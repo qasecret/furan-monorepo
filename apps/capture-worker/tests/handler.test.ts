@@ -45,6 +45,7 @@ desc("handleCaptureJob (integration)", () => {
   let fixtureServer: Server;
   let fixtureUrl: string;
   let job: CaptureJob;
+  let seededProjectId: string | undefined;
 
   beforeAll(async () => {
     const created = createDb();
@@ -116,9 +117,20 @@ desc("handleCaptureJob (integration)", () => {
       viewport: { width: 1280, height: 720 },
       browser: "chromium",
     };
+    seededProjectId = p.id;
   }, 60_000);
 
   afterAll(async () => {
+    // Cascade-delete the test's project so screenshots/test_runs etc. don't
+    // leak into the next run (the screenshots.image_key UNIQUE constraint
+    // would otherwise block a re-run on identical Playwright output).
+    try {
+      if (db && seededProjectId) {
+        await db.delete(projects).where(eq(projects.id, seededProjectId));
+      }
+    } catch {
+      // best-effort cleanup
+    }
     await closeAllBrowsers();
     if (closeDb) await closeDb();
     if (redis) redis.disconnect();
