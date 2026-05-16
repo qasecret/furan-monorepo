@@ -24,6 +24,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://furan:cipw@localhost:5432/furan_ci
+      # gitleaks:allow — CI-only placeholder, not a real secret
       JWT_SECRET: "ci_jwt_secret_at_least_32_chars_long_for_test"
     steps:
       - uses: actions/checkout@v4

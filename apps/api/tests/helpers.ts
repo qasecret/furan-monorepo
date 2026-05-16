@@ -15,6 +15,7 @@ export interface TestApp {
 
 const DEFAULT_DATABASE_URL =
   "postgresql://furan:devpw@localhost:5433/furan_dev";
+// gitleaks:allow — test-only placeholder, not a real secret
 const DEFAULT_JWT_SECRET = "test_jwt_secret_at_least_32_chars_long_for_tests";
 
 export interface CreateTestAppOpts {
