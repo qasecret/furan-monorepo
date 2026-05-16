@@ -1,0 +1,13 @@
+# Dev-mode overrides for `compose.yml` — exposes service ports to the host
+# so contributors can `psql`, `redis-cli`, and open the MinIO console.
+# DO NOT enable this overlay in production self-host deployments.
+
+services:
+  postgres:
+    ports: ["5433:5432"]
+  redis:
+    ports: ["6379:6379"]
+  minio:
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console

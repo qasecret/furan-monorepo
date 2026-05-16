@@ -19,16 +19,22 @@ branch-aware baselines that don't pollute `main`.
 - **GitHub App** that drops sticky PR comments + status checks + auto-promotion on merge (Phase 4).
 - **Apache 2.0**, no telemetry on the server, no upgrade gate.
 
-## Quickstart (target — not yet functional)
+## Quickstart
 
 ```bash
-git clone https://github.com/qasecret/furan-monorepo && cd furan-monorepo
-cp .env.example .env   # set JWT_SECRET and POSTGRES_PASSWORD once Phase 1 lands
-docker compose up -d   # Phase 1+
+git clone git@github.com:qasecret/furan-monorepo.git && cd furan-monorepo
+cp .env.example .env   # set POSTGRES_PASSWORD + MINIO_ROOT_PASSWORD
+pnpm install
+docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml up -d
 ```
 
-For now, contributors run `pnpm install && pnpm lint && pnpm test` to verify
-the scaffold.
+Stack on `:5432` (Postgres), `:6379` (Redis), `:9000` (MinIO S3 API), `:9001`
+(MinIO console). Verify with `docker compose ps` — every service should
+report `healthy` within ~60 s.
+
+The first application service (`apps/api`) lands in Phase 1.C
+(`v0.2.3-api`). For now `pnpm install && pnpm lint && pnpm test` verifies
+the scaffold + foundation packages.
 
 ## Repository layout
 
