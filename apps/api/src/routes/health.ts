@@ -1,5 +1,9 @@
 import { sql } from "@furan/db";
+import { createRedisConnection } from "@furan/queue";
+import { createStorage, type Storage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
+
+type Redis = ReturnType<typeof createRedisConnection>;
 
 const PROBE_TIMEOUT_MS = 1000;
 
@@ -13,25 +17,59 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export async function registerHealthRoutes(
   app: FastifyInstance,
 ): Promise<void> {
+  let redis: Redis | null = null;
+  let storage: Storage | null = null;
+
+  const getRedis = (): Redis => {
+    if (!redis) redis = createRedisConnection();
+    return redis;
+  };
+  const getStorage = (): Storage => {
+    if (!storage) storage = createStorage();
+    return storage;
+  };
+
+  app.addHook("onClose", async () => {
+    if (redis) {
+      await redis.quit();
+      redis = null;
+    }
+  });
+
   app.get("/livez", async (_req, reply) => {
     return reply.header("cache-control", "no-store").send({ status: "ok" });
   });
 
   app.get("/readyz", async (_req, reply) => {
     const checks: Record<string, string> = {};
+
     try {
       await withTimeout(app.db.execute(sql`SELECT 1`), PROBE_TIMEOUT_MS);
       checks.postgres = "ok";
     } catch (err) {
       checks.postgres = err instanceof Error ? err.message : "fail";
     }
-    // Redis + S3 stubs — wired in P1.D when @furan/queue + @furan/storage land.
-    checks.redis = "skipped_until_p1d";
-    checks.s3 = "skipped_until_p1d";
 
-    const ok = Object.values(checks).every(
-      (v) => v === "ok" || v.startsWith("skipped"),
-    );
+    try {
+      await withTimeout(getRedis().ping(), PROBE_TIMEOUT_MS);
+      checks.redis = "ok";
+    } catch (err) {
+      checks.redis = err instanceof Error ? err.message : "fail";
+    }
+
+    try {
+      // head() on a sentinel key — returns null when bucket exists but key
+      // doesn't; throws when bucket missing. Either way no exception → "ok".
+      await withTimeout(
+        getStorage().head("__furan_readyz_sentinel__"),
+        PROBE_TIMEOUT_MS,
+      );
+      checks.s3 = "ok";
+    } catch (err) {
+      checks.s3 = err instanceof Error ? err.message : "fail";
+    }
+
+    const ok = Object.values(checks).every((v) => v === "ok");
     return reply
       .code(ok ? 200 : 503)
       .header("cache-control", "no-store")

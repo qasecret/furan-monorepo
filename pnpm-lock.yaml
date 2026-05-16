@@ -35,9 +35,15 @@ importers:
       '@furan/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@furan/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@furan/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@furan/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@furan/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry

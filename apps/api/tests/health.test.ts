@@ -17,11 +17,15 @@ describe("health endpoints", () => {
     expect(res.json()).toEqual({ status: "ok" });
   });
 
-  test("GET /readyz returns 200 when Postgres reachable", async () => {
+  test("GET /readyz returns 200 when Postgres + Redis + S3 reachable", async () => {
     const res = await h.app.inject({ method: "GET", url: "/readyz" });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { checks: { postgres: string } };
+    const body = res.json() as {
+      checks: { postgres: string; redis: string; s3: string };
+    };
     expect(body.checks.postgres).toBe("ok");
+    expect(body.checks.redis).toBe("ok");
+    expect(body.checks.s3).toBe("ok");
   });
 
   test("GET /metrics returns prometheus text", async () => {
