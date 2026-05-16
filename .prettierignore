@@ -1,0 +1,18 @@
+# Lock files — generated, never reformat
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+.next/
+.turbo/
+
+# Test / coverage
+coverage/
+
+# Dependencies
+node_modules/
+
+# Generated docs / artifacts (none yet; Phase 1+ may add)
