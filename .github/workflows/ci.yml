@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Turbo affected lint + typecheck + test
+        run: pnpm turbo run lint typecheck test --filter=...[origin/main]
+      - name: Turbo affected build
+        run: pnpm turbo run build --filter=...[origin/main]
