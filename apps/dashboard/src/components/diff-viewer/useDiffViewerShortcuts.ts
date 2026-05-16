@@ -6,6 +6,8 @@ import { tinykeys } from "tinykeys";
 
 import { useViewerStore, type ViewerMode } from "./useViewerStore";
 
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+
 const MODES: ViewerMode[] = [
   "side-by-side",
   "overlay",
@@ -79,6 +81,9 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       R: () => optsRef.current.onReject?.(),
       "?": () => optsRef.current.onHelpToggle?.(),
       "Shift+?": () => optsRef.current.onHelpToggle?.(),
+      // T9: `/` opens the global cmdk command palette. We reach into the
+      // zustand store directly so the binding stays decoupled from props.
+      "/": () => usePaletteStore.getState().setOpen(true),
     });
   }, [router, mode, setMode, viewport, setViewport]);
 }

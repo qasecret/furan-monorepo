@@ -1,0 +1,81 @@
+"use client";
+
+import Link from "next/link";
+
+import { Badge } from "@/components/ui/badge";
+
+interface RunRowData {
+  id: string;
+  branchName: string | null;
+  status: string;
+  diffPercent: number | null;
+  pixelMisMatchCount: number | null;
+  baselineSource: string | null;
+  createdAt: string | Date;
+}
+
+interface Props {
+  projectId: string;
+  run: RunRowData;
+}
+
+function relative(date: string | Date): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  return d.toLocaleDateString();
+}
+
+function statusVariant(
+  status: string,
+): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "passed" || status === "ok") return "default";
+  if (status === "failed") return "destructive";
+  if (status === "running" || status === "new") return "secondary";
+  return "outline";
+}
+
+/**
+ * Single row in the runs index table. Links the branch cell to the diff
+ * viewer for the run. The viewer route is `runs/[runId]/diffs/[diffId]` —
+ * v0.4 doesn't expose per-diff IDs from `runs.list`, so we reuse the runId
+ * for both segments and rely on the viewer to load the first diff.
+ */
+export function RunRow({ projectId, run }: Props) {
+  return (
+    <tr
+      className="border-b last:border-0 hover:bg-accent/40"
+      data-testid={`run-row-${run.id}`}
+    >
+      <td className="py-2 pr-2">
+        <Link
+          href={`/projects/${projectId}/runs/${run.id}/diffs/${run.id}`}
+          className="hover:underline"
+        >
+          {run.branchName ?? "—"}
+        </Link>
+      </td>
+      <td className="py-2 pr-2">
+        <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+      </td>
+      <td className="py-2 pr-2">
+        {run.diffPercent !== null ? `${run.diffPercent.toFixed(2)}%` : "—"}
+      </td>
+      <td className="py-2 pr-2">
+        {run.pixelMisMatchCount !== null
+          ? run.pixelMisMatchCount.toLocaleString()
+          : "—"}
+      </td>
+      <td className="py-2 pr-2 text-muted-foreground">
+        {relative(run.createdAt)}
+      </td>
+    </tr>
+  );
+}
