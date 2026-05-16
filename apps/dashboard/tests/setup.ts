@@ -45,3 +45,13 @@ if (proto) {
     proto.releasePointerCapture = () => undefined;
   }
 }
+
+// Radix Select (Task 3 / Task 9) calls scrollIntoView when opening the popover;
+// jsdom Element does not implement it. Defensive shim so future tests don't
+// break when they mount a <Select> for the first time.
+const elemProto = globalThis.Element?.prototype as
+  | (Element & { scrollIntoView?: () => void })
+  | undefined;
+if (elemProto && typeof elemProto.scrollIntoView !== "function") {
+  elemProto.scrollIntoView = () => undefined;
+}
