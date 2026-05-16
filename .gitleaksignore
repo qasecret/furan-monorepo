@@ -1,2 +1,8 @@
 # Add commit SHAs or file:line:rule entries only if a confirmed false positive needs suppressing.
-# Phase 0 baseline: empty.
+
+# P1.C — test-only JWT placeholders flagged in PR-range scan against intermediate
+# commits (gitleaks scans every commit on the branch, so HEAD-level
+# `# gitleaks:allow` annotations don't suppress historical findings).
+# After squash-merge these SHAs leave history; entries become inert.
+f45e37753db0518a6a05ad7003026455824b5ab3:apps/api/tests/helpers.ts:generic-api-key:18
+944816c8eafaeb22dfba384e5bf2e68daaca6065:.github/workflows/ci.yml:generic-api-key:27
