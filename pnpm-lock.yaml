@@ -67,6 +67,31 @@ importers:
         specifier: ^8.18.0
         version: 8.59.3(eslint@9.39.4)(typescript@5.9.3)
 
+  packages/shared-types:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@furan/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@furan/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)
+
   packages/telemetry:
     dependencies:
       '@opentelemetry/api':
