@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import type { DiffRegion } from "./layers/regionTypes";
+import { RegionListPanel } from "./RegionListPanel";
+import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
+import { ViewportSwitcher } from "./ViewportSwitcher";
 
 import { browserEnv } from "@/lib/env";
 import { trpc } from "@/lib/trpc";
@@ -63,10 +67,28 @@ export function DiffViewer({ runId, diffId }: Props) {
   const baselineScreenshot = data?.baselineScreenshot ?? null;
   // The L1 diff worker writes the diff overlay PNG to testRuns.diffName (key).
   const diffOverlayKey = data?.diffName ?? null;
+  const baselineSource = data?.baselineSource ?? null;
+
+  const uniqueViewports = useMemo(() => {
+    const shots = data?.screenshots ?? [];
+    const vps = shots
+      .map((s) => (s as { viewport?: string | null }).viewport ?? null)
+      .filter((v): v is string => Boolean(v));
+    return Array.from(new Set(vps));
+  }, [data?.screenshots]);
 
   const baselineUrl = useAuthedImage(baselineScreenshot?.imageKey);
   const candidateUrl = useAuthedImage(candidateScreenshot?.imageKey);
   const diffOverlayUrl = useAuthedImage(diffOverlayKey);
+
+  useDiffViewerShortcuts({
+    viewports: uniqueViewports,
+    prevDiffHref: null, // wired when runs.list lands (Phase 3)
+    nextDiffHref: null,
+    onApprove: () => undefined, // T11 fills in
+    onReject: () => undefined,
+    onHelpToggle: () => undefined,
+  });
 
   if (isLoading) return <div className="p-4">Loading…</div>;
   if (error)
@@ -78,12 +100,21 @@ export function DiffViewer({ runId, diffId }: Props) {
   return (
     <div className="flex flex-col h-full" data-diff-id={diffId}>
       <ViewerToolbar />
-      <ViewerCanvas
-        baselineUrl={baselineUrl}
-        candidateUrl={candidateUrl}
-        diffOverlayUrl={diffOverlayUrl}
-        regions={regions}
-      />
+      <div className="flex items-center gap-2 px-3 py-2 border-b">
+        <BaselineSourceBadge source={baselineSource} />
+        <ViewportSwitcher viewports={uniqueViewports} />
+      </div>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-auto">
+          <ViewerCanvas
+            baselineUrl={baselineUrl}
+            candidateUrl={candidateUrl}
+            diffOverlayUrl={diffOverlayUrl}
+            regions={regions}
+          />
+        </div>
+        <RegionListPanel regions={regions} />
+      </div>
     </div>
   );
 }

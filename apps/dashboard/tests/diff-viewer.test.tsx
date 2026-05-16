@@ -35,6 +35,12 @@ vi.mock("pixi.js", () => ({
   },
 }));
 
+// Mock next/navigation — DiffViewer now invokes useDiffViewerShortcuts
+// which calls useRouter at render time.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
 // Mock the tRPC client. The DiffViewer only uses runs.getById.useQuery.
 // T9: response now includes baselineScreenshot + diffName.
 vi.mock("../src/lib/trpc", () => ({
