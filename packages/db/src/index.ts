@@ -11,4 +11,4 @@ export type { BaselineSource, GitRefs } from "./baseline.js";
 // Re-export drizzle-orm helpers that consumers (apps/api) need.
 // Per @furan/no-raw-drizzle ESLint rule, apps cannot import from
 // drizzle-orm directly — they go through this re-export.
-export { sql, eq, and, or, asc, desc, ilike, inArray } from "drizzle-orm";
+export { sql, eq, and, or, asc, desc, ilike, inArray, lt } from "drizzle-orm";
