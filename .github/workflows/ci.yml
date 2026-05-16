@@ -31,19 +31,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: furan
-          MINIO_ROOT_PASSWORD: minio_ci_pw_long_enough
-          MINIO_DEFAULT_BUCKETS: furan-ci
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -fsS http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
     env:
       DATABASE_URL: postgresql://furan:cipw@localhost:5432/furan_ci
       REDIS_URL: redis://localhost:6379
@@ -57,6 +44,27 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
+      - name: Start MinIO + create bucket
+        # services: block can't pass server args to the official minio image,
+        # so we start it manually here. Bitnami's auto-bucket image had a
+        # broken `:latest` tag at PR time.
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=furan \
+            -e MINIO_ROOT_PASSWORD=minio_ci_pw_long_enough \
+            quay.io/minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "minio ready"
+              break
+            fi
+            echo "waiting for minio... ($i/30)"
+            sleep 2
+          done
+          docker run --rm --network host \
+            -e MC_HOST_local=http://furan:minio_ci_pw_long_enough@localhost:9000 \
+            quay.io/minio/mc:latest mb local/furan-ci
       - name: Apply migrations
         run: pnpm --filter @furan/db exec drizzle-kit migrate
       - name: Turbo affected lint + typecheck + test
