@@ -6,6 +6,8 @@ import type { Env } from "./env.js";
 import authPlugin from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerTokensRoutes } from "./routes/tokens.js";
+import { registerUsersRoutes } from "./routes/users.js";
 
 export interface AppDeps {
   db: DB;
@@ -36,6 +38,8 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   // Plugins + routes register in Tasks 2-7.
   await app.register(authPlugin);
   await registerAuthRoutes(app);
+  await registerTokensRoutes(app);
+  await registerUsersRoutes(app);
   await registerHealthRoutes(app);
 
   return app;
