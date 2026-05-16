@@ -268,4 +268,31 @@ describe("project-isolation matrix", () => {
     });
     expect(res.statusCode).toBe(403);
   });
+
+  test("19. GET /users as admin -> 200", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/users",
+      headers: auth(adminJwt),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  test("20. GET /users as editor -> 403", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/users",
+      headers: auth(aliceJwt),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  test("21. GET /users as guest -> 403", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/users",
+      headers: auth(guestJwt),
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });

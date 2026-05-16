@@ -10,6 +10,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
+import { registerUsersAdminRoutes } from "./routes/users-admin.js";
 import { registerUsersRoutes } from "./routes/users.js";
 
 export interface AppDeps {
@@ -43,6 +44,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app);
   await registerTokensRoutes(app);
   await registerUsersRoutes(app);
+  await registerUsersAdminRoutes(app);
   await registerProjectsRoutes(app);
   await registerMembersRoutes(app);
   await registerBuildsRoutes(app);
