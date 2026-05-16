@@ -1,4 +1,4 @@
-import { desc, eq, users } from "@furan/db";
+import { and, desc, eq, ilike, users } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -27,6 +27,8 @@ const updateBody = z
 const paramsId = z.object({ id: z.string().uuid() });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  q: z.string().max(120).optional(),
 });
 
 const safeUserCols = {
@@ -51,11 +53,18 @@ export async function registerUsersAdminRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_query" });
       }
+      const { limit, offset, q } = parsed.data;
+      const trimmed = q?.trim();
+      const whereClause = trimmed
+        ? and(ilike(users.email, `%${trimmed}%`))
+        : undefined;
       return app.db
         .select(safeUserCols)
         .from(users)
+        .where(whereClause)
         .orderBy(desc(users.createdAt))
-        .limit(parsed.data.limit);
+        .limit(limit)
+        .offset(offset);
     },
   );
 
