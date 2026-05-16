@@ -15,8 +15,12 @@
   },
   "dependencies": {
     "@furan/config": "workspace:*",
+    "@furan/db": "workspace:^",
+    "@furan/diff-engine": "workspace:^",
     "@furan/queue": "workspace:*",
+    "@furan/storage": "workspace:^",
     "@furan/telemetry": "workspace:*",
+    "ioredis": "^5.4.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

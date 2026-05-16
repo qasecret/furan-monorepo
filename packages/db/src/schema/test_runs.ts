@@ -10,7 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { builds } from "./builds.js";
-import { environmentEnum } from "./enums.js";
+import { baselineSourceEnum, environmentEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testVariations } from "./test_variations.js";
 
@@ -47,6 +47,7 @@ export const testRuns = pgTable(
     ignoreAreas: text("ignore_areas"),
     tempIgnoreAreas: text("temp_ignore_areas"),
     environment: environmentEnum("environment").notNull().default("default"),
+    baselineSource: baselineSourceEnum("baseline_source"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

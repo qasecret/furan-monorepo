@@ -67,7 +67,19 @@ jobs:
             quay.io/minio/mc:latest mb local/furan-ci
       - name: Apply migrations
         run: pnpm --filter @furan/db exec drizzle-kit migrate
-      - name: Turbo affected lint + typecheck + test
-        run: pnpm turbo run lint typecheck test --filter=...[origin/main]
+      - name: Install Playwright browsers (capture-worker integration test)
+        # apps/capture-worker spawns chromium for its integration test. The
+        # ubuntu-latest runner has the OS deps preinstalled; only browser
+        # binaries need to land. --with-deps is a no-op on hosted runners but
+        # documents intent.
+        run: pnpm --filter @furan/capture-worker exec playwright install --with-deps chromium
+      - name: Turbo affected lint + typecheck
+        run: pnpm turbo run lint typecheck --filter=...[origin/main]
+      - name: Turbo affected test (serialized — workers + api share the same Postgres)
+        # Integration tests across apps/api, apps/capture-worker, apps/diff-worker, packages/db
+        # all hit the same compose Postgres. Parallel test runs across packages race on
+        # cleanup (api tests truncate `test_runs` / `projects` while worker tests are
+        # mid-handler). Serialize the test stage. Lint + typecheck stay parallel above.
+        run: pnpm turbo run test --filter=...[origin/main] --concurrency=1
       - name: Turbo affected build
         run: pnpm turbo run build --filter=...[origin/main]

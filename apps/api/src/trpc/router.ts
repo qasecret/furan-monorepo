@@ -1,6 +1,3 @@
-import { initTRPC } from "@trpc/server";
-
-const t = initTRPC.create();
-
-export const appRouter = t.router({});
-export type AppRouter = typeof appRouter;
+// The appRouter implementation lives under v1/. This re-export keeps
+// the historical import path working.
+export { appRouter, type AppRouter } from "./v1/router.js";

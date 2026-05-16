@@ -1,5 +1,7 @@
 import { getEnv } from "@furan/config";
-import { createWorker } from "@furan/queue";
+import { createDb } from "@furan/db";
+import { createRedisConnection, createWorker } from "@furan/queue";
+import { createStorage } from "@furan/storage";
 import { bootstrapTelemetry } from "@furan/telemetry";
 
 import { envSchema } from "./env.js";
@@ -16,12 +18,16 @@ async function main(): Promise<void> {
       : {}),
   });
 
+  const { db, close: closeDb } = createDb();
+  const storage = createStorage();
+  const redis = createRedisConnection();
+
   const worker = createWorker("diff", async (job) => {
     telemetry.logger.info(
       { jobId: job.id, projectId: job.data.projectId },
       "diff_job_received",
     );
-    return handleDiffJob(job.data, telemetry.logger);
+    return handleDiffJob(job.data, telemetry.logger, { db, storage, redis });
   });
 
   const health = startHealthServer({
@@ -33,6 +39,8 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
     await worker.close();
+    redis.disconnect();
+    await closeDb();
     await new Promise<void>((res) => health.close(() => res()));
     await telemetry.shutdown();
     process.exit(0);

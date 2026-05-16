@@ -1,0 +1,29 @@
+{
+  "name": "@furan/diff-engine",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "odiff-bin": "^3.1.0",
+    "diff-dom": "^5.1.0",
+    "jsdom": "^25.0.1"
+  },
+  "devDependencies": {
+    "@furan/eslint-config": "workspace:*",
+    "@furan/tsconfig": "workspace:*",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

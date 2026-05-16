@@ -20,6 +20,7 @@ export const baselines = pgTable(
       onDelete: "set null",
     }),
     environment: environmentEnum("environment").notNull().default("default"),
+    branchName: text("branch_name").notNull().default("main"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

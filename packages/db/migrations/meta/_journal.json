@@ -8,6 +8,13 @@
       "when": 1778929315755,
       "tag": "0000_red_selene",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778941837461,
+      "tag": "0001_fluffy_blonde_phantom",
+      "breakpoints": true
     }
   ]
 }

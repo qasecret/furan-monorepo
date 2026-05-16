@@ -11,3 +11,8 @@ export const imageComparisonEnum = pgEnum("image_comparison", [
   "looks_same",
   "odiff",
 ]);
+export const baselineSourceEnum = pgEnum("baseline_source", [
+  "this_branch",
+  "parent_pr",
+  "default_branch",
+]);
