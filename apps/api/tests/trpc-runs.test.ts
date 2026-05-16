@@ -3,9 +3,11 @@ import type { AddressInfo } from "node:net";
 import {
   baselines,
   builds,
+  diffRegions,
   eq,
   projectMembers,
   projects,
+  screenshots,
   testRuns,
   testVariations,
   users,
@@ -40,6 +42,8 @@ interface Seeded {
 
 async function seed(h: TestApp): Promise<Seeded> {
   // FK-order: dependents before parents.
+  await h.db.delete(diffRegions);
+  await h.db.delete(screenshots);
   await h.db.delete(baselines);
   await h.db.delete(testRuns);
   await h.db.delete(testVariations);
@@ -152,6 +156,60 @@ d("tRPC runs router", () => {
     expect(data.id).toBe(s.runId);
     expect(Array.isArray(data.screenshots)).toBe(true);
     expect(Array.isArray(data.diffRegions)).toBe(true);
+    // T9: baseline lookup is included; null for a run with no prior baseline.
+    expect(data.baselineScreenshot).toBeNull();
+    expect(data.baselineSource).toBeNull();
+  });
+
+  test("getById: returns baselineScreenshot when a prior baseline exists", async () => {
+    // Seed an older run on the SAME variation+branch and snapshot it as the
+    // baseline; resolveBaseline should pick it up via the this_branch tier.
+    const [olderRun] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId: (
+          await h.db
+            .select({ buildId: testRuns.buildId })
+            .from(testRuns)
+            .where(eq(testRuns.id, s.runId))
+            .limit(1)
+        )[0]!.buildId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        status: "ok",
+        branchName: "feature/x",
+        name: "older",
+      })
+      .returning();
+
+    const [bl] = await h.db
+      .insert(baselines)
+      .values({
+        baselineName: "older",
+        testVariationId: s.variationId,
+        testRunId: olderRun.id,
+        branchName: "feature/x",
+      })
+      .returning();
+    expect(bl.id).toBeDefined();
+
+    const olderShot = await h.db
+      .insert(screenshots)
+      .values({
+        runId: olderRun.id,
+        projectId: s.projectId,
+        imageKey: "a".repeat(64),
+        viewport: "1280x720",
+        browser: "chromium",
+      })
+      .returning();
+    expect(olderShot[0]?.id).toBeDefined();
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.baselineScreenshot).not.toBeNull();
+    expect(data.baselineScreenshot?.imageKey).toBe("a".repeat(64));
+    expect(data.baselineSource).toBe("this_branch");
   });
 
   test("getById: non-member receives FORBIDDEN", async () => {

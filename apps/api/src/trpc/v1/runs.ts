@@ -1,4 +1,12 @@
-import { baselines, diffRegions, eq, screenshots, testRuns } from "@furan/db";
+import {
+  baselines,
+  diffRegions,
+  eq,
+  projects,
+  resolveBaseline,
+  screenshots,
+  testRuns,
+} from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -51,7 +59,59 @@ export const runsRouter = t.router({
         .from(diffRegions)
         .where(eq(diffRegions.runId, input.runId));
 
-      return { ...run, screenshots: shots, diffRegions: regions };
+      // Resolve the baseline screenshot for the BASELINE pane of the viewer.
+      // T9: dashboard side-by-side / overlay / onion-skin all need the
+      // baseline's screenshot row (its imageKey). Reuse the three-tier
+      // resolver from @furan/db so we stay consistent with the diff worker.
+      let baselineScreenshot: (typeof shots)[number] | null = null;
+      let baselineSource: string | null = null;
+      try {
+        const projectRows = await ctx.db
+          .select({ mainBranchName: projects.mainBranchName })
+          .from(projects)
+          .where(eq(projects.id, run.projectId))
+          .limit(1);
+        const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
+
+        const resolution = await resolveBaseline(
+          ctx.db,
+          run.projectId,
+          run.branchName ?? defaultBranch,
+          run.testVariationId,
+          { defaultBranch },
+        );
+
+        if (resolution) {
+          baselineSource = resolution.source;
+          const baselineRows = await ctx.db
+            .select({ testRunId: baselines.testRunId })
+            .from(baselines)
+            .where(eq(baselines.id, resolution.baselineId))
+            .limit(1);
+          const baselineRunId = baselineRows[0]?.testRunId;
+          if (baselineRunId) {
+            const blShots = await ctx.db
+              .select()
+              .from(screenshots)
+              .where(eq(screenshots.runId, baselineRunId));
+            baselineScreenshot = blShots[0] ?? null;
+          }
+        }
+      } catch (err) {
+        // Baseline resolution is informational; don't fail getById on it.
+        ctx.telemetry.logger.warn(
+          { err, runId: run.id },
+          "baseline_screenshot_lookup_failed",
+        );
+      }
+
+      return {
+        ...run,
+        screenshots: shots,
+        diffRegions: regions,
+        baselineScreenshot,
+        baselineSource,
+      };
     }),
 
   approve: t.procedure

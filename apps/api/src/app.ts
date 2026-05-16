@@ -15,6 +15,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
 import { registerRunEventsRoute } from "./routes/run-events.js";
+import { registerStorageProxyRoute } from "./routes/storage-proxy.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
 import { registerUsersAdminRoutes } from "./routes/users-admin.js";
 import { registerUsersRoutes } from "./routes/users.js";
@@ -57,6 +58,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerMembersRoutes(app);
   await registerBuildsRoutes(app);
   await registerRunEventsRoute(app);
+  await registerStorageProxyRoute(app);
   await registerHealthRoutes(app);
 
   // Soft-authenticate /trpc/* requests: populate req.auth when valid creds

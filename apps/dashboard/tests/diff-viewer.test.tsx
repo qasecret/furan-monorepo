@@ -14,10 +14,29 @@ vi.mock("pixi.js", () => ({
   Sprite: class {
     width = 0;
     height = 0;
+    alpha = 1;
+  },
+  Container: class {
+    children: unknown[] = [];
+    addChild(c: unknown) {
+      this.children.push(c);
+    }
+  },
+  Graphics: class {
+    rect() {
+      return this;
+    }
+    fill() {
+      return this;
+    }
+    stroke() {
+      return this;
+    }
   },
 }));
 
 // Mock the tRPC client. The DiffViewer only uses runs.getById.useQuery.
+// T9: response now includes baselineScreenshot + diffName.
 vi.mock("../src/lib/trpc", () => ({
   trpc: {
     runs: {
@@ -27,6 +46,9 @@ vi.mock("../src/lib/trpc", () => ({
             id: "00000000-0000-0000-0000-000000000000",
             screenshots: [],
             diffRegions: [],
+            baselineScreenshot: null,
+            baselineSource: null,
+            diffName: null,
           },
           isLoading: false,
           error: null,
