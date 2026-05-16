@@ -44,15 +44,15 @@ furan/
 
 ## What v1.0 will ship
 
-| Capability | v1.0 |
-|---|---|
-| Visual diff pipeline | L1 (odiff pixel) + L2 (DOM diff via `diff-dom`) |
-| Diff viewer | Side-by-side, overlay, onion-skin, heatmap, viewport switcher |
-| Branch-aware baselines | Fallback chain + GitHub App merge promotion |
-| Authentication | Email + password + JWT |
-| RBAC | 3 roles (admin / editor / guest) gated by project membership |
-| SDK | Kotlin (`io.furan:sdk-core` + `io.furan:sdk-selenium`) |
-| Self-host | Docker Compose; documented under 30 min |
+| Capability             | v1.0                                                          |
+| ---------------------- | ------------------------------------------------------------- |
+| Visual diff pipeline   | L1 (odiff pixel) + L2 (DOM diff via `diff-dom`)               |
+| Diff viewer            | Side-by-side, overlay, onion-skin, heatmap, viewport switcher |
+| Branch-aware baselines | Fallback chain + GitHub App merge promotion                   |
+| Authentication         | Email + password + JWT                                        |
+| RBAC                   | 3 roles (admin / editor / guest) gated by project membership  |
+| SDK                    | Kotlin (`io.furan:sdk-core` + `io.furan:sdk-selenium`)        |
+| Self-host              | Docker Compose; documented under 30 min                       |
 
 The full feature list and v1.1+ roadmap (TypeScript SDK, GitLab/Bitbucket/Azure DevOps bots, multi-tenancy, SSO, audit log, and more) lives in [furan-design/plan-roadmap.md](https://github.com/qasecret/furan-design/blob/main/plan-roadmap.md).
 
