@@ -6,8 +6,12 @@
   "type": "module",
   "files": [
     "base.js",
-    "node.js"
+    "node.js",
+    "no-raw-drizzle.js"
   ],
+  "scripts": {
+    "test": "vitest run"
+  },
   "peerDependencies": {
     "eslint": "^9.0.0"
   },
@@ -17,5 +21,8 @@
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-unused-imports": "^4.1.4",
     "typescript-eslint": "^8.18.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
   }
 }
