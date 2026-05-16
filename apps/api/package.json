@@ -5,6 +5,12 @@
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/server.js",
+  "exports": {
+    "./trpc": {
+      "types": "./dist/trpc/v1/router.d.ts",
+      "default": "./dist/trpc/v1/router.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -34,6 +40,7 @@
   "devDependencies": {
     "@furan/eslint-config": "workspace:*",
     "@furan/tsconfig": "workspace:*",
+    "@trpc/client": "^11",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",
