@@ -218,12 +218,24 @@ importers:
       '@furan/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@furan/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@furan/diff-engine':
+        specifier: workspace:^
+        version: link:../../packages/diff-engine
       '@furan/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@furan/storage':
+        specifier: workspace:^
+        version: link:../../packages/storage
       '@furan/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.10.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76

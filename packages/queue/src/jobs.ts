@@ -11,8 +11,14 @@ export interface CaptureJob {
 export interface DiffJob {
   runId: string;
   projectId: string;
-  baselineKey: string;
-  candidateKey: string;
+  // Phase 2: the worker derives baseline + candidate storage keys from the
+  // screenshots table via `resolveBaseline`; these legacy fields remain
+  // optional for callers that already populate them (handler ignores them).
+  baselineKey?: string;
+  candidateKey?: string;
+  // Optional PR parent base branch used as the second tier in baseline
+  // resolution (see `resolveBaseline` in @furan/db).
+  parentPrBaseBranch?: string | null;
 }
 
 export interface WebhookJob {
