@@ -8,11 +8,30 @@ on:
 jobs:
   lint-typecheck-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: furan
+          POSTGRES_PASSWORD: cipw
+          POSTGRES_DB: furan_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U furan -d furan_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://furan:cipw@localhost:5432/furan_ci
+      JWT_SECRET: "ci_jwt_secret_at_least_32_chars_long_for_test"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
+      - name: Apply migrations
+        run: pnpm --filter @furan/db exec drizzle-kit migrate
       - name: Turbo affected lint + typecheck + test
         run: pnpm turbo run lint typecheck test --filter=...[origin/main]
       - name: Turbo affected build
