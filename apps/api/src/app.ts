@@ -1,0 +1,35 @@
+import type { DB } from "@furan/db";
+import type { Telemetry } from "@furan/telemetry";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+
+import type { Env } from "./env.js";
+
+export interface AppDeps {
+  db: DB;
+  telemetry: Telemetry;
+  env: Env;
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    db: DB;
+    telemetry: Telemetry;
+    env: Env;
+  }
+}
+
+export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
+  const app = Fastify({
+    loggerInstance: deps.telemetry.logger as unknown as FastifyBaseLogger,
+    genReqId: () => crypto.randomUUID(),
+    requestIdHeader: "x-request-id",
+    disableRequestLogging: false,
+  });
+
+  app.decorate("db", deps.db);
+  app.decorate("telemetry", deps.telemetry);
+  app.decorate("env", deps.env);
+
+  // Plugins + routes register in Tasks 2-7.
+  return app;
+}
