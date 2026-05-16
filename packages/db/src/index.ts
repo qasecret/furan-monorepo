@@ -1,6 +1,8 @@
 export * from "./client.js";
 export * from "./scope.js";
 export * as schema from "./schema/index.js";
+// Re-export schema tables/enums as named exports for direct consumption.
+export * from "./schema/index.js";
 
 // Re-export drizzle-orm helpers that consumers (apps/api) need.
 // Per @furan/no-raw-drizzle ESLint rule, apps cannot import from

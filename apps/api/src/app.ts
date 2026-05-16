@@ -3,6 +3,8 @@ import type { Telemetry } from "@furan/telemetry";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
 import type { Env } from "./env.js";
+import authPlugin from "./plugins/auth.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 
 export interface AppDeps {
@@ -32,6 +34,8 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("env", deps.env);
 
   // Plugins + routes register in Tasks 2-7.
+  await app.register(authPlugin);
+  await registerAuthRoutes(app);
   await registerHealthRoutes(app);
 
   return app;
