@@ -3,3 +3,8 @@ export * from "./users.js";
 export * from "./projects.js";
 export * from "./project_members.js";
 export * from "./tokens.js";
+export * from "./builds.js";
+export * from "./test_variations.js";
+export * from "./test_runs.js";
+export * from "./baselines.js";
+export * from "./webhooks.js";
