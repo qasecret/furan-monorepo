@@ -15,4 +15,6 @@ coverage/
 # Dependencies
 node_modules/
 
-# Generated docs / artifacts (none yet; Phase 1+ may add)
+# Generated docs / artifacts
+packages/db/migrations/
+
