@@ -1,0 +1,27 @@
+# Pre-commit hooks. Installed via `pnpm install` (which runs `lefthook install`
+# from the root `package.json` `prepare` script).
+#
+# CI runs the same checks independently via .github/workflows/ci.yml and
+# gitleaks.yml — these hooks are a developer-experience nicety, not a
+# security control.
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+      run: pnpm prettier --check {staged_files}
+    typecheck:
+      glob: "*.{ts,tsx}"
+      run: pnpm typecheck
+    lint:
+      glob: "*.{ts,tsx,js,jsx}"
+      run: pnpm lint
+    gitleaks:
+      run: |
+        if command -v gitleaks >/dev/null 2>&1; then
+          gitleaks protect --staged --redact --no-banner
+        else
+          echo "lefthook: gitleaks not installed locally — CI will still gate"
+          exit 0
+        fi
