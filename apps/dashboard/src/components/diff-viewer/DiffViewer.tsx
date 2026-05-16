@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
@@ -10,6 +11,7 @@ import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
 
+import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
 import { trpc } from "@/lib/trpc";
 
@@ -61,7 +63,34 @@ function useAuthedImage(key: string | null | undefined): string | null {
 }
 
 export function DiffViewer({ runId, diffId }: Props) {
+  const utils = trpc.useUtils();
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+
+  // T11: keyboard-shortcut mutations. These are deliberately separate hook
+  // instances from the ones inside <ApprovalBar>; both invalidate the same
+  // runs.getById query on success, so the UI converges regardless of source.
+  const approveKb = trpc.runs.approve.useMutation({
+    onSuccess: () => void utils.runs.getById.invalidate({ runId }),
+  });
+  const rejectKb = trpc.runs.reject.useMutation({
+    onSuccess: () => void utils.runs.getById.invalidate({ runId }),
+  });
+
+  // T11: SSE — invalidate runs.getById on terminal worker events so the
+  // viewer picks up freshly written diff regions, baselineSource, etc.
+  const onSseEvent = useCallback(
+    (e: RunEvent) => {
+      if (
+        e.type === "diff.completed" ||
+        e.type === "capture.completed" ||
+        e.type === "run.completed"
+      ) {
+        void utils.runs.getById.invalidate({ runId });
+      }
+    },
+    [utils, runId],
+  );
+  useRunEvents(runId, onSseEvent);
 
   const candidateScreenshot = data?.screenshots?.[0] ?? null;
   const baselineScreenshot = data?.baselineScreenshot ?? null;
@@ -85,8 +114,8 @@ export function DiffViewer({ runId, diffId }: Props) {
     viewports: uniqueViewports,
     prevDiffHref: null, // wired when runs.list lands (Phase 3)
     nextDiffHref: null,
-    onApprove: () => undefined, // T11 fills in
-    onReject: () => undefined,
+    onApprove: () => approveKb.mutate({ runId }),
+    onReject: () => rejectKb.mutate({ runId }),
     onHelpToggle: () => undefined,
   });
 
@@ -115,6 +144,7 @@ export function DiffViewer({ runId, diffId }: Props) {
         </div>
         <RegionListPanel regions={regions} />
       </div>
+      <ApprovalBar runId={runId} />
     </div>
   );
 }

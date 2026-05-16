@@ -41,28 +41,61 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-// Mock the tRPC client. The DiffViewer only uses runs.getById.useQuery.
-// T9: response now includes baselineScreenshot + diffName.
-vi.mock("../src/lib/trpc", () => ({
-  trpc: {
-    runs: {
-      getById: {
-        useQuery: () => ({
-          data: {
-            id: "00000000-0000-0000-0000-000000000000",
-            screenshots: [],
-            diffRegions: [],
-            baselineScreenshot: null,
-            baselineSource: null,
-            diffName: null,
-          },
-          isLoading: false,
-          error: null,
-        }),
+// Mock the tRPC client.
+// T9: getById response includes baselineScreenshot + diffName.
+// T11: DiffViewer now also calls runs.approve / runs.reject mutations
+// (used for keyboard shortcuts and via the embedded <ApprovalBar>) and
+// trpc.useUtils() for query invalidation.
+vi.mock("../src/lib/trpc", () => {
+  const noopMutation = () => ({ mutate: () => undefined, isPending: false });
+  return {
+    trpc: {
+      useUtils: () => ({
+        runs: { getById: { invalidate: () => undefined } },
+      }),
+      runs: {
+        getById: {
+          useQuery: () => ({
+            data: {
+              id: "00000000-0000-0000-0000-000000000000",
+              screenshots: [],
+              diffRegions: [],
+              baselineScreenshot: null,
+              baselineSource: null,
+              diffName: null,
+            },
+            isLoading: false,
+            error: null,
+          }),
+        },
+        approve: { useMutation: noopMutation },
+        reject: { useMutation: noopMutation },
       },
     },
-  },
-}));
+  };
+});
+
+// T11: DiffViewer mounts useRunEvents which opens an EventSource. jsdom
+// has no EventSource — stub it so the hook is a no-op for these tests.
+class StubEventSource {
+  url: string;
+  withCredentials: boolean;
+  constructor(url: string, init?: EventSourceInit) {
+    this.url = url;
+    this.withCredentials = init?.withCredentials ?? false;
+  }
+  addEventListener(): void {
+    /* noop */
+  }
+  removeEventListener(): void {
+    /* noop */
+  }
+  close(): void {
+    /* noop */
+  }
+}
+(globalThis as unknown as { EventSource: typeof StubEventSource }).EventSource =
+  StubEventSource;
 
 import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
