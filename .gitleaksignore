@@ -1,0 +1,2 @@
+# Add commit SHAs or file:line:rule entries only if a confirmed false positive needs suppressing.
+# Phase 0 baseline: empty.
