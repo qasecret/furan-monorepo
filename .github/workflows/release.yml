@@ -18,10 +18,17 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v3
       - name: Publish sdk-core + sdk-selenium to Maven Central
+        # The vanniktech plugin reads ORG_GRADLE_PROJECT_* env vars by convention;
+        # docs/runbooks/maven-central-publish.md documents the full secret list.
         env:
-          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
         working-directory: packages/sdk-kotlin
-        run: ./gradlew :core:publish :selenium:publish --no-daemon
+        # publishToMavenCentral uploads + stages but does NOT release —
+        # `automaticRelease = false` in build.gradle.kts means a maintainer must
+        # promote from the Portal UI after reviewing the staged artifact.
+        # (publishAndReleaseToMavenCentral would force-release regardless.)
+        run: ./gradlew publishToMavenCentral --no-configuration-cache --no-daemon

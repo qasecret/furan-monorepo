@@ -6,6 +6,7 @@ kotlinx-serialization = "1.7.3"
 junit = "5.11.3"
 slf4j = "2.0.16"
 selenium = "4.27.0"
+vanniktech-publish = "0.30.0"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -24,3 +25,4 @@ selenium-java = { module = "org.seleniumhq.selenium:selenium-java", version.ref 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+vanniktech-mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "vanniktech-publish" }
