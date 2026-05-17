@@ -23,17 +23,52 @@ export interface HandlerDeps {
   redis: Redis;
 }
 
+interface PerViewportResult {
+  viewport: string | null;
+  passed: boolean;
+  diffPercent: number;
+  pixelMismatchCount: number;
+  diffImageKey: string | null;
+  regions: Array<{
+    severity: string;
+    category: string;
+    bbox: unknown;
+    description: string;
+    source: string;
+    viewport: string | null;
+  }>;
+  ranTiers: Array<"l1" | "l2">;
+  firstBaseline: boolean;
+}
+
 /**
- * Phase 2 diff handler: looks up project + candidate run, resolves the
- * baseline via the three-tier `resolveBaseline` chain, fetches both image +
- * DOM blobs from storage, invokes `runDiff` (L1 pixel + optional L2 DOM),
- * writes the diff overlay back to storage, updates `test_runs` (status,
- * diff_percent, pixel_mis_match_count, diff_name, baseline_source) and
- * inserts `diff_regions` rows. Publishes `diff.started` and `diff.completed`
- * events on the per-run Redis pub/sub channel.
+ * Phase 2 diff handler (v0.5 multi-viewport): looks up project + candidate
+ * run, then for each candidate screenshot (one per viewport) resolves the
+ * baseline via the three-tier `resolveBaseline` chain, matches the
+ * same-viewport baseline screenshot, and runs the L1+L2 diff. When no
+ * matching baseline screenshot exists for a viewport (new viewport added
+ * since the baseline was captured) the viewport is treated as a
+ * first-baseline (passes with 0% diff for that viewport).
  *
- * When no baseline exists in any tier the run is the *first* baseline for
- * this variation: we mark it passed and skip the diff entirely.
+ * Aggregation rolled back to the single `test_runs` row:
+ *   status        = "failed" if ANY viewport failed; else "passed"
+ *   diffPercent   = MAX(per-viewport diffPercent) — surfaces the worst
+ *                   viewport for at-a-glance triage. Per-viewport breakdown
+ *                   is recoverable from `diff_regions.viewport`.
+ *   pixelMisMatchCount = SUM(per-viewport pixelMismatchCount)
+ *   diffName      = imageKey of the worst (max diffPercent) viewport's
+ *                   overlay; null if no overlay produced anywhere.
+ *   baselineSource = baseline.source from the chain (same for all viewports
+ *                   of a run; the chain resolves per variation + branch).
+ *
+ * Backwards compatibility: when the candidate run has a single screenshot
+ * with NULL viewport (legacy v0.4 row), the loop runs exactly once and the
+ * inserted `diff_regions` rows carry NULL viewport — matching pre-v0.5
+ * behavior.
+ *
+ * Preserved from T9: publishes a terminal `run.completed` event after
+ * `diff.completed` so the integrations subscriber (GitHub flow + webhook
+ * flow) can fan out.
  */
 export async function handleDiffJob(
   data: DiffJob,
@@ -71,6 +106,15 @@ export async function handleDiffJob(
   );
 
   if (!baseline) {
+    // First-baseline: nothing to diff against, mark the run passed +
+    // emit both `diff.completed` and `run.completed` so the integrations
+    // subscriber (T8 GitHub flow + T9 webhook flow) can react.
+    await withProjectScope(deps.db, data.projectId, async (tx) => {
+      await tx
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, data.runId));
+    });
     await deps.redis.publish(
       `run:${data.runId}:events`,
       JSON.stringify({
@@ -78,6 +122,18 @@ export async function handleDiffJob(
         runId: data.runId,
         passed: true,
         firstBaseline: true,
+      }),
+    );
+    await deps.redis.publish(
+      `run:${data.runId}:events`,
+      JSON.stringify({
+        type: "run.completed",
+        runId: data.runId,
+        projectId: data.projectId,
+        status: "passed",
+        diffPercent: 0,
+        branchName: run.branchName,
+        numChanges: 0,
       }),
     );
     logger.info(
@@ -94,70 +150,154 @@ export async function handleDiffJob(
     throw new Error(`baseline_has_no_run:${baseline.baselineId}`);
   }
 
-  const baselineScreenshot = await deps.db.query.screenshots.findFirst({
+  // Pull all screenshots for both runs and group by viewport. With v0.5
+  // multi-viewport captures, expect N rows per run (one per viewport); with
+  // legacy v0.4 single-viewport runs, expect 1 row with NULL viewport — the
+  // loop below collapses to the same single-pair flow.
+  const baselineShots = await deps.db.query.screenshots.findMany({
     where: eq(screenshots.runId, baselineRow.testRunId),
   });
-  const candidateScreenshot = await deps.db.query.screenshots.findFirst({
+  const candidateShots = await deps.db.query.screenshots.findMany({
     where: eq(screenshots.runId, data.runId),
   });
-  if (!baselineScreenshot || !candidateScreenshot) {
-    throw new Error(
-      `missing_screenshot:baseline=${!!baselineScreenshot},candidate=${!!candidateScreenshot}`,
-    );
+  if (candidateShots.length === 0) {
+    throw new Error(`missing_screenshot:candidate=0`);
+  }
+  if (baselineShots.length === 0) {
+    throw new Error(`missing_screenshot:baseline=0`);
   }
 
-  const baselineBytes = await deps.storage.get(baselineScreenshot.imageKey);
-  const candidateBytes = await deps.storage.get(candidateScreenshot.imageKey);
-  const baselineDom = baselineScreenshot.domKey
-    ? new TextDecoder().decode(
-        await deps.storage.get(baselineScreenshot.domKey),
-      )
-    : undefined;
-  const candidateDom = candidateScreenshot.domKey
-    ? new TextDecoder().decode(
-        await deps.storage.get(candidateScreenshot.domKey),
-      )
-    : undefined;
+  const baselineByViewport = new Map<
+    string | null,
+    (typeof baselineShots)[0]
+  >();
+  for (const bs of baselineShots) {
+    // Use null key for legacy NULL-viewport rows (v0.4 single-viewport).
+    baselineByViewport.set(bs.viewport ?? null, bs);
+  }
 
   const ignoreAreas = parseIgnoreAreas(run.ignoreAreas);
+  const perViewport: PerViewportResult[] = [];
 
-  const result = await runDiff({
-    baseline: {
-      image: Buffer.from(baselineBytes),
-      ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
-    },
-    candidate: {
-      image: Buffer.from(candidateBytes),
-      ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
-    },
-    config: {
-      diffThreshold: project.diffThreshold ?? 0.001,
-      l2Enabled: project.l2Enabled ?? true,
-      ...(ignoreAreas !== undefined ? { ignoreAreas } : {}),
-    },
-  });
+  for (const cs of candidateShots) {
+    const viewportKey = cs.viewport ?? null;
+    // Try exact viewport match first; for legacy v0.4 candidate (NULL),
+    // fall back to any baseline screenshot so the pair-up still works.
+    const baselineShot =
+      baselineByViewport.get(viewportKey) ??
+      (viewportKey === null ? baselineShots[0] : undefined);
 
-  let diffImageKey: string | null = null;
-  if (result.diffImageBytes.length > 0) {
-    diffImageKey = objectKey(result.diffImageBytes);
-    await deps.storage.put(diffImageKey, result.diffImageBytes, "image/png");
+    if (!baselineShot) {
+      // New viewport added since baseline was captured — no pair to diff.
+      // Treat as first-baseline for this viewport: pass with 0% diff and
+      // skip the engine call.
+      perViewport.push({
+        viewport: viewportKey,
+        passed: true,
+        diffPercent: 0,
+        pixelMismatchCount: 0,
+        diffImageKey: null,
+        regions: [],
+        ranTiers: [],
+        firstBaseline: true,
+      });
+      logger.info(
+        {
+          runId: data.runId,
+          viewport: viewportKey,
+        },
+        "diff_viewport_no_baseline",
+      );
+      continue;
+    }
+
+    const baselineBytes = await deps.storage.get(baselineShot.imageKey);
+    const candidateBytes = await deps.storage.get(cs.imageKey);
+    const baselineDom = baselineShot.domKey
+      ? new TextDecoder().decode(await deps.storage.get(baselineShot.domKey))
+      : undefined;
+    const candidateDom = cs.domKey
+      ? new TextDecoder().decode(await deps.storage.get(cs.domKey))
+      : undefined;
+
+    const result = await runDiff({
+      baseline: {
+        image: Buffer.from(baselineBytes),
+        ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
+      },
+      candidate: {
+        image: Buffer.from(candidateBytes),
+        ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
+      },
+      config: {
+        diffThreshold: project.diffThreshold ?? 0.001,
+        l2Enabled: project.l2Enabled ?? true,
+        ...(ignoreAreas !== undefined ? { ignoreAreas } : {}),
+      },
+    });
+
+    let diffImageKey: string | null = null;
+    if (result.diffImageBytes.length > 0) {
+      diffImageKey = objectKey(result.diffImageBytes);
+      await deps.storage.put(diffImageKey, result.diffImageBytes, "image/png");
+    }
+
+    perViewport.push({
+      viewport: viewportKey,
+      passed: result.passed,
+      diffPercent: result.diffPercent,
+      pixelMismatchCount: result.pixelMismatchCount,
+      diffImageKey,
+      regions: result.regions.map((r) => ({
+        severity: r.severity,
+        category: r.category,
+        bbox: r.bbox,
+        description: r.description,
+        source: r.source,
+        viewport: viewportKey,
+      })),
+      ranTiers: result.ranTiers,
+      firstBaseline: false,
+    });
   }
+
+  // Aggregate per-viewport results to the single test_runs row.
+  // - status: "failed" if any viewport failed.
+  // - diffPercent: MAX across viewports (surfaces the worst viewport).
+  // - pixelMisMatchCount: SUM across viewports.
+  // - diffName: overlay key of the viewport with max diffPercent (or null).
+  const aggregateFailed = perViewport.some((v) => !v.passed);
+  const aggregateDiffPercent = perViewport.reduce(
+    (m, v) => (v.diffPercent > m ? v.diffPercent : m),
+    0,
+  );
+  const aggregatePixelMismatch = perViewport.reduce(
+    (s, v) => s + v.pixelMismatchCount,
+    0,
+  );
+  const worst = perViewport.reduce<PerViewportResult | null>(
+    (acc, v) => (acc === null || v.diffPercent > acc.diffPercent ? v : acc),
+    null,
+  );
+  const aggregateDiffName = worst?.diffImageKey ?? null;
+  const allRegions = perViewport.flatMap((v) => v.regions);
+  const aggregateStatus = aggregateFailed ? "failed" : "passed";
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
       .update(testRuns)
       .set({
-        diffPercent: result.diffPercent,
-        pixelMisMatchCount: result.pixelMismatchCount,
-        diffName: diffImageKey,
-        status: result.passed ? "passed" : "failed",
+        diffPercent: aggregateDiffPercent,
+        pixelMisMatchCount: aggregatePixelMismatch,
+        diffName: aggregateDiffName,
+        status: aggregateStatus,
         baselineSource: baseline.source,
       })
       .where(eq(testRuns.id, data.runId));
 
-    if (result.regions.length > 0) {
+    if (allRegions.length > 0) {
       await tx.insert(diffRegions).values(
-        result.regions.map((r) => ({
+        allRegions.map((r) => ({
           runId: data.runId,
           projectId: data.projectId,
           severity: r.severity,
@@ -165,31 +305,57 @@ export async function handleDiffJob(
           bbox: r.bbox,
           description: r.description,
           source: r.source,
+          viewport: r.viewport,
         })),
       );
     }
   });
 
   const durationMs = Date.now() - t0;
+  const ranTiersUnion = Array.from(
+    new Set(perViewport.flatMap((v) => v.ranTiers)),
+  );
   await deps.redis.publish(
     `run:${data.runId}:events`,
     JSON.stringify({
       type: "diff.completed",
       runId: data.runId,
-      passed: result.passed,
-      diffPercent: result.diffPercent,
-      ranTiers: result.ranTiers,
+      passed: !aggregateFailed,
+      diffPercent: aggregateDiffPercent,
+      ranTiers: ranTiersUnion,
+      viewportCount: perViewport.length,
       durationMs,
+    }),
+  );
+  // T9: emit the terminal `run.completed` event so the integrations
+  // subscriber can fan out to GitHub (T8) + outbound webhooks (T9).
+  // GitHub-side fields (installationId, repoOwner, repoName, sha,
+  // prNumber) are intentionally omitted — reaching them from the diff
+  // worker would require joining `installations` to the project AND
+  // sniffing the branch's open PR. Both T8's GitHub consumer and T9's
+  // webhook consumer are defensive about missing fields, so we ship
+  // only the core fields here and revisit when the join becomes cheap.
+  await deps.redis.publish(
+    `run:${data.runId}:events`,
+    JSON.stringify({
+      type: "run.completed",
+      runId: data.runId,
+      projectId: data.projectId,
+      status: aggregateStatus,
+      diffPercent: aggregateDiffPercent,
+      branchName: run.branchName,
+      numChanges: allRegions.length,
     }),
   );
   logger.info(
     {
       runId: data.runId,
       projectId: data.projectId,
-      diffPercent: result.diffPercent,
-      pixelMismatchCount: result.pixelMismatchCount,
-      ranTiers: result.ranTiers,
+      diffPercent: aggregateDiffPercent,
+      pixelMismatchCount: aggregatePixelMismatch,
+      ranTiers: ranTiersUnion,
       baselineSource: baseline.source,
+      viewportCount: perViewport.length,
       durationMs,
     },
     "diff_completed",

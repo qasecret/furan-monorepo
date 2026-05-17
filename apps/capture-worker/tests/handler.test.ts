@@ -54,10 +54,24 @@ desc("handleCaptureJob (integration)", () => {
     storage = createStorage();
     redis = new Redis(process.env.REDIS_URL!);
 
-    fixtureServer = createServer((_req, res) => {
+    // Responsive fixture with a query-string-driven unique body, so each
+    // test can use its own URL to bypass the global UNIQUE constraint on
+    // screenshots.image_key across tests. The `?u=...` querystring is
+    // rendered into the page so two tests requesting different `u` get
+    // distinct content-addressed image keys.
+    fixtureServer = createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://x").searchParams.get("u") ?? "";
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(
-        "<!DOCTYPE html><html><body><h1>Furan capture fixture</h1><p>hello world</p></body></html>",
+        `<!DOCTYPE html><html><head><style>
+          html,body{margin:0;padding:0;font-family:sans-serif;}
+          .a{display:block;background:#0a0;color:#fff;height:200px;width:100vw;}
+          .b{display:block;background:#a00;color:#fff;height:80vh;width:100vw;}
+          @media (max-width:600px){.a{background:#00a;height:400px;} .b{background:#0aa;}}
+        </style></head><body>
+          <div class="a"><h1>Furan capture fixture</h1></div>
+          <div class="b"><p>hello world ${u}</p></div>
+        </body></html>`,
       );
     });
     await new Promise<void>((resolve) =>
@@ -177,4 +191,106 @@ desc("handleCaptureJob (integration)", () => {
 
     sub.disconnect();
   }, 60_000);
+
+  test("multi-viewport: captures one screenshots row per viewport (v0.5)", async () => {
+    // Seed a fresh run that's separate from the single-viewport test so
+    // the unique image_key constraint can still fire if Playwright produces
+    // identical bytes for the 1280x720 capture (defensive — the 375x812
+    // shot will differ from the prior single-viewport test's content).
+    const uniq = Date.now();
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `cw-mv-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "cw",
+        lastName: "mv",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `cw-mv-${uniq}` })
+      .returning();
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [r] = await db
+      .insert(testRuns)
+      .values({
+        name: "r-mv",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    const mvJob: CaptureJob = {
+      runId: r.id,
+      projectId: p.id,
+      buildId: b.id,
+      testVariationId: v.id,
+      // Per-test unique URL so the responsive fixture renders distinct
+      // bytes vs the single-viewport test above (image_key is a global
+      // UNIQUE constraint).
+      url: `${fixtureUrl}/?u=mv-${uniq}`,
+      viewports: [
+        { width: 1280, height: 720 },
+        { width: 375, height: 812 },
+      ],
+      browser: "chromium",
+    };
+
+    const events: string[] = [];
+    const sub = new Redis(process.env.REDIS_URL!);
+    await sub.subscribe(`run:${r.id}:events`);
+    sub.on("message", (_channel, message) => events.push(message));
+    await new Promise((res) => setTimeout(res, 100));
+
+    try {
+      await handleCaptureJob(mvJob, mockLogger, { db, storage, redis });
+
+      const shots = await db.query.screenshots.findMany({
+        where: eq(screenshots.runId, r.id),
+      });
+      expect(shots.length).toBe(2);
+      const viewports = shots.map((s) => s.viewport).sort();
+      expect(viewports).toEqual(["1280x720", "375x812"]);
+      // Distinct image keys per viewport (different content sizes ⇒ distinct hashes).
+      const keys = new Set(shots.map((s) => s.imageKey));
+      expect(keys.size).toBe(2);
+
+      // Two capture.started + one capture.completed expected.
+      await new Promise((res) => setTimeout(res, 200));
+      const types = events.map((e) => JSON.parse(e).type as string);
+      const startedCount = types.filter((t) => t === "capture.started").length;
+      const completedCount = types.filter(
+        (t) => t === "capture.completed",
+      ).length;
+      expect(startedCount).toBe(2);
+      expect(completedCount).toBe(1);
+      const completed = events
+        .map((e) => JSON.parse(e))
+        .find((e) => e.type === "capture.completed");
+      expect(completed.viewportCount).toBe(2);
+    } finally {
+      sub.disconnect();
+      // Per-test scoped cleanup: cascade-delete this single project so
+      // the next test starts clean (and concurrency=1 leaves no leakage).
+      await db.delete(projects).where(eq(projects.id, p.id));
+    }
+  }, 90_000);
 });

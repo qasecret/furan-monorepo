@@ -1,0 +1,1 @@
+ALTER TABLE "diff_regions" ADD COLUMN "viewport" text;

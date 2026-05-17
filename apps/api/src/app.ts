@@ -1,3 +1,4 @@
+import multipart from "@fastify/multipart";
 import { eq, tokens, users, type DB } from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
 import {
@@ -15,6 +16,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
 import { registerRunEventsRoute } from "./routes/run-events.js";
+import { registerSdkRoutes } from "./routes/sdk-runs.js";
 import { registerStorageProxyRoute } from "./routes/storage-proxy.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
 import { registerUsersAdminRoutes } from "./routes/users-admin.js";
@@ -50,6 +52,11 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // Plugins + routes register in Tasks 2-7.
   await app.register(authPlugin);
+  // Multipart parser for SDK screenshot uploads (Phase 4 Task 4).
+  // 50 MB ceiling per file part is enforced both here and in the route handler.
+  await app.register(multipart, {
+    limits: { fileSize: 50 * 1024 * 1024 },
+  });
   await registerAuthRoutes(app);
   await registerTokensRoutes(app);
   await registerUsersRoutes(app);
@@ -58,6 +65,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerMembersRoutes(app);
   await registerBuildsRoutes(app);
   await registerRunEventsRoute(app);
+  await registerSdkRoutes(app);
   await registerStorageProxyRoute(app);
   await registerHealthRoutes(app);
 

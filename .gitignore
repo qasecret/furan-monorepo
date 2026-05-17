@@ -36,4 +36,10 @@ npm-debug.log*
 # Worktrees (per superpowers:using-git-worktrees)
 .worktrees/
 
+# Gradle (SDK builds)
+packages/sdk-kotlin/**/build/
+packages/sdk-kotlin/**/.gradle/
+packages/sdk-kotlin/.gradle/
+packages/sdk-kotlin/build/
+
 # Phase-0 scaffold has nothing under any of these yet; Phase 1+ adds content.

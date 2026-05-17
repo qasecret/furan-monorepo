@@ -1,0 +1,27 @@
+name: release
+
+on:
+  push:
+    tags: ["sdk/v*"]
+
+jobs:
+  publish-sdk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # reserved for future OIDC namespace verification
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Publish sdk-core + sdk-selenium to Maven Central
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        working-directory: packages/sdk-kotlin
+        run: ./gradlew :core:publish :selenium:publish --no-daemon

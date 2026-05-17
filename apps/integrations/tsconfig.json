@@ -1,0 +1,5 @@
+{
+  "extends": "@furan/tsconfig/node.json",
+  "include": ["src"],
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" }
+}

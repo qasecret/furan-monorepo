@@ -15,6 +15,27 @@
       "when": 1778941837461,
       "tag": "0001_fluffy_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778984612432,
+      "tag": "0002_narrow_zuras",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778985716619,
+      "tag": "0003_old_frog_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778988022313,
+      "tag": "0004_lyrical_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

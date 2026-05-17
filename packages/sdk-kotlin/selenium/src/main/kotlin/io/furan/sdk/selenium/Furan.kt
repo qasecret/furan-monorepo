@@ -1,0 +1,115 @@
+package io.furan.sdk.selenium
+
+import io.furan.sdk.FuranClient
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.Viewport
+import io.furan.sdk.dto.CreateBuildRequest
+import io.furan.sdk.dto.CreateRunRequest
+import io.furan.sdk.dto.Snapshot
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.openqa.selenium.Dimension
+import org.openqa.selenium.WebDriver
+import java.io.Closeable
+
+/**
+ * Public API for Furan's Selenium-Java adapter.
+ *
+ * ```
+ * val driver = ChromeDriver()
+ * val furan = Furan(driver, FuranConfig.fromEnv())
+ * furan.snapshot("checkout-page")
+ * furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))
+ * furan.close()
+ * ```
+ *
+ * Lazy-initializes a Build + Run on the first `snapshot()` call. Subsequent
+ * snapshots reuse the same run id. `close()` flushes any buffered snapshots
+ * and posts anonymous telemetry.
+ */
+class Furan(
+    private val driver: WebDriver,
+    val config: FuranConfig,
+) : Closeable {
+    private val client = FuranClient(config, adapter = "selenium")
+    private val createRunMutex = Mutex()
+
+    @Volatile private var runId: String? = null
+    @Volatile private var buildId: String? = config.buildId
+
+    /**
+     * Capture a screenshot + DOM at each viewport and upload.
+     *
+     * @param name Logical snapshot name (e.g., "checkout-page").
+     * @param mask Optional CSS selectors to mask in the diff (server honors these).
+     * @param viewports Override the per-call viewport list. Defaults to
+     *     [FuranConfig.viewports].
+     */
+    fun snapshot(
+        name: String,
+        mask: List<String> = emptyList(),
+        viewports: List<Viewport>? = null,
+    ) = runBlocking {
+        val targets = viewports ?: config.viewports
+        val resolvedRunId = ensureRun(targets.firstOrNull())
+
+        for (vp in targets) {
+            driver.manage().window().size = Dimension(vp.width, vp.height)
+            val pngBytes = captureScreenshot(driver)
+            val domHtml = runCatching { captureDom(driver) }.getOrNull()
+            client.uploadSnapshot(
+                runId = resolvedRunId,
+                snap = Snapshot(
+                    name = name,
+                    viewport = vp,
+                    pngBytes = pngBytes,
+                    domHtml = domHtml,
+                    mask = mask,
+                    browser = "selenium",
+                ),
+            )
+        }
+    }
+
+    /**
+     * Double-checked-locking via a coroutine Mutex (avoids returning from inside
+     * a `synchronized { return runBlocking { ... } }` block, which doesn't
+     * compile cleanly when the outer fn is suspend).
+     */
+    private suspend fun ensureRun(firstViewport: Viewport?): String {
+        runId?.let { return it }
+        createRunMutex.withLock {
+            runId?.let { return it }
+
+            val resolvedBuildId = buildId ?: run {
+                val build = client.createBuild(
+                    CreateBuildRequest(
+                        ciBuildId = config.buildId,
+                        branchName = config.branchName,
+                    ),
+                )
+                buildId = build.id
+                build.id
+            }
+
+            val viewportStr = firstViewport?.let { "${it.width}x${it.height}" }
+            val run = client.createRun(
+                CreateRunRequest(
+                    projectId = config.projectId,
+                    buildId = resolvedBuildId,
+                    branchName = config.branchName,
+                    name = "snapshot-run",
+                    browser = "selenium",
+                    viewport = viewportStr,
+                ),
+            )
+            runId = run.id
+        }
+        return runId!!
+    }
+
+    override fun close() {
+        client.close()
+    }
+}
