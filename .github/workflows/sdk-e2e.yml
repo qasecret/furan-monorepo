@@ -103,6 +103,14 @@ jobs:
         # Mirrors apps/capture-worker package.json (playwright ^1.49). Hosted
         # ubuntu-latest already has the OS deps; --with-deps is documented intent.
         run: pnpm --filter @furan/capture-worker exec playwright install --with-deps chromium
+      - name: Build workspace packages (apps' tsx loaders resolve @furan/* via main → dist)
+        # Without this step, `tsx watch src/server.ts` fails with
+        # ERR_MODULE_NOT_FOUND on @furan/config/dist/index.js — packages set
+        # "main": "./dist/index.js" in their package.json, and tsx resolves
+        # workspace imports through package.json main (TS-paths logic does not
+        # apply across workspace boundaries). Build the libs so the imports
+        # resolve; skip @furan/dashboard which has its own build pipeline.
+        run: pnpm -r --filter '!@furan/dashboard' --filter '@furan/*' build
       - name: Apply migrations
         run: pnpm --filter @furan/db exec drizzle-kit migrate
       - name: Start MinIO + create bucket
