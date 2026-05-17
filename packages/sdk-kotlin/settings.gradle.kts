@@ -8,5 +8,4 @@ dependencyResolutionManagement {
     // Version catalog auto-imported from gradle/libs.versions.toml
 }
 
-include("core")
-// selenium added in Task 3
+include("core", "selenium")
