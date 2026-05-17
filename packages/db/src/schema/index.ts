@@ -8,6 +8,7 @@ export * from "./test_variations.js";
 export * from "./test_runs.js";
 export * from "./baselines.js";
 export * from "./webhooks.js";
+export * from "./webhook_deliveries.js";
 export * from "./screenshots.js";
 export * from "./diff_regions.js";
 export * from "./installations.js";

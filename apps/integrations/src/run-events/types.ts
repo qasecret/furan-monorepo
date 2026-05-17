@@ -43,6 +43,10 @@ export type RunEvent =
       status?: "passed" | "failed";
       numChanges?: number;
       dashboardUrl?: string;
+      // T9: branch + diff% so outbound webhooks (Slack notifier) can
+      // render context without re-querying test_runs.
+      branchName?: string;
+      diffPercent?: number;
       // Optional repo+PR context. Without these the GitHub-side updaters
       // can't act, but the event itself is still valid for other
       // subscribers (Slack, outbound webhooks in T9).

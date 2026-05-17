@@ -1,6 +1,6 @@
 import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
-import { createRedisConnection } from "@furan/queue";
+import { createQueue, createRedisConnection } from "@furan/queue";
 import { bootstrapTelemetry } from "@furan/telemetry";
 import type { App } from "octokit";
 
@@ -10,6 +10,7 @@ import { createGitHubApp } from "./github/app.js";
 import { registerWebhookHandlers } from "./github/webhook-handlers.js";
 import { startHealthServer } from "./health.js";
 import { startRunEventsSubscriber } from "./run-events/subscriber.js";
+import { createDlqCounter, startWebhookWorker } from "./webhooks/index.js";
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -29,6 +30,17 @@ async function main(): Promise<void> {
   const redisSub = createRedisConnection();
 
   const { db, close: closeDb } = createDb();
+
+  // T9: outbound webhook delivery pipeline. The queue is the producer
+  // surface (enqueued by run-events/subscriber.ts on `run.completed`);
+  // the worker drains it and POSTs signed payloads to subscribers.
+  const webhookQueue = createQueue("webhook");
+  const dlqCounter = createDlqCounter(telemetry.metrics);
+  const webhookWorker = startWebhookWorker({
+    db,
+    logger: telemetry.logger,
+    dlqCounter,
+  });
 
   // GitHub App is optional in v1.0 — set all three env vars to enable.
   // The env schema's `.refine()` already rejects partial config, so here
@@ -66,17 +78,21 @@ async function main(): Promise<void> {
     ready: async () => true,
   });
 
-  const runEvents = startRunEventsSubscriber(
-    redisSub,
-    telemetry.logger,
-    githubApp,
-  );
+  const runEvents = startRunEventsSubscriber({
+    redis: redisSub,
+    logger: telemetry.logger,
+    db,
+    webhookQueue,
+    ...(githubApp !== undefined ? { githubApp } : {}),
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
     try {
       await app.close();
       await runEvents.close();
+      await webhookWorker.close();
+      await webhookQueue.close();
       await new Promise<void>((res) => health.close(() => res()));
       redisSub.disconnect();
       redis.disconnect();

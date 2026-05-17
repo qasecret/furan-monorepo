@@ -1,6 +1,10 @@
+import type { DB } from "@furan/db";
+import type { Queue, WebhookJob } from "@furan/queue";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import type { App } from "octokit";
+
+import { enqueueWebhookDeliveries } from "../webhooks/enqueue.js";
 
 import { handleRunCompleted } from "./handle-run-completed.js";
 import { parseRunEvent } from "./types.js";
@@ -11,26 +15,37 @@ export interface RunEventsSubscriber {
   close: () => Promise<void>;
 }
 
+export interface StartRunEventsSubscriberDeps {
+  redis: Redis;
+  logger: Logger;
+  githubApp?: App;
+  db?: DB;
+  webhookQueue?: Queue<WebhookJob>;
+  dashboardBaseUrl?: string;
+}
+
 /**
  * Subscribe to `run:*:events` on Redis Pub/Sub and dispatch on `type`.
  *
- * T8: handle `run.completed` by posting sticky PR comment + commit status
- * (when `githubApp` is configured AND the event payload carries the
- * required GitHub fields). Other event types just log at debug.
+ * On `run.completed`:
+ *   - T8: post sticky PR comment + commit status (when `githubApp` AND
+ *     the GitHub fields on the event are present — best-effort).
+ *   - T9: enqueue outbound webhook deliveries for every active
+ *     subscriber matching the project + "run.completed" event (when
+ *     `db` AND `webhookQueue` are wired).
+ *
+ * Both handlers are independent and best-effort — if one fails it logs
+ * and continues. Other event types just log at debug.
  *
  * Caller MUST pass a dedicated ioredis client — pub/sub mode blocks the
  * connection from issuing normal commands, so reusing the primary
  * connection would deadlock the rest of the app.
- *
- * If `githubApp` is undefined (no GitHub App credentials configured) the
- * subscriber still runs — it just no-ops on `run.completed`. That keeps
- * dev environments without an App installed working.
  */
 export function startRunEventsSubscriber(
-  redis: Redis,
-  log: Logger,
-  githubApp: App | undefined,
+  deps: StartRunEventsSubscriberDeps,
 ): RunEventsSubscriber {
+  const { redis, logger: log, githubApp, db, webhookQueue } = deps;
+
   redis.psubscribe("run:*:events", (err, count) => {
     if (err) {
       log.error({ err }, "run_events_subscribe_failed");
@@ -48,17 +63,37 @@ export function startRunEventsSubscriber(
     log.debug({ channel, type: event.type }, "run_event_received");
 
     if (event.type === "run.completed") {
-      if (!githubApp) {
+      const completed = event as Extract<
+        typeof event,
+        { type: "run.completed" }
+      >;
+
+      if (githubApp) {
+        void handleRunCompleted({
+          githubApp,
+          event: completed,
+          log,
+        }).catch((err) => {
+          log.error({ err, channel }, "run_completed_handler_threw");
+        });
+      } else {
         log.debug({ channel }, "run_completed_skipped_no_github_app");
-        return;
       }
-      void handleRunCompleted({
-        githubApp,
-        event: event as Extract<typeof event, { type: "run.completed" }>,
-        log,
-      }).catch((err) => {
-        log.error({ err, channel }, "run_completed_handler_threw");
-      });
+
+      if (db && webhookQueue) {
+        void enqueueWebhookDeliveries(completed, {
+          db,
+          logger: log,
+          webhookQueue,
+          ...(deps.dashboardBaseUrl
+            ? { dashboardBaseUrl: deps.dashboardBaseUrl }
+            : {}),
+        }).catch((err) => {
+          log.error({ err, channel }, "webhook_enqueue_threw");
+        });
+      } else {
+        log.debug({ channel }, "webhook_enqueue_skipped_no_db_or_queue");
+      }
     }
   });
 

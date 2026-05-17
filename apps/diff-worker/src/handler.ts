@@ -71,6 +71,15 @@ export async function handleDiffJob(
   );
 
   if (!baseline) {
+    // First-baseline: nothing to diff against, mark the run passed +
+    // emit both `diff.completed` and `run.completed` so the integrations
+    // subscriber (T8 GitHub flow + T9 webhook flow) can react.
+    await withProjectScope(deps.db, data.projectId, async (tx) => {
+      await tx
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, data.runId));
+    });
     await deps.redis.publish(
       `run:${data.runId}:events`,
       JSON.stringify({
@@ -78,6 +87,18 @@ export async function handleDiffJob(
         runId: data.runId,
         passed: true,
         firstBaseline: true,
+      }),
+    );
+    await deps.redis.publish(
+      `run:${data.runId}:events`,
+      JSON.stringify({
+        type: "run.completed",
+        runId: data.runId,
+        projectId: data.projectId,
+        status: "passed",
+        diffPercent: 0,
+        branchName: run.branchName,
+        numChanges: 0,
       }),
     );
     logger.info(
@@ -180,6 +201,26 @@ export async function handleDiffJob(
       diffPercent: result.diffPercent,
       ranTiers: result.ranTiers,
       durationMs,
+    }),
+  );
+  // T9: emit the terminal `run.completed` event so the integrations
+  // subscriber can fan out to GitHub (T8) + outbound webhooks (T9).
+  // GitHub-side fields (installationId, repoOwner, repoName, sha,
+  // prNumber) are intentionally omitted — reaching them from the diff
+  // worker would require joining `installations` to the project AND
+  // sniffing the branch's open PR. Both T8's GitHub consumer and T9's
+  // webhook consumer are defensive about missing fields, so we ship
+  // only the core fields here and revisit when the join becomes cheap.
+  await deps.redis.publish(
+    `run:${data.runId}:events`,
+    JSON.stringify({
+      type: "run.completed",
+      runId: data.runId,
+      projectId: data.projectId,
+      status: result.passed ? "passed" : "failed",
+      diffPercent: result.diffPercent,
+      branchName: run.branchName,
+      numChanges: result.regions.length,
     }),
   );
   logger.info(
