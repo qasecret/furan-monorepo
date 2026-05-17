@@ -1,0 +1,23 @@
+name: visual-regression
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: "temurin", java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: Run visual tests
+        env:
+          FURAN_API_URL: ${{ secrets.FURAN_API_URL }}
+          FURAN_API_TOKEN: ${{ secrets.FURAN_API_TOKEN }}
+          FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
+          FURAN_BUILD_ID: ${{ github.sha }}
+          FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: ./gradlew test --tests "*VisualTest*"

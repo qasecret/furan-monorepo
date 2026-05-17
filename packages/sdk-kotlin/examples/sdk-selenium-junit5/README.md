@@ -52,3 +52,7 @@ gradle test
 
 Without those vars the test is skipped, which is the intended behavior in
 CI for the example itself.
+
+## See also
+
+For a full CI walkthrough, see [docs/integrations/github-actions.md](../../../../docs/integrations/github-actions.md).

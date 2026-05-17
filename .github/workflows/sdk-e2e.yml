@@ -1,0 +1,142 @@
+name: sdk-e2e
+# Early-warning CI for the Kotlin SDK + downstream example.
+#
+# v0.5 scope: build the SDK, publish artifacts to mavenLocal, then compile
+# the standalone example project against them. This catches "SDK source
+# broke" and "example no longer resolves" regressions on every PR that
+# touches the SDK or any of the apps/packages that feed it.
+#
+# A full end-to-end run (example test → apps/api → diff worker → assert
+# test_runs row) is deferred to a follow-up — it requires a deterministic
+# seed-admin + mint-token + create-project flow that doesn't exist as a
+# single script today. The TODO at the bottom of this file marks where
+# that wiring lands once available.
+
+on:
+  pull_request:
+    paths:
+      - "packages/sdk-kotlin/**"
+      - "apps/api/**"
+      - "apps/capture-worker/**"
+      - "apps/diff-worker/**"
+      - "packages/queue/**"
+      - "packages/db/**"
+      - ".github/workflows/sdk-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/sdk-kotlin/**"
+      - ".github/workflows/sdk-e2e.yml"
+
+jobs:
+  sdk-build-and-example-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Build + publish SDK to mavenLocal
+        working-directory: packages/sdk-kotlin
+        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal --no-daemon
+      - name: Compile example project against mavenLocal SDK
+        working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
+        # `testClasses` compiles the test sources without executing them.
+        # The example's CheckoutTest is gated on FURAN_API_URL, so a plain
+        # `test` invocation skips silently — `testClasses` proves the SDK
+        # API surface still satisfies the example.
+        run: ../../gradlew -p . testClasses --no-daemon
+
+  # TODO(post-v0.5): full e2e — boot apps/api + workers against Postgres/Redis/MinIO,
+  # seed admin via apps/api/src/cli/seed-admin.ts, mint a token via POST /account/tokens,
+  # create a project + build via POST /projects + POST /projects/:id/builds, then run
+  # the example with FURAN_* env vars and assert a test_runs row exists. The seed flow
+  # depends on a one-shot script that's not in the tree yet; the workflow above gives
+  # us early-warning value without that brittleness.
+  #
+  # full-e2e:
+  #   runs-on: ubuntu-latest
+  #   if: false
+  #   services:
+  #     postgres:
+  #       image: postgres:17-alpine
+  #       env: { POSTGRES_USER: furan, POSTGRES_PASSWORD: cipw, POSTGRES_DB: furan_ci }
+  #       ports: ["5432:5432"]
+  #       options: >-
+  #         --health-cmd "pg_isready -U furan -d furan_ci"
+  #         --health-interval 5s --health-timeout 3s --health-retries 10
+  #     redis:
+  #       image: redis:7-alpine
+  #       ports: ["6379:6379"]
+  #       options: >-
+  #         --health-cmd "redis-cli ping"
+  #         --health-interval 5s --health-timeout 3s --health-retries 10
+  #   env:
+  #     DATABASE_URL: postgresql://furan:cipw@localhost:5432/furan_ci
+  #     REDIS_URL: redis://localhost:6379
+  #     S3_ENDPOINT: http://localhost:9000
+  #     S3_BUCKET: furan-ci
+  #     S3_ACCESS_KEY: furan
+  #     S3_SECRET_KEY: minio_ci_pw_long_enough # gitleaks:allow
+  #     JWT_SECRET: ci_jwt_secret_at_least_32_chars_long_for_test # gitleaks:allow
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: ./.github/actions/setup
+  #     - uses: actions/setup-java@v4
+  #       with: { distribution: temurin, java-version: "21" }
+  #     - uses: gradle/actions/setup-gradle@v3
+  #     - uses: browser-actions/setup-chrome@v1
+  #     - name: Install Playwright chromium
+  #       run: pnpm --filter @furan/capture-worker exec playwright install --with-deps chromium
+  #     - name: Apply migrations
+  #       run: pnpm --filter @furan/db exec drizzle-kit migrate
+  #     - name: Boot MinIO + bucket
+  #       run: |
+  #         docker run -d --name minio -p 9000:9000 \
+  #           -e MINIO_ROOT_USER=furan -e MINIO_ROOT_PASSWORD=minio_ci_pw_long_enough \
+  #           quay.io/minio/minio:latest server /data
+  #         until curl -fsS http://localhost:9000/minio/health/live; do sleep 2; done
+  #         docker run --rm --network host \
+  #           -e MC_HOST_local=http://furan:minio_ci_pw_long_enough@localhost:9000 \
+  #           quay.io/minio/mc:latest mb local/furan-ci
+  #     - name: Start apps
+  #       run: |
+  #         pnpm --filter @furan/api dev &        echo $! > /tmp/api.pid
+  #         pnpm --filter @furan/capture-worker dev & echo $! > /tmp/cw.pid
+  #         pnpm --filter @furan/diff-worker dev &    echo $! > /tmp/dw.pid
+  #     - name: Wait for apps/api /livez
+  #       run: timeout 60 bash -c 'until curl -fsS http://localhost:3000/livez; do sleep 1; done'
+  #     - name: Seed admin + mint token + create project
+  #       id: seed
+  #       run: |
+  #         pnpm --filter @furan/api cli:seed-admin --email ci@furan.local --password ci_password_for_test_only
+  #         TOKEN=$(curl -fsS -X POST http://localhost:3000/auth/login \
+  #           -H 'content-type: application/json' \
+  #           -d '{"email":"ci@furan.local","password":"ci_password_for_test_only"}' | jq -r .token)
+  #         API_TOKEN=$(curl -fsS -X POST http://localhost:3000/account/tokens \
+  #           -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  #           -d '{"label":"ci"}' | jq -r .token)
+  #         PROJECT_ID=$(curl -fsS -X POST http://localhost:3000/projects \
+  #           -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  #           -d '{"name":"ci-project"}' | jq -r .id)
+  #         echo "api_token=$API_TOKEN" >> "$GITHUB_OUTPUT"
+  #         echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+  #     - name: Publish SDK locally
+  #       working-directory: packages/sdk-kotlin
+  #       run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal --no-daemon
+  #     - name: Run example test against live API
+  #       working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
+  #       env:
+  #         FURAN_API_URL: http://localhost:3000
+  #         FURAN_API_TOKEN: ${{ steps.seed.outputs.api_token }}
+  #         FURAN_PROJECT_ID: ${{ steps.seed.outputs.project_id }}
+  #         FURAN_BUILD_ID: ${{ github.sha }}
+  #         FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
+  #       run: ../../gradlew -p . test --no-daemon
+  #     - name: Assert a test_run was created
+  #       run: |
+  #         COUNT=$(PGPASSWORD=cipw psql -h localhost -U furan -d furan_ci -tAc \
+  #           "SELECT count(*) FROM test_runs WHERE name LIKE 'checkout-%'")
+  #         test "$COUNT" -ge 1
