@@ -1,0 +1,33 @@
+name: release-please
+
+# On every push to main, release-please scans Conventional Commits since the
+# last release and either opens/updates a "Release PR" (when there are
+# user-facing changes) or, when a Release PR is merged, creates the
+# `sdk/v<version>` tag. The tag push then triggers publish.yml, which
+# auto-releases the artifact to Maven Central (automaticRelease = true).
+#
+# Conventional Commit prefixes that drive the version bump:
+#   feat:                 → minor bump
+#   fix:                  → patch bump
+#   feat!:                → major bump
+#   BREAKING CHANGE: ...  → major bump
+#   docs: / chore: / test: / ci: / refactor:  → no version bump
+#
+# See docs/runbooks/maven-central-publish.md "Release flow" for the full lifecycle.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

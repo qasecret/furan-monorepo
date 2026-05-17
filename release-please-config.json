@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": true,
+  "packages": {
+    "packages/sdk-kotlin": {
+      "release-type": "simple",
+      "component": "sdk",
+      "package-name": "sdk",
+      "tag-separator": "/",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["version.txt"]
+    }
+  }
+}

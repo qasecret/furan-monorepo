@@ -40,7 +40,13 @@ tasks.test {
 mavenPublishing {
     // Targets the Sonatype Central Portal (the post-OSSRH endpoint).
     // Sources/javadoc jars + POM validation are handled by the plugin.
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = false)
+    //
+    // automaticRelease = true: tag push → publish.yml → auto-released to
+    // Maven Central with no human-in-the-loop. Maven Central is IMMUTABLE,
+    // so trust the CI gate (sdk-build-and-example-compile must be green) +
+    // the release-please Release-PR review step. To revert to the manual
+    // Portal-click gate, flip to false here and in selenium/build.gradle.kts.
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
 
     // Sign only when signing keys are present (CI). publishToMavenLocal dry-runs
     // run without signing — see docs/runbooks/maven-central-publish.md "Dry-run".

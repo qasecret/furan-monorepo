@@ -30,7 +30,8 @@ tasks.test {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = false)
+    // automaticRelease = true matches core/build.gradle.kts — see rationale there.
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
 
     if (project.hasProperty("signingInMemoryKey") ||
         System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null) {
