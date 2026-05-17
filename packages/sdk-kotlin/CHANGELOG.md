@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.6.0...sdk/v0.6.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **sdk-kotlin:** drop null defaults from request bodies so api zod .optional() accepts them ([#30](https://github.com/qasecret/furan-monorepo/issues/30)) ([78eb8c9](https://github.com/qasecret/furan-monorepo/commit/78eb8c98a4743d1e1ccced89b341d6997c06a93e))
+
 ## [0.6.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.5.0...sdk/v0.6.0) (2026-05-17)
 
 
