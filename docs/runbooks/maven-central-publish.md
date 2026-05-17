@@ -1,92 +1,144 @@
 # Maven Central publish runbook (sdk-kotlin)
 
-This runbook covers everything needed to publish `io.furan:sdk-core` and
-`io.furan:sdk-selenium` to Maven Central via the Sonatype Central Portal.
+This runbook covers everything needed to publish `io.github.qasecret:furan-core`
+and `io.github.qasecret:furan-selenium` to Maven Central via the Sonatype
+Central Portal.
+
+The Gradle wiring uses **[`com.vanniktech.maven.publish`](https://github.com/vanniktech/gradle-maven-publish-plugin)**
+— the plugin the official Kotlin guide recommends for Maven Central publishing
+(see [kotlinlang.org/docs/multiplatform/multiplatform-publish-libraries-to-maven](https://kotlinlang.org/docs/multiplatform/multiplatform-publish-libraries-to-maven.html)
+— the steps apply to JVM-only Kotlin libraries too).
 
 ## One-time maintainer setup
 
-### 1. Register the `io.furan` namespace
+### 1. Register the `io.github.qasecret` namespace
 
-Sign in to the [Central Portal](https://central.sonatype.com/) and register
-`io.furan` as a namespace. Two verification paths are accepted:
+Sign in to the [Central Portal](https://central.sonatype.com/) using the
+"Sign in with GitHub" button (uses the `qasecret` GitHub account). The Portal
+will associate `io.github.qasecret` with that account.
 
-- **GitHub OIDC verification (recommended)** — the Portal hands you a temporary
-  repo name (e.g. `OSSRH-1234`); create that repo under `qasecret` to prove
-  ownership of the GitHub org tied to `io.furan`.
-- **DNS TXT record** — only viable once we own `furan.io`. Add the TXT record
-  the Portal gives you to `furan.io` and verify.
+1. Avatar menu → **View Namespaces** → **Add Namespace**.
+2. Enter exactly `io.github.qasecret`.
+3. The Portal returns a **Verification Key** (a short random string).
+4. Create a public GitHub repo named after that verification key:
+   ```bash
+   gh repo create qasecret/<VERIFICATION_KEY> --public \
+     --description "Sonatype Central Portal namespace verification"
+   ```
+5. Back in the Portal, click **Verify Namespace**. Resolves in seconds via
+   GitHub OIDC.
+6. Once verified, delete the verification repo:
+   ```bash
+   gh repo delete qasecret/<VERIFICATION_KEY> --yes
+   ```
 
-Use the GitHub OIDC path until the domain is registered.
+### 2. Generate Portal user token
 
-### 2. Generate a PGP signing key
+Portal UI → **View Account** → **Generate User Token**. The Portal shows
+two values **once**:
+
+- A **token name** (looks like a username)
+- A **token password** (looks like a password)
+
+Copy both into a password manager immediately. These map to the
+`MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` GitHub Actions secrets in
+step 4.
+
+### 3. Generate a PGP signing key
 
 ```bash
 gpg --gen-key
-# Use real name "Furan Maintainers" + email "maintainers@furan.dev"
-# Use a strong passphrase — it goes into SIGNING_PASSWORD below
+# Real name:  Furan Maintainers
+# Email:      maintainers@furan.dev
+# Passphrase: <pick a strong one — goes into SIGNING_PASSWORD>
 
-# Find the key id
+# Find the key id (16-char long form)
 gpg --list-secret-keys --keyid-format=long
+# sec   rsa4096/<LONG_KEY_ID> <date>  [SC]
+#       <FINGERPRINT>
+# uid   Furan Maintainers <maintainers@furan.dev>
 
-# Publish the public key so Central can verify signatures
-gpg --keyserver keys.openpgp.org --send-keys <KEY_ID>
+# Take the last 8 characters of LONG_KEY_ID — that's SIGNING_KEY_ID
+
+# Publish the public key so Central Portal can verify signatures
+gpg --keyserver keys.openpgp.org --send-keys <LONG_KEY_ID>
+# also publish to a second keyserver for redundancy:
+gpg --keyserver keyserver.ubuntu.com --send-keys <LONG_KEY_ID>
+
+# Export the private key to a file for the GitHub Actions secret
+gpg --export-secret-keys <LONG_KEY_ID> > /tmp/secring.gpg
 ```
 
-### 3. Export the private key for CI
+Treat `/tmp/secring.gpg` like a password — it goes into the
+`GPG_KEY_CONTENTS` GitHub Actions secret in step 4, then is shredded.
+
+### 4. Configure GitHub Actions secrets
+
+The `com.vanniktech.maven.publish` plugin reads these five environment
+variables (which `release.yml` populates from secrets):
 
 ```bash
-gpg --armor --export-secret-keys <KEY_ID> > private.asc
+# Portal token (step 2)
+gh secret set MAVEN_CENTRAL_USERNAME --repo qasecret/furan-monorepo
+gh secret set MAVEN_CENTRAL_PASSWORD --repo qasecret/furan-monorepo
+
+# PGP key (step 3) — three values
+gh secret set SIGNING_KEY_ID --repo qasecret/furan-monorepo
+# (paste the last 8 chars of the long key id)
+
+gh secret set SIGNING_PASSWORD --repo qasecret/furan-monorepo
+# (paste the passphrase you chose)
+
+gh secret set GPG_KEY_CONTENTS --repo qasecret/furan-monorepo < /tmp/secring.gpg
+# (the full binary file; the plugin handles base64 internally)
 ```
 
-Keep `private.asc` out of git. Delete it from disk once it is loaded into the
-GitHub Actions secret in step 4.
-
-### 4. Add GitHub Actions secrets (org-level recommended)
+Verify:
 
 ```bash
-gh secret set MAVEN_CENTRAL_USERNAME --org qasecret --visibility all
-gh secret set MAVEN_CENTRAL_PASSWORD --org qasecret --visibility all
-gh secret set SIGNING_KEY            --org qasecret --visibility all < private.asc
-gh secret set SIGNING_PASSWORD       --org qasecret --visibility all
+gh api repos/qasecret/furan-monorepo/actions/secrets | jq '.total_count'
+# should be >= 5
 ```
 
-- `MAVEN_CENTRAL_USERNAME` — Central Portal user-token **name**
-  (Portal → Account → Generate User Token)
-- `MAVEN_CENTRAL_PASSWORD` — Central Portal user-token **password**
-- `SIGNING_KEY` — the full armored PGP private key (multi-line; pipe the file in)
-- `SIGNING_PASSWORD` — passphrase chosen in step 2
-
-After setting `SIGNING_KEY`, delete `private.asc`:
+Then shred the local copy:
 
 ```bash
-shred -u private.asc 2>/dev/null || rm -P private.asc
+shred -u /tmp/secring.gpg 2>/dev/null || rm -P /tmp/secring.gpg
 ```
 
 ### 5. Verify namespace ownership before the first release
 
-In the Central Portal UI, confirm `io.furan` is listed as a verified namespace
-on the maintainer account. Do this **before** pushing the first `sdk/v*` tag —
-the upload will be rejected otherwise.
+In the Central Portal UI, confirm `io.github.qasecret` is listed as a
+verified namespace on the maintainer account. Do this **before** pushing
+the first `sdk/v*` tag — the upload will be rejected otherwise.
 
 ## Release flow
 
 1. Bump `version=` in `packages/sdk-kotlin/gradle.properties`.
-2. Commit and merge to `main`.
+2. Commit + merge to `main`.
 3. Push a release tag:
    ```bash
    git tag sdk/v0.5.0
    git push origin sdk/v0.5.0
    ```
-4. Tag push triggers `.github/workflows/release.yml`, which runs
-   `./gradlew :core:publish :selenium:publish` against the Central Portal upload API.
+4. The tag push triggers [.github/workflows/release.yml](../../.github/workflows/release.yml),
+   which runs `./gradlew publishToMavenCentral --no-configuration-cache`.
+   The vanniktech plugin handles: signing, sources/javadoc jars, POM
+   validation, multi-module aggregation, Portal upload + staging.
+   (`publishToMavenCentral` uploads and closes the staging repo but does
+   NOT release — `automaticRelease = false` in the build files keeps a
+   human in the loop. Use `publishAndReleaseToMavenCentral` instead only
+   when we trust the pipeline enough to auto-release on every tag.)
 5. Watch the workflow run. On success, the artifacts land in the Central Portal
-   **staging** area.
-6. Open the Central Portal UI → Deployments. Verify the staged artifacts look
-   right (groupId, artifactId, version, sources + javadoc jars, `.asc` signatures
-   present). **Manually promote / release from the Portal UI** — auto-release is
-   intentionally off until we have several clean releases under our belt.
+   **staging** area (auto-release is disabled — `automaticRelease = false`).
+6. Open the Central Portal UI → **Deployments**. Verify the staged artifacts
+   look right (groupId, artifactId, version, sources + javadoc jars,
+   `.asc` signatures present). **Manually promote / release from the Portal
+   UI** — auto-release is intentionally off until we have several clean
+   releases under our belt.
 7. After promotion, expect Maven Central search index propagation to take
-   ~15 min – 4 h.
+   ~15 min – 4 h. The artifact is downloadable immediately even before the
+   index updates.
 
 ## Dry-run (local, no secrets)
 
@@ -96,15 +148,15 @@ Verify the publish wiring without ever touching Maven Central:
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 cd packages/sdk-kotlin
 
-# Publish to the local ~/.m2 repo. Signing is skipped automatically when
-# SIGNING_KEY / SIGNING_PASSWORD are unset.
-./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal --no-daemon
+# Publish to the local ~/.m2 repo. Signing is auto-skipped when SIGNING_*
+# env vars are unset.
+./gradlew publishToMavenLocal --no-daemon
 
 # Confirm the artifacts landed.
-ls ~/.m2/repository/io/furan/sdk-core/0.5.0/
-ls ~/.m2/repository/io/furan/sdk-selenium/0.5.0/
+ls ~/.m2/repository/io/github/qasecret/furan-core/0.5.0/
+ls ~/.m2/repository/io/github/qasecret/furan-selenium/0.5.0/
 
-# Sanity-check downstream consumers (the T5 example pulls from mavenLocal).
+# Sanity-check downstream consumers (the example resolves from mavenLocal).
 ./gradlew -p examples/sdk-selenium-junit5 clean build --no-daemon
 ```
 
@@ -113,14 +165,19 @@ publication is wired correctly end-to-end.
 
 ## Notes / caveats
 
-- Native Gradle support for the new Central Portal is still maturing. The
-  `central-publishing-maven-plugin` is a Maven plugin, not a Gradle one. We
-  point `publishing { repositories { maven { ... } } }` at the Portal upload
-  URL directly. If a release fails with an upload-API issue, the fastest
-  fallback is to add a curl-driven upload step to `release.yml` that POSTs the
-  staged `~/.m2` artifacts to the Portal API; the publication block stays
-  unchanged.
-- `signing {}` is a no-op when `SIGNING_KEY` / `SIGNING_PASSWORD` are unset,
-  which is exactly what we want for local `publishToMavenLocal` dry-runs.
-- Never commit `private.asc`, user tokens, or passphrases. All four secrets
-  live in GitHub Actions org-level secrets.
+- The vanniktech plugin's `publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL,
+automaticRelease = false)` targets the **new Central Portal** endpoint, not
+  the deprecated OSSRH staging API. Sonatype stopped accepting new namespaces
+  on OSSRH in 2026.
+- Sources + javadoc jars are produced automatically by `KotlinJvm(javadocJar =
+JavadocJar.Empty(), sourcesJar = true)`. The empty Javadoc jar satisfies
+  Central Portal's requirement without us shipping a meaningless Dokka build
+  step.
+- The plugin's signing is conditional on `SIGNING_KEY_ID` / `SIGNING_PASSWORD`
+  / `GPG_KEY_CONTENTS` env vars being present — `publishToMavenLocal` dry-runs
+  skip signing automatically.
+- Never commit `secring.gpg`, user tokens, or passphrases. All five secrets
+  live in GitHub Actions org-level (or repo-level) secrets only.
+- The plugin's full env-var contract is documented at
+  https://vanniktech.github.io/gradle-maven-publish-plugin/central/ — defer to
+  upstream docs if behavior diverges from this runbook.

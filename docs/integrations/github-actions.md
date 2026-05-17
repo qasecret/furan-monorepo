@@ -74,7 +74,7 @@ webhook fires.
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.furan:sdk-selenium:0.5.0")
+  testImplementation("io.github.qasecret:furan-selenium:0.5.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -132,14 +132,14 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 
 ## 6. Troubleshooting
 
-| Symptom                                 | Likely cause                                                                                                                          |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `401 unauthorized` from SDK             | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                              |
-| `404 project not found`                 | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                           |
-| Chrome fails to start in CI             | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                   |
-| Sticky comment not appearing on PR      | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL                                               |
-| `furan/baselines` check stays `pending` | Diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                 |
-| SDK build can't resolve `io.furan:*`    | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin` |
+| Symptom                                        | Likely cause                                                                                                                          |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `401 unauthorized` from SDK                    | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                              |
+| `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                           |
+| Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                   |
+| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL                                               |
+| `furan/baselines` check stays `pending`        | Diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                 |
+| SDK build can't resolve `io.github.qasecret:*` | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin` |
 
 For deeper debugging, hit `GET /projects/<id>/runs/<runId>/events` (SSE) or
 inspect the `test_runs` and `screenshots` tables directly.

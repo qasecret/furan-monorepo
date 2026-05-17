@@ -96,7 +96,7 @@ at least one external installer feedback file is in `docs/feedback/`.
   - Sticky PR comment + `furan/baselines` status check via the GitHub
     App (`apps/integrations`).
   - Slack incoming-webhook delivery on `run.completed`.
-  - `io.furan:sdk-selenium:0.5.0` published-to-Maven-Central path
+  - `io.github.qasecret:furan-selenium:0.5.0` published-to-Maven-Central path
     (Gradle wired; staging dry-run completed; production release gated
     on first `sdk/v0.5.0` tag push with credentials configured).
     Next action remains the same: rolls forward to Phase 5 as a v1.0 GA

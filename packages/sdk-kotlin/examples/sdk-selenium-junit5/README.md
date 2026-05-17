@@ -2,12 +2,12 @@
 
 Standalone Gradle project demonstrating the Furan Selenium adapter from a
 plain JUnit 5 test. Intentionally _not_ part of the parent SDK multi-module
-build — it consumes the published `io.furan:sdk-selenium` artifact the same
+build — it consumes the published `io.github.qasecret:furan-selenium` artifact the same
 way a downstream user would.
 
 ## Layout
 
-- `build.gradle.kts` — declares `io.furan:sdk-selenium:0.5.0` from
+- `build.gradle.kts` — declares `io.github.qasecret:furan-selenium:0.5.0` from
   `mavenLocal()` / `mavenCentral()`.
 - `settings.gradle.kts` — standalone root project (`sdk-selenium-junit5`).
 - `src/test/kotlin/CheckoutTest.kt` — minimal smoke test that boots Chrome
@@ -21,7 +21,7 @@ way a downstream user would.
 
 ## Building
 
-Until `io.furan:sdk-selenium` is published to Maven Central (Phase 4 T6),
+Until `io.github.qasecret:furan-selenium` is published to Maven Central (Phase 4 T6),
 install it to your local Maven cache first:
 
 ```bash
