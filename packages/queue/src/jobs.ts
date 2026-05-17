@@ -1,10 +1,26 @@
+export interface Viewport {
+  width: number;
+  height: number;
+  deviceScaleFactor?: number;
+}
+
 export interface CaptureJob {
   runId: string;
   projectId: string;
   buildId: string;
   testVariationId: string;
   url: string;
-  viewport: { width: number; height: number };
+  /**
+   * v0.4 single-viewport field — kept for backwards compatibility. If
+   * `viewports` is set, this is ignored.
+   */
+  viewport?: Viewport;
+  /**
+   * v0.5+: optional array of viewports to capture in a single job. If
+   * omitted, the capture-worker falls back to [`viewport`] when set, or to
+   * a default of `[{ width: 1280, height: 720 }]`.
+   */
+  viewports?: Viewport[];
   browser: "chromium" | "firefox" | "webkit";
 }
 

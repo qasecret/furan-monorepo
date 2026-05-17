@@ -26,6 +26,10 @@ export const diffRegions = pgTable(
     bbox: jsonb("bbox").notNull(),
     description: varchar("description", { length: 200 }).notNull(),
     source: text("source").notNull(),
+    // v0.5+: viewport this region was detected in (e.g. "1280x720"). NULL
+    // marks a legacy v0.4 single-viewport row from before multi-viewport
+    // diffs landed.
+    viewport: text("viewport"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
