@@ -43,3 +43,12 @@ packages/sdk-kotlin/.gradle/
 packages/sdk-kotlin/build/
 
 # Phase-0 scaffold has nothing under any of these yet; Phase 1+ adds content.
+
+# Local checkout of the separate `furan-design` repo (ADRs, arch specs,
+# phase plans). Lives here for AI/dev convenience; never commit into
+# furan-monorepo.
+furan-design/
+
+# Personal Claude Code guidance — kept local, not shared.
+CLAUDE.md
+.claude/
