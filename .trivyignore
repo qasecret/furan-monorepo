@@ -28,3 +28,55 @@ CVE-2026-28390
 # libc6 (glibc) — Debian 12.13, fix pending in 12.14
 # Per runbook §2 root-causes table.
 CVE-2026-0861
+
+# ---------------------------------------------------------------------------
+# Upstream-bundled CVEs in mcr.microsoft.com/playwright:v1.60.0-noble
+# (used only by apps/capture-worker).
+#
+# Trivy scans the entire image filesystem, including pre-compiled binaries
+# (CLI tools written in Go: gh, kubectl, docker, etc., plus an old
+# picomatch in the image's internal npm tree) that ship inside the
+# Playwright base image. These are NOT invoked by our runtime — the
+# capture-worker CMD is `node apps/capture-worker/dist/server.js` which
+# only spawns chromium via Playwright. The bundled Go CLIs sit dormant on
+# disk and never execute.
+#
+# We cannot patch them without forking + rebuilding the Playwright image
+# (out of scope). They will close when Microsoft publishes a future
+# Playwright image with refreshed Go stdlib + npm deps.
+#
+# Re-evaluate on every Playwright base bump. Re-run `trivy image
+# mcr.microsoft.com/playwright:vX.Y.Z-noble --severity CRITICAL,HIGH` to
+# confirm which entries are still flagged before deleting any.
+#
+# Owner: @qasecret-maintainer
+# Last reviewed: 2026-05-17 (v1.0.3 build-images run on v1.60.0-noble)
+
+# Go stdlib in upstream-bundled Go CLIs (curl, kubectl, gh, docker, etc.)
+# inside the Playwright image. 2 CRITICAL + 18 HIGH on v1.60.0-noble.
+CVE-2023-39325
+CVE-2023-44487
+CVE-2023-45283
+CVE-2023-45288
+CVE-2024-24790
+CVE-2024-34156
+CVE-2025-47907
+CVE-2025-58183
+CVE-2025-61726
+CVE-2025-61728
+CVE-2025-61729
+CVE-2025-68121
+CVE-2026-25679
+CVE-2026-32280
+CVE-2026-32281
+CVE-2026-32283
+CVE-2026-33811
+CVE-2026-33814
+CVE-2026-39820
+CVE-2026-39836
+CVE-2026-42499
+
+# picomatch 4.0.3 inside Playwright image's internal npm tree (NOT our
+# workspace — we resolve 4.0.4 via pnpm). Closes when Playwright bumps
+# its own tooling.
+CVE-2026-33671
