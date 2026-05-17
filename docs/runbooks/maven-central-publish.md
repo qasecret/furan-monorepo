@@ -81,7 +81,7 @@ Treat `/tmp/secring.asc` like a password — it goes into the
 ### 4. Configure GitHub Actions secrets
 
 The `com.vanniktech.maven.publish` plugin reads these five environment
-variables (which `release.yml` populates from secrets):
+variables (which `publish.yml` populates from secrets):
 
 ```bash
 # Portal token (step 2)
@@ -145,8 +145,8 @@ On every push to `main`, [.github/workflows/release-please.yml](../../.github/wo
 runs and either opens or updates a **Release PR** titled `chore(main): release sdk <version>`.
 The Release PR contains:
 
-- Version bump in `packages/sdk-kotlin/gradle.properties` (driven by the
-  `# x-release-please-version` marker)
+- Version bump in `packages/sdk-kotlin/version.txt` (driven by the
+  `# x-release-please-version` marker on that file's first line)
 - Updated `packages/sdk-kotlin/CHANGELOG.md` summarizing every Conventional
   Commit since the last release
 - Updated `.release-please-manifest.json`
@@ -189,16 +189,19 @@ cd packages/sdk-kotlin/examples/sdk-selenium-junit5
 ### Manual override (rare)
 
 To cut a release out-of-band (hotfix, force a specific version), bump
-`gradle.properties` + tag manually:
+`version.txt` + tag manually:
 
 ```bash
-sed -i.bak 's/version=.*/version=0.5.1/' packages/sdk-kotlin/gradle.properties
-git add packages/sdk-kotlin/gradle.properties
+echo "0.5.1 # x-release-please-version" > packages/sdk-kotlin/version.txt
+git add packages/sdk-kotlin/version.txt
 git commit -m "chore: release sdk 0.5.1"
 git push origin main
 git tag sdk/v0.5.1
 git push origin sdk/v0.5.1
 ```
+
+Also update `.release-please-manifest.json` (`packages/sdk-kotlin: "0.5.1"`)
+so release-please's next run picks up where you left off.
 
 This bypasses release-please but still hits publish.yml. Prefer the
 Conventional-Commits flow when not in a hotfix.
