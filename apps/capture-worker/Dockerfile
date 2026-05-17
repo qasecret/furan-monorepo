@@ -62,9 +62,12 @@ RUN pnpm --filter @furan/capture-worker... build
 # Stage 3: runtime — Playwright base (jammy)                         #
 #####################################################################
 # Pin to a Playwright image matching the npm `playwright` version range
-# in apps/capture-worker/package.json (^1.49). v1.50 is the closest tagged
-# upstream image at the time of writing.
-FROM mcr.microsoft.com/playwright:v1.50.0-jammy AS runtime
+# in apps/capture-worker/package.json (^1.60). Noble (Ubuntu 24.04) base
+# carries newer OS package versions than jammy (Ubuntu 22.04), which
+# eliminates the dirmngr/git/gnupg/libtiff5 HIGH CVEs Trivy flagged on
+# the prior v1.50.0-jammy base. Bumping the Playwright npm dep in lockstep
+# refreshes the bundled glob/minimatch/tar transitive deps too.
+FROM mcr.microsoft.com/playwright:v1.60.0-noble AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
