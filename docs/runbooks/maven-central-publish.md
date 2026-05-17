@@ -65,11 +65,17 @@ gpg --keyserver keys.openpgp.org --send-keys <LONG_KEY_ID>
 # also publish to a second keyserver for redundancy:
 gpg --keyserver keyserver.ubuntu.com --send-keys <LONG_KEY_ID>
 
-# Export the private key to a file for the GitHub Actions secret
-gpg --export-secret-keys <LONG_KEY_ID> > /tmp/secring.gpg
+# Export the private key in ASCII-armored form (vanniktech's
+# useInMemoryPgpKeys reads it as text — binary form fails with
+# "Cannot perform signing task ... because it has no configured signatory").
+gpg --armor --export-secret-keys <LONG_KEY_ID> > /tmp/secring.asc
+
+# Sanity check — the file must begin with the armor header:
+head -1 /tmp/secring.asc
+# expect: -----BEGIN PGP PRIVATE KEY BLOCK-----
 ```
 
-Treat `/tmp/secring.gpg` like a password — it goes into the
+Treat `/tmp/secring.asc` like a password — it goes into the
 `GPG_KEY_CONTENTS` GitHub Actions secret in step 4, then is shredded.
 
 ### 4. Configure GitHub Actions secrets
@@ -89,8 +95,8 @@ gh secret set SIGNING_KEY_ID --repo qasecret/furan-monorepo
 gh secret set SIGNING_PASSWORD --repo qasecret/furan-monorepo
 # (paste the passphrase you chose)
 
-gh secret set GPG_KEY_CONTENTS --repo qasecret/furan-monorepo < /tmp/secring.gpg
-# (the full binary file; the plugin handles base64 internally)
+gh secret set GPG_KEY_CONTENTS --repo qasecret/furan-monorepo < /tmp/secring.asc
+# (the ASCII-armored block; vanniktech reads it as text via useInMemoryPgpKeys)
 ```
 
 Verify:
@@ -103,7 +109,7 @@ gh api repos/qasecret/furan-monorepo/actions/secrets | jq '.total_count'
 Then shred the local copy:
 
 ```bash
-shred -u /tmp/secring.gpg 2>/dev/null || rm -P /tmp/secring.gpg
+shred -u /tmp/secring.asc 2>/dev/null || rm -P /tmp/secring.asc
 ```
 
 ### 5. Verify namespace ownership before the first release
