@@ -1,0 +1,47 @@
+# Opt-in compose overlay — nightly pg_dump sidecar.
+# Usage:
+#   cd infra/docker
+#   docker compose -f compose.yml -f compose.backup.yml up -d backup-cron
+#
+# Behaviour:
+#   - postgres:17-alpine container runs crond (BusyBox) in the foreground.
+#   - Cron entry fires /usr/local/bin/backup-pg.sh at 03:00 UTC daily.
+#   - Each run writes /backups/furan-pg-YYYYMMDD-HHMMSS.sql.gz on the host
+#     via the ./backups bind mount (relative to infra/docker/).
+#   - Logs append to /backups/backup.log so the host can tail them.
+#
+# Off-host sync (rsync to a second host, restic to B2/S3, S3 lifecycle to
+# Glacier, etc.) is intentionally out of scope for v1.0 — configure on the
+# host out-of-band. See docs/runbooks/restore-from-backup.md §6 for the
+# v1.1+ off-host mirror re-entry trigger.
+#
+# Do NOT enable this overlay against an empty Postgres — depends_on +
+# service_healthy gate handles the cold-start case automatically.
+
+services:
+  backup-cron:
+    image: postgres:17-alpine # has both pg_dump and crond (BusyBox)
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # pg_dump reads PGPASSWORD directly. Sourced from the same .env
+      # the data-plane services use; never committed.
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup-pg.sh:/usr/local/bin/backup-pg.sh:ro
+    # Single-arg command form is required because we override entrypoint
+    # to ["/bin/sh", "-c"] — compose appends `command` as one argv element.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "0 3 * * * /usr/local/bin/backup-pg.sh >> /backups/backup.log 2>&1" > /etc/crontabs/root
+        echo "[init $(date -u +%FT%TZ)] crontab installed; backup-cron running (03:00 UTC daily)"
+        exec crond -f -d 8
