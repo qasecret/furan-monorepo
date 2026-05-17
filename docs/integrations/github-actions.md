@@ -5,7 +5,7 @@ sticky PR comment and a `furan/baselines` status check.
 
 Assumes a self-hosted Furan deployment (see [docs/install/quickstart.md](../install/quickstart.md))
 and a Furan project already created. Repository-to-project mapping is wired by
-the GitHub App + a one-time SQL link (see step 3 below).
+the GitHub App + a one-time admin-UI link (see step 2 below).
 
 ## Quick start
 
@@ -54,18 +54,17 @@ your own App, set the slug in `apps/integrations`, and surface its install
 URL to your team.
 
 After installing the App on your repository, **link the GitHub installation
-to a Furan project**. In v0.5 this is a one-time SQL command against the
-Furan database — a `/admin/integrations` UI is planned for v1.1+.
+to a Furan project** via the admin UI:
 
-```sql
-UPDATE installations
-   SET project_id = '<your-project-uuid>'
- WHERE installation_id = <github-installation-id>;
-```
+1. Open `/admin/installations` in the Furan dashboard (admin-only).
+2. Find your installation in the list — rows are sorted by `created_at`
+   (oldest first), so the most recent install is at the bottom.
+3. Pick the Furan project this installation should route events to from
+   the project Select on that row. The change saves automatically.
 
-You can find the GitHub `installation_id` in the install URL after accepting
-(`/settings/installations/<id>`) or in the `installations` table after the
-webhook fires.
+You can find the GitHub `installation_id` (shown in the table) in the
+install URL after accepting (`/settings/installations/<id>`) or in the
+`installations` table after the webhook fires — useful for debugging.
 
 ## 3. Add the SDK to your Gradle build
 
