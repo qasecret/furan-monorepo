@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # apps/diff-worker — BullMQ consumer for diff jobs.
-# Three-stage build mirroring apps/api/Dockerfile.
+# Four-stage build mirroring apps/api/Dockerfile.
 #
 # Runtime: distroless nodejs22-debian12. The worker depends on `sharp`
 # (native bindings) — sharp ships prebuilt binaries for linux/glibc,
@@ -58,18 +58,58 @@ RUN pnpm install --frozen-lockfile --filter @furan/diff-worker... --prefer-offli
 RUN pnpm --filter @furan/diff-worker... build
 
 #####################################################################
-# Stage 3: runtime — distroless                                      #
+# Stage 3: prune — prod-only deps (Phase 5 D6(e))                    #
+#####################################################################
+# Fresh install from the lockfile with --prod so devDeps (tsc, eslint,
+# vitest, tsx, @types/*, etc.) never enter node_modules. Runtime copies
+# node_modules from here instead of from `build`, shrinking the
+# distroless image substantially.
+#
+# We start from a clean /app and copy only manifests + lockfile (NOT
+# build's node_modules). Running `pnpm install --prod` on top of an
+# existing devDep-bearing tree keeps the extras — pnpm's `--prod` does
+# NOT retroactively prune. A clean install side-steps that.
+#
+# We omit --ignore-scripts so sharp's postinstall fetches its prebuilt
+# binary into the new node_modules tree.
+FROM node:22-bookworm-slim AS prune
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+COPY pnpm-lock.yaml package.json pnpm-workspace.yaml ./
+COPY apps/diff-worker/package.json apps/diff-worker/
+COPY packages/config/package.json         packages/config/
+COPY packages/db/package.json             packages/db/
+COPY packages/diff-engine/package.json    packages/diff-engine/
+COPY packages/eslint-config/package.json  packages/eslint-config/
+COPY packages/queue/package.json          packages/queue/
+COPY packages/shared-types/package.json   packages/shared-types/
+COPY packages/storage/package.json        packages/storage/
+COPY packages/telemetry/package.json      packages/telemetry/
+COPY packages/tsconfig/package.json       packages/tsconfig/
+
+RUN pnpm install --frozen-lockfile --filter @furan/diff-worker... --prod --prefer-offline \
+  || pnpm rebuild sharp
+
+#####################################################################
+# Stage 4: runtime — distroless                                      #
 #####################################################################
 FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY --from=build --chown=nonroot:nonroot /app/node_modules              ./node_modules
-COPY --from=build --chown=nonroot:nonroot /app/packages                  ./packages
-COPY --from=build --chown=nonroot:nonroot /app/apps/diff-worker/dist     ./apps/diff-worker/dist
+# pnpm's isolated node-linker places per-package symlinks under
+# apps/<name>/node_modules — Node's ESM resolver walks UP from the entry
+# point, so apps/diff-worker/node_modules/@furan/config is required, not
+# just /app/node_modules/@furan/config. Both come from the `prune` stage
+# so devDeps stay out of the runtime image.
+COPY --from=prune --chown=nonroot:nonroot /app/node_modules                  ./node_modules
+COPY --from=prune --chown=nonroot:nonroot /app/apps/diff-worker/node_modules ./apps/diff-worker/node_modules
+COPY --from=build --chown=nonroot:nonroot /app/packages                      ./packages
+COPY --from=build --chown=nonroot:nonroot /app/apps/diff-worker/dist         ./apps/diff-worker/dist
 COPY --from=build --chown=nonroot:nonroot /app/apps/diff-worker/package.json ./apps/diff-worker/package.json
-COPY --from=build --chown=nonroot:nonroot /app/package.json              ./package.json
-COPY --from=build --chown=nonroot:nonroot /app/pnpm-workspace.yaml       ./pnpm-workspace.yaml
+COPY --from=build --chown=nonroot:nonroot /app/package.json                  ./package.json
+COPY --from=build --chown=nonroot:nonroot /app/pnpm-workspace.yaml           ./pnpm-workspace.yaml
 
 USER nonroot
 EXPOSE 3200

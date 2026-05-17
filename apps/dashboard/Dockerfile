@@ -5,6 +5,13 @@
 # Build context = repo root. The standalone output (.next/standalone)
 # pulls only the files Next traces — significantly smaller than a full
 # node_modules copy.
+#
+# NOTE on Phase 5 D6(e): the other distroless apps gain a 4th `prune`
+# stage that re-runs `pnpm install --prod` to drop devDeps from the
+# runtime image. Dashboard skips it: Next standalone's own tracer already
+# excludes node_modules — the runtime tree (~322 MB) is dominated by
+# Next's traced server bundle, not by devDeps, so a prune stage would
+# add build time for ~0 MB savings.
 
 #####################################################################
 # Stage 1: deps                                                      #
