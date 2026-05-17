@@ -10,6 +10,12 @@ name: publish
 on:
   push:
     tags: ["sdk/v*"]
+  # Manual dispatch — useful when release-please creates a tag via the
+  # default GITHUB_TOKEN (which by GitHub design doesn't fire downstream
+  # workflows). Run with: `gh workflow run publish.yml --ref sdk/v<version>`.
+  # Future: configure a PAT for release-please so tag creation auto-triggers
+  # this workflow without needing the manual dispatch.
+  workflow_dispatch:
 
 jobs:
   publish-sdk:
