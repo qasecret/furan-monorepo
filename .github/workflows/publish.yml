@@ -1,4 +1,11 @@
-name: release
+name: publish
+
+# Triggered by release-please when a Release PR is merged and the
+# `sdk/v<version>` tag is created. The vanniktech plugin's
+# `automaticRelease = true` setting in core/build.gradle.kts +
+# selenium/build.gradle.kts means publishToMavenCentral here stages AND
+# auto-releases to Maven Central in one step — no Portal click.
+# See docs/runbooks/maven-central-publish.md "Release flow".
 
 on:
   push:
@@ -17,7 +24,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v3
-      - name: Publish sdk-core + sdk-selenium to Maven Central
+      - name: Publish furan-core + furan-selenium to Maven Central
         # The vanniktech plugin reads ORG_GRADLE_PROJECT_* env vars by convention;
         # docs/runbooks/maven-central-publish.md documents the full secret list.
         env:
@@ -27,8 +34,4 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
         working-directory: packages/sdk-kotlin
-        # publishToMavenCentral uploads + stages but does NOT release —
-        # `automaticRelease = false` in build.gradle.kts means a maintainer must
-        # promote from the Portal UI after reviewing the staged artifact.
-        # (publishAndReleaseToMavenCentral would force-release regardless.)
         run: ./gradlew publishToMavenCentral --no-configuration-cache --no-daemon

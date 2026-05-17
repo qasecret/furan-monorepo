@@ -120,31 +120,88 @@ the first `sdk/v*` tag — the upload will be rejected otherwise.
 
 ## Release flow
 
-1. Bump `version=` in `packages/sdk-kotlin/gradle.properties`.
-2. Commit + merge to `main`.
-3. Push a release tag:
-   ```bash
-   git tag sdk/v0.5.0
-   git push origin sdk/v0.5.0
-   ```
-4. The tag push triggers [.github/workflows/release.yml](../../.github/workflows/release.yml),
-   which runs `./gradlew publishToMavenCentral --no-configuration-cache`.
-   The vanniktech plugin handles: signing, sources/javadoc jars, POM
-   validation, multi-module aggregation, Portal upload + staging.
-   (`publishToMavenCentral` uploads and closes the staging repo but does
-   NOT release — `automaticRelease = false` in the build files keeps a
-   human in the loop. Use `publishAndReleaseToMavenCentral` instead only
-   when we trust the pipeline enough to auto-release on every tag.)
-5. Watch the workflow run. On success, the artifacts land in the Central Portal
-   **staging** area (auto-release is disabled — `automaticRelease = false`).
-6. Open the Central Portal UI → **Deployments**. Verify the staged artifacts
-   look right (groupId, artifactId, version, sources + javadoc jars,
-   `.asc` signatures present). **Manually promote / release from the Portal
-   UI** — auto-release is intentionally off until we have several clean
-   releases under our belt.
-7. After promotion, expect Maven Central search index propagation to take
-   ~15 min – 4 h. The artifact is downloadable immediately even before the
-   index updates.
+Release is fully automated end-to-end. **No manual version bump, no manual
+tagging, no manual Portal click.** The flow is driven by Conventional Commits
+
+- [release-please](https://github.com/googleapis/release-please) + the
+  vanniktech plugin's `automaticRelease = true`.
+
+### 1. Use Conventional Commits on PRs to `main`
+
+| Commit prefix                                    | Effect                         |
+| ------------------------------------------------ | ------------------------------ |
+| `feat: ...`                                      | minor bump (`0.5.0` → `0.6.0`) |
+| `fix: ...`                                       | patch bump (`0.5.0` → `0.5.1`) |
+| `feat!: ...` _or_ `BREAKING CHANGE: ...` in body | major bump (`0.5.0` → `1.0.0`) |
+| `docs: / chore: / test: / ci: / refactor:`       | no bump                        |
+
+Scope is recommended but optional: `feat(sdk): add foo()`. Only commits that
+touch `packages/sdk-kotlin/**` are considered by release-please (per its
+[path config](../../release-please-config.json)).
+
+### 2. release-please opens a Release PR
+
+On every push to `main`, [.github/workflows/release-please.yml](../../.github/workflows/release-please.yml)
+runs and either opens or updates a **Release PR** titled `chore(main): release sdk <version>`.
+The Release PR contains:
+
+- Version bump in `packages/sdk-kotlin/gradle.properties` (driven by the
+  `# x-release-please-version` marker)
+- Updated `packages/sdk-kotlin/CHANGELOG.md` summarizing every Conventional
+  Commit since the last release
+- Updated `.release-please-manifest.json`
+
+Review the Release PR like any other PR. The version bump + changelog is
+your last "before publish" review checkpoint.
+
+### 3. Merge the Release PR
+
+When you merge the Release PR, release-please immediately:
+
+- Creates the `sdk/v<version>` git tag pointing at the merge commit
+- Creates a matching GitHub Release
+
+The tag push triggers [.github/workflows/publish.yml](../../.github/workflows/publish.yml),
+which runs `./gradlew publishToMavenCentral` against the Central Portal.
+Because `automaticRelease = true` in
+[core/build.gradle.kts](../../packages/sdk-kotlin/core/build.gradle.kts) +
+[selenium/build.gradle.kts](../../packages/sdk-kotlin/selenium/build.gradle.kts),
+the vanniktech plugin stages **and** releases in one step — no manual
+Portal click required.
+
+### 4. Wait for Maven Central propagation
+
+After publish.yml goes green, expect:
+
+- **Direct URL download** (`https://repo1.maven.org/maven2/io/github/qasecret/furan-selenium/<ver>/...`):
+  usually within a few minutes
+- **Maven Central search index** propagation: 15 min – 4 h
+- **Mirrors used by Gradle's `mavenCentral()`**: typically 30 min – 4 h
+
+Verify with:
+
+```bash
+rm -rf ~/.gradle/caches/modules-2/files-2.1/io.github.qasecret
+cd packages/sdk-kotlin/examples/sdk-selenium-junit5
+./gradlew --refresh-dependencies build
+```
+
+### Manual override (rare)
+
+To cut a release out-of-band (hotfix, force a specific version), bump
+`gradle.properties` + tag manually:
+
+```bash
+sed -i.bak 's/version=.*/version=0.5.1/' packages/sdk-kotlin/gradle.properties
+git add packages/sdk-kotlin/gradle.properties
+git commit -m "chore: release sdk 0.5.1"
+git push origin main
+git tag sdk/v0.5.1
+git push origin sdk/v0.5.1
+```
+
+This bypasses release-please but still hits publish.yml. Prefer the
+Conventional-Commits flow when not in a hotfix.
 
 ## Dry-run (local, no secrets)
 
