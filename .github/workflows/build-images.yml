@@ -62,7 +62,7 @@ jobs:
       # block every release until Debian rolls a new point release).
       - name: Trivy scan
         if: github.event_name == 'push'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
           severity: CRITICAL,HIGH
