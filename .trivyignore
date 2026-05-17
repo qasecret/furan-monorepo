@@ -1,0 +1,30 @@
+# Upstream-pending CVEs in Debian 12.13 base image
+# (used by distroless nodejs22-debian12 + bookworm-slim runtime images).
+#
+# Per docs/runbooks/security-dry-run-v1.md §2: these CVEs have no patch
+# available in the current Debian 12.13 security feed. Debian Security
+# Tracker shows them as "pending upstream / next point release". They
+# cannot be remediated by Furan-side changes — only by rebuilding on
+# Debian 12.14 once it ships.
+#
+# Re-evaluate when Debian 12.14 lands and remove the corresponding entries
+# from this file. Re-run `trivy image --severity CRITICAL,HIGH` to confirm
+# closure before deleting an entry.
+#
+# Owner: @qasecret-maintainer
+# Last reviewed: 2026-05-17 (Phase 5 D8 — security bump PR)
+
+# libssl3 (OpenSSL) — Debian 12.13, fix pending in 12.14
+# Per runbook §2 root-causes table.
+CVE-2026-31789
+
+# libssl3 (OpenSSL) — runbook §2 lists "CVE-2026-28387..28390" as a range.
+# Expand the contiguous range explicitly so trivy matches each ID.
+CVE-2026-28387
+CVE-2026-28388
+CVE-2026-28389
+CVE-2026-28390
+
+# libc6 (glibc) — Debian 12.13, fix pending in 12.14
+# Per runbook §2 root-causes table.
+CVE-2026-0861
