@@ -84,7 +84,11 @@ export const membersRouter = t.router({
         });
       } catch (err) {
         // postgres-js surfaces unique violations as `code: "23505"`.
-        if ((err as { code?: string })?.code === "23505") {
+        // drizzle-orm >=0.40 wraps the original PostgresError as `cause`,
+        // so check both the outer error and its cause.
+        const outerCode = (err as { code?: string })?.code;
+        const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
+        if (outerCode === "23505" || causeCode === "23505") {
           throw new TRPCError({
             code: "CONFLICT",
             message: "already_a_member",

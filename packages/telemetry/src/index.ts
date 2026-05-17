@@ -2,9 +2,12 @@ import type { Writable } from "node:stream";
 
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from "@opentelemetry/semantic-conventions";
 import pino, { type Logger } from "pino";
 import { Registry, collectDefaultMetrics } from "prom-client";
 
@@ -54,9 +57,9 @@ export function bootstrapTelemetry(opts: BootstrapOptions): Telemetry {
   let sdk: NodeSDK | null = null;
   if (opts.otlpEndpoint) {
     sdk = new NodeSDK({
-      resource: new Resource({
-        [SemanticResourceAttributes.SERVICE_NAME]: opts.service,
-        [SemanticResourceAttributes.SERVICE_VERSION]: opts.version,
+      resource: resourceFromAttributes({
+        [ATTR_SERVICE_NAME]: opts.service,
+        [ATTR_SERVICE_VERSION]: opts.version,
       }),
       traceExporter: new OTLPTraceExporter({ url: opts.otlpEndpoint }),
       instrumentations: [getNodeAutoInstrumentations()],
