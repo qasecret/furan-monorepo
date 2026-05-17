@@ -8,17 +8,29 @@ import io.furan.sdk.dto.Snapshot
 import io.furan.sdk.telemetry.AnonymousCounter
 import io.furan.sdk.telemetry.SdkTelemetryPayload
 import io.furan.sdk.transport.Batch
+import io.furan.sdk.transport.HttpException
 import io.furan.sdk.transport.HttpTransport
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.runBlocking
 import java.io.Closeable
+import java.util.UUID
 
 /**
  * Top-level SDK orchestrator. Composes [HttpTransport] + [Batch] + telemetry.
  * Public adapters (sdk-selenium, sdk-playwright) instantiate one of these.
  *
- * Task 2 wires construction, batching scaffolding, and lifecycle. The actual
- * multipart screenshot upload is stubbed in [uploadSnapshotInner] and is wired
- * up in Task 4 once `POST /api/v1/runs/:runId/screenshots` exists.
+ * REST URL convention: routes are mounted on `apps/api` WITHOUT an `/api/v1`
+ * prefix (matches the existing convention used by `/auth/login`,
+ * `/projects/:id/builds`, etc.). Task 4 added `POST /runs`,
+ * `POST /runs/:runId/screenshots`, and `POST /_telemetry/sdk`.
  */
 class FuranClient(
     val config: FuranConfig,
@@ -37,7 +49,7 @@ class FuranClient(
     suspend fun createBuild(req: CreateBuildRequest): BuildResponse = try {
         transport
             .post<CreateBuildRequest, BuildResponse>(
-                "api/v1/projects/${config.projectId}/builds",
+                "projects/${config.projectId}/builds",
                 req,
             )
             .also { counter.recordSuccess() }
@@ -46,10 +58,10 @@ class FuranClient(
         throw e
     }
 
-    /** Create a new run. Endpoint `POST /api/v1/runs` is added in Task 4. */
+    /** Create a new run. Endpoint `POST /runs` lives in `apps/api`. */
     suspend fun createRun(req: CreateRunRequest): RunResponse = try {
         transport
-            .post<CreateRunRequest, RunResponse>("api/v1/runs", req)
+            .post<CreateRunRequest, RunResponse>("runs", req)
             .also { counter.recordSuccess() }
     } catch (e: Throwable) {
         counter.recordError()
@@ -58,19 +70,61 @@ class FuranClient(
 
     /**
      * Offer a snapshot to the batch. Flush happens automatically when the
-     * batch reaches `config.batchSize`, or on [flush]/[close].
+     * batch reaches `config.batchSize`, or on [flush]/[close]. The [runId]
+     * is stamped onto the snapshot so each flushed item knows where to land
+     * (the Batch may interleave snapshots from multiple runs).
      */
-    suspend fun uploadSnapshot(@Suppress("UNUSED_PARAMETER") runId: String, snap: Snapshot) {
-        // runId is unused until Task 4 wires the actual multipart upload below.
-        batch.offer(snap)
+    suspend fun uploadSnapshot(runId: String, snap: Snapshot) {
+        batch.offer(snap.copy(runId = runId))
     }
 
-    private suspend fun uploadSnapshotInner(@Suppress("UNUSED_PARAMETER") snap: Snapshot) {
-        // Task 4: POST /api/v1/runs/:runId/screenshots (multipart: image + dom).
-        // For now: count as a success so batch flushing is observable in tests
-        // without requiring a live API. Per-snapshot runId carry-through will be
-        // added when the upload route exists.
+    /**
+     * Multipart POST to `/runs/{runId}/screenshots`. Sends `pngBytes` (image),
+     * optional `domHtml` (text), and the metadata fields (`name`, `viewport`,
+     * `browser`) as form values. Throws [HttpException] on non-2xx.
+     */
+    private suspend fun uploadSnapshotInner(snap: Snapshot) {
+        val runId = snap.runId
+            ?: throw IllegalStateException(
+                "Snapshot reached uploadSnapshotInner without a runId. " +
+                    "Use FuranClient.uploadSnapshot(runId, snap) — never offer to the Batch directly.",
+            )
         try {
+            val viewportStr = "${snap.viewport.width}x${snap.viewport.height}"
+            val browserStr = snap.browser ?: adapter
+            val multipart = MultiPartFormDataContent(
+                formData {
+                    append("name", snap.name)
+                    append("viewport", viewportStr)
+                    append("browser", browserStr)
+                    append(
+                        "pngBytes",
+                        snap.pngBytes,
+                        Headers.build {
+                            append(HttpHeaders.ContentType, "image/png")
+                            append(HttpHeaders.ContentDisposition, "filename=\"snap.png\"")
+                        },
+                    )
+                    snap.domHtml?.let { dom ->
+                        append(
+                            "domHtml",
+                            dom.toByteArray(Charsets.UTF_8),
+                            Headers.build {
+                                append(HttpHeaders.ContentType, "text/html; charset=utf-8")
+                                append(HttpHeaders.ContentDisposition, "filename=\"snap.html\"")
+                            },
+                        )
+                    }
+                },
+            )
+            val response = transport.client.post("runs/$runId/screenshots") {
+                header("X-Request-Id", UUID.randomUUID().toString())
+                setBody(multipart)
+            }
+            if (!response.status.isSuccess()) {
+                counter.recordError()
+                throw HttpException(response.status.value, response.bodyAsText())
+            }
             counter.recordSuccess()
         } catch (e: Throwable) {
             counter.recordError()
@@ -88,7 +142,7 @@ class FuranClient(
         if (!config.telemetryEnabled) return
         runCatching {
             transport.post<SdkTelemetryPayload, Map<String, String>>(
-                "api/v1/_telemetry/sdk",
+                "_telemetry/sdk",
                 counter.snapshot(),
             )
         }
