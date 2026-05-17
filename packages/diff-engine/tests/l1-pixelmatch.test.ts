@@ -54,4 +54,25 @@ describe("runL1Pixelmatch", () => {
     );
     expect(r.diffPercent).toBe(0);
   });
+
+  it("threshold knob: strict catches near-identical, loose does not", async () => {
+    // The AA fixture differs from baseline only by alpha ±2 in a 20x20 patch.
+    // pixelmatch's `threshold` is per-pixel sensitivity (0=strictest, 1=loosest).
+    // With AA tracking ON (ignoreAntialiasing:false → includeAA:true) and strict
+    // threshold, those sub-perceptual diffs register. With a loose threshold or
+    // AA disabled, they don't.
+    const strict = await runL1Pixelmatch(
+      FIXTURE("baseline-a.png"),
+      FIXTURE("candidate-a-aa-only.png"),
+      undefined,
+      { ...DEFAULT_ENGINE_CONFIG, threshold: 0, ignoreAntialiasing: false },
+    );
+    const loose = await runL1Pixelmatch(
+      FIXTURE("baseline-a.png"),
+      FIXTURE("candidate-a-aa-only.png"),
+      undefined,
+      { ...DEFAULT_ENGINE_CONFIG, threshold: 0.5, ignoreAntialiasing: false },
+    );
+    expect(strict.pixelMismatchCount).toBeGreaterThan(loose.pixelMismatchCount);
+  });
 });
