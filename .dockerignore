@@ -1,0 +1,66 @@
+# Dockerignore for furan-monorepo per-app builds.
+# Keep this list aligned with .gitignore + the Dockerfile multi-stage
+# build inputs. The goal is small, deterministic build contexts: copy
+# only sources + manifests + the lockfile.
+
+# Never ship secrets in a build context
+.env
+.env.*
+!.env.example
+
+# Dependency stores (each stage runs `pnpm install` itself)
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build outputs (built inside the image)
+dist/
+**/dist/
+build/
+**/build/
+.next/
+**/.next/
+.turbo/
+**/.turbo/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Test / coverage / playwright artifacts
+coverage/
+**/coverage/
+.nyc_output/
+**/test-results/
+**/playwright-report/
+
+# VCS / CI
+.git/
+.gitignore
+.github/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Worktrees (per superpowers:using-git-worktrees)
+.worktrees/
+
+# Gradle (SDK builds — not needed by any Node image)
+packages/sdk-kotlin/core/build/
+packages/sdk-kotlin/selenium/build/
+packages/sdk-kotlin/examples/build/
+packages/sdk-kotlin/build/
+packages/sdk-kotlin/.gradle/
+packages/sdk-kotlin/**/build/
+packages/sdk-kotlin/**/.gradle/
+
+# Docs (don't bake them into runtime images)
+docs/
+*.md
+!packages/*/README.md
