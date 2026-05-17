@@ -1,10 +1,7 @@
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { compare } from "odiff-bin";
-
-import type { DiffRegion } from "./types.js";
+import { runL1LooksSame } from "./l1-looks-same.js";
+import { runL1Odiff } from "./l1-odiff.js";
+import { runL1Pixelmatch } from "./l1-pixelmatch.js";
+import type { DiffRegion, EngineConfig, ImageComparison } from "./types.js";
 
 export interface L1Result {
   diffPercent: number;
@@ -13,58 +10,31 @@ export interface L1Result {
   regions: DiffRegion[];
 }
 
+/**
+ * Dispatches to the configured L1 backend. Exhaustive switch — adding
+ * a fourth engine (e.g. VLM) without a case here fails typecheck.
+ */
 export async function runL1(
   baseline: Buffer,
   candidate: Buffer,
   ignoreAreas:
     | Array<{ x: number; y: number; width: number; height: number }>
     | undefined,
+  engine: ImageComparison,
+  engineConfig: EngineConfig,
 ): Promise<L1Result> {
-  const dir = mkdtempSync(join(tmpdir(), "furan-diff-"));
-  const blPath = join(dir, "baseline.png");
-  const cdPath = join(dir, "candidate.png");
-  const dfPath = join(dir, "diff.png");
-  try {
-    writeFileSync(blPath, baseline);
-    writeFileSync(cdPath, candidate);
-    const result = await compare(blPath, cdPath, dfPath, {
-      antialiasing: true,
-      ignoreRegions:
-        ignoreAreas?.map((r) => ({
-          x1: r.x,
-          y1: r.y,
-          x2: r.x + r.width,
-          y2: r.y + r.height,
-        })) ?? [],
-    });
-    if (result.match) {
-      return {
-        diffPercent: 0,
-        pixelMismatchCount: 0,
-        diffImageBytes: Buffer.alloc(0),
-        regions: [],
-      };
-    }
-    if (result.reason !== "pixel-diff") {
-      return {
-        diffPercent: 100,
-        pixelMismatchCount: 0,
-        diffImageBytes: Buffer.alloc(0),
-        regions: [],
-      };
-    }
-    const diffBytes = readFileSync(dfPath);
-    return {
-      diffPercent: result.diffPercentage,
-      pixelMismatchCount: result.diffCount,
-      diffImageBytes: diffBytes,
-      regions: [],
-    };
-  } finally {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
+  switch (engine) {
+    case "odiff":
+      return runL1Odiff(baseline, candidate, ignoreAreas, engineConfig);
+    case "pixelmatch":
+      return runL1Pixelmatch(baseline, candidate, ignoreAreas, engineConfig);
+    case "looks_same":
+      return runL1LooksSame(baseline, candidate, ignoreAreas, engineConfig);
+    default: {
+      const _exhaustive: never = engine;
+      throw new Error(
+        `Unknown image comparison engine: ${String(_exhaustive)}`,
+      );
     }
   }
 }

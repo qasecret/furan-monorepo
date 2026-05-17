@@ -15,10 +15,34 @@ export interface DiffRegion {
   source: "l1" | "l2";
 }
 
+export type ImageComparison = "pixelmatch" | "looks_same" | "odiff";
+
+export interface EngineConfig {
+  /** Engine-internal sensitivity. Pixelmatch: 0..1 strict→loose.
+   *  Looks-same / odiff: passed through but used only as a hint. */
+  threshold: number;
+  /** Treat antialiased pixels as equal. Maps to odiff `antialiasing: true`,
+   *  pixelmatch `includeAA: false`, looks-same `antialiasingTolerance > 0`. */
+  ignoreAntialiasing: boolean;
+  /** Reserved for v1.1+; plumbed but currently a no-op. */
+  allowDiffDimensions: boolean;
+}
+
+export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
+  threshold: 0.1,
+  ignoreAntialiasing: true,
+  allowDiffDimensions: false,
+};
+
 export interface ProjectDiffConfig {
   diffThreshold: number;
   l2Enabled: boolean;
   ignoreAreas?: Array<{ x: number; y: number; width: number; height: number }>;
+  /** Defaults to "odiff" when omitted (backwards-compat for callers that
+   *  predate the engine-selection feature). */
+  engine?: ImageComparison;
+  /** Defaults to DEFAULT_ENGINE_CONFIG when omitted. */
+  engineConfig?: EngineConfig;
 }
 
 export interface DiffResult {

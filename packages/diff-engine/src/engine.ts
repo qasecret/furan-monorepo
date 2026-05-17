@@ -1,7 +1,12 @@
 import { classifyRegions } from "./classify.js";
 import { runL1 } from "./l1.js";
 import { runL2 } from "./l2.js";
-import type { DiffResult, ProjectDiffConfig, DiffRegion } from "./types.js";
+import {
+  DEFAULT_ENGINE_CONFIG,
+  type DiffResult,
+  type ProjectDiffConfig,
+  type DiffRegion,
+} from "./types.js";
 
 export interface RunDiffInput {
   baseline: { image: Buffer; dom?: string };
@@ -10,11 +15,15 @@ export interface RunDiffInput {
 }
 
 export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
+  const engine = input.config.engine ?? "odiff";
+  const engineConfig = input.config.engineConfig ?? DEFAULT_ENGINE_CONFIG;
   const t0 = performance.now();
   const l1 = await runL1(
     input.baseline.image,
     input.candidate.image,
     input.config.ignoreAreas,
+    engine,
+    engineConfig,
   );
   const t1 = performance.now();
 
