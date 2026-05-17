@@ -86,3 +86,20 @@ at least one external installer feedback file is in `docs/feedback/`.
   self-measurement to fill the runbook on a fresh host, or (b) onboarding
   an external installer during Phase 4 and converting this file into
   `alpha-1-<handle>.md`.
+- **2026-05-17 (v0.5 close)**: Phase 4 (`v0.5-integrated`) closed without
+  an external installer onboarded. Outreach surfaced now that Phase 4
+  ships the GitHub App + Slack notifier + Kotlin SDK + GitHub Actions
+  recipe — these were the missing pieces flagged in §"Mitigation plan
+  for Phase 5" point 4 (CI ingestion + notifications). Concrete v0.5
+  artifacts that improve the "Show HN" hook:
+  - `docs/integrations/github-actions.md` — copy-paste CI recipe.
+  - Sticky PR comment + `furan/baselines` status check via the GitHub
+    App (`apps/integrations`).
+  - Slack incoming-webhook delivery on `run.completed`.
+  - `io.furan:sdk-selenium:0.5.0` published-to-Maven-Central path
+    (Gradle wired; staging dry-run completed; production release gated
+    on first `sdk/v0.5.0` tag push with credentials configured).
+    Next action remains the same: rolls forward to Phase 5 as a v1.0 GA
+    blocker. Phase 5's acceptance criteria block the `v1.0` tag until at
+    least one `alpha-1-<handle>.md` lands alongside the filled-in
+    `docs/runbooks/alpha-install.md` measurement.
