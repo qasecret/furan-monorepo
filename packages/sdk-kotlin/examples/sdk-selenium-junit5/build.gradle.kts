@@ -10,7 +10,7 @@ dependencies {
     // Keep in lockstep with packages/sdk-kotlin/version.txt — release-please
     // bumps that file but does NOT update this pin, so each version bump that
     // adds new SDK behavior needed by the example must bump this line too.
-    testImplementation("io.github.qasecret:furan-selenium:0.6.0")
+    testImplementation("io.github.qasecret:furan-selenium:0.6.1")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

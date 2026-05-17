@@ -50,28 +50,10 @@ jobs:
 
   full-e2e:
     runs-on: ubuntu-latest
-    # Phase 5 D6(a): activate the full e2e job.
-    # Marked continue-on-error until we have at least one green run on main.
-    # As of PR #29's 4th iteration the live-stack assertions get through:
-    #   apps boot → migrations → MinIO → seed admin → mint token → create
-    #   project → create build → SDK publish → example test → POST /runs (400).
-    # The remaining failure is an SDK 0.5.0 bug, not a workflow bug:
-    #   HttpTransport sets `Json { encodeDefaults = true }`, so optional fields
-    #   declared `String? = null` in CreateRunRequest (testVariationId, device,
-    #   os, customTags) serialize as `"...": null`. The api's createRunBody zod
-    #   schema uses `.optional()` which accepts undefined, not null, so the
-    #   POST /runs body fails validation with 400 invalid_body.
-    # TODO(v1.0.x SDK patch): cut a sdk/v0.6.1 that flips HttpTransport's Json
-    # config to `Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }`
-    # so null-defaulted fields are dropped from the body. Then bump the example
-    # pin to that version and flip continue-on-error to false.
-    # Other v1.1 follow-ups:
-    #   - whether `pnpm --filter @furan/api cli:seed-admin` propagates trailing
-    #     CLI args correctly under pnpm (vs. needing `-- --email ...`).
-    #   - whether mavenCentral resolves furan-selenium fast enough on a cold
-    #     runner (no proxy cache); the version is pinned in the example's
-    #     build.gradle.kts so the live-published artifact is used.
-    continue-on-error: true
+    # Phase 5 D6(a): full e2e job. The SDK explicitNulls=false fix (PR #30 →
+    # sdk/v0.6.1 published to Maven Central) closed the POST /runs null-body
+    # bug, and the example pin was bumped in lockstep, so this is now a
+    # required check.
     services:
       postgres:
         image: postgres:17-alpine
