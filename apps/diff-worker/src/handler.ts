@@ -9,11 +9,48 @@ import {
   withProjectScope,
   type DB,
 } from "@furan/db";
-import { runDiff } from "@furan/diff-engine";
+import {
+  runDiff,
+  DEFAULT_ENGINE_CONFIG,
+  type EngineConfig,
+} from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
+import { z } from "zod";
+
+const engineConfigSchema = z.object({
+  threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
+  ignoreAntialiasing: z
+    .boolean()
+    .default(DEFAULT_ENGINE_CONFIG.ignoreAntialiasing),
+  allowDiffDimensions: z
+    .boolean()
+    .default(DEFAULT_ENGINE_CONFIG.allowDiffDimensions),
+});
+
+function parseEngineConfig(
+  raw: string | null | undefined,
+  logger: { warn: (obj: object, msg: string) => void },
+  projectId: string,
+): EngineConfig {
+  if (!raw) return DEFAULT_ENGINE_CONFIG;
+  try {
+    const parsed = JSON.parse(raw);
+    return engineConfigSchema.parse(parsed);
+  } catch (err) {
+    logger.warn(
+      {
+        projectId,
+        rawTruncated: raw.slice(0, 200),
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "image_comparison_config_invalid_falling_back_to_defaults",
+    );
+    return DEFAULT_ENGINE_CONFIG;
+  }
+}
 
 type Logger = Telemetry["logger"];
 
@@ -233,6 +270,12 @@ export async function handleDiffJob(
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
         ...(ignoreAreas !== undefined ? { ignoreAreas } : {}),
+        engine: project.imageComparison,
+        engineConfig: parseEngineConfig(
+          project.imageComparisonConfig,
+          logger,
+          project.id,
+        ),
       },
     });
 

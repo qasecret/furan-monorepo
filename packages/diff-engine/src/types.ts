@@ -38,11 +38,8 @@ export interface ProjectDiffConfig {
   diffThreshold: number;
   l2Enabled: boolean;
   ignoreAreas?: Array<{ x: number; y: number; width: number; height: number }>;
-  /** Defaults to "odiff" when omitted (backwards-compat for callers that
-   *  predate the engine-selection feature). */
-  engine?: ImageComparison;
-  /** Defaults to DEFAULT_ENGINE_CONFIG when omitted. */
-  engineConfig?: EngineConfig;
+  engine: ImageComparison;
+  engineConfig: EngineConfig;
 }
 
 export interface DiffResult {
