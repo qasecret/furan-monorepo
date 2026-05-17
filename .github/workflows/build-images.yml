@@ -2,11 +2,19 @@ name: build-images
 
 # Per-app container build matrix. On PRs we build-only (no push, no scan)
 # to catch broken Dockerfiles cheaply. On push to main + tag pushes we
-# push to GHCR, run a Trivy CVE scan, sign with cosign (keyless OIDC),
-# and emit a SPDX SBOM as a workflow artifact.
+# push to GHCR **and Docker Hub** (dual-publish for installer convenience),
+# run a Trivy CVE scan, sign with cosign (keyless OIDC), and emit a SPDX
+# SBOM as a workflow artifact.
 #
-# Image naming: ghcr.io/qasecret/furan-<app>:<sha> always.
-# Tag pushes add ghcr.io/qasecret/furan-<app>:<tag> + :latest.
+# Image naming (both registries):
+#   <registry>/qasecret/furan-<app>:<sha>      always (on push)
+#   <registry>/qasecret/furan-<app>:<tag>      on tag push
+#   <registry>/qasecret/furan-<app>:latest     on tag push
+# where <registry> ∈ {ghcr.io, docker.io}.
+#
+# workflow_dispatch is wired so a maintainer can re-fire the workflow
+# against an existing tag (e.g. `gh workflow run build-images.yml --ref v1.0`)
+# without having to push a new tag.
 #
 # Why fail-fast=false: one shaky Dockerfile shouldn't kill the whole
 # matrix. Each app builds independently.
@@ -16,6 +24,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -35,12 +44,19 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
         id: build
@@ -48,20 +64,24 @@ jobs:
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
-          push: ${{ github.event_name == 'push' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
+            docker.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
             ${{ startsWith(github.ref, 'refs/tags/v') && format('ghcr.io/qasecret/furan-{0}:{1}', matrix.app, github.ref_name) || '' }}
             ${{ startsWith(github.ref, 'refs/tags/v') && format('ghcr.io/qasecret/furan-{0}:latest', matrix.app) || '' }}
+            ${{ startsWith(github.ref, 'refs/tags/v') && format('docker.io/qasecret/furan-{0}:{1}', matrix.app, github.ref_name) || '' }}
+            ${{ startsWith(github.ref, 'refs/tags/v') && format('docker.io/qasecret/furan-{0}:latest', matrix.app) || '' }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,scope=${{ matrix.app }},mode=max
 
-      # CVE scan only runs on push (PRs already need approval to merge).
-      # exit-code=1 fails the job on CRITICAL/HIGH; ignore-unfixed avoids
-      # CVEs without an upstream patch (otherwise base-image CVEs would
-      # block every release until Debian rolls a new point release).
+      # CVE scan only runs on push/workflow_dispatch (PRs already need
+      # approval to merge). exit-code=1 fails the job on CRITICAL/HIGH;
+      # ignore-unfixed avoids CVEs without an upstream patch (otherwise
+      # base-image CVEs would block every release until Debian rolls a
+      # new point release).
       - name: Trivy scan
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
@@ -70,26 +90,31 @@ jobs:
           ignore-unfixed: true
 
       - name: Install cosign
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3
 
       # Keyless signing via the workflow's OIDC token — no long-lived keys
       # in the repo. The transparency log entry on rekor.sigstore.dev pins
       # the signature to this workflow run.
       - name: Sign image (cosign keyless)
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
 
+      # upload-release-assets: false stops anchore/sbom-action from trying
+      # to attach the SBOM to the GitHub Release on tag pushes — that path
+      # needs `contents: write` which the workflow does not grant, and the
+      # SBOM is already preserved as a workflow artifact via the next step.
       - name: Generate SBOM (syft → SPDX JSON)
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
           image: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
           format: spdx-json
           output-file: sbom-${{ matrix.app }}.spdx.json
+          upload-release-assets: false
 
       - name: Upload SBOM artifact
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.app }}

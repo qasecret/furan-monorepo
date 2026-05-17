@@ -1,9 +1,11 @@
 # Furan base compose stack — internal-only (no host port exposure).
 # Dev workflow adds `compose.dev.yml` for host ports.
 # Phase 1.A: postgres + redis + minio + minio-init.
-# Phase 4 Task 11: api + dashboard + capture-worker + diff-worker +
-# integrations added, pinned to ghcr.io images at the v0.5-integrated
-# release tag (controller tags as v0.5-integrated at T14 → image tag 0.5.0).
+# Phase 5 v1.0: app services pull from Docker Hub (docker.io/qasecret/furan-*)
+# pinned to :v1.0. GHCR mirror images at ghcr.io/qasecret/furan-*:v1.0 are
+# also published by the build-images.yml workflow for users who prefer GHCR
+# (signed via cosign keyless, scanned via Trivy, SBOM available as a workflow
+# artifact). Bumping versions is a single tag-replace per service.
 
 services:
   postgres:
@@ -66,11 +68,13 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET}
     restart: "no"
 
-  # ----- App services (Phase 4 T11) -------------------------------------
-  # All five pull pre-built images from GHCR. Bumping versions is a single
-  # tag-replace per service. Use `compose.dev.yml` to expose host ports.
+  # ----- App services ---------------------------------------------------
+  # All five pull pre-built images from Docker Hub. To use the GHCR mirror
+  # instead, swap `docker.io/` for `ghcr.io/` (you'll need a GH PAT with
+  # read:packages scope if the GHCR packages are private). Use
+  # `compose.dev.yml` to expose host ports.
   api:
-    image: ghcr.io/qasecret/furan-api:0.5.0
+    image: docker.io/qasecret/furan-api:v1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +96,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: ghcr.io/qasecret/furan-capture-worker:0.5.0
+    image: docker.io/qasecret/furan-capture-worker:v1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,7 +116,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: ghcr.io/qasecret/furan-diff-worker:0.5.0
+    image: docker.io/qasecret/furan-diff-worker:v1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,7 +136,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: ghcr.io/qasecret/furan-integrations:0.5.0
+    image: docker.io/qasecret/furan-integrations:v1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,7 +157,7 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: ghcr.io/qasecret/furan-dashboard:0.5.0
+    image: docker.io/qasecret/furan-dashboard:v1.0
     depends_on:
       - api
     environment:

@@ -86,10 +86,17 @@ All four services (`postgres`, `redis`, `minio`, `minio-init`) should report
 healthy / exited-0. `minio-init` is a one-shot bucket creator and is
 expected to exit after first run.
 
-> **v0.4 scope note**: the data plane is the only thing in compose today.
-> The api / dashboard / capture-worker / diff-worker run on the host via
-> `pnpm dev`. Per-app Docker images and a single `docker compose up -d`
-> install flow are Phase 4 work.
+> **v1.0**: `compose.yml` now boots the **full** stack (data plane + the
+> five app services) from pre-built images published to Docker Hub:
+> `docker.io/qasecret/furan-{api,dashboard,capture-worker,diff-worker,integrations}:v1.0`.
+> A `:latest` tag is also published. GHCR mirrors at
+> `ghcr.io/qasecret/furan-*:v1.0` are available for installers who prefer
+> GHCR; images are cosign-signed (keyless) and have SBOM artifacts.
+>
+> The host-process `pnpm dev` flow below is the **development** path. For a
+> production-shaped install just run `docker compose -f infra/docker/compose.yml up -d`
+> (no `-f compose.dev.yml`); skip the rest of this quickstart's `pnpm`
+> sections.
 
 ## 4. Install dependencies + apply migrations
 
