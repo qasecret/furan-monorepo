@@ -8,6 +8,7 @@ import {
 import { createStorage } from "@furan/storage";
 import { bootstrapTelemetry } from "@furan/telemetry";
 
+import { createDiffMetrics } from "./diff-metrics.js";
 import { envSchema } from "./env.js";
 import { handleDiffJob } from "./handler.js";
 import { startHealthServer } from "./health.js";
@@ -35,13 +36,19 @@ async function main(): Promise<void> {
   const storage = createStorage();
   const redis = createRedisConnection();
   const retentionMetrics = createRetentionMetrics(telemetry.metrics);
+  const diffMetrics = createDiffMetrics(telemetry.metrics);
 
   const worker = createWorker("diff", async (job) => {
     telemetry.logger.info(
       { jobId: job.id, projectId: job.data.projectId },
       "diff_job_received",
     );
-    return handleDiffJob(job.data, telemetry.logger, { db, storage, redis });
+    return handleDiffJob(job.data, telemetry.logger, {
+      db,
+      storage,
+      redis,
+      metrics: diffMetrics,
+    });
   });
 
   const retentionWorker = createWorker(

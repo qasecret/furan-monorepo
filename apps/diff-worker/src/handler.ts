@@ -20,6 +20,8 @@ import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import { z } from "zod";
 
+import type { DiffMetrics } from "./diff-metrics.js";
+
 const engineConfigSchema = z.object({
   threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
   ignoreAntialiasing: z
@@ -58,6 +60,10 @@ export interface HandlerDeps {
   db: DB;
   storage: Storage;
   redis: Redis;
+  /** Diff-pipeline metrics. Optional so existing tests that don't
+   *  bootstrap a prom-client registry continue to work; the production
+   *  worker passes a real instance from `createDiffMetrics`. */
+  metrics?: DiffMetrics;
 }
 
 interface PerViewportResult {
@@ -278,6 +284,14 @@ export async function handleDiffJob(
         ),
       },
     });
+
+    // Observe L1 latency labelled by engine. durationMs.l1 is always set
+    // (every runDiff invocation runs L1); converting ms -> seconds to
+    // match the histogram's seconds-based bucket boundaries and the
+    // OpenMetrics convention.
+    deps.metrics?.l1Duration
+      .labels({ engine: project.imageComparison })
+      .observe(result.durationMs.l1 / 1000);
 
     let diffImageKey: string | null = null;
     if (result.diffImageBytes.length > 0) {
