@@ -44,7 +44,26 @@ class HttpTransport(private val config: FuranConfig) : Closeable {
     private val jsonCodec = Json {
         ignoreUnknownKeys = true
         isLenient = true
-        encodeDefaults = true
+        // explicitNulls = false drops nullable fields whose value is null from
+        // the serialized JSON. The api's zod request schemas (e.g.
+        // `createRunBody` in apps/api/src/routes/sdk-runs.ts, `createBody` in
+        // apps/api/src/routes/builds.ts) use `.optional()`, which means
+        // `T | undefined` — NOT `T | null`. With the previous
+        // `encodeDefaults = true` config, nullable DTO fields holding their
+        // default null value (e.g. CreateRunRequest.testVariationId,
+        // CreateBuildRequest.ciBuildId) serialized as `"foo": null` and zod
+        // rejected the body with 400 invalid_body. Dropping the nulls makes
+        // the wire shape match what the api expects.
+        //
+        // encodeDefaults is intentionally NOT set: every DTO field with a
+        // default in packages/sdk-kotlin/core/src/main/kotlin/io/furan/sdk/dto/
+        // defaults to null today, so there is no non-null default that needs
+        // to round-trip. If a future DTO field needs a load-bearing non-null
+        // default (e.g. `val telemetryEnabled: Boolean = true`), set
+        // `encodeDefaults = true` here — combined with `explicitNulls = false`
+        // it still does the right thing (non-null defaults serialize; null
+        // defaults are dropped).
+        explicitNulls = false
     }
 
     val client: HttpClient = HttpClient(CIO) {
