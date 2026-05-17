@@ -10,3 +10,4 @@ export * from "./baselines.js";
 export * from "./webhooks.js";
 export * from "./screenshots.js";
 export * from "./diff_regions.js";
+export * from "./installations.js";

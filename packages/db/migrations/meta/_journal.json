@@ -15,6 +15,13 @@
       "when": 1778941837461,
       "tag": "0001_fluffy_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778984612432,
+      "tag": "0002_narrow_zuras",
+      "breakpoints": true
     }
   ]
 }

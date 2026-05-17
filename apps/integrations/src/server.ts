@@ -1,9 +1,13 @@
 import { getEnv } from "@furan/config";
+import { createDb } from "@furan/db";
 import { createRedisConnection } from "@furan/queue";
 import { bootstrapTelemetry } from "@furan/telemetry";
+import type { App } from "octokit";
 
 import { envSchema } from "./env.js";
 import { buildFastify } from "./fastify.js";
+import { createGitHubApp } from "./github/app.js";
+import { registerWebhookHandlers } from "./github/webhook-handlers.js";
 import { startHealthServer } from "./health.js";
 import { startRunEventsSubscriber } from "./run-events/subscriber.js";
 
@@ -24,7 +28,35 @@ async function main(): Promise<void> {
   // normal commands on the same connection.
   const redisSub = createRedisConnection();
 
-  const app = await buildFastify({ env, telemetry });
+  const { db, close: closeDb } = createDb();
+
+  // GitHub App is optional in v1.0 — set all three env vars to enable.
+  // The env schema's `.refine()` already rejects partial config, so here
+  // we only need to check one of the three.
+  let githubApp: App | undefined;
+  if (
+    env.GITHUB_APP_ID &&
+    env.GITHUB_APP_PRIVATE_KEY &&
+    env.GITHUB_APP_WEBHOOK_SECRET
+  ) {
+    githubApp = createGitHubApp({
+      GITHUB_APP_ID: env.GITHUB_APP_ID,
+      GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY,
+      GITHUB_APP_WEBHOOK_SECRET: env.GITHUB_APP_WEBHOOK_SECRET,
+    });
+    registerWebhookHandlers(githubApp, db, telemetry.logger);
+    telemetry.logger.info("github_app_configured");
+  } else {
+    telemetry.logger.warn(
+      "github_app_not_configured — set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_WEBHOOK_SECRET to enable",
+    );
+  }
+
+  const app = await buildFastify({
+    env,
+    telemetry,
+    ...(githubApp !== undefined ? { githubApp } : {}),
+  });
 
   const health = startHealthServer({
     port: env.HEALTH_PORT,
@@ -34,7 +66,11 @@ async function main(): Promise<void> {
     ready: async () => true,
   });
 
-  const runEvents = startRunEventsSubscriber(redisSub, telemetry.logger);
+  const runEvents = startRunEventsSubscriber(
+    redisSub,
+    telemetry.logger,
+    githubApp,
+  );
 
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
@@ -44,6 +80,7 @@ async function main(): Promise<void> {
       await new Promise<void>((res) => health.close(() => res()));
       redisSub.disconnect();
       redis.disconnect();
+      await closeDb();
       await telemetry.shutdown();
     } catch (err) {
       telemetry.logger.error({ err }, "shutdown_error");
