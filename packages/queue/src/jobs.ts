@@ -44,9 +44,32 @@ export interface WebhookJob {
   payload: unknown;
 }
 
+/**
+ * Nightly per-project TTL sweep job (Phase 5 D3 / spec §9 GA-row metric
+ * "`projects.retention_days` enforced nightly"). Enqueued by the cron
+ * scheduler at startup (`server.ts`) and optionally by the
+ * `cli/retention.ts` helper for one-shot or per-project sweeps.
+ */
+export interface RetentionJob {
+  /**
+   * When omitted/empty, the handler sweeps every project with
+   * `retentionDays > 0`. When set, restricts the sweep to the listed
+   * project ids (still respecting each project's own `retentionDays`
+   * guard — projects with `retentionDays <= 0` are skipped).
+   */
+  projectIds?: string[];
+  /**
+   * When true, the handler logs the would-be deletions per project but
+   * never deletes any rows or storage objects. Used by the CLI for
+   * pre-flight inspection.
+   */
+  dryRun?: boolean;
+}
+
 export type JobMap = {
   capture: CaptureJob;
   diff: DiffJob;
   webhook: WebhookJob;
+  retention: RetentionJob;
 };
 export type JobName = keyof JobMap;

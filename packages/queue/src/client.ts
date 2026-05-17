@@ -19,4 +19,14 @@ export function createWorker<N extends JobName>(
   });
 }
 
+/**
+ * Convenience constructor for the retention TTL queue (Phase 5 D3). Thin
+ * wrapper around `createQueue("retention")` — kept distinct so callers
+ * (CLI, server bootstrap) don't have to remember the magic string and so
+ * the queue name lives in one place if it ever needs to change.
+ */
+export function createRetentionQueue(): Queue<JobMap["retention"]> {
+  return createQueue("retention");
+}
+
 export { Queue, Worker } from "bullmq";
