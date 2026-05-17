@@ -202,7 +202,13 @@ jobs:
           FURAN_API_URL: http://localhost:3000
           FURAN_API_TOKEN: ${{ steps.seed.outputs.api_token }}
           FURAN_PROJECT_ID: ${{ steps.seed.outputs.project_id }}
-          FURAN_BUILD_ID: ${{ github.sha }}
+          # Intentionally NOT setting FURAN_BUILD_ID. api validates `buildId`
+          # as z.string().uuid() and github.sha is a 40-char hex digest. When
+          # FURAN_BUILD_ID is unset, Furan.ensureRun() lazily POSTs
+          # /projects/:id/builds and uses the returned UUID. The github.sha
+          # context is lost from `builds.ciBuildId` in this e2e flow — TODO(v1.1):
+          # add FURAN_CI_BUILD_ID env support to FuranConfig.fromEnv so the
+          # SHA lands in builds.ciBuildId for real CI runs too.
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: ../../gradlew -p . test --no-daemon
       - name: Assert a test_run was created
