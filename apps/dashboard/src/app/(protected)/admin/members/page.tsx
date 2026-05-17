@@ -1,23 +1,24 @@
+import { MembersTable, type MemberRow } from "./_components/members-table";
+
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
-interface User {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: "admin" | "editor" | "guest";
-  isActive: boolean;
-}
-
 interface Me {
   id: string;
-  role: User["role"];
+  role: "admin" | "editor" | "guest";
 }
 
-export default async function MembersPage() {
+interface SearchParams {
+  q?: string;
+}
+
+export default async function MembersPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
   const me = await apiGet<Me>("/users/me");
   if (
     me.status === 401 ||
@@ -34,27 +35,24 @@ export default async function MembersPage() {
       </Card>
     );
   }
-  const list = await apiGet<User[]>("/users");
+
+  const params: SearchParams =
+    (await (searchParams ?? Promise.resolve({} as SearchParams))) ?? {};
+  const q = params.q?.trim();
+  const path = q
+    ? `/users?limit=25&q=${encodeURIComponent(q)}`
+    : `/users?limit=25`;
+  const list = await apiGet<MemberRow[]>(path);
   const members = list.data ?? [];
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Members</h1>
       <p className="text-sm text-neutral-600">
-        Create / edit lands with the simplified-auth UI wave (Phase 3).
+        Manage user access. Admins can create users, change roles, and
+        deactivate accounts.
       </p>
-      <div className="space-y-2">
-        {members.map((u) => (
-          <Card key={u.id}>
-            <p className="font-medium">
-              {u.firstName} {u.lastName}
-            </p>
-            <p className="text-sm text-neutral-600">{u.email}</p>
-            <p className="text-xs text-neutral-500">
-              {u.role} · {u.isActive ? "active" : "inactive"}
-            </p>
-          </Card>
-        ))}
-      </div>
+      <MembersTable initialUsers={members} currentUserId={me.data.id} />
     </div>
   );
 }

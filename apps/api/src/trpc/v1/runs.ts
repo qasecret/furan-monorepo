@@ -1,7 +1,10 @@
 import {
+  and,
   baselines,
+  desc,
   diffRegions,
   eq,
+  lt,
   projects,
   resolveBaseline,
   screenshots,
@@ -18,6 +21,23 @@ import { t } from "../trpc.js";
 const runIdInput = z.object({ runId: z.string().uuid() });
 type RunIdInput = z.infer<typeof runIdInput>;
 
+const listInput = z.object({
+  projectId: z.string().uuid(),
+  cursor: z.string().datetime().optional(),
+  limit: z.number().int().min(1).max(100).default(25),
+  /** Exact-match filter on `test_runs.branch_name`. */
+  branch: z.string().min(1).max(255).optional(),
+  /**
+   * Exact-match filter on `test_runs.status`. The column is free-form `text`
+   * (not a pgEnum), so we accept any short string here and let the DB return
+   * an empty page for unknown values rather than rejecting at the boundary.
+   * Known values across the codebase: "new" | "ok" | "running" | "passed" |
+   * "failed". Task 9 should constrain to that union at the UI layer.
+   */
+  status: z.string().min(1).max(32).optional(),
+});
+type ListInput = z.infer<typeof listInput>;
+
 async function resolveRunProjectId(
   input: RunIdInput,
   ctx: Context,
@@ -31,6 +51,49 @@ async function resolveRunProjectId(
 }
 
 export const runsRouter = t.router({
+  /**
+   * Cursor-paginated run listing for the dashboard index page (T9).
+   * Order: `desc(created_at)`. Cursor is the `created_at` (ISO string) of
+   * the last item from the previous page; we fetch `limit + 1` rows and use
+   * the extra row to decide whether `nextCursor` should be set.
+   */
+  list: t.procedure
+    .input(listInput)
+    .use(authed)
+    .use(
+      projectMember<ListInput>("read", {
+        from: {
+          resolver: ({ input }: { input: ListInput; ctx: Context }) =>
+            Promise.resolve(input.projectId),
+        },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const conditions = [eq(testRuns.projectId, input.projectId)];
+      if (input.cursor) {
+        conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));
+      }
+      if (input.branch) {
+        conditions.push(eq(testRuns.branchName, input.branch));
+      }
+      if (input.status) {
+        conditions.push(eq(testRuns.status, input.status));
+      }
+
+      const rows = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(and(...conditions))
+        .orderBy(desc(testRuns.createdAt))
+        .limit(input.limit + 1);
+
+      const hasMore = rows.length > input.limit;
+      const items = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = items[items.length - 1];
+      const nextCursor = hasMore && last ? last.createdAt.toISOString() : null;
+      return { items, nextCursor };
+    }),
+
   getById: t.procedure
     .input(runIdInput)
     .use(authed)

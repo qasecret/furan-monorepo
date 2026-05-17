@@ -6,3 +6,9 @@
 # After squash-merge these SHAs leave history; entries become inert.
 f45e37753db0518a6a05ad7003026455824b5ab3:apps/api/tests/helpers.ts:generic-api-key:18
 944816c8eafaeb22dfba384e5bf2e68daaca6065:.github/workflows/ci.yml:generic-api-key:27
+
+# P3 T5 — test fixture for the /account/tokens show-once flow: a hard-coded
+# fake `furan_pat_*` value used by the mock fetch handler. Not a real secret;
+# gitleaks scans the intermediate commit so HEAD-level annotations don't
+# suppress. After squash-merge the SHA leaves history; entry becomes inert.
+577e641b18fde51872833344fcd8fd29ccfacd56:apps/dashboard/tests/account-tokens.test.tsx:generic-api-key:60

@@ -69,6 +69,45 @@ describe("admin user CRUD", () => {
     }
   });
 
+  test("GET /users?q= filters by email substring (case-insensitive)", async () => {
+    await h.db.insert(users).values([
+      {
+        email: "alice@x.example",
+        hashedPassword: await hashPassword("x12345678"),
+        firstName: "Al",
+        lastName: "Ice",
+        role: "editor",
+        isActive: true,
+      },
+      {
+        email: "bob@x.example",
+        hashedPassword: await hashPassword("x12345678"),
+        firstName: "Bo",
+        lastName: "B",
+        role: "editor",
+        isActive: true,
+      },
+      {
+        email: "charlie@alice.io",
+        hashedPassword: await hashPassword("x12345678"),
+        firstName: "Char",
+        lastName: "Lie",
+        role: "guest",
+        isActive: true,
+      },
+    ]);
+
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/users?q=alice",
+      headers: { authorization: `Bearer ${adminJwt}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const list = res.json() as Array<{ email: string }>;
+    const emails = list.map((u) => u.email).sort();
+    expect(emails).toEqual(["alice@x.example", "charlie@alice.io"]);
+  });
+
   test("GET /users (editor) -> 403", async () => {
     const res = await h.app.inject({
       method: "GET",

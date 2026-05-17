@@ -1,0 +1,150 @@
+"use client";
+
+import { useState } from "react";
+
+import { FiltersBar } from "./filters-bar";
+import { RunRow } from "./run-row";
+
+import { Button } from "@/components/ui/button";
+import { trpc } from "@/lib/trpc";
+
+interface Props {
+  projectId: string;
+  initialBranch?: string;
+  initialStatus?: string;
+}
+
+interface RunItem {
+  id: string;
+  projectId: string;
+  branchName: string | null;
+  status: string;
+  diffPercent: number | null;
+  pixelMisMatchCount: number | null;
+  baselineSource: string | null;
+  createdAt: string | Date;
+}
+
+/**
+ * Runs index table for /projects/[projectId]/runs.
+ *
+ * Pagination model: manual cursor state rather than `useInfiniteQuery`.
+ * The tRPC `runs.list` procedure is shaped correctly for infinite-query
+ * (cursor in, nextCursor out), but the manual approach is more explicit
+ * about filter-change resets and avoids a tRPC-react-query version
+ * spelunk to confirm `useInfiniteQuery` is wired in this monorepo.
+ * Either pattern is acceptable for v0.4.
+ *
+ * `cursor` is the cursor for the CURRENTLY-LOADED page; on "Load more"
+ * we copy the current page into `accumulated`, then advance the cursor
+ * so the next useQuery call fetches the following page. Filter changes
+ * reset both pieces of state.
+ */
+export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
+  const [filters, setFilters] = useState<{ branch?: string; status?: string }>({
+    branch: initialBranch,
+    status: initialStatus,
+  });
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [accumulated, setAccumulated] = useState<RunItem[]>([]);
+
+  const { data, isLoading, error } = trpc.runs.list.useQuery({
+    projectId,
+    limit: 25,
+    cursor,
+    branch: filters.branch,
+    status: filters.status,
+  });
+
+  // Dedupe on id: cursor pagination on a non-strictly-monotonic
+  // `created_at` could legitimately return overlapping rows on the
+  // boundary between pages, and React would warn about duplicate keys.
+  const items: RunItem[] = [];
+  const seen = new Set<string>();
+  for (const r of accumulated) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      items.push(r);
+    }
+  }
+  for (const r of (data?.items as unknown as RunItem[] | undefined) ?? []) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      items.push(r);
+    }
+  }
+
+  const onLoadMore = () => {
+    if (!data?.nextCursor) return;
+    setAccumulated((prev) => [
+      ...prev,
+      ...((data.items as unknown as RunItem[]) ?? []),
+    ]);
+    setCursor(data.nextCursor);
+  };
+
+  const onFiltersChange = (f: { branch?: string; status?: string }) => {
+    setFilters(f);
+    setAccumulated([]);
+    setCursor(undefined);
+  };
+
+  return (
+    <div className="space-y-4">
+      <FiltersBar
+        initialBranch={initialBranch}
+        initialStatus={initialStatus}
+        onChange={onFiltersChange}
+      />
+      {isLoading && !data ? (
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      ) : error ? (
+        <div className="text-sm text-destructive">Error: {error.message}</div>
+      ) : (
+        <>
+          <table
+            className="w-full text-sm border-collapse"
+            data-testid="runs-table"
+          >
+            <thead className="text-left text-muted-foreground border-b">
+              <tr>
+                <th className="py-2 pr-2">Branch</th>
+                <th className="py-2 pr-2">Status</th>
+                <th className="py-2 pr-2">Diff %</th>
+                <th className="py-2 pr-2">Mismatched px</th>
+                <th className="py-2 pr-2">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-6 text-center text-muted-foreground"
+                  >
+                    No runs match.
+                  </td>
+                </tr>
+              ) : (
+                items.map((r) => (
+                  <RunRow key={r.id} projectId={projectId} run={r} />
+                ))
+              )}
+            </tbody>
+          </table>
+          {data?.nextCursor && (
+            <div className="flex justify-center">
+              <Button
+                variant="secondary"
+                onClick={onLoadMore}
+                data-testid="load-more-button"
+              >
+                Load more
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
