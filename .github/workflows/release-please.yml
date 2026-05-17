@@ -29,5 +29,12 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          # Use a fine-grained PAT (scoped to this repo, contents/PRs/workflows
+          # = read+write) so that tag creation here fires downstream workflows
+          # (publish.yml on `sdk/v*`). The default GITHUB_TOKEN cannot trigger
+          # downstream workflows by GitHub's anti-loop design — without this
+          # PAT, publish.yml has to be manually dispatched after each Release
+          # PR merge. See docs/runbooks/maven-central-publish.md.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

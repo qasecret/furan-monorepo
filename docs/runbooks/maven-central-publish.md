@@ -80,8 +80,8 @@ Treat `/tmp/secring.asc` like a password — it goes into the
 
 ### 4. Configure GitHub Actions secrets
 
-The `com.vanniktech.maven.publish` plugin reads these five environment
-variables (which `publish.yml` populates from secrets):
+Six secrets total. Five drive the publish step; the sixth lets
+release-please's tag creation fire `publish.yml` automatically.
 
 ```bash
 # Portal token (step 2)
@@ -97,14 +97,37 @@ gh secret set SIGNING_PASSWORD --repo qasecret/furan-monorepo
 
 gh secret set GPG_KEY_CONTENTS --repo qasecret/furan-monorepo < /tmp/secring.asc
 # (the ASCII-armored block; vanniktech reads it as text via useInMemoryPgpKeys)
+
+# Fine-grained PAT for release-please (step 4b below)
+gh secret set RELEASE_PLEASE_TOKEN --repo qasecret/furan-monorepo
 ```
 
 Verify:
 
 ```bash
 gh api repos/qasecret/furan-monorepo/actions/secrets | jq '.total_count'
-# should be >= 5
+# should be >= 6
 ```
+
+### 4b. Generate the release-please PAT
+
+GitHub's default `GITHUB_TOKEN` cannot trigger downstream workflows
+(anti-loop guard). Without a PAT, release-please's `sdk/v<version>` tag
+creation does not fire `publish.yml`, so each release would require a
+manual `gh workflow run publish.yml`. The PAT bypasses that.
+
+1. https://github.com/settings/personal-access-tokens/new (must be
+   created by the repo owner — `qasecret`)
+2. Name: `furan-monorepo-release-please`. Expiration: 1 year recommended.
+3. Resource owner: `qasecret`. Repository access: **Only select
+   repositories** → `qasecret/furan-monorepo` only.
+4. Repository permissions (leave all others "No access"):
+   - Contents: Read and write
+   - Pull requests: Read and write
+   - Workflows: Read and write
+5. Generate token. **Copy the `github_pat_...` value immediately** — shown
+   once.
+6. Paste into the `gh secret set RELEASE_PLEASE_TOKEN ...` prompt above.
 
 Then shred the local copy:
 
