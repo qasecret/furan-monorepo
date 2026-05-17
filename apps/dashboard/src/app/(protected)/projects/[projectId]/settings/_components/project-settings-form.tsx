@@ -18,6 +18,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
@@ -40,6 +47,7 @@ const schema = z.object({
   diffThreshold: z.number().min(0).max(1),
   l2Enabled: z.boolean(),
   autoApproveFeature: z.boolean(),
+  imageComparison: z.enum(["pixelmatch", "looks_same", "odiff"]),
   retentionDays: z.coerce.number().int().min(1).max(3650),
   maxBuildAllowed: z.coerce.number().int().min(1),
   maxBranchLifetime: z.coerce.number().int().min(1),
@@ -77,6 +85,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
       diffThreshold: 0.001,
       l2Enabled: true,
       autoApproveFeature: false,
+      imageComparison: "odiff",
       retentionDays: 90,
       maxBuildAllowed: 100,
       maxBranchLifetime: 30,
@@ -95,6 +104,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
         autoApproveFeature: project.autoApproveFeature ?? false,
+        imageComparison: project.imageComparison ?? "odiff",
         retentionDays: project.retentionDays ?? 90,
         maxBuildAllowed: project.maxBuildAllowed ?? 100,
         maxBranchLifetime: project.maxBranchLifetime ?? 30,
@@ -264,7 +274,34 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
           <CardHeader>
             <CardTitle>Image comparison</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <FormField
+              control={form.control}
+              name="imageComparison"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Algorithm</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger data-testid="image-comparison-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="odiff">Odiff (default)</SelectItem>
+                      <SelectItem value="pixelmatch">Pixelmatch</SelectItem>
+                      <SelectItem value="looks_same">Looks-Same</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    L1 pixel comparison backend. Odiff is the default;
+                    Pixelmatch matches the jest-image-snapshot / Percy world;
+                    Looks-Same is perceptual and antialiasing-tolerant.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="imageComparisonConfig"

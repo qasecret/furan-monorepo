@@ -15,6 +15,8 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     input.baseline.image,
     input.candidate.image,
     input.config.ignoreAreas,
+    input.config.engine,
+    input.config.engineConfig,
   );
   const t1 = performance.now();
 
