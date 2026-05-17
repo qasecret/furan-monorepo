@@ -103,3 +103,24 @@ at least one external installer feedback file is in `docs/feedback/`.
     blocker. Phase 5's acceptance criteria block the `v1.0` tag until at
     least one `alpha-1-<handle>.md` lands alongside the filled-in
     `docs/runbooks/alpha-install.md` measurement.
+- **2026-05-17 (v1.0 close)**: Phase 5 (`v1.0-GA`) is closing on its
+  technical floor without an external installer materializing. Per
+  spec D2.5 cut-down, v1.0 ships with the documented attempt log and
+  the alpha gate rolls to a v1.0.x patch wave. Concrete v1.0 polish
+  additions since the v0.5 close note above that make the next round
+  of outreach easier:
+  - `docs/runbooks/api-down.md` — operator triage decision tree (Phase 5 D5)
+  - `docs/runbooks/restore-from-backup.md` + compose backup sidecar (Phase 5 D4)
+  - `docs/runbooks/security-dry-run-v1.md` — security posture sign-off (Phase 5 D7)
+  - `/admin/installations` dashboard page replaces the manual SQL
+    UPDATE step in the github-actions.md recipe (Phase 5 D6.f)
+  - Per-project retention TTL job + CLI (Phase 5 D3) — installers no
+    longer need to manually prune data
+  - Maven Central production publish working end-to-end:
+    `io.github.qasecret:furan-{core,selenium}:0.6.0` resolves via
+    `mavenCentral()`; release-please auto-bump + auto-release pipeline
+    in place for future versions
+    Re-entry trigger for D2: maintainer or community member who tries
+    the v1.0 install lands an `alpha-1-<handle>.md` file with the 5-
+    question feedback. Phase 5 cut-list pre-authorized this cut-down
+    (see spec §4.2 R-P5-1).
