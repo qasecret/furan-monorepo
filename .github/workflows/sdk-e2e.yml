@@ -155,16 +155,25 @@ jobs:
       - name: Wait for diff-worker /livez
         # diff-worker exposes a health server on :3200 (apps/diff-worker/src/env.ts PORT default).
         run: timeout 60 bash -c 'until curl -fsS http://localhost:3200/livez; do sleep 2; done'
-      - name: Seed admin + mint token + create project
+      - name: Seed admin + mint token + create project + create build
         id: seed
         # The seed-admin script lives at apps/api/src/cli/seed-admin.ts and
         # accepts `--email` / `--password`. pnpm forwards trailing args after
         # the script name to the underlying command.
         # Endpoint shapes (confirmed against apps/api/src/routes):
-        #   POST /auth/login        body {email, password}             -> {token, user}
-        #   POST /account/tokens    body {label}, Bearer JWT           -> {..., token: raw}
-        #   POST /projects          body {name}, Bearer JWT (admin)    -> projects row (has id)
+        #   POST /auth/login                  body {email, password}                 -> {token, user}
+        #   POST /account/tokens              body {label}, Bearer JWT               -> {..., token: raw}
+        #   POST /projects                    body {name}, Bearer JWT (admin)        -> projects row (has id)
+        #   POST /projects/:id/builds         body {ciBuildId?, branchName?}, Bearer -> builds row (has id)
         # No /api/v1 prefix — routes mount at the root (see apps/api/src/app.ts).
+        #
+        # Build creation is done here instead of letting the SDK do it lazily
+        # because the SDK 0.5.0's createBuild request serializes a null
+        # ciBuildId field when FURAN_BUILD_ID is unset, and zod's `.optional()`
+        # treats null differently than undefined (rejects null with 400).
+        # Pre-creating the build lets us pin a real ciBuildId (the github.sha)
+        # and pass the resulting UUID into FURAN_BUILD_ID, so the SDK skips
+        # createBuild entirely and goes straight to createRun with valid UUIDs.
         run: |
           pnpm --filter @furan/api cli:seed-admin --email ci@furan.local --password ci_password_for_test_only
           TOKEN=$(curl -fsS -X POST http://localhost:3000/auth/login \
@@ -185,8 +194,16 @@ jobs:
           if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
             echo "project create failed"; exit 1
           fi
+          BRANCH_NAME='${{ github.head_ref || github.ref_name }}'
+          BUILD_ID=$(curl -fsS -X POST "http://localhost:3000/projects/$PROJECT_ID/builds" \
+            -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+            -d "{\"ciBuildId\":\"${{ github.sha }}\",\"branchName\":\"$BRANCH_NAME\"}" | jq -r .id)
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+            echo "build create failed"; exit 1
+          fi
           echo "api_token=$API_TOKEN" >> "$GITHUB_OUTPUT"
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
       - name: Publish SDK locally
         working-directory: packages/sdk-kotlin
         run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal --no-daemon
@@ -202,13 +219,10 @@ jobs:
           FURAN_API_URL: http://localhost:3000
           FURAN_API_TOKEN: ${{ steps.seed.outputs.api_token }}
           FURAN_PROJECT_ID: ${{ steps.seed.outputs.project_id }}
-          # Intentionally NOT setting FURAN_BUILD_ID. api validates `buildId`
-          # as z.string().uuid() and github.sha is a 40-char hex digest. When
-          # FURAN_BUILD_ID is unset, Furan.ensureRun() lazily POSTs
-          # /projects/:id/builds and uses the returned UUID. The github.sha
-          # context is lost from `builds.ciBuildId` in this e2e flow — TODO(v1.1):
-          # add FURAN_CI_BUILD_ID env support to FuranConfig.fromEnv so the
-          # SHA lands in builds.ciBuildId for real CI runs too.
+          # Pre-created in the seed step above; SDK uses this UUID directly
+          # and skips its own createBuild call. See the seed step's comment
+          # for why we don't let the SDK lazily create.
+          FURAN_BUILD_ID: ${{ steps.seed.outputs.build_id }}
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: ../../gradlew -p . test --no-daemon
       - name: Assert a test_run was created
