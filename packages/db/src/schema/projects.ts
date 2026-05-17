@@ -20,7 +20,7 @@ export const projects = pgTable("projects", {
   autoApproveFeature: boolean("auto_approve_feature").notNull().default(true),
   imageComparison: imageComparisonEnum("image_comparison")
     .notNull()
-    .default("pixelmatch"),
+    .default("odiff"),
   imageComparisonConfig: text("image_comparison_config")
     .notNull()
     .default(
