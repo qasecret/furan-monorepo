@@ -20,7 +20,7 @@
     "@furan/storage": "workspace:^",
     "@furan/telemetry": "workspace:*",
     "ioredis": "^5.4.1",
-    "playwright": "^1.49",
+    "playwright": "^1.60",
     "sharp": "^0.33",
     "zod": "^3.24.1"
   },
