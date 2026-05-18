@@ -67,10 +67,6 @@ desc(
     const VP_DESKTOP = "1280x720";
     const VP_MOBILE = "375x667";
 
-    // Content-addressed keys for fixtures — computed once, reused across tests.
-    let baselineKey: string;
-    let candidateKey: string;
-
     beforeAll(async () => {
       const created = createDb();
       db = created.db;
@@ -107,14 +103,6 @@ desc(
         .values({ name: "home", projectId })
         .returning();
       variationId = v.id;
-
-      // Upload fixtures once — content-addressed so idempotent.
-      const baselineBytes = FIXTURE("baseline-a.png");
-      const candidateBytes = FIXTURE("candidate-a-major.png");
-      baselineKey = objectKey(baselineBytes);
-      candidateKey = objectKey(candidateBytes);
-      await storage.put(baselineKey, baselineBytes, "image/png");
-      await storage.put(candidateKey, candidateBytes, "image/png");
     }, 60_000);
 
     afterAll(async () => {
@@ -125,6 +113,9 @@ desc(
     async function seedBaselineAndCandidate(opts: {
       viewports: string[];
     }): Promise<void> {
+      const baselineBytes = FIXTURE("baseline-a.png");
+      const candidateBytes = FIXTURE("candidate-a-major.png");
+
       const [br] = await db
         .insert(testRuns)
         .values({
@@ -158,18 +149,27 @@ desc(
         branchName: "main",
       });
 
+      // screenshots.image_key has a UNIQUE constraint, so each (run, viewport)
+      // pair needs a distinct storage key. We synthesize keys by appending the
+      // viewport + runId to the content hash; storage.put accepts any string
+      // key, the diff engine retrieves bytes by whatever key is in the row.
       for (const vp of opts.viewports) {
+        const bKey = `${objectKey(baselineBytes)}-${baselineRunId}-${vp}`;
+        const cKey = `${objectKey(candidateBytes)}-${candidateRunId}-${vp}`;
+        await storage.put(bKey, baselineBytes, "image/png");
+        await storage.put(cKey, candidateBytes, "image/png");
+
         await db.insert(screenshots).values({
           runId: baselineRunId,
           projectId,
-          imageKey: baselineKey,
+          imageKey: bKey,
           viewport: vp,
           browser: "chromium",
         });
         await db.insert(screenshots).values({
           runId: candidateRunId,
           projectId,
-          imageKey: candidateKey,
+          imageKey: cKey,
           viewport: vp,
           browser: "chromium",
         });
