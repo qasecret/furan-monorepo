@@ -247,6 +247,35 @@ d("tRPC runs router", () => {
     expect(data.variationIgnoreAreas).toBeNull();
   });
 
+  test("getById: returns ignoreAreas as a parsed array (not raw JSON string)", async () => {
+    const region = { x: 5, y: 5, width: 20, height: 20, viewport: "1280x720" };
+    await h.db
+      .update(testRuns)
+      .set({ ignoreAreas: JSON.stringify([region]) })
+      .where(eq(testRuns.id, s.runId));
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.ignoreAreas).toEqual([region]);
+  });
+
+  test("getById: ignoreAreas is null when test_runs.ignore_areas column is null", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.ignoreAreas).toBeNull();
+  });
+
+  test("getById: ignoreAreas is null when test_runs.ignore_areas holds malformed JSON", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ ignoreAreas: "not-valid-json" })
+      .where(eq(testRuns.id, s.runId));
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.ignoreAreas).toBeNull();
+  });
+
   test("getById: non-member receives FORBIDDEN", async () => {
     const client = makeClient(baseUrl, s.nonMemberJwt);
     let err: TRPCClientError<AppRouter> | undefined;
@@ -497,6 +526,10 @@ d("tRPC runs router", () => {
       expect(row.ignoreAreas).toBeNull();
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+        runId: s.runId,
+        projectId: s.projectId,
+      });
     });
 
     test("ignoreAreas: null clears the target column (scope=run)", async () => {
@@ -670,8 +703,9 @@ d("tRPC runs router", () => {
         err = e as TRPCClientError<AppRouter>;
       }
       // resolveRunProjectId returns null for unknown runId → projectMember
-      // middleware rejects with FORBIDDEN (its standard behavior). NOT_FOUND
-      // would require a separate pre-check before the middleware.
+      // middleware rejects with NOT_FOUND. The test accepts FORBIDDEN as
+      // well to be robust against future middleware refactors that might
+      // pre-check authorization instead.
       expect(["FORBIDDEN", "NOT_FOUND"]).toContain(err?.data?.code);
       expect(h.diffQueueAdd).not.toHaveBeenCalled();
     });

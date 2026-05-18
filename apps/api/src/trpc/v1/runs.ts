@@ -151,6 +151,20 @@ export const runsRouter = t.router({
         }
       }
 
+      // Parse run-level ignore areas; override the raw JSON string from ...run.
+      // Returned as a parsed array; null when the column is unset or malformed.
+      let runIgnoreAreas: IgnoreRegion[] | null = null;
+      if (run.ignoreAreas) {
+        try {
+          const parsed = JSON.parse(run.ignoreAreas);
+          if (Array.isArray(parsed)) {
+            runIgnoreAreas = parsed as IgnoreRegion[];
+          }
+        } catch {
+          // malformed JSON → treat as null
+        }
+      }
+
       // Resolve the baseline screenshot for the BASELINE pane of the viewer.
       // T9: dashboard side-by-side / overlay / onion-skin all need the
       // baseline's screenshot row (its imageKey). Reuse the three-tier
@@ -199,6 +213,7 @@ export const runsRouter = t.router({
 
       return {
         ...run,
+        ignoreAreas: runIgnoreAreas, // override the raw JSON string spread from ...run
         screenshots: shots,
         diffRegions: regions,
         baselineScreenshot,
