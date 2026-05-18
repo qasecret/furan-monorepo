@@ -29,7 +29,16 @@ export const screenshots = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    imageKeyUnique: uniqueIndex("screenshots_image_key_unique").on(t.imageKey),
+    // ADR-033: compound uniqueness for capture-worker retry idempotency.
+    // Replaces the prior global UNIQUE on image_key, which blocked
+    // legitimate bytes-identical cross-run captures.
+    runViewportUnique: uniqueIndex("screenshots_run_id_viewport_unique").on(
+      t.runId,
+      t.viewport,
+    ),
     runIdx: index("screenshots_run_idx").on(t.runId),
+    // Non-unique index for content-addressed lookups (ADR-032 auto-approve
+    // match query reads runs by image_key).
+    imageKeyIdx: index("screenshots_image_key_idx").on(t.imageKey),
   }),
 );
