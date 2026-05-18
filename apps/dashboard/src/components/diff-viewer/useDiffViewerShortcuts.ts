@@ -88,6 +88,33 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       // T9: `/` opens the global cmdk command palette. We reach into the
       // zustand store directly so the binding stays decoupled from props.
       "/": () => usePaletteStore.getState().setOpen(true),
+      // F14/F15: ignore-region editor shortcuts (ADR-031)
+      I: () => {
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode === "off") {
+          store.setIgnoreEditMode("run");
+        } else {
+          store.setIgnoreEditMode("off");
+        }
+      },
+      Delete: () => {
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode !== "off") {
+          store.deleteSelected();
+        }
+      },
+      Backspace: () => {
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode !== "off") {
+          store.deleteSelected();
+        }
+      },
+      Escape: () => {
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode !== "off") {
+          store.setIgnoreEditMode("off");
+        }
+      },
     });
   }, [router, mode, setMode, viewport, setViewport]);
 }
