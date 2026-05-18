@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const setIgnoreAreasMutate = vi.fn();
@@ -171,7 +172,8 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(useViewerStore.getState().markedForDeletion.size).toBe(0);
   });
 
-  test("scope switch with unsaved changes prompts confirm; Cancel preserves state", () => {
+  test("scope switch with unsaved changes prompts confirm; Cancel preserves state", async () => {
+    const user = userEvent.setup();
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
@@ -180,67 +182,24 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     });
 
     render(<ViewerToolbar runId={RUN_ID} />);
-    // Bypass Radix portal: directly invoke requestEditMode("variation") via
-    // the store. Since there are unsaved changes, the toolbar should show the
-    // scope-switch confirm bar. We simulate this by calling setIgnoreEditMode
-    // in a way that matches what the dropdown item onClick does: directly
-    // trigger the state that causes pendingScopeSwitch to appear.
-    // The component's requestEditMode logic is: if editing && scope !== current
-    // && hasPendingChanges → setPendingScopeSwitch(next).
-    // We exercise this via the rendered DropdownMenuContent items.
-    // Since Radix portals may not be queryable with fireEvent in jsdom, we
-    // verify the confirm bar via a re-render after manually setting pendingScopeSwitch
-    // state indirectly: the only way to set it is through requestEditMode, which
-    // is wired to the dropdown items. Instead, we test the confirm bar by
-    // re-rendering with the scope-switch-confirm visible — achieved by calling
-    // the editing scope dropdown item directly.
-    //
-    // Practical approach: use the editing DropdownMenuContent items.
-    // The "switch-scope-variation" item is in the DropdownMenuContent that
-    // is only rendered when editing=true. Radix DropdownMenuContent renders
-    // in a portal in real browsers, but in jsdom (happy-dom/jsdom test env)
-    // with @radix-ui components, the portal content may be attached to
-    // document.body. Try fireEvent.click on the trigger to open, then find
-    // the item via document.querySelector as a fallback.
-    //
-    // We use a direct approach: click the trigger (which exits edit mode due
-    // to the onClick handler). To avoid that, we need to open the dropdown
-    // menu without triggering the onClick. Since that's not straightforward,
-    // we simulate the scope-switch flow by manipulating the component's
-    // internal state via props changes and store updates.
-    //
-    // Simplest verifiable approach: skip the dropdown interaction entirely for
-    // the "confirm bar appears" assertion, and instead verify the confirm/cancel
-    // button behavior by rendering a ViewerToolbar where we force pendingScopeSwitch
-    // to be set. We do this by calling requestEditMode indirectly via the
-    // DropdownMenuItem items that are rendered in the DOM.
-    //
-    // Check if Radix renders items into document.body:
-    const variationItem = document.querySelector(
-      '[data-testid="switch-scope-variation"]',
-    );
-    if (variationItem) {
-      fireEvent.click(variationItem);
-      expect(screen.getByTestId("scope-switch-confirm")).toBeDefined();
-      fireEvent.click(screen.getByTestId("scope-switch-confirm-no"));
-      expect(useViewerStore.getState().ignoreEditMode).toBe("run");
-      expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
-    } else {
-      // Portal content not accessible via fireEvent — verify confirm bar by
-      // checking that the component renders it when pendingScopeSwitch is set.
-      // We can trigger pendingScopeSwitch by clicking the DropdownMenuTrigger
-      // to open the menu, then clicking the item from the document body.
-      // As a fallback, confirm that clicking the toggle with pending changes
-      // exits edit mode (the toggle's own onClick handler):
-      fireEvent.click(screen.getByTestId("edit-regions-toggle"));
-      // Toggle onClick sets ignoreEditMode to "off" when editing.
-      expect(useViewerStore.getState().ignoreEditMode).toBe("off");
-      // The unsaved changes remain (toggle exit does not discard):
-      expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
-    }
+    // Open the scope-switch dropdown (separate from the exit toggle when editing).
+    await user.click(screen.getByTestId("scope-switch-dropdown-trigger"));
+    // Pick the "variation" item to request a scope switch.
+    await user.click(screen.getByTestId("switch-scope-variation"));
+
+    // Confirm bar appears.
+    expect(screen.getByTestId("scope-switch-confirm")).toBeDefined();
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run"); // not switched yet
+
+    // Cancel keeps state.
+    await user.click(screen.getByTestId("scope-switch-confirm-no"));
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
+    expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
+    expect(screen.queryByTestId("scope-switch-confirm")).toBeNull();
   });
 
-  test("scope switch confirm → discard + switch", () => {
+  test("scope switch confirm → discard + switch", async () => {
+    const user = userEvent.setup();
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
@@ -249,21 +208,13 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     });
 
     render(<ViewerToolbar runId={RUN_ID} />);
-    const variationItem = document.querySelector(
-      '[data-testid="switch-scope-variation"]',
-    );
-    if (variationItem) {
-      fireEvent.click(variationItem);
-      fireEvent.click(screen.getByTestId("scope-switch-confirm-yes"));
-      expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
-      expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
-    } else {
-      // Fallback: directly exercise the discardIgnoreChanges + setIgnoreEditMode
-      // path that "Discard & switch" would trigger.
-      useViewerStore.getState().discardIgnoreChanges();
-      useViewerStore.getState().setIgnoreEditMode("variation");
-      expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
-      expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
-    }
+    await user.click(screen.getByTestId("scope-switch-dropdown-trigger"));
+    await user.click(screen.getByTestId("switch-scope-variation"));
+    expect(screen.getByTestId("scope-switch-confirm")).toBeDefined();
+
+    await user.click(screen.getByTestId("scope-switch-confirm-yes"));
+    expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
+    expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
+    expect(screen.queryByTestId("scope-switch-confirm")).toBeNull();
   });
 });

@@ -112,26 +112,20 @@ export function ViewerToolbar({ runId }: Props) {
         </TabsList>
       </Tabs>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant={editing ? "default" : "secondary"}
-            className="px-2 py-1 text-xs"
-            data-testid="edit-regions-toggle"
-            onClick={(e) => {
-              if (editing) {
-                e.preventDefault();
-                setIgnoreEditMode("off");
-              }
-            }}
-          >
-            {editing
-              ? `Editing: ${ignoreEditMode === "run" ? "this run" : "all runs"}`
-              : "Edit regions ▾"}
-          </Button>
-        </DropdownMenuTrigger>
-        {!editing && (
+      {/* When not editing: a single DropdownMenu with the toggle as its
+          trigger so users can pick a scope to start editing. */}
+      {!editing && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="secondary"
+              className="px-2 py-1 text-xs"
+              data-testid="edit-regions-toggle"
+            >
+              Edit regions ▾
+            </Button>
+          </DropdownMenuTrigger>
           <DropdownMenuContent>
             <DropdownMenuItem
               data-testid="edit-regions-run"
@@ -146,26 +140,58 @@ export function ViewerToolbar({ runId }: Props) {
               Edit for all runs of this test
             </DropdownMenuItem>
           </DropdownMenuContent>
-        )}
-        {editing && (
-          <DropdownMenuContent>
-            <DropdownMenuItem
-              data-testid="switch-scope-run"
-              onClick={() => requestEditMode("run")}
-              disabled={ignoreEditMode === "run"}
-            >
-              Edit for this run
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="switch-scope-variation"
-              onClick={() => requestEditMode("variation")}
-              disabled={ignoreEditMode === "variation"}
-            >
-              Edit for all runs of this test
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        )}
-      </DropdownMenu>
+        </DropdownMenu>
+      )}
+
+      {/* When editing: a plain exit button (no dropdown) plus a separate
+          DropdownMenu for switching scope. This avoids the ambiguity of a
+          button that is simultaneously a dropdown trigger and an exit action —
+          with userEvent / Radix pointer-event handling, both would fire and
+          produce unpredictable results. */}
+      {editing && (
+        <>
+          <Button
+            type="button"
+            variant="default"
+            className="px-2 py-1 text-xs"
+            data-testid="edit-regions-toggle"
+            onClick={() => setIgnoreEditMode("off")}
+          >
+            {ignoreEditMode === "run"
+              ? "Editing: this run"
+              : "Editing: all runs"}{" "}
+            ×
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                className="px-2 py-1 text-xs"
+                data-testid="scope-switch-dropdown-trigger"
+              >
+                Switch scope ▾
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem
+                data-testid="switch-scope-run"
+                onClick={() => requestEditMode("run")}
+                disabled={ignoreEditMode === "run"}
+              >
+                Edit for this run
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="switch-scope-variation"
+                onClick={() => requestEditMode("variation")}
+                disabled={ignoreEditMode === "variation"}
+              >
+                Edit for all runs of this test
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )}
 
       {editing && (
         <>
