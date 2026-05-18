@@ -419,21 +419,34 @@ export async function handleDiffJob(
   );
 }
 
+const ignoreAreaParseSchema = z.object({
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+  viewport: z.string().min(1).max(32).optional(),
+});
+
+/**
+ * Per-run / per-variation ignore region. Includes an optional viewport tag
+ * (added in ADR-031) so multi-viewport runs can apply masks to the right
+ * screenshot. Legacy rows without `viewport` apply universally.
+ */
+export type ParsedIgnoreArea = z.infer<typeof ignoreAreaParseSchema>;
+
 function parseIgnoreAreas(
   value: string | null | undefined,
-): Array<{ x: number; y: number; width: number; height: number }> | undefined {
+): ParsedIgnoreArea[] | undefined {
   if (!value) return undefined;
   try {
     const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) {
-      return parsed as Array<{
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-      }>;
+    if (!Array.isArray(parsed)) return undefined;
+    const out: ParsedIgnoreArea[] = [];
+    for (const item of parsed) {
+      const result = ignoreAreaParseSchema.safeParse(item);
+      if (result.success) out.push(result.data);
     }
-    return undefined;
+    return out;
   } catch {
     return undefined;
   }
