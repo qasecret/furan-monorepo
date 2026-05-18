@@ -1,5 +1,16 @@
 import { eq, users } from "@furan/db";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+
+export const meResponse = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  firstName: z.string(),
+  lastName: z.string(),
+  role: z.enum(["admin", "editor", "guest"]),
+  isActive: z.boolean(),
+  createdAt: z.date(),
+});
 
 export async function registerUsersRoutes(app: FastifyInstance): Promise<void> {
   app.get("/users/me", { preHandler: app.authenticate }, async (req, reply) => {

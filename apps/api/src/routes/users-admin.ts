@@ -5,7 +5,7 @@ import { z } from "zod";
 import { requireRole } from "../hooks/require-role.js";
 import { hashPassword } from "../lib/password.js";
 
-const createBody = z.object({
+export const createBody = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   firstName: z.string().min(1).max(80),
@@ -13,7 +13,7 @@ const createBody = z.object({
   role: z.enum(["admin", "editor", "guest"]).default("editor"),
 });
 
-const updateBody = z
+export const updateBody = z
   .object({
     role: z.enum(["admin", "editor", "guest"]).optional(),
     isActive: z.boolean().optional(),
@@ -24,12 +24,25 @@ const updateBody = z
     message: "at_least_one_field_required",
   });
 
-const paramsId = z.object({ id: z.string().uuid() });
-const listQuery = z.object({
+export const paramsId = z.object({ id: z.string().uuid() });
+export const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   q: z.string().max(120).optional(),
 });
+
+export const userResponse = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  firstName: z.string(),
+  lastName: z.string(),
+  role: z.enum(["admin", "editor", "guest"]),
+  isActive: z.boolean(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export const userListResponse = z.array(userResponse);
 
 const safeUserCols = {
   id: users.id,

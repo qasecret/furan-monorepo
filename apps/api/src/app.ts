@@ -9,6 +9,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
 import type { Env } from "./env.js";
 import { hashToken, isPatFormat } from "./lib/token.js";
+import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBuildsRoutes } from "./routes/builds.js";
@@ -69,6 +70,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerSdkRoutes(app);
   await registerStorageProxyRoute(app);
   await registerHealthRoutes(app);
+  await app.register(docsPlugin);
 
   // Soft-authenticate /trpc/* requests: populate req.auth when valid creds
   // are present, otherwise leave it null. tRPC middlewares (authed,

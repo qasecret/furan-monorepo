@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 
-const paramsSchema = z.object({ id: z.string().uuid() });
+export const paramsSchema = z.object({ id: z.string().uuid() });
 
 export async function registerRunEventsRoute(
   app: FastifyInstance,

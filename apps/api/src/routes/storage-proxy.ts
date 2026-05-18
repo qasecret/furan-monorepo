@@ -12,7 +12,7 @@ import { z } from "zod";
  * keys are sha256 hex of content — unguessable. Acceptable for small-team
  * v1.0; upgrade in Phase 3 if cross-project leakage becomes a concern.
  */
-const paramsSchema = z.object({
+export const paramsSchema = z.object({
   key: z.string().regex(/^[0-9a-f]{64}$/, "must be a sha256 hex"),
 });
 
