@@ -236,6 +236,17 @@ d("tRPC runs router", () => {
     expect(data.variationIgnoreAreas).toBeNull();
   });
 
+  test("getById: variationIgnoreAreas is null when column holds malformed JSON", async () => {
+    await h.db
+      .update(testVariations)
+      .set({ ignoreAreas: "not-valid-json" })
+      .where(eq(testVariations.id, s.variationId));
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.variationIgnoreAreas).toBeNull();
+  });
+
   test("getById: non-member receives FORBIDDEN", async () => {
     const client = makeClient(baseUrl, s.nonMemberJwt);
     let err: TRPCClientError<AppRouter> | undefined;

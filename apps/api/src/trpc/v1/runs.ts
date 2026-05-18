@@ -22,6 +22,14 @@ import { t } from "../trpc.js";
 const runIdInput = z.object({ runId: z.string().uuid() });
 type RunIdInput = z.infer<typeof runIdInput>;
 
+type IgnoreRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewport?: string;
+};
+
 const listInput = z.object({
   projectId: z.string().uuid(),
   cursor: z.string().datetime().optional(),
@@ -123,22 +131,14 @@ export const runsRouter = t.router({
         .from(diffRegions)
         .where(eq(diffRegions.runId, input.runId));
 
-      // Per ADR-031, PR 2 (frontend) needs the variation's ignoreAreas to
-      // render the inactive-scope read-only regions in the editor. Return
-      // it as a parsed array (or null when unset/malformed).
+      // Fetch the variation's ignore areas for the diff viewer's region editor.
+      // Returned as a parsed array; null when the column is unset or malformed.
       const variationRows = await ctx.db
         .select({ ignoreAreas: testVariations.ignoreAreas })
         .from(testVariations)
         .where(eq(testVariations.id, run.testVariationId))
         .limit(1);
       const variationIgnoreAreasRaw = variationRows[0]?.ignoreAreas ?? null;
-      type IgnoreRegion = {
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-        viewport?: string;
-      };
       let variationIgnoreAreas: IgnoreRegion[] | null = null;
       if (variationIgnoreAreasRaw) {
         try {
