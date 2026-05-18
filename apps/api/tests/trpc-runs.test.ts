@@ -284,4 +284,108 @@ d("tRPC runs router", () => {
     expect(err).toBeDefined();
     expect(err?.data?.code).toBe("FORBIDDEN");
   });
+
+  test("setComment: writes a string and surfaces it via getById", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.setComment.mutate({
+      runId: s.runId,
+      comment: "a reviewer note",
+    });
+    expect(res).toEqual({ runId: s.runId, comment: "a reviewer note" });
+
+    const got = await client.runs.getById.query({ runId: s.runId });
+    expect(got.comment).toBe("a reviewer note");
+  });
+
+  test("setComment: null clears the column", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    await client.runs.setComment.mutate({ runId: s.runId, comment: "x" });
+    const cleared = await client.runs.setComment.mutate({
+      runId: s.runId,
+      comment: null,
+    });
+    expect(cleared).toEqual({ runId: s.runId, comment: null });
+
+    const got = await client.runs.getById.query({ runId: s.runId });
+    expect(got.comment).toBeNull();
+  });
+
+  test("setComment: empty string stored verbatim (server is not the normalizer)", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.setComment.mutate({
+      runId: s.runId,
+      comment: "",
+    });
+    expect(res).toEqual({ runId: s.runId, comment: "" });
+  });
+
+  test("setComment: length cap rejects > 10,000 chars", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.setComment.mutate({
+        runId: s.runId,
+        comment: "x".repeat(10_001),
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+  });
+
+  test("setComment: 10,000 chars is accepted (boundary)", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const payload = "x".repeat(10_000);
+    const res = await client.runs.setComment.mutate({
+      runId: s.runId,
+      comment: payload,
+    });
+    expect(res.comment).toBe(payload);
+  });
+
+  test("setComment: unauthenticated client receives UNAUTHORIZED", async () => {
+    const client = makeClient(baseUrl); // no jwt
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.setComment.mutate({
+        runId: s.runId,
+        comment: "x",
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("UNAUTHORIZED");
+  });
+
+  test("setComment: non-member receives FORBIDDEN", async () => {
+    const client = makeClient(baseUrl, s.nonMemberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.setComment.mutate({
+        runId: s.runId,
+        comment: "x",
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("FORBIDDEN");
+  });
+
+  test("setComment: unknown runId returns NOT_FOUND", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.setComment.mutate({
+        runId: "00000000-0000-0000-0000-000000000000",
+        comment: "x",
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("NOT_FOUND");
+  });
 });
