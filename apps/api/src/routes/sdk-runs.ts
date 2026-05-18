@@ -270,14 +270,21 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               viewport,
               browser,
             })
-            .onConflictDoNothing({ target: screenshots.imageKey })
+            .onConflictDoNothing({
+              target: [screenshots.runId, screenshots.viewport],
+            })
             .returning();
           if (result[0]) return result[0];
           // Conflict: load the existing row so the response reflects reality.
           const [existing] = await tx
             .select()
             .from(screenshots)
-            .where(eq(screenshots.imageKey, imageKey))
+            .where(
+              and(
+                eq(screenshots.runId, run.id),
+                eq(screenshots.viewport, viewport),
+              ),
+            )
             .limit(1);
           return existing!;
         },
