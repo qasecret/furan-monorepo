@@ -6,6 +6,7 @@ import { registerHealthPaths } from "./paths/health.js";
 import { registerMembersPaths } from "./paths/members.js";
 import { registerProjectsPaths } from "./paths/projects.js";
 import { registerTokensPaths } from "./paths/tokens.js";
+import { registerUsersAdminPaths } from "./paths/users-admin.js";
 import { registerUsersPaths } from "./paths/users.js";
 import { registry } from "./registry.js";
 
@@ -20,6 +21,7 @@ function registerAll(): void {
   registerProjectsPaths();
   registerMembersPaths();
   registerBuildsPaths();
+  registerUsersAdminPaths();
   _registered = true;
 }
 
