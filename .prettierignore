@@ -17,4 +17,5 @@ node_modules/
 
 # Generated docs / artifacts
 packages/db/migrations/
+apps/api/openapi.snapshot.json
 

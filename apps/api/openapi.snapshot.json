@@ -1,6 +1,7 @@
 {
   "components": {
-    "parameters": {},
+    "parameters": {
+    },
     "schemas": {
       "ErrorResponse": {
         "properties": {
@@ -9,7 +10,9 @@
             "type": "string"
           }
         },
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "type": "object"
       }
     },
@@ -38,7 +41,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": {},
+                "additionalProperties": {
+                },
                 "description": "Anonymous SDK telemetry payload — server logs only, no validation.",
                 "type": "object"
               }
@@ -51,7 +55,9 @@
           }
         },
         "summary": "Anonymous SDK telemetry sink. Body is logged and discarded. Always returns 204.",
-        "tags": ["sdk"]
+        "tags": [
+          "sdk"
+        ]
       }
     },
     "/account/tokens": {
@@ -74,10 +80,18 @@
                         "type": "string"
                       },
                       "lastUsedAt": {
-                        "type": ["string", "null"]
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
-                    "required": ["id", "label", "createdAt", "lastUsedAt"],
+                    "required": [
+                      "id",
+                      "label",
+                      "createdAt",
+                      "lastUsedAt"
+                    ],
                     "type": "object"
                   },
                   "type": "array"
@@ -99,11 +113,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "List the caller's personal access tokens",
-        "tags": ["tokens"]
+        "tags": [
+          "tokens"
+        ]
       },
       "post": {
         "requestBody": {
@@ -117,7 +134,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["label"],
+                "required": [
+                  "label"
+                ],
                 "type": "object"
               }
             }
@@ -144,7 +163,12 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "label", "createdAt", "token"],
+                  "required": [
+                    "id",
+                    "label",
+                    "createdAt",
+                    "token"
+                  ],
                   "type": "object"
                 }
               }
@@ -174,11 +198,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Create a personal access token. Raw token is returned ONCE.",
-        "tags": ["tokens"]
+        "tags": [
+          "tokens"
+        ]
       }
     },
     "/account/tokens/{id}": {
@@ -221,11 +248,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Revoke a personal access token",
-        "tags": ["tokens"]
+        "tags": [
+          "tokens"
+        ]
       }
     },
     "/api/v1/runs/{id}/events": {
@@ -287,11 +317,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Server-Sent Events stream for a run. Emits `event: progress` frames with JSON payloads carrying `{ event, runId, ...details }`. Sends a `:` keep-alive every 15s.",
-        "tags": ["sse"]
+        "tags": [
+          "sse"
+        ]
       }
     },
     "/api/v1/storage/{key}": {
@@ -354,11 +387,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Authenticated proxy for stored image bytes. Key is sha256 hex of content (content-addressed storage).",
-        "tags": ["storage"]
+        "tags": [
+          "storage"
+        ]
       }
     },
     "/auth/login": {
@@ -377,7 +413,10 @@
                     "type": "string"
                   }
                 },
-                "required": ["email", "password"],
+                "required": [
+                  "email",
+                  "password"
+                ],
                 "type": "object"
               }
             }
@@ -404,15 +443,26 @@
                           "type": "string"
                         },
                         "role": {
-                          "enum": ["admin", "editor", "guest"],
+                          "enum": [
+                            "admin",
+                            "editor",
+                            "guest"
+                          ],
                           "type": "string"
                         }
                       },
-                      "required": ["id", "email", "role"],
+                      "required": [
+                        "id",
+                        "email",
+                        "role"
+                      ],
                       "type": "object"
                     }
                   },
-                  "required": ["token", "user"],
+                  "required": [
+                    "token",
+                    "user"
+                  ],
                   "type": "object"
                 }
               }
@@ -441,7 +491,9 @@
           }
         },
         "summary": "Authenticate with email + password; returns a JWT",
-        "tags": ["auth"]
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/livez": {
@@ -453,11 +505,15 @@
                 "schema": {
                   "properties": {
                     "status": {
-                      "enum": ["ok"],
+                      "enum": [
+                        "ok"
+                      ],
                       "type": "string"
                     }
                   },
-                  "required": ["status"],
+                  "required": [
+                    "status"
+                  ],
                   "type": "object"
                 }
               }
@@ -466,7 +522,9 @@
           }
         },
         "summary": "Liveness probe",
-        "tags": ["health"]
+        "tags": [
+          "health"
+        ]
       }
     },
     "/metrics": {
@@ -485,7 +543,9 @@
           }
         },
         "summary": "Prometheus metrics exposition",
-        "tags": ["health"]
+        "tags": [
+          "health"
+        ]
       }
     },
     "/projects": {
@@ -508,37 +568,57 @@
                         "type": "string"
                       },
                       "diffThreshold": {
-                        "type": ["number", "null"]
+                        "type": [
+                          "number",
+                          "null"
+                        ]
                       },
                       "id": {
                         "format": "uuid",
                         "type": "string"
                       },
                       "imageComparison": {
-                        "enum": ["odiff", "pixelmatch", "looks_same"],
+                        "enum": [
+                          "odiff",
+                          "pixelmatch",
+                          "looks_same"
+                        ],
                         "type": "string"
                       },
-                      "imageComparisonConfig": {},
+                      "imageComparisonConfig": {
+                      },
                       "l2Enabled": {
                         "type": "boolean"
                       },
                       "mainBranchName": {
-                        "type": ["string", "null"]
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "maxBranchLifetime": {
                         "minimum": 0,
-                        "type": ["integer", "null"]
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
                       },
                       "maxBuildAllowed": {
                         "minimum": 0,
-                        "type": ["integer", "null"]
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
                       },
                       "name": {
                         "type": "string"
                       },
                       "retentionDays": {
                         "minimum": 0,
-                        "type": ["integer", "null"]
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
                       },
                       "updatedAt": {
                         "type": "string"
@@ -580,11 +660,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "List projects visible to the caller",
-        "tags": ["projects"]
+        "tags": [
+          "projects"
+        ]
       },
       "post": {
         "requestBody": {
@@ -603,7 +686,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "type": "object"
               }
             }
@@ -626,37 +711,57 @@
                       "type": "string"
                     },
                     "diffThreshold": {
-                      "type": ["number", "null"]
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "id": {
                       "format": "uuid",
                       "type": "string"
                     },
                     "imageComparison": {
-                      "enum": ["odiff", "pixelmatch", "looks_same"],
+                      "enum": [
+                        "odiff",
+                        "pixelmatch",
+                        "looks_same"
+                      ],
                       "type": "string"
                     },
-                    "imageComparisonConfig": {},
+                    "imageComparisonConfig": {
+                    },
                     "l2Enabled": {
                       "type": "boolean"
                     },
                     "mainBranchName": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "maxBranchLifetime": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "maxBuildAllowed": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "name": {
                       "type": "string"
                     },
                     "retentionDays": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "updatedAt": {
                       "type": "string"
@@ -726,11 +831,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Create a project (admin only)",
-        "tags": ["projects"]
+        "tags": [
+          "projects"
+        ]
       }
     },
     "/projects/{id}": {
@@ -763,37 +871,57 @@
                       "type": "string"
                     },
                     "diffThreshold": {
-                      "type": ["number", "null"]
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     },
                     "id": {
                       "format": "uuid",
                       "type": "string"
                     },
                     "imageComparison": {
-                      "enum": ["odiff", "pixelmatch", "looks_same"],
+                      "enum": [
+                        "odiff",
+                        "pixelmatch",
+                        "looks_same"
+                      ],
                       "type": "string"
                     },
-                    "imageComparisonConfig": {},
+                    "imageComparisonConfig": {
+                    },
                     "l2Enabled": {
                       "type": "boolean"
                     },
                     "mainBranchName": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "maxBranchLifetime": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "maxBuildAllowed": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "name": {
                       "type": "string"
                     },
                     "retentionDays": {
                       "minimum": 0,
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "updatedAt": {
                       "type": "string"
@@ -853,11 +981,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Fetch a project by id (project members only)",
-        "tags": ["projects"]
+        "tags": [
+          "projects"
+        ]
       }
     },
     "/projects/{id}/builds": {
@@ -892,16 +1023,25 @@
                   "items": {
                     "properties": {
                       "branchName": {
-                        "type": ["string", "null"]
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "ciBuildId": {
-                        "type": ["string", "null"]
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "createdAt": {
                         "type": "string"
                       },
                       "environment": {
-                        "type": ["string", "null"]
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       },
                       "id": {
                         "format": "uuid",
@@ -911,7 +1051,10 @@
                         "type": "boolean"
                       },
                       "number": {
-                        "type": ["integer", "null"]
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
                       },
                       "projectId": {
                         "format": "uuid",
@@ -992,11 +1135,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "List builds for a project (most recent first)",
-        "tags": ["builds"]
+        "tags": [
+          "builds"
+        ]
       },
       "post": {
         "parameters": [
@@ -1039,16 +1185,25 @@
                 "schema": {
                   "properties": {
                     "branchName": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "ciBuildId": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "createdAt": {
                       "type": "string"
                     },
                     "environment": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "id": {
                       "format": "uuid",
@@ -1058,7 +1213,10 @@
                       "type": "boolean"
                     },
                     "number": {
-                      "type": ["integer", "null"]
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
                     },
                     "projectId": {
                       "format": "uuid",
@@ -1137,11 +1295,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Create a build under a project",
-        "tags": ["builds"]
+        "tags": [
+          "builds"
+        ]
       }
     },
     "/projects/{id}/members": {
@@ -1167,7 +1328,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["userId"],
+                "required": [
+                  "userId"
+                ],
                 "type": "object"
               }
             }
@@ -1195,7 +1358,12 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "projectId", "userId", "createdAt"],
+                  "required": [
+                    "id",
+                    "projectId",
+                    "userId",
+                    "createdAt"
+                  ],
                   "type": "object"
                 }
               }
@@ -1255,11 +1423,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Add a member to a project (admin only)",
-        "tags": ["members"]
+        "tags": [
+          "members"
+        ]
       }
     },
     "/projects/{id}/members/{userId}": {
@@ -1321,11 +1492,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Remove a member from a project (admin only)",
-        "tags": ["members"]
+        "tags": [
+          "members"
+        ]
       }
     },
     "/readyz": {
@@ -1343,7 +1517,9 @@
                       "type": "object"
                     }
                   },
-                  "required": ["checks"],
+                  "required": [
+                    "checks"
+                  ],
                   "type": "object"
                 }
               }
@@ -1362,7 +1538,9 @@
                       "type": "object"
                     }
                   },
-                  "required": ["checks"],
+                  "required": [
+                    "checks"
+                  ],
                   "type": "object"
                 }
               }
@@ -1371,7 +1549,9 @@
           }
         },
         "summary": "Readiness probe — checks Postgres, Redis, object storage",
-        "tags": ["health"]
+        "tags": [
+          "health"
+        ]
       }
     },
     "/runs": {
@@ -1424,7 +1604,12 @@
                     "type": "string"
                   }
                 },
-                "required": ["projectId", "buildId", "branchName", "name"],
+                "required": [
+                  "projectId",
+                  "buildId",
+                  "branchName",
+                  "name"
+                ],
                 "type": "object"
               }
             }
@@ -1440,7 +1625,10 @@
                       "type": "string"
                     },
                     "browser": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "buildId": {
                       "format": "uuid",
@@ -1468,7 +1656,10 @@
                       "type": "string"
                     },
                     "viewport": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -1522,11 +1713,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Create a test run (SDK)",
-        "tags": ["sdk"]
+        "tags": [
+          "sdk"
+        ]
       }
     },
     "/runs/{runId}/screenshots": {
@@ -1570,7 +1764,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["pngBytes"],
+                "required": [
+                  "pngBytes"
+                ],
                 "type": "object"
               }
             }
@@ -1586,10 +1782,16 @@
                       "type": "string"
                     },
                     "createdAt": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "domKey": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "id": {
                       "format": "uuid",
@@ -1680,11 +1882,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Upload a screenshot for a run. Multipart form with PNG bytes + optional DOM HTML. 50 MB max per file part.",
-        "tags": ["sdk"]
+        "tags": [
+          "sdk"
+        ]
       }
     },
     "/users": {
@@ -1708,7 +1913,10 @@
             "schema": {
               "default": 0,
               "minimum": 0,
-              "type": ["integer", "null"]
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           {
@@ -1749,7 +1957,11 @@
                         "type": "string"
                       },
                       "role": {
-                        "enum": ["admin", "editor", "guest"],
+                        "enum": [
+                          "admin",
+                          "editor",
+                          "guest"
+                        ],
                         "type": "string"
                       },
                       "updatedAt": {
@@ -1807,11 +2019,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "List users (admin only)",
-        "tags": ["users-admin"]
+        "tags": [
+          "users-admin"
+        ]
       },
       "post": {
         "requestBody": {
@@ -1839,11 +2054,20 @@
                   },
                   "role": {
                     "default": "editor",
-                    "enum": ["admin", "editor", "guest"],
+                    "enum": [
+                      "admin",
+                      "editor",
+                      "guest"
+                    ],
                     "type": "string"
                   }
                 },
-                "required": ["email", "password", "firstName", "lastName"],
+                "required": [
+                  "email",
+                  "password",
+                  "firstName",
+                  "lastName"
+                ],
                 "type": "object"
               }
             }
@@ -1876,7 +2100,11 @@
                       "type": "string"
                     },
                     "role": {
-                      "enum": ["admin", "editor", "guest"],
+                      "enum": [
+                        "admin",
+                        "editor",
+                        "guest"
+                      ],
                       "type": "string"
                     },
                     "updatedAt": {
@@ -1942,11 +2170,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Create a user (admin only)",
-        "tags": ["users-admin"]
+        "tags": [
+          "users-admin"
+        ]
       }
     },
     "/users/me": {
@@ -1978,7 +2209,11 @@
                       "type": "string"
                     },
                     "role": {
-                      "enum": ["admin", "editor", "guest"],
+                      "enum": [
+                        "admin",
+                        "editor",
+                        "guest"
+                      ],
                       "type": "string"
                     }
                   },
@@ -2020,11 +2255,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Current authenticated user",
-        "tags": ["users"]
+        "tags": [
+          "users"
+        ]
       }
     },
     "/users/{id}": {
@@ -2059,7 +2297,11 @@
                     "type": "string"
                   },
                   "role": {
-                    "enum": ["admin", "editor", "guest"],
+                    "enum": [
+                      "admin",
+                      "editor",
+                      "guest"
+                    ],
                     "type": "string"
                   }
                 },
@@ -2095,7 +2337,11 @@
                       "type": "string"
                     },
                     "role": {
-                      "enum": ["admin", "editor", "guest"],
+                      "enum": [
+                        "admin",
+                        "editor",
+                        "guest"
+                      ],
                       "type": "string"
                     },
                     "updatedAt": {
@@ -2161,11 +2407,14 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "bearerAuth": [
+            ]
           }
         ],
         "summary": "Update a user (admin only). Cannot disable self.",
-        "tags": ["users-admin"]
+        "tags": [
+          "users-admin"
+        ]
       }
     }
   },
@@ -2174,5 +2423,6 @@
       "url": "/"
     }
   ],
-  "webhooks": {}
+  "webhooks": {
+  }
 }
