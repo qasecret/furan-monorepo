@@ -88,18 +88,31 @@ export const useViewerStore = create<State>((set) => ({
 
   setIgnoreEditMode: (ignoreEditMode) => set({ ignoreEditMode }),
   hydrateSavedIgnoreAreas: (run, variation) =>
-    set({
-      savedRunIgnoreAreas: run.map((r) => ({
-        ...r,
-        id: crypto.randomUUID(),
-      })),
-      savedVariationIgnoreAreas: variation.map((r) => ({
-        ...r,
-        id: crypto.randomUUID(),
-      })),
-      draftIgnoreAreas: [],
-      markedForDeletion: new Set(),
-      selectedIgnoreId: null,
+    set((s) => {
+      const hasUnsaved =
+        s.draftIgnoreAreas.length > 0 || s.markedForDeletion.size > 0;
+      const saved = {
+        savedRunIgnoreAreas: run.map((r) => ({
+          ...r,
+          id: crypto.randomUUID(),
+        })),
+        savedVariationIgnoreAreas: variation.map((r) => ({
+          ...r,
+          id: crypto.randomUUID(),
+        })),
+      };
+      if (hasUnsaved) {
+        // Spurious refetch (window focus, SSE invalidation, mutation
+        // success on a *sibling* mutation) must not destroy in-progress
+        // user work. Update only the server-derived slices.
+        return saved;
+      }
+      return {
+        ...saved,
+        draftIgnoreAreas: [],
+        markedForDeletion: new Set(),
+        selectedIgnoreId: null,
+      };
     }),
   addDraftRegion: (region) =>
     set((s) => ({ draftIgnoreAreas: [...s.draftIgnoreAreas, region] })),
@@ -115,6 +128,11 @@ export const useViewerStore = create<State>((set) => ({
         next.splice(draftIdx, 1);
         return { draftIgnoreAreas: next, selectedIgnoreId: null };
       }
+      // If the id is not a draft, assume it's a saved region and mark
+      // it for deletion. selectedIgnoreId is always set from active-
+      // scope regions visible in the UI, so a phantom id can't be
+      // introduced via the click path; this branch is the catch-all
+      // for the saved-region case.
       const next = new Set(s.markedForDeletion);
       next.add(s.selectedIgnoreId);
       return { markedForDeletion: next, selectedIgnoreId: null };

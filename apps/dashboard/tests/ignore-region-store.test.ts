@@ -30,12 +30,7 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(useViewerStore.getState().ignoreEditMode).toBe("off");
   });
 
-  it("hydrateSavedIgnoreAreas assigns client ids and resets local edit state", () => {
-    useViewerStore.setState({
-      draftIgnoreAreas: [{ id: "stale", ...plainRegion() }],
-      markedForDeletion: new Set(["stale-saved-id"]),
-      selectedIgnoreId: "anything",
-    });
+  it("hydrateSavedIgnoreAreas assigns client ids and clears local state when nothing is unsaved", () => {
     useViewerStore
       .getState()
       .hydrateSavedIgnoreAreas([plainRegion()], [plainRegion({ x: 200 })]);
@@ -48,6 +43,29 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(s.draftIgnoreAreas).toEqual([]);
     expect(s.markedForDeletion.size).toBe(0);
     expect(s.selectedIgnoreId).toBeNull();
+  });
+
+  it("hydrateSavedIgnoreAreas preserves drafts + markedForDeletion when unsaved changes exist", () => {
+    // Set up unsaved local state.
+    useViewerStore.setState({
+      draftIgnoreAreas: [{ id: "d1", ...plainRegion() }],
+      markedForDeletion: new Set(["s1"]),
+      selectedIgnoreId: "d1",
+    });
+    // Spurious refetch hydration:
+    useViewerStore
+      .getState()
+      .hydrateSavedIgnoreAreas([plainRegion({ x: 5 })], []);
+
+    const s = useViewerStore.getState();
+    // Server-derived slices updated:
+    expect(s.savedRunIgnoreAreas).toHaveLength(1);
+    expect(s.savedRunIgnoreAreas[0]!.x).toBe(5);
+    // Unsaved local state PRESERVED:
+    expect(s.draftIgnoreAreas).toHaveLength(1);
+    expect(s.draftIgnoreAreas[0]!.id).toBe("d1");
+    expect(s.markedForDeletion.has("s1")).toBe(true);
+    expect(s.selectedIgnoreId).toBe("d1");
   });
 
   it("addDraftRegion appends to draftIgnoreAreas", () => {
@@ -124,6 +142,7 @@ describe("useViewerStore — ignore-region slice", () => {
     ).toBeDefined();
     expect(state.draftIgnoreAreas).toEqual([]);
     expect(state.markedForDeletion.size).toBe(0);
+    expect(state.selectedIgnoreId).toBeNull();
   });
 
   it("applySaveSuccess(variation) merges drafts into savedVariationIgnoreAreas; run slice untouched", () => {
@@ -141,5 +160,6 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(state.savedRunIgnoreAreas).toHaveLength(1);
     expect(state.savedRunIgnoreAreas[0]!.id).toBe(runIdBefore);
     expect(state.draftIgnoreAreas).toEqual([]);
+    expect(state.selectedIgnoreId).toBeNull();
   });
 });
