@@ -129,8 +129,11 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
     }
 
     expect(err).toBeDefined();
-    const msg = (err as Error).message ?? "";
-    expect(msg).toMatch(/screenshots_run_id_viewport_unique/);
+    // Postgres unique-violation: the constraint name lives in the nested
+    // PostgresError cause, not in the top-level message which only carries
+    // the "Failed query: ..." wrapper text.
+    const errorJson = JSON.stringify(err, Object.getOwnPropertyNames(err));
+    expect(errorJson).toMatch(/screenshots_run_id_viewport_unique/);
   });
 
   it("onConflictDoNothing on (run_id, viewport) is idempotent", async () => {
