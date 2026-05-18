@@ -227,8 +227,7 @@ export async function handleDiffJob(
   const variationRow = await deps.db.query.testVariations.findFirst({
     where: eq(testVariations.id, run.testVariationId),
   });
-  const variationRegions =
-    parseIgnoreAreas(variationRow?.ignoreAreas ?? null) ?? [];
+  const variationRegions = parseIgnoreAreas(variationRow?.ignoreAreas) ?? [];
   const runRegions = parseIgnoreAreas(run.ignoreAreas) ?? [];
   const allRegions = dedupeRegions([...variationRegions, ...runRegions]);
   const perViewport: PerViewportResult[] = [];
@@ -288,6 +287,8 @@ export async function handleDiffJob(
         l2Enabled: project.l2Enabled ?? true,
         ignoreAreas: allRegions
           .filter(
+            // cs.viewport null (legacy v0.4 row) → ?? makes equality self-referential
+            // → all tagged regions apply, matching the no-viewport-tag legacy compat.
             (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
           )
           .map(({ x, y, width, height }) => ({ x, y, width, height })),

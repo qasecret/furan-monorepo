@@ -6,6 +6,7 @@ import {
   baselines,
   builds,
   createDb,
+  diffRegions,
   eq,
   projects,
   screenshots,
@@ -226,27 +227,41 @@ desc(
     it("viewport filter: regions tagged with non-matching viewport are skipped", async () => {
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP, VP_MOBILE] });
 
-      const desktopOnly = {
-        x: 5,
-        y: 5,
-        width: 100,
-        height: 100,
+      // A single region tagged VP_DESKTOP that covers the entire image.
+      // Over-large dimensions are fine — the engine clips to image bounds.
+      // This fully masks desktop but leaves mobile unmasked; the candidate
+      // fixture differs from baseline, so mobile must produce diff regions
+      // and desktop must produce zero.
+      const desktopFullCover = {
+        x: 0,
+        y: 0,
+        width: 10000,
+        height: 10000,
         viewport: VP_DESKTOP,
       };
       await db
         .update(testRuns)
-        .set({ ignoreAreas: JSON.stringify([desktopOnly]) })
+        .set({ ignoreAreas: JSON.stringify([desktopFullCover]) })
         .where(eq(testRuns.id, candidateRunId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
 
-      const [row] = await db
+      const dr = await db
         .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, candidateRunId))
-        .limit(1);
-      expect(row.status).toBeDefined();
+        .from(diffRegions)
+        .where(eq(diffRegions.runId, candidateRunId));
+
+      const desktopRegions = dr.filter((r) => r.viewport === VP_DESKTOP);
+      const mobileRegions = dr.filter((r) => r.viewport === VP_MOBILE);
+
+      // Mobile is unmasked; the candidate fixture differs from baseline so
+      // mobile must produce diff regions.
+      expect(mobileRegions.length).toBeGreaterThan(0);
+      // Desktop is fully masked → zero diff regions for desktop.
+      // (Falsifiable: if the viewport filter were stripped, the full-cover
+      // region would also mask mobile and mobileRegions would be empty too.)
+      expect(desktopRegions.length).toBe(0);
     }, 60_000);
 
     it("regions without a viewport field apply to all viewports (backward compat)", async () => {
