@@ -41,6 +41,22 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
+// ADR-032: tests override fields on this object (e.g., autoApproved)
+// per-test via mockGetByIdData = { ...defaultMockData, autoApproved: true }.
+const defaultMockData = {
+  id: "00000000-0000-0000-0000-000000000000",
+  screenshots: [],
+  diffRegions: [],
+  baselineScreenshot: null,
+  baselineSource: null,
+  diffName: null,
+  comment: null,
+  ignoreAreas: null,
+  variationIgnoreAreas: null,
+  autoApproved: false,
+};
+let mockGetByIdData: typeof defaultMockData = { ...defaultMockData };
+
 // Mock the tRPC client.
 // T9: getById response includes baselineScreenshot + diffName.
 // T11: DiffViewer now also calls runs.approve / runs.reject mutations
@@ -56,14 +72,7 @@ vi.mock("../src/lib/trpc", () => {
       runs: {
         getById: {
           useQuery: () => ({
-            data: {
-              id: "00000000-0000-0000-0000-000000000000",
-              screenshots: [],
-              diffRegions: [],
-              baselineScreenshot: null,
-              baselineSource: null,
-              diffName: null,
-            },
+            data: mockGetByIdData,
             isLoading: false,
             error: null,
           }),
@@ -104,6 +113,7 @@ import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 
 describe("DiffViewer", () => {
   beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
@@ -135,5 +145,21 @@ describe("DiffViewer", () => {
 
     fireEvent.mouseDown(r.getByRole("tab", { name: /onion-skin/i }));
     expect(useViewerStore.getState().mode).toBe("onion-skin");
+  });
+
+  test("renders the Auto-approved badge when data.autoApproved is true", () => {
+    mockGetByIdData = { ...defaultMockData, autoApproved: true };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.getByTestId("auto-approved-badge")).toBeDefined();
+  });
+
+  test("does not render the Auto-approved badge when data.autoApproved is false", () => {
+    mockGetByIdData = { ...defaultMockData, autoApproved: false };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.queryByTestId("auto-approved-badge")).toBeNull();
   });
 });
