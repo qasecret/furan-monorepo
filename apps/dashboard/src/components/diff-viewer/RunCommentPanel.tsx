@@ -115,7 +115,11 @@ export function RunCommentPanel({ runId }: Props) {
         </Button>
       </div>
       {error && (
-        <span className="text-sm text-red-600" data-testid="comment-error">
+        <span
+          role="alert"
+          className="text-sm text-red-600"
+          data-testid="comment-error"
+        >
           {error}
         </span>
       )}
