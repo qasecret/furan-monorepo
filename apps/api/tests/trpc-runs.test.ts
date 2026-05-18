@@ -453,6 +453,37 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("NOT_FOUND");
   });
 
+  test("getById: autoApproved is true when a baselines row has user_id NULL for the run", async () => {
+    await h.db.insert(baselines).values({
+      baselineName: "auto",
+      testVariationId: s.variationId,
+      testRunId: s.runId,
+      branchName: "feature/x",
+    });
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.autoApproved).toBe(true);
+  });
+
+  test("getById: autoApproved is false when only manually-approved baselines exist", async () => {
+    await h.db.insert(baselines).values({
+      baselineName: "manual",
+      testVariationId: s.variationId,
+      testRunId: s.runId,
+      userId: s.memberId,
+      branchName: "feature/x",
+    });
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.autoApproved).toBe(false);
+  });
+
+  test("getById: autoApproved is false when no baselines exist for the run", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.autoApproved).toBe(false);
+  });
+
   // ADR-031: per-run ignore-regions editor + re-diff trigger.
   describe("setIgnoreAreas", () => {
     const VP = "1280x720";

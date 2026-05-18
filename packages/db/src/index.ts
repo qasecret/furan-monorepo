@@ -20,6 +20,7 @@ export {
   desc,
   ilike,
   inArray,
+  isNull,
   lt,
   gt,
 } from "drizzle-orm";

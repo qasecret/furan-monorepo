@@ -220,6 +220,67 @@ export async function handleDiffJob(
     baselineByViewport.set(bs.viewport ?? null, bs);
   }
 
+  // ADR-032: pre-engine auto-approve. If the project has the feature
+  // enabled and every candidate viewport's image hash matches its
+  // baseline counterpart, short-circuit the L1+L2 diff entirely. Write
+  // the run row, insert a baselines row with userId=NULL (signal: auto),
+  // publish the SSE events, and return.
+  if (
+    project.autoApproveFeature &&
+    allHashesMatch(candidateShots, baselineByViewport)
+  ) {
+    await withProjectScope(deps.db, data.projectId, async (tx) => {
+      await tx
+        .update(testRuns)
+        .set({
+          status: "passed",
+          diffPercent: 0,
+          pixelMisMatchCount: 0,
+          merge: true,
+          baselineSource: baseline.source,
+        })
+        .where(eq(testRuns.id, data.runId));
+      await tx.insert(baselines).values({
+        baselineName: run.baselineName ?? run.name ?? "auto",
+        testVariationId: run.testVariationId,
+        testRunId: run.id,
+        // userId omitted → defaults to NULL → signals auto-approve.
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+      });
+    });
+
+    await deps.redis.publish(
+      `run:${data.runId}:events`,
+      JSON.stringify({
+        type: "diff.completed",
+        runId: data.runId,
+        passed: true,
+        diffPercent: 0,
+        ranTiers: [],
+        viewportCount: candidateShots.length,
+        durationMs: Date.now() - t0,
+        autoApproved: true,
+      }),
+    );
+    await deps.redis.publish(
+      `run:${data.runId}:events`,
+      JSON.stringify({
+        type: "run.completed",
+        runId: data.runId,
+        projectId: data.projectId,
+        status: "passed",
+        diffPercent: 0,
+        branchName: run.branchName,
+        numChanges: 0,
+      }),
+    );
+    logger.info(
+      { runId: data.runId, projectId: data.projectId, autoApproved: true },
+      "diff_auto_approved",
+    );
+    return;
+  }
+
   // Per ADR-031: merge variation + run ignore areas. Both are JSON arrays
   // of {x,y,width,height,viewport?}. The viewport tag is filtered against
   // each candidate screenshot's viewport inside the per-viewport loop
@@ -433,6 +494,25 @@ export async function handleDiffJob(
     },
     "diff_completed",
   );
+}
+
+/**
+ * ADR-032 auto-approve gate: every candidate viewport's image hash must
+ * equal its same-viewport baseline counterpart. Returns false if any
+ * viewport has no baseline match or a hash mismatch. Defensive false
+ * on empty candidate list.
+ */
+function allHashesMatch(
+  candidateShots: Array<{ imageKey: string; viewport: string | null }>,
+  baselineByViewport: Map<string | null, { imageKey: string }>,
+): boolean {
+  if (candidateShots.length === 0) return false;
+  for (const cs of candidateShots) {
+    const bs = baselineByViewport.get(cs.viewport ?? null);
+    if (!bs) return false;
+    if (cs.imageKey !== bs.imageKey) return false;
+  }
+  return true;
 }
 
 const ignoreAreaParseSchema = z.object({

@@ -158,6 +158,15 @@ export function DiffViewer({ runId, diffId }: Props) {
       <ViewerToolbar runId={runId} />
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <BaselineSourceBadge source={baselineSource} />
+        {data.autoApproved && (
+          <span
+            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+            data-testid="auto-approved-badge"
+            title="System-approved: candidate's image bytes matched the baseline exactly."
+          >
+            Auto-approved
+          </span>
+        )}
         <ViewportSwitcher viewports={uniqueViewports} />
       </div>
       <div className="flex flex-1 overflow-hidden">
