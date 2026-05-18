@@ -4,9 +4,25 @@ import { z } from "zod";
 
 import { generateRawToken } from "../lib/token.js";
 
-const createBody = z.object({ label: z.string().min(1).max(80) });
+export const createBody = z.object({ label: z.string().min(1).max(80) });
 
-const paramsId = z.object({ id: z.string().uuid() });
+export const paramsId = z.object({ id: z.string().uuid() });
+
+export const tokenSummary = z.object({
+  id: z.string().uuid(),
+  label: z.string(),
+  createdAt: z.date(),
+  lastUsedAt: z.date().nullable(),
+});
+export const tokenListResponse = z.array(tokenSummary);
+export const tokenCreateResponse = z.object({
+  id: z.string().uuid(),
+  label: z.string(),
+  createdAt: z.date(),
+  token: z
+    .string()
+    .describe("Raw `furan_pat_*` token — shown ONCE, never retrievable again."),
+});
 
 export async function registerTokensRoutes(
   app: FastifyInstance,

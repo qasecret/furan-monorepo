@@ -4,9 +4,18 @@ import { z } from "zod";
 
 import { verifyPassword } from "../lib/password.js";
 
-const loginBody = z.object({
+export const loginBody = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+});
+
+export const loginResponse = z.object({
+  token: z.string().describe("JWT bearer token (signed with HS256)."),
+  user: z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    role: z.enum(["admin", "editor", "guest"]),
+  }),
 });
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
