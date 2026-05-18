@@ -12,6 +12,7 @@ const docsPlugin: FastifyPluginAsync = async (app) => {
 
   await app.register(fastifyApiReference, {
     routePrefix: "/docs",
+    // Scalar 1.57+ uses configuration.content directly (not configuration.spec.content).
     configuration: {
       content: document,
       theme: "default",
