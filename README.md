@@ -17,6 +17,7 @@ branch-aware baselines that don't pollute `main`.
 - **Branch-aware baselines** — feature → PR base → default fallback chain with atomic merge promotion
 - **GitHub App** — sticky PR comments + `furan/baselines` status check + auto-promote on merge
 - **Kotlin SDK** — `io.github.qasecret:furan-selenium` on Maven Central, drop-in for JUnit 5 + Selenium
+- **OpenAPI 3.1 spec:** `GET /openapi.json` · **Interactive docs:** `GET /docs` (Scalar).
 - **Operations** — per-project retention TTL, nightly Postgres backup sidecar, api-down + restore runbooks
 - **Container images** — cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release
 - **Apache 2.0**, no telemetry on the server, no upgrade gate
