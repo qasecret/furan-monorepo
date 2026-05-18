@@ -79,6 +79,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       },
       A: () => optsRef.current.onApprove?.(),
       R: () => optsRef.current.onReject?.(),
+      C: () => {
+        const store = useViewerStore.getState();
+        store.setCommentPanelOpen(!store.commentPanelOpen);
+      },
       "?": () => optsRef.current.onHelpToggle?.(),
       "Shift+?": () => optsRef.current.onHelpToggle?.(),
       // T9: `/` opens the global cmdk command palette. We reach into the

@@ -6,6 +6,7 @@ import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
+import { RunCommentPanel } from "./RunCommentPanel";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
@@ -145,6 +146,7 @@ export function DiffViewer({ runId, diffId }: Props) {
         <RegionListPanel regions={regions} />
       </div>
       <ApprovalBar runId={runId} />
+      <RunCommentPanel runId={runId} />
     </div>
   );
 }

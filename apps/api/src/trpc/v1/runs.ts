@@ -177,6 +177,33 @@ export const runsRouter = t.router({
       };
     }),
 
+  setComment: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        comment: z.string().max(10_000).nullable(),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const updated = await ctx.db
+        .update(testRuns)
+        .set({ comment: input.comment, updatedAt: new Date() })
+        .where(eq(testRuns.id, input.runId))
+        .returning({ id: testRuns.id, comment: testRuns.comment });
+      const row = updated[0];
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      return { runId: row.id, comment: row.comment };
+    }),
+
   approve: t.procedure
     .input(runIdInput)
     .use(authed)

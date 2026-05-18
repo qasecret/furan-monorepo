@@ -69,12 +69,22 @@ describe("ApprovalBar", () => {
   });
   afterEach(() => cleanup());
 
-  it("renders three buttons with the Comment button disabled", () => {
+  it("renders three buttons; Comment toggles the viewer store's commentPanelOpen", async () => {
+    const { useViewerStore } =
+      await import("../src/components/diff-viewer/useViewerStore");
+    // Reset store before the test so we exercise the off→on transition.
+    useViewerStore.setState({ commentPanelOpen: false });
+
     render(<ApprovalBar runId={RUN_ID} />);
     expect(screen.getByTestId("approve-button")).toBeDefined();
     expect(screen.getByTestId("reject-button")).toBeDefined();
     const comment = screen.getByTestId("comment-button") as HTMLButtonElement;
-    expect(comment.disabled).toBe(true);
+    expect(comment.disabled).toBe(false);
+
+    fireEvent.click(comment);
+    expect(useViewerStore.getState().commentPanelOpen).toBe(true);
+    fireEvent.click(comment);
+    expect(useViewerStore.getState().commentPanelOpen).toBe(false);
   });
 
   it("Approve click invokes the runs.approve mutation with the runId and invalidates the run query", () => {
