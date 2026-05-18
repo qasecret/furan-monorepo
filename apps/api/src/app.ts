@@ -21,13 +21,14 @@ import { registerStorageProxyRoute } from "./routes/storage-proxy.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
 import { registerUsersAdminRoutes } from "./routes/users-admin.js";
 import { registerUsersRoutes } from "./routes/users.js";
-import { buildContext } from "./trpc/context.js";
+import { buildContext, type DiffQueueProducer } from "./trpc/context.js";
 import { appRouter } from "./trpc/v1/router.js";
 
 export interface AppDeps {
   db: DB;
   telemetry: Telemetry;
   env: Env;
+  diffQueue: DiffQueueProducer;
 }
 
 declare module "fastify" {
@@ -85,7 +86,11 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     trpcOptions: {
       router: appRouter,
       createContext: ({ req }) =>
-        buildContext(req, { db: deps.db, telemetry: deps.telemetry }),
+        buildContext(req, {
+          db: deps.db,
+          telemetry: deps.telemetry,
+          diffQueue: deps.diffQueue,
+        }),
       onError: ({ error, path }) => {
         app.log.error({ path, err: error }, "trpc_error");
       },

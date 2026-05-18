@@ -1,15 +1,22 @@
 import { createDb, type DB } from "@furan/db";
 import { bootstrapTelemetry, type Telemetry } from "@furan/telemetry";
 import type { FastifyInstance } from "fastify";
+import { vi, type Mock } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { envSchema, type Env } from "../src/env.js";
+import type { DiffQueueProducer } from "../src/trpc/context.js";
 
 export interface TestApp {
   app: FastifyInstance;
   db: DB;
   telemetry: Telemetry;
   env: Env;
+  /**
+   * Spy on `.add()` calls. Detached/inert when `opts.diffQueue` is
+   * overridden. Reset via `diffQueueAdd.mockReset()` between tests.
+   */
+  diffQueueAdd: Mock;
   close: () => Promise<void>;
 }
 
@@ -21,6 +28,8 @@ export interface CreateTestAppOpts {
   envOverrides?: Partial<Env>;
   /** Skip `app.ready()` so callers can register probe routes first. */
   skipReady?: boolean;
+  /** Override the default vi.fn() diffQueue mock. */
+  diffQueue?: DiffQueueProducer;
 }
 
 export async function createTestApp(
@@ -35,7 +44,13 @@ export async function createTestApp(
     version: "test",
   });
   const { db, close: closeDb } = createDb();
-  const app = await createApp({ db, telemetry, env });
+
+  const diffQueueAdd = vi
+    .fn<DiffQueueProducer["add"]>()
+    .mockResolvedValue({ id: "test-job-id" });
+  const diffQueue: DiffQueueProducer = opts.diffQueue ?? { add: diffQueueAdd };
+
+  const app = await createApp({ db, telemetry, env, diffQueue });
   if (!opts.skipReady) {
     await app.ready();
   }
@@ -44,6 +59,7 @@ export async function createTestApp(
     db,
     telemetry,
     env,
+    diffQueueAdd,
     close: async () => {
       await app.close();
       await closeDb();

@@ -6,6 +6,7 @@ import {
   resolveBaseline,
   screenshots,
   testRuns,
+  testVariations,
   withProjectScope,
   type DB,
 } from "@furan/db";
@@ -219,7 +220,16 @@ export async function handleDiffJob(
     baselineByViewport.set(bs.viewport ?? null, bs);
   }
 
-  const ignoreAreas = parseIgnoreAreas(run.ignoreAreas);
+  // Per ADR-031: merge variation + run ignore areas. Both are JSON arrays
+  // of {x,y,width,height,viewport?}. The viewport tag is filtered against
+  // each candidate screenshot's viewport inside the per-viewport loop
+  // below. Legacy rows without `viewport` apply universally.
+  const variationRow = await deps.db.query.testVariations.findFirst({
+    where: eq(testVariations.id, run.testVariationId),
+  });
+  const variationRegions = parseIgnoreAreas(variationRow?.ignoreAreas) ?? [];
+  const runRegions = parseIgnoreAreas(run.ignoreAreas) ?? [];
+  const allRegions = dedupeRegions([...variationRegions, ...runRegions]);
   const perViewport: PerViewportResult[] = [];
 
   for (const cs of candidateShots) {
@@ -275,7 +285,13 @@ export async function handleDiffJob(
       config: {
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
-        ...(ignoreAreas !== undefined ? { ignoreAreas } : {}),
+        ignoreAreas: allRegions
+          .filter(
+            // cs.viewport null (legacy v0.4 row) → ?? makes equality self-referential
+            // → all tagged regions apply, matching the no-viewport-tag legacy compat.
+            (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
+          )
+          .map(({ x, y, width, height }) => ({ x, y, width, height })),
         engine: project.imageComparison,
         engineConfig: parseEngineConfig(
           project.imageComparisonConfig,
@@ -337,7 +353,7 @@ export async function handleDiffJob(
     null,
   );
   const aggregateDiffName = worst?.diffImageKey ?? null;
-  const allRegions = perViewport.flatMap((v) => v.regions);
+  const aggregateRegions = perViewport.flatMap((v) => v.regions);
   const aggregateStatus = aggregateFailed ? "failed" : "passed";
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
@@ -352,9 +368,9 @@ export async function handleDiffJob(
       })
       .where(eq(testRuns.id, data.runId));
 
-    if (allRegions.length > 0) {
+    if (aggregateRegions.length > 0) {
       await tx.insert(diffRegions).values(
-        allRegions.map((r) => ({
+        aggregateRegions.map((r) => ({
           runId: data.runId,
           projectId: data.projectId,
           severity: r.severity,
@@ -401,7 +417,7 @@ export async function handleDiffJob(
       status: aggregateStatus,
       diffPercent: aggregateDiffPercent,
       branchName: run.branchName,
-      numChanges: allRegions.length,
+      numChanges: aggregateRegions.length,
     }),
   );
   logger.info(
@@ -419,21 +435,47 @@ export async function handleDiffJob(
   );
 }
 
+const ignoreAreaParseSchema = z.object({
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+  viewport: z.string().min(1).max(32).optional(),
+});
+
+/**
+ * Per-run / per-variation ignore region. Includes an optional viewport tag
+ * (added in ADR-031) so multi-viewport runs can apply masks to the right
+ * screenshot. Legacy rows without `viewport` apply universally.
+ */
+export type ParsedIgnoreArea = z.infer<typeof ignoreAreaParseSchema>;
+
+function dedupeRegions(rs: ParsedIgnoreArea[]): ParsedIgnoreArea[] {
+  const seen = new Set<string>();
+  const out: ParsedIgnoreArea[] = [];
+  for (const r of rs) {
+    const key = `${r.x}:${r.y}:${r.width}:${r.height}:${r.viewport ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
 function parseIgnoreAreas(
   value: string | null | undefined,
-): Array<{ x: number; y: number; width: number; height: number }> | undefined {
+): ParsedIgnoreArea[] | undefined {
   if (!value) return undefined;
   try {
     const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) {
-      return parsed as Array<{
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-      }>;
+    if (!Array.isArray(parsed)) return undefined;
+    const out: ParsedIgnoreArea[] = [];
+    for (const item of parsed) {
+      const result = ignoreAreaParseSchema.safeParse(item);
+      if (result.success) out.push(result.data);
     }
-    return undefined;
+    return out;
   } catch {
     return undefined;
   }

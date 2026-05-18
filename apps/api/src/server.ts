@@ -1,5 +1,6 @@
 import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
+import { createQueue } from "@furan/queue";
 import { bootstrapTelemetry } from "@furan/telemetry";
 
 import { createApp } from "./app.js";
@@ -15,12 +16,14 @@ async function main(): Promise<void> {
       : {}),
   });
   const { db, close } = createDb();
+  const diffQueue = createQueue("diff");
 
-  const app = await createApp({ db, telemetry, env });
+  const app = await createApp({ db, telemetry, env, diffQueue });
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "shutting down");
     await app.close();
+    await diffQueue.close();
     await close();
     await telemetry.shutdown();
     process.exit(0);
