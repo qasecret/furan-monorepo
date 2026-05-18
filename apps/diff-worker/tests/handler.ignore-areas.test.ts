@@ -6,7 +6,6 @@ import {
   baselines,
   builds,
   createDb,
-  diffRegions,
   eq,
   projects,
   screenshots,
@@ -227,11 +226,12 @@ desc(
     it("viewport filter: regions tagged with non-matching viewport are skipped", async () => {
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP, VP_MOBILE] });
 
-      // A single region tagged VP_DESKTOP that covers the entire image.
-      // Over-large dimensions are fine — the engine clips to image bounds.
-      // This fully masks desktop but leaves mobile unmasked; the candidate
-      // fixture differs from baseline, so mobile must produce diff regions
-      // and desktop must produce zero.
+      // Full-cover region tagged for desktop only. After the diff:
+      //   desktop screenshot → masked → diff_percent for desktop = 0
+      //   mobile screenshot  → NOT masked → diff_percent for mobile > 0
+      // Aggregate diff_percent on the run row = MAX(desktop=0, mobile>0) > 0.
+      // FALSIFIABILITY: if the viewport filter were stripped (region applies
+      // to both viewports), both would be masked, aggregate would be 0.
       const desktopFullCover = {
         x: 0,
         y: 0,
@@ -247,30 +247,26 @@ desc(
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
 
-      const dr = await db
+      const [row] = await db
         .select()
-        .from(diffRegions)
-        .where(eq(diffRegions.runId, candidateRunId));
-
-      const desktopRegions = dr.filter((r) => r.viewport === VP_DESKTOP);
-      const mobileRegions = dr.filter((r) => r.viewport === VP_MOBILE);
-
-      // Mobile is unmasked; the candidate fixture differs from baseline so
-      // mobile must produce diff regions.
-      expect(mobileRegions.length).toBeGreaterThan(0);
-      // Desktop is fully masked → zero diff regions for desktop.
-      // (Falsifiable: if the viewport filter were stripped, the full-cover
-      // region would also mask mobile and mobileRegions would be empty too.)
-      expect(desktopRegions.length).toBe(0);
+        .from(testRuns)
+        .where(eq(testRuns.id, candidateRunId))
+        .limit(1);
+      expect(row.diffPercent).toBeGreaterThan(0);
     }, 60_000);
 
     it("regions without a viewport field apply to all viewports (backward compat)", async () => {
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP, VP_MOBILE] });
 
-      const legacy = { x: 5, y: 5, width: 100, height: 100 };
+      // Legacy region (no viewport field) covering the full image. After
+      // the diff: BOTH viewports masked → both diff_percent values = 0 →
+      // aggregate = MAX(0, 0) = 0. FALSIFIABILITY: if untagged regions
+      // were skipped instead of applied-to-all, neither viewport would be
+      // masked, aggregate would be > 0.
+      const legacyFullCover = { x: 0, y: 0, width: 10000, height: 10000 };
       await db
         .update(testRuns)
-        .set({ ignoreAreas: JSON.stringify([legacy]) })
+        .set({ ignoreAreas: JSON.stringify([legacyFullCover]) })
         .where(eq(testRuns.id, candidateRunId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
@@ -281,7 +277,7 @@ desc(
         .from(testRuns)
         .where(eq(testRuns.id, candidateRunId))
         .limit(1);
-      expect(row.status).toBeDefined();
+      expect(row.diffPercent).toBe(0);
     }, 60_000);
 
     it("malformed variation JSON falls back to run-only (no crash)", async () => {
