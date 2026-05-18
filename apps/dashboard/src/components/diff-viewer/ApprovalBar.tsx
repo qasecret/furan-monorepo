@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { useViewerStore } from "./useViewerStore";
+
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 
@@ -69,8 +71,11 @@ export function ApprovalBar({ runId }: Props) {
       </Button>
       <Button
         variant="secondary"
-        disabled
-        title="Comments arrive in Phase 3"
+        onClick={() =>
+          useViewerStore
+            .getState()
+            .setCommentPanelOpen(!useViewerStore.getState().commentPanelOpen)
+        }
         data-testid="comment-button"
       >
         Comment
