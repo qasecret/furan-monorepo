@@ -2,6 +2,15 @@ import { sql } from "@furan/db";
 import { createRedisConnection } from "@furan/queue";
 import { createStorage, type Storage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+
+export const livezResponse = z.object({ status: z.literal("ok") });
+export const readyzResponse = z.object({
+  checks: z.record(z.string(), z.string()),
+});
+export const metricsResponse = z
+  .string()
+  .describe("Prometheus exposition format (text/plain).");
 
 type Redis = ReturnType<typeof createRedisConnection>;
 

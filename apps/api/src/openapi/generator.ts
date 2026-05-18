@@ -1,12 +1,15 @@
 import { OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 
+import { registerHealthPaths } from "./paths/health.js";
+import { registerUsersPaths } from "./paths/users.js";
 import { registry } from "./registry.js";
 
 let _registered = false;
 
 function registerAll(): void {
   if (_registered) return;
-  // Path registrars are added in subsequent tasks (5–9).
+  registerHealthPaths();
+  registerUsersPaths();
   _registered = true;
 }
 
