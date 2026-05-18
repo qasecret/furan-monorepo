@@ -9,11 +9,14 @@ import type {
 /**
  * Render styles for the four region states. Saved-active = solid red,
  * saved-inactive = gray (read-only when editing a different scope),
- * draft = dashed yellow, marked-for-deletion = strikethrough overlay.
- * Selected = +2px stroke width.
+ * draft = yellow stroke / no fill, marked-for-deletion = strikethrough
+ * diagonal overlay. Selected = 4px stroke width.
  *
  * Colors are chosen for visibility over white/varied images per ADR-031;
  * inactive-scope uses a lower alpha so it stays clearly subordinate.
+ * (Pixi v8 Graphics.stroke has no native dash support; if dashed strokes
+ * become a UX requirement, we'd implement them by drawing segmented
+ * line pieces.)
  */
 const STYLE = {
   savedActive: {
@@ -68,7 +71,6 @@ export function mountIgnoreRegionLayer(
   input: MountInput,
 ): Container {
   const container = new Container();
-  container.eventMode = "static";
 
   type ItemStyle = {
     fill: number;
