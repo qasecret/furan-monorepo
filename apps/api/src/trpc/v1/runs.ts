@@ -9,6 +9,7 @@ import {
   resolveBaseline,
   screenshots,
   testRuns,
+  testVariations,
 } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -122,6 +123,34 @@ export const runsRouter = t.router({
         .from(diffRegions)
         .where(eq(diffRegions.runId, input.runId));
 
+      // Per ADR-031, PR 2 (frontend) needs the variation's ignoreAreas to
+      // render the inactive-scope read-only regions in the editor. Return
+      // it as a parsed array (or null when unset/malformed).
+      const variationRows = await ctx.db
+        .select({ ignoreAreas: testVariations.ignoreAreas })
+        .from(testVariations)
+        .where(eq(testVariations.id, run.testVariationId))
+        .limit(1);
+      const variationIgnoreAreasRaw = variationRows[0]?.ignoreAreas ?? null;
+      type IgnoreRegion = {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        viewport?: string;
+      };
+      let variationIgnoreAreas: IgnoreRegion[] | null = null;
+      if (variationIgnoreAreasRaw) {
+        try {
+          const parsed = JSON.parse(variationIgnoreAreasRaw);
+          if (Array.isArray(parsed)) {
+            variationIgnoreAreas = parsed as IgnoreRegion[];
+          }
+        } catch {
+          // malformed JSON → treat as null
+        }
+      }
+
       // Resolve the baseline screenshot for the BASELINE pane of the viewer.
       // T9: dashboard side-by-side / overlay / onion-skin all need the
       // baseline's screenshot row (its imageKey). Reuse the three-tier
@@ -174,6 +203,7 @@ export const runsRouter = t.router({
         diffRegions: regions,
         baselineScreenshot,
         baselineSource,
+        variationIgnoreAreas,
       };
     }),
 

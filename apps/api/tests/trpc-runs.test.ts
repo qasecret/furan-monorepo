@@ -212,6 +212,30 @@ d("tRPC runs router", () => {
     expect(data.baselineSource).toBe("this_branch");
   });
 
+  test("getById: returns variationIgnoreAreas from the run's variation", async () => {
+    const region = {
+      x: 10,
+      y: 20,
+      width: 30,
+      height: 40,
+      viewport: "1280x720",
+    };
+    await h.db
+      .update(testVariations)
+      .set({ ignoreAreas: JSON.stringify([region]) })
+      .where(eq(testVariations.id, s.variationId));
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.variationIgnoreAreas).toEqual([region]);
+  });
+
+  test("getById: variationIgnoreAreas is null when variation column is null", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.variationIgnoreAreas).toBeNull();
+  });
+
   test("getById: non-member receives FORBIDDEN", async () => {
     const client = makeClient(baseUrl, s.nonMemberJwt);
     let err: TRPCClientError<AppRouter> | undefined;
