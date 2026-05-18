@@ -89,7 +89,9 @@ export async function handleCaptureJob(
             viewport: viewportStr,
             browser: data.browser,
           })
-          .onConflictDoNothing({ target: screenshots.imageKey });
+          .onConflictDoNothing({
+            target: [screenshots.runId, screenshots.viewport],
+          });
       });
 
       imageKeys.push(imageKey);
