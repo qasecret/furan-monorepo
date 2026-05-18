@@ -5,6 +5,9 @@ import { registerBuildsPaths } from "./paths/builds.js";
 import { registerHealthPaths } from "./paths/health.js";
 import { registerMembersPaths } from "./paths/members.js";
 import { registerProjectsPaths } from "./paths/projects.js";
+import { registerRunEventsPaths } from "./paths/run-events.js";
+import { registerSdkRunsPaths } from "./paths/sdk-runs.js";
+import { registerStorageProxyPaths } from "./paths/storage-proxy.js";
 import { registerTokensPaths } from "./paths/tokens.js";
 import { registerUsersAdminPaths } from "./paths/users-admin.js";
 import { registerUsersPaths } from "./paths/users.js";
@@ -22,6 +25,9 @@ function registerAll(): void {
   registerMembersPaths();
   registerBuildsPaths();
   registerUsersAdminPaths();
+  registerSdkRunsPaths();
+  registerRunEventsPaths();
+  registerStorageProxyPaths();
   _registered = true;
 }
 

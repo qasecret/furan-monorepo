@@ -15,7 +15,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 
-const createRunBody = z.object({
+export const createRunBody = z.object({
   projectId: z.string().uuid(),
   buildId: z.string().uuid(),
   branchName: z.string().min(1).max(255),
@@ -28,7 +28,63 @@ const createRunBody = z.object({
   customTags: z.string().max(1024).optional(),
 });
 
-const screenshotsParams = z.object({ runId: z.string().uuid() });
+export const screenshotsParams = z.object({ runId: z.string().uuid() });
+
+export const createRunResponse = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  projectId: z.string().uuid(),
+  testVariationId: z.string().uuid(),
+  buildId: z.string().uuid(),
+  branchName: z.string(),
+  browser: z.string().nullable(),
+  viewport: z.string().nullable(),
+  status: z.string(),
+  createdAt: z.date(),
+});
+
+export const uploadScreenshotForm = z.object({
+  pngBytes: z
+    .string()
+    .openapi({ type: "string", format: "binary" })
+    .describe("PNG screenshot bytes. Max 50 MB. Required."),
+  domHtml: z
+    .string()
+    .openapi({ type: "string", format: "binary" })
+    .optional()
+    .describe("Optional captured DOM HTML, used by L2 diff."),
+  name: z
+    .string()
+    .optional()
+    .describe("Snapshot name (logged for traceability)."),
+  viewport: z
+    .string()
+    .optional()
+    .describe("Viewport string e.g. `1280x720`. Defaults to run viewport."),
+  browser: z
+    .string()
+    .optional()
+    .describe("Browser id. Defaults to run browser."),
+});
+
+export const uploadScreenshotResponse = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  imageKey: z
+    .string()
+    .describe("sha256 hex of PNG bytes (content-addressed storage key)."),
+  domKey: z.string().nullable(),
+  viewport: z.string(),
+  browser: z.string(),
+  createdAt: z.date().nullable(),
+});
+
+export const telemetryBody = z
+  .record(z.string(), z.unknown())
+  .describe(
+    "Anonymous SDK telemetry payload — server logs only, no validation.",
+  );
 
 // Defensible deviation: bytes cap for a single PNG is enforced by the
 // @fastify/multipart `limits.fileSize` registration in app.ts (50 MB). DOM HTML
