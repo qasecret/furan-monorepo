@@ -4,6 +4,7 @@ import {
   desc,
   diffRegions,
   eq,
+  isNull,
   lt,
   projects,
   resolveBaseline,
@@ -165,6 +166,18 @@ export const runsRouter = t.router({
         }
       }
 
+      // ADR-032: autoApproved is true iff at least one baselines row
+      // exists for this run with userId IS NULL (the system-approved
+      // signal). Single PK-indexed lookup; cheap.
+      const autoApprovedRows = await ctx.db
+        .select({ id: baselines.id })
+        .from(baselines)
+        .where(
+          and(eq(baselines.testRunId, input.runId), isNull(baselines.userId)),
+        )
+        .limit(1);
+      const autoApproved = autoApprovedRows.length > 0;
+
       // Resolve the baseline screenshot for the BASELINE pane of the viewer.
       // T9: dashboard side-by-side / overlay / onion-skin all need the
       // baseline's screenshot row (its imageKey). Reuse the three-tier
@@ -219,6 +232,7 @@ export const runsRouter = t.router({
         baselineScreenshot,
         baselineSource,
         variationIgnoreAreas,
+        autoApproved,
       };
     }),
 
