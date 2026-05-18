@@ -8,6 +8,7 @@ import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
+import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
@@ -93,6 +94,31 @@ export function DiffViewer({ runId, diffId }: Props) {
   );
   useRunEvents(runId, onSseEvent);
 
+  // ADR-031: hydrate the ignore-region editor's saved slices from the
+  // run + variation payload. The store's hydrateSavedIgnoreAreas
+  // preserves drafts + markedForDeletion when unsaved changes exist
+  // (guards against silent loss on react-query refetch / SSE refresh).
+  const hydrateSavedIgnoreAreas = useViewerStore(
+    (s) => s.hydrateSavedIgnoreAreas,
+  );
+  useEffect(() => {
+    const runRegions = (data?.ignoreAreas ?? []) as Array<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      viewport: string;
+    }>;
+    const variationRegions = (data?.variationIgnoreAreas ?? []) as Array<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      viewport: string;
+    }>;
+    hydrateSavedIgnoreAreas(runRegions, variationRegions);
+  }, [data?.ignoreAreas, data?.variationIgnoreAreas, hydrateSavedIgnoreAreas]);
+
   const candidateScreenshot = data?.screenshots?.[0] ?? null;
   const baselineScreenshot = data?.baselineScreenshot ?? null;
   // The L1 diff worker writes the diff overlay PNG to testRuns.diffName (key).
@@ -129,7 +155,7 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   return (
     <div className="flex flex-col h-full" data-diff-id={diffId}>
-      <ViewerToolbar />
+      <ViewerToolbar runId={runId} />
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <BaselineSourceBadge source={baselineSource} />
         <ViewportSwitcher viewports={uniqueViewports} />

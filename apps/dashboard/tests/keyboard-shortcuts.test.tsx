@@ -21,6 +21,12 @@ describe("useDiffViewerShortcuts", () => {
       opacity: 0.5,
       selectedRegionId: null,
       viewport: "",
+      ignoreEditMode: "off",
+      savedRunIgnoreAreas: [],
+      savedVariationIgnoreAreas: [],
+      draftIgnoreAreas: [],
+      markedForDeletion: new Set(),
+      selectedIgnoreId: null,
     });
     pushMock.mockReset();
   });
@@ -58,5 +64,81 @@ describe("useDiffViewerShortcuts", () => {
     );
     act(() => press("]"));
     expect(useViewerStore.getState().viewport).toBe("375x667");
+  });
+
+  it("I toggles ignoreEditMode off→run→off", () => {
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("I"));
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
+    act(() => press("I"));
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+  });
+
+  it("Delete removes the selected region when edit mode is on", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("Delete"));
+    expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
+    expect(useViewerStore.getState().selectedIgnoreId).toBeNull();
+  });
+
+  it("Backspace also removes the selected region", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "variation",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("Backspace"));
+    expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
+  });
+
+  it("Escape exits ignore edit mode", () => {
+    useViewerStore.setState({ ignoreEditMode: "run" });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("Escape"));
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+  });
+
+  it("Delete is a no-op when edit mode is off", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("Delete"));
+    expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
   });
 });
