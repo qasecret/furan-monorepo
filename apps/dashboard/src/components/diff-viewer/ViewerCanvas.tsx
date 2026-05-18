@@ -101,7 +101,6 @@ export function ViewerCanvas({
       if (cancelled) return;
       baselineRef.current?.appendChild(baselineApp.canvas);
       candidateRef.current?.appendChild(candidateApp.canvas);
-      candidateAppRef.current = candidateApp;
 
       if (baselineUrl) {
         baselineSpriteRef.current = await mountImageLayer(
@@ -115,6 +114,10 @@ export function ViewerCanvas({
           candidateUrl,
         );
       }
+      // IgnoreRegionLayer mount effect uses candidateAppRef.current — only set
+      // it after the candidate sprite has mounted so the layer doesn't briefly
+      // render on an empty stage during init.
+      candidateAppRef.current = candidateApp;
     })();
 
     return () => {
@@ -141,7 +144,6 @@ export function ViewerCanvas({
       });
       if (cancelled) return;
       stageRef.current?.appendChild(app.canvas);
-      singleAppRef.current = app;
 
       if (baselineUrl) {
         baselineSpriteRef.current = await mountImageLayer(app, baselineUrl);
@@ -166,6 +168,10 @@ export function ViewerCanvas({
       ) {
         candidateSpriteRef.current.alpha = opacityRef.current;
       }
+      // IgnoreRegionLayer mount effect uses singleAppRef.current — only set
+      // it after all mountImageLayer calls (including the diff-heatmap branch)
+      // so the layer doesn't briefly render on an empty stage during init.
+      singleAppRef.current = app;
     })();
 
     return () => {
@@ -286,6 +292,12 @@ export function ViewerCanvas({
     addDraftRegion(draft);
   };
 
+  const handlePointerCancel = (_e: React.PointerEvent<HTMLDivElement>) => {
+    if (!overlayActive) return;
+    setDragStart(null);
+    setDragCurrent(null);
+  };
+
   if (mode === "side-by-side") {
     return (
       <div className="grid grid-cols-2 gap-2 p-2">
@@ -307,6 +319,7 @@ export function ViewerCanvas({
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerCancel}
             />
           )}
         </div>
@@ -329,6 +342,7 @@ export function ViewerCanvas({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
         />
       )}
     </div>
