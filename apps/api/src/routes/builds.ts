@@ -4,16 +4,32 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 
-const createBody = z.object({
+export const createBody = z.object({
   ciBuildId: z.string().min(1).optional(),
   number: z.number().int().optional(),
   branchName: z.string().min(1).optional(),
 });
 
-const paramsId = z.object({ id: z.string().uuid() });
-const querySchema = z.object({
+export const paramsId = z.object({ id: z.string().uuid() });
+export const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+export const buildResponse = z.object({
+  id: z.string().uuid(),
+  ciBuildId: z.string().nullable(),
+  number: z.number().int().nullable(),
+  branchName: z.string().nullable(),
+  status: z.string(),
+  projectId: z.string().uuid(),
+  userId: z.string().uuid(),
+  isRunning: z.boolean(),
+  environment: z.string().nullable(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export const buildListResponse = z.array(buildResponse);
 
 export async function registerBuildsRoutes(
   app: FastifyInstance,

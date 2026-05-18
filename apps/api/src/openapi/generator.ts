@@ -1,7 +1,10 @@
 import { OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 
 import { registerAuthPaths } from "./paths/auth.js";
+import { registerBuildsPaths } from "./paths/builds.js";
 import { registerHealthPaths } from "./paths/health.js";
+import { registerMembersPaths } from "./paths/members.js";
+import { registerProjectsPaths } from "./paths/projects.js";
 import { registerTokensPaths } from "./paths/tokens.js";
 import { registerUsersPaths } from "./paths/users.js";
 import { registry } from "./registry.js";
@@ -14,6 +17,9 @@ function registerAll(): void {
   registerUsersPaths();
   registerAuthPaths();
   registerTokensPaths();
+  registerProjectsPaths();
+  registerMembersPaths();
+  registerBuildsPaths();
   _registered = true;
 }
 

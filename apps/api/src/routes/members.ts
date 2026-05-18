@@ -4,12 +4,19 @@ import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
 
-const addBody = z.object({ userId: z.string().uuid() });
+export const addBody = z.object({ userId: z.string().uuid() });
 
-const paramsAdd = z.object({ id: z.string().uuid() });
-const paramsRemove = z.object({
+export const paramsAdd = z.object({ id: z.string().uuid() });
+export const paramsRemove = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
+});
+
+export const memberResponse = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  userId: z.string().uuid(),
+  createdAt: z.date(),
 });
 
 export async function registerMembersRoutes(
