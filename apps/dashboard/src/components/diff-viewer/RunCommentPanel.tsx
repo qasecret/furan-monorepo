@@ -81,8 +81,8 @@ export function RunCommentPanel({ runId }: Props) {
         </label>
         <Button
           type="button"
-          variant="ghost"
-          size="sm"
+          variant="secondary"
+          className="px-2 py-1 text-xs"
           onClick={() => setOpen(false)}
           data-testid="comment-close-button"
         >
