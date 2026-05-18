@@ -234,6 +234,84 @@ export const runsRouter = t.router({
       return { runId: row.id, comment: row.comment };
     }),
 
+  /**
+   * Per ADR-031: persist ignore regions at run scope (`test_runs.ignore_areas`)
+   * or variation scope (`test_variations.ignore_areas`), then enqueue a
+   * `diff` job for the same run so the worker re-evaluates with the new
+   * masks. The mutation never writes both columns.
+   *
+   * Regions carry a `viewport` tag so multi-viewport runs apply the right
+   * mask to the right screenshot — see ADR-031 §Decision 3.
+   */
+  setIgnoreAreas: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        scope: z.enum(["run", "variation"]),
+        ignoreAreas: z
+          .array(
+            z.object({
+              x: z.number().int().nonnegative(),
+              y: z.number().int().nonnegative(),
+              width: z.number().int().min(1),
+              height: z.number().int().min(1),
+              viewport: z.string().min(1).max(32),
+            }),
+          )
+          .max(50)
+          .nullable(),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const runRows = await ctx.db
+        .select({
+          id: testRuns.id,
+          projectId: testRuns.projectId,
+          testVariationId: testRuns.testVariationId,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const payload =
+        input.ignoreAreas === null ? null : JSON.stringify(input.ignoreAreas);
+
+      if (input.scope === "run") {
+        await ctx.db
+          .update(testRuns)
+          .set({ ignoreAreas: payload, updatedAt: new Date() })
+          .where(eq(testRuns.id, input.runId));
+      } else {
+        await ctx.db
+          .update(testVariations)
+          .set({ ignoreAreas: payload, updatedAt: new Date() })
+          .where(eq(testVariations.id, run.testVariationId));
+      }
+
+      await ctx.diffQueue.add("diff", {
+        runId: run.id,
+        projectId: run.projectId,
+      });
+
+      return {
+        runId: run.id,
+        scope: input.scope,
+        ignoreAreas: input.ignoreAreas,
+        requeued: true as const,
+      };
+    }),
+
   approve: t.procedure
     .input(runIdInput)
     .use(authed)

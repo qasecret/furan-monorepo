@@ -423,4 +423,257 @@ d("tRPC runs router", () => {
     expect(err).toBeDefined();
     expect(err?.data?.code).toBe("NOT_FOUND");
   });
+
+  // ADR-031: per-run ignore-regions editor + re-diff trigger.
+  describe("setIgnoreAreas", () => {
+    const VP = "1280x720";
+    const validRegion = { x: 10, y: 20, width: 30, height: 40, viewport: VP };
+
+    beforeEach(() => {
+      h.diffQueueAdd.mockClear();
+    });
+
+    test("scope=run writes to test_runs.ignore_areas and enqueues a diff job", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [validRegion],
+      });
+      expect(res).toEqual({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [validRegion],
+        requeued: true,
+      });
+
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(row.ignoreAreas).toBe(JSON.stringify([validRegion]));
+
+      const [vRow] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(vRow.ignoreAreas).toBeNull();
+
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+        runId: s.runId,
+        projectId: s.projectId,
+      });
+    });
+
+    test("scope=variation writes to test_variations.ignore_areas and enqueues a diff job", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [validRegion],
+      });
+      expect(res).toEqual({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [validRegion],
+        requeued: true,
+      });
+
+      const [vRow] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(vRow.ignoreAreas).toBe(JSON.stringify([validRegion]));
+
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(row.ignoreAreas).toBeNull();
+
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+    });
+
+    test("ignoreAreas: null clears the target column (scope=run)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [validRegion],
+      });
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: null,
+      });
+      expect(res.ignoreAreas).toBeNull();
+
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(row.ignoreAreas).toBeNull();
+    });
+
+    test("ignoreAreas: null clears the target column (scope=variation)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [validRegion],
+      });
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: null,
+      });
+      expect(res.ignoreAreas).toBeNull();
+
+      const [vRow] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(vRow.ignoreAreas).toBeNull();
+    });
+
+    test("rejects > 50 regions", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const tooMany = Array.from({ length: 51 }, (_, i) => ({
+        ...validRegion,
+        x: i,
+      }));
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: tooMany,
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+
+    test("rejects region with negative coordinates", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [{ ...validRegion, x: -1 }],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects region with zero width/height", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [{ ...validRegion, width: 0 }],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects region missing viewport field", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          // @ts-expect-error — deliberately omitting viewport to test runtime validation
+          ignoreAreas: [{ x: 1, y: 1, width: 10, height: 10 }],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects invalid scope value", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          // @ts-expect-error — deliberately invalid scope
+          scope: "project",
+          ignoreAreas: [validRegion],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("unauthenticated client receives UNAUTHORIZED", async () => {
+      const client = makeClient(baseUrl);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [validRegion],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("UNAUTHORIZED");
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+
+    test("non-member receives FORBIDDEN", async () => {
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [validRegion],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("FORBIDDEN");
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+
+    test("unknown runId returns NOT_FOUND or FORBIDDEN", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.setIgnoreAreas.mutate({
+          runId: "00000000-0000-0000-0000-000000000000",
+          scope: "run",
+          ignoreAreas: [validRegion],
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      // resolveRunProjectId returns null for unknown runId → projectMember
+      // middleware rejects with FORBIDDEN (its standard behavior). NOT_FOUND
+      // would require a separate pre-check before the middleware.
+      expect(["FORBIDDEN", "NOT_FOUND"]).toContain(err?.data?.code);
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+  });
 });
