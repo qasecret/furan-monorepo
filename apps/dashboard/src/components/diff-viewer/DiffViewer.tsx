@@ -155,7 +155,7 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   return (
     <div className="flex flex-col h-full" data-diff-id={diffId}>
-      <ViewerToolbar />
+      <ViewerToolbar runId={runId} />
       <div className="flex items-center gap-2 px-3 py-2 border-b">
         <BaselineSourceBadge source={baselineSource} />
         <ViewportSwitcher viewports={uniqueViewports} />

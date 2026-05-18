@@ -71,6 +71,7 @@ vi.mock("../src/lib/trpc", () => {
         approve: { useMutation: noopMutation },
         reject: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
+        setIgnoreAreas: { useMutation: noopMutation },
       },
     },
   };
