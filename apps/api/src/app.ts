@@ -21,8 +21,7 @@ import { registerStorageProxyRoute } from "./routes/storage-proxy.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
 import { registerUsersAdminRoutes } from "./routes/users-admin.js";
 import { registerUsersRoutes } from "./routes/users.js";
-import { buildContext } from "./trpc/context.js";
-import type { DiffQueueProducer } from "./trpc/context.js";
+import { buildContext, type DiffQueueProducer } from "./trpc/context.js";
 import { appRouter } from "./trpc/v1/router.js";
 
 export interface AppDeps {

@@ -12,7 +12,10 @@ export interface TestApp {
   db: DB;
   telemetry: Telemetry;
   env: Env;
-  /** Spy on .add() calls. Reset via diffQueueAdd.mockReset() between tests. */
+  /**
+   * Spy on `.add()` calls. Detached/inert when `opts.diffQueue` is
+   * overridden. Reset via `diffQueueAdd.mockReset()` between tests.
+   */
   diffQueueAdd: Mock;
   close: () => Promise<void>;
 }
@@ -23,6 +26,7 @@ const DEFAULT_JWT_SECRET = "test_jwt_secret_at_least_32_chars_long_for_tests"; /
 
 export interface CreateTestAppOpts {
   envOverrides?: Partial<Env>;
+  /** Skip `app.ready()` so callers can register probe routes first. */
   skipReady?: boolean;
   /** Override the default vi.fn() diffQueue mock. */
   diffQueue?: DiffQueueProducer;
@@ -41,10 +45,10 @@ export async function createTestApp(
   });
   const { db, close: closeDb } = createDb();
 
-  const diffQueueAdd = vi.fn().mockResolvedValue({ id: "test-job-id" });
-  const diffQueue: DiffQueueProducer = opts.diffQueue ?? {
-    add: diffQueueAdd as unknown as DiffQueueProducer["add"],
-  };
+  const diffQueueAdd = vi
+    .fn<DiffQueueProducer["add"]>()
+    .mockResolvedValue({ id: "test-job-id" });
+  const diffQueue: DiffQueueProducer = opts.diffQueue ?? { add: diffQueueAdd };
 
   const app = await createApp({ db, telemetry, env, diffQueue });
   if (!opts.skipReady) {
