@@ -87,7 +87,14 @@ export const runsRouter = t.router({
         conditions.push(eq(testRuns.branchName, input.branch));
       }
       if (input.status) {
-        conditions.push(eq(testRuns.status, input.status));
+        // The column is now a pgEnum (migration 0008_run_status_enum); the
+        // input Zod schema is still free-form string — Task 3 (step 3.5) of
+        // furan-design/plans/2026-05-19-run-status-enum.md narrows it to the
+        // typed union. Until then the cast keeps the existing runtime behaviour
+        // (unknown values yield an empty page) without lying about types.
+        conditions.push(
+          eq(testRuns.status, input.status as typeof testRuns.status._.data),
+        );
       }
 
       const rows = await ctx.db

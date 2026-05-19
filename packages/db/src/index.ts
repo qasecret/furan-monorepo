@@ -8,6 +8,10 @@ export * from "./schema/index.js";
 export { resolveBaseline } from "./baseline.js";
 export type { BaselineSource, GitRefs } from "./baseline.js";
 
+// Explicit type re-export for the run-status enum (the table-exports above
+// already pick up the pgEnum constant via `./schema/index.js`).
+export type { RunStatus } from "./schema/enums.js";
+
 // Re-export drizzle-orm helpers that consumers (apps/api) need.
 // Per @furan/no-raw-drizzle ESLint rule, apps cannot import from
 // drizzle-orm directly — they go through this re-export.
