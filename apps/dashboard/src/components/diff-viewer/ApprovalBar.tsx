@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useViewerStore } from "./useViewerStore";
 
+import { AggregateSeverityPill } from "@/components/aggregate-severity-pill";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +37,13 @@ interface Props {
    * `running` is the safest default since it disables every control.
    */
   status?: RunStatus;
+  /**
+   * Diff regions for the current run; feeds the AggregateSeverityPill chip
+   * rendered next to the status badge. Optional + defaults to an empty list
+   * so callers that don't have the data yet (or runs with no regions) render
+   * cleanly.
+   */
+  diffRegions?: { severity: string }[];
 }
 
 /**
@@ -75,7 +83,7 @@ const DISABLED_REASON: Record<
  * detail; the predicate is resilient to minor encoder changes between tRPC
  * patch releases.
  */
-export function ApprovalBar({ runId, status }: Props) {
+export function ApprovalBar({ runId, status, diffRegions }: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
 
@@ -132,6 +140,7 @@ export function ApprovalBar({ runId, status }: Props) {
             Status
           </span>
           <RunStatusBadge status={effectiveStatus} />
+          <AggregateSeverityPill regions={diffRegions ?? []} />
         </div>
 
         <div className="flex items-center gap-2">
