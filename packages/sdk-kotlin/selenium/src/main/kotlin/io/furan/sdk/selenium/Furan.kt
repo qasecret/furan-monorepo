@@ -87,6 +87,8 @@ class Furan(
                     CreateBuildRequest(
                         ciBuildId = config.buildId,
                         branchName = config.branchName,
+                        name = config.name,
+                        properties = config.properties.takeIf { it.isNotEmpty() },
                     ),
                 )
                 buildId = build.id

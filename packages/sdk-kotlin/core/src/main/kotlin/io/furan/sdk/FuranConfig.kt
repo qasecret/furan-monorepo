@@ -8,6 +8,10 @@ data class FuranConfig(
     val projectId: String,
     val buildId: String? = null,
     val branchName: String = "main",
+    /** Applitools BATCH_NAME parallel. Populated from FURAN_BUILD_NAME. */
+    val name: String? = null,
+    /** Applitools `addProperty` parallel. Populated from FURAN_BUILD_PROPERTIES. */
+    val properties: Map<String, String> = emptyMap(),
     val viewports: List<Viewport> = listOf(Viewport(1280, 720)),
     val batchSize: Int = 16,
     val logLevel: String = "info",
@@ -40,12 +44,42 @@ data class FuranConfig(
                 projectId = projectId,
                 buildId = env["FURAN_BUILD_ID"],
                 branchName = env["FURAN_BRANCH"] ?: "main",
+                name = env["FURAN_BUILD_NAME"]?.trim()?.takeIf { it.isNotEmpty() },
+                properties = parseProperties(env["FURAN_BUILD_PROPERTIES"]),
                 viewports = env["FURAN_VIEWPORTS"]?.let(::parseViewports) ?: listOf(Viewport(1280, 720)),
                 batchSize = env["FURAN_BATCH_SIZE"]?.toIntOrNull() ?: 16,
                 logLevel = env["FURAN_LOG_LEVEL"] ?: "info",
                 telemetryEnabled = env["FURAN_TELEMETRY"]?.let { it != "0" && it.lowercase() != "false" } ?: true,
                 caCertPath = env["FURAN_CA_CERT_PATH"],
             )
+        }
+
+        /**
+         * Parses `key1=value1,key2=value2` (or `;`-separated) into a Map.
+         * Malformed pairs (no `=`, empty key) are dropped from the result and
+         * a warning is emitted on stdout via the same `[furan-sdk]` prefix used
+         * elsewhere — never fail a test run because of a misformatted CI env var.
+         */
+        internal fun parseProperties(raw: String?): Map<String, String> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            val out = mutableMapOf<String, String>()
+            for (token in raw.split(',', ';')) {
+                val pair = token.trim()
+                if (pair.isEmpty()) continue
+                val eq = pair.indexOf('=')
+                if (eq <= 0) {
+                    println("[furan-sdk] Skipping malformed FURAN_BUILD_PROPERTIES entry: '$pair'")
+                    continue
+                }
+                val key = pair.substring(0, eq).trim()
+                val value = pair.substring(eq + 1).trim()
+                if (key.isEmpty()) {
+                    println("[furan-sdk] Skipping malformed FURAN_BUILD_PROPERTIES entry: '$pair'")
+                    continue
+                }
+                out[key] = value
+            }
+            return out.toMap()
         }
 
         /** Parses `1280x720,375x812` into a list of [Viewport]. */

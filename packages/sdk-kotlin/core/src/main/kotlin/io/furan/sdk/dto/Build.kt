@@ -15,11 +15,14 @@ data class CreateBuildRequest(
     val ciBuildId: String? = null,
     val number: Int? = null,
     val branchName: String? = null,
+    val name: String? = null,
+    val properties: Map<String, String>? = null,
 )
 
 /**
  * Response body for POST /api/v1/projects/:id/builds and listing endpoints.
- * Mirrors the `builds` Drizzle row in `packages/db/src/schema/builds.ts`.
+ * Mirrors the `builds` Drizzle row in `packages/db/src/schema/builds.ts`
+ * post-migration 0009.
  */
 @Serializable
 data class BuildResponse(
@@ -30,6 +33,8 @@ data class BuildResponse(
     val ciBuildId: String? = null,
     val number: Int? = null,
     val status: String? = null,
+    val name: String? = null,
+    val properties: Map<String, String> = emptyMap(),
     val isRunning: Boolean = false,
     val environment: String = "default",
     val createdAt: String? = null,
