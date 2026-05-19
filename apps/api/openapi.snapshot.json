@@ -1013,6 +1013,42 @@
               "minimum": 1,
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            }
           }
         ],
         "responses": {
@@ -1020,77 +1056,112 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "properties": {
-                      "branchName": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "branchName": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "ciBuildId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "environment": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "id": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "isRunning": {
+                            "type": "boolean"
+                          },
+                          "name": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "number": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "projectId": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "properties": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "status": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "userId": {
+                            "format": "uuid",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "ciBuildId",
+                          "number",
+                          "branchName",
+                          "status",
+                          "name",
+                          "properties",
+                          "projectId",
+                          "userId",
+                          "isRunning",
+                          "environment",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "type": "object"
                       },
-                      "ciBuildId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "createdAt": {
-                        "type": "string"
-                      },
-                      "environment": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "id": {
-                        "format": "uuid",
-                        "type": "string"
-                      },
-                      "isRunning": {
-                        "type": "boolean"
-                      },
-                      "number": {
-                        "type": [
-                          "integer",
-                          "null"
-                        ]
-                      },
-                      "projectId": {
-                        "format": "uuid",
-                        "type": "string"
-                      },
-                      "status": {
-                        "type": "string"
-                      },
-                      "updatedAt": {
-                        "type": "string"
-                      },
-                      "userId": {
-                        "format": "uuid",
-                        "type": "string"
-                      }
+                      "type": "array"
                     },
-                    "required": [
-                      "id",
-                      "ciBuildId",
-                      "number",
-                      "branchName",
-                      "status",
-                      "projectId",
-                      "userId",
-                      "isRunning",
-                      "environment",
-                      "createdAt",
-                      "updatedAt"
-                    ],
-                    "type": "object"
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "type": "object"
                 }
               }
             },
-            "description": "Builds ordered by createdAt desc"
+            "description": "Builds ordered by createdAt desc with cursor"
           },
           "400": {
             "content": {
@@ -1100,7 +1171,7 @@
                 }
               }
             },
-            "description": "Invalid query"
+            "description": "Invalid query (e.g. malformed property filter)"
           },
           "401": {
             "content": {
@@ -1139,7 +1210,7 @@
             ]
           }
         ],
-        "summary": "List builds for a project (most recent first)",
+        "summary": "List builds for a project (paginated, with optional filters)",
         "tags": [
           "builds"
         ]
@@ -1162,15 +1233,29 @@
               "schema": {
                 "properties": {
                   "branchName": {
+                    "maxLength": 200,
                     "minLength": 1,
                     "type": "string"
                   },
                   "ciBuildId": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 200,
                     "minLength": 1,
                     "type": "string"
                   },
                   "number": {
                     "type": "integer"
+                  },
+                  "properties": {
+                    "additionalProperties": {
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "type": "object"
                   }
                 },
                 "type": "object"
@@ -1179,6 +1264,99 @@
           }
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "branchName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "ciBuildId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "environment": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "isRunning": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "number": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "projectId": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "properties": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "status": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "userId": {
+                      "format": "uuid",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "ciBuildId",
+                    "number",
+                    "branchName",
+                    "status",
+                    "name",
+                    "properties",
+                    "projectId",
+                    "userId",
+                    "isRunning",
+                    "environment",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Existing build reattached (request properties merged in)"
+          },
           "201": {
             "content": {
               "application/json": {
@@ -1212,6 +1390,12 @@
                     "isRunning": {
                       "type": "boolean"
                     },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "number": {
                       "type": [
                         "integer",
@@ -1222,15 +1406,27 @@
                       "format": "uuid",
                       "type": "string"
                     },
+                    "properties": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
                     "status": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "updatedAt": {
                       "type": "string"
                     },
                     "userId": {
                       "format": "uuid",
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -1239,6 +1435,8 @@
                     "number",
                     "branchName",
                     "status",
+                    "name",
+                    "properties",
                     "projectId",
                     "userId",
                     "isRunning",
@@ -1250,7 +1448,7 @@
                 }
               }
             },
-            "description": "Build created"
+            "description": "New build created"
           },
           "400": {
             "content": {
@@ -1260,7 +1458,7 @@
                 }
               }
             },
-            "description": "Invalid body"
+            "description": "Invalid body (validation failed)"
           },
           "401": {
             "content": {
@@ -1280,7 +1478,7 @@
                 }
               }
             },
-            "description": "Not a project member with write access"
+            "description": "Not a project member"
           },
           "404": {
             "content": {
@@ -1299,7 +1497,7 @@
             ]
           }
         ],
-        "summary": "Create a build under a project",
+        "summary": "Find-or-create a build under a project, keyed on (projectId, ciBuildId)",
         "tags": [
           "builds"
         ]

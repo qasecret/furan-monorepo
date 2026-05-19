@@ -25,6 +25,10 @@ export {
   ilike,
   inArray,
   isNull,
+  isNotNull,
   lt,
+  lte,
   gt,
+  gte,
+  count,
 } from "drizzle-orm";
