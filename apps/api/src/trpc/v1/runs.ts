@@ -4,6 +4,7 @@ import {
   desc,
   diffRegions,
   eq,
+  inArray,
   isNull,
   lt,
   projects,
@@ -44,12 +45,16 @@ const listInput = z.object({
   /** Exact-match filter on `test_runs.branch_name`. */
   branch: z.string().min(1).max(255).optional(),
   /**
-   * Exact-match filter on `test_runs.status`. Narrowed to the typed
-   * `runStatusSchema` enum (the seven Applitools-aligned values) so the
-   * boundary rejects unknown values up front rather than silently
-   * returning an empty page. Replaces the Task 1 defensive cast.
+   * Multi-select filter on `test_runs.status`. Each element is narrowed to
+   * the typed `runStatusSchema` enum (the seven Applitools-aligned values)
+   * so the boundary rejects unknown values up front rather than silently
+   * returning an empty page. Spec §3.5: reviewers can combine e.g.
+   * "Unresolved + Failed" simultaneously.
+   *
+   * Semantics: `undefined` OR an empty array means "no filter" (return
+   * all statuses); a non-empty array translates to `status IN (...)`.
    */
-  status: runStatusSchema.optional(),
+  status: runStatusSchema.array().optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -91,8 +96,11 @@ export const runsRouter = t.router({
       if (input.branch) {
         conditions.push(eq(testRuns.branchName, input.branch));
       }
-      if (input.status) {
-        conditions.push(eq(testRuns.status, input.status));
+      // Empty array == no filter, identical to undefined — keeps the
+      // dashboard's "all checkboxes off" state simple and avoids an
+      // accidental `status IN ()` that would return zero rows.
+      if (input.status && input.status.length > 0) {
+        conditions.push(inArray(testRuns.status, input.status));
       }
 
       const rows = await ctx.db

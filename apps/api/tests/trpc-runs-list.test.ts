@@ -213,16 +213,46 @@ d("tRPC runs.list", () => {
     expect(page.nextCursor).toBeNull();
   });
 
-  test("list: filters by status enum", async () => {
+  test("list: filters by status enum (single value)", async () => {
     const client = makeClient(baseUrl, s.memberJwt);
     const page = await client.runs.list.query({
       projectId: s.projectId,
-      status: "passed",
+      status: ["passed"],
     });
     expect(page.items).toHaveLength(1);
     expect(page.items[0]?.status).toBe("passed");
     expect(page.items[0]?.branchName).toBe("feature/x");
     expect(page.nextCursor).toBeNull();
+  });
+
+  test("list: filters by status enum (multi-select array)", async () => {
+    // Spec §3.5: reviewers can pick e.g. 'Unresolved + Failed' or, here,
+    // the two distinguished feature/x runs (passed + failed). The seed
+    // has exactly two such runs; the 24 'new' runs must NOT come back.
+    const client = makeClient(baseUrl, s.memberJwt);
+    const page = await client.runs.list.query({
+      projectId: s.projectId,
+      status: ["passed", "failed"],
+    });
+    expect(page.items).toHaveLength(2);
+    const statuses = page.items.map((r) => r.status).sort();
+    expect(statuses).toEqual(["failed", "passed"]);
+    expect(page.items.every((r) => r.branchName === "feature/x")).toBe(true);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  test("list: empty status array behaves like 'no filter' (returns all)", async () => {
+    // The API treats `status: []` the same as `status: undefined` so the
+    // dashboard's "all checkboxes off" state never accidentally compiles
+    // to `status IN ()` (which would return zero rows). With 26 seeded
+    // runs and default page size 25, we expect a full page + cursor.
+    const client = makeClient(baseUrl, s.memberJwt);
+    const page = await client.runs.list.query({
+      projectId: s.projectId,
+      status: [],
+    });
+    expect(page.items).toHaveLength(25);
+    expect(page.nextCursor).not.toBeNull();
   });
 
   test("list: non-member editor receives FORBIDDEN", async () => {

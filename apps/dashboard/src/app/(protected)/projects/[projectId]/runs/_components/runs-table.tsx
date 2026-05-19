@@ -12,7 +12,11 @@ import { trpc } from "@/lib/trpc";
 interface Props {
   projectId: string;
   initialBranch?: string;
-  initialStatus?: RunStatus;
+  /**
+   * Per spec §3.5 the status filter is multi-select; an undefined or empty
+   * array both mean "no filter, show all statuses".
+   */
+  initialStatus?: RunStatus[];
 }
 
 interface RunItem {
@@ -44,10 +48,11 @@ interface RunItem {
 export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
   const [filters, setFilters] = useState<{
     branch?: string;
-    status?: RunStatus;
+    status?: RunStatus[];
   }>({
     branch: initialBranch,
-    status: initialStatus,
+    status:
+      initialStatus && initialStatus.length > 0 ? initialStatus : undefined,
   });
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunItem[]>([]);
@@ -57,6 +62,9 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
     limit: 25,
     cursor,
     branch: filters.branch,
+    // Send `undefined` (omitted) instead of `[]` for the all-statuses case
+    // so the wire shape matches the spec semantics and the API's
+    // `input.status.length > 0` guard sees consistent inputs.
     status: filters.status,
   });
 
@@ -87,8 +95,11 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
     setCursor(data.nextCursor);
   };
 
-  const onFiltersChange = (f: { branch?: string; status?: RunStatus }) => {
-    setFilters(f);
+  const onFiltersChange = (f: { branch?: string; status?: RunStatus[] }) => {
+    setFilters({
+      branch: f.branch,
+      status: f.status && f.status.length > 0 ? f.status : undefined,
+    });
     setAccumulated([]);
     setCursor(undefined);
   };

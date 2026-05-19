@@ -6,6 +6,10 @@
  * Spec D5 acceptance: <RunsTable> renders rows, FiltersBar changes the
  * trpc input, and "Load more" pushes the previous response's cursor into
  * the next useQuery call.
+ *
+ * Spec §3.5 acceptance (multi-select status filter): the dropdown
+ * commits 0 / 1 / 2+ statuses to the API as `undefined`, `["..."]`, or
+ * `["..", ".."]`; URL round-trip uses repeated `?status=` params.
  */
 import {
   cleanup,
@@ -22,9 +26,10 @@ vi.mock("sonner", () => ({
 
 // next/navigation hooks used by FiltersBar to sync filter state into the URL.
 const replaceMock = vi.fn();
+let mockSearchParams: URLSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock, push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));
 
 const listMock = vi.fn();
@@ -81,7 +86,7 @@ vi.mock("@/lib/trpc", () => ({
           cursor?: string;
           limit?: number;
           branch?: string;
-          status?: string;
+          status?: string[];
         }) => {
           listMock(input);
           return {
@@ -98,6 +103,7 @@ vi.mock("@/lib/trpc", () => ({
   },
 }));
 
+import { FiltersBar } from "../src/app/(protected)/projects/[projectId]/runs/_components/filters-bar";
 import { RunsTable } from "../src/app/(protected)/projects/[projectId]/runs/_components/runs-table";
 
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
@@ -105,6 +111,7 @@ const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 beforeEach(() => {
   listMock.mockReset();
   replaceMock.mockReset();
+  mockSearchParams = new URLSearchParams();
 });
 
 afterEach(() => {
@@ -159,5 +166,162 @@ describe("RunsTable", () => {
       const lastCall = listMock.mock.calls.at(-1)?.[0] as { cursor?: string };
       expect(lastCall.cursor).toBe("2026-05-15T00:00:00.000Z");
     });
+  });
+});
+
+/**
+ * FiltersBar multi-select coverage — spec §3.5. Goes through the
+ * component directly (rather than through <RunsTable>) so we can assert
+ * on the onChange payload shape without coupling to RunsTable's
+ * normalisation step.
+ */
+describe("FiltersBar multi-select status", () => {
+  // Radix DropdownMenu trigger fires on pointerdown, not `click`, so a
+  // synthetic `fireEvent.click` on the trigger doesn't open the menu in
+  // jsdom. Drive the trigger with the keyboard path instead — pressing
+  // Enter on a focused trigger opens the menu. Same approach as the
+  // ApprovalBar override-menu tests.
+  const openStatusMenu = async () => {
+    const trigger = screen.getByTestId(
+      "status-filter-trigger",
+    ) as HTMLButtonElement;
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    // Allow Radix to flush its portal mount.
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  test("0 checked → onChange receives status: undefined and summary is 'All statuses'", async () => {
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    const trigger = screen.getByTestId("status-filter-trigger");
+    expect(trigger.textContent).toContain("All statuses");
+    // Without any change the debounced effect doesn't fire (firstRun guard).
+    await new Promise((r) => setTimeout(r, 350));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test("1 checked → API receives status: ['unresolved']", async () => {
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    await openStatusMenu();
+    const opt = await screen.findByTestId("status-filter-option-unresolved");
+    fireEvent.click(opt);
+
+    await waitFor(
+      () => {
+        const last = onChange.mock.calls.at(-1)?.[0] as {
+          status?: string[];
+        };
+        expect(last?.status).toEqual(["unresolved"]);
+      },
+      { timeout: 1000 },
+    );
+    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
+      "Unresolved",
+    );
+  });
+
+  test("2 checked → API receives status: ['unresolved', 'failed']", async () => {
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    await openStatusMenu();
+    fireEvent.click(
+      await screen.findByTestId("status-filter-option-unresolved"),
+    );
+    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
+
+    await waitFor(
+      () => {
+        const last = onChange.mock.calls.at(-1)?.[0] as {
+          status?: string[];
+        };
+        // STATUS_OPTIONS order is unresolved-first, then failed.
+        expect(last?.status).toEqual(["unresolved", "failed"]);
+      },
+      { timeout: 1000 },
+    );
+    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
+      "Unresolved + Failed",
+    );
+  });
+
+  test("3+ checked → trigger summarises as 'N statuses'", async () => {
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    await openStatusMenu();
+    fireEvent.click(
+      await screen.findByTestId("status-filter-option-unresolved"),
+    );
+    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
+    fireEvent.click(await screen.findByTestId("status-filter-option-aborted"));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByTestId("status-filter-trigger").textContent,
+        ).toContain("3 statuses");
+      },
+      { timeout: 1000 },
+    );
+  });
+
+  test("toggling a checked status off restores 'All statuses' when none remain", async () => {
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    await openStatusMenu();
+    const opt = await screen.findByTestId("status-filter-option-unresolved");
+    fireEvent.click(opt); // on
+    fireEvent.click(opt); // off
+
+    await waitFor(
+      () => {
+        const last = onChange.mock.calls.at(-1)?.[0] as {
+          status?: string[];
+        };
+        expect(last?.status).toBeUndefined();
+      },
+      { timeout: 1000 },
+    );
+    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
+      "All statuses",
+    );
+  });
+
+  test("URL round-trip: writes repeated ?status= params and hydrates from them", async () => {
+    // Phase 1 — toggle two statuses on, assert the replace() URL has both.
+    const onChange = vi.fn();
+    render(<FiltersBar onChange={onChange} />);
+    await openStatusMenu();
+    fireEvent.click(
+      await screen.findByTestId("status-filter-option-unresolved"),
+    );
+    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
+
+    await waitFor(
+      () => {
+        const lastCall = replaceMock.mock.calls.at(-1)?.[0] as string;
+        const sp = new URLSearchParams(lastCall.replace(/^\?/, ""));
+        expect(sp.getAll("status")).toEqual(["unresolved", "failed"]);
+      },
+      { timeout: 1000 },
+    );
+
+    cleanup();
+
+    // Phase 2 — simulate reload by mounting fresh with the URL we just wrote
+    // as both initial props and useSearchParams() backing store. Trigger
+    // summary should hydrate to "Unresolved + Failed" with no user input.
+    mockSearchParams = new URLSearchParams("status=unresolved&status=failed");
+    const onChange2 = vi.fn();
+    render(
+      <FiltersBar
+        initialStatus={["unresolved", "failed"]}
+        onChange={onChange2}
+      />,
+    );
+    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
+      "Unresolved + Failed",
+    );
   });
 });
