@@ -666,6 +666,150 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("NOT_FOUND");
   });
 
+  /**
+   * Cross-cutting lifecycle e2e (Task 5 of furan-design/plans/
+   * 2026-05-19-run-status-enum.md). Drives a single run through
+   * SDK-creation → diff-worker-write → reviewer-approve and asserts each
+   * stage emits the right status. The worker writes are simulated by
+   * direct UPDATEs because the API test suite has no queue-draining
+   * harness today (per plan §5.1 fallback), but every other hop —
+   * Fastify route, tRPC mutation, baseline insert — runs through the
+   * real wire path.
+   *
+   * If a future commit accidentally regresses any seam in this chain
+   * (e.g. sdk-runs.ts starts writing "new" again, approve stops
+   * inserting a baseline, override skips the recompute), this test
+   * fails before the per-package suites do because it spans them.
+   */
+  describe("run lifecycle e2e", () => {
+    test("POST /runs → unresolved → approve produces passed + baseline + merge=true", async () => {
+      // Stage 1: SDK creates a run via the public REST surface. This is
+      // what the Kotlin SDK does on its first checkpoint upload.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: (
+            await h.db
+              .select({ buildId: testRuns.buildId })
+              .from(testRuns)
+              .where(eq(testRuns.id, s.runId))
+              .limit(1)
+          )[0]!.buildId,
+          branchName: "feature/lifecycle-e2e",
+          name: "lifecycle-e2e",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      // Per spec §3.2 SDK-creation writes 'running', not 'new'.
+      expect(created.status).toBe("running");
+
+      // Stage 2: diff-worker would now do its work. We simulate the
+      // diff-found terminal write (spec §3.2: "unresolved" replaces the
+      // legacy "failed" on diff-found). The real handler is integration-
+      // tested in apps/diff-worker/tests/handler.test.ts.
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved" })
+        .where(eq(testRuns.id, created.id));
+
+      // Stage 3: reviewer approves via tRPC. This must (a) flip
+      // status → passed, (b) set merge → true, and (c) insert a
+      // baselines row attributing the promotion to the reviewer.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const approveRes = await client.runs.approve.mutate({
+        runId: created.id,
+      });
+      expect(approveRes).toEqual({ runId: created.id, approved: true });
+
+      const finalRows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, created.id))
+        .limit(1);
+      expect(finalRows[0]?.status).toBe("passed");
+      expect(finalRows[0]?.merge).toBe(true);
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows.length).toBe(1);
+      expect(baselineRows[0]?.userId).toBe(s.memberId);
+      expect(baselineRows[0]?.branchName).toBe("feature/lifecycle-e2e");
+    });
+
+    test("POST /runs → unresolved → overrideStatus(default) with no diffs collapses to passed", async () => {
+      // Same SDK-creation hop as above, but the reviewer takes the
+      // override-status path instead of approve. The diff-worker has
+      // written 'unresolved' but the diff_regions table is empty
+      // (e.g. all regions were below the severity threshold and
+      // pruned); the recompute branch should resolve to 'passed'.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: (
+            await h.db
+              .select({ buildId: testRuns.buildId })
+              .from(testRuns)
+              .where(eq(testRuns.id, s.runId))
+              .limit(1)
+          )[0]!.buildId,
+          branchName: "feature/lifecycle-e2e-override",
+          name: "lifecycle-e2e-override",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      expect(created.status).toBe("running");
+
+      // Simulate diff-worker writing the diff-found terminal state.
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved" })
+        .where(eq(testRuns.id, created.id));
+
+      // No diff_regions inserted — the recompute branch sees zero rows.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const overrideRes = await client.runs.overrideStatus.mutate({
+        runId: created.id,
+        status: "default",
+      });
+      expect(overrideRes.status).toBe("passed");
+
+      const finalRows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, created.id))
+        .limit(1);
+      // overrideStatus must NOT touch merge — that's approve/reject's job.
+      expect(finalRows[0]?.status).toBe("passed");
+      expect(finalRows[0]?.merge).toBe(false);
+      // No baseline written by overrideStatus.
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows.length).toBe(0);
+    });
+  });
+
   test("getById: autoApproved is true when a baselines row has user_id NULL for the run", async () => {
     await h.db.insert(baselines).values({
       baselineName: "auto",
