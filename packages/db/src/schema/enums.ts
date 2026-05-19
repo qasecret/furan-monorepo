@@ -16,3 +16,14 @@ export const baselineSourceEnum = pgEnum("baseline_source", [
   "parent_pr",
   "default_branch",
 ]);
+export const runStatusEnum = pgEnum("run_status", [
+  "new",
+  "running",
+  "passed",
+  "unresolved",
+  "failed",
+  "aborted",
+  "empty",
+]);
+
+export type RunStatus = (typeof runStatusEnum.enumValues)[number];

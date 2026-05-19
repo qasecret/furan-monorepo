@@ -1,5 +1,7 @@
 import type { Octokit } from "octokit";
 
+import type { GitHubStatusState } from "../status-mapping.js";
+
 /**
  * Single canonical commit-status context for Furan. Branch protection rules
  * in dogfood repos reference this exact string — DO NOT change it without
@@ -19,13 +21,17 @@ export const STATUS_CHECK_CONTEXT = "furan/baselines";
  * installations without a separate check-run lifecycle. T8 stays minimal;
  * a future task can upgrade to Checks if richer UI (annotations, etc.)
  * becomes worth the API surface.
+ *
+ * `state` is one of GitHub's 4 commit-status values — see
+ * `apps/integrations/src/status-mapping.ts` for how the 7-value Furan
+ * `run_status` enum projects onto this surface.
  */
 export async function createOrUpdateStatusCheck(opts: {
   octokit: Octokit;
   owner: string;
   repo: string;
   sha: string;
-  state: "pending" | "success" | "failure";
+  state: GitHubStatusState;
   description: string;
   targetUrl?: string;
 }): Promise<void> {

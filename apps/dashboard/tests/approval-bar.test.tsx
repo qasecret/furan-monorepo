@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // input) instead of tRPC's wire format.
 const approveMutate = vi.fn();
 const rejectMutate = vi.fn();
+const overrideMutate = vi.fn();
 const invalidate = vi.fn();
 
 let approveState = { isPending: false };
 let rejectState = { isPending: false };
+let overrideState = { isPending: false };
 let approveOnError: ((e: { message: string }) => void) | undefined;
 
 vi.mock("@/lib/trpc", () => ({
@@ -50,6 +52,20 @@ vi.mock("@/lib/trpc", () => ({
           isPending: rejectState.isPending,
         }),
       },
+      overrideStatus: {
+        useMutation: (opts?: {
+          onMutate?: () => void;
+          onSuccess?: () => void;
+          onError?: (e: { message: string }) => void;
+        }) => ({
+          mutate: (input: { runId: string; status: string }) => {
+            opts?.onMutate?.();
+            overrideMutate(input);
+            opts?.onSuccess?.();
+          },
+          isPending: overrideState.isPending,
+        }),
+      },
     },
   },
 }));
@@ -62,22 +78,27 @@ describe("ApprovalBar", () => {
   beforeEach(() => {
     approveMutate.mockReset();
     rejectMutate.mockReset();
+    overrideMutate.mockReset();
     invalidate.mockReset();
     approveState = { isPending: false };
     rejectState = { isPending: false };
+    overrideState = { isPending: false };
     approveOnError = undefined;
   });
   afterEach(() => cleanup());
 
-  it("renders three buttons; Comment toggles the viewer store's commentPanelOpen", async () => {
+  it("renders status pill + buttons; Comment toggles the viewer store's commentPanelOpen", async () => {
     const { useViewerStore } =
       await import("../src/components/diff-viewer/useViewerStore");
     // Reset store before the test so we exercise the off→on transition.
     useViewerStore.setState({ commentPanelOpen: false });
 
-    render(<ApprovalBar runId={RUN_ID} />);
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    expect(screen.getByTestId("approval-bar-status")).toBeDefined();
+    expect(screen.getByTestId("run-status-badge-unresolved")).toBeDefined();
     expect(screen.getByTestId("approve-button")).toBeDefined();
     expect(screen.getByTestId("reject-button")).toBeDefined();
+    expect(screen.getByTestId("override-button")).toBeDefined();
     const comment = screen.getByTestId("comment-button") as HTMLButtonElement;
     expect(comment.disabled).toBe(false);
 
@@ -88,23 +109,107 @@ describe("ApprovalBar", () => {
   });
 
   it("Approve click invokes the runs.approve mutation with the runId and invalidates the run query", () => {
-    render(<ApprovalBar runId={RUN_ID} />);
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("approve-button"));
     expect(approveMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
   it("Reject click invokes the runs.reject mutation with the runId", () => {
-    render(<ApprovalBar runId={RUN_ID} />);
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("reject-button"));
     expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
   it("wires onError on the approve mutation hook", () => {
-    render(<ApprovalBar runId={RUN_ID} />);
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     // The component must opt into onError so failed mutations surface as
     // visible error text rather than silent no-ops.
     expect(approveOnError).toBeTypeOf("function");
+  });
+
+  it("disables Approve / Reject / Override when run is in a non-reviewable state (aborted)", () => {
+    render(<ApprovalBar runId={RUN_ID} status="aborted" />);
+    const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
+    const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
+    const override = screen.getByTestId("override-button") as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(reject.disabled).toBe(true);
+    expect(override.disabled).toBe(true);
+    // Clicking the disabled approve must NOT fire the mutation.
+    fireEvent.click(approve);
+    expect(approveMutate).not.toHaveBeenCalled();
+  });
+
+  it.each([["running"], ["new"], ["aborted"], ["empty"]] as const)(
+    "disables review controls when status='%s'",
+    (status) => {
+      render(<ApprovalBar runId={RUN_ID} status={status} />);
+      const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
+      const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
+      const override = screen.getByTestId(
+        "override-button",
+      ) as HTMLButtonElement;
+      expect(approve.disabled).toBe(true);
+      expect(reject.disabled).toBe(true);
+      expect(override.disabled).toBe(true);
+    },
+  );
+
+  it.each([["passed"], ["unresolved"], ["failed"]] as const)(
+    "enables review controls when status='%s'",
+    (status) => {
+      render(<ApprovalBar runId={RUN_ID} status={status} />);
+      const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
+      const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
+      expect(approve.disabled).toBe(false);
+      expect(reject.disabled).toBe(false);
+    },
+  );
+
+  // Radix DropdownMenu trigger fires on pointerdown (mouse button down)
+  // rather than `click`, so synthetic `fireEvent.click` on the trigger
+  // doesn't open the menu in jsdom. Drive the trigger with the keyboard
+  // path instead — pressing Enter on a focused trigger opens the menu.
+  const openOverrideMenu = async () => {
+    const trigger = screen.getByTestId("override-button") as HTMLButtonElement;
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    // Allow Radix to flush its portal mount.
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("override dropdown 'Set Passed' calls overrideStatus with status=passed", async () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    await openOverrideMenu();
+    const item = await screen.findByTestId("override-set-passed");
+    fireEvent.click(item);
+    expect(overrideMutate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      status: "passed",
+    });
+  });
+
+  it("override dropdown 'Set Failed' calls overrideStatus with status=failed", async () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    await openOverrideMenu();
+    const item = await screen.findByTestId("override-set-failed");
+    fireEvent.click(item);
+    expect(overrideMutate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      status: "failed",
+    });
+  });
+
+  it("override dropdown 'Default (recompute)' calls overrideStatus with status=default", async () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    await openOverrideMenu();
+    const item = await screen.findByTestId("override-set-default");
+    fireEvent.click(item);
+    expect(overrideMutate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      status: "default",
+    });
   });
 });

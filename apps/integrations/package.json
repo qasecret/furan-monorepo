@@ -17,6 +17,7 @@
     "@furan/config": "workspace:*",
     "@furan/db": "workspace:*",
     "@furan/queue": "workspace:*",
+    "@furan/shared-types": "workspace:*",
     "@furan/storage": "workspace:*",
     "@furan/telemetry": "workspace:*",
     "@octokit/auth-app": "^7.1.4",

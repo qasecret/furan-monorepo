@@ -220,7 +220,10 @@ desc(
         .from(testRuns)
         .where(eq(testRuns.id, candidateRunId))
         .limit(1);
-      expect(["passed", "failed"]).toContain(row.status);
+      // Per spec §3.2 (run-status-enum) the diff-worker emits "unresolved"
+      // (not "failed") on diff-found. Accept either terminal outcome the
+      // ignore-merge logic might land on.
+      expect(["passed", "unresolved"]).toContain(row.status);
     }, 60_000);
 
     it("viewport filter: regions tagged with non-matching viewport are skipped", async () => {

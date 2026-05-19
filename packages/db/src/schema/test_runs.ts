@@ -10,7 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { builds } from "./builds.js";
-import { baselineSourceEnum, environmentEnum } from "./enums.js";
+import { baselineSourceEnum, environmentEnum, runStatusEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testVariations } from "./test_variations.js";
 
@@ -23,7 +23,7 @@ export const testRuns = pgTable(
     diffPercent: doublePrecision("diff_percent"),
     diffTollerancePercent: doublePrecision("diff_tollerance_percent"),
     pixelMisMatchCount: integer("pixel_mis_match_count"),
-    status: text("status"),
+    status: runStatusEnum("status").notNull().default("running"),
     buildId: uuid("build_id")
       .notNull()
       .references(() => builds.id, { onDelete: "cascade" }),

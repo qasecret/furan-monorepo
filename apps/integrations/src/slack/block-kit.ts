@@ -1,3 +1,7 @@
+import type { RunStatus } from "@furan/shared-types";
+
+import { type GitHubStatusState, presentationFor } from "../status-mapping.js";
+
 /**
  * Slack Block Kit shapes — narrowly typed to what we actually emit. We
  * intentionally don't pull in `@slack/web-api`'s `KnownBlock` because the
@@ -5,9 +9,14 @@
  * carry transport concerns we don't need.
  *
  * See https://api.slack.com/block-kit for the reference.
+ *
+ * `attachments[].color` is the legacy-attachment field Slack still
+ * renders as a left-border swatch even for Block Kit content. We use it
+ * to telegraph status at a glance — see `colorByState` below.
  */
 export interface SlackPayload {
   blocks: unknown[];
+  attachments?: Array<{ color: string; blocks?: unknown[] }>;
 }
 
 export interface SeverityCounts {
@@ -20,12 +29,24 @@ export interface SeverityCounts {
 export interface RunCompletedBlockKitOpts {
   runId: string;
   projectId: string;
-  status: string; // "passed" | "failed" | etc.
+  status: RunStatus;
   diffPercent: number | null;
   branchName: string;
   severityCounts: SeverityCounts;
   dashboardUrl: string;
 }
+
+/**
+ * Map Furan's 4-value projection onto a Slack attachment colour. Hex
+ * codes match Tailwind 500-shade tokens used elsewhere in the
+ * dashboard so the visual language is consistent across surfaces.
+ */
+const colorByState: Record<GitHubStatusState, string> = {
+  pending: "#3b82f6", // blue-500
+  success: "#22c55e", // green-500
+  failure: "#ef4444", // red-500
+  error: "#eab308", // yellow-500
+};
 
 /**
  * Render a `run.completed` event as a 4-block Slack payload:
@@ -34,15 +55,19 @@ export interface RunCompletedBlockKitOpts {
  *   3. Severity counts (single mrkdwn line with coloured dot emojis).
  *   4. Actions row with a single "View in dashboard" button.
  *
+ * The 7-status emoji + description come from `presentationFor` so this
+ * surface stays in lock-step with GitHub commit-status and PR comment.
+ *
  * Pure / deterministic: no fetch, no Date.now, no Math.random. Tests pin
  * the exact block array shape so any subtle drift surfaces immediately.
  */
 export function runCompletedBlockKit(
   opts: RunCompletedBlockKitOpts,
 ): SlackPayload {
-  const passed = opts.status === "passed";
+  const { emoji, description, githubState } = presentationFor(opts.status);
   const diffPercentText =
     opts.diffPercent != null ? `${opts.diffPercent.toFixed(2)}%` : "—";
+  const color = colorByState[githubState];
 
   return {
     blocks: [
@@ -58,7 +83,7 @@ export function runCompletedBlockKit(
         fields: [
           {
             type: "mrkdwn",
-            text: `*Status:* ${passed ? ":white_check_mark:" : ":x:"} ${opts.status}`,
+            text: `*Status:* ${emoji} ${description}`,
           },
           {
             type: "mrkdwn",
@@ -88,5 +113,6 @@ export function runCompletedBlockKit(
         ],
       },
     ],
+    attachments: [{ color }],
   };
 }

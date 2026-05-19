@@ -346,7 +346,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     expect(auto.length).toBe(0);
   });
 
-  it("first-baseline (no prior baseline) does not auto-approve", async () => {
+  it("first-baseline (no prior baseline) takes first-baseline path, not auto-approve", async () => {
     // Setup: project + a candidate run with NO baselines pointer row.
     const uniq = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
     const [p] = await db
@@ -370,12 +370,16 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         buildId: b.id,
         projectId: p.id,
         testVariationId: v.id,
-        status: "new",
+        status: "running",
         branchName: "main",
         name: "home",
       })
       .returning();
-    // Note: no baselines row inserted, so resolveBaseline returns null.
+    // Note: no baselines row inserted, so resolveBaseline returns null and
+    // the handler takes the first-baseline branch (which, per spec §3.2,
+    // ALSO seeds a baselines row — distinct from the auto-approve fast
+    // path). The distinguishing signal is the test_runs.status value:
+    // first-baseline → "new", auto-approve → "passed".
 
     await handleDiffJob({ runId: cr.id, projectId: p.id }, mockLogger, {
       db,
@@ -383,10 +387,20 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       redis,
     });
 
+    const updated = await db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, cr.id))
+      .limit(1);
+    // Must NOT be "passed" (that would mean auto-approve fired).
+    expect(updated[0]!.status).toBe("new");
+    // The first-baseline path also inserts an auto-seeded baselines row,
+    // identical in shape to the auto-approve fast path (userId=NULL).
     const auto = await db
       .select()
       .from(baselines)
       .where(eq(baselines.testRunId, cr.id));
-    expect(auto.length).toBe(0);
+    expect(auto.length).toBe(1);
+    expect(auto[0]!.userId).toBeNull();
   });
 });

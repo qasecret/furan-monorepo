@@ -180,7 +180,7 @@ export function DiffViewer({ runId, diffId }: Props) {
         </div>
         <RegionListPanel regions={regions} />
       </div>
-      <ApprovalBar runId={runId} />
+      <ApprovalBar runId={runId} status={data?.status} />
       <RunCommentPanel runId={runId} />
     </div>
   );

@@ -104,7 +104,11 @@ async function seed(h: TestApp): Promise<Seeded> {
       buildId: build.id,
       projectId: project.id,
       testVariationId: variation.id,
-      status: "new",
+      // Per spec §3.3 (run-status-enum) only terminal review states are
+      // reviewer-overridable. `unresolved` is the canonical "diff-worker
+      // found differences, awaiting review" status — i.e. the state most
+      // tests want as a starting point for approve/reject coverage.
+      status: "unresolved",
       branchName: "feature/x",
       name: "home page",
     })
@@ -130,6 +134,18 @@ function makeClient(baseUrl: string, jwt?: string) {
       }),
     ],
   });
+}
+
+// Tiny helper to dedupe the IIFE that reads buildId off a seeded run.
+// The /runs payload requires a buildId, and across this file we always
+// reuse the seeded run's build to avoid spinning up a second one.
+async function getSeedBuildId(h: TestApp, runId: string): Promise<string> {
+  const rows = await h.db
+    .select({ buildId: testRuns.buildId })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .limit(1);
+  return rows[0]!.buildId;
 }
 
 d("tRPC runs router", () => {
@@ -167,16 +183,12 @@ d("tRPC runs router", () => {
     const [olderRun] = await h.db
       .insert(testRuns)
       .values({
-        buildId: (
-          await h.db
-            .select({ buildId: testRuns.buildId })
-            .from(testRuns)
-            .where(eq(testRuns.id, s.runId))
-            .limit(1)
-        )[0]!.buildId,
+        buildId: await getSeedBuildId(h, s.runId),
         projectId: s.projectId,
         testVariationId: s.variationId,
-        status: "ok",
+        // Legacy `"ok"` value is no longer a valid enum label (migration
+        // 0008 remaps it to "passed"). Use the post-migration spelling.
+        status: "passed",
         branchName: "feature/x",
         name: "older",
       })
@@ -300,7 +312,7 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("UNAUTHORIZED");
   });
 
-  test("approve: flips merge=true and inserts a baseline row", async () => {
+  test("approve: writes status=passed, merge=true and inserts a baseline row", async () => {
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.runs.approve.mutate({ runId: s.runId });
     expect(res).toEqual({ runId: s.runId, approved: true });
@@ -311,6 +323,7 @@ d("tRPC runs router", () => {
       .where(eq(testRuns.id, s.runId))
       .limit(1);
     expect(updatedRows[0]?.merge).toBe(true);
+    expect(updatedRows[0]?.status).toBe("passed");
 
     const baselineRows = await h.db
       .select()
@@ -321,8 +334,9 @@ d("tRPC runs router", () => {
     expect(baselineRows[0]?.userId).toBe(s.memberId);
   });
 
-  test("reject: flips merge=false (and does NOT insert a baseline)", async () => {
-    // First approve to flip it to true, then reject to ensure flip works.
+  test("reject: writes status=failed, merge=false (and does NOT insert a baseline)", async () => {
+    // First approve to flip status=passed/merge=true, then reject to
+    // ensure both flips work; both source statuses are reviewer-legal.
     const client = makeClient(baseUrl, s.memberJwt);
     await client.runs.approve.mutate({ runId: s.runId });
 
@@ -335,6 +349,239 @@ d("tRPC runs router", () => {
       .where(eq(testRuns.id, s.runId))
       .limit(1);
     expect(updatedRows[0]?.merge).toBe(false);
+    expect(updatedRows[0]?.status).toBe("failed");
+  });
+
+  test("transitions unresolved → failed and sets merge=false (canonical reviewer reject)", async () => {
+    // Direct unresolved → reject path. The other reject test above
+    // approves first (so the source status is `passed`); this test
+    // covers the more common production case where the reviewer sees a
+    // diff-worker-emitted `unresolved` and rejects without any prior
+    // approve hop. Seed gives status=unresolved already (see `seed()`).
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.reject.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: false });
+
+    const updatedRows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(updatedRows[0]?.status).toBe("failed");
+    expect(updatedRows[0]?.merge).toBe(false);
+
+    // Reject MUST NOT insert a baselines row — that's approve's job.
+    // (Inserting one here would orphan a baseline pointing at a rejected
+    // run, which would then be picked as a baseline by future diffs.)
+    const baselineRows = await h.db
+      .select()
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    expect(baselineRows.length).toBe(0);
+  });
+
+  test("approve: rejects BAD_REQUEST when run.status='aborted'", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "aborted" })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.approve.mutate({ runId: s.runId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+  });
+
+  test("approve: idempotent no-op when run.status='passed'", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "passed", merge: true })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.approve.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: true });
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(rows[0]?.status).toBe("passed");
+    expect(rows[0]?.merge).toBe(true);
+  });
+
+  test("reject: rejects BAD_REQUEST when run.status='new' (would orphan baseline)", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "new", merge: true })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.reject.mutate({ runId: s.runId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+  });
+
+  describe("overrideStatus", () => {
+    test("status=passed: writes status without touching merge", async () => {
+      // Seed: status=unresolved (from helper), merge defaults to false.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "passed",
+      });
+      expect(res).toEqual({ runId: s.runId, status: "passed" });
+      const rows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(rows[0]?.status).toBe("passed");
+      // merge unchanged (still default false from the seed insert).
+      expect(rows[0]?.merge).toBe(false);
+    });
+
+    test("status='default' recomputes to 'unresolved' when diff_regions has severity!=none", async () => {
+      // Pre-seed run as `passed` so the recompute must flip it back.
+      await h.db
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, s.runId));
+      await h.db.insert(diffRegions).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        severity: "major",
+        category: "layout",
+        bbox: { x: 0, y: 0, width: 1, height: 1 },
+        description: "test",
+        source: "l1",
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("unresolved");
+      const rows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(rows[0]?.status).toBe("unresolved");
+    });
+
+    test("status='default' resolves to 'passed' when no diff_regions rows exist", async () => {
+      // Seed: status=unresolved (from helper), no diff_regions inserted.
+      // Recompute should flip it to passed.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("passed");
+    });
+
+    test("status='default' resolves to 'passed' when all diff_regions have severity=none", async () => {
+      await h.db.insert(diffRegions).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        severity: "none",
+        category: "layout",
+        bbox: { x: 0, y: 0, width: 1, height: 1 },
+        description: "below threshold",
+        source: "l1",
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("passed");
+    });
+
+    test("rejects BAD_REQUEST when run.status='running'", async () => {
+      await h.db
+        .update(testRuns)
+        .set({ status: "running" })
+        .where(eq(testRuns.id, s.runId));
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects BAD_REQUEST when run.status='aborted'", async () => {
+      await h.db
+        .update(testRuns)
+        .set({ status: "aborted" })
+        .where(eq(testRuns.id, s.runId));
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects invalid status value", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          // @ts-expect-error deliberately invalid status
+          status: "running",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("non-member receives FORBIDDEN", async () => {
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+
+    test("unauthenticated receives UNAUTHORIZED", async () => {
+      const client = makeClient(baseUrl);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("UNAUTHORIZED");
+    });
   });
 
   test("approve: non-member receives FORBIDDEN", async () => {
@@ -451,6 +698,253 @@ d("tRPC runs router", () => {
     }
     expect(err).toBeDefined();
     expect(err?.data?.code).toBe("NOT_FOUND");
+  });
+
+  /**
+   * Cross-cutting lifecycle e2e (Task 5 of furan-design/plans/
+   * 2026-05-19-run-status-enum.md). Drives a single run through
+   * SDK-creation → diff-worker-write → reviewer-approve and asserts each
+   * stage emits the right status. The worker writes are simulated by
+   * direct UPDATEs because the API test suite has no queue-draining
+   * harness today (per plan §5.1 fallback), but every other hop —
+   * Fastify route, tRPC mutation, baseline insert — runs through the
+   * real wire path.
+   *
+   * If a future commit accidentally regresses any seam in this chain
+   * (e.g. sdk-runs.ts starts writing "new" again, approve stops
+   * inserting a baseline, override skips the recompute), this test
+   * fails before the per-package suites do because it spans them.
+   */
+  describe("run lifecycle e2e", () => {
+    test("POST /runs → unresolved → approve produces passed + baseline + merge=true", async () => {
+      // Stage 1: SDK creates a run via the public REST surface. This is
+      // what the Kotlin SDK does on its first checkpoint upload.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feature/lifecycle-e2e",
+          name: "lifecycle-e2e",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      // Per spec §3.2 SDK-creation writes 'running', not 'new'.
+      expect(created.status).toBe("running");
+
+      // Stage 2: diff-worker would now do its work. We simulate the
+      // diff-found terminal write (spec §3.2: "unresolved" replaces the
+      // legacy "failed" on diff-found). The real handler is integration-
+      // tested in apps/diff-worker/tests/handler.test.ts.
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved" })
+        .where(eq(testRuns.id, created.id));
+
+      // Stage 3: reviewer approves via tRPC. This must (a) flip
+      // status → passed, (b) set merge → true, and (c) insert a
+      // baselines row attributing the promotion to the reviewer.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const approveRes = await client.runs.approve.mutate({
+        runId: created.id,
+      });
+      expect(approveRes).toEqual({ runId: created.id, approved: true });
+
+      const finalRows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, created.id))
+        .limit(1);
+      expect(finalRows[0]?.status).toBe("passed");
+      expect(finalRows[0]?.merge).toBe(true);
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows.length).toBe(1);
+      expect(baselineRows[0]?.userId).toBe(s.memberId);
+      expect(baselineRows[0]?.branchName).toBe("feature/lifecycle-e2e");
+    });
+
+    test("POST /runs → unresolved → overrideStatus(default) with no diffs collapses to passed", async () => {
+      // Same SDK-creation hop as above, but the reviewer takes the
+      // override-status path instead of approve. The diff-worker has
+      // written 'unresolved' but the diff_regions table is empty
+      // (e.g. all regions were below the severity threshold and
+      // pruned); the recompute branch should resolve to 'passed'.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feature/lifecycle-e2e-override",
+          name: "lifecycle-e2e-override",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      expect(created.status).toBe("running");
+
+      // Simulate diff-worker writing the diff-found terminal state.
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved" })
+        .where(eq(testRuns.id, created.id));
+
+      // No diff_regions inserted — the recompute branch sees zero rows.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const overrideRes = await client.runs.overrideStatus.mutate({
+        runId: created.id,
+        status: "default",
+      });
+      expect(overrideRes.status).toBe("passed");
+
+      const finalRows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, created.id))
+        .limit(1);
+      // overrideStatus must NOT touch merge — that's approve/reject's job.
+      expect(finalRows[0]?.status).toBe("passed");
+      expect(finalRows[0]?.merge).toBe(false);
+      // No baseline written by overrideStatus.
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows.length).toBe(0);
+    });
+
+    test("POST /runs → first run with no baseline → diff-worker writes new + auto-creates baseline", async () => {
+      // Stage 1: SDK creates the run; status is "running" at this point.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feat/lifecycle-first-run",
+          name: "lifecycle-test-new",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+        testVariationId: string;
+        name: string | null;
+      };
+      expect(created.status).toBe("running");
+
+      // Stage 2: simulate diff-worker discovering no baseline exists for
+      // this (variation, branch, viewport):
+      //   - writes status=new
+      //   - sets merge=true
+      //   - inserts a baselines row from this run with userId=NULL (auto)
+      // The real handler is integration-tested in
+      // apps/diff-worker/tests/handler.test.ts; here we just simulate the
+      // terminal write (plan §5.1 fallback — no queue-draining harness yet).
+      await h.db
+        .update(testRuns)
+        .set({ status: "new", merge: true })
+        .where(eq(testRuns.id, created.id));
+      await h.db.insert(baselines).values({
+        baselineName: created.name ?? "auto",
+        testVariationId: created.testVariationId,
+        testRunId: created.id,
+        userId: null,
+        branchName: "feat/lifecycle-first-run",
+      });
+
+      // Verify the row landed in the new state.
+      const rowAfter = (
+        await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, created.id))
+          .limit(1)
+      )[0];
+      expect(rowAfter!.status).toBe("new");
+      expect(rowAfter!.merge).toBe(true);
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows).toHaveLength(1);
+      expect(baselineRows[0]!.userId).toBeNull(); // auto-created, no reviewer
+      expect(baselineRows[0]!.branchName).toBe("feat/lifecycle-first-run");
+    });
+
+    test("POST /runs → identical candidate → diff-worker writes passed, no baseline change", async () => {
+      // Stage 1: SDK creates the run; status is "running".
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feat/lifecycle-no-diff",
+          name: "lifecycle-test-passed",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      expect(created.status).toBe("running");
+
+      // Stage 2: simulate diff-worker comparing against an existing
+      // baseline and finding no diff:
+      //   - writes status=passed
+      //   - leaves merge untouched (no baseline promotion needed)
+      //   - does NOT insert a baseline row
+      // Real handler is integration-tested in
+      // apps/diff-worker/tests/handler.test.ts.
+      await h.db
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, created.id));
+
+      const rowAfter = (
+        await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, created.id))
+          .limit(1)
+      )[0];
+      expect(rowAfter!.status).toBe("passed");
+      expect(rowAfter!.merge).toBe(false); // unchanged from default
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows).toHaveLength(0); // no new baseline
+    });
   });
 
   test("getById: autoApproved is true when a baselines row has user_id NULL for the run", async () => {

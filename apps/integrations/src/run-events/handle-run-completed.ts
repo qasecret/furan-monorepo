@@ -1,8 +1,10 @@
+import type { RunStatus } from "@furan/shared-types";
 import type { Telemetry } from "@furan/telemetry";
 import type { App } from "octokit";
 
 import { createOrUpdateStickyComment } from "../github/pr-comment.js";
 import { createOrUpdateStatusCheck } from "../github/status-check.js";
+import { presentationFor } from "../status-mapping.js";
 
 import type { RunEvent } from "./types.js";
 
@@ -64,25 +66,33 @@ export async function handleRunCompleted(opts: {
     return;
   }
 
-  const state: "success" | "failure" =
-    event.status === "passed" ? "success" : "failure";
-  const description =
-    event.status === "passed"
-      ? "Visual regression: no breaking changes"
-      : `Visual regression: ${event.numChanges ?? "?"} change(s)`;
+  // Project the 7-value Furan `run_status` enum onto GitHub's 4-state
+  // commit-status surface via the single source of truth in
+  // `status-mapping.ts`. Fall back to `running` (→ `pending`) when the
+  // event carries no status — better to leave the PR yellow than to
+  // mis-report a non-result as success or failure.
+  const status: RunStatus = (event.status as RunStatus) ?? "running";
+  const {
+    githubState,
+    description: mappedDescription,
+    emoji,
+  } = presentationFor(status);
 
-  const body =
-    event.status === "passed"
-      ? `**Furan**: visual regression passed.${
-          event.dashboardUrl ? `\n\n[View run](${event.dashboardUrl})` : ""
-        }`
-      : `**Furan**: visual regression detected ${
-          event.numChanges ?? "?"
-        } change(s).${
-          event.dashboardUrl
-            ? `\n\n[Review in dashboard](${event.dashboardUrl})`
-            : ""
-        }`;
+  // Append change-count context to the GitHub status description when
+  // the diff-worker provided it — keeps the existing detail without
+  // changing the load-bearing state/description policy.
+  const description =
+    event.numChanges !== undefined && event.numChanges > 0
+      ? `${mappedDescription} (${event.numChanges} change${event.numChanges === 1 ? "" : "s"})`
+      : mappedDescription;
+
+  const body = `## ${emoji} ${mappedDescription}${
+    event.numChanges !== undefined && event.numChanges > 0
+      ? `\n\n${event.numChanges} change${event.numChanges === 1 ? "" : "s"} detected.`
+      : ""
+  }${
+    event.dashboardUrl ? `\n\n[View run details](${event.dashboardUrl})` : ""
+  }`;
 
   try {
     await Promise.all([
@@ -99,7 +109,7 @@ export async function handleRunCompleted(opts: {
         owner,
         repo,
         sha,
-        state,
+        state: githubState,
         description,
         ...(event.dashboardUrl !== undefined
           ? { targetUrl: event.dashboardUrl }
@@ -107,7 +117,7 @@ export async function handleRunCompleted(opts: {
       }),
     ]);
     log.info(
-      { runId: event.runId, prNumber, sha, state },
+      { runId: event.runId, prNumber, sha, state: githubState, status },
       "run_completed_github_updated",
     );
   } catch (err) {

@@ -1,3 +1,4 @@
+import type { RunStatus } from "@furan/shared-types";
 import { describe, expect, test } from "vitest";
 
 import { runCompletedBlockKit } from "../src/slack/block-kit.js";
@@ -6,13 +7,28 @@ function baseOpts() {
   return {
     runId: "run-1",
     projectId: "proj-1",
-    status: "passed",
+    status: "passed" as RunStatus,
     diffPercent: 0,
     branchName: "main",
     severityCounts: { breaking: 0, major: 0, minor: 0, cosmetic: 0 },
     dashboardUrl: "https://app.furan.dev/projects/proj-1/runs/run-1",
   };
 }
+
+/** Spec §3.4 — emoji + GitHub-state derived attachment colour per status. */
+const STATUS_TABLE: Array<{
+  status: RunStatus;
+  emoji: string;
+  color: string;
+}> = [
+  { status: "running", emoji: "🔵", color: "#3b82f6" },
+  { status: "new", emoji: "⚪", color: "#22c55e" },
+  { status: "passed", emoji: "🟢", color: "#22c55e" },
+  { status: "unresolved", emoji: "🟡", color: "#ef4444" },
+  { status: "failed", emoji: "🔴", color: "#ef4444" },
+  { status: "aborted", emoji: "⚠️", color: "#eab308" },
+  { status: "empty", emoji: "⚪", color: "#ef4444" },
+];
 
 describe("runCompletedBlockKit", () => {
   test("emits four blocks in the canonical order: section/section/section/actions", () => {
@@ -22,23 +38,16 @@ describe("runCompletedBlockKit", () => {
     expect(types).toEqual(["section", "section", "section", "actions"]);
   });
 
-  test("passing run renders the white-check-mark + 'passed' string", () => {
-    const payload = runCompletedBlockKit({ ...baseOpts(), status: "passed" });
-    const second = payload.blocks[1] as {
-      fields: Array<{ text: string }>;
-    };
-    expect(second.fields[0].text).toContain(":white_check_mark:");
-    expect(second.fields[0].text).toContain("passed");
-  });
-
-  test("failing run renders the cross + 'failed' string", () => {
-    const payload = runCompletedBlockKit({ ...baseOpts(), status: "failed" });
-    const second = payload.blocks[1] as {
-      fields: Array<{ text: string }>;
-    };
-    expect(second.fields[0].text).toContain(":x:");
-    expect(second.fields[0].text).toContain("failed");
-  });
+  for (const { status, emoji, color } of STATUS_TABLE) {
+    test(`status=${status} renders ${emoji} emoji and ${color} attachment colour`, () => {
+      const payload = runCompletedBlockKit({ ...baseOpts(), status });
+      const second = payload.blocks[1] as {
+        fields: Array<{ text: string }>;
+      };
+      expect(second.fields[0].text).toContain(emoji);
+      expect(payload.attachments?.[0]?.color).toBe(color);
+    });
+  }
 
   test("renders diffPercent with 2 decimals and a percent sign", () => {
     const payload = runCompletedBlockKit({
@@ -91,5 +100,13 @@ describe("runCompletedBlockKit", () => {
     const header = payload.blocks[0] as { text: { text: string } };
     expect(header.text.text).toContain("feature/abc");
     expect(header.text.text).toContain("Furan visual regression");
+  });
+
+  test("status field contains the spec description text", () => {
+    const payload = runCompletedBlockKit({ ...baseOpts(), status: "passed" });
+    const second = payload.blocks[1] as {
+      fields: Array<{ text: string }>;
+    };
+    expect(second.fields[0].text).toContain("Furan: no visual changes");
   });
 });

@@ -95,7 +95,9 @@ interface PerViewportResult {
  * first-baseline (passes with 0% diff for that viewport).
  *
  * Aggregation rolled back to the single `test_runs` row:
- *   status        = "failed" if ANY viewport failed; else "passed"
+ *   status        = "unresolved" if ANY viewport failed; else "passed"
+ *                   (per spec §3.2 the diff-worker NEVER writes "failed";
+ *                   "failed" is reserved for reviewer-rejected runs.)
  *   diffPercent   = MAX(per-viewport diffPercent) — surfaces the worst
  *                   viewport for at-a-glance triage. Per-viewport breakdown
  *                   is recoverable from `diff_regions.viewport`.
@@ -115,6 +117,58 @@ interface PerViewportResult {
  * flow) can fan out.
  */
 export async function handleDiffJob(
+  data: DiffJob,
+  logger: Logger,
+  deps: HandlerDeps,
+): Promise<void> {
+  try {
+    await handleDiffJobInner(data, logger, deps);
+  } catch (err) {
+    // Best-effort terminal status write so an aborted run does not hang
+    // in `running` indefinitely. Per spec §3.2 worker exceptions land as
+    // `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
+    // own try/catch so a status-write failure does not mask the original
+    // error — the worker's error visibility is unchanged.
+    try {
+      await withProjectScope(deps.db, data.projectId, async (tx) => {
+        await tx
+          .update(testRuns)
+          .set({ status: "aborted" })
+          .where(eq(testRuns.id, data.runId));
+      });
+    } catch (statusErr) {
+      logger.error(
+        { err: statusErr, runId: data.runId },
+        "failed_to_write_aborted_status",
+      );
+    }
+    // Best-effort `run.completed` publish so the integrations subscriber
+    // (GitHub commit-status, Slack notifier, outbound webhooks) reacts
+    // to the aborted terminal state. Without this, the GitHub check would
+    // stay stuck at `pending` and Slack would never notify. Wrap in its
+    // own try/catch — a publish failure must not mask the worker's
+    // original error, which remains the load-bearing signal.
+    try {
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "aborted",
+        }),
+      );
+    } catch (publishErr) {
+      logger.error(
+        { err: publishErr, runId: data.runId },
+        "failed_to_publish_aborted_run_completed",
+      );
+    }
+    throw err;
+  }
+}
+
+async function handleDiffJobInner(
   data: DiffJob,
   logger: Logger,
   deps: HandlerDeps,
@@ -150,14 +204,24 @@ export async function handleDiffJob(
   );
 
   if (!baseline) {
-    // First-baseline: nothing to diff against, mark the run passed +
-    // emit both `diff.completed` and `run.completed` so the integrations
-    // subscriber (T8 GitHub flow + T9 webhook flow) can react.
+    // First-baseline: no prior baseline existed for this variation+branch.
+    // Per spec §3.2 this is the terminal "new" status — the candidate run
+    // becomes the seed baseline. Write status=new + merge=true and snapshot
+    // the run into the baselines table so future runs of this variation
+    // have something to diff against. Emit both `diff.completed` and
+    // `run.completed` so the integrations subscriber can react.
     await withProjectScope(deps.db, data.projectId, async (tx) => {
       await tx
         .update(testRuns)
-        .set({ status: "passed" })
+        .set({ status: "new", merge: true })
         .where(eq(testRuns.id, data.runId));
+      await tx.insert(baselines).values({
+        baselineName: run.baselineName ?? run.name ?? "auto",
+        testVariationId: run.testVariationId,
+        testRunId: run.id,
+        // userId omitted → defaults to NULL → signals auto-baseline.
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+      });
     });
     await deps.redis.publish(
       `run:${data.runId}:events`,
@@ -174,7 +238,7 @@ export async function handleDiffJob(
         type: "run.completed",
         runId: data.runId,
         projectId: data.projectId,
-        status: "passed",
+        status: "new",
         diffPercent: 0,
         branchName: run.branchName,
         numChanges: 0,
@@ -396,7 +460,8 @@ export async function handleDiffJob(
   }
 
   // Aggregate per-viewport results to the single test_runs row.
-  // - status: "failed" if any viewport failed.
+  // - status: "unresolved" if any viewport failed (per spec §3.2 the
+  //   diff-worker NEVER writes "failed" — that's reviewer-rejected only).
   // - diffPercent: MAX across viewports (surfaces the worst viewport).
   // - pixelMisMatchCount: SUM across viewports.
   // - diffName: overlay key of the viewport with max diffPercent (or null).
@@ -415,7 +480,7 @@ export async function handleDiffJob(
   );
   const aggregateDiffName = worst?.diffImageKey ?? null;
   const aggregateRegions = perViewport.flatMap((v) => v.regions);
-  const aggregateStatus = aggregateFailed ? "failed" : "passed";
+  const aggregateStatus = aggregateFailed ? "unresolved" : "passed";
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx

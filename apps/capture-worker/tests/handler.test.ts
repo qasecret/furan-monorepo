@@ -192,6 +192,193 @@ desc("handleCaptureJob (integration)", () => {
     sub.disconnect();
   }, 60_000);
 
+  test("uncaught exception path: handler throws → status='aborted' (spec §3.2) + publishes run.completed", async () => {
+    // Seed a separate run with an unreachable URL so page.goto() throws
+    // inside the per-viewport loop. The wrapper try/catch should catch,
+    // write status=aborted, publish run.completed, and re-throw so the
+    // worker's error visibility is preserved.
+    const uniq = Date.now();
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `cw-abort-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "cw",
+        lastName: "abort",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `cw-abort-${uniq}` })
+      .returning();
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [r] = await db
+      .insert(testRuns)
+      .values({
+        name: "r-abort",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    const abortJob: CaptureJob = {
+      runId: r.id,
+      projectId: p.id,
+      buildId: b.id,
+      testVariationId: v.id,
+      // 127.0.0.1:1 — unbound port, connection refused → page.goto throws.
+      url: "http://127.0.0.1:1/",
+      viewport: { width: 1280, height: 720 },
+      browser: "chromium",
+    };
+
+    // Subscribe to the run's event channel BEFORE invoking the handler so
+    // the trailing `run.completed` publish (which the integrations
+    // subscriber needs to flip GitHub commit-status to `error` and
+    // trigger Slack) is observed.
+    const events: string[] = [];
+    const sub = new Redis(process.env.REDIS_URL!);
+    await sub.subscribe(`run:${r.id}:events`);
+    sub.on("message", (_channel, message) => events.push(message));
+    await new Promise((res) => setTimeout(res, 100));
+
+    try {
+      await expect(
+        handleCaptureJob(abortJob, mockLogger, { db, storage, redis }),
+      ).rejects.toThrow();
+
+      const updated = await db.query.testRuns.findFirst({
+        where: eq(testRuns.id, r.id),
+      });
+      expect(updated!.status).toBe("aborted");
+
+      await new Promise((res) => setTimeout(res, 200));
+      const runCompleted = events
+        .map((e) => JSON.parse(e))
+        .find((e) => e.type === "run.completed");
+      expect(runCompleted).toBeDefined();
+      expect(runCompleted.status).toBe("aborted");
+      expect(runCompleted.runId).toBe(r.id);
+      expect(runCompleted.projectId).toBe(p.id);
+    } finally {
+      sub.disconnect();
+      // Per-test scoped cleanup — concurrency=1 leaves no leakage.
+      await db.delete(projects).where(eq(projects.id, p.id));
+    }
+  }, 60_000);
+
+  test("zero-screenshot path: handler writes status='empty' + publishes run.completed (spec §3.2)", async () => {
+    // Drive the handler down the empty branch by passing `viewports: []`
+    // — the handler interprets an explicit empty list as "no viewports
+    // to capture" and skips straight to the terminal `empty` write.
+    // Asserts BOTH the DB row flip and the trailing `run.completed`
+    // publish (without which the integrations subscriber leaves GitHub
+    // at `pending` and never notifies Slack — the very gap this commit
+    // fixes).
+    const uniq = Date.now();
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `cw-empty-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "cw",
+        lastName: "empty",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `cw-empty-${uniq}` })
+      .returning();
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [r] = await db
+      .insert(testRuns)
+      .values({
+        name: "r-empty",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    const emptyJob: CaptureJob = {
+      runId: r.id,
+      projectId: p.id,
+      buildId: b.id,
+      testVariationId: v.id,
+      url: fixtureUrl,
+      // Explicit empty viewports list — handler skips the capture loop
+      // entirely and lands in the §3.2 `empty` terminal branch.
+      viewports: [],
+      browser: "chromium",
+    };
+
+    const events: string[] = [];
+    const sub = new Redis(process.env.REDIS_URL!);
+    await sub.subscribe(`run:${r.id}:events`);
+    sub.on("message", (_channel, message) => events.push(message));
+    await new Promise((res) => setTimeout(res, 100));
+
+    try {
+      await handleCaptureJob(emptyJob, mockLogger, { db, storage, redis });
+
+      const updated = await db.query.testRuns.findFirst({
+        where: eq(testRuns.id, r.id),
+      });
+      expect(updated!.status).toBe("empty");
+
+      // No screenshots row should have been inserted.
+      const shots = await db.query.screenshots.findMany({
+        where: eq(screenshots.runId, r.id),
+      });
+      expect(shots.length).toBe(0);
+
+      await new Promise((res) => setTimeout(res, 200));
+      const runCompleted = events
+        .map((e) => JSON.parse(e))
+        .find((e) => e.type === "run.completed");
+      expect(runCompleted).toBeDefined();
+      expect(runCompleted.status).toBe("empty");
+      expect(runCompleted.runId).toBe(r.id);
+      expect(runCompleted.projectId).toBe(p.id);
+    } finally {
+      sub.disconnect();
+      await db.delete(projects).where(eq(projects.id, p.id));
+    }
+  }, 60_000);
+
   test("multi-viewport: captures one screenshots row per viewport (v0.5)", async () => {
     // Seed a fresh run that's separate from the single-viewport test so
     // the unique image_key constraint can still fire if Playwright produces

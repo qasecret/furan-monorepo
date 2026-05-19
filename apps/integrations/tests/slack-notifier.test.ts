@@ -1,3 +1,4 @@
+import type { RunStatus } from "@furan/shared-types";
 import { describe, expect, test } from "vitest";
 
 import { buildPayload, isSlackUrl } from "../src/slack/notifier.js";
@@ -23,7 +24,7 @@ describe("buildPayload", () => {
     type: "run.completed" as const,
     runId: "r1",
     projectId: "p1",
-    status: "failed" as const,
+    status: "failed" as RunStatus,
     diffPercent: 4.2,
     branchName: "feat/x",
     numChanges: 7,
@@ -40,6 +41,7 @@ describe("buildPayload", () => {
       "https://hooks.slack.com/services/x/y/z",
       baseInput,
     );
+    expect(out).not.toBeNull();
     expect(out).toHaveProperty("blocks");
   });
 
@@ -66,5 +68,82 @@ describe("buildPayload", () => {
     expect(out.status).toBeUndefined();
     expect(out.branchName).toBeUndefined();
     expect(out.diffPercent).toBeUndefined();
+  });
+});
+
+describe("Slack gate on terminal status (spec §3.4)", () => {
+  const slackUrl = "https://hooks.slack.com/services/x/y/z";
+  const baseInput = {
+    branchName: "feat/x",
+    severityCounts: { breaking: 0, major: 0, minor: 0, cosmetic: 0 },
+    dashboardUrl: "https://app.furan.dev/x",
+  };
+
+  test("status=running → Slack payload is null (no notification fires)", () => {
+    // The whole point: `running` is not terminal under the new 7-value
+    // taxonomy. Sending a Slack message for it would spam channels with
+    // intermediate noise during a long-running test.
+    const out = buildPayload(slackUrl, {
+      ...baseInput,
+      event: {
+        type: "run.completed",
+        runId: "r1",
+        status: "running",
+        projectId: "p1",
+      },
+    });
+    expect(out).toBeNull();
+  });
+
+  test("status=unresolved → Slack payload is built (review-required notify)", () => {
+    const out = buildPayload(slackUrl, {
+      ...baseInput,
+      event: {
+        type: "run.completed",
+        runId: "r1",
+        status: "unresolved",
+        projectId: "p1",
+      },
+    });
+    expect(out).not.toBeNull();
+    expect(out).toHaveProperty("blocks");
+  });
+
+  for (const status of [
+    "new",
+    "passed",
+    "unresolved",
+    "failed",
+    "aborted",
+    "empty",
+  ] as const) {
+    test(`status=${status} → Slack payload is built (terminal)`, () => {
+      const out = buildPayload(slackUrl, {
+        ...baseInput,
+        event: {
+          type: "run.completed",
+          runId: "r1",
+          status,
+          projectId: "p1",
+        },
+      });
+      expect(out).not.toBeNull();
+    });
+  }
+
+  test("generic (non-Slack) subscriber still receives running payload", () => {
+    // Generic webhooks deliberately are NOT gated — they may want to
+    // build their own state machines downstream. The gate is Slack-only.
+    const out = buildPayload("https://example.com/hook", {
+      ...baseInput,
+      event: {
+        type: "run.completed",
+        runId: "r1",
+        status: "running",
+        projectId: "p1",
+      },
+    });
+    expect(out).not.toBeNull();
+    expect(out).toHaveProperty("event", "run.completed");
   });
 });

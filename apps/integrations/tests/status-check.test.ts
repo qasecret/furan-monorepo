@@ -85,4 +85,21 @@ describe("createOrUpdateStatusCheck", () => {
     const args = createCommitStatus.mock.calls[0]?.[0] as { state: string };
     expect(args.state).toBe("pending");
   });
+
+  test("supports error state (for aborted runs — distinct from failure)", async () => {
+    // Spec §3.4: `aborted` → GitHub `error` (not `failure`) so operators
+    // read it as infra-side rather than test-side.
+    const { octokit, createCommitStatus } = buildMockOctokit();
+    await createOrUpdateStatusCheck({
+      octokit,
+      owner: "a",
+      repo: "b",
+      sha: "abc",
+      state: "error",
+      description: "Furan: run aborted — check worker logs",
+    });
+    expect(createCommitStatus).toHaveBeenCalledTimes(1);
+    const args = createCommitStatus.mock.calls[0]?.[0] as { state: string };
+    expect(args.state).toBe("error");
+  });
 });
