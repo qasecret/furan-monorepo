@@ -266,4 +266,37 @@ d("tRPC runs.list", () => {
     expect(err).toBeDefined();
     expect(err?.data?.code).toBe("FORBIDDEN");
   });
+
+  test("list: filters by buildId (drill-in from Builds tab)", async () => {
+    // Seed already created `s.buildId` with 26 runs attached. Add a SECOND
+    // build under the same project + variation with 2 runs; the buildId
+    // filter should return exactly those 2.
+    const [b2] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, ciBuildId: "build-B" })
+      .returning();
+    if (!b2) throw new Error("second build not seeded");
+    await h.db.insert(testRuns).values([
+      {
+        projectId: s.projectId,
+        buildId: b2.id,
+        testVariationId: s.variationId,
+        status: "passed",
+      },
+      {
+        projectId: s.projectId,
+        buildId: b2.id,
+        testVariationId: s.variationId,
+        status: "passed",
+      },
+    ]);
+    const client = makeClient(baseUrl, s.memberJwt);
+    const page = await client.runs.list.query({
+      projectId: s.projectId,
+      buildId: b2.id,
+    });
+    expect(page.items).toHaveLength(2);
+    expect(page.items.every((r) => r.buildId === b2.id)).toBe(true);
+    expect(page.nextCursor).toBeNull();
+  });
 });

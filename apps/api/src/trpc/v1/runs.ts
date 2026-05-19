@@ -55,6 +55,8 @@ const listInput = z.object({
    * all statuses); a non-empty array translates to `status IN (...)`.
    */
   status: runStatusSchema.array().optional(),
+  /** Optional filter to runs under a single build (drill-in from Builds tab). */
+  buildId: z.string().uuid().optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -95,6 +97,9 @@ export const runsRouter = t.router({
       }
       if (input.branch) {
         conditions.push(eq(testRuns.branchName, input.branch));
+      }
+      if (input.buildId) {
+        conditions.push(eq(testRuns.buildId, input.buildId));
       }
       // Empty array == no filter, identical to undefined — keeps the
       // dashboard's "all checkboxes off" state simple and avoids an
