@@ -77,6 +77,30 @@ const RUNS_PAGE_1: RunRow[] = [
   },
 ];
 
+// Per-test override: tests can replace this to return a different
+// useQuery payload (e.g., zero-items case) without re-mocking.
+let listUseQueryImpl: (input: {
+  projectId: string;
+  cursor?: string;
+  limit?: number;
+  branch?: string;
+  status?: string[];
+}) => {
+  data: { items: RunRow[]; nextCursor: string | null };
+  isLoading: boolean;
+  error: null;
+} = (input) => {
+  listMock(input);
+  return {
+    data: {
+      items: RUNS_PAGE_1,
+      nextCursor: "2026-05-15T00:00:00.000Z",
+    },
+    isLoading: false,
+    error: null,
+  };
+};
+
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     runs: {
@@ -87,17 +111,7 @@ vi.mock("@/lib/trpc", () => ({
           limit?: number;
           branch?: string;
           status?: string[];
-        }) => {
-          listMock(input);
-          return {
-            data: {
-              items: RUNS_PAGE_1,
-              nextCursor: "2026-05-15T00:00:00.000Z",
-            },
-            isLoading: false,
-            error: null,
-          };
-        },
+        }) => listUseQueryImpl(input),
       },
     },
   },
@@ -166,6 +180,46 @@ describe("RunsTable", () => {
       const lastCall = listMock.mock.calls.at(-1)?.[0] as { cursor?: string };
       expect(lastCall.cursor).toBe("2026-05-15T00:00:00.000Z");
     });
+  });
+});
+
+describe("RunsTable empty-state branches", () => {
+  // Override the list mock to return zero items for these tests.
+  const emptyImpl = () => ({
+    data: { items: [] as RunRow[], nextCursor: null },
+    isLoading: false,
+    error: null,
+  });
+
+  beforeEach(() => {
+    listUseQueryImpl = emptyImpl;
+  });
+
+  afterEach(() => {
+    // Restore default impl for downstream tests.
+    listUseQueryImpl = (input) => {
+      listMock(input);
+      return {
+        data: {
+          items: RUNS_PAGE_1,
+          nextCursor: "2026-05-15T00:00:00.000Z",
+        },
+        isLoading: false,
+        error: null,
+      };
+    };
+  });
+
+  test("renders EmptyRunsCta when zero items and no filter active", () => {
+    render(<RunsTable projectId={PROJECT_ID} />);
+    expect(screen.getByTestId("empty-runs-cta")).toBeDefined();
+    expect(screen.queryByText(/No runs match\./)).toBeNull();
+  });
+
+  test("renders 'No runs match.' when zero items and a filter IS active", () => {
+    render(<RunsTable projectId={PROJECT_ID} initialBranch="feature/x" />);
+    expect(screen.getByText(/No runs match\./)).toBeDefined();
+    expect(screen.queryByTestId("empty-runs-cta")).toBeNull();
   });
 });
 

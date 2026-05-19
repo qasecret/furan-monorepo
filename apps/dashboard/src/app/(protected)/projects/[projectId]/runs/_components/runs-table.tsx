@@ -3,6 +3,7 @@
 import type { RunStatus } from "@furan/shared-types";
 import { useState } from "react";
 
+import { EmptyRunsCta } from "./empty-runs-cta";
 import { FiltersBar } from "./filters-bar";
 import { RunRow } from "./run-row";
 
@@ -115,6 +116,36 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : error ? (
         <div className="text-sm text-destructive">Error: {error.message}</div>
+      ) : items.length === 0 ? (
+        filters.branch === undefined &&
+        (!filters.status || filters.status.length === 0) ? (
+          <EmptyRunsCta projectId={projectId} />
+        ) : (
+          <table
+            className="w-full text-sm border-collapse"
+            data-testid="runs-table"
+          >
+            <thead className="text-left text-muted-foreground border-b">
+              <tr>
+                <th className="py-2 pr-2">Branch</th>
+                <th className="py-2 pr-2">Status</th>
+                <th className="py-2 pr-2">Diff %</th>
+                <th className="py-2 pr-2">Mismatched px</th>
+                <th className="py-2 pr-2">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td
+                  colSpan={5}
+                  className="py-6 text-center text-muted-foreground"
+                >
+                  No runs match.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        )
       ) : (
         <>
           <table
@@ -131,20 +162,9 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="py-6 text-center text-muted-foreground"
-                  >
-                    No runs match.
-                  </td>
-                </tr>
-              ) : (
-                items.map((r) => (
-                  <RunRow key={r.id} projectId={projectId} run={r} />
-                ))
-              )}
+              {items.map((r) => (
+                <RunRow key={r.id} projectId={projectId} run={r} />
+              ))}
             </tbody>
           </table>
           {data?.nextCursor && (

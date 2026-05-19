@@ -43,8 +43,26 @@ vi.mock("next/navigation", () => ({
 
 // ADR-032: tests override fields on this object (e.g., autoApproved)
 // per-test via mockGetByIdData = { ...defaultMockData, autoApproved: true }.
-const defaultMockData = {
+type RunStatusLite = "unresolved" | "empty" | "passed" | "failed" | "running";
+interface MockData {
+  id: string;
+  projectId: string;
+  buildId: string;
+  screenshots: unknown[];
+  diffRegions: unknown[];
+  baselineScreenshot: unknown;
+  baselineSource: unknown;
+  diffName: string | null;
+  comment: string | null;
+  ignoreAreas: unknown;
+  variationIgnoreAreas: unknown;
+  autoApproved: boolean;
+  status: RunStatusLite;
+}
+const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
+  projectId: "test-project-id",
+  buildId: "test-build-id",
   screenshots: [],
   diffRegions: [],
   baselineScreenshot: null,
@@ -57,9 +75,9 @@ const defaultMockData = {
   // Task 3 (run-status enum): ApprovalBar reads `status` from this query
   // to drive its enabled-state + status pill. Default `unresolved` so the
   // embedded ApprovalBar is in its canonical reviewable state.
-  status: "unresolved" as const,
+  status: "unresolved",
 };
-let mockGetByIdData: typeof defaultMockData = { ...defaultMockData };
+let mockGetByIdData: MockData = { ...defaultMockData };
 
 // Mock the tRPC client.
 // T9: getById response includes baselineScreenshot + diffName.
@@ -166,5 +184,25 @@ describe("DiffViewer", () => {
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     expect(r.queryByTestId("auto-approved-badge")).toBeNull();
+  });
+
+  test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "empty" as const,
+      projectId: "test-project-id",
+      buildId: "test-build-id",
+      diffRegions: [],
+      screenshots: [],
+    };
+    const r = render(<DiffViewer runId="r1" diffId="d1" />);
+    expect(r.getByTestId("empty-run-card")).toBeDefined();
+    expect(r.queryByTestId("region-list-panel")).toBeNull();
+  });
+
+  test("non-empty status (e.g. unresolved) renders viewer + region list normally", () => {
+    mockGetByIdData = { ...defaultMockData, status: "unresolved" as const };
+    const r = render(<DiffViewer runId="r1" diffId="d1" />);
+    expect(r.queryByTestId("empty-run-card")).toBeNull();
   });
 });

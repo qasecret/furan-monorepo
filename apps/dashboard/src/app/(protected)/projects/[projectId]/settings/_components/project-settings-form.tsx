@@ -229,10 +229,11 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
               render={({ field }) => (
                 <FormItem className="flex items-center justify-between gap-4">
                   <div>
-                    <FormLabel>Enable L2 (DOM diff)</FormLabel>
+                    <FormLabel>Layout-aware comparison</FormLabel>
                     <FormDescription>
-                      Run structural / text-change analysis when pixel diff
-                      exceeds the threshold.
+                      Analyze DOM structure changes in addition to pixel
+                      differences. Helps catch layout regressions that look
+                      similar pixel-by-pixel. Adds ~50ms per check.
                     </FormDescription>
                   </div>
                   <FormControl>
