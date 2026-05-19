@@ -1,13 +1,14 @@
 "use client";
 
+import type { RunStatus } from "@furan/shared-types";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
+import { RunStatusBadge } from "@/components/run-status-badge";
 
 interface RunRowData {
   id: string;
   branchName: string | null;
-  status: string;
+  status: RunStatus;
   diffPercent: number | null;
   pixelMisMatchCount: number | null;
   baselineSource: string | null;
@@ -33,20 +34,14 @@ function relative(date: string | Date): string {
   return d.toLocaleDateString();
 }
 
-function statusVariant(
-  status: string,
-): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "passed" || status === "ok") return "default";
-  if (status === "failed") return "destructive";
-  if (status === "running" || status === "new") return "secondary";
-  return "outline";
-}
-
 /**
  * Single row in the runs index table. Links the branch cell to the diff
  * viewer for the run. The viewer route is `runs/[runId]/diffs/[diffId]` —
  * v0.4 doesn't expose per-diff IDs from `runs.list`, so we reuse the runId
  * for both segments and rely on the viewer to load the first diff.
+ *
+ * Status renders through the shared `<RunStatusBadge>` so colour + tooltip
+ * stay consistent across run-row, the runs-list filter, and ApprovalBar.
  */
 export function RunRow({ projectId, run }: Props) {
   return (
@@ -63,7 +58,7 @@ export function RunRow({ projectId, run }: Props) {
         </Link>
       </td>
       <td className="py-2 pr-2">
-        <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+        <RunStatusBadge status={run.status} />
       </td>
       <td className="py-2 pr-2">
         {run.diffPercent !== null ? `${run.diffPercent.toFixed(2)}%` : "—"}

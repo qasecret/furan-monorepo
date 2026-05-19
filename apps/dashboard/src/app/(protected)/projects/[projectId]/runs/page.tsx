@@ -1,3 +1,4 @@
+import { runStatusSchema } from "@furan/shared-types";
 import { notFound, redirect } from "next/navigation";
 
 import { RunsTable } from "./_components/runs-table";
@@ -29,6 +30,13 @@ export default async function ProjectRunsPage({
 }) {
   const { projectId } = await params;
   const sp: { branch?: string; status?: string } = (await searchParams) ?? {};
+  // Narrow the raw URL `status` param to the typed enum; an unknown value
+  // (e.g. a stale link from before the enum migration) silently falls
+  // through to "All statuses" rather than 500ing.
+  const parsedStatus = sp.status
+    ? runStatusSchema.safeParse(sp.status)
+    : undefined;
+  const initialStatus = parsedStatus?.success ? parsedStatus.data : undefined;
 
   const project = await apiGet<Project>(`/projects/${projectId}`);
   if (project.status === 401) {
@@ -59,7 +67,7 @@ export default async function ProjectRunsPage({
       <RunsTable
         projectId={projectId}
         initialBranch={sp.branch}
-        initialStatus={sp.status}
+        initialStatus={initialStatus}
       />
     </div>
   );

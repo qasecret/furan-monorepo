@@ -14,7 +14,10 @@ import {
   testVariations,
   type RunStatus,
 } from "@furan/db";
-import { overrideStatusInputSchema } from "@furan/shared-types";
+import {
+  overrideStatusInputSchema,
+  runStatusSchema,
+} from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -41,13 +44,12 @@ const listInput = z.object({
   /** Exact-match filter on `test_runs.branch_name`. */
   branch: z.string().min(1).max(255).optional(),
   /**
-   * Exact-match filter on `test_runs.status`. The column is free-form `text`
-   * (not a pgEnum), so we accept any short string here and let the DB return
-   * an empty page for unknown values rather than rejecting at the boundary.
-   * Known values across the codebase: "new" | "ok" | "running" | "passed" |
-   * "failed". Task 9 should constrain to that union at the UI layer.
+   * Exact-match filter on `test_runs.status`. Narrowed to the typed
+   * `runStatusSchema` enum (the seven Applitools-aligned values) so the
+   * boundary rejects unknown values up front rather than silently
+   * returning an empty page. Replaces the Task 1 defensive cast.
    */
-  status: z.string().min(1).max(32).optional(),
+  status: runStatusSchema.optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -90,14 +92,7 @@ export const runsRouter = t.router({
         conditions.push(eq(testRuns.branchName, input.branch));
       }
       if (input.status) {
-        // The column is now a pgEnum (migration 0008_run_status_enum); the
-        // input Zod schema is still free-form string — Task 3 (step 3.5) of
-        // furan-design/plans/2026-05-19-run-status-enum.md narrows it to the
-        // typed union. Until then the cast keeps the existing runtime behaviour
-        // (unknown values yield an empty page) without lying about types.
-        conditions.push(
-          eq(testRuns.status, input.status as typeof testRuns.status._.data),
-        );
+        conditions.push(eq(testRuns.status, input.status));
       }
 
       const rows = await ctx.db

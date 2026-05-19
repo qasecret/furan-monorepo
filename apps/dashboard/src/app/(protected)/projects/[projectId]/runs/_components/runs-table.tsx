@@ -1,5 +1,6 @@
 "use client";
 
+import type { RunStatus } from "@furan/shared-types";
 import { useState } from "react";
 
 import { FiltersBar } from "./filters-bar";
@@ -11,14 +12,14 @@ import { trpc } from "@/lib/trpc";
 interface Props {
   projectId: string;
   initialBranch?: string;
-  initialStatus?: string;
+  initialStatus?: RunStatus;
 }
 
 interface RunItem {
   id: string;
   projectId: string;
   branchName: string | null;
-  status: string;
+  status: RunStatus;
   diffPercent: number | null;
   pixelMisMatchCount: number | null;
   baselineSource: string | null;
@@ -41,7 +42,10 @@ interface RunItem {
  * reset both pieces of state.
  */
 export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
-  const [filters, setFilters] = useState<{ branch?: string; status?: string }>({
+  const [filters, setFilters] = useState<{
+    branch?: string;
+    status?: RunStatus;
+  }>({
     branch: initialBranch,
     status: initialStatus,
   });
@@ -83,7 +87,7 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
     setCursor(data.nextCursor);
   };
 
-  const onFiltersChange = (f: { branch?: string; status?: string }) => {
+  const onFiltersChange = (f: { branch?: string; status?: RunStatus }) => {
     setFilters(f);
     setAccumulated([]);
     setCursor(undefined);

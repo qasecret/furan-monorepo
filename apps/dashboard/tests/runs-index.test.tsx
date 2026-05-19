@@ -119,8 +119,12 @@ describe("RunsTable", () => {
     expect(screen.getByTestId("run-row-r2")).toBeDefined();
     expect(screen.getByText("main")).toBeDefined();
     expect(screen.getByText("feature/x")).toBeDefined();
-    expect(screen.getByText("passed")).toBeDefined();
-    expect(screen.getByText("failed")).toBeDefined();
+    // RunStatusBadge renders the title-cased label + a status-keyed
+    // testid; assert both to lock in the badge wiring.
+    expect(screen.getByTestId("run-status-badge-passed")).toBeDefined();
+    expect(screen.getByTestId("run-status-badge-failed")).toBeDefined();
+    expect(screen.getByText("Passed")).toBeDefined();
+    expect(screen.getByText("Failed")).toBeDefined();
   });
 
   test("branch filter input updates the query input passed to useQuery", async () => {

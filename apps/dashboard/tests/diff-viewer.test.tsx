@@ -54,6 +54,10 @@ const defaultMockData = {
   ignoreAreas: null,
   variationIgnoreAreas: null,
   autoApproved: false,
+  // Task 3 (run-status enum): ApprovalBar reads `status` from this query
+  // to drive its enabled-state + status pill. Default `unresolved` so the
+  // embedded ApprovalBar is in its canonical reviewable state.
+  status: "unresolved" as const,
 };
 let mockGetByIdData: typeof defaultMockData = { ...defaultMockData };
 
@@ -79,6 +83,7 @@ vi.mock("../src/lib/trpc", () => {
         },
         approve: { useMutation: noopMutation },
         reject: { useMutation: noopMutation },
+        overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: { useMutation: noopMutation },
       },
