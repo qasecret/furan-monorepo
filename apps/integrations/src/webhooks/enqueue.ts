@@ -71,6 +71,7 @@ export async function enqueueWebhookDeliveries(
       : "");
 
   let enqueued = 0;
+  let skipped = 0;
   for (const hook of hooks) {
     const payload = buildPayload(hook.url, {
       event,
@@ -79,6 +80,13 @@ export async function enqueueWebhookDeliveries(
       dashboardUrl,
     });
 
+    // `buildPayload` returns null when a Slack subscriber is asked to
+    // notify on a non-terminal status (e.g. `running`). Skip silently.
+    if (payload === null) {
+      skipped++;
+      continue;
+    }
+
     await deps.webhookQueue.add("webhook", {
       projectId: event.projectId,
       webhookId: hook.id,
@@ -86,6 +94,18 @@ export async function enqueueWebhookDeliveries(
       payload,
     });
     enqueued++;
+  }
+
+  if (skipped > 0) {
+    deps.logger.debug(
+      {
+        runId: event.runId,
+        projectId: event.projectId,
+        skipped,
+        status: event.status,
+      },
+      "webhook_deliveries_skipped_non_terminal",
+    );
   }
 
   deps.logger.info(

@@ -1,3 +1,5 @@
+import type { RunStatus } from "@furan/shared-types";
+
 /**
  * Minimal `run:*:events` payload union — defined locally in the
  * integrations app because there is no canonical shared type yet.
@@ -40,7 +42,11 @@ export type RunEvent =
       type: "run.completed";
       runId: string;
       projectId?: string;
-      status?: "passed" | "failed";
+      // 7-value Furan `run_status` enum — see
+      // `packages/shared-types/src/run-status.ts`. Publishers may also
+      // emit legacy `"passed" | "failed"` for a transitional window; the
+      // consumer treats any non-RunStatus value as unknown.
+      status?: RunStatus;
       numChanges?: number;
       dashboardUrl?: string;
       // T9: branch + diff% so outbound webhooks (Slack notifier) can

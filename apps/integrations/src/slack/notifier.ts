@@ -1,6 +1,8 @@
 import { diffRegions, eq, type DB } from "@furan/db";
+import type { RunStatus } from "@furan/shared-types";
 
 import type { RunEvent } from "../run-events/types.js";
+import { isTerminal } from "../status-mapping.js";
 
 import {
   runCompletedBlockKit,
@@ -43,19 +45,35 @@ export interface BuildPayloadInput {
 }
 
 /**
- * Branch on URL shape and return either a Slack Block Kit payload or a
- * generic envelope. Both consume the same `RunEvent` arm so the run-events
- * subscriber doesn't need to know which downstream it's targeting.
+ * Branch on URL shape and return either a Slack Block Kit payload, a
+ * generic envelope, or `null` to mean "skip this subscriber".
+ *
+ * Returns `null` for Slack URLs when the run status is non-terminal
+ * (i.e. `running`). Under the 7-value `run_status` taxonomy, `running`
+ * is mid-flight and not a notify-worthy event — firing a Slack message
+ * for it would spam channels with intermediate noise. Generic
+ * subscribers still receive non-terminal payloads in case they want to
+ * implement their own gating downstream.
  */
 export function buildPayload(
   hookUrl: string,
   input: BuildPayloadInput,
-): SlackPayload | GenericRunCompletedPayload {
+): SlackPayload | GenericRunCompletedPayload | null {
   if (isSlackUrl(hookUrl)) {
+    // Slack gate: only fire on terminal statuses.
+    if (
+      input.event.status !== undefined &&
+      !isTerminal(input.event.status as RunStatus)
+    ) {
+      return null;
+    }
     return runCompletedBlockKit({
       runId: input.event.runId,
       projectId: input.event.projectId ?? "",
-      status: input.event.status ?? "unknown",
+      // Default to `passed` when status is missing so existing payloads
+      // (which historically only included passed/failed) keep rendering
+      // a sensible message. Non-terminal statuses are already gated above.
+      status: (input.event.status as RunStatus) ?? "passed",
       diffPercent:
         input.event.diffPercent !== undefined ? input.event.diffPercent : null,
       branchName: input.branchName,
