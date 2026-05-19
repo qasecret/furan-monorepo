@@ -263,7 +263,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         where: eq(testRuns.id, candidateRun.id),
       });
       expect(updatedRun).toBeDefined();
-      expect(updatedRun!.status).toBe("failed");
+      expect(updatedRun!.status).toBe("unresolved");
       expect(updatedRun!.diffPercent ?? 0).toBeGreaterThan(0);
       expect(updatedRun!.pixelMisMatchCount ?? 0).toBeGreaterThan(0);
       expect(updatedRun!.diffName).toMatch(/^[0-9a-f]{64}$/);
@@ -327,7 +327,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       where: eq(testRuns.id, candidateRun.id),
     });
     expect(updatedRun).toBeDefined();
-    expect(updatedRun!.status).toBe("failed");
+    expect(updatedRun!.status).toBe("unresolved");
     expect(updatedRun!.diffPercent ?? 0).toBeGreaterThan(0);
   }, 60_000);
 });

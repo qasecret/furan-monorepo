@@ -195,7 +195,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               branchName: input.branchName,
               browser,
               viewport,
-              status: "new",
+              status: "running",
             })
             .returning();
           return created!;

@@ -192,6 +192,78 @@ desc("handleCaptureJob (integration)", () => {
     sub.disconnect();
   }, 60_000);
 
+  test("uncaught exception path: handler throws → status='aborted' (spec §3.2)", async () => {
+    // Seed a separate run with an unreachable URL so page.goto() throws
+    // inside the per-viewport loop. The wrapper try/catch should catch,
+    // write status=aborted, and re-throw so the worker's error visibility
+    // is preserved.
+    const uniq = Date.now();
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `cw-abort-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "cw",
+        lastName: "abort",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `cw-abort-${uniq}` })
+      .returning();
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [r] = await db
+      .insert(testRuns)
+      .values({
+        name: "r-abort",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    const abortJob: CaptureJob = {
+      runId: r.id,
+      projectId: p.id,
+      buildId: b.id,
+      testVariationId: v.id,
+      // 127.0.0.1:1 — unbound port, connection refused → page.goto throws.
+      url: "http://127.0.0.1:1/",
+      viewport: { width: 1280, height: 720 },
+      browser: "chromium",
+    };
+
+    try {
+      await expect(
+        handleCaptureJob(abortJob, mockLogger, { db, storage, redis }),
+      ).rejects.toThrow();
+
+      const updated = await db.query.testRuns.findFirst({
+        where: eq(testRuns.id, r.id),
+      });
+      expect(updated!.status).toBe("aborted");
+    } finally {
+      // Per-test scoped cleanup — concurrency=1 leaves no leakage.
+      await db.delete(projects).where(eq(projects.id, p.id));
+    }
+  }, 60_000);
+
   test("multi-viewport: captures one screenshots row per viewport (v0.5)", async () => {
     // Seed a fresh run that's separate from the single-viewport test so
     // the unique image_key constraint can still fire if Playwright produces

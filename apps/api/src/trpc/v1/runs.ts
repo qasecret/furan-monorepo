@@ -9,9 +9,12 @@ import {
   projects,
   resolveBaseline,
   screenshots,
+  sql,
   testRuns,
   testVariations,
+  type RunStatus,
 } from "@furan/db";
+import { overrideStatusInputSchema } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -367,9 +370,19 @@ export const runsRouter = t.router({
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
+      // Per spec §3.3: only terminal review states can be approved. Reject
+      // mid-flight (`running`) and terminal system states (`new`, `aborted`,
+      // `empty`) — for those the right response is to re-run, not override.
+      if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
+        });
+      }
+
       await ctx.db
         .update(testRuns)
-        .set({ merge: true })
+        .set({ status: "passed", merge: true })
         .where(eq(testRuns.id, input.runId));
 
       // Snapshot the approved run into baselines (branch-scoped, §4.7).
@@ -403,11 +416,107 @@ export const runsRouter = t.router({
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
+      // Per spec §3.3: same legality matrix as approve. In particular,
+      // rejecting a `new` run would orphan its just-created baseline; if
+      // the reviewer wants that, they need to delete the baseline directly
+      // (a separate operation not introduced by this spec).
+      if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Cannot reject a run with status '${run.status}'. Re-run the test instead.`,
+        });
+      }
+
       await ctx.db
         .update(testRuns)
-        .set({ merge: false })
+        .set({ status: "failed", merge: false })
         .where(eq(testRuns.id, input.runId));
 
       return { runId: run.id, approved: false };
     }),
+
+  /**
+   * Applitools-style "Override Status" — sets the run's status without
+   * touching `merge` or `baselines`. This is the differentiator from
+   * approve/reject: same status outcome (passed/failed), no baseline
+   * side effect.
+   *
+   * Per spec §3.3 the same legality set applies — only terminal review
+   * states (`passed | unresolved | failed`) are overridable.
+   *
+   * `"default"` recomputes the system-computed status from
+   * `diff_regions`: if any row exists for this run with non-trivial
+   * severity, the run becomes `unresolved`; else `passed`.
+   */
+  overrideStatus: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        status: overrideStatusInputSchema,
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const runRows = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+      if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Cannot override status from '${run.status}'.`,
+        });
+      }
+
+      let nextStatus: "passed" | "unresolved" | "failed";
+      if (input.status === "default") {
+        // Recompute: any diff_regions row with severity != 'none' means
+        // the system would have flagged this run as unresolved. Use a
+        // LIMIT 1 short-circuit query — cheaper than COUNT(*).
+        const diffRows = await ctx.db
+          .select({ id: diffRegions.id })
+          .from(diffRegions)
+          .where(
+            and(
+              eq(diffRegions.runId, input.runId),
+              sql`${diffRegions.severity} != 'none'`,
+            ),
+          )
+          .limit(1);
+        nextStatus = diffRows.length > 0 ? "unresolved" : "passed";
+      } else {
+        nextStatus = input.status;
+      }
+
+      await ctx.db
+        .update(testRuns)
+        .set({ status: nextStatus })
+        .where(eq(testRuns.id, input.runId));
+
+      return { runId: run.id, status: nextStatus };
+    }),
 });
+
+/**
+ * The legal source statuses for any reviewer-driven status mutation
+ * (`approve`, `reject`, `overrideStatus`) per spec §3.3. Excludes
+ * `running` (no diff outcome yet) and the terminal system states
+ * `new | aborted | empty` (re-run instead of overriding).
+ */
+const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "passed",
+  "unresolved",
+  "failed",
+]);

@@ -104,7 +104,11 @@ async function seed(h: TestApp): Promise<Seeded> {
       buildId: build.id,
       projectId: project.id,
       testVariationId: variation.id,
-      status: "new",
+      // Per spec §3.3 (run-status-enum) only terminal review states are
+      // reviewer-overridable. `unresolved` is the canonical "diff-worker
+      // found differences, awaiting review" status — i.e. the state most
+      // tests want as a starting point for approve/reject coverage.
+      status: "unresolved",
       branchName: "feature/x",
       name: "home page",
     })
@@ -176,7 +180,9 @@ d("tRPC runs router", () => {
         )[0]!.buildId,
         projectId: s.projectId,
         testVariationId: s.variationId,
-        status: "ok",
+        // Legacy `"ok"` value is no longer a valid enum label (migration
+        // 0008 remaps it to "passed"). Use the post-migration spelling.
+        status: "passed",
         branchName: "feature/x",
         name: "older",
       })
@@ -300,7 +306,7 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("UNAUTHORIZED");
   });
 
-  test("approve: flips merge=true and inserts a baseline row", async () => {
+  test("approve: writes status=passed, merge=true and inserts a baseline row", async () => {
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.runs.approve.mutate({ runId: s.runId });
     expect(res).toEqual({ runId: s.runId, approved: true });
@@ -311,6 +317,7 @@ d("tRPC runs router", () => {
       .where(eq(testRuns.id, s.runId))
       .limit(1);
     expect(updatedRows[0]?.merge).toBe(true);
+    expect(updatedRows[0]?.status).toBe("passed");
 
     const baselineRows = await h.db
       .select()
@@ -321,8 +328,9 @@ d("tRPC runs router", () => {
     expect(baselineRows[0]?.userId).toBe(s.memberId);
   });
 
-  test("reject: flips merge=false (and does NOT insert a baseline)", async () => {
-    // First approve to flip it to true, then reject to ensure flip works.
+  test("reject: writes status=failed, merge=false (and does NOT insert a baseline)", async () => {
+    // First approve to flip status=passed/merge=true, then reject to
+    // ensure both flips work; both source statuses are reviewer-legal.
     const client = makeClient(baseUrl, s.memberJwt);
     await client.runs.approve.mutate({ runId: s.runId });
 
@@ -335,6 +343,211 @@ d("tRPC runs router", () => {
       .where(eq(testRuns.id, s.runId))
       .limit(1);
     expect(updatedRows[0]?.merge).toBe(false);
+    expect(updatedRows[0]?.status).toBe("failed");
+  });
+
+  test("approve: rejects BAD_REQUEST when run.status='aborted'", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "aborted" })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.approve.mutate({ runId: s.runId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+  });
+
+  test("approve: idempotent no-op when run.status='passed'", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "passed", merge: true })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.approve.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: true });
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(rows[0]?.status).toBe("passed");
+    expect(rows[0]?.merge).toBe(true);
+  });
+
+  test("reject: rejects BAD_REQUEST when run.status='new' (would orphan baseline)", async () => {
+    await h.db
+      .update(testRuns)
+      .set({ status: "new", merge: true })
+      .where(eq(testRuns.id, s.runId));
+    const client = makeClient(baseUrl, s.memberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.reject.mutate({ runId: s.runId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+  });
+
+  describe("overrideStatus", () => {
+    test("status=passed: writes status without touching merge", async () => {
+      // Seed: status=unresolved (from helper), merge defaults to false.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "passed",
+      });
+      expect(res).toEqual({ runId: s.runId, status: "passed" });
+      const rows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(rows[0]?.status).toBe("passed");
+      // merge unchanged (still default false from the seed insert).
+      expect(rows[0]?.merge).toBe(false);
+    });
+
+    test("status='default' recomputes to 'unresolved' when diff_regions has severity!=none", async () => {
+      // Pre-seed run as `passed` so the recompute must flip it back.
+      await h.db
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, s.runId));
+      await h.db.insert(diffRegions).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        severity: "major",
+        category: "layout",
+        bbox: { x: 0, y: 0, width: 1, height: 1 },
+        description: "test",
+        source: "l1",
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("unresolved");
+      const rows = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(rows[0]?.status).toBe("unresolved");
+    });
+
+    test("status='default' resolves to 'passed' when no diff_regions rows exist", async () => {
+      // Seed: status=unresolved (from helper), no diff_regions inserted.
+      // Recompute should flip it to passed.
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("passed");
+    });
+
+    test("status='default' resolves to 'passed' when all diff_regions have severity=none", async () => {
+      await h.db.insert(diffRegions).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        severity: "none",
+        category: "layout",
+        bbox: { x: 0, y: 0, width: 1, height: 1 },
+        description: "below threshold",
+        source: "l1",
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "default",
+      });
+      expect(res.status).toBe("passed");
+    });
+
+    test("rejects BAD_REQUEST when run.status='running'", async () => {
+      await h.db
+        .update(testRuns)
+        .set({ status: "running" })
+        .where(eq(testRuns.id, s.runId));
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects BAD_REQUEST when run.status='aborted'", async () => {
+      await h.db
+        .update(testRuns)
+        .set({ status: "aborted" })
+        .where(eq(testRuns.id, s.runId));
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("rejects invalid status value", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          // @ts-expect-error deliberately invalid status
+          status: "running",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("non-member receives FORBIDDEN", async () => {
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+
+    test("unauthenticated receives UNAUTHORIZED", async () => {
+      const client = makeClient(baseUrl);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.overrideStatus.mutate({
+          runId: s.runId,
+          status: "passed",
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("UNAUTHORIZED");
+    });
   });
 
   test("approve: non-member receives FORBIDDEN", async () => {

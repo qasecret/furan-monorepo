@@ -210,7 +210,9 @@ desc("handleDiffJob (integration)", () => {
       where: eq(testRuns.id, candidateRunId),
     });
     expect(updatedRun).toBeDefined();
-    expect(updatedRun!.status).toBe("failed");
+    // Per spec §3.2 the diff-worker writes "unresolved" on diff-found.
+    // "failed" is reserved for reviewer-rejected runs.
+    expect(updatedRun!.status).toBe("unresolved");
     expect(updatedRun!.baselineSource).toBe("default_branch");
     expect(updatedRun!.diffPercent).toBeGreaterThan(0);
     expect(updatedRun!.pixelMisMatchCount).toBeGreaterThan(0);
@@ -454,8 +456,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     expect(updatedRun).toBeDefined();
     // 1280x720 viewport has a substantial diff; 375x812 viewport is identical
     // bytes (or no baseline for that viewport — first-baseline pass). Either
-    // way the aggregate must be "failed" because the 1280x720 viewport fails.
-    expect(updatedRun!.status).toBe("failed");
+    // way the aggregate must be "unresolved" because the 1280x720 viewport
+    // fails. Per spec §3.2 the diff-worker writes "unresolved", not "failed".
+    expect(updatedRun!.status).toBe("unresolved");
     expect(updatedRun!.diffPercent!).toBeGreaterThan(10);
 
     // diff_regions rows MUST carry the viewport column populated for
@@ -481,8 +484,202 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       .map((e) => JSON.parse(e))
       .find((e) => e.type === "run.completed");
     expect(runCompleted).toBeDefined();
-    expect(runCompleted.status).toBe("failed");
+    // Per spec §3.2 diff-worker writes "unresolved" on diff-found.
+    expect(runCompleted.status).toBe("unresolved");
 
     sub.disconnect();
+  }, 60_000);
+});
+
+/**
+ * Spec §3.2 coverage for the two writer paths that did not exist before
+ * the run-status-enum migration: `new` (first-baseline auto-seed) and
+ * `aborted` (uncaught handler exception). These need their own isolated
+ * project seeds because the existing `desc`/`descMv` blocks pre-seed a
+ * baseline — the whole point of the first-baseline test is "no baseline
+ * exists for this variation+branch yet".
+ */
+const descStatus = skip ? describe.skip : describe;
+descStatus("handleDiffJob status writes (spec §3.2)", () => {
+  let db: DB;
+  let closeDb: () => Promise<void>;
+  let storage: Storage;
+  let redis: Redis;
+  const cleanupProjectIds: string[] = [];
+
+  beforeAll(async () => {
+    const created = createDb();
+    db = created.db;
+    closeDb = created.close;
+    storage = createStorage();
+    redis = new Redis(process.env.REDIS_URL!);
+  }, 30_000);
+
+  afterAll(async () => {
+    for (const pid of cleanupProjectIds) {
+      try {
+        await db.delete(projects).where(eq(projects.id, pid));
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (redis) redis.disconnect();
+    if (closeDb) await closeDb();
+  });
+
+  test("first-baseline path: no prior baseline → status='new', merge=true, baselines row inserted", async () => {
+    const uniq = Date.now();
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `dw-new-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "dw",
+        lastName: "new",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `dw-new-${uniq}`, mainBranchName: "main" })
+      .returning();
+    cleanupProjectIds.push(p.id);
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [run] = await db
+      .insert(testRuns)
+      .values({
+        name: "first-run",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    // Seed a candidate screenshot so the resolveBaseline-lookup path can
+    // even consider this run. With no `baselines` row yet, resolveBaseline
+    // returns null and the handler takes the first-baseline branch.
+    const fixtureBytes = FIXTURE("baseline-a.png");
+    const key = objectKey(fixtureBytes);
+    await storage.put(key, fixtureBytes, "image/png");
+    await db.delete(screenshots).where(eq(screenshots.imageKey, key));
+    await db.insert(screenshots).values({
+      runId: run.id,
+      projectId: p.id,
+      imageKey: key,
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    await handleDiffJob({ runId: run.id, projectId: p.id }, mockLogger, {
+      db,
+      storage,
+      redis,
+    });
+
+    const updated = await db.query.testRuns.findFirst({
+      where: eq(testRuns.id, run.id),
+    });
+    expect(updated!.status).toBe("new");
+    expect(updated!.merge).toBe(true);
+
+    const seededBaselines = await db.query.baselines.findMany({
+      where: eq(baselines.testRunId, run.id),
+    });
+    expect(seededBaselines.length).toBe(1);
+    expect(seededBaselines[0]!.branchName).toBe("main");
+    // userId NULL → auto-seeded (vs reviewer-approved).
+    expect(seededBaselines[0]!.userId).toBeNull();
+  }, 60_000);
+
+  test("uncaught exception path: handler throws → status='aborted' (best-effort)", async () => {
+    const uniq = Date.now() + 1;
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `dw-abort-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "dw",
+        lastName: "abort",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `dw-abort-${uniq}`, mainBranchName: "main" })
+      .returning();
+    cleanupProjectIds.push(p.id);
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [baselineRun] = await db
+      .insert(testRuns)
+      .values({
+        name: "baseline-abort",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    const [candidateRun] = await db
+      .insert(testRuns)
+      .values({
+        name: "candidate-abort",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "feature/abort",
+        status: "running",
+      })
+      .returning();
+    await db.insert(baselines).values({
+      testVariationId: v.id,
+      testRunId: baselineRun.id,
+      branchName: "main",
+      userId: u.id,
+    });
+
+    // Force the exception: no candidate screenshot rows → handler throws
+    // `missing_screenshot:candidate=0`. The wrapper try/catch should
+    // catch, write status=aborted, and re-throw.
+    await expect(
+      handleDiffJob({ runId: candidateRun.id, projectId: p.id }, mockLogger, {
+        db,
+        storage,
+        redis,
+      }),
+    ).rejects.toThrow(/missing_screenshot/);
+
+    const updated = await db.query.testRuns.findFirst({
+      where: eq(testRuns.id, candidateRun.id),
+    });
+    expect(updated!.status).toBe("aborted");
   }, 60_000);
 });

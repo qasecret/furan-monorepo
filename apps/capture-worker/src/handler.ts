@@ -1,4 +1,10 @@
-import { screenshots, withProjectScope, type DB } from "@furan/db";
+import {
+  eq,
+  screenshots,
+  testRuns,
+  withProjectScope,
+  type DB,
+} from "@furan/db";
 import type { CaptureJob, Viewport } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
@@ -28,6 +34,36 @@ const DEFAULT_VIEWPORT: Viewport = { width: 1280, height: 720 };
  * viewport count + duration.
  */
 export async function handleCaptureJob(
+  data: CaptureJob,
+  logger: Logger,
+  deps: HandlerDeps,
+): Promise<void> {
+  try {
+    await handleCaptureJobInner(data, logger, deps);
+  } catch (err) {
+    // Best-effort terminal status write so a crashed capture does not
+    // hang the run in `running` indefinitely. Per spec §3.2 worker
+    // exceptions land as `aborted` (distinct from reviewer-rejected
+    // `failed`). Wrap in its own try/catch so a status-write failure
+    // does not mask the original error.
+    try {
+      await withProjectScope(deps.db, data.projectId, async (tx) => {
+        await tx
+          .update(testRuns)
+          .set({ status: "aborted" })
+          .where(eq(testRuns.id, data.runId));
+      });
+    } catch (statusErr) {
+      logger.error(
+        { err: statusErr, runId: data.runId },
+        "failed_to_write_aborted_status",
+      );
+    }
+    throw err;
+  }
+}
+
+async function handleCaptureJobInner(
   data: CaptureJob,
   logger: Logger,
   deps: HandlerDeps,
@@ -108,6 +144,25 @@ export async function handleCaptureJob(
     } finally {
       await ctx.close();
     }
+  }
+
+  // Per spec §3.2: a capture run that completed without producing any
+  // screenshots (e.g. SDK opened a run via `eyes.open` but never called
+  // `eyes.check`, or every viewport short-circuited) is `empty` —
+  // distinct from `aborted` (worker crashed) and `running` (still in
+  // flight). Mark the run terminal here so the diff-worker never picks
+  // up a check-less run.
+  if (imageKeys.length === 0) {
+    await withProjectScope(deps.db, data.projectId, async (tx) => {
+      await tx
+        .update(testRuns)
+        .set({ status: "empty" })
+        .where(eq(testRuns.id, data.runId));
+    });
+    logger.info(
+      { runId: data.runId, projectId: data.projectId },
+      "capture_completed_empty",
+    );
   }
 
   const durationMs = Date.now() - t0;
