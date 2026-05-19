@@ -142,6 +142,28 @@ export async function handleDiffJob(
         "failed_to_write_aborted_status",
       );
     }
+    // Best-effort `run.completed` publish so the integrations subscriber
+    // (GitHub commit-status, Slack notifier, outbound webhooks) reacts
+    // to the aborted terminal state. Without this, the GitHub check would
+    // stay stuck at `pending` and Slack would never notify. Wrap in its
+    // own try/catch — a publish failure must not mask the worker's
+    // original error, which remains the load-bearing signal.
+    try {
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "aborted",
+        }),
+      );
+    } catch (publishErr) {
+      logger.error(
+        { err: publishErr, runId: data.runId },
+        "failed_to_publish_aborted_run_completed",
+      );
+    }
     throw err;
   }
 }

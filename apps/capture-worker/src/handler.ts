@@ -59,6 +59,29 @@ export async function handleCaptureJob(
         "failed_to_write_aborted_status",
       );
     }
+    // Best-effort `run.completed` publish so the integrations subscriber
+    // (GitHub commit-status, Slack notifier, outbound webhooks) reacts to
+    // the aborted terminal state. The diff-worker normally publishes
+    // `run.completed` on the happy path, but a capture-side abort means
+    // the diff-worker never runs — so this is the only chance to notify.
+    // Wrap in its own try/catch — a publish failure must not mask the
+    // worker's original error.
+    try {
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "aborted",
+        }),
+      );
+    } catch (publishErr) {
+      logger.error(
+        { err: publishErr, runId: data.runId },
+        "failed_to_publish_aborted_run_completed",
+      );
+    }
     throw err;
   }
 }
@@ -69,10 +92,13 @@ async function handleCaptureJobInner(
   deps: HandlerDeps,
 ): Promise<void> {
   const t0 = Date.now();
-  const viewports: Viewport[] =
-    data.viewports && data.viewports.length > 0
-      ? data.viewports
-      : [data.viewport ?? DEFAULT_VIEWPORT];
+  // An explicit empty `viewports: []` is honored as "no viewports to
+  // capture" — exercising the spec §3.2 `empty` terminal state below.
+  // When `viewports` is undefined (the common case), fall back to the
+  // legacy single-viewport field (or the default 1280x720).
+  const viewports: Viewport[] = data.viewports
+    ? data.viewports
+    : [data.viewport ?? DEFAULT_VIEWPORT];
 
   const browser = await getBrowser(data.browser);
   const imageKeys: string[] = [];
@@ -159,6 +185,28 @@ async function handleCaptureJobInner(
         .set({ status: "empty" })
         .where(eq(testRuns.id, data.runId));
     });
+    // Best-effort `run.completed` publish so the integrations subscriber
+    // (GitHub commit-status, Slack notifier, outbound webhooks) reacts to
+    // the empty terminal state. The diff-worker won't run for a
+    // zero-screenshot run, so this is the only chance to notify. Wrap in
+    // its own try/catch — a publish failure must not abort the capture
+    // worker's terminal write path.
+    try {
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "empty",
+        }),
+      );
+    } catch (publishErr) {
+      logger.error(
+        { err: publishErr, runId: data.runId },
+        "failed_to_publish_empty_run_completed",
+      );
+    }
     logger.info(
       { runId: data.runId, projectId: data.projectId },
       "capture_completed_empty",

@@ -606,7 +606,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     expect(seededBaselines[0]!.userId).toBeNull();
   }, 60_000);
 
-  test("uncaught exception path: handler throws → status='aborted' (best-effort)", async () => {
+  test("uncaught exception path: handler throws → status='aborted' (best-effort) + publishes run.completed", async () => {
     const uniq = Date.now() + 1;
     const [u] = await db
       .insert(users)
@@ -666,9 +666,19 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       userId: u.id,
     });
 
+    // Subscribe to the run's event channel BEFORE invoking the handler so
+    // the trailing `run.completed` publish (which the integrations
+    // subscriber needs to flip GitHub commit-status to `error` and trigger
+    // Slack) is observed.
+    const events: string[] = [];
+    const sub = new Redis(process.env.REDIS_URL!);
+    await sub.subscribe(`run:${candidateRun.id}:events`);
+    sub.on("message", (_channel, message) => events.push(message));
+    await new Promise((r) => setTimeout(r, 100));
+
     // Force the exception: no candidate screenshot rows → handler throws
     // `missing_screenshot:candidate=0`. The wrapper try/catch should
-    // catch, write status=aborted, and re-throw.
+    // catch, write status=aborted, publish run.completed, and re-throw.
     await expect(
       handleDiffJob({ runId: candidateRun.id, projectId: p.id }, mockLogger, {
         db,
@@ -681,5 +691,19 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       where: eq(testRuns.id, candidateRun.id),
     });
     expect(updated!.status).toBe("aborted");
+
+    // Wait for pub/sub delivery, then assert the aborted `run.completed`
+    // event went out. Without this the integrations subscriber would
+    // leave the GitHub check at `pending` and never notify Slack.
+    await new Promise((r) => setTimeout(r, 200));
+    const runCompleted = events
+      .map((e) => JSON.parse(e))
+      .find((e) => e.type === "run.completed");
+    expect(runCompleted).toBeDefined();
+    expect(runCompleted.status).toBe("aborted");
+    expect(runCompleted.runId).toBe(candidateRun.id);
+    expect(runCompleted.projectId).toBe(p.id);
+
+    sub.disconnect();
   }, 60_000);
 });

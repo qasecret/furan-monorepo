@@ -352,6 +352,34 @@ d("tRPC runs router", () => {
     expect(updatedRows[0]?.status).toBe("failed");
   });
 
+  test("transitions unresolved → failed and sets merge=false (canonical reviewer reject)", async () => {
+    // Direct unresolved → reject path. The other reject test above
+    // approves first (so the source status is `passed`); this test
+    // covers the more common production case where the reviewer sees a
+    // diff-worker-emitted `unresolved` and rejects without any prior
+    // approve hop. Seed gives status=unresolved already (see `seed()`).
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.reject.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: false });
+
+    const updatedRows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(updatedRows[0]?.status).toBe("failed");
+    expect(updatedRows[0]?.merge).toBe(false);
+
+    // Reject MUST NOT insert a baselines row — that's approve's job.
+    // (Inserting one here would orphan a baseline pointing at a rejected
+    // run, which would then be picked as a baseline by future diffs.)
+    const baselineRows = await h.db
+      .select()
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    expect(baselineRows.length).toBe(0);
+  });
+
   test("approve: rejects BAD_REQUEST when run.status='aborted'", async () => {
     await h.db
       .update(testRuns)
