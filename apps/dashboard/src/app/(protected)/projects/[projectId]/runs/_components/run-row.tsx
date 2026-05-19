@@ -12,6 +12,14 @@ interface RunRowData {
   diffPercent: number | null;
   pixelMisMatchCount: number | null;
   baselineSource: string | null;
+  /**
+   * Optional build context — decorative chip only. Not yet populated by
+   * `runs.list`; the conditional render below gracefully no-ops until a
+   * future PR widens the response shape (spec §3.5 / §3.8).
+   */
+  buildId?: string | null;
+  buildName?: string | null;
+  buildNumber?: number | null;
   createdAt: string | Date;
 }
 
@@ -56,6 +64,18 @@ export function RunRow({ projectId, run }: Props) {
         >
           {run.branchName ?? "—"}
         </Link>
+        {run.buildId && (
+          <Link
+            href={`/projects/${projectId}/builds?expand=${run.buildId}`}
+            className="ml-2 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-200"
+            data-testid={`run-build-chip-${run.id}`}
+          >
+            {run.buildName ??
+              (run.buildNumber !== null && run.buildNumber !== undefined
+                ? `#${run.buildNumber}`
+                : "build")}
+          </Link>
+        )}
       </td>
       <td className="py-2 pr-2">
         <RunStatusBadge status={run.status} />
