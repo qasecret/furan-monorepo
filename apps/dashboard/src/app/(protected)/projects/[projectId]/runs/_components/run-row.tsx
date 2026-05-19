@@ -20,6 +20,7 @@ interface RunRowData {
   buildId?: string | null;
   buildName?: string | null;
   buildNumber?: number | null;
+  testVariationId?: string | null;
   createdAt: string | Date;
 }
 
@@ -74,6 +75,15 @@ export function RunRow({ projectId, run }: Props) {
               (run.buildNumber !== null && run.buildNumber !== undefined
                 ? `#${run.buildNumber}`
                 : "build")}
+          </Link>
+        )}
+        {run.testVariationId && (
+          <Link
+            href={`/projects/${projectId}/variations/${run.testVariationId}`}
+            className="ml-2 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-200"
+            data-testid={`run-history-chip-${run.id}`}
+          >
+            History
           </Link>
         )}
       </td>
