@@ -60,4 +60,78 @@ class FuranConfigTest {
             config.viewports,
         )
     }
+
+    @Test
+    fun `fromEnv parses FURAN_BUILD_NAME`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_BUILD_NAME" to "nightly main",
+        )
+        assertEquals("nightly main", FuranConfig.fromEnv(env).name)
+    }
+
+    @Test
+    fun `fromEnv empty FURAN_BUILD_NAME is treated as null`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_BUILD_NAME" to "   ",
+        )
+        assertEquals(null, FuranConfig.fromEnv(env).name)
+    }
+
+    @Test
+    fun `fromEnv parses FURAN_BUILD_PROPERTIES comma-separated`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_BUILD_PROPERTIES" to "region=us-east-1,shard=2,feature=new-cart",
+        )
+        assertEquals(
+            mapOf("region" to "us-east-1", "shard" to "2", "feature" to "new-cart"),
+            FuranConfig.fromEnv(env).properties,
+        )
+    }
+
+    @Test
+    fun `fromEnv parses FURAN_BUILD_PROPERTIES semicolon-separated`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_BUILD_PROPERTIES" to "region=us-east-1;shard=2",
+        )
+        assertEquals(
+            mapOf("region" to "us-east-1", "shard" to "2"),
+            FuranConfig.fromEnv(env).properties,
+        )
+    }
+
+    @Test
+    fun `fromEnv drops malformed FURAN_BUILD_PROPERTIES entries`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_BUILD_PROPERTIES" to "region=us-east-1,no-eq-here,=empty-key,shard=2",
+        )
+        assertEquals(
+            mapOf("region" to "us-east-1", "shard" to "2"),
+            FuranConfig.fromEnv(env).properties,
+        )
+    }
+
+    @Test
+    fun `fromEnv empty FURAN_BUILD_PROPERTIES is empty map`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+        )
+        assertEquals(emptyMap<String, String>(), FuranConfig.fromEnv(env).properties)
+    }
 }
