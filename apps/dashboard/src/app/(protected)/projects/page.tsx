@@ -1,3 +1,5 @@
+import { EmptyProjectsCta } from "./_components/empty-projects-cta";
+
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
 
@@ -9,19 +11,24 @@ interface Project {
   mainBranchName: string;
 }
 
+interface Me {
+  id: string;
+  role: "admin" | "editor" | "guest";
+}
+
 export default async function ProjectsPage() {
   const { data, status } = await apiGet<Project[]>("/projects");
   if (status === 401 || status === 403) {
     return <p>Not authorized.</p>;
   }
   const projects = data ?? [];
+
   if (projects.length === 0) {
-    return (
-      <Card>
-        <p>No projects yet. Ask an admin to create one.</p>
-      </Card>
-    );
+    const me = await apiGet<Me>("/users/me");
+    const role: Me["role"] = me.data?.role ?? "guest";
+    return <EmptyProjectsCta role={role} />;
   }
+
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {projects.map((p) => (
