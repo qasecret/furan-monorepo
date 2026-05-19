@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
+import { EmptyRunCard } from "./EmptyRunCard";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
@@ -153,33 +154,44 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   const regions = (data.diffRegions ?? []) as DiffRegion[];
 
+  const isEmpty = data?.status === "empty";
+
   return (
     <div className="flex flex-col h-full" data-diff-id={diffId}>
-      <ViewerToolbar runId={runId} />
-      <div className="flex items-center gap-2 px-3 py-2 border-b">
-        <BaselineSourceBadge source={baselineSource} />
-        {data.autoApproved && (
-          <span
-            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-            data-testid="auto-approved-badge"
-            title="System-approved: candidate's image bytes matched the baseline exactly."
-          >
-            Auto-approved
-          </span>
-        )}
-        <ViewportSwitcher viewports={uniqueViewports} />
-      </div>
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <ViewerCanvas
-            baselineUrl={baselineUrl}
-            candidateUrl={candidateUrl}
-            diffOverlayUrl={diffOverlayUrl}
-            regions={regions}
-          />
-        </div>
-        <RegionListPanel regions={regions} />
-      </div>
+      {isEmpty ? (
+        <EmptyRunCard
+          projectId={data.projectId}
+          buildId={data.buildId ?? null}
+        />
+      ) : (
+        <>
+          <ViewerToolbar runId={runId} />
+          <div className="flex items-center gap-2 px-3 py-2 border-b">
+            <BaselineSourceBadge source={baselineSource} />
+            {data.autoApproved && (
+              <span
+                className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                data-testid="auto-approved-badge"
+                title="System-approved: candidate's image bytes matched the baseline exactly."
+              >
+                Auto-approved
+              </span>
+            )}
+            <ViewportSwitcher viewports={uniqueViewports} />
+          </div>
+          <div className="flex flex-1 overflow-hidden">
+            <div className="flex-1 overflow-auto">
+              <ViewerCanvas
+                baselineUrl={baselineUrl}
+                candidateUrl={candidateUrl}
+                diffOverlayUrl={diffOverlayUrl}
+                regions={regions}
+              />
+            </div>
+            <RegionListPanel regions={regions} />
+          </div>
+        </>
+      )}
       <ApprovalBar
         runId={runId}
         status={data?.status}
