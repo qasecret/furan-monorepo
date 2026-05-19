@@ -136,6 +136,18 @@ function makeClient(baseUrl: string, jwt?: string) {
   });
 }
 
+// Tiny helper to dedupe the IIFE that reads buildId off a seeded run.
+// The /runs payload requires a buildId, and across this file we always
+// reuse the seeded run's build to avoid spinning up a second one.
+async function getSeedBuildId(h: TestApp, runId: string): Promise<string> {
+  const rows = await h.db
+    .select({ buildId: testRuns.buildId })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .limit(1);
+  return rows[0]!.buildId;
+}
+
 d("tRPC runs router", () => {
   let h: TestApp;
   let baseUrl: string;
@@ -171,13 +183,7 @@ d("tRPC runs router", () => {
     const [olderRun] = await h.db
       .insert(testRuns)
       .values({
-        buildId: (
-          await h.db
-            .select({ buildId: testRuns.buildId })
-            .from(testRuns)
-            .where(eq(testRuns.id, s.runId))
-            .limit(1)
-        )[0]!.buildId,
+        buildId: await getSeedBuildId(h, s.runId),
         projectId: s.projectId,
         testVariationId: s.variationId,
         // Legacy `"ok"` value is no longer a valid enum label (migration
@@ -691,13 +697,7 @@ d("tRPC runs router", () => {
         headers: { authorization: `Bearer ${s.memberJwt}` },
         payload: {
           projectId: s.projectId,
-          buildId: (
-            await h.db
-              .select({ buildId: testRuns.buildId })
-              .from(testRuns)
-              .where(eq(testRuns.id, s.runId))
-              .limit(1)
-          )[0]!.buildId,
+          buildId: await getSeedBuildId(h, s.runId),
           branchName: "feature/lifecycle-e2e",
           name: "lifecycle-e2e",
           browser: "chromium",
@@ -759,13 +759,7 @@ d("tRPC runs router", () => {
         headers: { authorization: `Bearer ${s.memberJwt}` },
         payload: {
           projectId: s.projectId,
-          buildId: (
-            await h.db
-              .select({ buildId: testRuns.buildId })
-              .from(testRuns)
-              .where(eq(testRuns.id, s.runId))
-              .limit(1)
-          )[0]!.buildId,
+          buildId: await getSeedBuildId(h, s.runId),
           branchName: "feature/lifecycle-e2e-override",
           name: "lifecycle-e2e-override",
           browser: "chromium",
@@ -807,6 +801,121 @@ d("tRPC runs router", () => {
         .from(baselines)
         .where(eq(baselines.testRunId, created.id));
       expect(baselineRows.length).toBe(0);
+    });
+
+    test("POST /runs → first run with no baseline → diff-worker writes new + auto-creates baseline", async () => {
+      // Stage 1: SDK creates the run; status is "running" at this point.
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feat/lifecycle-first-run",
+          name: "lifecycle-test-new",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+        testVariationId: string;
+        name: string | null;
+      };
+      expect(created.status).toBe("running");
+
+      // Stage 2: simulate diff-worker discovering no baseline exists for
+      // this (variation, branch, viewport):
+      //   - writes status=new
+      //   - sets merge=true
+      //   - inserts a baselines row from this run with userId=NULL (auto)
+      // The real handler is integration-tested in
+      // apps/diff-worker/tests/handler.test.ts; here we just simulate the
+      // terminal write (plan §5.1 fallback — no queue-draining harness yet).
+      await h.db
+        .update(testRuns)
+        .set({ status: "new", merge: true })
+        .where(eq(testRuns.id, created.id));
+      await h.db.insert(baselines).values({
+        baselineName: created.name ?? "auto",
+        testVariationId: created.testVariationId,
+        testRunId: created.id,
+        userId: null,
+        branchName: "feat/lifecycle-first-run",
+      });
+
+      // Verify the row landed in the new state.
+      const rowAfter = (
+        await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, created.id))
+          .limit(1)
+      )[0];
+      expect(rowAfter!.status).toBe("new");
+      expect(rowAfter!.merge).toBe(true);
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows).toHaveLength(1);
+      expect(baselineRows[0]!.userId).toBeNull(); // auto-created, no reviewer
+      expect(baselineRows[0]!.branchName).toBe("feat/lifecycle-first-run");
+    });
+
+    test("POST /runs → identical candidate → diff-worker writes passed, no baseline change", async () => {
+      // Stage 1: SDK creates the run; status is "running".
+      const createRes = await h.app.inject({
+        method: "POST",
+        url: "/runs",
+        headers: { authorization: `Bearer ${s.memberJwt}` },
+        payload: {
+          projectId: s.projectId,
+          buildId: await getSeedBuildId(h, s.runId),
+          branchName: "feat/lifecycle-no-diff",
+          name: "lifecycle-test-passed",
+          browser: "chromium",
+          viewport: "1280x720",
+        },
+      });
+      expect(createRes.statusCode).toBe(200);
+      const created = JSON.parse(createRes.body) as {
+        id: string;
+        status: string;
+      };
+      expect(created.status).toBe("running");
+
+      // Stage 2: simulate diff-worker comparing against an existing
+      // baseline and finding no diff:
+      //   - writes status=passed
+      //   - leaves merge untouched (no baseline promotion needed)
+      //   - does NOT insert a baseline row
+      // Real handler is integration-tested in
+      // apps/diff-worker/tests/handler.test.ts.
+      await h.db
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, created.id));
+
+      const rowAfter = (
+        await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, created.id))
+          .limit(1)
+      )[0];
+      expect(rowAfter!.status).toBe("passed");
+      expect(rowAfter!.merge).toBe(false); // unchanged from default
+
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, created.id));
+      expect(baselineRows).toHaveLength(0); // no new baseline
     });
   });
 
