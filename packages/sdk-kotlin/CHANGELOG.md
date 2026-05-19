@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.6.1...sdk/v0.7.0) (2026-05-19)
+
+
+### Features
+
+* builds-as-batches stage 2 — Kotlin SDK ([#51](https://github.com/qasecret/furan-monorepo/issues/51)) ([c5a6bfd](https://github.com/qasecret/furan-monorepo/commit/c5a6bfd752ba6dd94f3da0269de862a187913b12))
+
 ## [0.6.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.6.0...sdk/v0.6.1) (2026-05-17)
 
 
