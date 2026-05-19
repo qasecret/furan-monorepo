@@ -234,7 +234,9 @@ describe("project-isolation matrix", () => {
       headers: auth(aliceJwt),
     });
     expect(res.statusCode).toBe(200);
-    expect((res.json() as unknown[]).length).toBe(1);
+    const body = res.json() as { items: unknown[]; nextCursor: string | null };
+    expect(body.items.length).toBe(1);
+    expect(body.nextCursor).toBeNull();
   });
 
   test("16. POST /projects/:idA/builds as bob -> 403", async () => {
