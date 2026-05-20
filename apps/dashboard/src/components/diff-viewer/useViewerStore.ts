@@ -316,3 +316,38 @@ export function selectSelectedKindAndPattern(
     ? { kind: saved.kind, pattern: saved.pattern }
     : { kind: "ignore", pattern: undefined };
 }
+
+/**
+ * Resolves the current effective state of the selected region — for a
+ * draft, returns the draft as-is; for a saved region, applies any
+ * unsaved padding + kind/pattern overrides. Used by the Copy action so
+ * the clipboard captures what the user sees on canvas, not the
+ * server-persisted bytes.
+ */
+export function selectEffectiveRegion(
+  s: Pick<
+    State,
+    | "selectedIgnoreId"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+    | "paddingOverrides"
+    | "kindOverrides"
+  >,
+): IgnoreArea | null {
+  if (!s.selectedIgnoreId) return null;
+  const draft = s.draftIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (draft) return draft;
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (!saved) return null;
+  const padOv = s.paddingOverrides.get(saved.id);
+  const kindOv = s.kindOverrides.get(saved.id);
+  return {
+    ...saved,
+    paddingPx: padOv ?? saved.paddingPx,
+    kind: kindOv?.kind ?? saved.kind,
+    pattern: kindOv ? kindOv.pattern : saved.pattern,
+  };
+}
