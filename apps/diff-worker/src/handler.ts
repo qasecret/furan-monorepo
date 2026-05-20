@@ -23,6 +23,10 @@ import sharp from "sharp";
 import { z } from "zod";
 
 import type { DiffMetrics } from "./diff-metrics.js";
+import {
+  evaluateDynamicTextRegions,
+  type DynamicTextResult,
+} from "./dynamic-text.js";
 
 const engineConfigSchema = z.object({
   threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
@@ -357,6 +361,13 @@ async function handleDiffJobInner(
   const runRegions = parseIgnoreAreas(run.ignoreAreas) ?? [];
   const allRegions = dedupeRegions([...variationRegions, ...runRegions]);
   const perViewport: PerViewportResult[] = [];
+  // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
+  // string and the per-region OCR results, so we can persist a synthetic
+  // audit row in `diff_regions` per (viewport, region) pair.
+  const dynamicTextAudits: Array<{
+    viewport: string | null;
+    results: DynamicTextResult[];
+  }> = [];
 
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
@@ -405,6 +416,40 @@ async function handleDiffJobInner(
       height: candidateMeta.height ?? 0,
     };
 
+    // Dynamic-text regions: OCR the candidate crop, evaluate the regex,
+    // and only inject matched regions into the mask. Unmatched regions
+    // fall through to L1 (catching real visual diffs). Skipped entirely
+    // when the project doesn't have the feature flag on — tesseract.js
+    // stays unloaded.
+    const dynamicTextResults = project.dynamicTextEnabled
+      ? await evaluateDynamicTextRegions(
+          Buffer.from(candidateBytes),
+          allRegions,
+          logger,
+        )
+      : [];
+    const matchedIndexes = new Set(
+      dynamicTextResults.filter((r) => r.matched).map((r) => r.regionIndex),
+    );
+    for (const dtr of dynamicTextResults) {
+      deps.metrics?.dynamicTextMatch
+        .labels({
+          outcome:
+            dtr.ocrText === null
+              ? "ocr_failed"
+              : dtr.matched
+                ? "matched"
+                : "unmatched",
+        })
+        .inc();
+    }
+    if (dynamicTextResults.length > 0) {
+      dynamicTextAudits.push({
+        viewport: cs.viewport ?? null,
+        results: dynamicTextResults,
+      });
+    }
+
     const result = await runDiff({
       baseline: {
         image: Buffer.from(baselineBytes),
@@ -418,12 +463,17 @@ async function handleDiffJobInner(
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
         ignoreAreas: allRegions
-          .filter(
+          .map((r, i) => ({ r, i }))
+          .filter(({ r, i }) => {
             // cs.viewport null (legacy v0.4 row) → ?? makes equality self-referential
             // → all tagged regions apply, matching the no-viewport-tag legacy compat.
-            (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
-          )
-          .map((r) => inflateRegion(r, bounds)),
+            if (r.viewport && r.viewport !== (cs.viewport ?? r.viewport))
+              return false;
+            // Dynamic-text regions are only masked when OCR matched the regex.
+            if (r.kind === "dynamic-text") return matchedIndexes.has(i);
+            return true;
+          })
+          .map(({ r }) => inflateRegion(r, bounds)),
         engine: project.imageComparison,
         engineConfig: parseEngineConfig(
           project.imageComparisonConfig,
@@ -515,6 +565,34 @@ async function handleDiffJobInner(
         })),
       );
     }
+
+    // Synthetic audit rows for dynamic-text OCR decisions (matched OR
+    // unmatched). `source="dynamic_text"` + `ocr_text`/`ocr_matched`
+    // distinguish these from real L1/L2 regions; severity is always
+    // "none" so they're hidden from the default RegionListPanel view.
+    const auditValues = dynamicTextAudits.flatMap(({ viewport, results }) =>
+      results.map((dt) => {
+        const r = allRegions[dt.regionIndex]!;
+        const preview = (dt.ocrText ?? "").slice(0, 80);
+        return {
+          runId: data.runId,
+          projectId: data.projectId,
+          severity: "none",
+          category: "text",
+          bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
+          description: dt.matched
+            ? `Dynamic text matched: "${preview}"`
+            : `Dynamic text did NOT match: "${preview}"`,
+          source: "dynamic_text",
+          viewport,
+          ocrText: dt.ocrText,
+          ocrMatched: dt.matched,
+        };
+      }),
+    );
+    if (auditValues.length > 0) {
+      await tx.insert(diffRegions).values(auditValues);
+    }
   });
 
   const durationMs = Date.now() - t0;
@@ -587,14 +665,23 @@ function allHashesMatch(
   return true;
 }
 
-const ignoreAreaParseSchema = z.object({
-  x: z.number().int().nonnegative(),
-  y: z.number().int().nonnegative(),
-  width: z.number().int().min(1),
-  height: z.number().int().min(1),
-  viewport: z.string().min(1).max(32).optional(),
-  paddingPx: z.number().int().min(0).max(32).default(0),
-});
+const ignoreAreaParseSchema = z
+  .object({
+    x: z.number().int().nonnegative(),
+    y: z.number().int().nonnegative(),
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+    viewport: z.string().min(1).max(32).optional(),
+    paddingPx: z.number().int().min(0).max(32).default(0),
+    kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
+    pattern: z.string().min(1).max(500).optional(),
+  })
+  .refine(
+    (r) =>
+      r.kind !== "dynamic-text" ||
+      (r.pattern !== undefined && r.pattern.length > 0),
+    { message: "pattern is required when kind is dynamic-text" },
+  );
 
 /**
  * Per-run / per-variation ignore region. Includes an optional viewport tag

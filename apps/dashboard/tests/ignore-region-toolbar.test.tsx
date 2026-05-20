@@ -62,6 +62,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
+      kindOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
@@ -110,6 +111,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       height: 20,
       viewport: VP,
       paddingPx: 0,
+      kind: "ignore" as const,
     };
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -123,14 +125,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       runId: RUN_ID,
       scope: "run",
       ignoreAreas: [
-        {
+        expect.objectContaining({
           x: 10,
           y: 10,
           width: 20,
           height: 20,
           viewport: VP,
           paddingPx: 0,
-        },
+        }),
       ],
     });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
@@ -158,6 +160,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 30,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       markedForDeletion: new Set([ids[0]!]),
@@ -170,8 +173,22 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       runId: RUN_ID,
       scope: "variation",
       ignoreAreas: [
-        { x: 2, y: 2, width: 5, height: 5, viewport: VP, paddingPx: 0 },
-        { x: 100, y: 100, width: 30, height: 30, viewport: VP, paddingPx: 0 },
+        expect.objectContaining({
+          x: 2,
+          y: 2,
+          width: 5,
+          height: 5,
+          viewport: VP,
+          paddingPx: 0,
+        }),
+        expect.objectContaining({
+          x: 100,
+          y: 100,
+          width: 30,
+          height: 30,
+          viewport: VP,
+          paddingPx: 0,
+        }),
       ],
     });
   });
@@ -188,6 +205,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       markedForDeletion: new Set(["x"]),
@@ -212,6 +230,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
     });
@@ -246,6 +265,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
     });
@@ -292,6 +312,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       selectedIgnoreId: draftId,
@@ -314,6 +335,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       selectedIgnoreId: draftId,
@@ -341,6 +363,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       draftIgnoreAreas: [
@@ -352,6 +375,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 8,
+          kind: "ignore",
         },
       ],
       paddingOverrides: overrides,
@@ -368,5 +392,137 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     const draftPayload = callArg.ignoreAreas.find((r) => r.x === 10);
     expect(savedPayload!.paddingPx).toBe(4); // override
     expect(draftPayload!.paddingPx).toBe(8); // draft's own
+  });
+
+  test("kind controls hidden when project.dynamicTextEnabled is false", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    render(
+      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: false }} />,
+    );
+    expect(screen.queryByTestId("region-kind-control")).toBeNull();
+  });
+
+  test("kind controls visible when project flag on, edit mode on, region selected", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    render(
+      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: true }} />,
+    );
+    expect(screen.queryByTestId("region-kind-control")).not.toBeNull();
+    expect(screen.queryByTestId("region-kind-select")).not.toBeNull();
+  });
+
+  test("switching kind to dynamic-text fills the date preset", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      selectedIgnoreId: "d1",
+    });
+    // Direct store action instead of clicking through the Radix portal; the
+    // dropdown→onValueChange path calls setKindForSelected("dynamic-text", PRESETS.date)
+    // and we verify the same end state.
+    useViewerStore
+      .getState()
+      .setKindForSelected("dynamic-text", "preset-pattern");
+    const state = useViewerStore.getState();
+    expect(state.draftIgnoreAreas[0]!.kind).toBe("dynamic-text");
+    expect(state.draftIgnoreAreas[0]!.pattern).toBeDefined();
+  });
+
+  test("handleSave payload includes kind + pattern from drafts and overrides", () => {
+    const savedId = "00000000-0000-0000-0000-000000000099";
+    const draftId = "00000000-0000-0000-0000-000000000077";
+    const kindOverrides = new Map<
+      string,
+      { kind: "ignore" | "dynamic-text"; pattern?: string }
+    >([[savedId, { kind: "dynamic-text", pattern: "\\d{4}" }]]);
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 100,
+          y: 100,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "dynamic-text",
+          pattern: "[a-z]+",
+        },
+      ],
+      kindOverrides,
+      selectedIgnoreId: null,
+    });
+    render(
+      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: true }} />,
+    );
+    fireEvent.click(screen.getByTestId("ignore-save-button"));
+    expect(setIgnoreAreasMutate).toHaveBeenCalled();
+    const callArg = setIgnoreAreasMutate.mock.calls[0]![0] as {
+      ignoreAreas: Array<{
+        x: number;
+        kind: string;
+        pattern?: string;
+      }>;
+    };
+    const saved = callArg.ignoreAreas.find((r) => r.x === 100);
+    const draft = callArg.ignoreAreas.find((r) => r.x === 10);
+    expect(saved!.kind).toBe("dynamic-text");
+    expect(saved!.pattern).toBe("\\d{4}");
+    expect(draft!.kind).toBe("dynamic-text");
+    expect(draft!.pattern).toBe("[a-z]+");
   });
 });

@@ -65,6 +65,42 @@ export function RegionItem({ region }: { region: DiffRegion }) {
   const sev = asSeverity(region.severity);
   const style = SEVERITY_STYLE[sev];
 
+  // Dynamic-text audit rows get a smaller, distinct card: the badge is the
+  // match outcome, and we surface the OCR text inline so reviewers can audit
+  // exactly what tesseract saw.
+  if (region.source === "dynamic_text") {
+    const matched = region.ocrMatched === true;
+    return (
+      <button
+        type="button"
+        onClick={() => setSelected(region.id)}
+        aria-label={`Dynamic text ${matched ? "matched" : "not matched"}: ${region.ocrText ?? ""}`}
+        aria-pressed={isSelected}
+        className={cn(
+          "w-full text-left p-2 rounded border border-dashed hover:bg-accent transition-colors flex items-center gap-2",
+          isSelected && "bg-accent ring-2 ring-primary",
+          matched ? "border-purple-400" : "border-amber-400",
+        )}
+        data-region-id={region.id}
+        data-source="dynamic_text"
+      >
+        <Badge
+          variant="outline"
+          className={
+            matched
+              ? "border-purple-500 text-purple-700"
+              : "border-amber-500 text-amber-700"
+          }
+        >
+          {matched ? "Dynamic text · matched" : "Dynamic text · NOT matched"}
+        </Badge>
+        <span className="text-xs font-mono truncate">
+          &quot;{region.ocrText ?? ""}&quot;
+        </span>
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"

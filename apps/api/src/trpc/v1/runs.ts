@@ -297,14 +297,36 @@ export const runsRouter = t.router({
         scope: z.enum(["run", "variation"]),
         ignoreAreas: z
           .array(
-            z.object({
-              x: z.number().int().nonnegative(),
-              y: z.number().int().nonnegative(),
-              width: z.number().int().min(1),
-              height: z.number().int().min(1),
-              viewport: z.string().min(1).max(32),
-              paddingPx: z.number().int().min(0).max(32).default(0),
-            }),
+            z
+              .object({
+                x: z.number().int().nonnegative(),
+                y: z.number().int().nonnegative(),
+                width: z.number().int().min(1),
+                height: z.number().int().min(1),
+                viewport: z.string().min(1).max(32),
+                paddingPx: z.number().int().min(0).max(32).default(0),
+                kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
+                pattern: z.string().min(1).max(500).optional(),
+              })
+              .refine(
+                (r) =>
+                  r.kind !== "dynamic-text" ||
+                  (r.pattern !== undefined && r.pattern.length > 0),
+                { message: "pattern is required when kind is dynamic-text" },
+              )
+              .superRefine((r, ctx) => {
+                if (r.kind === "dynamic-text" && r.pattern !== undefined) {
+                  try {
+                    new RegExp(r.pattern, "i");
+                  } catch (err) {
+                    ctx.addIssue({
+                      code: z.ZodIssueCode.custom,
+                      message: `Invalid regex: ${(err as Error).message}`,
+                      path: ["pattern"],
+                    });
+                  }
+                }
+              }),
           )
           .max(50)
           .nullable(),

@@ -21,4 +21,11 @@ export interface DiffRegion {
   bbox: BBox | unknown; // jsonb; tolerate non-object rows defensively
   description: string;
   source: string;
+  /** Non-null only for `source === "dynamic_text"` audit rows. The OCR
+   * text extracted from the candidate crop (trimmed). */
+  ocrText?: string | null;
+  /** Non-null only for `source === "dynamic_text"` audit rows. Whether
+   * the OCR text matched the region's regex. */
+  ocrMatched?: boolean | null;
+  viewport?: string | null;
 }

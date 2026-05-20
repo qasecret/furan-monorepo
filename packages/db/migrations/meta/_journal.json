@@ -71,6 +71,13 @@
       "when": 1779164272994,
       "tag": "0009_builds_name_properties",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1779240173708,
+      "tag": "0010_dynamic_text_regions",
+      "breakpoints": true
     }
   ]
 }

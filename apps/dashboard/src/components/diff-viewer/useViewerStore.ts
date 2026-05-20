@@ -17,6 +17,11 @@ export interface IgnoreArea {
   viewport: string;
   /** Inflated by N pixels on all sides before the diff engine masks. 0-32. */
   paddingPx: number;
+  /** "ignore" (default, mask always) or "dynamic-text" (mask only when OCR
+   * extracts text matching `pattern`). */
+  kind: "ignore" | "dynamic-text";
+  /** Required when kind === "dynamic-text"; regex source string (no flags). */
+  pattern?: string;
 }
 
 /**
@@ -25,6 +30,16 @@ export interface IgnoreArea {
  * at creation time so React can key the layer's child Graphics objects.
  */
 export type DraftIgnoreArea = IgnoreArea;
+
+/**
+ * Server-shaped region for hydration. `kind`/`pattern` are optional here
+ * because legacy rows (and rows persisted before the dynamic-text feature
+ * shipped) don't carry these fields — `hydrateSavedIgnoreAreas` defaults
+ * `kind` to `"ignore"` when missing.
+ */
+export type HydrateIgnoreArea = Omit<IgnoreArea, "id" | "kind"> & {
+  kind?: IgnoreArea["kind"];
+};
 
 export type IgnoreEditMode = "off" | "run" | "variation";
 
@@ -48,6 +63,11 @@ interface State {
    * applySaveSuccess.
    */
   paddingOverrides: Map<string, number>;
+  /**
+   * Kind/pattern adjustments for SAVED regions (drafts mutate in place).
+   * Keyed by region id. Same lifecycle as `paddingOverrides`.
+   */
+  kindOverrides: Map<string, { kind: IgnoreArea["kind"]; pattern?: string }>;
   selectedIgnoreId: string | null;
 
   setMode: (mode: ViewerMode) => void;
@@ -58,8 +78,8 @@ interface State {
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   hydrateSavedIgnoreAreas: (
-    run: Array<Omit<IgnoreArea, "id">>,
-    variation: Array<Omit<IgnoreArea, "id">>,
+    run: Array<HydrateIgnoreArea>,
+    variation: Array<HydrateIgnoreArea>,
   ) => void;
   addDraftRegion: (region: DraftIgnoreArea) => void;
   setSelectedIgnoreId: (id: string | null) => void;
@@ -71,7 +91,13 @@ interface State {
    * No-op when nothing is selected.
    */
   setPaddingForSelected: (paddingPx: number) => void;
-  /** Wipes drafts, markedForDeletion, and paddingOverrides. */
+  /**
+   * Kind/pattern setter for the currently-selected region. Mutates drafts
+   * in place; for saved regions, sets an entry in kindOverrides. When kind
+   * is "ignore" the pattern is cleared.
+   */
+  setKindForSelected: (kind: IgnoreArea["kind"], pattern?: string) => void;
+  /** Wipes drafts, markedForDeletion, paddingOverrides, and kindOverrides. */
   discardIgnoreChanges: () => void;
   /**
    * Called after a successful save mutation: clears markedForDeletion +
@@ -94,6 +120,7 @@ export const useViewerStore = create<State>((set) => ({
   draftIgnoreAreas: [],
   markedForDeletion: new Set(),
   paddingOverrides: new Map(),
+  kindOverrides: new Map(),
   selectedIgnoreId: null,
 
   setMode: (mode) => set({ mode }),
@@ -108,18 +135,18 @@ export const useViewerStore = create<State>((set) => ({
       const hasUnsaved =
         s.draftIgnoreAreas.length > 0 ||
         s.markedForDeletion.size > 0 ||
-        s.paddingOverrides.size > 0;
+        s.paddingOverrides.size > 0 ||
+        s.kindOverrides.size > 0;
+      const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
+        ...r,
+        id: crypto.randomUUID(),
+        paddingPx: r.paddingPx ?? 0,
+        kind: r.kind ?? "ignore",
+        pattern: r.pattern,
+      });
       const saved = {
-        savedRunIgnoreAreas: run.map((r) => ({
-          ...r,
-          id: crypto.randomUUID(),
-          paddingPx: r.paddingPx ?? 0,
-        })),
-        savedVariationIgnoreAreas: variation.map((r) => ({
-          ...r,
-          id: crypto.randomUUID(),
-          paddingPx: r.paddingPx ?? 0,
-        })),
+        savedRunIgnoreAreas: run.map(hydrate),
+        savedVariationIgnoreAreas: variation.map(hydrate),
       };
       if (hasUnsaved) {
         // Spurious refetch (window focus, SSE invalidation, mutation
@@ -132,6 +159,7 @@ export const useViewerStore = create<State>((set) => ({
         draftIgnoreAreas: [],
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
+        kindOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -174,11 +202,35 @@ export const useViewerStore = create<State>((set) => ({
       overrides.set(s.selectedIgnoreId, paddingPx);
       return { paddingOverrides: overrides };
     }),
+  setKindForSelected: (kind, pattern) =>
+    set((s) => {
+      if (!s.selectedIgnoreId) return {};
+      const draftIdx = s.draftIgnoreAreas.findIndex(
+        (r) => r.id === s.selectedIgnoreId,
+      );
+      if (draftIdx !== -1) {
+        const next = [...s.draftIgnoreAreas];
+        const existing = next[draftIdx]!;
+        next[draftIdx] = {
+          ...existing,
+          kind,
+          pattern: kind === "dynamic-text" ? pattern : undefined,
+        };
+        return { draftIgnoreAreas: next };
+      }
+      const overrides = new Map(s.kindOverrides);
+      overrides.set(s.selectedIgnoreId, {
+        kind,
+        pattern: kind === "dynamic-text" ? pattern : undefined,
+      });
+      return { kindOverrides: overrides };
+    }),
   discardIgnoreChanges: () =>
     set({
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
+      kindOverrides: new Map(),
       selectedIgnoreId: null,
     }),
   applySaveSuccess: (scope) =>
@@ -187,10 +239,15 @@ export const useViewerStore = create<State>((set) => ({
         scope === "run" ? s.savedRunIgnoreAreas : s.savedVariationIgnoreAreas
       )
         .filter((r) => !s.markedForDeletion.has(r.id))
-        .map((r) => ({
-          ...r,
-          paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
-        }));
+        .map((r) => {
+          const kindOv = s.kindOverrides.get(r.id);
+          return {
+            ...r,
+            paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
+            kind: kindOv?.kind ?? r.kind,
+            pattern: kindOv ? kindOv.pattern : r.pattern,
+          };
+        });
       const newSaved = [...survivors, ...s.draftIgnoreAreas];
       return {
         ...(scope === "run"
@@ -199,6 +256,7 @@ export const useViewerStore = create<State>((set) => ({
         draftIgnoreAreas: [],
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
+        kindOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -228,4 +286,33 @@ export function selectSelectedPaddingPx(
     s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
     s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
   return saved?.paddingPx ?? 0;
+}
+
+/**
+ * Kind + pattern for the currently-selected region. Precedence
+ * (highest → lowest): kindOverrides map → draft region's own
+ * kind/pattern → saved region's persisted kind/pattern → defaults
+ * `{ kind: "ignore", pattern: undefined }`.
+ */
+export function selectSelectedKindAndPattern(
+  s: Pick<
+    State,
+    | "selectedIgnoreId"
+    | "kindOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+): { kind: IgnoreArea["kind"]; pattern?: string } {
+  if (!s.selectedIgnoreId) return { kind: "ignore", pattern: undefined };
+  const override = s.kindOverrides.get(s.selectedIgnoreId);
+  if (override) return { kind: override.kind, pattern: override.pattern };
+  const draft = s.draftIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (draft) return { kind: draft.kind, pattern: draft.pattern };
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  return saved
+    ? { kind: saved.kind, pattern: saved.pattern }
+    : { kind: "ignore", pattern: undefined };
 }

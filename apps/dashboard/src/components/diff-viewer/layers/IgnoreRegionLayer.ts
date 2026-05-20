@@ -25,6 +25,15 @@ const STYLE = {
     stroke: 0xcc0000,
     strokeWidth: 2,
   },
+  /** Purple variant of savedActive used for `kind: "dynamic-text"` regions
+   * so reviewers can visually distinguish ignore from dynamic-text regions
+   * at a glance. */
+  savedActiveDynamicText: {
+    fill: 0x9333ea,
+    fillAlpha: 0.15,
+    stroke: 0x7e22ce,
+    strokeWidth: 2,
+  },
   savedInactive: {
     fill: 0x666666,
     fillAlpha: 0.12,
@@ -32,6 +41,14 @@ const STYLE = {
     strokeWidth: 1,
   },
   draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xffcc00, strokeWidth: 2 },
+  /** Purple-stroke draft for dynamic-text. Same alpha/fill as `draft` but
+   * stroke color is the lighter purple from the saved variant. */
+  draftDynamicText: {
+    fill: 0x000000,
+    fillAlpha: 0,
+    stroke: 0xa855f7,
+    strokeWidth: 2,
+  },
 } as const;
 
 const SELECTED_STROKE_WIDTH = 4;
@@ -85,6 +102,7 @@ export function mountIgnoreRegionLayer(
     width: number;
     height: number;
     paddingPx: number;
+    kind: IgnoreArea["kind"];
     style: ItemStyle;
     selectable: boolean;
     marked: boolean;
@@ -107,7 +125,11 @@ export function mountIgnoreRegionLayer(
       width: r.width,
       height: r.height,
       paddingPx: r.paddingPx ?? 0,
-      style: STYLE.savedActive,
+      kind: r.kind,
+      style:
+        r.kind === "dynamic-text"
+          ? STYLE.savedActiveDynamicText
+          : STYLE.savedActive,
       selectable: input.editMode !== "off",
       marked: input.markedForDeletion.has(r.id),
     });
@@ -128,6 +150,10 @@ export function mountIgnoreRegionLayer(
         width: r.width,
         height: r.height,
         paddingPx: r.paddingPx ?? 0,
+        kind: r.kind,
+        // Inactive scope keeps `savedInactive` regardless of kind: this is a
+        // read-only render of the off-scope, and the gray styling is the
+        // load-bearing signal for "you can't edit me here".
         style: STYLE.savedInactive,
         selectable: false,
         marked: false,
@@ -145,7 +171,11 @@ export function mountIgnoreRegionLayer(
         width: r.width,
         height: r.height,
         paddingPx: r.paddingPx ?? 0,
-        style: STYLE.savedActive,
+        kind: r.kind,
+        style:
+          r.kind === "dynamic-text"
+            ? STYLE.savedActiveDynamicText
+            : STYLE.savedActive,
         selectable: false,
         marked: false,
       });
@@ -162,7 +192,8 @@ export function mountIgnoreRegionLayer(
         width: r.width,
         height: r.height,
         paddingPx: r.paddingPx ?? 0,
-        style: STYLE.draft,
+        kind: r.kind,
+        style: r.kind === "dynamic-text" ? STYLE.draftDynamicText : STYLE.draft,
         selectable: true,
         marked: false,
       });

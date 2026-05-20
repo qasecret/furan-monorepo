@@ -6,6 +6,7 @@ import {
   jsonb,
   timestamp,
   index,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 import { projects } from "./projects.js";
@@ -30,6 +31,8 @@ export const diffRegions = pgTable(
     // marks a legacy v0.4 single-viewport row from before multi-viewport
     // diffs landed.
     viewport: text("viewport"),
+    ocrText: text("ocr_text"),
+    ocrMatched: boolean("ocr_matched"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

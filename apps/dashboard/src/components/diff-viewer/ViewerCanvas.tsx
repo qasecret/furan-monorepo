@@ -8,7 +8,11 @@ import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
-import { useViewerStore, type DraftIgnoreArea } from "./useViewerStore";
+import {
+  useViewerStore,
+  type DraftIgnoreArea,
+  type IgnoreArea,
+} from "./useViewerStore";
 
 interface Props {
   baselineUrl: string | null;
@@ -76,6 +80,7 @@ export function ViewerCanvas({
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
+  const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
@@ -198,17 +203,22 @@ export function ViewerCanvas({
     const app =
       mode === "side-by-side" ? candidateAppRef.current : singleAppRef.current;
     if (!app) return;
-    // Apply paddingOverrides to saved regions before handing them to the
-    // layer; the layer itself doesn't know about overrides. Drafts mutate
-    // in place via setPaddingForSelected, so they don't need this mapping.
-    const savedRunWithOverrides = savedRunIgnoreAreas.map((r) => ({
-      ...r,
-      paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
-    }));
-    const savedVariationWithOverrides = savedVariationIgnoreAreas.map((r) => ({
-      ...r,
-      paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
-    }));
+    // Apply padding + kind overrides to saved regions before handing them
+    // to the layer; the layer itself doesn't know about overrides. Drafts
+    // mutate in place via setPaddingForSelected / setKindForSelected, so
+    // they don't need this mapping.
+    const applyOverrides = (r: IgnoreArea): IgnoreArea => {
+      const kindOv = kindOverrides.get(r.id);
+      return {
+        ...r,
+        paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
+        kind: kindOv?.kind ?? r.kind,
+        pattern: kindOv ? kindOv.pattern : r.pattern,
+      };
+    };
+    const savedRunWithOverrides = savedRunIgnoreAreas.map(applyOverrides);
+    const savedVariationWithOverrides =
+      savedVariationIgnoreAreas.map(applyOverrides);
     const layer = mountIgnoreRegionLayer(app, {
       editMode: ignoreEditMode,
       savedRunIgnoreAreas: savedRunWithOverrides,
@@ -230,6 +240,7 @@ export function ViewerCanvas({
     draftIgnoreAreas,
     markedForDeletion,
     paddingOverrides,
+    kindOverrides,
     selectedIgnoreId,
     viewport,
     setSelectedIgnoreId,
@@ -302,6 +313,7 @@ export function ViewerCanvas({
       height,
       viewport,
       paddingPx: 0,
+      kind: "ignore",
     };
     addDraftRegion(draft);
   };
