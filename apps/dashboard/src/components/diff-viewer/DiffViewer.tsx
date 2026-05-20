@@ -195,6 +195,7 @@ export function DiffViewer({ runId, diffId }: Props) {
         <>
           <ViewerToolbar
             runId={runId}
+            projectId={data?.projectId ?? ""}
             project={{
               dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
             }}

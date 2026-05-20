@@ -6,6 +6,10 @@ const setIgnoreAreasMutate = vi.fn();
 const invalidate = vi.fn();
 let isPending = false;
 
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
@@ -50,6 +54,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     setIgnoreAreasMutate.mockReset();
     invalidate.mockReset();
     isPending = false;
+    sessionStorage.clear();
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
@@ -524,5 +529,170 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(saved!.pattern).toBe("\\d{4}");
     expect(draft!.kind).toBe("dynamic-text");
     expect(draft!.pattern).toBe("[a-z]+");
+  });
+
+  test("Copy button disabled when no region selected", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+    });
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: false }}
+      />,
+    );
+    const btn = screen.getByTestId("region-copy-button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  test("Copy button enabled when region selected, writes effective region to clipboard", () => {
+    const savedId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 100,
+          y: 100,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      paddingOverrides: new Map([[savedId, 8]]),
+      kindOverrides: new Map([
+        [savedId, { kind: "dynamic-text" as const, pattern: "\\d{4}" }],
+      ]),
+      selectedIgnoreId: savedId,
+    });
+    sessionStorage.clear();
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: true }}
+      />,
+    );
+    const btn = screen.getByTestId("region-copy-button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    const stored = sessionStorage.getItem("furan:region-clipboard:p1");
+    expect(stored).not.toBeNull();
+    const entry = JSON.parse(stored!);
+    expect(entry.region.paddingPx).toBe(8);
+    expect(entry.region.kind).toBe("dynamic-text");
+    expect(entry.region.pattern).toBe("\\d{4}");
+  });
+
+  test("Paste button disabled when clipboard empty", () => {
+    sessionStorage.clear();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+    });
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: false }}
+      />,
+    );
+    const btn = screen.getByTestId("region-paste-button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  test("Paste button enabled when clipboard has content; click creates a draft", () => {
+    sessionStorage.setItem(
+      "furan:region-clipboard:p1",
+      JSON.stringify({
+        _v: 1,
+        copiedAt: 0,
+        region: {
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 4,
+          kind: "ignore" as const,
+        },
+      }),
+    );
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+      viewport: "1280x720",
+      draftIgnoreAreas: [],
+    });
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: false }}
+      />,
+    );
+    const btn = screen.getByTestId("region-paste-button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    const drafts = useViewerStore.getState().draftIgnoreAreas;
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]!.x).toBe(10);
+    expect(drafts[0]!.paddingPx).toBe(4);
+  });
+
+  test("Paste retags viewport to current viewer's active viewport", () => {
+    sessionStorage.setItem(
+      "furan:region-clipboard:p1",
+      JSON.stringify({
+        _v: 1,
+        copiedAt: 0,
+        region: {
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 50,
+          viewport: "1280x720", // source viewport
+          paddingPx: 0,
+          kind: "ignore" as const,
+        },
+      }),
+    );
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+      viewport: "1920x1080", // destination viewport
+      draftIgnoreAreas: [],
+    });
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: false }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("region-paste-button"));
+    expect(useViewerStore.getState().draftIgnoreAreas[0]!.viewport).toBe(
+      "1920x1080",
+    );
+  });
+
+  test("Copy + Paste cluster is NOT rendered outside edit mode", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      selectedIgnoreId: null,
+    });
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        projectId="p1"
+        project={{ dynamicTextEnabled: false }}
+      />,
+    );
+    expect(screen.queryByTestId("region-copy-button")).toBeNull();
+    expect(screen.queryByTestId("region-paste-button")).toBeNull();
   });
 });
