@@ -89,4 +89,48 @@ d("GET /api/v1/storage/:key", () => {
       await h.close();
     }
   });
+
+  test("serves a `.elements.json` sidecar with application/json content-type", async () => {
+    const h = await createTestApp();
+    try {
+      const storage = createStorage();
+      // 64-hex prefix + the `.elements.json` suffix is the on-disk key
+      // the SDK writes (PR #61). The proxy must serve this byte-identical.
+      const key = "a".repeat(64) + ".elements.json";
+      const payload = '{"v":1,"elements":{},"capturedAt":0}';
+      await storage.put(key, Buffer.from(payload), "application/json");
+
+      const userId = "00000000-0000-0000-0000-000000000099";
+      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toMatch(/application\/json/);
+      expect(res.body).toBe(payload);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("rejects keys with non-`.elements.json` suffixes as 404", async () => {
+    const h = await createTestApp();
+    try {
+      const userId = "00000000-0000-0000-0000-000000000099";
+      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const key = "a".repeat(64) + ".bogus";
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      await h.close();
+    }
+  });
 });

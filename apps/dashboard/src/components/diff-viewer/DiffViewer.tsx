@@ -8,7 +8,9 @@ import { EmptyRunCard } from "./EmptyRunCard";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
+import { findSmallestContainingElement } from "./snap-to-element";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
+import { useElementMap } from "./useElementMap";
 import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
@@ -150,6 +152,35 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   const candidateScreenshot = data?.screenshots?.[0] ?? null;
   const baselineScreenshot = data?.baselineScreenshot ?? null;
+
+  // F-a/3: lazily fetch the candidate's element-map sidecar when in
+  // ignore-edit mode AND the screenshot row has a key. Old runs that
+  // predate PR #61 carry `elementMapKey === null`; the hook treats
+  // null as "idle" so the proxy is never hit.
+  const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
+  const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
+  const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
+  const proposePendingSnap = useViewerStore((s) => s.proposePendingSnap);
+  const elementMapKey =
+    (candidateScreenshot as { elementMapKey?: string | null } | null)
+      ?.elementMapKey ?? null;
+  const enableElementMap = ignoreEditMode !== "off" && Boolean(elementMapKey);
+  const { map: elementMap } = useElementMap(
+    enableElementMap ? elementMapKey : null,
+  );
+
+  // Propose a smallest-containing-element snap for every fresh draft.
+  // Idempotent via `pendingSnaps.has(draft.id)`; skipping drafts that
+  // already carry a selector prevents re-proposing after Apply.
+  useEffect(() => {
+    if (!elementMap) return;
+    for (const draft of draftIgnoreAreas) {
+      if (pendingSnaps.has(draft.id)) continue;
+      if (draft.selector) continue;
+      const hit = findSmallestContainingElement(draft, elementMap.elements);
+      if (hit) proposePendingSnap(draft.id, hit);
+    }
+  }, [draftIgnoreAreas, elementMap, pendingSnaps, proposePendingSnap]);
   // The L1 diff worker writes the diff overlay PNG to testRuns.diffName (key).
   const diffOverlayKey = data?.diffName ?? null;
   const baselineSource = data?.baselineSource ?? null;

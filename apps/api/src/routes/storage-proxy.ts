@@ -13,7 +13,12 @@ import { z } from "zod";
  * v1.0; upgrade in Phase 3 if cross-project leakage becomes a concern.
  */
 export const paramsSchema = z.object({
-  key: z.string().regex(/^[0-9a-f]{64}$/, "must be a sha256 hex"),
+  key: z
+    .string()
+    .regex(
+      /^[0-9a-f]{64}(\.elements\.json)?$/,
+      "must be a sha256 hex (with optional .elements.json suffix)",
+    ),
 });
 
 const CACHE_HEADER = "public, max-age=300, immutable";
@@ -55,6 +60,13 @@ export async function registerStorageProxyRoute(
  * sha256 keys carry no type metadata so we sniff the body itself.
  */
 function sniffContentType(bytes: Uint8Array): string {
+  // JSON: '{' as first byte. The element-map sidecar is always an object.
+  // Goes before binary checks so a JSON body that happens to share an
+  // early byte with a binary magic doesn't get misdetected. (The PNG /
+  // WebP / JPEG magic-byte checks below are not ambiguous with 0x7b.)
+  if (bytes.length >= 1 && bytes[0] === 0x7b) {
+    return "application/json";
+  }
   // PNG: 89 50 4E 47
   if (
     bytes.length >= 4 &&
