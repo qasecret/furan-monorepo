@@ -181,6 +181,14 @@ describe("RunsTable", () => {
       expect(lastCall.cursor).toBe("2026-05-15T00:00:00.000Z");
     });
   });
+
+  test("renders history chip when testVariationId present on run", () => {
+    render(<RunsTable projectId={PROJECT_ID} />);
+    const chip = screen.getByTestId("run-history-chip-r1");
+    expect(chip.getAttribute("href")).toBe(
+      `/projects/${PROJECT_ID}/variations/v1`,
+    );
+  });
 });
 
 describe("RunsTable empty-state branches", () => {

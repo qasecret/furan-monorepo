@@ -28,6 +28,7 @@ interface RunItem {
   diffPercent: number | null;
   pixelMisMatchCount: number | null;
   baselineSource: string | null;
+  testVariationId: string | null;
   createdAt: string | Date;
 }
 

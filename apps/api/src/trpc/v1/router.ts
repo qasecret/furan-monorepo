@@ -5,6 +5,7 @@ import { installationsRouter } from "./installations.js";
 import { membersRouter } from "./members.js";
 import { projectsRouter } from "./projects.js";
 import { runsRouter } from "./runs.js";
+import { variationsRouter } from "./variations.js";
 
 export const appRouter = t.router({
   builds: buildsRouter,
@@ -12,6 +13,7 @@ export const appRouter = t.router({
   members: membersRouter,
   projects: projectsRouter,
   runs: runsRouter,
+  variations: variationsRouter,
 });
 
 export type AppRouter = typeof appRouter;
