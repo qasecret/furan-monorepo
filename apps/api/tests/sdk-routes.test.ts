@@ -288,6 +288,157 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(fetched.equals(TINY_PNG)).toBe(true);
   });
 
+  test("POST /runs/:id/screenshots accepts elementMapJson + stores sidecar", async () => {
+    const elementMap = JSON.stringify({
+      v: 1,
+      elements: {
+        "#login": { x: 0, y: 0, width: 200, height: 50 },
+      },
+      capturedAt: 1700000000000,
+    });
+    const form = new FormData();
+    form.append("name", "with-element-map");
+    form.append("viewport", "1280x720");
+    form.append("browser", "selenium");
+    form.append(
+      "pngBytes",
+      new Blob([TINY_PNG], { type: "image/png" }),
+      "snap.png",
+    );
+    form.append(
+      "elementMapJson",
+      new Blob([Buffer.from(elementMap)], { type: "application/json" }),
+      "elements.json",
+    );
+
+    const res = await fetch(
+      `http://127.0.0.1:${port}/runs/${s.runId}/screenshots`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.memberJwt}` },
+        body: form,
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { imageKey: string };
+
+    const rows = await h.db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.runId, s.runId));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.elementMapKey).toBe(`${body.imageKey}.elements.json`);
+
+    const storage = createStorage();
+    const head = await storage.head(rows[0]!.elementMapKey!);
+    expect(head).toBeTruthy();
+    expect(head!.contentType).toMatch(/application\/json/);
+    const fetched = Buffer.from(
+      await storage.get(rows[0]!.elementMapKey!),
+    ).toString("utf8");
+    expect(fetched).toBe(elementMap);
+  });
+
+  test("POST /runs/:id/screenshots drops oversized elementMapJson silently", async () => {
+    const oversized = "x".repeat(1_000_001);
+    const form = new FormData();
+    form.append("name", "oversized-map");
+    form.append("viewport", "1280x720");
+    form.append("browser", "selenium");
+    form.append(
+      "pngBytes",
+      new Blob([TINY_PNG], { type: "image/png" }),
+      "snap.png",
+    );
+    form.append(
+      "elementMapJson",
+      new Blob([Buffer.from(oversized)], { type: "application/json" }),
+      "elements.json",
+    );
+
+    const res = await fetch(
+      `http://127.0.0.1:${port}/runs/${s.runId}/screenshots`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.memberJwt}` },
+        body: form,
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await h.db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.runId, s.runId));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.elementMapKey).toBeNull();
+  });
+
+  test("POST /runs/:id/screenshots drops malformed JSON silently", async () => {
+    const form = new FormData();
+    form.append("name", "bad-json");
+    form.append("viewport", "1280x720");
+    form.append("browser", "selenium");
+    form.append(
+      "pngBytes",
+      new Blob([TINY_PNG], { type: "image/png" }),
+      "snap.png",
+    );
+    form.append(
+      "elementMapJson",
+      new Blob([Buffer.from("not valid { json")], {
+        type: "application/json",
+      }),
+      "elements.json",
+    );
+
+    const res = await fetch(
+      `http://127.0.0.1:${port}/runs/${s.runId}/screenshots`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.memberJwt}` },
+        body: form,
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await h.db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.runId, s.runId));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.elementMapKey).toBeNull();
+  });
+
+  test("POST /runs/:id/screenshots back-compat: missing field => column null", async () => {
+    const form = new FormData();
+    form.append("name", "no-map");
+    form.append("viewport", "1280x720");
+    form.append("browser", "selenium");
+    form.append(
+      "pngBytes",
+      new Blob([TINY_PNG], { type: "image/png" }),
+      "snap.png",
+    );
+
+    const res = await fetch(
+      `http://127.0.0.1:${port}/runs/${s.runId}/screenshots`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.memberJwt}` },
+        body: form,
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await h.db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.runId, s.runId));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.elementMapKey).toBeNull();
+  });
+
   test("POST /runs/:id/screenshots without pngBytes → 400", async () => {
     const form = new FormData();
     form.append("name", "no-image");

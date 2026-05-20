@@ -1,5 +1,6 @@
 package io.furan.sdk.selenium
 
+import io.furan.sdk.ELEMENT_BBOX_SCRIPT
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.Viewport
@@ -10,7 +11,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.openqa.selenium.Dimension
+import org.openqa.selenium.JavascriptExecutor
 import org.openqa.selenium.WebDriver
+import org.slf4j.LoggerFactory
 import java.io.Closeable
 
 /**
@@ -58,6 +61,7 @@ class Furan(
             driver.manage().window().size = Dimension(vp.width, vp.height)
             val pngBytes = captureScreenshot(driver)
             val domHtml = runCatching { captureDom(driver) }.getOrNull()
+            val elementMapJson = captureElementBboxes(driver)
             client.uploadSnapshot(
                 runId = resolvedRunId,
                 snap = Snapshot(
@@ -65,6 +69,7 @@ class Furan(
                     viewport = vp,
                     pngBytes = pngBytes,
                     domHtml = domHtml,
+                    elementMapJson = elementMapJson,
                     mask = mask,
                     browser = "selenium",
                 ),
@@ -113,5 +118,38 @@ class Furan(
 
     override fun close() {
         client.close()
+    }
+
+    companion object {
+        private val log = LoggerFactory.getLogger(Furan::class.java)
+        private const val MAX_ELEMENT_MAP_BYTES = 1_000_000
+
+        /**
+         * Best-effort: drops the map silently on any failure (non-JS driver,
+         * thrown JS, oversized payload). Never blocks the screenshot upload.
+         */
+        internal fun captureElementBboxes(driver: WebDriver): String? = try {
+            val js = driver as? JavascriptExecutor
+            if (js == null) {
+                null
+            } else {
+                val raw = js.executeScript(ELEMENT_BBOX_SCRIPT) as? String
+                when {
+                    raw == null -> null
+                    raw.length > MAX_ELEMENT_MAP_BYTES -> {
+                        log.warn(
+                            "Element map {} bytes exceeds {}; dropping",
+                            raw.length,
+                            MAX_ELEMENT_MAP_BYTES,
+                        )
+                        null
+                    }
+                    else -> raw
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Element bbox capture failed; continuing without it", e)
+            null
+        }
     }
 }

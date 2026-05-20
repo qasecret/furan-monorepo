@@ -22,17 +22,23 @@ data class ScreenshotResponse(
 /**
  * Internal SDK shape representing a captured snapshot prior to upload.
  * NOT serialized over the wire — used as the buffered Batch element. The
- * actual upload is multipart (PNG bytes + optional DOM HTML) via Task 4's route.
+ * actual upload is multipart (PNG bytes + optional DOM HTML + optional
+ * elementMapJson sidecar) via the API screenshots route.
  *
  * `runId` is carried per-snapshot so the Batch can mix uploads from multiple
  * runs (concurrent `Furan(driver).snapshot(...)` across distinct runs land in
  * the same buffer and each flushes to its own `POST /runs/{runId}/screenshots`).
+ *
+ * `elementMapJson` is the JSON envelope produced by ELEMENT_BBOX_SCRIPT.
+ * Null when capture failed, exceeded the SDK-side 1 MB ceiling, or the
+ * driver was not a JavascriptExecutor.
  */
 data class Snapshot(
     val name: String,
     val viewport: Viewport,
     val pngBytes: ByteArray,
     val domHtml: String? = null,
+    val elementMapJson: String? = null,
     val mask: List<String> = emptyList(),
     val browser: String? = null,
     val runId: String? = null,

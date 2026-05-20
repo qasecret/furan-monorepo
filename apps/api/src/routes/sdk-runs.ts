@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 
 export const createRunBody = z.object({
   projectId: z.string().uuid(),
@@ -91,6 +92,7 @@ export const telemetryBody = z
 // is also size-limited transitively. We accept either a file part `domHtml`
 // (preferred for binary safety) or a field with the same name.
 const MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024;
+const MAX_ELEMENT_MAP_BYTES = 1_000_000;
 
 /**
  * SDK-facing REST routes (Task 4 of Phase 4):
@@ -253,6 +255,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       // for traceability; the screenshots table has no name column today.
       let pngBytes: Buffer | null = null;
       let domHtml: string | null = null;
+      let elementMapRaw: string | null = null;
       let snapName = "snapshot";
       let viewport = run.viewport ?? "1280x720";
       let browser = run.browser ?? "selenium";
@@ -269,6 +272,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               pngBytes = buf;
             } else if (part.fieldname === "domHtml") {
               domHtml = buf.toString("utf8");
+            } else if (part.fieldname === "elementMapJson") {
+              elementMapRaw = buf.toString("utf8");
             }
           } else {
             // part.type === "field"
@@ -280,6 +285,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
             else if (part.fieldname === "viewport") viewport = value;
             else if (part.fieldname === "browser") browser = value;
             else if (part.fieldname === "domHtml" && !domHtml) domHtml = value;
+            else if (part.fieldname === "elementMapJson" && !elementMapRaw)
+              elementMapRaw = value;
           }
         }
       } catch (err) {
@@ -312,6 +319,37 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         await storage().put(domKey, domBuf, "text/html");
       }
 
+      let elementMapKey: string | null = null;
+      if (elementMapRaw !== null) {
+        if (elementMapRaw.length > MAX_ELEMENT_MAP_BYTES) {
+          req.log.warn(
+            { runId: run.id, imageKey, bytes: elementMapRaw.length },
+            "element_map_too_large_dropped",
+          );
+          recordElementMapOutcome(app.telemetry.metrics, "too_large");
+        } else {
+          try {
+            JSON.parse(elementMapRaw);
+            const candidateKey = `${imageKey}.elements.json`;
+            await storage().put(
+              candidateKey,
+              Buffer.from(elementMapRaw, "utf8"),
+              "application/json",
+            );
+            elementMapKey = candidateKey;
+            recordElementMapOutcome(app.telemetry.metrics, "ok");
+          } catch (err) {
+            const outcome =
+              err instanceof SyntaxError ? "invalid_json" : "storage_error";
+            req.log.warn(
+              { runId: run.id, imageKey, err },
+              "element_map_dropped",
+            );
+            recordElementMapOutcome(app.telemetry.metrics, outcome);
+          }
+        }
+      }
+
       const inserted = await withProjectScope(
         app.db,
         run.projectId,
@@ -323,6 +361,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               projectId: run.projectId,
               imageKey,
               domKey,
+              elementMapKey,
               viewport,
               browser,
             })
