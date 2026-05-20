@@ -1,11 +1,22 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, test } from "vitest";
 
-import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import {
+  selectSelectedPaddingPx,
+  useViewerStore,
+} from "../src/components/diff-viewer/useViewerStore";
 
 const VP = "1280x720";
 
 function plainRegion(over: Partial<{ x: number; y: number }> = {}) {
-  return { x: 10, y: 10, width: 20, height: 20, viewport: VP, ...over };
+  return {
+    x: 10,
+    y: 10,
+    width: 20,
+    height: 20,
+    viewport: VP,
+    paddingPx: 0,
+    ...over,
+  };
 }
 
 describe("useViewerStore — ignore-region slice", () => {
@@ -16,6 +27,7 @@ describe("useViewerStore — ignore-region slice", () => {
       savedVariationIgnoreAreas: [],
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
@@ -161,5 +173,120 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(state.savedRunIgnoreAreas[0]!.id).toBe(runIdBefore);
     expect(state.draftIgnoreAreas).toEqual([]);
     expect(state.selectedIgnoreId).toBeNull();
+  });
+
+  test("setPaddingForSelected on a draft region mutates in place", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.getState().addDraftRegion({
+      id: draftId,
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      viewport: "1280x720",
+      paddingPx: 0,
+    });
+    useViewerStore.getState().setSelectedIgnoreId(draftId);
+    useViewerStore.getState().setPaddingForSelected(8);
+    const state = useViewerStore.getState();
+    expect(state.draftIgnoreAreas[0]!.paddingPx).toBe(8);
+    expect(state.paddingOverrides.size).toBe(0);
+  });
+
+  test("setPaddingForSelected on a saved region records an override", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setPaddingForSelected(4);
+    const state = useViewerStore.getState();
+    expect(state.savedRunIgnoreAreas[0]!.paddingPx).toBe(0); // saved unchanged
+    expect(state.paddingOverrides.get(savedId)).toBe(4);
+  });
+
+  test("setPaddingForSelected is a no-op when nothing selected", () => {
+    useViewerStore.getState().setSelectedIgnoreId(null);
+    useViewerStore.getState().setPaddingForSelected(4);
+    expect(useViewerStore.getState().paddingOverrides.size).toBe(0);
+  });
+
+  test("discardIgnoreChanges clears paddingOverrides", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setPaddingForSelected(4);
+    expect(useViewerStore.getState().paddingOverrides.size).toBe(1);
+    useViewerStore.getState().discardIgnoreChanges();
+    expect(useViewerStore.getState().paddingOverrides.size).toBe(0);
+  });
+
+  test("applySaveSuccess clears paddingOverrides", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setPaddingForSelected(4);
+    useViewerStore.getState().applySaveSuccess("run");
+    expect(useViewerStore.getState().paddingOverrides.size).toBe(0);
+  });
+
+  test("selectSelectedPaddingPx prefers override > draft > saved.paddingPx > 0", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 2,
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    // Saved without override → returns saved.paddingPx
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    expect(selectSelectedPaddingPx(useViewerStore.getState())).toBe(2);
+    // Override > saved
+    useViewerStore.getState().setPaddingForSelected(7);
+    expect(selectSelectedPaddingPx(useViewerStore.getState())).toBe(7);
+    // No selection → 0
+    useViewerStore.getState().setSelectedIgnoreId(null);
+    expect(selectSelectedPaddingPx(useViewerStore.getState())).toBe(0);
   });
 });

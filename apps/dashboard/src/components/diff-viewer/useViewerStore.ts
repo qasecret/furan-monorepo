@@ -15,6 +15,8 @@ export interface IgnoreArea {
   width: number;
   height: number;
   viewport: string;
+  /** Inflated by N pixels on all sides before the diff engine masks. 0-32. */
+  paddingPx: number;
 }
 
 /**
@@ -39,6 +41,13 @@ interface State {
   savedVariationIgnoreAreas: IgnoreArea[];
   draftIgnoreAreas: DraftIgnoreArea[];
   markedForDeletion: Set<string>;
+  /**
+   * Padding adjustments for SAVED regions (drafts mutate in place). Keyed
+   * by region id. Mirrors `markedForDeletion`'s role for the "saved row
+   * was edited this session" case. Cleared on discardIgnoreChanges and
+   * applySaveSuccess.
+   */
+  paddingOverrides: Map<string, number>;
   selectedIgnoreId: string | null;
 
   setMode: (mode: ViewerMode) => void;
@@ -56,12 +65,18 @@ interface State {
   setSelectedIgnoreId: (id: string | null) => void;
   /** Removes a draft region by id, OR marks a saved region for deletion. */
   deleteSelected: () => void;
-  /** Wipes drafts and clears markedForDeletion. */
+  /**
+   * Padding adjustment for the currently-selected region. Mutates draft
+   * regions in place; for saved regions, sets an entry in paddingOverrides.
+   * No-op when nothing is selected.
+   */
+  setPaddingForSelected: (paddingPx: number) => void;
+  /** Wipes drafts, markedForDeletion, and paddingOverrides. */
   discardIgnoreChanges: () => void;
   /**
-   * Called after a successful save mutation: clears markedForDeletion,
-   * promotes drafts to the matching saved slice (based on scope), and
-   * clears the draft slice.
+   * Called after a successful save mutation: clears markedForDeletion +
+   * paddingOverrides, promotes drafts to the matching saved slice (based
+   * on scope), and clears the draft slice.
    */
   applySaveSuccess: (scope: "run" | "variation") => void;
 }
@@ -78,6 +93,7 @@ export const useViewerStore = create<State>((set) => ({
   savedVariationIgnoreAreas: [],
   draftIgnoreAreas: [],
   markedForDeletion: new Set(),
+  paddingOverrides: new Map(),
   selectedIgnoreId: null,
 
   setMode: (mode) => set({ mode }),
@@ -90,15 +106,19 @@ export const useViewerStore = create<State>((set) => ({
   hydrateSavedIgnoreAreas: (run, variation) =>
     set((s) => {
       const hasUnsaved =
-        s.draftIgnoreAreas.length > 0 || s.markedForDeletion.size > 0;
+        s.draftIgnoreAreas.length > 0 ||
+        s.markedForDeletion.size > 0 ||
+        s.paddingOverrides.size > 0;
       const saved = {
         savedRunIgnoreAreas: run.map((r) => ({
           ...r,
           id: crypto.randomUUID(),
+          paddingPx: r.paddingPx ?? 0,
         })),
         savedVariationIgnoreAreas: variation.map((r) => ({
           ...r,
           id: crypto.randomUUID(),
+          paddingPx: r.paddingPx ?? 0,
         })),
       };
       if (hasUnsaved) {
@@ -111,6 +131,7 @@ export const useViewerStore = create<State>((set) => ({
         ...saved,
         draftIgnoreAreas: [],
         markedForDeletion: new Set(),
+        paddingOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -137,17 +158,39 @@ export const useViewerStore = create<State>((set) => ({
       next.add(s.selectedIgnoreId);
       return { markedForDeletion: next, selectedIgnoreId: null };
     }),
+  setPaddingForSelected: (paddingPx) =>
+    set((s) => {
+      if (!s.selectedIgnoreId) return {};
+      const draftIdx = s.draftIgnoreAreas.findIndex(
+        (r) => r.id === s.selectedIgnoreId,
+      );
+      if (draftIdx !== -1) {
+        const next = [...s.draftIgnoreAreas];
+        const existing = next[draftIdx]!;
+        next[draftIdx] = { ...existing, paddingPx };
+        return { draftIgnoreAreas: next };
+      }
+      const overrides = new Map(s.paddingOverrides);
+      overrides.set(s.selectedIgnoreId, paddingPx);
+      return { paddingOverrides: overrides };
+    }),
   discardIgnoreChanges: () =>
     set({
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
       selectedIgnoreId: null,
     }),
   applySaveSuccess: (scope) =>
     set((s) => {
       const survivors = (
         scope === "run" ? s.savedRunIgnoreAreas : s.savedVariationIgnoreAreas
-      ).filter((r) => !s.markedForDeletion.has(r.id));
+      )
+        .filter((r) => !s.markedForDeletion.has(r.id))
+        .map((r) => ({
+          ...r,
+          paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
+        }));
       const newSaved = [...survivors, ...s.draftIgnoreAreas];
       return {
         ...(scope === "run"
@@ -155,7 +198,34 @@ export const useViewerStore = create<State>((set) => ({
           : { savedVariationIgnoreAreas: newSaved }),
         draftIgnoreAreas: [],
         markedForDeletion: new Set(),
+        paddingOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
 }));
+
+/**
+ * Padding value to show on the slider for the currently-selected region.
+ * Precedence (highest → lowest): override map → draft region's own
+ * paddingPx → saved region's persisted paddingPx → 0.
+ */
+export function selectSelectedPaddingPx(
+  s: Pick<
+    State,
+    | "selectedIgnoreId"
+    | "paddingOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+): number {
+  if (!s.selectedIgnoreId) return 0;
+  const override = s.paddingOverrides.get(s.selectedIgnoreId);
+  if (override !== undefined) return override;
+  const draft = s.draftIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (draft) return draft.paddingPx;
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  return saved?.paddingPx ?? 0;
+}
