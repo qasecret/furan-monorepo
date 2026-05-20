@@ -307,6 +307,7 @@ export const runsRouter = t.router({
                 paddingPx: z.number().int().min(0).max(32).default(0),
                 kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
                 pattern: z.string().min(1).max(500).optional(),
+                selector: z.string().min(1).max(500).optional(),
               })
               .refine(
                 (r) =>

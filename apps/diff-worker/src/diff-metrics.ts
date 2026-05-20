@@ -31,6 +31,7 @@ export interface DiffMetrics {
   l1Duration: Histogram<"engine">;
   dynamicTextOcrDuration: Histogram<string>;
   dynamicTextMatch: Counter<"outcome">;
+  regionResolution: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -51,6 +52,12 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     dynamicTextMatch: new Counter({
       name: "furan_dynamic_text_match_total",
       help: "Dynamic-text regex evaluations",
+      labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    regionResolution: new Counter({
+      name: "furan_diff_region_resolution_total",
+      help: "Outcome of resolving an ignore region's CSS selector against the candidate's element-map sidecar",
       labelNames: ["outcome"],
       registers: [registry],
     }),
