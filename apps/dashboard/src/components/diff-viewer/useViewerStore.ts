@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import type { ElementBbox } from "./useElementMap";
+
 export type ViewerMode =
   | "side-by-side"
   | "overlay"
@@ -22,6 +24,15 @@ export interface IgnoreArea {
   kind: "ignore" | "dynamic-text";
   /** Required when kind === "dynamic-text"; regex source string (no flags). */
   pattern?: string;
+  /**
+   * Optional CSS-path anchor (F-a subproject 3). When present, the diff
+   * engine resolves the region's mask geometry against the candidate's
+   * element map at mask time (PR #63); the stored x/y/w/h is the
+   * fallback when the selector misses. Captured by the SDK (PR #61);
+   * the editor either pushes it through or clears it — there's no
+   * hand-edit UI.
+   */
+  selector?: string;
 }
 
 /**
@@ -68,6 +79,21 @@ interface State {
    * Keyed by region id. Same lifecycle as `paddingOverrides`.
    */
   kindOverrides: Map<string, { kind: IgnoreArea["kind"]; pattern?: string }>;
+  /**
+   * F-a/3: per-draft snap suggestions surfaced after the user finishes a
+   * drag-draw. Keyed by draft.id. The store is the source of truth for
+   * "does this draft have a pending Anchor-to-`<selector>` proposal";
+   * the canvas/toolbar reads from here, the DiffViewer effect writes here.
+   * Cleared by the same lifecycle hooks as `paddingOverrides`.
+   */
+  pendingSnaps: Map<string, { selector: string; bbox: ElementBbox }>;
+  /**
+   * F-a/3: per-saved-region selector overrides (`null` = "user cleared the
+   * inherited selector"). Mirrors the `kindOverrides` pattern — drafts
+   * mutate in place; saved regions push an entry here, reconciled by
+   * `applySaveSuccess` and the toolbar's save payload builder.
+   */
+  selectorOverrides: Map<string, string | null>;
   selectedIgnoreId: string | null;
 
   setMode: (mode: ViewerMode) => void;
@@ -97,6 +123,32 @@ interface State {
    * is "ignore" the pattern is cleared.
    */
   setKindForSelected: (kind: IgnoreArea["kind"], pattern?: string) => void;
+  /**
+   * F-a/3: record a snap suggestion for a freshly-drawn draft. Idempotent
+   * on the same draft id — re-proposing keeps the first suggestion so
+   * effect re-runs don't bounce the value.
+   */
+  proposePendingSnap: (
+    draftId: string,
+    snap: { selector: string; bbox: ElementBbox },
+  ) => void;
+  /**
+   * F-a/3: accept a pending snap → writes `selector` onto the draft and
+   * removes the pending entry. No-op when the draft has no pending snap.
+   */
+  applyPendingSnap: (draftId: string) => void;
+  /**
+   * F-a/3: dismiss a pending snap → removes the pending entry without
+   * touching the draft. No-op when nothing is pending for the draft.
+   */
+  dismissPendingSnap: (draftId: string) => void;
+  /**
+   * F-a/3: clear the selector on the currently-selected region. For a
+   * draft, mutates in place. For a saved region, records a `null`
+   * override that the save payload builder converts to "explicit clear."
+   * Matches the `setPaddingForSelected` / `setKindForSelected` shape.
+   */
+  clearSelectorForSelected: () => void;
   /** Wipes drafts, markedForDeletion, paddingOverrides, and kindOverrides. */
   discardIgnoreChanges: () => void;
   /**
@@ -121,6 +173,8 @@ export const useViewerStore = create<State>((set) => ({
   markedForDeletion: new Set(),
   paddingOverrides: new Map(),
   kindOverrides: new Map(),
+  pendingSnaps: new Map(),
+  selectorOverrides: new Map(),
   selectedIgnoreId: null,
 
   setMode: (mode) => set({ mode }),
@@ -136,13 +190,15 @@ export const useViewerStore = create<State>((set) => ({
         s.draftIgnoreAreas.length > 0 ||
         s.markedForDeletion.size > 0 ||
         s.paddingOverrides.size > 0 ||
-        s.kindOverrides.size > 0;
+        s.kindOverrides.size > 0 ||
+        s.selectorOverrides.size > 0;
       const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
         ...r,
         id: crypto.randomUUID(),
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind ?? "ignore",
         pattern: r.pattern,
+        selector: r.selector,
       });
       const saved = {
         savedRunIgnoreAreas: run.map(hydrate),
@@ -160,6 +216,8 @@ export const useViewerStore = create<State>((set) => ({
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
         kindOverrides: new Map(),
+        pendingSnaps: new Map(),
+        selectorOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -225,12 +283,60 @@ export const useViewerStore = create<State>((set) => ({
       });
       return { kindOverrides: overrides };
     }),
+  proposePendingSnap: (draftId, snap) =>
+    set((s) => {
+      // Idempotent: an effect that re-fires on dependency change must
+      // not overwrite a snap the user is mid-decision on.
+      if (s.pendingSnaps.has(draftId)) return {};
+      const next = new Map(s.pendingSnaps);
+      next.set(draftId, snap);
+      return { pendingSnaps: next };
+    }),
+  applyPendingSnap: (draftId) =>
+    set((s) => {
+      const snap = s.pendingSnaps.get(draftId);
+      if (!snap) return {};
+      const drafts = s.draftIgnoreAreas.map((d) =>
+        d.id === draftId ? { ...d, selector: snap.selector } : d,
+      );
+      const nextPending = new Map(s.pendingSnaps);
+      nextPending.delete(draftId);
+      return { draftIgnoreAreas: drafts, pendingSnaps: nextPending };
+    }),
+  dismissPendingSnap: (draftId) =>
+    set((s) => {
+      if (!s.pendingSnaps.has(draftId)) return {};
+      const next = new Map(s.pendingSnaps);
+      next.delete(draftId);
+      return { pendingSnaps: next };
+    }),
+  clearSelectorForSelected: () =>
+    set((s) => {
+      const id = s.selectedIgnoreId;
+      if (!id) return {};
+      // Saved region: explicit-null override (the save payload builder
+      // converts `null` to an omitted `selector` field on the wire).
+      const savedRun = s.savedRunIgnoreAreas.find((r) => r.id === id);
+      const savedVar = s.savedVariationIgnoreAreas.find((r) => r.id === id);
+      if (savedRun || savedVar) {
+        const next = new Map(s.selectorOverrides);
+        next.set(id, null);
+        return { selectorOverrides: next };
+      }
+      // Draft: mutate in place (same pattern as setKindForSelected).
+      const drafts = s.draftIgnoreAreas.map((d) =>
+        d.id === id ? { ...d, selector: undefined } : d,
+      );
+      return { draftIgnoreAreas: drafts };
+    }),
   discardIgnoreChanges: () =>
     set({
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
       kindOverrides: new Map(),
+      pendingSnaps: new Map(),
+      selectorOverrides: new Map(),
       selectedIgnoreId: null,
     }),
   applySaveSuccess: (scope) =>
@@ -241,11 +347,17 @@ export const useViewerStore = create<State>((set) => ({
         .filter((r) => !s.markedForDeletion.has(r.id))
         .map((r) => {
           const kindOv = s.kindOverrides.get(r.id);
+          const selectorOv = s.selectorOverrides.get(r.id);
           return {
             ...r,
             paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
             kind: kindOv?.kind ?? r.kind,
             pattern: kindOv ? kindOv.pattern : r.pattern,
+            // `selectorOv === null` is the explicit-clear signal from
+            // `clearSelectorForSelected`. `undefined` means "no override,"
+            // so the saved row's existing selector survives.
+            selector:
+              selectorOv === null ? undefined : (selectorOv ?? r.selector),
           };
         });
       const newSaved = [...survivors, ...s.draftIgnoreAreas];
@@ -257,6 +369,8 @@ export const useViewerStore = create<State>((set) => ({
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
         kindOverrides: new Map(),
+        pendingSnaps: new Map(),
+        selectorOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
