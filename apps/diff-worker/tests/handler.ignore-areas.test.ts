@@ -397,6 +397,137 @@ desc(
       expect(unmatchedRow!.ocrText).toBe("ORDER-XYZ");
     }, 60_000);
 
+    it("resolves a region's selector against the candidate element-map and masks the resolved bbox", async () => {
+      // Build two 100×100 PNGs on the fly. Baseline is solid white;
+      // candidate has an 80×80 black square at (10,10). Without a mask
+      // the L1 diff would flag ~6400 pixels — diff_percent > 0. The
+      // stored bbox on the saved ignore region is a tiny 1×1 at (0,0),
+      // which would NOT mask the modification. Only the resolver
+      // kicking in (selector `#center` → resolved bbox 10,10,80,80)
+      // can mask the change. If the resolver doesn't fire, diff_percent
+      // stays > 0 and the assertion fails.
+      const sharp = (await import("sharp")).default;
+      const baselineBytes = await sharp({
+        create: {
+          width: 100,
+          height: 100,
+          channels: 3,
+          background: { r: 255, g: 255, b: 255 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const blackSquare = await sharp({
+        create: {
+          width: 80,
+          height: 80,
+          channels: 3,
+          background: { r: 0, g: 0, b: 0 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const candidateBytes = await sharp(baselineBytes)
+        .composite([{ input: blackSquare, left: 10, top: 10 }])
+        .png()
+        .toBuffer();
+
+      const VP = "100x100";
+
+      const [br] = await db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId,
+          testVariationId: variationId,
+          status: "passed",
+          branchName: "main",
+          name: "home",
+        })
+        .returning();
+      const [cr] = await db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId,
+          testVariationId: variationId,
+          status: "new",
+          branchName: "main",
+          name: "home",
+        })
+        .returning();
+      await db.insert(baselines).values({
+        baselineName: "home",
+        testVariationId: variationId,
+        testRunId: br.id,
+        branchName: "main",
+      });
+
+      const bKey = `${objectKey(baselineBytes)}-${br.id}-${VP}`;
+      const cKey = `${objectKey(candidateBytes)}-${cr.id}-${VP}`;
+      const elementMapKey = `${cKey}.elements.json`;
+
+      await storage.put(bKey, baselineBytes, "image/png");
+      await storage.put(cKey, candidateBytes, "image/png");
+      const elementMap = {
+        v: 1 as const,
+        elements: {
+          "#center": { x: 10, y: 10, width: 80, height: 80 },
+        },
+        capturedAt: Date.now(),
+      };
+      await storage.put(
+        elementMapKey,
+        Buffer.from(JSON.stringify(elementMap)),
+        "application/json",
+      );
+
+      await db.insert(screenshots).values({
+        runId: br.id,
+        projectId,
+        imageKey: bKey,
+        viewport: VP,
+        browser: "chromium",
+      });
+      await db.insert(screenshots).values({
+        runId: cr.id,
+        projectId,
+        imageKey: cKey,
+        elementMapKey,
+        viewport: VP,
+        browser: "chromium",
+      });
+
+      // Saved region: stored bbox is a tiny 1×1 at (0,0) — would NOT
+      // mask the modification. Selector points at the actual change.
+      await db
+        .update(testVariations)
+        .set({
+          ignoreAreas: JSON.stringify([
+            {
+              x: 0,
+              y: 0,
+              width: 1,
+              height: 1,
+              viewport: VP,
+              selector: "#center",
+            },
+          ]),
+        })
+        .where(eq(testVariations.id, variationId));
+
+      const job: DiffJob = { runId: cr.id, projectId };
+      await handleDiffJob(job, mockLogger, { db, storage, redis });
+
+      const [updated] = await db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, cr.id))
+        .limit(1);
+      expect(updated.status).toBe("passed");
+      expect(updated.diffPercent).toBe(0);
+    }, 60_000);
+
     it("flag off: no dynamic_text audit rows persisted", async () => {
       // Explicitly disable the flag.
       await db
