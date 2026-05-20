@@ -20,7 +20,7 @@ package io.furan.sdk
  * `v` is a forward-compat schema marker; future shape changes bump it so
  * older consumers reject unknown shapes via a 1-line check.
  */
-internal const val ELEMENT_BBOX_SCRIPT: String = """
+const val ELEMENT_BBOX_SCRIPT: String = """
 (function() {
   var MIN_SIZE = 8;
   var MAX_ELEMENTS = 5000;
