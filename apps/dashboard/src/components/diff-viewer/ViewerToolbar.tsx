@@ -2,9 +2,12 @@
 
 import { REGION_PATTERN_PRESETS } from "@furan/shared-types";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { PatternEditor } from "./PatternEditor";
+import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
 import {
+  selectEffectiveRegion,
   selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
   useViewerStore,
@@ -40,6 +43,12 @@ interface Props {
   /** The current run id — needed for the setIgnoreAreas mutation. */
   runId: string;
   /**
+   * Project id — keys the per-project region clipboard. Optional so
+   * existing call sites (and tests) that haven't threaded it yet still
+   * compile; when empty the clipboard read/write is a no-op.
+   */
+  projectId?: string;
+  /**
    * Project-scoped settings the toolbar needs. Currently only
    * `dynamicTextEnabled`, which gates the kind selector + PatternEditor.
    * Defaults to false when omitted so callers that haven't wired the flag
@@ -48,7 +57,7 @@ interface Props {
   project?: { dynamicTextEnabled: boolean };
 }
 
-export function ViewerToolbar({ runId, project }: Props) {
+export function ViewerToolbar({ runId, projectId = "", project }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
   const setMode = useViewerStore((s) => s.setMode);
@@ -86,6 +95,12 @@ export function ViewerToolbar({ runId, project }: Props) {
     kind: selectedKind,
     pattern: selectedPattern,
   };
+  // Region clipboard wiring (Copy/Paste). `useClipboardRegion` subscribes
+  // to same-tab + cross-tab clipboard events so the Paste button's
+  // disabled state reflects the live clipboard.
+  const clipboard = useClipboardRegion(projectId);
+  const viewport = useViewerStore((s) => s.viewport);
+  const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
 
   const utils = trpc.useUtils();
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
@@ -274,6 +289,40 @@ export function ViewerToolbar({ runId, project }: Props) {
             onClick={discardIgnoreChanges}
           >
             Discard
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="px-2 py-1 text-xs"
+            data-testid="region-copy-button"
+            disabled={!selectedIgnoreId}
+            onClick={() => {
+              const effective = selectEffectiveRegion(
+                useViewerStore.getState(),
+              );
+              if (!effective) return;
+              setClipboardRegion(projectId, effective);
+              toast.success("Region copied");
+            }}
+          >
+            Copy
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="px-2 py-1 text-xs"
+            data-testid="region-paste-button"
+            disabled={!clipboard}
+            onClick={() => {
+              if (!clipboard) return;
+              addDraftRegion({
+                ...clipboard,
+                id: crypto.randomUUID(),
+                viewport: viewport || clipboard.viewport,
+              });
+            }}
+          >
+            Paste
           </Button>
         </>
       )}

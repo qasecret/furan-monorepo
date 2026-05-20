@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, test } from "vitest";
 
 import {
+  selectEffectiveRegion,
   selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
   useViewerStore,
@@ -436,6 +437,83 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(selectSelectedKindAndPattern(useViewerStore.getState())).toEqual({
       kind: "ignore",
       pattern: undefined,
+    });
+  });
+
+  test("selectEffectiveRegion merges saved + paddingOverride + kindOverride", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    // Saved baseline
+    expect(selectEffectiveRegion(useViewerStore.getState())).toEqual({
+      id: savedId,
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      viewport: "1280x720",
+      paddingPx: 0,
+      kind: "ignore",
+      pattern: undefined,
+    });
+    // Apply both overrides
+    useViewerStore.getState().setPaddingForSelected(8);
+    useViewerStore.getState().setKindForSelected("dynamic-text", "\\d{4}");
+    expect(selectEffectiveRegion(useViewerStore.getState())).toEqual({
+      id: savedId,
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      viewport: "1280x720",
+      paddingPx: 8,
+      kind: "dynamic-text",
+      pattern: "\\d{4}",
+    });
+  });
+
+  test("selectEffectiveRegion returns null without selection", () => {
+    useViewerStore.getState().setSelectedIgnoreId(null);
+    expect(selectEffectiveRegion(useViewerStore.getState())).toBeNull();
+  });
+
+  test("selectEffectiveRegion returns draft as-is", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.getState().addDraftRegion({
+      id: draftId,
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+      viewport: "1280x720",
+      paddingPx: 2,
+      kind: "dynamic-text",
+      pattern: "[a-z]+",
+    });
+    useViewerStore.getState().setSelectedIgnoreId(draftId);
+    expect(selectEffectiveRegion(useViewerStore.getState())).toEqual({
+      id: draftId,
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+      viewport: "1280x720",
+      paddingPx: 2,
+      kind: "dynamic-text",
+      pattern: "[a-z]+",
     });
   });
 
