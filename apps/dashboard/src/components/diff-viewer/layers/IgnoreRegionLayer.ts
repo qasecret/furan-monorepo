@@ -84,6 +84,7 @@ export function mountIgnoreRegionLayer(
     y: number;
     width: number;
     height: number;
+    paddingPx: number;
     style: ItemStyle;
     selectable: boolean;
     marked: boolean;
@@ -105,6 +106,7 @@ export function mountIgnoreRegionLayer(
       y: r.y,
       width: r.width,
       height: r.height,
+      paddingPx: r.paddingPx ?? 0,
       style: STYLE.savedActive,
       selectable: input.editMode !== "off",
       marked: input.markedForDeletion.has(r.id),
@@ -125,6 +127,7 @@ export function mountIgnoreRegionLayer(
         y: r.y,
         width: r.width,
         height: r.height,
+        paddingPx: r.paddingPx ?? 0,
         style: STYLE.savedInactive,
         selectable: false,
         marked: false,
@@ -141,6 +144,7 @@ export function mountIgnoreRegionLayer(
         y: r.y,
         width: r.width,
         height: r.height,
+        paddingPx: r.paddingPx ?? 0,
         style: STYLE.savedActive,
         selectable: false,
         marked: false,
@@ -157,6 +161,7 @@ export function mountIgnoreRegionLayer(
         y: r.y,
         width: r.width,
         height: r.height,
+        paddingPx: r.paddingPx ?? 0,
         style: STYLE.draft,
         selectable: true,
         marked: false,
@@ -169,13 +174,18 @@ export function mountIgnoreRegionLayer(
     const strokeWidth = isSelected
       ? SELECTED_STROKE_WIDTH
       : it.style.strokeWidth;
+    const p = it.paddingPx;
+    const x = it.x - p;
+    const y = it.y - p;
+    const w = it.width + 2 * p;
+    const h = it.height + 2 * p;
     const g = new Graphics();
-    g.rect(it.x, it.y, it.width, it.height)
+    g.rect(x, y, w, h)
       .fill({ color: it.style.fill, alpha: it.style.fillAlpha })
       .stroke({ color: it.style.stroke, width: strokeWidth, alpha: 0.95 });
     if (it.marked) {
-      g.moveTo(it.x, it.y)
-        .lineTo(it.x + it.width, it.y + it.height)
+      g.moveTo(x, y)
+        .lineTo(x + w, y + h)
         .stroke({ color: MARKED_STRIKE_COLOR, width: MARKED_STRIKE_WIDTH });
     }
     if (it.selectable) {
@@ -184,6 +194,17 @@ export function mountIgnoreRegionLayer(
       g.on("pointertap", () => input.onSelect(it.id));
     }
     container.addChild(g);
+
+    if (p > 0) {
+      // Faint inner rect at the drag-drawn bbox so users can see what
+      // they originally drew vs. the padded extent that's actually
+      // masked. Same stroke color, low alpha, thin stroke.
+      const inner = new Graphics();
+      inner
+        .rect(it.x, it.y, it.width, it.height)
+        .stroke({ color: it.style.stroke, width: 1, alpha: 0.4 });
+      container.addChild(inner);
+    }
   }
 
   app.stage.addChild(container);
