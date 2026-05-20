@@ -543,3 +543,229 @@ describe("useViewerStore — ignore-region slice", () => {
     expect(selectSelectedPaddingPx(useViewerStore.getState())).toBe(0);
   });
 });
+
+describe("useViewerStore — pendingSnaps + selectorOverrides lifecycle (F-a/3)", () => {
+  beforeEach(() => {
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      savedRunIgnoreAreas: [],
+      savedVariationIgnoreAreas: [],
+      draftIgnoreAreas: [],
+      markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
+      kindOverrides: new Map(),
+      pendingSnaps: new Map(),
+      selectorOverrides: new Map(),
+      selectedIgnoreId: null,
+    });
+  });
+
+  it("hydrates selector through hydrateSavedIgnoreAreas", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#login",
+        },
+      ],
+      [],
+    );
+    const saved = useViewerStore.getState().savedRunIgnoreAreas;
+    expect(saved.length).toBe(1);
+    expect(saved[0]?.selector).toBe("#login");
+  });
+
+  it("proposePendingSnap is idempotent on same draft id (first wins)", () => {
+    const id = "draft-1";
+    useViewerStore.getState().proposePendingSnap(id, {
+      selector: "#x",
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+    });
+    useViewerStore.getState().proposePendingSnap(id, {
+      selector: "#y",
+      bbox: { x: 5, y: 5, width: 20, height: 20 },
+    });
+    const snap = useViewerStore.getState().pendingSnaps.get(id);
+    expect(snap?.selector).toBe("#x");
+    expect(useViewerStore.getState().pendingSnaps.size).toBe(1);
+  });
+
+  it("applyPendingSnap writes selector onto the draft + clears the pending entry", () => {
+    const id = "draft-2";
+    useViewerStore.setState({
+      draftIgnoreAreas: [
+        {
+          id,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+    });
+    useViewerStore.getState().proposePendingSnap(id, {
+      selector: "#applied",
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+    });
+    useViewerStore.getState().applyPendingSnap(id);
+    const draft = useViewerStore
+      .getState()
+      .draftIgnoreAreas.find((d) => d.id === id);
+    expect(draft?.selector).toBe("#applied");
+    expect(useViewerStore.getState().pendingSnaps.has(id)).toBe(false);
+  });
+
+  it("applyPendingSnap is a no-op when nothing is pending for the draft", () => {
+    useViewerStore.setState({
+      draftIgnoreAreas: [
+        {
+          id: "lonely",
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+    });
+    useViewerStore.getState().applyPendingSnap("lonely");
+    const draft = useViewerStore.getState().draftIgnoreAreas[0]!;
+    expect(draft.selector).toBeUndefined();
+  });
+
+  it("dismissPendingSnap clears the entry without touching the draft", () => {
+    const id = "draft-3";
+    useViewerStore.setState({
+      draftIgnoreAreas: [
+        {
+          id,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+    });
+    useViewerStore.getState().proposePendingSnap(id, {
+      selector: "#x",
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+    });
+    useViewerStore.getState().dismissPendingSnap(id);
+    const draft = useViewerStore
+      .getState()
+      .draftIgnoreAreas.find((d) => d.id === id);
+    expect(draft?.selector).toBeUndefined();
+    expect(useViewerStore.getState().pendingSnaps.has(id)).toBe(false);
+  });
+
+  it("clearSelectorForSelected sets a null override on a saved region", () => {
+    const savedId = "saved-1";
+    useViewerStore.setState({
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#hydrated",
+        },
+      ],
+      selectedIgnoreId: savedId,
+    });
+    useViewerStore.getState().clearSelectorForSelected();
+    expect(useViewerStore.getState().selectorOverrides.get(savedId)).toBeNull();
+    // Saved row itself unchanged — override carries the clear.
+    expect(useViewerStore.getState().savedRunIgnoreAreas[0]!.selector).toBe(
+      "#hydrated",
+    );
+  });
+
+  it("clearSelectorForSelected mutates a draft in place", () => {
+    const draftId = "draft-4";
+    useViewerStore.setState({
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#to-clear",
+        },
+      ],
+      selectedIgnoreId: draftId,
+    });
+    useViewerStore.getState().clearSelectorForSelected();
+    const draft = useViewerStore
+      .getState()
+      .draftIgnoreAreas.find((d) => d.id === draftId);
+    expect(draft?.selector).toBeUndefined();
+    expect(useViewerStore.getState().selectorOverrides.size).toBe(0);
+  });
+
+  it("clearSelectorForSelected is a no-op when nothing selected", () => {
+    useViewerStore.setState({ selectedIgnoreId: null });
+    useViewerStore.getState().clearSelectorForSelected();
+    expect(useViewerStore.getState().selectorOverrides.size).toBe(0);
+  });
+
+  it("discardIgnoreChanges resets pendingSnaps + selectorOverrides", () => {
+    useViewerStore.setState({
+      pendingSnaps: new Map([
+        ["x", { selector: "#x", bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+      ]),
+      selectorOverrides: new Map([["y", null]]),
+    });
+    useViewerStore.getState().discardIgnoreChanges();
+    expect(useViewerStore.getState().pendingSnaps.size).toBe(0);
+    expect(useViewerStore.getState().selectorOverrides.size).toBe(0);
+  });
+
+  it("applySaveSuccess folds selectorOverrides into surviving saved rows", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#initial",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.setState({
+      selectorOverrides: new Map([[savedId, null]]),
+    });
+    useViewerStore.getState().applySaveSuccess("run");
+    const after = useViewerStore.getState().savedRunIgnoreAreas[0]!;
+    expect(after.selector).toBeUndefined();
+    expect(useViewerStore.getState().selectorOverrides.size).toBe(0);
+    expect(useViewerStore.getState().pendingSnaps.size).toBe(0);
+  });
+});
