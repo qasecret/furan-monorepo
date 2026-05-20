@@ -4,6 +4,7 @@ import {
   selectEffectiveRegion,
   selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
+  selectSelectedSelector,
   useViewerStore,
 } from "../src/components/diff-viewer/useViewerStore";
 
@@ -740,6 +741,43 @@ describe("useViewerStore — pendingSnaps + selectorOverrides lifecycle (F-a/3)"
     useViewerStore.getState().discardIgnoreChanges();
     expect(useViewerStore.getState().pendingSnaps.size).toBe(0);
     expect(useViewerStore.getState().selectorOverrides.size).toBe(0);
+  });
+
+  it("selectSelectedSelector prefers override > draft > saved > undefined", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#saved-sel",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    // Saved without override → saved.selector.
+    expect(selectSelectedSelector(useViewerStore.getState())).toBe(
+      "#saved-sel",
+    );
+    // Null override → undefined (explicit clear).
+    useViewerStore.setState({
+      selectorOverrides: new Map([[savedId, null]]),
+    });
+    expect(selectSelectedSelector(useViewerStore.getState())).toBeUndefined();
+    // String override → that string.
+    useViewerStore.setState({
+      selectorOverrides: new Map([[savedId, "#override"]]),
+    });
+    expect(selectSelectedSelector(useViewerStore.getState())).toBe("#override");
+    // Nothing selected → undefined.
+    useViewerStore.getState().setSelectedIgnoreId(null);
+    expect(selectSelectedSelector(useViewerStore.getState())).toBeUndefined();
   });
 
   it("applySaveSuccess folds selectorOverrides into surviving saved rows", () => {

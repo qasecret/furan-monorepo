@@ -432,6 +432,36 @@ export function selectSelectedKindAndPattern(
 }
 
 /**
+ * F-a/3: effective selector for the currently-selected region. Precedence
+ * (highest → lowest): `selectorOverrides` map (`null` = explicit clear) →
+ * draft region's own `selector` → saved region's persisted `selector` →
+ * `undefined`. Returns `undefined` whenever there's no selector to show
+ * (the toolbar uses this to switch between "Anchor to <selector>" and
+ * the static "🔗 <selector>" affordance).
+ */
+export function selectSelectedSelector(
+  s: Pick<
+    State,
+    | "selectedIgnoreId"
+    | "selectorOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+): string | undefined {
+  if (!s.selectedIgnoreId) return undefined;
+  const override = s.selectorOverrides.get(s.selectedIgnoreId);
+  if (override === null) return undefined; // explicit clear
+  if (override !== undefined) return override;
+  const draft = s.draftIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (draft) return draft.selector;
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  return saved?.selector;
+}
+
+/**
  * Resolves the current effective state of the selected region — for a
  * draft, returns the draft as-is; for a saved region, applies any
  * unsaved padding + kind/pattern overrides. Used by the Copy action so

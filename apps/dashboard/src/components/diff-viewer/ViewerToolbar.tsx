@@ -10,6 +10,7 @@ import {
   selectEffectiveRegion,
   selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
+  selectSelectedSelector,
   useViewerStore,
   type ViewerMode,
 } from "./useViewerStore";
@@ -80,6 +81,15 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
   const selectedPaddingPx = useViewerStore(selectSelectedPaddingPx);
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const setKindForSelected = useViewerStore((s) => s.setKindForSelected);
+  // F-a/3: pending snap + selector indicator wiring.
+  const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
+  const selectorOverrides = useViewerStore((s) => s.selectorOverrides);
+  const applyPendingSnap = useViewerStore((s) => s.applyPendingSnap);
+  const dismissPendingSnap = useViewerStore((s) => s.dismissPendingSnap);
+  const clearSelectorForSelected = useViewerStore(
+    (s) => s.clearSelectorForSelected,
+  );
+  const selectedEffectiveSelector = useViewerStore(selectSelectedSelector);
   // Split into two primitive selectors so each subscription's equality is
   // reference-stable. (Returning a fresh object from a zustand selector
   // re-renders on every store change since the default equality is
@@ -119,8 +129,15 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
     mode === "onion-skin" ? "Baseline ↔ Candidate" : "Candidate opacity";
 
   const editing = ignoreEditMode !== "off";
+  // F-a/3: selectorOverrides counts as "pending" the same way drafts +
+  // marked-for-deletion do — without this, clearing a saved region's
+  // selector wouldn't enable the Save button. Padding/kind overrides
+  // remain excluded to preserve prior behavior (their saves piggyback
+  // on draft / delete edits).
   const hasPendingChanges =
-    draftIgnoreAreas.length > 0 || markedForDeletion.size > 0;
+    draftIgnoreAreas.length > 0 ||
+    markedForDeletion.size > 0 ||
+    selectorOverrides.size > 0;
 
   const requestEditMode = (next: "run" | "variation") => {
     if (editing && ignoreEditMode !== next && hasPendingChanges) {
@@ -147,6 +164,12 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
       .filter((r) => !markedForDeletion.has(r.id))
       .map((r) => {
         const kindOv = kindOverrides.get(r.id);
+        const selectorOv = selectorOverrides.get(r.id);
+        // F-a/3: `null` override = explicit clear (omit `selector` on
+        // the wire). `undefined` = no override → preserve the saved
+        // row's selector.
+        const resolvedSelector =
+          selectorOv === null ? undefined : (selectorOv ?? r.selector);
         return {
           x: r.x,
           y: r.y,
@@ -156,6 +179,7 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
           paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
           kind: kindOv?.kind ?? r.kind,
           pattern: kindOv ? kindOv.pattern : r.pattern,
+          selector: resolvedSelector,
         };
       });
     const drafts = draftIgnoreAreas.map((r) => ({
@@ -167,6 +191,7 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
       paddingPx: r.paddingPx,
       kind: r.kind,
       pattern: r.pattern,
+      selector: r.selector,
     }));
     setIgnoreAreas.mutate({
       runId,
@@ -377,6 +402,75 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
           </span>
         </div>
       )}
+
+      {editing && selectedIgnoreId && selectedEffectiveSelector === undefined
+        ? (() => {
+            const ps = pendingSnaps.get(selectedIgnoreId);
+            if (!ps) return null;
+            return (
+              <div
+                className="flex items-center gap-2 text-xs"
+                data-testid="pending-snap-row"
+              >
+                <span aria-hidden>🔗</span>
+                <span>Anchor to</span>
+                <code
+                  className="truncate max-w-[200px] font-mono"
+                  title={ps.selector}
+                  data-testid="pending-snap-selector"
+                >
+                  {ps.selector}
+                </code>
+                <Button
+                  type="button"
+                  variant="default"
+                  className="px-2 py-1 text-xs"
+                  data-testid="pending-snap-apply"
+                  onClick={() => applyPendingSnap(selectedIgnoreId)}
+                >
+                  Apply
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="px-2 py-1 text-xs"
+                  data-testid="pending-snap-dismiss"
+                  onClick={() => dismissPendingSnap(selectedIgnoreId)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            );
+          })()
+        : null}
+
+      {editing &&
+        selectedIgnoreId &&
+        selectedEffectiveSelector !== undefined && (
+          <div
+            className="flex items-center gap-2 text-xs"
+            data-testid="selector-row"
+          >
+            <span aria-hidden>🔗</span>
+            <code
+              className="truncate max-w-[200px] font-mono"
+              title={selectedEffectiveSelector}
+              data-testid="selector-value"
+            >
+              {selectedEffectiveSelector}
+            </code>
+            <Button
+              type="button"
+              variant="secondary"
+              className="px-1 py-0 text-xs h-6 w-6"
+              data-testid="selector-clear"
+              aria-label="Clear selector"
+              onClick={clearSelectorForSelected}
+            >
+              ×
+            </Button>
+          </div>
+        )}
 
       {editing && selectedIgnoreId && dynamicTextEnabled && (
         <div

@@ -68,6 +68,8 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
       kindOverrides: new Map(),
+      pendingSnaps: new Map(),
+      selectorOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
@@ -694,5 +696,274 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     );
     expect(screen.queryByTestId("region-copy-button")).toBeNull();
     expect(screen.queryByTestId("region-paste-button")).toBeNull();
+  });
+
+  // F-a/3: snap affordance + selector indicator + selector save plumbing.
+  test("renders pending-snap row when selected draft has a proposal and no selector", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      pendingSnaps: new Map([
+        [
+          draftId,
+          {
+            selector: "#login-button",
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+          },
+        ],
+      ]),
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.getByTestId("pending-snap-row")).toBeDefined();
+    expect(screen.getByTestId("pending-snap-selector").textContent).toBe(
+      "#login-button",
+    );
+    expect(screen.queryByTestId("selector-row")).toBeNull();
+  });
+
+  test("Apply on the pending-snap row writes selector onto the draft and hides the row", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      pendingSnaps: new Map([
+        [
+          draftId,
+          {
+            selector: "#cta",
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+          },
+        ],
+      ]),
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("pending-snap-apply"));
+    const state = useViewerStore.getState();
+    expect(state.draftIgnoreAreas[0]!.selector).toBe("#cta");
+    expect(state.pendingSnaps.size).toBe(0);
+  });
+
+  test("Dismiss on the pending-snap row removes the entry without touching the draft", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      pendingSnaps: new Map([
+        [
+          draftId,
+          {
+            selector: "#cta",
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+          },
+        ],
+      ]),
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("pending-snap-dismiss"));
+    const state = useViewerStore.getState();
+    expect(state.draftIgnoreAreas[0]!.selector).toBeUndefined();
+    expect(state.pendingSnaps.size).toBe(0);
+  });
+
+  test("renders selector indicator (and × clear button) when selected region has a selector", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#login",
+        },
+      ],
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.getByTestId("selector-row")).toBeDefined();
+    expect(screen.getByTestId("selector-value").textContent).toBe("#login");
+    expect(screen.queryByTestId("pending-snap-row")).toBeNull();
+  });
+
+  test("× clear on a selector indicator removes selector from a draft in place", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#clearme",
+        },
+      ],
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("selector-clear"));
+    expect(
+      useViewerStore.getState().draftIgnoreAreas[0]!.selector,
+    ).toBeUndefined();
+  });
+
+  test("× clear on a saved-region selector indicator sets a null override", () => {
+    const savedId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#hydrated",
+        },
+      ],
+      selectedIgnoreId: savedId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("selector-clear"));
+    expect(useViewerStore.getState().selectorOverrides.get(savedId)).toBeNull();
+    // Saved row itself untouched.
+    expect(useViewerStore.getState().savedRunIgnoreAreas[0]!.selector).toBe(
+      "#hydrated",
+    );
+  });
+
+  test("handleSave payload carries selector from drafts and folds selectorOverrides on saved rows", () => {
+    const savedId = crypto.randomUUID();
+    const savedClearedId = crypto.randomUUID();
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 100,
+          y: 100,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#kept",
+        },
+        {
+          id: savedClearedId,
+          x: 200,
+          y: 200,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#was-anchored",
+        },
+      ],
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#fresh-draft",
+        },
+      ],
+      // Override the second saved row's selector with null = explicit clear.
+      selectorOverrides: new Map([[savedClearedId, null]]),
+      selectedIgnoreId: null,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("ignore-save-button"));
+    expect(setIgnoreAreasMutate).toHaveBeenCalled();
+    const payload = setIgnoreAreasMutate.mock.calls[0]![0] as {
+      ignoreAreas: Array<{ x: number; selector?: string }>;
+    };
+    const keptSaved = payload.ignoreAreas.find((r) => r.x === 100);
+    const clearedSaved = payload.ignoreAreas.find((r) => r.x === 200);
+    const fresh = payload.ignoreAreas.find((r) => r.x === 10);
+    expect(keptSaved!.selector).toBe("#kept");
+    expect(clearedSaved!.selector).toBeUndefined();
+    expect(fresh!.selector).toBe("#fresh-draft");
+  });
+
+  test("Save button enables when only a selectorOverride is pending (saved-region clear path)", () => {
+    const savedId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+          selector: "#x",
+        },
+      ],
+      selectorOverrides: new Map([[savedId, null]]),
+      selectedIgnoreId: null,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    const btn = screen.getByTestId("ignore-save-button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
   });
 });
