@@ -74,4 +74,30 @@ describe("RegionListPanel", () => {
     expect(severities).toContain("major");
     expect(severities).toContain("minor");
   });
+
+  it("source='dynamic_text' rows hidden by default; visible when toggle on", () => {
+    const regions: DiffRegion[] = [
+      {
+        id: "dt1",
+        severity: "none",
+        category: "text",
+        bbox: { x: 0, y: 0, width: 50, height: 20 },
+        description: 'Dynamic text matched: "Mar 5, 2026"',
+        source: "dynamic_text",
+        ocrText: "Mar 5, 2026",
+        ocrMatched: true,
+      },
+    ];
+    render(<RegionListPanel regions={regions} />);
+    // Default: synthetic audit row is hidden.
+    expect(document.querySelector('[data-source="dynamic_text"]')).toBeNull();
+    // Toggle on → row appears.
+    const toggleInput = screen
+      .getByTestId("show-suppressed-toggle")
+      .querySelector("input")!;
+    fireEvent.click(toggleInput);
+    expect(
+      document.querySelector('[data-source="dynamic_text"]'),
+    ).not.toBeNull();
+  });
 });

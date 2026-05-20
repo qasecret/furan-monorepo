@@ -50,6 +50,10 @@ function areaOf(b: BBox | unknown): number {
 export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
+  // Dynamic-text audit rows (`source === "dynamic_text"`) are hidden by
+  // default so they don't drown out actionable diff regions. Toggle reveals
+  // them so reviewers can audit which OCR decisions Furan made for a run.
+  const [showSuppressed, setShowSuppressed] = useState(false);
 
   const categories = useMemo(() => {
     const set = new Set(regions.map((r) => r.category));
@@ -58,6 +62,11 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
 
   const filtered = useMemo(() => {
     return regions
+      .filter((r) => {
+        // Always hide synthetic dynamic-text audit rows unless the toggle is on.
+        if (r.source === "dynamic_text") return showSuppressed;
+        return true;
+      })
       .filter((r) => severityFilter === "all" || r.severity === severityFilter)
       .filter((r) => categoryFilter === "all" || r.category === categoryFilter)
       .slice()
@@ -67,7 +76,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
         if (sa !== sb) return sb - sa;
         return areaOf(b.bbox) - areaOf(a.bbox);
       });
-  }, [regions, severityFilter, categoryFilter]);
+  }, [regions, severityFilter, categoryFilter, showSuppressed]);
 
   return (
     <aside
@@ -123,6 +132,18 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <label
+            className="flex items-center gap-1 text-xs px-2 py-1"
+            data-testid="show-suppressed-toggle"
+          >
+            <input
+              type="checkbox"
+              checked={showSuppressed}
+              onChange={(e) => setShowSuppressed(e.target.checked)}
+              className="w-3 h-3"
+            />
+            Show suppressed
+          </label>
         </div>
       </div>
       <div className="overflow-auto flex-1 p-2 space-y-1">
