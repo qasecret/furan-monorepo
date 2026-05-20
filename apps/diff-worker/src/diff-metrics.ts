@@ -1,4 +1,4 @@
-import { Histogram, type Registry } from "prom-client";
+import { Counter, Histogram, type Registry } from "prom-client";
 
 /**
  * L1 latency histogram for the diff pipeline, keyed by engine.
@@ -29,6 +29,8 @@ import { Histogram, type Registry } from "prom-client";
  */
 export interface DiffMetrics {
   l1Duration: Histogram<"engine">;
+  dynamicTextOcrDuration: Histogram<string>;
+  dynamicTextMatch: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -38,6 +40,18 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
       help: "Wall-clock duration of the L1 (pixel) diff stage, labelled by engine",
       labelNames: ["engine"],
       buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      registers: [registry],
+    }),
+    dynamicTextOcrDuration: new Histogram({
+      name: "furan_dynamic_text_ocr_duration_seconds",
+      help: "Wall-clock duration of one OCR pass on one dynamic-text region",
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+      registers: [registry],
+    }),
+    dynamicTextMatch: new Counter({
+      name: "furan_dynamic_text_match_total",
+      help: "Dynamic-text regex evaluations",
+      labelNames: ["outcome"],
       registers: [registry],
     }),
   };

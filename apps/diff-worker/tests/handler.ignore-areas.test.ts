@@ -6,6 +6,7 @@ import {
   baselines,
   builds,
   createDb,
+  diffRegions,
   eq,
   projects,
   screenshots,
@@ -27,7 +28,26 @@ import {
   vi,
 } from "vitest";
 
+import {
+  __resetTesseractWorkerForTests,
+  evaluateDynamicTextRegions,
+} from "../src/dynamic-text.js";
 import { handleDiffJob } from "../src/handler.js";
+
+// Mock tesseract.js for the dynamic-text integration tests. The first
+// `recognize` call returns "Mar 5, 2026" (matches the date preset); the
+// second returns "ORDER-XYZ" (no match). The mock applies module-wide
+// because handler.ts → dynamic-text.ts does `await import("tesseract.js")`
+// lazily; vi.mock here intercepts that dynamic import.
+vi.mock("tesseract.js", () => ({
+  createWorker: vi.fn(async () => ({
+    recognize: vi
+      .fn()
+      .mockResolvedValueOnce({ data: { text: "Mar 5, 2026" } })
+      .mockResolvedValueOnce({ data: { text: "ORDER-XYZ" } }),
+    terminate: vi.fn(),
+  })),
+}));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string): Buffer =>
@@ -313,5 +333,113 @@ desc(
         handleDiffJob(job, mockLogger, { db, storage, redis }),
       ).resolves.not.toThrow();
     }, 60_000);
+
+    it("dynamic-text: matched region is added to mask; unmatched persists audit row", async () => {
+      // Enable the project flag and reset the lazy tesseract singleton so
+      // the per-test mock factory (Mar 5 → matched, ORDER-XYZ → unmatched)
+      // takes effect.
+      await db
+        .update(projects)
+        .set({ dynamicTextEnabled: true })
+        .where(eq(projects.id, projectId));
+      __resetTesseractWorkerForTests();
+
+      await seedBaselineAndCandidate({ viewports: [VP_DESKTOP] });
+
+      // Two dynamic-text regions. The order of OCR calls is the iteration
+      // order over `allRegions`; the mock's mockResolvedValueOnce queue
+      // pops in that order: first region → "Mar 5, 2026" (matches date),
+      // second → "ORDER-XYZ" (does NOT match).
+      const datePattern = String.raw`\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*[\s\-\/]+\d{1,2},?\s+\d{2,4}\b`;
+      const orderPattern = String.raw`^ORDER-\d+$`;
+      await db
+        .update(testRuns)
+        .set({
+          ignoreAreas: JSON.stringify([
+            {
+              x: 0,
+              y: 0,
+              width: 40,
+              height: 40,
+              viewport: VP_DESKTOP,
+              kind: "dynamic-text",
+              pattern: datePattern,
+            },
+            {
+              x: 40,
+              y: 40,
+              width: 40,
+              height: 40,
+              viewport: VP_DESKTOP,
+              kind: "dynamic-text",
+              pattern: orderPattern,
+            },
+          ]),
+        })
+        .where(eq(testRuns.id, candidateRunId));
+
+      const job: DiffJob = { runId: candidateRunId, projectId };
+      await handleDiffJob(job, mockLogger, { db, storage, redis });
+
+      const auditRows = await db
+        .select()
+        .from(diffRegions)
+        .where(eq(diffRegions.runId, candidateRunId));
+      const dynamicTextRows = auditRows.filter(
+        (r) => r.source === "dynamic_text",
+      );
+      expect(dynamicTextRows).toHaveLength(2);
+      const matchedRow = dynamicTextRows.find((r) => r.ocrMatched === true);
+      const unmatchedRow = dynamicTextRows.find((r) => r.ocrMatched === false);
+      expect(matchedRow).toBeDefined();
+      expect(unmatchedRow).toBeDefined();
+      expect(matchedRow!.ocrText).toBe("Mar 5, 2026");
+      expect(unmatchedRow!.ocrText).toBe("ORDER-XYZ");
+    }, 60_000);
+
+    it("flag off: no dynamic_text audit rows persisted", async () => {
+      // Explicitly disable the flag.
+      await db
+        .update(projects)
+        .set({ dynamicTextEnabled: false })
+        .where(eq(projects.id, projectId));
+      __resetTesseractWorkerForTests();
+
+      await seedBaselineAndCandidate({ viewports: [VP_DESKTOP] });
+
+      await db
+        .update(testRuns)
+        .set({
+          ignoreAreas: JSON.stringify([
+            {
+              x: 0,
+              y: 0,
+              width: 40,
+              height: 40,
+              viewport: VP_DESKTOP,
+              kind: "dynamic-text",
+              pattern: ".+",
+            },
+          ]),
+        })
+        .where(eq(testRuns.id, candidateRunId));
+
+      const job: DiffJob = { runId: candidateRunId, projectId };
+      await handleDiffJob(job, mockLogger, { db, storage, redis });
+
+      const auditRows = await db
+        .select()
+        .from(diffRegions)
+        .where(eq(diffRegions.runId, candidateRunId));
+      const dynamicTextRows = auditRows.filter(
+        (r) => r.source === "dynamic_text",
+      );
+      expect(dynamicTextRows).toHaveLength(0);
+    }, 60_000);
   },
 );
+
+// Reference the import so vitest doesn't strip the dynamic-text module
+// load — keeping the helper in scope ensures vi.mock("tesseract.js")
+// applies to the same dynamic import the handler triggers at runtime.
+void evaluateDynamicTextRegions;
