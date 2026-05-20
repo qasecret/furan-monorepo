@@ -587,14 +587,23 @@ function allHashesMatch(
   return true;
 }
 
-const ignoreAreaParseSchema = z.object({
-  x: z.number().int().nonnegative(),
-  y: z.number().int().nonnegative(),
-  width: z.number().int().min(1),
-  height: z.number().int().min(1),
-  viewport: z.string().min(1).max(32).optional(),
-  paddingPx: z.number().int().min(0).max(32).default(0),
-});
+const ignoreAreaParseSchema = z
+  .object({
+    x: z.number().int().nonnegative(),
+    y: z.number().int().nonnegative(),
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+    viewport: z.string().min(1).max(32).optional(),
+    paddingPx: z.number().int().min(0).max(32).default(0),
+    kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
+    pattern: z.string().min(1).max(500).optional(),
+  })
+  .refine(
+    (r) =>
+      r.kind !== "dynamic-text" ||
+      (r.pattern !== undefined && r.pattern.length > 0),
+    { message: "pattern is required when kind is dynamic-text" },
+  );
 
 /**
  * Per-run / per-variation ignore region. Includes an optional viewport tag
