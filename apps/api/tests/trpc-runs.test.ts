@@ -992,6 +992,7 @@ d("tRPC runs router", () => {
       height: 40,
       viewport: VP,
       paddingPx: 0,
+      kind: "ignore" as const,
     };
 
     beforeEach(() => {
@@ -1325,6 +1326,93 @@ d("tRPC runs router", () => {
           ],
         }),
       ).rejects.toThrow();
+    });
+
+    test("setIgnoreAreas accepts default kind=ignore without pattern", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          { x: 10, y: 10, width: 50, height: 50, viewport: "1280x720" },
+        ],
+      });
+      const [row] = await h.db
+        .select({ ignoreAreas: testRuns.ignoreAreas })
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      const stored = JSON.parse(row!.ignoreAreas!) as Array<{ kind: string }>;
+      expect(stored[0]!.kind).toBe("ignore");
+    });
+
+    test("setIgnoreAreas accepts kind=dynamic-text with pattern", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+            viewport: "1280x720",
+            kind: "dynamic-text",
+            pattern: "\\d{4}-\\d{2}-\\d{2}",
+          },
+        ],
+      });
+      const [row] = await h.db
+        .select({ ignoreAreas: testRuns.ignoreAreas })
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
+        kind: string;
+        pattern: string;
+      }>;
+      expect(stored[0]!.kind).toBe("dynamic-text");
+      expect(stored[0]!.pattern).toBe("\\d{4}-\\d{2}-\\d{2}");
+    });
+
+    test("setIgnoreAreas rejects kind=dynamic-text without pattern", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await expect(
+        client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [
+            {
+              x: 10,
+              y: 10,
+              width: 50,
+              height: 50,
+              viewport: "1280x720",
+              kind: "dynamic-text",
+            },
+          ],
+        }),
+      ).rejects.toThrow(/pattern is required/i);
+    });
+
+    test("setIgnoreAreas rejects unparseable regex pattern", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await expect(
+        client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [
+            {
+              x: 10,
+              y: 10,
+              width: 50,
+              height: 50,
+              viewport: "1280x720",
+              kind: "dynamic-text",
+              pattern: "((",
+            },
+          ],
+        }),
+      ).rejects.toThrow(/Invalid regex/i);
     });
   });
 });

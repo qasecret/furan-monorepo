@@ -22,6 +22,7 @@ const updateInput = z.object({
   maxBranchLifetime: z.number().int().min(1).optional(),
   imageComparison: z.enum(["pixelmatch", "looks_same", "odiff"]).optional(),
   imageComparisonConfig: z.string().optional(),
+  dynamicTextEnabled: z.boolean().optional(),
 });
 type UpdateInput = z.infer<typeof updateInput>;
 
