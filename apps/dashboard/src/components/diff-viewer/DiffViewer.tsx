@@ -168,6 +168,7 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
+    projectId: data?.projectId ?? "",
     prevDiffHref: null, // wired when runs.list lands (Phase 3)
     nextDiffHref: null,
     onApprove: () => approveKb.mutate({ runId }),

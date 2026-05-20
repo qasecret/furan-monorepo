@@ -2,9 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { tinykeys } from "tinykeys";
 
-import { useViewerStore, type ViewerMode } from "./useViewerStore";
+import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
+import {
+  selectEffectiveRegion,
+  useViewerStore,
+  type ViewerMode,
+} from "./useViewerStore";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
@@ -17,11 +23,33 @@ const MODES: ViewerMode[] = [
 
 interface ShortcutOptions {
   viewports: string[];
+  /**
+   * Project id — keys the per-project region clipboard for the
+   * `$mod+C` / `$mod+V` shortcuts. Optional so existing callers that
+   * predate region copy/paste still compile; when empty the handlers
+   * short-circuit (no copy/paste happens).
+   */
+  projectId?: string;
   onApprove?: () => void; // T11 supplies these
   onReject?: () => void;
   prevDiffHref?: string | null;
   nextDiffHref?: string | null;
   onHelpToggle?: () => void;
+}
+
+function isTypingInInput(): boolean {
+  if (typeof document === "undefined") return false;
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+function hasTextSelection(): boolean {
+  if (typeof window === "undefined") return false;
+  const sel = window.getSelection();
+  return !!sel && sel.toString().length > 0;
 }
 
 /**
@@ -114,6 +142,39 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (store.ignoreEditMode !== "off") {
           store.setIgnoreEditMode("off");
         }
+      },
+      // F-b: region copy/paste. `$mod` is tinykeys' cross-platform alias
+      // (Ctrl on Win/Linux, Cmd on Mac). Plain `C` is already bound to
+      // toggle the comment panel, so we use the modified form here.
+      "$mod+C": (e) => {
+        // Yield to the browser when the user is typing or selecting text
+        // (audit panel, pattern editor, etc.).
+        if (isTypingInInput()) return;
+        if (hasTextSelection()) return;
+        const projectId = optsRef.current.projectId;
+        if (!projectId) return;
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode === "off" || !store.selectedIgnoreId) return;
+        const region = selectEffectiveRegion(store);
+        if (!region) return;
+        setClipboardRegion(projectId, region);
+        toast.success("Region copied");
+        e.preventDefault();
+      },
+      "$mod+V": (e) => {
+        if (isTypingInInput()) return;
+        const projectId = optsRef.current.projectId;
+        if (!projectId) return;
+        const store = useViewerStore.getState();
+        if (store.ignoreEditMode === "off") return;
+        const clipboard = getClipboardRegion(projectId);
+        if (!clipboard) return;
+        store.addDraftRegion({
+          ...clipboard,
+          id: crypto.randomUUID(),
+          viewport: store.viewport || clipboard.viewport,
+        });
+        e.preventDefault();
       },
     });
   }, [router, mode, setMode, viewport, setViewport]);
