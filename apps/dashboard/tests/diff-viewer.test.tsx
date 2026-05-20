@@ -105,6 +105,15 @@ vi.mock("../src/lib/trpc", () => {
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: { useMutation: noopMutation },
       },
+      projects: {
+        getById: {
+          useQuery: () => ({
+            data: { dynamicTextEnabled: false },
+            isLoading: false,
+            error: null,
+          }),
+        },
+      },
     },
   };
 });

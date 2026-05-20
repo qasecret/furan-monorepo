@@ -1,8 +1,11 @@
 "use client";
 
+import { REGION_PATTERN_PRESETS } from "@furan/shared-types";
 import { useState } from "react";
 
+import { PatternEditor } from "./PatternEditor";
 import {
+  selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
   useViewerStore,
   type ViewerMode,
@@ -15,6 +18,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
@@ -29,9 +39,17 @@ const MODES: { value: ViewerMode; label: string }[] = [
 interface Props {
   /** The current run id — needed for the setIgnoreAreas mutation. */
   runId: string;
+  /**
+   * Project-scoped settings the toolbar needs. Currently only
+   * `dynamicTextEnabled`, which gates the kind selector + PatternEditor.
+   * Defaults to false when omitted so callers that haven't wired the flag
+   * yet stay on the legacy "ignore-only" code path.
+   */
+  project?: { dynamicTextEnabled: boolean };
 }
 
-export function ViewerToolbar({ runId }: Props) {
+export function ViewerToolbar({ runId, project }: Props) {
+  const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
   const setMode = useViewerStore((s) => s.setMode);
   const opacity = useViewerStore((s) => s.opacity);
@@ -51,6 +69,23 @@ export function ViewerToolbar({ runId }: Props) {
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
   const setPaddingForSelected = useViewerStore((s) => s.setPaddingForSelected);
   const selectedPaddingPx = useViewerStore(selectSelectedPaddingPx);
+  const kindOverrides = useViewerStore((s) => s.kindOverrides);
+  const setKindForSelected = useViewerStore((s) => s.setKindForSelected);
+  // Split into two primitive selectors so each subscription's equality is
+  // reference-stable. (Returning a fresh object from a zustand selector
+  // re-renders on every store change since the default equality is
+  // `Object.is`.) Caller code that wants both still goes through the named
+  // selector for unit testing.
+  const selectedKind = useViewerStore(
+    (s) => selectSelectedKindAndPattern(s).kind,
+  );
+  const selectedPattern = useViewerStore(
+    (s) => selectSelectedKindAndPattern(s).pattern,
+  );
+  const selectedKindAndPattern = {
+    kind: selectedKind,
+    pattern: selectedPattern,
+  };
 
   const utils = trpc.useUtils();
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
@@ -95,14 +130,19 @@ export function ViewerToolbar({ runId }: Props) {
       scope === "variation" ? savedVariationIgnoreAreas : savedRunIgnoreAreas;
     const survivors = activeSaved
       .filter((r) => !markedForDeletion.has(r.id))
-      .map((r) => ({
-        x: r.x,
-        y: r.y,
-        width: r.width,
-        height: r.height,
-        viewport: r.viewport,
-        paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
-      }));
+      .map((r) => {
+        const kindOv = kindOverrides.get(r.id);
+        return {
+          x: r.x,
+          y: r.y,
+          width: r.width,
+          height: r.height,
+          viewport: r.viewport,
+          paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
+          kind: kindOv?.kind ?? r.kind,
+          pattern: kindOv ? kindOv.pattern : r.pattern,
+        };
+      });
     const drafts = draftIgnoreAreas.map((r) => ({
       x: r.x,
       y: r.y,
@@ -110,6 +150,8 @@ export function ViewerToolbar({ runId }: Props) {
       height: r.height,
       viewport: r.viewport,
       paddingPx: r.paddingPx,
+      kind: r.kind,
+      pattern: r.pattern,
     }));
     setIgnoreAreas.mutate({
       runId,
@@ -284,6 +326,45 @@ export function ViewerToolbar({ runId }: Props) {
           >
             {selectedPaddingPx}px
           </span>
+        </div>
+      )}
+
+      {editing && selectedIgnoreId && dynamicTextEnabled && (
+        <div
+          className="flex items-center gap-2"
+          data-testid="region-kind-control"
+        >
+          <span className="text-xs text-muted-foreground">Kind</span>
+          <div data-testid="region-kind-select">
+            <Select
+              value={selectedKindAndPattern.kind}
+              onValueChange={(k) => {
+                if (k === "dynamic-text") {
+                  setKindForSelected(
+                    "dynamic-text",
+                    selectedKindAndPattern.pattern ??
+                      REGION_PATTERN_PRESETS.date,
+                  );
+                } else {
+                  setKindForSelected("ignore");
+                }
+              }}
+            >
+              <SelectTrigger className="w-32 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ignore">Ignore</SelectItem>
+                <SelectItem value="dynamic-text">Dynamic text</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedKindAndPattern.kind === "dynamic-text" && (
+            <PatternEditor
+              value={selectedKindAndPattern.pattern ?? ""}
+              onChange={(p) => setKindForSelected("dynamic-text", p)}
+            />
+          )}
         </div>
       )}
 

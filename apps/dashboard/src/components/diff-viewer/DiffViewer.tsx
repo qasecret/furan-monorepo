@@ -68,6 +68,14 @@ function useAuthedImage(key: string | null | undefined): string | null {
 export function DiffViewer({ runId, diffId }: Props) {
   const utils = trpc.useUtils();
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+  // Sibling fetch for project settings the viewer needs (currently
+  // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
+  // Enabled only after `data` lands so we don't fire with an empty id.
+  const projectQuery = trpc.projects.getById.useQuery(
+    { projectId: data?.projectId ?? "" },
+    { enabled: !!data?.projectId },
+  );
+  const project = projectQuery.data;
 
   // T11: keyboard-shortcut mutations. These are deliberately separate hook
   // instances from the ones inside <ApprovalBar>; both invalidate the same
@@ -185,7 +193,12 @@ export function DiffViewer({ runId, diffId }: Props) {
         />
       ) : (
         <>
-          <ViewerToolbar runId={runId} />
+          <ViewerToolbar
+            runId={runId}
+            project={{
+              dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
+            }}
+          />
           <div className="flex items-center gap-2 px-3 py-2 border-b">
             <BaselineSourceBadge source={baselineSource} />
             {data.autoApproved && (
