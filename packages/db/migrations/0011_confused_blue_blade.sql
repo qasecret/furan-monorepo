@@ -1,0 +1,1 @@
+ALTER TABLE "screenshots" ADD COLUMN "element_map_key" text;

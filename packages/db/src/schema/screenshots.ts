@@ -22,6 +22,7 @@ export const screenshots = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     imageKey: text("image_key").notNull(),
     domKey: text("dom_key"),
+    elementMapKey: text("element_map_key"),
     viewport: text("viewport").notNull(),
     browser: text("browser").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
