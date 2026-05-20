@@ -27,6 +27,7 @@ import {
   evaluateDynamicTextRegions,
   type DynamicTextResult,
 } from "./dynamic-text.js";
+import { resolveRegionBbox, type ElementMap } from "./element-map-resolver.js";
 
 const engineConfigSchema = z.object({
   threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
@@ -368,6 +369,11 @@ async function handleDiffJobInner(
     viewport: string | null;
     results: DynamicTextResult[];
   }> = [];
+  // Per-job cache shared across viewports. Avoids refetching the same
+  // element-map sidecar when multiple viewports of the same job carry
+  // the same `elementMapKey` (rare) or when a single viewport's regions
+  // all resolve against the same map (the common case).
+  const elementMapCache = new Map<string, ElementMap | null>();
 
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
@@ -450,6 +456,47 @@ async function handleDiffJobInner(
       });
     }
 
+    // Resolve any selector-anchored regions against the candidate's
+    // element-map sidecar. Best-effort: every failure path returns the
+    // stored bbox. The per-job cache is shared across viewports.
+    const resolvedIgnoreAreas = await Promise.all(
+      allRegions
+        .map((r, i) => ({ r, i }))
+        .filter(({ r, i }) => {
+          // cs.viewport null (legacy v0.4 row) → ?? makes equality self-referential
+          // → all tagged regions apply, matching the no-viewport-tag legacy compat.
+          if (r.viewport && r.viewport !== (cs.viewport ?? r.viewport))
+            return false;
+          // Dynamic-text regions are only masked when OCR matched the regex.
+          if (r.kind === "dynamic-text") return matchedIndexes.has(i);
+          return true;
+        })
+        .map(async ({ r }) => {
+          const resolved = await resolveRegionBbox(
+            r,
+            cs.elementMapKey ?? null,
+            bounds,
+            elementMapCache,
+            {
+              storage: deps.storage,
+              logger,
+              onOutcome: (outcome) =>
+                deps.metrics?.regionResolution.labels({ outcome }).inc(),
+            },
+          );
+          return inflateRegion(
+            {
+              x: resolved.x,
+              y: resolved.y,
+              width: resolved.width,
+              height: resolved.height,
+              paddingPx: r.paddingPx,
+            },
+            bounds,
+          );
+        }),
+    );
+
     const result = await runDiff({
       baseline: {
         image: Buffer.from(baselineBytes),
@@ -462,18 +509,7 @@ async function handleDiffJobInner(
       config: {
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
-        ignoreAreas: allRegions
-          .map((r, i) => ({ r, i }))
-          .filter(({ r, i }) => {
-            // cs.viewport null (legacy v0.4 row) → ?? makes equality self-referential
-            // → all tagged regions apply, matching the no-viewport-tag legacy compat.
-            if (r.viewport && r.viewport !== (cs.viewport ?? r.viewport))
-              return false;
-            // Dynamic-text regions are only masked when OCR matched the regex.
-            if (r.kind === "dynamic-text") return matchedIndexes.has(i);
-            return true;
-          })
-          .map(({ r }) => inflateRegion(r, bounds)),
+        ignoreAreas: resolvedIgnoreAreas,
         engine: project.imageComparison,
         engineConfig: parseEngineConfig(
           project.imageComparisonConfig,

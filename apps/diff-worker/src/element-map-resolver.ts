@@ -27,7 +27,7 @@ interface Region {
   y: number;
   width: number;
   height: number;
-  selector?: string;
+  selector?: string | undefined;
 }
 
 interface Deps {
