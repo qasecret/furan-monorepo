@@ -103,12 +103,16 @@ export function DiffViewer({ runId, diffId }: Props) {
     (s) => s.hydrateSavedIgnoreAreas,
   );
   useEffect(() => {
+    // Server payload may predate the paddingPx column (legacy rows have
+    // no paddingPx); hydrateSavedIgnoreAreas applies `?? 0` so we widen
+    // the cast and let the store normalize.
     const runRegions = (data?.ignoreAreas ?? []) as Array<{
       x: number;
       y: number;
       width: number;
       height: number;
       viewport: string;
+      paddingPx?: number;
     }>;
     const variationRegions = (data?.variationIgnoreAreas ?? []) as Array<{
       x: number;
@@ -116,8 +120,12 @@ export function DiffViewer({ runId, diffId }: Props) {
       width: number;
       height: number;
       viewport: string;
+      paddingPx?: number;
     }>;
-    hydrateSavedIgnoreAreas(runRegions, variationRegions);
+    hydrateSavedIgnoreAreas(
+      runRegions.map((r) => ({ ...r, paddingPx: r.paddingPx ?? 0 })),
+      variationRegions.map((r) => ({ ...r, paddingPx: r.paddingPx ?? 0 })),
+    );
   }, [data?.ignoreAreas, data?.variationIgnoreAreas, hydrateSavedIgnoreAreas]);
 
   const candidateScreenshot = data?.screenshots?.[0] ?? null;

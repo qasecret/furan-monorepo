@@ -23,6 +23,7 @@
     "@furan/telemetry": "workspace:*",
     "ioredis": "^5.4.1",
     "prom-client": "^15.1.3",
+    "sharp": "^0.33",
     "zod": "^3.24.1"
   },
   "devDependencies": {

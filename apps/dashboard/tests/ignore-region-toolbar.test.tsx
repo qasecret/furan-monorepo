@@ -61,6 +61,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       savedVariationIgnoreAreas: [],
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
@@ -108,6 +109,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       width: 20,
       height: 20,
       viewport: VP,
+      paddingPx: 0,
     };
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -120,7 +122,16 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(setIgnoreAreasMutate).toHaveBeenCalledWith({
       runId: RUN_ID,
       scope: "run",
-      ignoreAreas: [{ x: 10, y: 10, width: 20, height: 20, viewport: VP }],
+      ignoreAreas: [
+        {
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          viewport: VP,
+          paddingPx: 0,
+        },
+      ],
     });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
@@ -129,8 +140,8 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.getState().hydrateSavedIgnoreAreas(
       [],
       [
-        { x: 1, y: 1, width: 5, height: 5, viewport: VP },
-        { x: 2, y: 2, width: 5, height: 5, viewport: VP },
+        { x: 1, y: 1, width: 5, height: 5, viewport: VP, paddingPx: 0 },
+        { x: 2, y: 2, width: 5, height: 5, viewport: VP, paddingPx: 0 },
       ],
     );
     const ids = useViewerStore
@@ -139,7 +150,15 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.setState({
       ignoreEditMode: "variation",
       draftIgnoreAreas: [
-        { id: "d1", x: 100, y: 100, width: 30, height: 30, viewport: VP },
+        {
+          id: "d1",
+          x: 100,
+          y: 100,
+          width: 30,
+          height: 30,
+          viewport: VP,
+          paddingPx: 0,
+        },
       ],
       markedForDeletion: new Set([ids[0]!]),
     });
@@ -151,8 +170,8 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       runId: RUN_ID,
       scope: "variation",
       ignoreAreas: [
-        { x: 2, y: 2, width: 5, height: 5, viewport: VP },
-        { x: 100, y: 100, width: 30, height: 30, viewport: VP },
+        { x: 2, y: 2, width: 5, height: 5, viewport: VP, paddingPx: 0 },
+        { x: 100, y: 100, width: 30, height: 30, viewport: VP, paddingPx: 0 },
       ],
     });
   });
@@ -161,7 +180,15 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
-        { id: "d1", x: 1, y: 1, width: 10, height: 10, viewport: VP },
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+        },
       ],
       markedForDeletion: new Set(["x"]),
     });
@@ -177,7 +204,15 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
-        { id: "d1", x: 1, y: 1, width: 10, height: 10, viewport: VP },
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+        },
       ],
     });
 
@@ -203,7 +238,15 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
-        { id: "d1", x: 1, y: 1, width: 10, height: 10, viewport: VP },
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: VP,
+          paddingPx: 0,
+        },
       ],
     });
 
@@ -216,5 +259,114 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
     expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
     expect(screen.queryByTestId("scope-switch-confirm")).toBeNull();
+  });
+
+  test("padding-control hidden when edit mode is off", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      selectedIgnoreId: "some-id",
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.queryByTestId("padding-control")).toBeNull();
+  });
+
+  test("padding-control hidden when no region selected", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      selectedIgnoreId: null,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.queryByTestId("padding-control")).toBeNull();
+  });
+
+  test("padding-control visible when editing + region selected", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.queryByTestId("padding-control")).toBeDefined();
+    expect(screen.getByTestId("padding-value").textContent).toBe("0px");
+  });
+
+  test("moving slider updates paddingPx on draft via setPaddingForSelected", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      selectedIgnoreId: draftId,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    const slider = screen.getByTestId("padding-slider") as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: "12" } });
+    const state = useViewerStore.getState();
+    expect(state.draftIgnoreAreas[0]!.paddingPx).toBe(12);
+  });
+
+  test("handleSave payload includes paddingPx from saved overrides + drafts", () => {
+    const savedId = crypto.randomUUID();
+    const draftId = crypto.randomUUID();
+    const overrides = new Map<string, number>();
+    overrides.set(savedId, 4);
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      savedRunIgnoreAreas: [
+        {
+          id: savedId,
+          x: 100,
+          y: 100,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      draftIgnoreAreas: [
+        {
+          id: draftId,
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 8,
+        },
+      ],
+      paddingOverrides: overrides,
+      selectedIgnoreId: null,
+    });
+    render(<ViewerToolbar runId={RUN_ID} />);
+    fireEvent.click(screen.getByTestId("ignore-save-button"));
+    expect(setIgnoreAreasMutate).toHaveBeenCalled();
+    const callArg = setIgnoreAreasMutate.mock.calls[0]![0] as {
+      ignoreAreas: Array<{ paddingPx: number; x: number }>;
+    };
+    expect(callArg.ignoreAreas).toHaveLength(2);
+    const savedPayload = callArg.ignoreAreas.find((r) => r.x === 100);
+    const draftPayload = callArg.ignoreAreas.find((r) => r.x === 10);
+    expect(savedPayload!.paddingPx).toBe(4); // override
+    expect(draftPayload!.paddingPx).toBe(8); // draft's own
   });
 });

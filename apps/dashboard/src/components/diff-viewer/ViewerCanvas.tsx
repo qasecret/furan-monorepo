@@ -75,6 +75,7 @@ export function ViewerCanvas({
   );
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
+  const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
@@ -197,10 +198,21 @@ export function ViewerCanvas({
     const app =
       mode === "side-by-side" ? candidateAppRef.current : singleAppRef.current;
     if (!app) return;
+    // Apply paddingOverrides to saved regions before handing them to the
+    // layer; the layer itself doesn't know about overrides. Drafts mutate
+    // in place via setPaddingForSelected, so they don't need this mapping.
+    const savedRunWithOverrides = savedRunIgnoreAreas.map((r) => ({
+      ...r,
+      paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
+    }));
+    const savedVariationWithOverrides = savedVariationIgnoreAreas.map((r) => ({
+      ...r,
+      paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
+    }));
     const layer = mountIgnoreRegionLayer(app, {
       editMode: ignoreEditMode,
-      savedRunIgnoreAreas,
-      savedVariationIgnoreAreas,
+      savedRunIgnoreAreas: savedRunWithOverrides,
+      savedVariationIgnoreAreas: savedVariationWithOverrides,
       draftIgnoreAreas,
       markedForDeletion,
       selectedIgnoreId,
@@ -217,6 +229,7 @@ export function ViewerCanvas({
     savedVariationIgnoreAreas,
     draftIgnoreAreas,
     markedForDeletion,
+    paddingOverrides,
     selectedIgnoreId,
     viewport,
     setSelectedIgnoreId,
@@ -288,6 +301,7 @@ export function ViewerCanvas({
       width,
       height,
       viewport,
+      paddingPx: 0,
     };
     addDraftRegion(draft);
   };
