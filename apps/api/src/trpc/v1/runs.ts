@@ -303,6 +303,7 @@ export const runsRouter = t.router({
               width: z.number().int().min(1),
               height: z.number().int().min(1),
               viewport: z.string().min(1).max(32),
+              paddingPx: z.number().int().min(0).max(32).default(0),
             }),
           )
           .max(50)

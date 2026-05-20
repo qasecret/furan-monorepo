@@ -154,6 +154,10 @@ d("tRPC runs router", () => {
   let s: Seeded;
 
   beforeAll(async () => {
+    process.env.S3_ENDPOINT ??= "http://localhost:9000";
+    process.env.S3_BUCKET ??= "furan-dev";
+    process.env.S3_ACCESS_KEY ??= "furan";
+    process.env.S3_SECRET_KEY ??= "devpw_must_be_long"; // gitleaks:allow
     h = await createTestApp();
     await h.app.listen({ port: 0, host: "127.0.0.1" });
     const addr = h.app.server.address() as AddressInfo;
@@ -981,7 +985,14 @@ d("tRPC runs router", () => {
   // ADR-031: per-run ignore-regions editor + re-diff trigger.
   describe("setIgnoreAreas", () => {
     const VP = "1280x720";
-    const validRegion = { x: 10, y: 20, width: 30, height: 40, viewport: VP };
+    const validRegion = {
+      x: 10,
+      y: 20,
+      width: 30,
+      height: 40,
+      viewport: VP,
+      paddingPx: 0,
+    };
 
     beforeEach(() => {
       h.diffQueueAdd.mockClear();
@@ -1233,6 +1244,87 @@ d("tRPC runs router", () => {
       // pre-check authorization instead.
       expect(["FORBIDDEN", "NOT_FOUND"]).toContain(err?.data?.code);
       expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+
+    test("setIgnoreAreas accepts omitted paddingPx (defaults to 0)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          { x: 10, y: 10, width: 50, height: 50, viewport: "1280x720" },
+        ],
+      });
+      const [row] = await h.db
+        .select({ ignoreAreas: testRuns.ignoreAreas })
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
+        paddingPx: number;
+      }>;
+      expect(stored[0]!.paddingPx).toBe(0);
+    });
+
+    test("setIgnoreAreas persists explicit paddingPx", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 50,
+            viewport: "1280x720",
+            paddingPx: 8,
+          },
+        ],
+      });
+      const [row] = await h.db
+        .select({ ignoreAreas: testRuns.ignoreAreas })
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId));
+      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
+        paddingPx: number;
+      }>;
+      expect(stored[0]!.paddingPx).toBe(8);
+    });
+
+    test("setIgnoreAreas rejects out-of-range paddingPx", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await expect(
+        client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [
+            {
+              x: 10,
+              y: 10,
+              width: 50,
+              height: 50,
+              viewport: "1280x720",
+              paddingPx: 33,
+            },
+          ],
+        }),
+      ).rejects.toThrow();
+      await expect(
+        client.runs.setIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [
+            {
+              x: 10,
+              y: 10,
+              width: 50,
+              height: 50,
+              viewport: "1280x720",
+              paddingPx: -1,
+            },
+          ],
+        }),
+      ).rejects.toThrow();
     });
   });
 });
