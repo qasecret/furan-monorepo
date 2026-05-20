@@ -323,9 +323,9 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    L1 pixel comparison backend. Odiff is the default;
-                    Pixelmatch matches the jest-image-snapshot / Percy world;
-                    Looks-Same is perceptual and antialiasing-tolerant.
+                    Pixel comparison backend. Odiff is the default; Pixelmatch
+                    matches the jest-image-snapshot / Percy world; Looks-Same is
+                    perceptual and antialiasing-tolerant.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
