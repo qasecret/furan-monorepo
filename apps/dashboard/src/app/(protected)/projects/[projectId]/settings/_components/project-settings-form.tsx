@@ -46,6 +46,7 @@ const schema = z.object({
   mainBranchName: z.string().min(1, "Required").max(120),
   diffThreshold: z.number().min(0).max(1),
   l2Enabled: z.boolean(),
+  dynamicTextEnabled: z.boolean(),
   autoApproveFeature: z.boolean(),
   imageComparison: z.enum(["pixelmatch", "looks_same", "odiff"]),
   retentionDays: z.coerce.number().int().min(1).max(3650),
@@ -84,6 +85,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
       mainBranchName: "main",
       diffThreshold: 0.001,
       l2Enabled: true,
+      dynamicTextEnabled: false,
       autoApproveFeature: false,
       imageComparison: "odiff",
       retentionDays: 90,
@@ -103,6 +105,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
         mainBranchName: project.mainBranchName ?? "main",
         diffThreshold: project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
+        dynamicTextEnabled: project.dynamicTextEnabled ?? false,
         autoApproveFeature: project.autoApproveFeature ?? false,
         imageComparison: project.imageComparison ?? "odiff",
         retentionDays: project.retentionDays ?? 90,
@@ -241,6 +244,31 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                       checked={field.value}
                       onCheckedChange={field.onChange}
                       data-testid="l2-enabled-switch"
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="dynamicTextEnabled"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between gap-4">
+                  <div>
+                    <FormLabel>Dynamic text regions</FormLabel>
+                    <FormDescription>
+                      Enable regex-anchored ignore regions. For each region
+                      tagged &quot;dynamic text&quot;, Furan runs OCR on the
+                      candidate screenshot and masks the region only when the
+                      extracted text matches the pattern. Adds ~200ms–2s per
+                      diff for projects with dynamic-text regions.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="dynamic-text-enabled-switch"
                     />
                   </FormControl>
                 </FormItem>
