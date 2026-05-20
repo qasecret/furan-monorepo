@@ -19,6 +19,7 @@ import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
+import sharp from "sharp";
 import { z } from "zod";
 
 import type { DiffMetrics } from "./diff-metrics.js";
@@ -398,6 +399,12 @@ async function handleDiffJobInner(
       ? new TextDecoder().decode(await deps.storage.get(cs.domKey))
       : undefined;
 
+    const candidateMeta = await sharp(Buffer.from(candidateBytes)).metadata();
+    const bounds = {
+      width: candidateMeta.width ?? 0,
+      height: candidateMeta.height ?? 0,
+    };
+
     const result = await runDiff({
       baseline: {
         image: Buffer.from(baselineBytes),
@@ -416,7 +423,7 @@ async function handleDiffJobInner(
             // → all tagged regions apply, matching the no-viewport-tag legacy compat.
             (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
           )
-          .map(({ x, y, width, height }) => ({ x, y, width, height })),
+          .map((r) => inflateRegion(r, bounds)),
         engine: project.imageComparison,
         engineConfig: parseEngineConfig(
           project.imageComparisonConfig,
@@ -586,6 +593,7 @@ const ignoreAreaParseSchema = z.object({
   width: z.number().int().min(1),
   height: z.number().int().min(1),
   viewport: z.string().min(1).max(32).optional(),
+  paddingPx: z.number().int().min(0).max(32).default(0),
 });
 
 /**
@@ -624,4 +632,34 @@ function parseIgnoreAreas(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Per-region padding (spec §3.3) is applied by the worker — the diff-engine
+ * remains padding-agnostic. Inflates the bbox by `paddingPx` on all sides
+ * and clamps at the screenshot bounds so the engine never sees negative
+ * coordinates or out-of-image widths.
+ */
+export function inflateRegion(
+  r: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    paddingPx?: number;
+  },
+  bounds: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const p = r.paddingPx ?? 0;
+  if (p === 0) return { x: r.x, y: r.y, width: r.width, height: r.height };
+  const x = Math.max(0, r.x - p);
+  const y = Math.max(0, r.y - p);
+  const right = Math.min(bounds.width, r.x + r.width + p);
+  const bottom = Math.min(bounds.height, r.y + r.height + p);
+  return {
+    x,
+    y,
+    width: Math.max(0, right - x),
+    height: Math.max(0, bottom - y),
+  };
 }
