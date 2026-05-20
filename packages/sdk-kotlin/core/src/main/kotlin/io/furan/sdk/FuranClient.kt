@@ -115,6 +115,16 @@ class FuranClient(
                             },
                         )
                     }
+                    snap.elementMapJson?.let { elementMap ->
+                        append(
+                            "elementMapJson",
+                            elementMap.toByteArray(Charsets.UTF_8),
+                            Headers.build {
+                                append(HttpHeaders.ContentType, "application/json; charset=utf-8")
+                                append(HttpHeaders.ContentDisposition, "filename=\"elements.json\"")
+                            },
+                        )
+                    }
                 },
             )
             val response = transport.client.post("runs/$runId/screenshots") {
