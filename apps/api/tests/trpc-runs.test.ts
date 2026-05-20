@@ -1414,5 +1414,55 @@ d("tRPC runs router", () => {
         }),
       ).rejects.toThrow(/Invalid regex/i);
     });
+
+    test("setIgnoreAreas accepts + round-trips the optional selector field", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [
+          {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+            viewport: VP,
+            selector: "#login-button",
+          },
+        ],
+      });
+      expect(res.ignoreAreas).toBeDefined();
+      expect(res.ignoreAreas?.[0]?.selector).toBe("#login-button");
+
+      // Round-trip: the JSON column carries the field.
+      const [variation] = await h.db
+        .select({ ignoreAreas: testVariations.ignoreAreas })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      const parsed = JSON.parse(variation!.ignoreAreas!) as Array<{
+        selector?: string;
+      }>;
+      expect(parsed[0]!.selector).toBe("#login-button");
+    });
+
+    test("setIgnoreAreas accepts areas without a selector (back-compat)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+            viewport: VP,
+          },
+        ],
+      });
+      expect(res.ignoreAreas).toBeDefined();
+      expect(res.ignoreAreas?.[0]).not.toHaveProperty("selector");
+    });
   });
 });
