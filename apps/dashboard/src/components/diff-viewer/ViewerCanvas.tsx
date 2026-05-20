@@ -302,6 +302,7 @@ export function ViewerCanvas({
       height,
       viewport,
       paddingPx: 0,
+      kind: "ignore",
     };
     addDraftRegion(draft);
   };

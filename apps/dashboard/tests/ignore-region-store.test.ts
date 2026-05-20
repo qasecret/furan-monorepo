@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, test } from "vitest";
 
 import {
+  selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
   useViewerStore,
 } from "../src/components/diff-viewer/useViewerStore";
@@ -15,6 +16,7 @@ function plainRegion(over: Partial<{ x: number; y: number }> = {}) {
     height: 20,
     viewport: VP,
     paddingPx: 0,
+    kind: "ignore" as const,
     ...over,
   };
 }
@@ -28,6 +30,7 @@ describe("useViewerStore — ignore-region slice", () => {
       draftIgnoreAreas: [],
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
+      kindOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
@@ -185,6 +188,7 @@ describe("useViewerStore — ignore-region slice", () => {
       height: 50,
       viewport: "1280x720",
       paddingPx: 0,
+      kind: "ignore",
     });
     useViewerStore.getState().setSelectedIgnoreId(draftId);
     useViewerStore.getState().setPaddingForSelected(8);
@@ -262,6 +266,177 @@ describe("useViewerStore — ignore-region slice", () => {
     useViewerStore.getState().setPaddingForSelected(4);
     useViewerStore.getState().applySaveSuccess("run");
     expect(useViewerStore.getState().paddingOverrides.size).toBe(0);
+  });
+
+  test("hydrateSavedIgnoreAreas defaults kind to 'ignore' when missing", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+        },
+      ],
+      [],
+    );
+    expect(useViewerStore.getState().savedRunIgnoreAreas[0]!.kind).toBe(
+      "ignore",
+    );
+  });
+
+  test("setKindForSelected on a draft region mutates kind + pattern in place", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.getState().addDraftRegion({
+      id: draftId,
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      viewport: "1280x720",
+      paddingPx: 0,
+      kind: "ignore",
+    });
+    useViewerStore.getState().setSelectedIgnoreId(draftId);
+    useViewerStore.getState().setKindForSelected("dynamic-text", "\\d{4}");
+    const draft = useViewerStore.getState().draftIgnoreAreas[0]!;
+    expect(draft.kind).toBe("dynamic-text");
+    expect(draft.pattern).toBe("\\d{4}");
+    expect(useViewerStore.getState().kindOverrides.size).toBe(0);
+  });
+
+  test("setKindForSelected on a saved region records an override", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setKindForSelected("dynamic-text", "\\d{4}");
+    const state = useViewerStore.getState();
+    expect(state.savedRunIgnoreAreas[0]!.kind).toBe("ignore"); // saved unchanged
+    expect(state.kindOverrides.get(savedId)).toEqual({
+      kind: "dynamic-text",
+      pattern: "\\d{4}",
+    });
+  });
+
+  test("setKindForSelected to 'ignore' clears pattern in the override", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "dynamic-text",
+          pattern: "\\d{4}",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setKindForSelected("ignore");
+    expect(useViewerStore.getState().kindOverrides.get(savedId)).toEqual({
+      kind: "ignore",
+      pattern: undefined,
+    });
+  });
+
+  test("discardIgnoreChanges clears kindOverrides", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setKindForSelected("dynamic-text", "\\d{4}");
+    useViewerStore.getState().discardIgnoreChanges();
+    expect(useViewerStore.getState().kindOverrides.size).toBe(0);
+  });
+
+  test("applySaveSuccess clears kindOverrides", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    useViewerStore.getState().setKindForSelected("dynamic-text", "\\d{4}");
+    useViewerStore.getState().applySaveSuccess("run");
+    expect(useViewerStore.getState().kindOverrides.size).toBe(0);
+  });
+
+  test("selectSelectedKindAndPattern returns override > draft > saved > defaults", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "dynamic-text",
+          pattern: "saved-pat",
+        },
+      ],
+      [],
+    );
+    const savedId = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(savedId);
+    // saved without override
+    expect(selectSelectedKindAndPattern(useViewerStore.getState())).toEqual({
+      kind: "dynamic-text",
+      pattern: "saved-pat",
+    });
+    // override wins
+    useViewerStore.getState().setKindForSelected("ignore");
+    expect(selectSelectedKindAndPattern(useViewerStore.getState())).toEqual({
+      kind: "ignore",
+      pattern: undefined,
+    });
+    // no selection → defaults
+    useViewerStore.getState().setSelectedIgnoreId(null);
+    expect(selectSelectedKindAndPattern(useViewerStore.getState())).toEqual({
+      kind: "ignore",
+      pattern: undefined,
+    });
   });
 
   test("selectSelectedPaddingPx prefers override > draft > saved.paddingPx > 0", () => {

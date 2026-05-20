@@ -110,6 +110,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       height: 20,
       viewport: VP,
       paddingPx: 0,
+      kind: "ignore" as const,
     };
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -123,14 +124,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       runId: RUN_ID,
       scope: "run",
       ignoreAreas: [
-        {
+        expect.objectContaining({
           x: 10,
           y: 10,
           width: 20,
           height: 20,
           viewport: VP,
           paddingPx: 0,
-        },
+        }),
       ],
     });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
@@ -158,6 +159,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 30,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       markedForDeletion: new Set([ids[0]!]),
@@ -170,8 +172,22 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       runId: RUN_ID,
       scope: "variation",
       ignoreAreas: [
-        { x: 2, y: 2, width: 5, height: 5, viewport: VP, paddingPx: 0 },
-        { x: 100, y: 100, width: 30, height: 30, viewport: VP, paddingPx: 0 },
+        expect.objectContaining({
+          x: 2,
+          y: 2,
+          width: 5,
+          height: 5,
+          viewport: VP,
+          paddingPx: 0,
+        }),
+        expect.objectContaining({
+          x: 100,
+          y: 100,
+          width: 30,
+          height: 30,
+          viewport: VP,
+          paddingPx: 0,
+        }),
       ],
     });
   });
@@ -188,6 +204,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       markedForDeletion: new Set(["x"]),
@@ -212,6 +229,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
     });
@@ -246,6 +264,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 10,
           viewport: VP,
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
     });
@@ -292,6 +311,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       selectedIgnoreId: draftId,
@@ -314,6 +334,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       selectedIgnoreId: draftId,
@@ -341,6 +362,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 0,
+          kind: "ignore",
         },
       ],
       draftIgnoreAreas: [
@@ -352,6 +374,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
           height: 50,
           viewport: "1280x720",
           paddingPx: 8,
+          kind: "ignore",
         },
       ],
       paddingOverrides: overrides,

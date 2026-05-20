@@ -113,6 +113,8 @@ export function DiffViewer({ runId, diffId }: Props) {
       height: number;
       viewport: string;
       paddingPx?: number;
+      kind?: "ignore" | "dynamic-text";
+      pattern?: string;
     }>;
     const variationRegions = (data?.variationIgnoreAreas ?? []) as Array<{
       x: number;
@@ -121,10 +123,20 @@ export function DiffViewer({ runId, diffId }: Props) {
       height: number;
       viewport: string;
       paddingPx?: number;
+      kind?: "ignore" | "dynamic-text";
+      pattern?: string;
     }>;
     hydrateSavedIgnoreAreas(
-      runRegions.map((r) => ({ ...r, paddingPx: r.paddingPx ?? 0 })),
-      variationRegions.map((r) => ({ ...r, paddingPx: r.paddingPx ?? 0 })),
+      runRegions.map((r) => ({
+        ...r,
+        paddingPx: r.paddingPx ?? 0,
+        kind: r.kind ?? "ignore",
+      })),
+      variationRegions.map((r) => ({
+        ...r,
+        paddingPx: r.paddingPx ?? 0,
+        kind: r.kind ?? "ignore",
+      })),
     );
   }, [data?.ignoreAreas, data?.variationIgnoreAreas, hydrateSavedIgnoreAreas]);
 
