@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 
-import { useViewerStore, type ViewerMode } from "./useViewerStore";
+import {
+  selectSelectedPaddingPx,
+  useViewerStore,
+  type ViewerMode,
+} from "./useViewerStore";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +47,10 @@ export function ViewerToolbar({ runId }: Props) {
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const discardIgnoreChanges = useViewerStore((s) => s.discardIgnoreChanges);
   const applySaveSuccess = useViewerStore((s) => s.applySaveSuccess);
+  const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
+  const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
+  const setPaddingForSelected = useViewerStore((s) => s.setPaddingForSelected);
+  const selectedPaddingPx = useViewerStore(selectSelectedPaddingPx);
 
   const utils = trpc.useUtils();
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
@@ -85,18 +93,28 @@ export function ViewerToolbar({ runId }: Props) {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
     const activeSaved =
       scope === "variation" ? savedVariationIgnoreAreas : savedRunIgnoreAreas;
-    const survivors = activeSaved.filter((r) => !markedForDeletion.has(r.id));
-    const payload = [...survivors, ...draftIgnoreAreas].map((r) => ({
+    const survivors = activeSaved
+      .filter((r) => !markedForDeletion.has(r.id))
+      .map((r) => ({
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        viewport: r.viewport,
+        paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
+      }));
+    const drafts = draftIgnoreAreas.map((r) => ({
       x: r.x,
       y: r.y,
       width: r.width,
       height: r.height,
       viewport: r.viewport,
+      paddingPx: r.paddingPx,
     }));
     setIgnoreAreas.mutate({
       runId,
       scope,
-      ignoreAreas: payload,
+      ignoreAreas: [...survivors, ...drafts],
     });
   };
 
@@ -243,6 +261,29 @@ export function ViewerToolbar({ runId }: Props) {
           >
             Cancel
           </Button>
+        </div>
+      )}
+
+      {editing && selectedIgnoreId && (
+        <div className="flex items-center gap-2" data-testid="padding-control">
+          <span className="text-xs text-muted-foreground">Padding</span>
+          <input
+            type="range"
+            min={0}
+            max={32}
+            step={1}
+            value={selectedPaddingPx}
+            onChange={(e) => setPaddingForSelected(Number(e.target.value))}
+            className="w-32"
+            data-testid="padding-slider"
+            aria-label={`Padding for selected region, ${selectedPaddingPx} pixels`}
+          />
+          <span
+            className="text-xs font-mono w-10 text-right"
+            data-testid="padding-value"
+          >
+            {selectedPaddingPx}px
+          </span>
         </div>
       )}
 
