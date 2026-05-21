@@ -205,14 +205,14 @@ The reference workflow runs your test suite, uploads diffs, posts a sticky PR co
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
 
 ```bash
-docker pull qasecret/furan-api:v1.0.6
-docker pull qasecret/furan-dashboard:v1.0.6
-docker pull qasecret/furan-capture-worker:v1.0.6
-docker pull qasecret/furan-diff-worker:v1.0.6
-docker pull qasecret/furan-integrations:v1.0.6
+docker pull qasecret/furan-api:v1.0.7
+docker pull qasecret/furan-dashboard:v1.0.7
+docker pull qasecret/furan-capture-worker:v1.0.7
+docker pull qasecret/furan-diff-worker:v1.0.7
+docker pull qasecret/furan-integrations:v1.0.7
 ```
 
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.0.6`. Every image is cosign-signed (keyless OIDC) and ships with an SBOM artifact.
+GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.0.7`. Every image is cosign-signed (keyless OIDC) and ships with an SBOM artifact.
 
 ## Common first-install problems
 
@@ -263,7 +263,7 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 
 ## Status and roadmap
 
-**v1.0.6 is the current release** (released 2026-05-21). The v1.0 line is in feature-complete patch mode while we onboard the first external installers — if you'd like to be one, see [`docs/runbooks/alpha-install.md`](docs/runbooks/alpha-install.md).
+**v1.0.7 is the current release** (released 2026-05-21). The v1.0 line is in feature-complete patch mode while we onboard the first external installers — if you'd like to be one, see [`docs/runbooks/alpha-install.md`](docs/runbooks/alpha-install.md).
 
 Deferred to v1.1+ (no schedule, will land when there's user signal):
 

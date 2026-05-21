@@ -41,6 +41,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # QEMU enables cross-arch builds. linux/arm64 layers are emulated on
+      # the amd64 GitHub-hosted runner — slower than native, but spares
+      # us a second runner pool. Switch to an arm64 runner matrix if the
+      # build minutes start hurting.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
@@ -64,6 +72,12 @@ jobs:
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
+          # Multi-arch: amd64 native + arm64 via QEMU. Per-PR runs
+          # build amd64 only (push=false anyway) to keep PR CI fast;
+          # arm64 only kicks in on main/tag/dispatch when we actually
+          # publish, so PR feedback time stays close to the prior
+          # single-arch build duration.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}

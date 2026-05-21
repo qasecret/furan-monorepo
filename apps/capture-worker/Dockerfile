@@ -76,12 +76,18 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # root by default; create a least-privileged user and chown the app tree.
 RUN groupadd -r furan && useradd -r -g furan -d /app furan
 
-COPY --from=build --chown=furan:furan /app/node_modules                       ./node_modules
-COPY --from=build --chown=furan:furan /app/packages                           ./packages
-COPY --from=build --chown=furan:furan /app/apps/capture-worker/dist           ./apps/capture-worker/dist
-COPY --from=build --chown=furan:furan /app/apps/capture-worker/package.json   ./apps/capture-worker/package.json
-COPY --from=build --chown=furan:furan /app/package.json                       ./package.json
-COPY --from=build --chown=furan:furan /app/pnpm-workspace.yaml                ./pnpm-workspace.yaml
+# pnpm's isolated node-linker places per-package symlinks under
+# apps/capture-worker/node_modules; Node's ESM resolver walks UP from the
+# entry point, so apps/capture-worker/node_modules/@furan/config (the
+# workspace-package symlink) is required — copying only /app/node_modules
+# leaves the resolver to fail with ERR_MODULE_NOT_FOUND on first import.
+COPY --from=build --chown=furan:furan /app/node_modules                          ./node_modules
+COPY --from=build --chown=furan:furan /app/apps/capture-worker/node_modules      ./apps/capture-worker/node_modules
+COPY --from=build --chown=furan:furan /app/packages                              ./packages
+COPY --from=build --chown=furan:furan /app/apps/capture-worker/dist              ./apps/capture-worker/dist
+COPY --from=build --chown=furan:furan /app/apps/capture-worker/package.json      ./apps/capture-worker/package.json
+COPY --from=build --chown=furan:furan /app/package.json                          ./package.json
+COPY --from=build --chown=furan:furan /app/pnpm-workspace.yaml                   ./pnpm-workspace.yaml
 
 USER furan
 EXPOSE 3100
