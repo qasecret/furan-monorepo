@@ -144,7 +144,7 @@ Add Furan as a test dependency:
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:0.7.0")
+testImplementation("io.github.qasecret:furan-selenium:0.8.0")
 ```
 
 In your test:
