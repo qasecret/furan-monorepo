@@ -94,25 +94,14 @@ docker compose -f infra/docker/compose.yml ps
 
 Every service should report `running (healthy)`. The `minio-init` container will show `exited (0)` — that's intentional; it's a one-shot bucket creator.
 
-### Step 3 — Seed the first admin
+### Step 3 — Sign in
 
-The dashboard starts empty. Create the first admin from the API container:
+Browse to **<http://localhost:3001>** and sign in with the credentials you set in `FURAN_BOOTSTRAP_ADMIN_EMAIL` / `FURAN_BOOTSTRAP_ADMIN_PASSWORD` in Step 1. The API seeded that admin automatically on first boot when it saw an empty users table.
 
-```bash
-docker compose -f infra/docker/compose.yml exec api \
-  node dist/cli/seed-admin.js \
-  --email you@example.com \
-  --password 'pick-a-strong-passphrase' \
-  --first-name Your --last-name Name
-```
+### Step 4 — Create your first project
 
-The CLI is idempotent — re-running with the same email is a no-op.
-
-### Step 4 — Sign in and create your first project
-
-1. Browse to **<http://localhost:3001>** and sign in with the credentials you just seeded.
-2. Click **Create project** on the empty `/projects` page. Name it after your app; the main branch defaults to `main`.
-3. The project lands at `/projects/<projectId>` — bookmark this URL for the dashboard.
+1. From the empty `/projects` page, click **Create project**. Name it after your app; the main branch defaults to `main`.
+2. The project lands at `/projects/<projectId>` — bookmark this URL for the dashboard.
 
 ### Step 5 — Mint a personal access token (PAT)
 
@@ -123,6 +112,29 @@ The CLI is idempotent — re-running with the same email is a no-op.
 The PAT has the form `furan_pat_<random>` and is used as a `Bearer` token from CI, the SDK, or curl scripts.
 
 You now have everything needed to send your first snapshot.
+
+### Adding more admins or resetting a password
+
+After the bootstrap admin exists, use the `seed-admin` CLI to add more admins or the `reset-password` CLI to recover an account.
+
+Add another admin:
+
+```bash
+docker compose -f infra/docker/compose.yml exec api \
+  node dist/cli/seed-admin.js \
+  --email another@example.com \
+  --password '<pick-a-strong-passphrase>'
+```
+
+Reset a password:
+
+```bash
+docker compose -f infra/docker/compose.yml exec api \
+  node dist/cli/reset-password.js \
+  --email someone@example.com
+```
+
+The CLI prompts for the new password and prints nothing on success.
 
 ## Send your first snapshot
 
@@ -206,7 +218,9 @@ GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.0.6`. Eve
 
 **`docker compose ... up -d` fails with port conflicts.** The default Compose stack binds ports `3000` (api), `3001` (dashboard), `5432` (postgres), `6379` (redis), and `9000` / `9001` (minio). If you already have something on those ports, either stop it or edit the port mappings in `infra/docker/compose.yml`.
 
-**`seed-admin` errors with `JWT_SECRET too short`.** Generate a new one with `openssl rand -hex 32` and restart the api container.
+**API exits at boot with `FURAN_BOOTSTRAP_ADMIN_EMAIL must be replaced from .env.example placeholder` (or the same for `_PASSWORD`).** You forgot to edit the two new keys at the top of `.env`. Either replace `change-me` / `change-me-run: openssl rand -hex 24` with real values (the API will then seed a first admin) — or remove both lines entirely and seed via the `seed-admin` CLI (see "Adding more admins or resetting a password" above).
+
+**API exits at boot with `JWT_SECRET must be ≥32 chars`.** Generate a new one with `openssl rand -hex 32` and restart the api container.
 
 **Screenshots upload but the diff viewer is empty.** The diff worker may be down or stuck. Check `docker compose ... ps` for `diff-worker` health, and `docker compose ... logs diff-worker` for the last error. The [`docs/runbooks/api-down.md`](docs/runbooks/api-down.md) triage tree covers worker-stuck symptoms as well.
 
