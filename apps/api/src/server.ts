@@ -5,6 +5,7 @@ import { bootstrapTelemetry } from "@furan/telemetry";
 
 import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
+import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -19,6 +20,10 @@ async function main(): Promise<void> {
   const diffQueue = createQueue("diff");
 
   const app = await createApp({ db, telemetry, env, diffQueue });
+
+  // First-admin bootstrap. Runs at most once (no-op when users exist).
+  // Never throws — operator can fall back to `seed-admin` CLI if it fails.
+  await maybeBootstrapAdmin(db, env, app.log);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "shutting down");

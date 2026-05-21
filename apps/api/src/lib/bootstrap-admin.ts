@@ -9,8 +9,8 @@ interface Logger {
 }
 
 interface BootstrapEnv {
-  FURAN_BOOTSTRAP_ADMIN_EMAIL?: string;
-  FURAN_BOOTSTRAP_ADMIN_PASSWORD?: string;
+  FURAN_BOOTSTRAP_ADMIN_EMAIL?: string | undefined;
+  FURAN_BOOTSTRAP_ADMIN_PASSWORD?: string | undefined;
 }
 
 /**
