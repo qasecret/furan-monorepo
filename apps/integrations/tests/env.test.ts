@@ -38,3 +38,33 @@ describe("envSchema GITHUB_APP_* group refine", () => {
     ).toThrow(/all be set together or all omitted/);
   });
 });
+
+describe("envSchema optional URL fields tolerate empty string", () => {
+  const base = { DATABASE_URL: "postgresql://x:y@localhost:5432/z" };
+
+  test("empty SLACK_WEBHOOK_URL parses to undefined", () => {
+    const parsed = envSchema.parse({ ...base, SLACK_WEBHOOK_URL: "" });
+    expect(parsed.SLACK_WEBHOOK_URL).toBeUndefined();
+  });
+
+  test("set SLACK_WEBHOOK_URL is preserved", () => {
+    const parsed = envSchema.parse({
+      ...base,
+      SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T/B/X",
+    });
+    expect(parsed.SLACK_WEBHOOK_URL).toBe(
+      "https://hooks.slack.com/services/T/B/X",
+    );
+  });
+
+  test("non-URL SLACK_WEBHOOK_URL still rejected", () => {
+    expect(() =>
+      envSchema.parse({ ...base, SLACK_WEBHOOK_URL: "not-a-url" }),
+    ).toThrow();
+  });
+
+  test("empty OTLP_ENDPOINT parses to undefined", () => {
+    const parsed = envSchema.parse({ ...base, OTLP_ENDPOINT: "" });
+    expect(parsed.OTLP_ENDPOINT).toBeUndefined();
+  });
+});

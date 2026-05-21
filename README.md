@@ -81,15 +81,17 @@ The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan_dev`, `MINIO_BUCKET=f
 ### Step 2 — Start the full stack
 
 ```bash
-docker compose -f infra/docker/compose.yml up -d
+docker compose --env-file .env -f infra/docker/compose.yml up -d
 ```
+
+`--env-file .env` is required because Compose's project directory defaults to the directory of the first `-f` file (`infra/docker/`), so it would otherwise miss the `.env` you just edited at the repo root.
 
 This pulls and starts seven services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 
 ```bash
-docker compose -f infra/docker/compose.yml ps
+docker compose --env-file .env -f infra/docker/compose.yml ps
 ```
 
 Every service should report `running (healthy)`. The `minio-init` container will show `exited (0)` — that's intentional; it's a one-shot bucket creator.
@@ -120,7 +122,7 @@ After the bootstrap admin exists, use the `seed-admin` CLI to add more admins or
 Add another admin:
 
 ```bash
-docker compose -f infra/docker/compose.yml exec api \
+docker compose --env-file .env -f infra/docker/compose.yml exec api \
   node dist/cli/seed-admin.js \
   --email another@example.com \
   --password '<pick-a-strong-passphrase>'
@@ -129,7 +131,7 @@ docker compose -f infra/docker/compose.yml exec api \
 Reset a password:
 
 ```bash
-docker compose -f infra/docker/compose.yml exec api \
+docker compose --env-file .env -f infra/docker/compose.yml exec api \
   node dist/cli/reset-password.js \
   --email someone@example.com
 ```

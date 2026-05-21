@@ -1,6 +1,9 @@
-# Furan base compose stack — internal-only (no host port exposure).
-# Dev workflow adds `compose.dev.yml` for host ports.
-# Phase 1.A: postgres + redis + minio + minio-init.
+# Furan base compose stack — the documented `docker compose up -d`
+# install path. Data plane (postgres/redis/minio) is internal-only; the
+# `api` and `dashboard` services expose 3000/3001 on the host so the
+# install README's "browse to <http://localhost:3001>" step works without
+# an additional overlay. Front with a reverse proxy in real deployments.
+# Dev workflow adds `compose.dev.yml` for host ports on the data plane.
 # Phase 5 v1.0: app services pull from Docker Hub (docker.io/qasecret/furan-*)
 # pinned to :v1.0. GHCR mirror images at ghcr.io/qasecret/furan-*:v1.0 are
 # also published by the build-images.yml workflow for users who prefer GHCR
@@ -82,6 +85,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    ports: ["3000:3000"]
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -92,6 +96,10 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      # Optional first-admin bootstrap (see .env.example). Forwarded so
+      # the api can seed an admin row when the users table is empty.
+      FURAN_BOOTSTRAP_ADMIN_EMAIL: ${FURAN_BOOTSTRAP_ADMIN_EMAIL:-}
+      FURAN_BOOTSTRAP_ADMIN_PASSWORD: ${FURAN_BOOTSTRAP_ADMIN_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     restart: unless-stopped
 
@@ -160,6 +168,7 @@ services:
     image: docker.io/qasecret/furan-dashboard:v1.0.6
     depends_on:
       - api
+    ports: ["3001:3001"]
     environment:
       NODE_ENV: production
       # Server-side calls go through the internal compose network; the
