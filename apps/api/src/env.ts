@@ -22,6 +22,30 @@ export const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
+
+  /**
+   * Optional one-shot admin seed. When BOTH keys are set AND the `users`
+   * table is empty at API startup, seeds a single admin row with these
+   * credentials. Ignored once any user exists. Placeholder values from
+   * `.env.example` (`change-me*`) are refused so the API fails closed if
+   * the operator forgets to fill them in.
+   */
+  FURAN_BOOTSTRAP_ADMIN_EMAIL: z
+    .string()
+    .email()
+    .refine(
+      (v) => v !== "change-me",
+      "FURAN_BOOTSTRAP_ADMIN_EMAIL must be replaced from .env.example placeholder",
+    )
+    .optional(),
+  FURAN_BOOTSTRAP_ADMIN_PASSWORD: z
+    .string()
+    .min(8, "FURAN_BOOTSTRAP_ADMIN_PASSWORD must be ≥8 chars")
+    .refine(
+      (v) => !v.startsWith("change-me-run:"),
+      "FURAN_BOOTSTRAP_ADMIN_PASSWORD must be replaced from .env.example placeholder",
+    )
+    .optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
