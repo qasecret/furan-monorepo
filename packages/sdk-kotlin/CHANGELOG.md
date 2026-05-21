@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.7.0...sdk/v0.8.0) (2026-05-21)
+
+
+### Features
+
+* **sdk:** capture per-element bbox map at snapshot time ([#61](https://github.com/qasecret/furan-monorepo/issues/61)) ([32094d0](https://github.com/qasecret/furan-monorepo/commit/32094d0b69b57ae65a5ac1e5b538593d6e017637))
+
 ## [0.7.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.6.1...sdk/v0.7.0) (2026-05-19)
 
 
