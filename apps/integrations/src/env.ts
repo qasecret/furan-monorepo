@@ -33,10 +33,19 @@ export const envSchema = z
     GITHUB_APP_PRIVATE_KEY: z.string().optional(),
     GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
 
-    // Slack outbound (T9). Optional in T7.
-    SLACK_WEBHOOK_URL: z.string().url().optional(),
+    // Slack outbound (T9). Optional in T7. Empty string is treated as
+    // unset so the documented compose stack — which passes
+    // `SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}` — boots cleanly when
+    // the operator hasn't configured Slack yet.
+    SLACK_WEBHOOK_URL: z
+      .union([z.string().url(), z.literal("")])
+      .optional()
+      .transform((v) => (v ? v : undefined)),
 
-    OTLP_ENDPOINT: z.string().url().optional(),
+    OTLP_ENDPOINT: z
+      .union([z.string().url(), z.literal("")])
+      .optional()
+      .transform((v) => (v ? v : undefined)),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace"])
       .default("info"),
