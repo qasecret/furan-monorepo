@@ -131,8 +131,27 @@ export function ViewerCanvas({
       candidateAppRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
-      baselineApp.destroy(true, { children: true, texture: true });
-      candidateApp.destroy(true, { children: true, texture: true });
+      // Pixi 8 occasionally throws `_cancelResize is not a function` from
+      // the cascading texture-destroy path when an effect re-runs (e.g.
+      // regions land via tRPC) before the previous Application has fully
+      // initialized. The error was masked before ImageLayer was rewritten
+      // because the load itself failed and no sprites were ever attached,
+      // so cleanup was a no-op. Now that images mount cleanly, the unsafe
+      // destroy reaches the bug — and an uncaught throw in a useEffect
+      // cleanup escalates to a client-side exception that the Next error
+      // boundary turns into "Application error: a client-side exception".
+      // Catch + log: cleanup is best-effort; a leaked GPU texture on
+      // route change is far cheaper than a blank error page.
+      try {
+        baselineApp.destroy(true, { children: true, texture: true });
+      } catch (err) {
+        console.warn("baseline Application.destroy threw (non-fatal)", err);
+      }
+      try {
+        candidateApp.destroy(true, { children: true, texture: true });
+      } catch (err) {
+        console.warn("candidate Application.destroy threw (non-fatal)", err);
+      }
     };
   }, [mode, baselineUrl, candidateUrl]);
 
@@ -185,7 +204,13 @@ export function ViewerCanvas({
       singleAppRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
-      app.destroy(true, { children: true, texture: true });
+      // See side-by-side cleanup above for why destroy is wrapped — Pixi
+      // 8's `_cancelResize` teardown path throws on rapid effect re-runs.
+      try {
+        app.destroy(true, { children: true, texture: true });
+      } catch (err) {
+        console.warn("single-stage Application.destroy threw (non-fatal)", err);
+      }
     };
   }, [mode, baselineUrl, candidateUrl, diffOverlayUrl, regions]);
 
