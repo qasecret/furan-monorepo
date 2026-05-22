@@ -279,4 +279,38 @@ d("builds REST — find-or-create + properties", () => {
     expect(afterCreated - beforeCreated).toBe(1);
     expect(afterReattached - beforeReattached).toBe(1);
   });
+
+  test("POST to non-existent project → 404 project_not_found (no FK leak)", async () => {
+    // Use an admin so requireProjectMember bypasses (the membership check
+    // doesn't validate existence); we want to exercise the explicit
+    // existence guard that turns a downstream FK violation into a clean
+    // 404 instead of an opaque 500.
+    const [admin] = await h.db
+      .insert(users)
+      .values({
+        email: "a@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "A",
+        lastName: "X",
+        role: "admin",
+        isActive: true,
+      })
+      .returning();
+    if (!admin) throw new Error("admin not seeded");
+    const adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
+    const ghostProjectId = "00000000-0000-0000-0000-000000000000";
+    const res = await h.app.inject({
+      method: "POST",
+      url: url(ghostProjectId),
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { ciBuildId: "leak-probe" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: "project_not_found" });
+    // Critical: the body must NOT contain any DB-internal info.
+    const bodyText = res.body;
+    expect(bodyText).not.toContain("insert into");
+    expect(bodyText).not.toContain("builds_project_id_projects_id_fk");
+    expect(bodyText).not.toContain(ghostProjectId);
+  });
 });
