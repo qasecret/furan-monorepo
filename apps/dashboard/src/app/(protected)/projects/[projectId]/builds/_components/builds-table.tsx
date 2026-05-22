@@ -7,6 +7,7 @@ import { BuildRunsDrawer } from "./build-runs-drawer";
 import { PropertiesFilter } from "./properties-filter";
 
 import { Button } from "@/components/ui/button";
+import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -125,11 +126,11 @@ function EmptyBuildsState({ projectId }: { projectId: string }) {
       </p>
       <pre className="mt-3 overflow-x-auto rounded bg-neutral-900 text-neutral-100 p-3 text-xs">
         {`# Gradle dependency
-implementation("io.github.qasecret:furan-selenium:1.0")
+implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 
 # Env vars for CI
 FURAN_API_URL=https://furan.example.com
-FURAN_API_TOKEN=furan_pat_…           # create one under Settings → Tokens
+FURAN_API_TOKEN=furan_pat_…           # create one at /account/tokens
 FURAN_PROJECT_ID=${projectId}
 FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}
 FURAN_BUILD_NAME="nightly main"
