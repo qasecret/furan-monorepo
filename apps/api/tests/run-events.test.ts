@@ -160,6 +160,81 @@ d("GET /api/v1/runs/:id/events", () => {
     expect(status.ctype).toMatch(/text\/event-stream/);
   });
 
+  test("includes CORS Allow-Origin when request comes from allowed origin", async () => {
+    // reply.hijack() in the SSE handler bypasses Fastify's onSend pipeline,
+    // so @fastify/cors never adds Allow-Origin to the stream. Without an
+    // explicit mirror, the dashboard's EventSource fails cross-origin with
+    // "blocked by CORS policy". This test pins the mirror behavior.
+    const headers = await new Promise<Record<string, string | undefined>>(
+      (resolve, reject) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port,
+            path: `/api/v1/runs/${s.runId}/events`,
+            headers: {
+              authorization: `Bearer ${s.memberJwt}`,
+              accept: "text/event-stream",
+              origin: "http://localhost:3001",
+            },
+          },
+          (response) => {
+            resolve({
+              "access-control-allow-origin": response.headers[
+                "access-control-allow-origin"
+              ] as string | undefined,
+              "access-control-allow-credentials": response.headers[
+                "access-control-allow-credentials"
+              ] as string | undefined,
+              vary: response.headers["vary"] as string | undefined,
+            });
+            response.destroy();
+            req.destroy();
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      },
+    );
+    expect(headers["access-control-allow-origin"]).toBe(
+      "http://localhost:3001",
+    );
+    expect(headers["access-control-allow-credentials"]).toBe("true");
+    expect(headers["vary"]).toContain("Origin");
+  });
+
+  test("does NOT include CORS Allow-Origin when origin is not allowlisted", async () => {
+    const headers = await new Promise<{ allowOrigin: string | undefined }>(
+      (resolve, reject) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port,
+            path: `/api/v1/runs/${s.runId}/events`,
+            headers: {
+              authorization: `Bearer ${s.memberJwt}`,
+              accept: "text/event-stream",
+              origin: "https://evil.example.com",
+            },
+          },
+          (response) => {
+            resolve({
+              allowOrigin: response.headers["access-control-allow-origin"] as
+                | string
+                | undefined,
+            });
+            response.destroy();
+            req.destroy();
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      },
+    );
+    // Either undefined or empty — never an echo of the disallowed origin.
+    expect(headers.allowOrigin).toBeUndefined();
+  });
+
   test("returns 403 for non-member", async () => {
     // The 403 short-circuits in the preHandler before reply.hijack() runs, so
     // app.inject() handles it fine — but for consistency we use the real socket.
