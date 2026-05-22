@@ -51,7 +51,7 @@ type FormValues = z.infer<typeof schema>;
  * is the next surface — that's where the user mints a PAT and configures the
  * SDK.
  */
-export function CreateProjectDialog(): JSX.Element {
+export function CreateProjectDialog() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
   const form = useForm<FormValues>({
@@ -60,13 +60,14 @@ export function CreateProjectDialog(): JSX.Element {
   });
 
   const onSubmit = async (values: FormValues): Promise<void> => {
-    const body: Record<string, string> = { name: values.name };
-    if (values.mainBranchName) body.mainBranchName = values.mainBranchName;
+    const requestBody: Record<string, string> = { name: values.name };
+    if (values.mainBranchName)
+      requestBody.mainBranchName = values.mainBranchName;
     const res = await fetch(`${browserEnv.NEXT_PUBLIC_API_URL}/projects`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
     if (res.status === 409) {
       form.setError("name", {
