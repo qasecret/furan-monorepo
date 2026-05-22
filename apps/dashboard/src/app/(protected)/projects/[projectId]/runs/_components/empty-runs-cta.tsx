@@ -33,7 +33,7 @@ FURAN_PROJECT_ID=${projectId}
 FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}`}
       </pre>
       <Link
-        href="/settings/tokens"
+        href="/account/tokens"
         className="mt-3 inline-block text-blue-700 hover:underline"
         data-testid="empty-runs-cta-token-link"
       >
