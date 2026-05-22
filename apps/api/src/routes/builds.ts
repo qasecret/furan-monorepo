@@ -1,4 +1,12 @@
-import { and, builds, desc, eq, sql, withProjectScope } from "@furan/db";
+import {
+  and,
+  builds,
+  desc,
+  eq,
+  projects,
+  sql,
+  withProjectScope,
+} from "@furan/db";
 import { buildPropertiesSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -165,6 +173,21 @@ export async function registerBuildsRoutes(
       }
       const { ciBuildId, number, branchName, name, properties } =
         bodyParsed.data;
+
+      // Existence check: requireProjectMember admin-bypasses for the auth
+      // role, so a stale/wrong projectId from a client (e.g. the SDK
+      // pointing at a deleted project, common in dev after a test wipe)
+      // would otherwise flow straight into the insert and trip a FK
+      // violation that surfaces as an opaque 500. Return a structured 404
+      // instead so the SDK can surface "no such project" upstream.
+      const projectRow = await app.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, paramsParsed.data.id))
+        .limit(1);
+      if (!projectRow[0]) {
+        return reply.code(404).send({ error: "project_not_found" });
+      }
 
       const start = process.hrtime.bigint();
       const result = await withProjectScope(

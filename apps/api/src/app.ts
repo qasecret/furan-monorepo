@@ -6,7 +6,13 @@ import {
   fastifyTRPCPlugin,
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
-import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 
 import type { Env } from "./env.js";
 import { hashToken, isPatFormat } from "./lib/token.js";
@@ -52,6 +58,32 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("db", deps.db);
   app.decorate("telemetry", deps.telemetry);
   app.decorate("env", deps.env);
+
+  // Generic 5xx body so internal failures don't leak SQL, query params, or
+  // stack frames to the client. Fastify's default error handler returns
+  // `err.message` verbatim, which for a Drizzle/Postgres exception is the
+  // full SQL + bind params — a sensitive info leak we don't want any route
+  // to accidentally surface (caught in the wild on POST /projects/:id/builds
+  // when an SDK client targets a deleted project). 4xx pass through so
+  // input-validation messages (Zod, etc.) still reach the client; the full
+  // error always lands in the structured log with reqId for correlation.
+  app.setErrorHandler(
+    (err: FastifyError, req: FastifyRequest, reply: FastifyReply) => {
+      const status =
+        err.statusCode && err.statusCode >= 400 && err.statusCode < 600
+          ? err.statusCode
+          : 500;
+      req.log.error({ err, reqId: req.id, url: req.url }, "request_error");
+      if (status >= 500) {
+        return reply.code(status).send({ error: "internal_error" });
+      }
+      return reply.code(status).send({
+        statusCode: status,
+        error: err.name || "Error",
+        message: err.message,
+      });
+    },
+  );
 
   // CORS must be registered before routes so the preflight handler is wired
   // for every path (the dashboard is a different origin from the api in the
