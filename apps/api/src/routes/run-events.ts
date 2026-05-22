@@ -41,11 +41,33 @@ export async function registerRunEventsRoute(
       // Take ownership of the raw socket — Fastify will not touch it.
       reply.hijack();
 
+      // SSE responses bypass Fastify's onSend pipeline, so @fastify/cors
+      // never adds Allow-Origin to the stream and the dashboard's
+      // EventSource fails with "blocked by CORS policy: No
+      // 'Access-Control-Allow-Origin' header is present on the requested
+      // resource." Mirror what the cors plugin would have set — only when
+      // the request's Origin actually matches the FURAN_DASHBOARD_ORIGIN
+      // allowlist, so the SSE channel stays as locked-down as every other
+      // route.
+      const sseCorsHeaders: Record<string, string> = {};
+      const reqOrigin = req.headers.origin;
+      if (typeof reqOrigin === "string") {
+        const allowed = app.env.FURAN_DASHBOARD_ORIGIN.split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        if (allowed.includes(reqOrigin)) {
+          sseCorsHeaders["Access-Control-Allow-Origin"] = reqOrigin;
+          sseCorsHeaders["Access-Control-Allow-Credentials"] = "true";
+          sseCorsHeaders["Vary"] = "Origin";
+        }
+      }
+
       reply.raw.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
+        ...sseCorsHeaders,
       });
       // Flush headers immediately so clients see 200 before any frame.
       if (typeof reply.raw.flushHeaders === "function") {
