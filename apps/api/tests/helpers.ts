@@ -38,6 +38,23 @@ export async function createTestApp(
   process.env.DATABASE_URL ??= DEFAULT_DATABASE_URL;
   process.env.JWT_SECRET ??= DEFAULT_JWT_SECRET;
 
+  // If the host .env still has the .env.example placeholder S3 creds
+  // (`devpw_must_be_long`) instead of the running MinIO's actual root
+  // creds, every S3 round-trip returns SignatureDoesNotMatch and 8 tests
+  // fail with no clear pointer. Auto-realign to MINIO_ROOT_* when both
+  // are present — same binding the docker compose.yml uses in prod.
+  if (process.env.MINIO_ROOT_USER && process.env.MINIO_ROOT_PASSWORD) {
+    if (!process.env.S3_ACCESS_KEY || process.env.S3_ACCESS_KEY === "furan") {
+      process.env.S3_ACCESS_KEY = process.env.MINIO_ROOT_USER;
+    }
+    if (
+      !process.env.S3_SECRET_KEY ||
+      process.env.S3_SECRET_KEY === "devpw_must_be_long"
+    ) {
+      process.env.S3_SECRET_KEY = process.env.MINIO_ROOT_PASSWORD;
+    }
+  }
+
   const env = envSchema.parse({ ...process.env, ...(opts.envOverrides ?? {}) });
   const telemetry = bootstrapTelemetry({
     service: "api-test",
