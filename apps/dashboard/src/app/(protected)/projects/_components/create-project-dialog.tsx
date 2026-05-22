@@ -63,12 +63,20 @@ export function CreateProjectDialog() {
     const requestBody: Record<string, string> = { name: values.name };
     if (values.mainBranchName)
       requestBody.mainBranchName = values.mainBranchName;
-    const res = await fetch(`${browserEnv.NEXT_PUBLIC_API_URL}/projects`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${browserEnv.NEXT_PUBLIC_API_URL}/projects`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+    } catch {
+      // Network-level failure (CORS, DNS, offline) — surface a toast so the
+      // dialog doesn't appear to hang silently after the spinner clears.
+      toast.error("Could not reach the API. Check NEXT_PUBLIC_API_URL.");
+      return;
+    }
     if (res.status === 409) {
       form.setError("name", {
         message: "A project with this name already exists",

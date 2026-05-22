@@ -1,3 +1,4 @@
+import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { eq, tokens, users, type DB } from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
@@ -51,6 +52,20 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("db", deps.db);
   app.decorate("telemetry", deps.telemetry);
   app.decorate("env", deps.env);
+
+  // CORS must be registered before routes so the preflight handler is wired
+  // for every path (the dashboard is a different origin from the api in the
+  // default self-host setup, so cross-origin POSTs with JSON bodies trigger
+  // a preflight that 404s without this). `credentials: true` is required
+  // because dashboard fetches use `credentials: "include"` to send the JWT
+  // cookie — which means the Allow-Origin reply cannot be `*`.
+  const allowedOrigins = deps.env.FURAN_DASHBOARD_ORIGIN.split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  await app.register(cors, {
+    origin: allowedOrigins,
+    credentials: true,
+  });
 
   // Plugins + routes register in Tasks 2-7.
   await app.register(authPlugin);
@@ -116,6 +131,21 @@ async function softAuthenticate(
     if (m) raw = m[1] ?? null;
   }
   if (!raw) {
+    // Dashboard's HttpOnly cookie (same fallback as plugins/auth.ts —
+    // see the note there on why browser fetches need this).
+    const cookieHeader = req.headers["cookie"];
+    if (typeof cookieHeader === "string") {
+      const m = /(?:^|;\s*)furan_jwt=([^;]+)/.exec(cookieHeader);
+      if (m && m[1]) {
+        try {
+          raw = decodeURIComponent(m[1]);
+        } catch {
+          raw = null;
+        }
+      }
+    }
+  }
+  if (!raw) {
     const legacy = req.headers["apikey"];
     if (typeof legacy === "string") raw = legacy;
   }
@@ -141,8 +171,12 @@ async function softAuthenticate(
   }
 
   try {
-    await req.jwtVerify();
-    const payload = req.user;
+    // Verify the extracted token (Bearer header *or* furan_jwt cookie);
+    // see plugins/auth.ts for the same pattern.
+    const payload = app.jwt.verify(raw) as {
+      sub: string;
+      role: "admin" | "editor" | "guest";
+    };
     req.auth = { id: payload.sub, role: payload.role };
   } catch {
     // leave req.auth null
