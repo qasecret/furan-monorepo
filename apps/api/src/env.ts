@@ -46,6 +46,14 @@ export const envSchema = z.object({
       "FURAN_BOOTSTRAP_ADMIN_PASSWORD must be replaced from .env.example placeholder",
     )
     .optional(),
+
+  // CORS allowlist for browser-side calls from the dashboard. Comma-separate
+  // for multiple origins (e.g. dev + staging). Required because the dashboard
+  // is served from a different origin than the api (browser hits
+  // localhost:3000 while the dashboard is on localhost:3001 in the default
+  // self-host setup), so cross-origin POSTs with JSON bodies trigger a
+  // preflight that 404s without an explicit CORS plugin.
+  FURAN_DASHBOARD_ORIGIN: z.string().min(1).default("http://localhost:3001"),
 });
 
 export type Env = z.infer<typeof envSchema>;

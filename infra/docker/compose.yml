@@ -100,6 +100,11 @@ services:
       # the api can seed an admin row when the users table is empty.
       FURAN_BOOTSTRAP_ADMIN_EMAIL: ${FURAN_BOOTSTRAP_ADMIN_EMAIL:-}
       FURAN_BOOTSTRAP_ADMIN_PASSWORD: ${FURAN_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # CORS allowlist for the dashboard's browser-side calls. The dashboard
+      # is on :3001 while the api is on :3000, so cross-origin preflights
+      # need an explicit allow. Override (comma-separated) when serving the
+      # dashboard from a different origin, e.g. https://furan.example.com.
+      FURAN_DASHBOARD_ORIGIN: ${FURAN_DASHBOARD_ORIGIN:-http://localhost:3001}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     restart: unless-stopped
 

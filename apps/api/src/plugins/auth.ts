@@ -74,8 +74,14 @@ export default fp(async (app) => {
       }
 
       try {
-        await req.jwtVerify();
-        const payload = req.user;
+        // Verify the token we extracted (Bearer header *or* furan_jwt
+        // cookie). `req.jwtVerify()` only inspects the Authorization
+        // header, so it would miss the cookie path — `app.jwt.verify`
+        // takes the raw token explicitly.
+        const payload = app.jwt.verify(raw) as {
+          sub: string;
+          role: UserRole;
+        };
         req.auth = { id: payload.sub, role: payload.role };
       } catch {
         return reply.code(401).send({ error: "invalid_jwt" });
@@ -84,11 +90,37 @@ export default fp(async (app) => {
   );
 });
 
+// Cookie name the dashboard sets in apps/dashboard/src/lib/auth.ts. The api
+// has to read it here because the dashboard's HttpOnly cookie is the only
+// credential the browser can attach to cross-origin fetches (it can't
+// reach into the cookie to forge an Authorization header, and exposing the
+// JWT to JS would defeat the HttpOnly safety). CSRF surface is contained
+// by the CORS allowlist + SameSite=Lax on the cookie.
+const DASHBOARD_JWT_COOKIE = "furan_jwt";
+
 function extractBearer(req: FastifyRequest): string | null {
   const h = req.headers["authorization"];
-  if (typeof h !== "string") return null;
-  const m = /^Bearer\s+(.+)$/.exec(h);
-  return m ? (m[1] ?? null) : null;
+  if (typeof h === "string") {
+    const m = /^Bearer\s+(.+)$/.exec(h);
+    if (m && m[1]) return m[1];
+  }
+  return extractDashboardCookie(req);
+}
+
+function extractDashboardCookie(req: FastifyRequest): string | null {
+  const cookieHeader = req.headers["cookie"];
+  if (typeof cookieHeader !== "string") return null;
+  // Single-cookie regex is sufficient here — we only look for one name and
+  // pulling in @fastify/cookie just for this would be overkill.
+  const m = new RegExp(`(?:^|;\\s*)${DASHBOARD_JWT_COOKIE}=([^;]+)`).exec(
+    cookieHeader,
+  );
+  if (!m || !m[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
 }
 
 function extractLegacyApiKey(req: FastifyRequest): string | null {
