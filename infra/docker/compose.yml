@@ -77,7 +77,7 @@ services:
   # read:packages scope if the GHCR packages are private). Use
   # `compose.dev.yml` to expose host ports.
   api:
-    image: docker.io/qasecret/furan-api:v1.0.7
+    image: docker.io/qasecret/furan-api:v1.0.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,7 +104,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: docker.io/qasecret/furan-capture-worker:v1.0.7
+    image: docker.io/qasecret/furan-capture-worker:v1.0.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,7 +124,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: docker.io/qasecret/furan-diff-worker:v1.0.7
+    image: docker.io/qasecret/furan-diff-worker:v1.0.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,7 +144,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: docker.io/qasecret/furan-integrations:v1.0.7
+    image: docker.io/qasecret/furan-integrations:v1.0.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -165,16 +165,18 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: docker.io/qasecret/furan-dashboard:v1.0.7
+    image: docker.io/qasecret/furan-dashboard:v1.0.8
     depends_on:
       - api
     ports: ["3001:3001"]
     environment:
       NODE_ENV: production
-      # Server-side calls go through the internal compose network; the
-      # browser hits whatever NEXT_PUBLIC_API_URL the build set. v1.1+
-      # may make this runtime-configurable via an entrypoint shim.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      # Default to the in-network api hostname so the dashboard's Server
+      # Actions / SSR fetches resolve from inside the compose network. The
+      # browser bundle gets http://localhost:3000 baked at build time via
+      # zod's default in apps/dashboard/src/lib/env.ts, which is what the
+      # host browser needs to reach the host-port-mapped api container.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
     restart: unless-stopped
 
 volumes:
