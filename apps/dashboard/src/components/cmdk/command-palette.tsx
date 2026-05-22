@@ -185,6 +185,14 @@ export function CommandPalette({ userRole }: Props) {
                 >
                   /admin/members
                 </Command.Item>
+                <Command.Item
+                  value="admin installations github"
+                  onSelect={() => go("/admin/installations")}
+                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                  data-testid="cmd-admin-installations"
+                >
+                  /admin/installations
+                </Command.Item>
               </Command.Group>
             )}
           </Command.List>

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { CreateProjectDialog } from "./_components/create-project-dialog";
 import { EmptyProjectsCta } from "./_components/empty-projects-cta";
 
@@ -40,12 +42,19 @@ export default async function ProjectsPage() {
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {projects.map((p) => (
-          <Card key={p.id}>
-            <h2 className="text-lg font-semibold">{p.name}</h2>
-            <p className="text-sm text-neutral-600">
-              Main branch: {p.mainBranchName}
-            </p>
-          </Card>
+          <Link
+            key={p.id}
+            href={`/projects/${p.id}`}
+            className="block rounded-lg outline-offset-2 transition hover:shadow-md focus-visible:outline-2"
+            data-testid={`project-card-${p.id}`}
+          >
+            <Card>
+              <h2 className="text-lg font-semibold">{p.name}</h2>
+              <p className="text-sm text-neutral-600">
+                Main branch: {p.mainBranchName}
+              </p>
+            </Card>
+          </Link>
         ))}
       </div>
     </div>

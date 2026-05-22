@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 
+import { LogoutButton } from "./_components/logout-button";
+
 import { Providers } from "@/app/providers";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { apiGet } from "@/lib/api-client";
@@ -35,7 +37,7 @@ export default async function ProtectedLayout({
   return (
     <Providers>
       <div className="min-h-screen p-6 max-w-6xl mx-auto">
-        <header className="mb-6">
+        <header className="mb-6 flex items-center justify-between">
           <nav className="flex gap-4 text-sm">
             <a href="/projects" className="underline">
               Projects
@@ -43,10 +45,18 @@ export default async function ProtectedLayout({
             <a href="/account/tokens" className="underline">
               Tokens
             </a>
-            <a href="/admin/members" className="underline">
-              Members
-            </a>
+            {userRole === "admin" && (
+              <>
+                <a href="/admin/members" className="underline">
+                  Members
+                </a>
+                <a href="/admin/installations" className="underline">
+                  Installations
+                </a>
+              </>
+            )}
           </nav>
+          <LogoutButton />
         </header>
         {children}
       </div>
