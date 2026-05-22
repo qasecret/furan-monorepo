@@ -130,6 +130,17 @@ export async function handleDiffJob(
   try {
     await handleDiffJobInner(data, logger, deps);
   } catch (err) {
+    // Always log the primary error first. BullMQ stashes it in the job's
+    // failedReason but the worker's own structured log was previously
+    // silent — a class of bug (e.g. odiff spawn-fail on a base-image
+    // GLIBC mismatch) would aborted-bucket every run with zero clue in
+    // dashboards or stdout. The secondary catches below only log when
+    // their own write fails, so this is the only place the actual cause
+    // surfaces in the worker log stream.
+    logger.error(
+      { err, runId: data.runId, projectId: data.projectId },
+      "diff_job_failed",
+    );
     // Best-effort terminal status write so an aborted run does not hang
     // in `running` indefinitely. Per spec §3.2 worker exceptions land as
     // `aborted` (distinct from reviewer-rejected `failed`). Wrap in its

@@ -676,9 +676,16 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((r) => setTimeout(r, 100));
 
+    // Reset logger spies so we can assert the loud diff_job_failed log
+    // (the catch block was previously silent on the primary error —
+    // a class of bug like odiff GLIBC mismatch would aborted-bucket
+    // every run with no clue in dashboards).
+    mockLogger.error.mockClear();
+
     // Force the exception: no candidate screenshot rows → handler throws
     // `missing_screenshot:candidate=0`. The wrapper try/catch should
-    // catch, write status=aborted, publish run.completed, and re-throw.
+    // catch, log diff_job_failed with the original err, write
+    // status=aborted, publish run.completed, and re-throw.
     await expect(
       handleDiffJob({ runId: candidateRun.id, projectId: p.id }, mockLogger, {
         db,
@@ -686,6 +693,21 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
         redis,
       }),
     ).rejects.toThrow(/missing_screenshot/);
+
+    // Loud error log: primary err is logged with diff_job_failed so the
+    // BullMQ failedReason isn't the only place the cause lives.
+    const failedLog = mockLogger.error.mock.calls.find(
+      (c) => c[1] === "diff_job_failed",
+    );
+    expect(failedLog).toBeDefined();
+    const failedPayload = failedLog![0] as {
+      err: Error;
+      runId: string;
+      projectId: string;
+    };
+    expect(failedPayload.runId).toBe(candidateRun.id);
+    expect(failedPayload.projectId).toBe(p.id);
+    expect(String(failedPayload.err)).toMatch(/missing_screenshot/);
 
     const updated = await db.query.testRuns.findFirst({
       where: eq(testRuns.id, candidateRun.id),
