@@ -10,6 +10,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string) =>
   readFileSync(join(__dirname, "fixtures", n), "utf8");
 
+describe("runL2 — route forwarding", () => {
+  it("includes `route` on each L2 DiffRegion so the worker can resolve bboxes", async () => {
+    const baseline = `<html><body><div>hi</div></body></html>`;
+    const candidate = `<html><body><div>HELLO</div></body></html>`;
+    const regions = await runL2(baseline, candidate);
+
+    expect(regions.length).toBeGreaterThan(0);
+    // At least one region should have a non-empty route (the text node
+    // change inside body > div).
+    const withRoute = regions.find((r) => r.route && r.route.length > 0);
+    expect(withRoute).toBeDefined();
+    expect(Array.isArray(withRoute!.route)).toBe(true);
+  });
+});
+
 describe("runL2", () => {
   it("detects text change as 'text' category", async () => {
     const regions = await runL2(
