@@ -9,7 +9,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<Variant, string> = {
-  default: "bg-brand text-black hover:bg-brand/90 disabled:hover:bg-brand",
+  default: "bg-brand text-black hover:bg-brand/90",
   secondary:
     "border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900",
   destructive:
@@ -22,7 +22,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       className={cn(
-        "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50",
+        "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
         variantClasses[variant],
         className,
       )}
