@@ -1,8 +1,9 @@
-import type { Application, Sprite } from "pixi.js";
+import type { Application, Container, Sprite } from "pixi.js";
 import { useCallback, type MutableRefObject } from "react";
 
 interface Refs {
   appRef: MutableRefObject<Application | null>;
+  worldRef: MutableRefObject<Container | null>;
   spriteRef: MutableRefObject<Sprite | null>;
 }
 
@@ -12,53 +13,62 @@ export interface ImagePoint {
 }
 
 /**
- * Returns a function that converts a screen-space `PointerEvent` into the
- * natural image-pixel coordinates of the sprite's underlying texture.
+ * Returns a function that converts a DOM `PointerEvent` into the natural
+ * image-pixel coordinates of the candidate sprite's underlying texture.
  *
- * The math: the sprite is rendered at app.screen size (per
- * mountImageLayer's sprite.width = app.screen.width). The texture's
- * natural width/height gives the source pixel space. The pointer's
- * clientX/clientY relative to the canvas element scales by
- * (texture.width / sprite.width).
+ * Math:
+ *   client(x,y)  →  canvas-CSS(x,y)  →  canvas-device(x,y)
+ *                                          via world.toLocal()
+ *                                       →  image-pixel(x,y)
  *
- * Returns `null` when the refs are not yet populated (initial render).
+ * `world` is a Container whose scale + position are managed by
+ * `fitWorldToCanvas` (and, later, zoom/pan). The sprite is added to it
+ * at natural texture size, so a local point in `world` IS the image-pixel
+ * coordinate — no per-layer scale math.
+ *
+ * Returns `null` when refs aren't populated, when the pointer falls
+ * outside the image bounds, or when the sprite has no texture.
  */
-export function useImageSpaceCoords({ appRef, spriteRef }: Refs) {
+export function useImageSpaceCoords({ appRef, worldRef, spriteRef }: Refs) {
   return useCallback(
     (event: PointerEvent | React.PointerEvent): ImagePoint | null => {
       const app = appRef.current;
+      const world = worldRef.current;
       const sprite = spriteRef.current;
-      if (!app || !sprite) return null;
+      if (!app || !world || !sprite) return null;
 
       const canvas = app.canvas as HTMLCanvasElement;
       const rect = canvas.getBoundingClientRect();
-      const screenX = event.clientX - rect.left;
-      const screenY = event.clientY - rect.top;
+      if (rect.width === 0 || rect.height === 0) return null;
 
-      // Account for CSS scaling: clientX/Y are in CSS pixels; the canvas
-      // is drawn at its intrinsic resolution. Use the displayed size for
-      // the ratio so a CSS-resized canvas still maps correctly.
+      // CSS pixels → canvas device pixels. Pixi's stage is in device
+      // pixels by default, so we need this rescale even when DPR === 1
+      // (CSS may still resize the canvas via width: 100%).
       const cssToCanvasX = canvas.width / rect.width;
       const cssToCanvasY = canvas.height / rect.height;
-      const canvasX = screenX * cssToCanvasX;
-      const canvasY = screenY * cssToCanvasY;
+      const canvasX = (event.clientX - rect.left) * cssToCanvasX;
+      const canvasY = (event.clientY - rect.top) * cssToCanvasY;
 
-      // Sprite is drawn at app.screen.* size. Convert canvas coords →
-      // sprite local coords → texture pixel coords.
-      const spriteW = sprite.width;
-      const spriteH = sprite.height;
+      // Convert canvas/stage-space point → world-local (= image-pixel).
+      const local = world.toLocal({ x: canvasX, y: canvasY });
       const tex = sprite.texture;
       const naturalW = tex.width;
       const naturalH = tex.height;
-
-      const xRatio = naturalW / spriteW;
-      const yRatio = naturalH / spriteH;
-
+      // Clamp to image bounds; out-of-bounds clicks (in the letterbox
+      // bands around the image) should not count.
+      if (
+        local.x < 0 ||
+        local.y < 0 ||
+        local.x > naturalW ||
+        local.y > naturalH
+      ) {
+        return null;
+      }
       return {
-        x: Math.max(0, Math.round(canvasX * xRatio)),
-        y: Math.max(0, Math.round(canvasY * yRatio)),
+        x: Math.round(local.x),
+        y: Math.round(local.y),
       };
     },
-    [appRef, spriteRef],
+    [appRef, worldRef, spriteRef],
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Application, type Sprite } from "pixi.js";
+import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
@@ -13,6 +13,7 @@ import {
   type DraftIgnoreArea,
   type IgnoreArea,
 } from "./useViewerStore";
+import { fitWorldToCanvas } from "./world-fit";
 
 interface Props {
   baselineUrl: string | null;
@@ -23,6 +24,17 @@ interface Props {
 
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
 const MIN_DRAW_PX = 5;
+
+/** Fallback dimensions used before the host element has been laid out. */
+const FALLBACK_W = 800;
+const FALLBACK_H = 600;
+
+function hostSize(el: HTMLElement | null): { w: number; h: number } {
+  if (!el) return { w: FALLBACK_W, h: FALLBACK_H };
+  const w = el.clientWidth || FALLBACK_W;
+  const h = el.clientHeight || FALLBACK_H;
+  return { w, h };
+}
 
 function hitTest(
   point: { x: number; y: number },
@@ -65,6 +77,17 @@ export function ViewerCanvas({
   const baselineSpriteRef = useRef<Sprite | null>(null);
   const candidateAppRef = useRef<Application | null>(null);
   const singleAppRef = useRef<Application | null>(null);
+  // World containers per Application. All overlays (image, regions, diff
+  // highlights) parent into the world container so a single
+  // scale + translate handles fit-to-canvas (and future zoom + pan).
+  const candidateWorldRef = useRef<Container | null>(null);
+  const baselineWorldRef = useRef<Container | null>(null);
+  const singleWorldRef = useRef<Container | null>(null);
+  // Overlay region layer ref so the rebuild effect can detach the previous
+  // mount before adding a new one (previously returned from the effect's
+  // setup as a closure — now refs because the world-container plumbing
+  // is shared across multiple effects).
+  const regionLayerRef = useRef<Container | null>(null);
 
   const mode = useViewerStore((s) => s.mode);
   const opacity = useViewerStore((s) => s.opacity);
@@ -99,40 +122,112 @@ export function ViewerCanvas({
     // to the destroyed candidateApp (silently orphaned), and the candidate
     // pane would render empty even though the NEW effect ran cleanly.
     const ac = new AbortController();
+    let baselineRO: ResizeObserver | null = null;
+    let candidateRO: ResizeObserver | null = null;
 
     (async () => {
+      const baselineSize = hostSize(baselineRef.current);
+      const candidateSize = hostSize(candidateRef.current);
       await baselineApp.init({
-        width: 600,
-        height: 400,
-        backgroundColor: 0xffffff,
+        width: baselineSize.w,
+        height: baselineSize.h,
+        backgroundColor: 0xf3f4f6, // slate-100; lets letterbox bands read as "outside the image"
+        antialias: true,
+        autoDensity: true,
+        resolution: window.devicePixelRatio || 1,
       });
       await candidateApp.init({
-        width: 600,
-        height: 400,
-        backgroundColor: 0xffffff,
+        width: candidateSize.w,
+        height: candidateSize.h,
+        backgroundColor: 0xf3f4f6,
+        antialias: true,
+        autoDensity: true,
+        resolution: window.devicePixelRatio || 1,
       });
       if (cancelled) return;
       baselineRef.current?.appendChild(baselineApp.canvas);
       candidateRef.current?.appendChild(candidateApp.canvas);
+      // World containers — sprite + overlays parent into these so the
+      // fit/zoom/pan transform applies uniformly to the whole scene.
+      const baselineWorld = new Container();
+      const candidateWorld = new Container();
+      baselineApp.stage.addChild(baselineWorld);
+      candidateApp.stage.addChild(candidateWorld);
 
       // Parallelize: a slow baseline fetch must not block the candidate
       // pane from rendering. Promise.all keeps both panes symmetric on
       // re-run (abort cancels both at once instead of one mid-attach).
       const [baselineSprite, candidateSprite] = await Promise.all([
         baselineUrl
-          ? mountImageLayer(baselineApp, baselineUrl, ac.signal)
+          ? mountImageLayer(baselineWorld, baselineUrl, ac.signal)
           : Promise.resolve(null),
         candidateUrl
-          ? mountImageLayer(candidateApp, candidateUrl, ac.signal)
+          ? mountImageLayer(candidateWorld, candidateUrl, ac.signal)
           : Promise.resolve(null),
       ]);
       if (cancelled) return;
       baselineSpriteRef.current = baselineSprite;
       candidateSpriteRef.current = candidateSprite;
-      // IgnoreRegionLayer mount effect uses candidateAppRef.current — only set
-      // it after the candidate sprite has mounted so the layer doesn't briefly
-      // render on an empty stage during init.
+      // Fit each pane to its canvas. If the sprite never loaded (e.g. no
+      // baseline yet, first-ever run), the world stays at identity and
+      // the canvas shows just the slate-100 background.
+      if (baselineSprite) {
+        fitWorldToCanvas(
+          baselineApp,
+          baselineWorld,
+          baselineSprite.texture.width,
+          baselineSprite.texture.height,
+        );
+      }
+      if (candidateSprite) {
+        fitWorldToCanvas(
+          candidateApp,
+          candidateWorld,
+          candidateSprite.texture.width,
+          candidateSprite.texture.height,
+        );
+      }
+      // IgnoreRegionLayer + drag overlay use these refs — set them last so
+      // the layer doesn't briefly render on an unfit world.
+      baselineWorldRef.current = baselineWorld;
+      candidateWorldRef.current = candidateWorld;
       candidateAppRef.current = candidateApp;
+
+      // Refit on resize so the screenshot follows the viewport without
+      // remounting the Pixi Application. ResizeObserver fires once on
+      // first observation, which is fine — fit math is cheap.
+      if (baselineRef.current) {
+        baselineRO = new ResizeObserver(() => {
+          if (cancelled || baselineApp.renderer === null) return;
+          const { w, h } = hostSize(baselineRef.current);
+          baselineApp.renderer.resize(w, h);
+          if (baselineSpriteRef.current) {
+            fitWorldToCanvas(
+              baselineApp,
+              baselineWorld,
+              baselineSpriteRef.current.texture.width,
+              baselineSpriteRef.current.texture.height,
+            );
+          }
+        });
+        baselineRO.observe(baselineRef.current);
+      }
+      if (candidateRef.current) {
+        candidateRO = new ResizeObserver(() => {
+          if (cancelled || candidateApp.renderer === null) return;
+          const { w, h } = hostSize(candidateRef.current);
+          candidateApp.renderer.resize(w, h);
+          if (candidateSpriteRef.current) {
+            fitWorldToCanvas(
+              candidateApp,
+              candidateWorld,
+              candidateSpriteRef.current.texture.width,
+              candidateSpriteRef.current.texture.height,
+            );
+          }
+        });
+        candidateRO.observe(candidateRef.current);
+      }
     })().catch((err) => {
       // mountImageLayer's AbortError on effect re-run is expected; don't
       // log it. Real failures still surface.
@@ -144,9 +239,14 @@ export function ViewerCanvas({
     return () => {
       cancelled = true;
       ac.abort();
+      baselineRO?.disconnect();
+      candidateRO?.disconnect();
       candidateAppRef.current = null;
+      candidateWorldRef.current = null;
+      baselineWorldRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
+      regionLayerRef.current = null;
       // Pixi 8 occasionally throws `_cancelResize is not a function` from
       // the cascading texture-destroy path when an effect re-runs (e.g.
       // regions land via tRPC) before the previous Application has fully
@@ -177,37 +277,57 @@ export function ViewerCanvas({
     const app = new Application();
     let cancelled = false;
     const ac = new AbortController();
+    let ro: ResizeObserver | null = null;
 
     (async () => {
+      const size = hostSize(stageRef.current);
       await app.init({
-        width: 1200,
-        height: 800,
-        backgroundColor: 0xffffff,
+        width: size.w,
+        height: size.h,
+        backgroundColor: 0xf3f4f6,
+        antialias: true,
+        autoDensity: true,
+        resolution: window.devicePixelRatio || 1,
       });
       if (cancelled) return;
       stageRef.current?.appendChild(app.canvas);
+      const world = new Container();
+      app.stage.addChild(world);
 
       // Parallelize the three loads — symmetric abort on re-run, no
       // sequential head-of-line blocking on a slow image.
       const [baselineSprite, candidateSprite, overlaySprite] =
         await Promise.all([
           baselineUrl
-            ? mountImageLayer(app, baselineUrl, ac.signal)
+            ? mountImageLayer(world, baselineUrl, ac.signal)
             : Promise.resolve(null),
           candidateUrl
-            ? mountImageLayer(app, candidateUrl, ac.signal)
+            ? mountImageLayer(world, candidateUrl, ac.signal)
             : Promise.resolve(null),
           mode === "diff-heatmap" && diffOverlayUrl
-            ? mountImageLayer(app, diffOverlayUrl, ac.signal)
+            ? mountImageLayer(world, diffOverlayUrl, ac.signal)
             : Promise.resolve(null),
         ]);
       if (cancelled) return;
       baselineSpriteRef.current = baselineSprite;
       candidateSpriteRef.current = candidateSprite;
       if (overlaySprite) overlaySprite.alpha = 0.6;
+      // Fit using the candidate's natural size (falling back to baseline)
+      // so the world's coordinate system matches what the user is
+      // reviewing. Both sprites are at (0,0) and identical aspect for any
+      // properly captured run.
+      const fitSource = candidateSprite ?? baselineSprite ?? overlaySprite;
+      if (fitSource) {
+        fitWorldToCanvas(
+          app,
+          world,
+          fitSource.texture.width,
+          fitSource.texture.height,
+        );
+      }
 
       if (mode === "diff-heatmap" && regions.length > 0) {
-        mountDiffOverlayLayer(app, regions);
+        mountDiffOverlayLayer(world, regions);
       }
 
       if (
@@ -216,10 +336,28 @@ export function ViewerCanvas({
       ) {
         candidateSpriteRef.current.alpha = opacityRef.current;
       }
-      // IgnoreRegionLayer mount effect uses singleAppRef.current — only set
-      // it after all mountImageLayer calls (including the diff-heatmap branch)
-      // so the layer doesn't briefly render on an empty stage during init.
+      // IgnoreRegionLayer + drag overlay use these refs — set them last
+      // so the layer doesn't briefly render on an unfit world.
+      singleWorldRef.current = world;
       singleAppRef.current = app;
+
+      if (stageRef.current) {
+        ro = new ResizeObserver(() => {
+          if (cancelled || app.renderer === null) return;
+          const { w, h } = hostSize(stageRef.current);
+          app.renderer.resize(w, h);
+          const refit = candidateSpriteRef.current ?? baselineSpriteRef.current;
+          if (refit) {
+            fitWorldToCanvas(
+              app,
+              world,
+              refit.texture.width,
+              refit.texture.height,
+            );
+          }
+        });
+        ro.observe(stageRef.current);
+      }
     })().catch((err) => {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         console.warn("single-stage mount failed", err);
@@ -229,9 +367,12 @@ export function ViewerCanvas({
     return () => {
       cancelled = true;
       ac.abort();
+      ro?.disconnect();
       singleAppRef.current = null;
+      singleWorldRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
+      regionLayerRef.current = null;
       // See side-by-side cleanup above for why destroy is wrapped — Pixi
       // 8's `_cancelResize` teardown path throws on rapid effect re-runs.
       try {
@@ -253,9 +394,11 @@ export function ViewerCanvas({
   // Remount the IgnoreRegionLayer whenever the store data or edit scope
   // changes. The layer is cheap to construct (one Graphics per region).
   useEffect(() => {
-    const app =
-      mode === "side-by-side" ? candidateAppRef.current : singleAppRef.current;
-    if (!app) return;
+    const world =
+      mode === "side-by-side"
+        ? candidateWorldRef.current
+        : singleWorldRef.current;
+    if (!world) return;
     // Apply padding + kind overrides to saved regions before handing them
     // to the layer; the layer itself doesn't know about overrides. Drafts
     // mutate in place via setPaddingForSelected / setKindForSelected, so
@@ -272,7 +415,7 @@ export function ViewerCanvas({
     const savedRunWithOverrides = savedRunIgnoreAreas.map(applyOverrides);
     const savedVariationWithOverrides =
       savedVariationIgnoreAreas.map(applyOverrides);
-    const layer = mountIgnoreRegionLayer(app, {
+    const layer = mountIgnoreRegionLayer(world, {
       editMode: ignoreEditMode,
       savedRunIgnoreAreas: savedRunWithOverrides,
       savedVariationIgnoreAreas: savedVariationWithOverrides,
@@ -282,8 +425,10 @@ export function ViewerCanvas({
       viewport,
       onSelect: (id) => setSelectedIgnoreId(id),
     });
+    regionLayerRef.current = layer;
     return () => {
       layer.destroy({ children: true });
+      if (regionLayerRef.current === layer) regionLayerRef.current = null;
     };
   }, [
     mode,
@@ -301,8 +446,11 @@ export function ViewerCanvas({
 
   // Drag-to-draw pointer overlay.
   const activeAppRef = mode === "side-by-side" ? candidateAppRef : singleAppRef;
+  const activeWorldRef =
+    mode === "side-by-side" ? candidateWorldRef : singleWorldRef;
   const toImage = useImageSpaceCoords({
     appRef: activeAppRef,
+    worldRef: activeWorldRef,
     spriteRef: candidateSpriteRef,
   });
 
@@ -377,53 +525,66 @@ export function ViewerCanvas({
     setDragCurrent(null);
   };
 
+  // Container layout: the pane wrapper is given an explicit min height so
+  // the Pixi canvas has a stable box to fill (and the ResizeObserver fires
+  // on real layout changes, not on every parent re-render).
   if (mode === "side-by-side") {
     return (
-      <div className="grid grid-cols-2 gap-2 p-2">
-        <div className="border rounded">
-          <div className="text-xs text-muted-foreground p-1 border-b">
+      <div className="grid grid-cols-2 gap-2 p-2 h-full min-h-[500px]">
+        <div className="border rounded flex flex-col overflow-hidden">
+          <div className="text-xs text-muted-foreground p-1 border-b shrink-0">
             Baseline
           </div>
-          <div ref={baselineRef} data-testid="baseline-canvas-host" />
+          <div
+            ref={baselineRef}
+            data-testid="baseline-canvas-host"
+            className="flex-1 min-h-0 relative"
+          />
         </div>
-        <div className="border rounded relative">
-          <div className="text-xs text-muted-foreground p-1 border-b">
+        <div className="border rounded flex flex-col overflow-hidden relative">
+          <div className="text-xs text-muted-foreground p-1 border-b shrink-0">
             Candidate
           </div>
-          <div ref={candidateRef} data-testid="candidate-canvas-host" />
-          {overlayActive && (
-            <div
-              className="absolute inset-0 cursor-crosshair"
-              data-testid="ignore-region-overlay"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerCancel}
-            />
-          )}
+          <div
+            ref={candidateRef}
+            data-testid="candidate-canvas-host"
+            className="flex-1 min-h-0 relative"
+          >
+            {overlayActive && (
+              <div
+                className="absolute inset-0 cursor-crosshair"
+                data-testid="ignore-region-overlay"
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerCancel}
+              />
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-2 relative">
+    <div className="p-2 h-full min-h-[500px] relative flex flex-col">
       <div
-        className="border rounded"
+        className="border rounded flex-1 min-h-0 relative"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
-      />
-      {overlayActive && (
-        <div
-          className="absolute inset-2 cursor-crosshair"
-          data-testid="ignore-region-overlay"
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerCancel}
-        />
-      )}
+      >
+        {overlayActive && (
+          <div
+            className="absolute inset-0 cursor-crosshair"
+            data-testid="ignore-region-overlay"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
+          />
+        )}
+      </div>
     </div>
   );
 }

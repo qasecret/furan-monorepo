@@ -1,4 +1,4 @@
-import { type Application, Container, Graphics } from "pixi.js";
+import { type Container as PixiContainer, Container, Graphics } from "pixi.js";
 
 import type { BBox, DiffRegion, Severity } from "./regionTypes";
 
@@ -32,12 +32,13 @@ function colorFor(sev: string): number {
 }
 
 /**
- * Mounts a Container holding one Graphics rect per region onto the
- * supplied pixi Application's stage. Returns the Container so callers
- * can toggle visibility or detach without touching the stage tree.
+ * Mounts a Container holding one Graphics rect per region into the given
+ * parent (typically the per-canvas "world" container). Returns the
+ * Container so callers can toggle visibility or detach without touching
+ * the rest of the scene tree.
  */
 export function mountDiffOverlayLayer(
-  app: Application,
+  parent: PixiContainer,
   regions: DiffRegion[],
 ): Container {
   const container = new Container();
@@ -53,6 +54,6 @@ export function mountDiffOverlayLayer(
       .stroke({ color, width: 2, alpha: 0.9 });
     container.addChild(g);
   }
-  app.stage.addChild(container);
+  parent.addChild(container);
   return container;
 }
