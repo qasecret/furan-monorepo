@@ -541,6 +541,121 @@ describe("useViewerStore — ignore-region slice", () => {
     });
   });
 
+  test("setThresholdForSelected on a strict draft mutates the draft in place", () => {
+    const draftId = crypto.randomUUID();
+    useViewerStore.getState().addDraftRegion({
+      id: draftId,
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      viewport: VP,
+      paddingPx: 0,
+      kind: "strict",
+    });
+    useViewerStore.getState().setSelectedIgnoreId(draftId);
+    useViewerStore.getState().setThresholdForSelected(0.005);
+    const draft = useViewerStore.getState().draftIgnoreAreas[0]!;
+    expect(draft.thresholdOverride).toBe(0.005);
+    expect(useViewerStore.getState().thresholdOverrides.size).toBe(0);
+  });
+
+  test("setThresholdForSelected on a saved strict region records an override", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "strict",
+        },
+      ],
+      [],
+    );
+    const id = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(id);
+    useViewerStore.getState().setThresholdForSelected(0.01);
+    expect(
+      useViewerStore.getState().savedRunIgnoreAreas[0]!.thresholdOverride,
+    ).toBeUndefined();
+    expect(useViewerStore.getState().thresholdOverrides.get(id)).toBe(0.01);
+  });
+
+  test("setThresholdForSelected(undefined) clears the override", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "strict",
+          thresholdOverride: 0.02,
+        },
+      ],
+      [],
+    );
+    const id = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(id);
+    useViewerStore.getState().setThresholdForSelected(undefined);
+    expect(
+      useViewerStore.getState().thresholdOverrides.get(id),
+    ).toBeUndefined();
+    expect(useViewerStore.getState().thresholdOverrides.has(id)).toBe(true); // explicit clear marker
+  });
+
+  test("discardIgnoreChanges wipes thresholdOverrides", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "strict",
+        },
+      ],
+      [],
+    );
+    const id = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(id);
+    useViewerStore.getState().setThresholdForSelected(0.03);
+    useViewerStore.getState().discardIgnoreChanges();
+    expect(useViewerStore.getState().thresholdOverrides.size).toBe(0);
+  });
+
+  test("applySaveSuccess promotes thresholdOverride onto the saved region", () => {
+    useViewerStore.getState().hydrateSavedIgnoreAreas(
+      [
+        {
+          x: 10,
+          y: 10,
+          width: 50,
+          height: 50,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "strict",
+          thresholdOverride: 0.01,
+        },
+      ],
+      [],
+    );
+    const id = useViewerStore.getState().savedRunIgnoreAreas[0]!.id;
+    useViewerStore.getState().setSelectedIgnoreId(id);
+    useViewerStore.getState().setThresholdForSelected(0.04);
+    useViewerStore.getState().applySaveSuccess("run");
+    const after = useViewerStore.getState().savedRunIgnoreAreas[0]!;
+    expect(after.thresholdOverride).toBe(0.04);
+    expect(useViewerStore.getState().thresholdOverrides.size).toBe(0);
+  });
+
   test("selectSelectedPaddingPx prefers override > draft > saved.paddingPx > 0", () => {
     useViewerStore.getState().hydrateSavedIgnoreAreas(
       [

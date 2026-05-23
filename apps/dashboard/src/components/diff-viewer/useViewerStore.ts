@@ -145,6 +145,13 @@ interface State {
    */
   kindOverrides: Map<string, { kind: IgnoreArea["kind"]; pattern?: string }>;
   /**
+   * Per-region tolerance overrides for saved STRICT regions (drafts
+   * mutate in place). Keyed by region id. A `undefined` value is an
+   * explicit clear (the save payload omits the field). Cleared on
+   * discardIgnoreChanges and applySaveSuccess.
+   */
+  thresholdOverrides: Map<string, number | undefined>;
+  /**
    * F-a/3: per-draft snap suggestions surfaced after the user finishes a
    * drag-draw. Keyed by draft.id. The store is the source of truth for
    * "does this draft have a pending Anchor-to-`<selector>` proposal";
@@ -207,6 +214,12 @@ interface State {
    */
   setKindForSelected: (kind: IgnoreArea["kind"], pattern?: string) => void;
   /**
+   * Tolerance setter for the currently-selected STRICT region. Mutates
+   * drafts in place; for saved regions, sets an entry in
+   * thresholdOverrides. Pass `undefined` to clear.
+   */
+  setThresholdForSelected: (threshold: number | undefined) => void;
+  /**
    * F-a/3: record a snap suggestion for a freshly-drawn draft. Idempotent
    * on the same draft id — re-proposing keeps the first suggestion so
    * effect re-runs don't bounce the value.
@@ -265,6 +278,7 @@ export const useViewerStore = create<State>((set) => ({
   markedForDeletion: new Set(),
   paddingOverrides: new Map(),
   kindOverrides: new Map(),
+  thresholdOverrides: new Map(),
   pendingSnaps: new Map(),
   selectorOverrides: new Map(),
   selectedIgnoreId: null,
@@ -325,6 +339,7 @@ export const useViewerStore = create<State>((set) => ({
         s.markedForDeletion.size > 0 ||
         s.paddingOverrides.size > 0 ||
         s.kindOverrides.size > 0 ||
+        s.thresholdOverrides.size > 0 ||
         s.selectorOverrides.size > 0;
       const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
         ...r,
@@ -350,6 +365,7 @@ export const useViewerStore = create<State>((set) => ({
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
         kindOverrides: new Map(),
+        thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
         selectedIgnoreId: null,
@@ -417,6 +433,22 @@ export const useViewerStore = create<State>((set) => ({
       });
       return { kindOverrides: overrides };
     }),
+  setThresholdForSelected: (threshold) =>
+    set((s) => {
+      if (!s.selectedIgnoreId) return {};
+      const draftIdx = s.draftIgnoreAreas.findIndex(
+        (r) => r.id === s.selectedIgnoreId,
+      );
+      if (draftIdx !== -1) {
+        const next = [...s.draftIgnoreAreas];
+        const existing = next[draftIdx]!;
+        next[draftIdx] = { ...existing, thresholdOverride: threshold };
+        return { draftIgnoreAreas: next };
+      }
+      const overrides = new Map(s.thresholdOverrides);
+      overrides.set(s.selectedIgnoreId, threshold);
+      return { thresholdOverrides: overrides };
+    }),
   proposePendingSnap: (draftId, snap) =>
     set((s) => {
       // Idempotent: an effect that re-fires on dependency change must
@@ -469,6 +501,7 @@ export const useViewerStore = create<State>((set) => ({
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
       kindOverrides: new Map(),
+      thresholdOverrides: new Map(),
       pendingSnaps: new Map(),
       selectorOverrides: new Map(),
       selectedIgnoreId: null,
@@ -482,6 +515,9 @@ export const useViewerStore = create<State>((set) => ({
         .map((r) => {
           const kindOv = s.kindOverrides.get(r.id);
           const selectorOv = s.selectorOverrides.get(r.id);
+          const thresholdOv = s.thresholdOverrides.has(r.id)
+            ? s.thresholdOverrides.get(r.id)
+            : r.thresholdOverride;
           return {
             ...r,
             paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
@@ -492,6 +528,7 @@ export const useViewerStore = create<State>((set) => ({
             // so the saved row's existing selector survives.
             selector:
               selectorOv === null ? undefined : (selectorOv ?? r.selector),
+            thresholdOverride: thresholdOv,
           };
         });
       const newSaved = [...survivors, ...s.draftIgnoreAreas];
@@ -503,6 +540,7 @@ export const useViewerStore = create<State>((set) => ({
         markedForDeletion: new Set(),
         paddingOverrides: new Map(),
         kindOverrides: new Map(),
+        thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
         selectedIgnoreId: null,
@@ -593,6 +631,34 @@ export function selectSelectedSelector(
     s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
     s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
   return saved?.selector;
+}
+
+/**
+ * Threshold override value to show for the currently-selected STRICT region.
+ * Precedence (highest → lowest): thresholdOverrides map → draft region's
+ * own thresholdOverride → saved region's persisted thresholdOverride →
+ * undefined.
+ */
+export function selectSelectedThresholdOverride(
+  s: Pick<
+    State,
+    | "selectedIgnoreId"
+    | "thresholdOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+): number | undefined {
+  if (!s.selectedIgnoreId) return undefined;
+  if (s.thresholdOverrides.has(s.selectedIgnoreId)) {
+    return s.thresholdOverrides.get(s.selectedIgnoreId);
+  }
+  const draft = s.draftIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  if (draft) return draft.thresholdOverride;
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === s.selectedIgnoreId) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === s.selectedIgnoreId);
+  return saved?.thresholdOverride;
 }
 
 /**
