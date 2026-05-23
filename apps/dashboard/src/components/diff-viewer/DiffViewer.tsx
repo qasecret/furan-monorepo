@@ -230,7 +230,12 @@ export function DiffViewer({ runId, diffId }: Props) {
             projectId={data?.projectId ?? ""}
             project={{
               dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
+              diffThreshold: project?.diffThreshold ?? null,
             }}
+            runDiffThresholdOverride={
+              (data as { diffThresholdOverride?: number | null })
+                ?.diffThresholdOverride ?? null
+            }
           />
           <div className="flex items-center gap-2 px-3 py-2 border-b">
             <BaselineSourceBadge source={baselineSource} />

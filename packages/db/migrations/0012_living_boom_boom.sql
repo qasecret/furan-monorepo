@@ -1,0 +1,1 @@
+ALTER TABLE "test_runs" ADD COLUMN "diff_threshold_override" double precision;

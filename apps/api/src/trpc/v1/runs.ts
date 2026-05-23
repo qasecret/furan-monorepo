@@ -383,6 +383,70 @@ export const runsRouter = t.router({
       };
     }),
 
+  /**
+   * Per-run override for the project's diff threshold. Pass `null` to clear
+   * the override (run reverts to the project default). The mutation also
+   * enqueues a `diff` job so the worker re-runs with the new threshold
+   * without the user having to re-upload screenshots.
+   *
+   * Same shape and semantics as `setIgnoreAreas` — store-then-requeue —
+   * so SSE consumers can watch `run.completed` to know the new result has
+   * landed.
+   */
+  setDiffThresholdOverride: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        /**
+         * 0-1 fraction (same units as `projects.diffThreshold`). `null`
+         * clears the override → the run inherits the project default.
+         * Clamp upper bound at 1 (= 100% mismatch) since values above
+         * that would never trigger a failure regardless of the diff.
+         */
+        threshold: z.number().min(0).max(1).nullable(),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const runRows = await ctx.db
+        .select({
+          id: testRuns.id,
+          projectId: testRuns.projectId,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await ctx.db
+        .update(testRuns)
+        .set({
+          diffThresholdOverride: input.threshold,
+          updatedAt: new Date(),
+        })
+        .where(eq(testRuns.id, input.runId));
+
+      await ctx.diffQueue.add("diff", {
+        runId: run.id,
+        projectId: run.projectId,
+      });
+
+      return {
+        runId: run.id,
+        threshold: input.threshold,
+        requeued: true as const,
+      };
+    }),
+
   approve: t.procedure
     .input(runIdInput)
     .use(authed)

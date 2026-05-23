@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { PatternEditor } from "./PatternEditor";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
+import { SensitivityControl } from "./SensitivityControl";
 import {
   selectEffectiveRegion,
   selectSelectedKindAndPattern,
@@ -56,10 +57,22 @@ interface Props {
    * Defaults to false when omitted so callers that haven't wired the flag
    * yet stay on the legacy "ignore-only" code path.
    */
-  project?: { dynamicTextEnabled: boolean };
+  project?: {
+    dynamicTextEnabled: boolean;
+    /** Project default for the diff threshold (0-1). Used as the slider's
+     * fallback when the run has no per-run override. */
+    diffThreshold?: number | null;
+  };
+  /** Per-run override of the project's diff threshold (0-1, or null = inherit). */
+  runDiffThresholdOverride?: number | null;
 }
 
-export function ViewerToolbar({ runId, projectId = "", project }: Props) {
+export function ViewerToolbar({
+  runId,
+  projectId = "",
+  project,
+  runDiffThresholdOverride = null,
+}: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
   const setMode = useViewerStore((s) => s.setMode);
@@ -215,6 +228,12 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
           ))}
         </TabsList>
       </Tabs>
+
+      <SensitivityControl
+        runId={runId}
+        runOverride={runDiffThresholdOverride}
+        projectThreshold={project?.diffThreshold ?? null}
+      />
 
       <div
         className="flex items-center gap-1"

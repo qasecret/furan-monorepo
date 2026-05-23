@@ -104,6 +104,7 @@ vi.mock("../src/lib/trpc", () => {
         overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: { useMutation: noopMutation },
+        setDiffThresholdOverride: { useMutation: noopMutation },
       },
       projects: {
         getById: {

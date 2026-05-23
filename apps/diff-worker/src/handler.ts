@@ -518,7 +518,12 @@ async function handleDiffJobInner(
         ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
       },
       config: {
-        diffThreshold: project.diffThreshold ?? 0.001,
+        // Per-run override (set via the in-viewer sensitivity slider) wins
+        // over the project default. Null/undefined means "inherit," so the
+        // existing project setting still drives every run that hasn't been
+        // tuned by hand.
+        diffThreshold:
+          run.diffThresholdOverride ?? project.diffThreshold ?? 0.001,
         l2Enabled: project.l2Enabled ?? true,
         ignoreAreas: resolvedIgnoreAreas,
         engine: project.imageComparison,
