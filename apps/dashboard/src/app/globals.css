@@ -1,6 +1,15 @@
 @import "tailwindcss";
 
 @theme {
+  /*
+   * Token names follow shadcn conventions (--color-background,
+   * --color-muted, ...) so straggler utilities in app pages
+   * (text-muted-foreground, bg-popover, ...) resolve correctly
+   * until those pages are re-skinned in Phase 3. The spec uses
+   * canvas/surface names; that set will replace these in a
+   * follow-on cleanup once all stragglers are gone.
+   */
+
   /* Brand */
   --color-brand: #a8ff53;
   --color-brand-foreground: #000000;
@@ -29,9 +38,6 @@
   /* Fonts — variables are set on <html> by next/font in Task 2 */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
-
-  /* Radius */
-  --radius: 0.625rem;
 }
 
 html,
