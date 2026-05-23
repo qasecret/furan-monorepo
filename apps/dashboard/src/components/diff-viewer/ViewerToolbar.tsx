@@ -12,6 +12,7 @@ import {
   selectSelectedKindAndPattern,
   selectSelectedPaddingPx,
   selectSelectedSelector,
+  selectSelectedThresholdOverride,
   useViewerStore,
   ZOOM_STEP,
   type ViewerMode,
@@ -108,6 +109,13 @@ export function ViewerToolbar({
   const selectedPaddingPx = useViewerStore(selectSelectedPaddingPx);
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const setKindForSelected = useViewerStore((s) => s.setKindForSelected);
+  const thresholdOverrides = useViewerStore((s) => s.thresholdOverrides);
+  const setThresholdForSelected = useViewerStore(
+    (s) => s.setThresholdForSelected,
+  );
+  const selectedThresholdOverride = useViewerStore(
+    selectSelectedThresholdOverride,
+  );
   // F-a/3: pending snap + selector indicator wiring.
   const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const selectorOverrides = useViewerStore((s) => s.selectorOverrides);
@@ -164,7 +172,8 @@ export function ViewerToolbar({
   const hasPendingChanges =
     draftIgnoreAreas.length > 0 ||
     markedForDeletion.size > 0 ||
-    selectorOverrides.size > 0;
+    selectorOverrides.size > 0 ||
+    thresholdOverrides.size > 0;
 
   const requestEditMode = (next: "run" | "variation") => {
     if (editing && ignoreEditMode !== next && hasPendingChanges) {
@@ -204,7 +213,11 @@ export function ViewerToolbar({
         // the save with a confusing 400.
         const effectiveKind = kindOv?.kind ?? r.kind;
         const threshold =
-          effectiveKind === "strict" ? r.thresholdOverride : undefined;
+          effectiveKind === "strict"
+            ? thresholdOverrides.has(r.id)
+              ? thresholdOverrides.get(r.id)
+              : r.thresholdOverride
+            : undefined;
         return {
           x: r.x,
           y: r.y,
@@ -518,6 +531,36 @@ export function ViewerToolbar({
           </span>
         </div>
       )}
+
+      {editing &&
+        selectedIgnoreId &&
+        selectedKindAndPattern.kind === "strict" && (
+          <div
+            className="flex items-center gap-2"
+            data-testid="strict-tolerance-control"
+          >
+            <span className="text-xs text-muted-foreground">Tolerance</span>
+            <input
+              type="range"
+              min={0}
+              max={500}
+              step={1}
+              value={Math.round((selectedThresholdOverride ?? 0) * 10000)}
+              onChange={(e) =>
+                setThresholdForSelected(Number(e.target.value) / 10000)
+              }
+              className="w-32"
+              data-testid="strict-tolerance-slider"
+              aria-label={`Strict region tolerance, ${((selectedThresholdOverride ?? 0) * 100).toFixed(2)} percent`}
+            />
+            <span
+              className="text-xs font-mono w-14 text-right"
+              data-testid="strict-tolerance-value"
+            >
+              {((selectedThresholdOverride ?? 0) * 100).toFixed(2)}%
+            </span>
+          </div>
+        )}
 
       {editing && selectedIgnoreId && selectedEffectiveSelector === undefined
         ? (() => {
