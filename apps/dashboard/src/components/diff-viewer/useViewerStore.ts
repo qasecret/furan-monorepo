@@ -34,12 +34,16 @@ export interface IgnoreArea {
   /**
    * - `ignore`: mask always (default).
    * - `dynamic-text`: mask only when OCR matches `pattern`.
-   * - `strict`: don't mask — region is a constraint marker ("must
-   *   match"). Future: `thresholdOverride` tightens the diff threshold
-   *   locally; engine support pending.
-   * - `layout` / `content`: mask at L1 in v1 (same as ignore at engine
-   *   level). Stored as distinct kinds so the wire shape is correct
-   *   for the deferred L2 classification work.
+   * - `strict`: pixel diff inside the bbox must stay within
+   *   `thresholdOverride` (default 0). Any breach fails the run AND
+   *   emits a `severity: "breaking"` region — the contract form of the
+   *   match modes.
+   * - `layout`: pixel diff inside the bbox is masked; structural / DOM
+   *   changes intersecting the bbox are re-tagged
+   *   `severity: "major", category: "layout"`.
+   * - `content`: pixel diff inside the bbox is masked; only text-node
+   *   changes intersecting the bbox survive (tagged `major` / `text`).
+   *   Attribute / structural changes inside the bbox are suppressed.
    */
   kind: RegionKind;
   /** Required when kind === "dynamic-text"; regex source string (no flags). */
@@ -47,8 +51,9 @@ export interface IgnoreArea {
   /**
    * Per-region diff threshold override, 0..1 fraction (same units as
    * `projects.diffThreshold`). Only valid for `kind: "strict"` — the
-   * server-side zod refines against this. Stored but not yet honored
-   * by the engine; see the design doc.
+   * server-side zod refines against this. Honored by the diff worker
+   * (`apps/diff-worker/src/strict-tolerance.ts`); a fraction-over-
+   * tolerance fails the run.
    */
   thresholdOverride?: number;
   /**

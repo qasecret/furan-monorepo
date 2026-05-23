@@ -690,11 +690,11 @@ export function ViewerToolbar({
                 data-testid="region-kind-hint"
               >
                 {selectedKindAndPattern.kind === "strict" &&
-                  "Strict: not masked (must match). Per-region tolerance is stored but the engine doesn't yet honor it."}
+                  "Strict: pixel diff inside the bbox must stay within tolerance, else the run fails. Drag the slider to allow a percentage of mismatch."}
                 {selectedKindAndPattern.kind === "layout" &&
-                  "Layout: pixel diff masked. L2 structural classification is engine work pending."}
+                  "Layout: pixel diff masked. Structural / positional DOM changes inside the bbox are flagged as major / layout."}
                 {selectedKindAndPattern.kind === "content" &&
-                  "Content: pixel diff masked. Text-content compare is engine work pending."}
+                  "Content: pixel diff masked. Only text changes inside the bbox flag as major / text; attribute and styling changes are suppressed."}
               </span>
             )}
         </div>
