@@ -53,6 +53,24 @@ describe("createDiffMetrics", () => {
     expect(countByEngine("looks_same")).toBe(1);
   });
 
+  it("exposes an l2Resolution Counter with resolved/selector_miss/route_invalid outcomes", async () => {
+    const registry = new Registry();
+    const m = createDiffMetrics(registry);
+    m.l2Resolution.labels({ outcome: "resolved" }).inc();
+    m.l2Resolution.labels({ outcome: "selector_miss" }).inc();
+    m.l2Resolution.labels({ outcome: "route_invalid" }).inc();
+    const text = await registry.metrics();
+    expect(text).toContain(
+      'furan_diff_l2_region_resolution_total{outcome="resolved"} 1',
+    );
+    expect(text).toContain(
+      'furan_diff_l2_region_resolution_total{outcome="selector_miss"} 1',
+    );
+    expect(text).toContain(
+      'furan_diff_l2_region_resolution_total{outcome="route_invalid"} 1',
+    );
+  });
+
   it("uses second-scale buckets sized for L1 latency", async () => {
     const registry = new Registry();
     const metrics = createDiffMetrics(registry);

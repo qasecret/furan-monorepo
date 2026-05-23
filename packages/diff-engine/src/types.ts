@@ -13,6 +13,16 @@ export interface DiffRegion {
   bbox: { x: number; y: number; width: number; height: number };
   description: string;
   source: "l1" | "l2";
+  /**
+   * For L2 regions: the diff-dom op's `route` (path through the DOM
+   * tree as child indices). The diff worker uses this with the
+   * candidate DOM + element-map sidecar to resolve a real bbox via
+   * `l2-bbox-resolver.ts`. Engine doesn't touch storage or the
+   * element-map; it just forwards what diff-dom already gave us.
+   *
+   * Absent for L1 regions and for the L2 overflow sentinel.
+   */
+  route?: number[];
 }
 
 export type ImageComparison = "pixelmatch" | "looks_same" | "odiff";

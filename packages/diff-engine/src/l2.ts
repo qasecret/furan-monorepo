@@ -32,6 +32,7 @@ function opToRegion(op: DdOp): DiffRegion | null {
             0,
             200,
           ),
+        ...(op.route ? { route: op.route } : {}),
       };
     case "addElement":
       return {
@@ -45,6 +46,7 @@ function opToRegion(op: DdOp): DiffRegion | null {
             0,
             200,
           ),
+        ...(op.route ? { route: op.route } : {}),
       };
     case "removeElement":
       return {
@@ -58,6 +60,7 @@ function opToRegion(op: DdOp): DiffRegion | null {
             0,
             200,
           ),
+        ...(op.route ? { route: op.route } : {}),
       };
     case "modifyAttribute": {
       const oldV = op.oldValue ?? "";
@@ -75,6 +78,7 @@ function opToRegion(op: DdOp): DiffRegion | null {
         bbox: baseBbox,
         source: "l2",
         description: `Attribute "${op.name}" changed`.slice(0, 200),
+        ...(op.route ? { route: op.route } : {}),
       };
     }
     case "relocateGroup":
@@ -85,6 +89,7 @@ function opToRegion(op: DdOp): DiffRegion | null {
         bbox: baseBbox,
         source: "l2",
         description: "Element relocated",
+        ...(op.route ? { route: op.route } : {}),
       };
     default:
       return null;
