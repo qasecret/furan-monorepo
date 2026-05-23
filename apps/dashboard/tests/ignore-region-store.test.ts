@@ -33,6 +33,7 @@ describe("useViewerStore — ignore-region slice", () => {
       markedForDeletion: new Set(),
       paddingOverrides: new Map(),
       kindOverrides: new Map(),
+      thresholdOverrides: new Map(),
       selectedIgnoreId: null,
     });
   });
