@@ -41,55 +41,54 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
       <div className="flex justify-end">
         <CreateTokenDialog onCreated={() => router.refresh()} />
       </div>
-      <table
-        className="w-full text-sm border-collapse"
-        data-testid="tokens-table"
-      >
-        <thead className="text-left text-muted-foreground border-b">
-          <tr>
-            <th className="py-2 pr-2">Label</th>
-            <th className="py-2 pr-2">Created</th>
-            <th className="py-2 pr-2">Last used</th>
-            <th className="py-2 pr-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tokens.length === 0 ? (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+        <table className="w-full text-sm" data-testid="tokens-table">
+          <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
             <tr>
-              <td
-                colSpan={4}
-                className="py-6 text-center text-muted-foreground"
-                data-testid="tokens-empty"
-              >
-                No tokens yet. Create one above.
-              </td>
+              <th className="px-4 py-2.5 font-medium">Label</th>
+              <th className="px-4 py-2.5 font-medium">Created</th>
+              <th className="px-4 py-2.5 font-medium">Last used</th>
+              <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr>
-          ) : (
-            tokens.map((t) => (
-              <tr
-                key={t.id}
-                className="border-b last:border-0"
-                data-testid={`token-row-${t.id}`}
-              >
-                <td className="py-2 pr-2 font-medium">{t.label}</td>
-                <td className="py-2 pr-2 text-muted-foreground">
-                  {relative(t.createdAt)}
-                </td>
-                <td className="py-2 pr-2 text-muted-foreground">
-                  {relative(t.lastUsedAt)}
-                </td>
-                <td className="py-2 pr-2 text-right">
-                  <DeleteTokenButton
-                    tokenId={t.id}
-                    label={t.label}
-                    onDeleted={() => router.refresh()}
-                  />
+          </thead>
+          <tbody className="divide-y divide-zinc-800">
+            {tokens.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-4 py-8 text-center text-zinc-500"
+                  data-testid="tokens-empty"
+                >
+                  No tokens yet. Create one above.
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              tokens.map((t) => (
+                <tr
+                  key={t.id}
+                  className="hover:bg-zinc-900/30 transition-colors"
+                  data-testid={`token-row-${t.id}`}
+                >
+                  <td className="px-4 py-2.5 font-medium">{t.label}</td>
+                  <td className="px-4 py-2.5 text-zinc-500">
+                    {relative(t.createdAt)}
+                  </td>
+                  <td className="px-4 py-2.5 text-zinc-500">
+                    {relative(t.lastUsedAt)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <DeleteTokenButton
+                      tokenId={t.id}
+                      label={t.label}
+                      onDeleted={() => router.refresh()}
+                    />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
