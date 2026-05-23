@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const approveMutate = vi.fn();
 const rejectMutate = vi.fn();
 const overrideMutate = vi.fn();
+const bulkApproveMutate = vi.fn();
 const invalidate = vi.fn();
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 let approveState = { isPending: false };
 let rejectState = { isPending: false };
@@ -66,6 +69,33 @@ vi.mock("@/lib/trpc", () => ({
           isPending: overrideState.isPending,
         }),
       },
+      // Bulk-approve-by-variation mock — minimal shape so the existing
+      // approval-bar tests keep passing. Dedicated assertions for the
+      // dropdown live in tests further down (see "bulk approve" block).
+      bulkApproveByVariation: {
+        useMutation: (opts?: {
+          onMutate?: () => void;
+          onSuccess?: (res: {
+            approved: number;
+            runIds: string[];
+            capped: boolean;
+            cap: number;
+          }) => void;
+          onError?: (e: { message: string }) => void;
+        }) => ({
+          mutate: (input: { runId: string }) => {
+            opts?.onMutate?.();
+            bulkApproveMutate(input);
+            opts?.onSuccess?.({
+              approved: 3,
+              runIds: [],
+              capped: false,
+              cap: 200,
+            });
+          },
+          isPending: false,
+        }),
+      },
     },
   },
 }));
@@ -79,6 +109,7 @@ describe("ApprovalBar", () => {
     approveMutate.mockReset();
     rejectMutate.mockReset();
     overrideMutate.mockReset();
+    bulkApproveMutate.mockReset();
     invalidate.mockReset();
     approveState = { isPending: false };
     rejectState = { isPending: false };
@@ -211,5 +242,46 @@ describe("ApprovalBar", () => {
       runId: RUN_ID,
       status: "default",
     });
+  });
+
+  // Same Radix-keyboard workaround as the Override dropdown above —
+  // pointerdown-driven triggers don't open on a synthetic fireEvent.click.
+  const openApproveMenu = async () => {
+    const trigger = screen.getByTestId(
+      "approve-more-menu",
+    ) as HTMLButtonElement;
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("Approve ▾ → 'Approve all runs of this test' opens the confirm; Approve all fires the bulk mutation", async () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    await openApproveMenu();
+    const item = await screen.findByTestId("approve-bulk-variation");
+    fireEvent.click(item);
+    // Confirm pane appears (not auto-confirmed).
+    expect(screen.getByTestId("approve-bulk-confirm")).toBeDefined();
+    expect(bulkApproveMutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("approve-bulk-confirm-yes"));
+    expect(bulkApproveMutate).toHaveBeenCalledWith({ runId: RUN_ID });
+    expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  it("Approve ▾ confirm Cancel dismisses without firing the mutation", async () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    await openApproveMenu();
+    const item = await screen.findByTestId("approve-bulk-variation");
+    fireEvent.click(item);
+    fireEvent.click(screen.getByTestId("approve-bulk-confirm-no"));
+    expect(bulkApproveMutate).not.toHaveBeenCalled();
+    // The confirm pane is gone — querying by testId throws when absent;
+    // queryByTestId returns null.
+    expect(screen.queryByTestId("approve-bulk-confirm")).toBeNull();
+  });
+
+  it("hides the Approve ▾ menu when status is not reviewer-actionable", () => {
+    render(<ApprovalBar runId={RUN_ID} status="aborted" />);
+    expect(screen.queryByTestId("approve-more-menu")).toBeNull();
   });
 });

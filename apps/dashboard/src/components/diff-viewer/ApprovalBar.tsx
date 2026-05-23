@@ -2,6 +2,7 @@
 
 import type { OverrideStatusInput, RunStatus } from "@furan/shared-types";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { useViewerStore } from "./useViewerStore";
 
@@ -98,6 +99,19 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
     onSuccess: () => invalidate(),
     onError: (e) => setError(e.message),
   });
+  const bulkApprove = trpc.runs.bulkApproveByVariation.useMutation({
+    onMutate: () => setError(null),
+    onSuccess: (res) => {
+      invalidate();
+      toast.success(
+        `Approved ${res.approved} run${res.approved === 1 ? "" : "s"} of this test${
+          res.capped ? ` (capped at ${res.cap} — run again for more)` : ""
+        }`,
+      );
+    },
+    onError: (e) => setError(e.message),
+  });
+  const [confirmBulk, setConfirmBulk] = useState(false);
   const reject = trpc.runs.reject.useMutation({
     onMutate: () => setError(null),
     onSuccess: () => invalidate(),
@@ -120,7 +134,11 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
         >
       ];
 
-  const pending = approve.isPending || reject.isPending || override.isPending;
+  const pending =
+    approve.isPending ||
+    reject.isPending ||
+    override.isPending ||
+    bulkApprove.isPending;
 
   const callOverride = (next: OverrideStatusInput) => {
     override.mutate({ runId, status: next });
@@ -144,6 +162,10 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Split-button pattern: primary action is single-run approve;
+              chevron exposes bulk-approve. Keeps the most common path one
+              click and pushes the riskier multi-row write behind a
+              confirmation step. */}
           <DisabledAwareButton
             disabled={!canReview || pending}
             reason={disabledReason}
@@ -153,6 +175,29 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
           >
             {approve.isPending ? "Approving…" : "Approve"}
           </DisabledAwareButton>
+          {canReview ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="default"
+                  disabled={pending}
+                  data-testid="approve-more-menu"
+                  aria-label="More approve actions"
+                  className="px-2"
+                >
+                  ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  data-testid="approve-bulk-variation"
+                  onSelect={() => setConfirmBulk(true)}
+                >
+                  Approve all runs of this test
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           <DisabledAwareButton
             disabled={!canReview || pending}
             reason={disabledReason}
@@ -229,6 +274,40 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
           >
             {error}
           </span>
+        )}
+
+        {confirmBulk && (
+          <div
+            role="alertdialog"
+            data-testid="approve-bulk-confirm"
+            className="flex items-center gap-2 text-xs ml-auto bg-muted px-3 py-2 rounded border"
+          >
+            <span>
+              Approve every reviewer-actionable run of this test variation? Each
+              approved run becomes the variation's baseline for its branch.
+            </span>
+            <Button
+              variant="default"
+              className="h-7 px-2 text-xs"
+              data-testid="approve-bulk-confirm-yes"
+              disabled={bulkApprove.isPending}
+              onClick={() => {
+                bulkApprove.mutate({ runId });
+                setConfirmBulk(false);
+              }}
+            >
+              {bulkApprove.isPending ? "Approving…" : "Approve all"}
+            </Button>
+            <Button
+              variant="secondary"
+              className="h-7 px-2 text-xs"
+              data-testid="approve-bulk-confirm-no"
+              onClick={() => setConfirmBulk(false)}
+              disabled={bulkApprove.isPending}
+            >
+              Cancel
+            </Button>
+          </div>
         )}
       </div>
     </TooltipProvider>
