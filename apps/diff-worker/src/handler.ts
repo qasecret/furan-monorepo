@@ -27,7 +27,17 @@ import {
   evaluateDynamicTextRegions,
   type DynamicTextResult,
 } from "./dynamic-text.js";
-import { resolveRegionBbox, type ElementMap } from "./element-map-resolver.js";
+import {
+  fetchElementMap,
+  resolveRegionBbox,
+  type ElementMap,
+} from "./element-map-resolver.js";
+import { resolveL2Bboxes } from "./l2-bbox-resolver.js";
+import {
+  classifyLayoutContent,
+  type ReviewerRegion,
+} from "./region-mode-classifier.js";
+import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 const engineConfigSchema = z.object({
   threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
@@ -554,6 +564,123 @@ async function handleDiffJobInner(
         ),
       },
     });
+
+    // --- Region modes v2 engine pipeline (after L1+L2, before persist) ---
+    //
+    // Step A: resolve L2 region bboxes via the candidate's element-map
+    // sidecar. Best-effort: misses leave bbox: {0,0,0,0}, which the
+    // classifier treats as never-intersecting.
+    const elementMapKey = cs.elementMapKey ?? null;
+    let elementMap: ElementMap | null = null;
+    if (elementMapKey) {
+      const cached = elementMapCache.get(elementMapKey);
+      if (cached !== undefined) {
+        elementMap = cached;
+      } else {
+        elementMap = await fetchElementMap(elementMapKey, {
+          storage: deps.storage,
+          logger,
+          onOutcome: (outcome) =>
+            deps.metrics?.regionResolution.labels({ outcome }).inc(),
+        });
+        elementMapCache.set(elementMapKey, elementMap);
+      }
+    }
+    resolveL2Bboxes(result.regions, candidateDom, elementMap, {
+      l2Resolution: {
+        labels: (l) => ({
+          inc: () => deps.metrics?.l2Resolution.labels(l).inc(),
+        }),
+      },
+    });
+
+    // Step B: classify L2 regions against reviewer Layout/Content
+    // regions. `allRegions` is the parsed + viewport-filtered list of
+    // saved/variation ignore-areas — same source used to build the L1
+    // mask above. We pass it through resolveRegionBbox so the
+    // classifier sees the same coords the engine masked at.
+    const reviewerForClassify: ReviewerRegion[] = await Promise.all(
+      allRegions
+        .filter((r) => r.kind === "layout" || r.kind === "content")
+        .filter(
+          (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
+        )
+        .map(async (r) => ({
+          kind: r.kind,
+          bbox: await resolveRegionBbox(
+            r,
+            elementMapKey,
+            bounds,
+            elementMapCache,
+            {
+              storage: deps.storage,
+              logger,
+              onOutcome: (outcome) =>
+                deps.metrics?.regionResolution.labels({ outcome }).inc(),
+            },
+          ),
+        })),
+    );
+    result.regions = classifyLayoutContent(result.regions, reviewerForClassify);
+
+    // Step C: strict tolerance post-filter. Decode the diff image once
+    // per viewport (sharp is cheap on PNG → raw RGBA). Any region
+    // breaching its tolerance becomes a synthetic "breaking" region
+    // AND forces `passed: false`.
+    const strictInputs: StrictRegionInput[] = await Promise.all(
+      allRegions
+        .filter((r) => r.kind === "strict")
+        .filter(
+          (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
+        )
+        .map(async (r) => ({
+          resolved: await resolveRegionBbox(
+            r,
+            elementMapKey,
+            bounds,
+            elementMapCache,
+            {
+              storage: deps.storage,
+              logger,
+              onOutcome: (outcome) =>
+                deps.metrics?.regionResolution.labels({ outcome }).inc(),
+            },
+          ),
+          ...(r.thresholdOverride !== undefined
+            ? { thresholdOverride: r.thresholdOverride }
+            : {}),
+        })),
+    );
+    if (strictInputs.length > 0 && result.diffImageBytes.length > 0) {
+      try {
+        const raw = await sharp(result.diffImageBytes).raw().toBuffer({
+          resolveWithObject: true,
+        });
+        const breaches = strictBreaches(strictInputs, {
+          data: raw.data,
+          info: { width: raw.info.width, height: raw.info.height },
+        });
+        for (const b of breaches) {
+          result.regions.push({
+            id: `strict-${b.bbox.x}-${b.bbox.y}-${b.bbox.width}-${b.bbox.height}`,
+            severity: "breaking",
+            category: "layout",
+            bbox: b.bbox,
+            description: `Strict region exceeded tolerance: ${(b.fraction * 100).toFixed(3)}% > ${(b.threshold * 100).toFixed(3)}%`,
+            source: "l1", // synthesised from L1 diff image; not an L2 op
+          });
+        }
+        if (breaches.length > 0) {
+          result.passed = false;
+        }
+      } catch (err) {
+        logger.warn(
+          { err, runId: data.runId },
+          "strict_tolerance_decode_failed",
+        );
+      }
+    }
+    // --- End region modes v2 pipeline ---
 
     // Observe L1 latency labelled by engine. durationMs.l1 is always set
     // (every runDiff invocation runs L1); converting ms -> seconds to
