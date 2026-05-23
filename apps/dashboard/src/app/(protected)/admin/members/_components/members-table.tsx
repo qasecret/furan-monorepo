@@ -80,76 +80,73 @@ export function MembersTable({
         <div className="flex-1" />
         <CreateUserDialog onCreated={() => router.refresh()} />
       </div>
-      <table
-        className="w-full text-sm border-collapse"
-        data-testid="members-table"
-      >
-        <thead className="text-left text-muted-foreground border-b">
-          <tr>
-            <th className="py-2 pr-2">Email</th>
-            <th className="py-2 pr-2">Role</th>
-            <th className="py-2 pr-2">Status</th>
-            <th className="py-2 pr-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {initialUsers.length === 0 ? (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+        <table className="w-full text-sm" data-testid="members-table">
+          <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
             <tr>
-              <td
-                colSpan={4}
-                className="py-6 text-center text-muted-foreground"
-                data-testid="members-empty"
-              >
-                No users found.
-              </td>
+              <th className="px-4 py-2.5 font-medium">Email</th>
+              <th className="px-4 py-2.5 font-medium">Role</th>
+              <th className="px-4 py-2.5 font-medium">Status</th>
+              <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr>
-          ) : (
-            initialUsers.map((u) => (
-              <tr
-                key={u.id}
-                className="border-b last:border-0"
-                data-testid={`user-row-${u.id}`}
-              >
-                <td className="py-2 pr-2">
-                  <span className="font-medium">{u.email}</span>
-                  {u.id === currentUserId && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      (you)
-                    </span>
-                  )}
-                  {(u.firstName || u.lastName) && (
-                    <div className="text-xs text-muted-foreground">
-                      {[u.firstName, u.lastName].filter(Boolean).join(" ")}
-                    </div>
-                  )}
-                </td>
-                <td className="py-2 pr-2">
-                  <ChangeRoleCell
-                    userId={u.id}
-                    value={u.role}
-                    onChanged={() => router.refresh()}
-                  />
-                </td>
-                <td className="py-2 pr-2">
-                  {u.isActive ? (
-                    <Badge>Active</Badge>
-                  ) : (
-                    <Badge variant="secondary">Disabled</Badge>
-                  )}
-                </td>
-                <td className="py-2 pr-2 text-right">
-                  <DeactivateButton
-                    userId={u.id}
-                    isActive={u.isActive}
-                    isSelf={u.id === currentUserId}
-                    onChanged={() => router.refresh()}
-                  />
+          </thead>
+          <tbody className="divide-y divide-zinc-800">
+            {initialUsers.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-4 py-8 text-center text-zinc-500"
+                  data-testid="members-empty"
+                >
+                  No users found.
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              initialUsers.map((u) => (
+                <tr
+                  key={u.id}
+                  className="hover:bg-zinc-900/30 transition-colors"
+                  data-testid={`user-row-${u.id}`}
+                >
+                  <td className="px-4 py-2.5">
+                    <span className="font-medium">{u.email}</span>
+                    {u.id === currentUserId && (
+                      <span className="ml-2 text-xs text-zinc-500">(you)</span>
+                    )}
+                    {(u.firstName || u.lastName) && (
+                      <div className="text-xs text-zinc-500">
+                        {[u.firstName, u.lastName].filter(Boolean).join(" ")}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <ChangeRoleCell
+                      userId={u.id}
+                      value={u.role}
+                      onChanged={() => router.refresh()}
+                    />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {u.isActive ? (
+                      <Badge>Active</Badge>
+                    ) : (
+                      <Badge variant="secondary">Disabled</Badge>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <DeactivateButton
+                      userId={u.id}
+                      isActive={u.isActive}
+                      isSelf={u.id === currentUserId}
+                      onChanged={() => router.refresh()}
+                    />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

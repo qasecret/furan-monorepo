@@ -30,21 +30,16 @@ export function InstallationsTable() {
   });
 
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground">Loading…</div>;
+    return <div className="text-sm text-zinc-400">Loading…</div>;
   }
   if (error) {
-    return (
-      <div className="text-sm text-destructive">Error: {error.message}</div>
-    );
+    return <div className="text-sm text-red-400">Error: {error.message}</div>;
   }
   const { installations = [], projects = [] } = data ?? {};
 
   if (installations.length === 0) {
     return (
-      <div
-        data-testid="installations-empty"
-        className="text-sm text-muted-foreground"
-      >
+      <div data-testid="installations-empty" className="text-sm text-zinc-400">
         No installations yet — install the Furan GitHub App on a repo to
         populate this list.
       </div>
@@ -52,57 +47,56 @@ export function InstallationsTable() {
   }
 
   return (
-    <table
-      className="w-full text-sm border-collapse"
-      data-testid="installations-table"
-    >
-      <thead className="text-left text-muted-foreground border-b">
-        <tr>
-          <th className="py-2 pr-4">Account</th>
-          <th className="py-2 pr-4">Installation ID</th>
-          <th className="py-2 pr-4">Repos</th>
-          <th className="py-2">Project</th>
-        </tr>
-      </thead>
-      <tbody>
-        {installations.map((inst) => (
-          <tr
-            key={inst.id}
-            className="border-b last:border-0"
-            data-testid={`install-row-${inst.id}`}
-          >
-            <td className="py-2 pr-4">{inst.accountLogin}</td>
-            <td className="py-2 pr-4">{inst.installationId}</td>
-            <td className="py-2 pr-4">{inst.repositoryIds.length}</td>
-            <td className="py-2">
-              <Select
-                value={inst.projectId ?? UNASSIGNED}
-                onValueChange={(v) =>
-                  update.mutate({
-                    id: inst.id,
-                    projectId: v === UNASSIGNED ? null : v,
-                  })
-                }
-              >
-                <SelectTrigger
-                  data-testid={`install-project-select-${inst.id}`}
-                  className="w-[260px]"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={UNASSIGNED}>(unassigned)</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </td>
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+      <table className="w-full text-sm" data-testid="installations-table">
+        <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
+          <tr>
+            <th className="px-4 py-2.5 font-medium">Account</th>
+            <th className="px-4 py-2.5 font-medium">Installation ID</th>
+            <th className="px-4 py-2.5 font-medium">Repos</th>
+            <th className="px-4 py-2.5 font-medium">Project</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-zinc-800">
+          {installations.map((inst) => (
+            <tr
+              key={inst.id}
+              className="hover:bg-zinc-900/30 transition-colors"
+              data-testid={`install-row-${inst.id}`}
+            >
+              <td className="px-4 py-2.5">{inst.accountLogin}</td>
+              <td className="px-4 py-2.5">{inst.installationId}</td>
+              <td className="px-4 py-2.5">{inst.repositoryIds.length}</td>
+              <td className="px-4 py-2.5">
+                <Select
+                  value={inst.projectId ?? UNASSIGNED}
+                  onValueChange={(v) =>
+                    update.mutate({
+                      id: inst.id,
+                      projectId: v === UNASSIGNED ? null : v,
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    data-testid={`install-project-select-${inst.id}`}
+                    className="w-[260px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={UNASSIGNED}>(unassigned)</SelectItem>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
