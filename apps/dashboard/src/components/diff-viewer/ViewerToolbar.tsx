@@ -12,6 +12,7 @@ import {
   selectSelectedPaddingPx,
   selectSelectedSelector,
   useViewerStore,
+  ZOOM_STEP,
   type ViewerMode,
 } from "./useViewerStore";
 
@@ -64,6 +65,9 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
   const setMode = useViewerStore((s) => s.setMode);
   const opacity = useViewerStore((s) => s.opacity);
   const setOpacity = useViewerStore((s) => s.setOpacity);
+  const zoom = useViewerStore((s) => s.zoom);
+  const zoomBy = useViewerStore((s) => s.zoomBy);
+  const resetZoom = useViewerStore((s) => s.resetZoom);
 
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const setIgnoreEditMode = useViewerStore((s) => s.setIgnoreEditMode);
@@ -211,6 +215,46 @@ export function ViewerToolbar({ runId, projectId = "", project }: Props) {
           ))}
         </TabsList>
       </Tabs>
+
+      <div
+        className="flex items-center gap-1"
+        data-testid="zoom-controls"
+        aria-label="Zoom"
+      >
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs h-7 w-7"
+          data-testid="zoom-out-button"
+          aria-label="Zoom out"
+          title="Zoom out (−)"
+          onClick={() => zoomBy(1 / ZOOM_STEP)}
+        >
+          −
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs h-7 min-w-[3.5rem]"
+          data-testid="zoom-reset-button"
+          aria-label={`Reset zoom (currently ${Math.round(zoom * 100)}%)`}
+          title="Fit to canvas (0)"
+          onClick={() => resetZoom()}
+        >
+          {Math.round(zoom * 100)}%
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs h-7 w-7"
+          data-testid="zoom-in-button"
+          aria-label="Zoom in"
+          title="Zoom in (+)"
+          onClick={() => zoomBy(ZOOM_STEP)}
+        >
+          +
+        </Button>
+      </div>
 
       {/* When not editing: a single DropdownMenu with the toggle as its
           trigger so users can pick a scope to start editing. */}

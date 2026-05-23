@@ -54,12 +54,34 @@ export type HydrateIgnoreArea = Omit<IgnoreArea, "id" | "kind"> & {
 
 export type IgnoreEditMode = "off" | "run" | "variation";
 
+/**
+ * Min/max zoom factor relative to fit. 1.0 = fit-to-canvas (the default
+ * computed by `world-fit.ts`). 4.0 = 4x of fit, which on a typical viewport
+ * lets you read sub-pixel anti-aliasing. 0.25 prevents users from
+ * accidentally shrinking past the readable threshold via repeated wheel-out.
+ */
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 8;
+export const ZOOM_STEP = 1.25;
+
 interface State {
   mode: ViewerMode;
   opacity: number;
   selectedRegionId: string | null;
   viewport: string;
   commentPanelOpen: boolean;
+  /**
+   * Zoom relative to fit-to-canvas. 1 = fit. Applied uniformly to both
+   * panes in side-by-side so reviewers compare like for like.
+   */
+  zoom: number;
+  /**
+   * Pan offset in canvas-CSS pixels, applied on top of the fit-centered
+   * position. (0,0) = centered like fit. Reset whenever zoom returns to 1
+   * via `resetZoom` so a "reset" feels like a fresh fit.
+   */
+  panX: number;
+  panY: number;
 
   // ADR-031 ignore-region editor state.
   ignoreEditMode: IgnoreEditMode;
@@ -101,6 +123,23 @@ interface State {
   setSelected: (id: string | null) => void;
   setViewport: (viewport: string) => void;
   setCommentPanelOpen: (open: boolean) => void;
+  /** Multiplicative zoom (e.g. ZOOM_STEP for +1 step). Clamped to [MIN,MAX]. */
+  zoomBy: (factor: number) => void;
+  /**
+   * Zoom centered on a canvas-CSS-space anchor point so the world point under
+   * the anchor stays put. Used by the mouse-wheel + double-click handlers.
+   */
+  zoomAt: (
+    factor: number,
+    anchor: { x: number; y: number },
+    canvasSize: { width: number; height: number },
+  ) => void;
+  /** Direct zoom set; same clamping as zoomBy. */
+  setZoom: (zoom: number) => void;
+  /** Reset zoom AND pan — single call so the toolbar/Hotkey can use one action. */
+  resetZoom: () => void;
+  /** Increment current pan by (dx,dy) in canvas-CSS pixels. */
+  panBy: (dx: number, dy: number) => void;
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   hydrateSavedIgnoreAreas: (
@@ -159,12 +198,20 @@ interface State {
   applySaveSuccess: (scope: "run" | "variation") => void;
 }
 
+function clampZoom(z: number): number {
+  if (!Number.isFinite(z)) return 1;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+}
+
 export const useViewerStore = create<State>((set) => ({
   mode: "side-by-side",
   opacity: 0.5,
   selectedRegionId: null,
   viewport: "",
   commentPanelOpen: false,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
 
   ignoreEditMode: "off",
   savedRunIgnoreAreas: [],
@@ -177,11 +224,46 @@ export const useViewerStore = create<State>((set) => ({
   selectorOverrides: new Map(),
   selectedIgnoreId: null,
 
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) =>
+    // Mode change resets zoom — different modes (side-by-side vs overlay)
+    // have different canvas sizes, and persisting a zoom across the
+    // transition would feel arbitrary.
+    set({ mode, zoom: 1, panX: 0, panY: 0 }),
   setOpacity: (opacity) => set({ opacity }),
   setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setViewport: (viewport) => set({ viewport }),
   setCommentPanelOpen: (commentPanelOpen) => set({ commentPanelOpen }),
+  zoomBy: (factor) => set((s) => ({ zoom: clampZoom(s.zoom * factor) })),
+  zoomAt: (factor, anchor, canvasSize) =>
+    set((s) => {
+      const nextZoom = clampZoom(s.zoom * factor);
+      if (nextZoom === s.zoom) return {};
+      // We want the world-space point currently under `anchor` to stay
+      // under `anchor` after zoom. The world transform is:
+      //   screen = center + pan + worldLocal * fitScale * zoom
+      // (where center = canvas/2 - imgFitSize/2; pan is our state)
+      // The portion that scales with zoom is `worldLocal * fitScale * zoom`.
+      // Treating that whole term as `delta`, we get
+      //   anchor = center + pan + delta
+      //   anchor = center + pan' + delta * (nextZoom/oldZoom)
+      // The center cancels, so
+      //   pan' = anchor - center - (anchor - center - pan) * ratio
+      // Rather than tracking fitScale here (the canvas owns that),
+      // approximate: scale pan around the anchor — visually identical
+      // when the image is centered fit. The canvas applies the math
+      // exactly via fitWorldToCanvas's center.
+      const ratio = nextZoom / s.zoom;
+      const cx = canvasSize.width / 2;
+      const cy = canvasSize.height / 2;
+      const offsetX = anchor.x - cx - s.panX;
+      const offsetY = anchor.y - cy - s.panY;
+      const panX = s.panX - offsetX * (ratio - 1);
+      const panY = s.panY - offsetY * (ratio - 1);
+      return { zoom: nextZoom, panX, panY };
+    }),
+  setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+  resetZoom: () => set({ zoom: 1, panX: 0, panY: 0 }),
+  panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
 
   setIgnoreEditMode: (ignoreEditMode) => set({ ignoreEditMode }),
   hydrateSavedIgnoreAreas: (run, variation) =>

@@ -9,6 +9,7 @@ import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import {
   selectEffectiveRegion,
   useViewerStore,
+  ZOOM_STEP,
   type ViewerMode,
 } from "./useViewerStore";
 
@@ -175,6 +176,26 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
           viewport: store.viewport || clipboard.viewport,
         });
         e.preventDefault();
+      },
+      // Zoom shortcuts. `=` is the unshifted key labeled "+" on US layouts —
+      // binding both `+` and `=` covers Shift-+ and bare-= without forcing
+      // users to chord. `0` resets to fit. Skip when typing so users can
+      // type "0" into the PatternEditor / audit comment.
+      "=": () => {
+        if (isTypingInInput()) return;
+        useViewerStore.getState().zoomBy(ZOOM_STEP);
+      },
+      "+": () => {
+        if (isTypingInInput()) return;
+        useViewerStore.getState().zoomBy(ZOOM_STEP);
+      },
+      "-": () => {
+        if (isTypingInInput()) return;
+        useViewerStore.getState().zoomBy(1 / ZOOM_STEP);
+      },
+      "0": () => {
+        if (isTypingInInput()) return;
+        useViewerStore.getState().resetZoom();
       },
     });
   }, [router, mode, setMode, viewport, setViewport]);
