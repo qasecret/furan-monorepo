@@ -36,13 +36,20 @@ export function classifyLayoutContent(
   const content = reviewerRegions.filter((r) => r.kind === "content");
   if (layout.length === 0 && content.length === 0) return regions;
 
-  // Record original categories before any mutation so the Content pass
-  // can apply the "text-only" filter against what the DOM engine actually
-  // produced, not against the Layout-retagged value.
-  const originalCategory = new Map<string, DiffRegion["category"]>();
+  // Record original category + description before any mutation so the
+  // Content pass can (a) apply the "text-only" filter against what the DOM
+  // engine actually produced, not against the Layout-retagged value, and
+  // (b) build "Content region: <orig>" without inheriting the Layout prefix.
+  const originalSnapshot = new Map<
+    string,
+    { category: DiffRegion["category"]; description: string }
+  >();
   for (const region of regions) {
     if (region.source === "l2") {
-      originalCategory.set(region.id, region.category);
+      originalSnapshot.set(region.id, {
+        category: region.category,
+        description: region.description,
+      });
     }
   }
 
@@ -76,9 +83,10 @@ export function classifyLayoutContent(
       survivors.push(region);
       continue;
     }
-    if (originalCategory.get(region.id) === "text") {
+    const snap = originalSnapshot.get(region.id);
+    if (snap?.category === "text") {
       region.severity = "major";
-      region.description = `Content region: ${region.description}`;
+      region.description = `Content region: ${snap.description}`;
       region.category = "text"; // restore text category — content intent wins over layout retag
       survivors.push(region);
     }

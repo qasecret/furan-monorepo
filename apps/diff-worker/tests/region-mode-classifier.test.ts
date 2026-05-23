@@ -122,6 +122,10 @@ describe("classifyLayoutContent", () => {
     expect(out.find((r) => r.id === "text-in-both")?.description).toMatch(
       /^Content region:/,
     );
+    // Description must not carry the Layout prefix — content wins cleanly.
+    expect(out.find((r) => r.id === "text-in-both")?.description).not.toMatch(
+      /Layout region/,
+    );
     // Attr suppressed by content even though layout retagged it first.
     expect(out.find((r) => r.id === "attr-in-both")).toBeUndefined();
   });
