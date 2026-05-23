@@ -39,6 +39,15 @@ vi.mock("@/lib/trpc", () => ({
           };
         },
       },
+      // SensitivityControl (rendered by ViewerToolbar) calls this — a no-op
+      // mock keeps the toolbar tests focused on region-editor behavior
+      // without coupling them to the slider's wire shape.
+      setDiffThresholdOverride: {
+        useMutation: () => ({
+          mutate: () => undefined,
+          isPending: false,
+        }),
+      },
     },
   },
 }));

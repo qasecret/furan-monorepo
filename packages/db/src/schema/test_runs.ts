@@ -22,6 +22,18 @@ export const testRuns = pgTable(
     diffName: text("diff_name"),
     diffPercent: doublePrecision("diff_percent"),
     diffTollerancePercent: doublePrecision("diff_tollerance_percent"),
+    /**
+     * Per-run override for `projects.diffThreshold`. Null = inherit the
+     * project default. Same units as the project field: a 0-1 fraction
+     * (e.g. 0.001 = 0.1%). Set by the in-viewer "sensitivity" slider so
+     * reviewers can re-run the diff at a different threshold without
+     * altering the project-wide default that every other run inherits.
+     *
+     * The diff worker reads `run.diffThresholdOverride ?? project.diffThreshold`
+     * at the top of the handler so a setIgnoreAreas-style re-enqueue picks
+     * up the override automatically.
+     */
+    diffThresholdOverride: doublePrecision("diff_threshold_override"),
     pixelMisMatchCount: integer("pixel_mis_match_count"),
     status: runStatusEnum("status").notNull().default("running"),
     buildId: uuid("build_id")
