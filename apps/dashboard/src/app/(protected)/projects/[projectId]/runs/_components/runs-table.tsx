@@ -114,60 +114,58 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
         onChange={onFiltersChange}
       />
       {isLoading && !data ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        <div className="text-sm text-zinc-400">Loading…</div>
       ) : error ? (
-        <div className="text-sm text-destructive">Error: {error.message}</div>
+        <div className="text-sm text-red-400">Error: {error.message}</div>
       ) : items.length === 0 ? (
         filters.branch === undefined &&
         (!filters.status || filters.status.length === 0) ? (
           <EmptyRunsCta projectId={projectId} />
         ) : (
-          <table
-            className="w-full text-sm border-collapse"
-            data-testid="runs-table"
-          >
-            <thead className="text-left text-muted-foreground border-b">
-              <tr>
-                <th className="py-2 pr-2">Branch</th>
-                <th className="py-2 pr-2">Status</th>
-                <th className="py-2 pr-2">Diff %</th>
-                <th className="py-2 pr-2">Mismatched px</th>
-                <th className="py-2 pr-2">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td
-                  colSpan={5}
-                  className="py-6 text-center text-muted-foreground"
-                >
-                  No runs match.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+            <table className="w-full text-sm" data-testid="runs-table">
+              <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Branch</th>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Diff %</th>
+                  <th className="px-4 py-2.5 font-medium">Mismatched px</th>
+                  <th className="px-4 py-2.5 font-medium">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-8 text-center text-zinc-500"
+                  >
+                    No runs match.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         )
       ) : (
         <>
-          <table
-            className="w-full text-sm border-collapse"
-            data-testid="runs-table"
-          >
-            <thead className="text-left text-muted-foreground border-b">
-              <tr>
-                <th className="py-2 pr-2">Branch</th>
-                <th className="py-2 pr-2">Status</th>
-                <th className="py-2 pr-2">Diff %</th>
-                <th className="py-2 pr-2">Mismatched px</th>
-                <th className="py-2 pr-2">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r) => (
-                <RunRow key={r.id} projectId={projectId} run={r} />
-              ))}
-            </tbody>
-          </table>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+            <table className="w-full text-sm" data-testid="runs-table">
+              <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Branch</th>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Diff %</th>
+                  <th className="px-4 py-2.5 font-medium">Mismatched px</th>
+                  <th className="px-4 py-2.5 font-medium">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {items.map((r) => (
+                  <RunRow key={r.id} projectId={projectId} run={r} />
+                ))}
+              </tbody>
+            </table>
+          </div>
           {data?.nextCursor && (
             <div className="flex justify-center">
               <Button

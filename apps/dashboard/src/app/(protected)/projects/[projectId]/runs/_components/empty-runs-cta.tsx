@@ -16,15 +16,15 @@ interface Props {
 export function EmptyRunsCta({ projectId }: Props) {
   return (
     <div
-      className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-sm text-neutral-700"
+      className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 p-6 text-sm text-zinc-300"
       data-testid="empty-runs-cta"
     >
-      <p className="font-medium">No runs yet for this project.</p>
-      <p className="mt-1 text-neutral-600">
+      <p className="font-medium text-white">No runs yet for this project.</p>
+      <p className="mt-1 text-zinc-400">
         Connect the Furan SDK to start sending runs. Project id:{" "}
-        <code className="font-mono text-xs">{projectId}</code>
+        <code className="font-mono text-xs text-zinc-300">{projectId}</code>
       </p>
-      <pre className="mt-3 overflow-x-auto rounded bg-neutral-900 text-neutral-100 p-3 text-xs">
+      <pre className="mt-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900 text-zinc-100 p-3 text-xs">
         {`# Gradle dependency
 implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 
@@ -36,7 +36,7 @@ FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}`}
       </pre>
       <Link
         href="/account/tokens"
-        className="mt-3 inline-block text-blue-700 hover:underline"
+        className="mt-3 inline-block text-brand hover:underline"
         data-testid="empty-runs-cta-token-link"
       >
         Create a personal access token →
