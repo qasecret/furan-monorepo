@@ -52,19 +52,19 @@ const PILL_STYLE: Record<
   { className: string; emoji: string }
 > = {
   breaking: {
-    className: "bg-red-100 text-red-800 border-red-300",
+    className: "bg-red-500/10 text-red-400 border-red-500/20",
     emoji: "🔴",
   },
   major: {
-    className: "bg-orange-100 text-orange-800 border-orange-300",
+    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
     emoji: "🟠",
   },
   minor: {
-    className: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
     emoji: "🟡",
   },
   cosmetic: {
-    className: "bg-blue-100 text-blue-800 border-blue-300",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
     emoji: "🔵",
   },
 };
