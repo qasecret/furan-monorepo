@@ -26,37 +26,37 @@ type StatusConfig = {
 export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   new: {
     label: "New",
-    className: "bg-gray-200 text-gray-800 border-gray-300",
+    className: "bg-zinc-900 text-zinc-300 border-zinc-800",
     tooltip: "First run for this test — baseline created",
   },
   running: {
     label: "Running",
-    className: "bg-blue-100 text-blue-800 border-blue-300",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
     tooltip: "Run is in progress",
   },
   passed: {
     label: "Passed",
-    className: "bg-green-100 text-green-800 border-green-300",
+    className: "bg-green-500/10 text-green-400 border-green-500/20",
     tooltip: "No visual differences",
   },
   unresolved: {
     label: "Unresolved",
-    className: "bg-amber-100 text-amber-800 border-amber-300",
+    className: "bg-amber-500/10 text-amber-400 border-amber-500/20",
     tooltip: "Visual differences found — awaiting review",
   },
   failed: {
     label: "Failed",
-    className: "bg-red-100 text-red-800 border-red-300",
+    className: "bg-red-500/10 text-red-400 border-red-500/20",
     tooltip: "Differences rejected",
   },
   aborted: {
     label: "Aborted",
-    className: "bg-yellow-200 text-yellow-900 border-yellow-400",
+    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
     tooltip: "Run terminated before completion (worker issue)",
   },
   empty: {
     label: "Empty",
-    className: "bg-gray-100 text-gray-600 border-gray-300",
+    className: "bg-zinc-900/50 text-zinc-500 border-zinc-800",
     tooltip: "Run completed but recorded no checks",
   },
 };

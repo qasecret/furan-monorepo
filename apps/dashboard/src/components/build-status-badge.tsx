@@ -12,27 +12,27 @@ const styles: Record<BuildAggregateStatus, { label: string; classes: string }> =
   {
     running: {
       label: "Running",
-      classes: "bg-blue-100 text-blue-700 ring-blue-200",
+      classes: "bg-blue-500/10 text-blue-400 ring-blue-500/20",
     },
     unresolved: {
       label: "Unresolved",
-      classes: "bg-amber-100 text-amber-800 ring-amber-300",
+      classes: "bg-amber-500/10 text-amber-400 ring-amber-500/20",
     },
     failed: {
       label: "Failed",
-      classes: "bg-red-100 text-red-700 ring-red-200",
+      classes: "bg-red-500/10 text-red-400 ring-red-500/20",
     },
     aborted: {
       label: "Aborted",
-      classes: "bg-neutral-200 text-neutral-700 ring-neutral-300",
+      classes: "bg-zinc-900 text-zinc-400 ring-zinc-800",
     },
     passed: {
       label: "Passed",
-      classes: "bg-green-100 text-green-700 ring-green-200",
+      classes: "bg-green-500/10 text-green-400 ring-green-500/20",
     },
     empty: {
       label: "Empty",
-      classes: "bg-neutral-100 text-neutral-600 ring-neutral-200",
+      classes: "bg-zinc-900/50 text-zinc-500 ring-zinc-800",
     },
   };
 
