@@ -42,13 +42,11 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
   });
 
   if (isLoading) {
-    return (
-      <div className="px-6 py-3 text-sm text-muted-foreground">Loading…</div>
-    );
+    return <div className="px-6 py-3 text-sm text-zinc-400">Loading…</div>;
   }
   if (error) {
     return (
-      <div className="px-6 py-3 text-sm text-destructive">
+      <div className="px-6 py-3 text-sm text-red-400">
         Error: {error.message}
       </div>
     );
@@ -57,19 +55,17 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
 
   return (
     <div
-      className="bg-neutral-50 px-6 py-3 space-y-2"
+      className="border-t border-zinc-800 bg-zinc-900/40 px-6 py-3 space-y-2"
       data-testid={`build-runs-drawer-${buildId}`}
     >
       {items.length === 0 ? (
-        <div className="text-sm text-muted-foreground">
-          No runs in this build.
-        </div>
+        <div className="text-sm text-zinc-400">No runs in this build.</div>
       ) : (
         <table className="w-full text-sm">
-          <tbody>
+          <tbody className="divide-y divide-zinc-800">
             {items.map((r) => (
-              <tr key={r.id} className="border-b last:border-0">
-                <td className="py-1 pr-2">
+              <tr key={r.id} className="hover:bg-zinc-900/30 transition-colors">
+                <td className="py-1.5 px-2">
                   <Link
                     href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
                     className="hover:underline"
@@ -77,15 +73,15 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
                     {r.branchName ?? "—"}
                   </Link>
                 </td>
-                <td className="py-1 pr-2">
+                <td className="py-1.5 px-2">
                   <RunStatusBadge status={r.status} />
                 </td>
-                <td className="py-1 pr-2">
+                <td className="py-1.5 px-2">
                   {r.diffPercent !== null
                     ? `${r.diffPercent.toFixed(2)}%`
                     : "—"}
                 </td>
-                <td className="py-1 pr-2 text-muted-foreground">
+                <td className="py-1.5 px-2 text-zinc-500">
                   {relative(r.createdAt)}
                 </td>
               </tr>
@@ -95,7 +91,7 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
       )}
       <Link
         href={`/projects/${projectId}/runs?buildId=${buildId}`}
-        className="text-xs text-blue-700 hover:underline"
+        className="text-xs text-brand hover:underline"
       >
         Open full run list for this build →
       </Link>
