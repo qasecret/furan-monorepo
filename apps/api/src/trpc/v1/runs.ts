@@ -493,6 +493,98 @@ export const runsRouter = t.router({
       return { runId: run.id, approved: true };
     }),
 
+  /**
+   * Bulk-approve every reviewer-actionable run that shares the same test
+   * variation as the supplied `runId`. Same per-run side effects as
+   * `approve` (status → passed, merge → true, snapshot into `baselines`),
+   * but applied in a single transaction so the user doesn't end up half
+   * approved if a row fails.
+   *
+   * Scope choice: variation-wide (not build-wide). Reviewers ask for this
+   * when they've decided "this candidate looks right for this test
+   * everywhere it appeared," which often spans multiple builds (re-runs,
+   * branch fan-out). The procedure caps at 200 rows to keep the
+   * transaction bounded; the toast surfaces if we hit the cap so the user
+   * knows to re-trigger.
+   *
+   * Pre-condition: the supplied runId must itself be reviewer-actionable
+   * (passed | unresolved | failed). The bulk operation can include runs
+   * already in `passed` — those are idempotently re-approved (baseline
+   * row inserted, status unchanged), which matches the existing single
+   * `approve` behavior.
+   */
+  bulkApproveByVariation: t.procedure
+    .input(runIdInput)
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const seedRows = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (!REVIEWER_LEGAL_FROM.has(seed.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Cannot bulk-approve from a '${seed.status}' run. Re-run the test instead.`,
+        });
+      }
+
+      // Find every other run of the same variation in a reviewer-legal
+      // state. Bounded to 200 to keep the transaction cheap and rule out
+      // pathological multi-thousand-row variations.
+      const BULK_CAP = 200;
+      const siblings = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.testVariationId, seed.testVariationId),
+            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+          ),
+        )
+        .limit(BULK_CAP + 1);
+      const capped = siblings.length > BULK_CAP;
+      const approveTargets = capped ? siblings.slice(0, BULK_CAP) : siblings;
+
+      // Same row-level side effects as the per-run approve, looped. A
+      // single transaction prevents a partial outcome on an unexpected
+      // constraint violation; if any row fails, the user retries with a
+      // clean state.
+      const approvedIds: string[] = [];
+      await ctx.db.transaction(async (tx) => {
+        for (const run of approveTargets) {
+          await tx
+            .update(testRuns)
+            .set({ status: "passed", merge: true })
+            .where(eq(testRuns.id, run.id));
+          await tx.insert(baselines).values({
+            baselineName: run.baselineName ?? run.name ?? "auto",
+            testVariationId: run.testVariationId,
+            testRunId: run.id,
+            userId: ctx.user.id,
+            ...(run.branchName ? { branchName: run.branchName } : {}),
+          });
+          approvedIds.push(run.id);
+        }
+      });
+
+      return {
+        approved: approvedIds.length,
+        runIds: approvedIds,
+        capped,
+        cap: BULK_CAP,
+      };
+    }),
+
   reject: t.procedure
     .input(runIdInput)
     .use(authed)
