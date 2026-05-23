@@ -99,6 +99,27 @@ describe("resolveL2Bboxes", () => {
     expect(regions[1]!.bbox).toEqual({ x: 2, y: 2, width: 2, height: 2 });
   });
 
+  it("emits `route_invalid` outcome when route steps into a non-element node (#text)", () => {
+    // <div id="main">hello world<p>x</p></div>
+    // Inside <div#main>, child index 0 is the text node "hello world",
+    // child index 1 is <p>. A route that steps into [..., 0] hits #text → route_invalid.
+    const html = `<html><body><div id="main">hello world<p>x</p></div></body></html>`;
+    const map: ElementMap = {
+      v: 1,
+      capturedAt: 0,
+      elements: {},
+    };
+    const calls: Array<{ outcome: string }> = [];
+    const regions = [makeL2Region([0, 0, 0])]; // body → div#main → #text
+    resolveL2Bboxes(regions, html, map, {
+      l2Resolution: {
+        labels: (l) => ({ inc: () => calls.push(l) }),
+      },
+    });
+    expect(regions[0]!.bbox).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(calls).toEqual([{ outcome: "route_invalid" }]);
+  });
+
   it("records `resolved` outcome metric when bbox lookup succeeds", () => {
     const inc = (() => {
       const calls: Array<{ outcome: string }> = [];
