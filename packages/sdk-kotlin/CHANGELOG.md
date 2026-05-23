@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.8.0...sdk/v0.8.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **dashboard:** parallel diff-viewer mounts + AbortSignal cancellation ([#82](https://github.com/qasecret/furan-monorepo/issues/82)) ([2ec53d0](https://github.com/qasecret/furan-monorepo/commit/2ec53d0bb3c28317197c8ce16234a32b4b916ac9))
+
 ## [0.8.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.7.0...sdk/v0.8.0) (2026-05-21)
 
 
