@@ -76,6 +76,18 @@ interface MountInput {
    * (the caller doesn't even register them in the hitmap).
    */
   onSelect: (id: string) => void;
+  /**
+   * Optional "pick element" hover preview — drawn as a translucent
+   * yellow outline so the user can see exactly which element they'd
+   * snap to before clicking. Cleared when the user moves off any
+   * element. Non-interactive (no pointer events).
+   */
+  pickPreviewBbox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
 }
 
 /**
@@ -236,6 +248,21 @@ export function mountIgnoreRegionLayer(
         .stroke({ color: it.style.stroke, width: 1, alpha: 0.4 });
       container.addChild(inner);
     }
+  }
+
+  // Pick-mode preview: rendered LAST so it sits above existing regions
+  // (saved + drafts) — the user is mid-pick and needs to clearly see
+  // what the next click will create, even if it overlaps an existing
+  // region. Stroke matches the draft yellow with a brighter alpha so
+  // it reads as "this is what's about to land."
+  if (input.pickPreviewBbox) {
+    const p = input.pickPreviewBbox;
+    const preview = new Graphics();
+    preview
+      .rect(p.x, p.y, p.width, p.height)
+      .fill({ color: 0xffcc00, alpha: 0.12 })
+      .stroke({ color: 0xffcc00, width: 2, alpha: 1 });
+    container.addChild(preview);
   }
 
   parent.addChild(container);

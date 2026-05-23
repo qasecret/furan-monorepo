@@ -40,3 +40,40 @@ export function findSmallestContainingElement(
   }
   return best ? { selector: best.selector, bbox: best.bbox } : null;
 }
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * Find the smallest-area element whose bbox contains a single point.
+ * Drives the "pick element" input mode in the diff viewer: the user
+ * hovers an image-space point and we resolve it to the deepest /
+ * smallest matching element from the SDK's captured element map.
+ *
+ * Same linear-scan complexity as findSmallestContainingElement;
+ * elements without overlap are skipped early. No tolerance — a click
+ * is a point, the user gets exactly what they pointed at.
+ */
+export function findSmallestElementAtPoint(
+  point: Point,
+  elements: Record<string, ElementBbox>,
+): { selector: string; bbox: ElementBbox } | null {
+  let best: { selector: string; bbox: ElementBbox; area: number } | null = null;
+  for (const [selector, bbox] of Object.entries(elements)) {
+    if (
+      point.x < bbox.x ||
+      point.y < bbox.y ||
+      point.x > bbox.x + bbox.width ||
+      point.y > bbox.y + bbox.height
+    ) {
+      continue;
+    }
+    const area = bbox.width * bbox.height;
+    if (best === null || area < best.area) {
+      best = { selector, bbox, area };
+    }
+  }
+  return best ? { selector: best.selector, bbox: best.bbox } : null;
+}

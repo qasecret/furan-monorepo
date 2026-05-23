@@ -55,6 +55,16 @@ export type HydrateIgnoreArea = Omit<IgnoreArea, "id" | "kind"> & {
 export type IgnoreEditMode = "off" | "run" | "variation";
 
 /**
+ * Region creation input mode (only meaningful when `ignoreEditMode !== "off"`):
+ * - `drag` (default): drag a rectangle on the canvas; the rectangle becomes
+ *   the draft region's bbox.
+ * - `pick`: single-click on an element; the element's captured bbox + selector
+ *   become the draft. Requires the SDK to have captured an element map for the
+ *   candidate screenshot.
+ */
+export type RegionInputMode = "drag" | "pick";
+
+/**
  * Min/max zoom factor relative to fit. 1.0 = fit-to-canvas (the default
  * computed by `world-fit.ts`). 4.0 = 4x of fit, which on a typical viewport
  * lets you read sub-pixel anti-aliasing. 0.25 prevents users from
@@ -85,6 +95,12 @@ interface State {
 
   // ADR-031 ignore-region editor state.
   ignoreEditMode: IgnoreEditMode;
+  /**
+   * Region input mode — defaults to drag-rectangle. Reset to "drag" whenever
+   * `ignoreEditMode` flips off so re-entering the editor doesn't strand the
+   * user in pick mode without the affordance being visible.
+   */
+  regionInputMode: RegionInputMode;
   savedRunIgnoreAreas: IgnoreArea[];
   savedVariationIgnoreAreas: IgnoreArea[];
   draftIgnoreAreas: DraftIgnoreArea[];
@@ -142,6 +158,7 @@ interface State {
   panBy: (dx: number, dy: number) => void;
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
+  setRegionInputMode: (mode: RegionInputMode) => void;
   hydrateSavedIgnoreAreas: (
     run: Array<HydrateIgnoreArea>,
     variation: Array<HydrateIgnoreArea>,
@@ -214,6 +231,7 @@ export const useViewerStore = create<State>((set) => ({
   panY: 0,
 
   ignoreEditMode: "off",
+  regionInputMode: "drag",
   savedRunIgnoreAreas: [],
   savedVariationIgnoreAreas: [],
   draftIgnoreAreas: [],
@@ -265,7 +283,14 @@ export const useViewerStore = create<State>((set) => ({
   resetZoom: () => set({ zoom: 1, panX: 0, panY: 0 }),
   panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
 
-  setIgnoreEditMode: (ignoreEditMode) => set({ ignoreEditMode }),
+  setIgnoreEditMode: (ignoreEditMode) =>
+    set((s) => ({
+      ignoreEditMode,
+      // Reset the input mode whenever the editor exits so re-entering
+      // starts on the (more familiar) drag affordance.
+      regionInputMode: ignoreEditMode === "off" ? "drag" : s.regionInputMode,
+    })),
+  setRegionInputMode: (regionInputMode) => set({ regionInputMode }),
   hydrateSavedIgnoreAreas: (run, variation) =>
     set((s) => {
       const hasUnsaved =
