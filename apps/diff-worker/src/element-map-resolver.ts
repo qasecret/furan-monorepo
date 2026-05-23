@@ -96,7 +96,7 @@ export async function resolveRegionBbox(
   return hit;
 }
 
-async function fetchElementMap(
+export async function fetchElementMap(
   key: string,
   deps: Deps,
 ): Promise<ElementMap | null> {
