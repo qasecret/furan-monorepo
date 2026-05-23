@@ -2,16 +2,19 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 
 import { cn } from "@/lib/cn";
 
-type Variant = "default" | "secondary" | "destructive";
+type Variant = "default" | "secondary" | "destructive" | "ghost";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
 }
 
 const variantClasses: Record<Variant, string> = {
-  default: "bg-neutral-900 text-neutral-50 hover:bg-neutral-800",
-  secondary: "bg-neutral-200 text-neutral-900 hover:bg-neutral-300",
-  destructive: "bg-red-600 text-white hover:bg-red-700",
+  default: "bg-brand text-black hover:bg-brand/90 disabled:hover:bg-brand",
+  secondary:
+    "border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900",
+  destructive:
+    "border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20",
+  ghost: "text-zinc-400 hover:text-white hover:bg-zinc-900/50",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
