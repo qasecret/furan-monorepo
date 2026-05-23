@@ -8,6 +8,18 @@ export type ViewerMode =
   | "onion-skin"
   | "diff-heatmap";
 
+/**
+ * Region match modes, Applitools-aligned. See
+ * `furan-design/specs/2026-05-23-region-modes-design.md` for the engine
+ * routing per mode + the v1-vs-deferred breakdown.
+ */
+export type RegionKind =
+  | "ignore"
+  | "dynamic-text"
+  | "strict"
+  | "layout"
+  | "content";
+
 /** ADR-031: a single ignore region in image-pixel space. */
 export interface IgnoreArea {
   /** Client-side id assigned at hydration; not persisted server-side. */
@@ -19,11 +31,26 @@ export interface IgnoreArea {
   viewport: string;
   /** Inflated by N pixels on all sides before the diff engine masks. 0-32. */
   paddingPx: number;
-  /** "ignore" (default, mask always) or "dynamic-text" (mask only when OCR
-   * extracts text matching `pattern`). */
-  kind: "ignore" | "dynamic-text";
+  /**
+   * - `ignore`: mask always (default).
+   * - `dynamic-text`: mask only when OCR matches `pattern`.
+   * - `strict`: don't mask — region is a constraint marker ("must
+   *   match"). Future: `thresholdOverride` tightens the diff threshold
+   *   locally; engine support pending.
+   * - `layout` / `content`: mask at L1 in v1 (same as ignore at engine
+   *   level). Stored as distinct kinds so the wire shape is correct
+   *   for the deferred L2 classification work.
+   */
+  kind: RegionKind;
   /** Required when kind === "dynamic-text"; regex source string (no flags). */
   pattern?: string;
+  /**
+   * Per-region diff threshold override, 0..1 fraction (same units as
+   * `projects.diffThreshold`). Only valid for `kind: "strict"` — the
+   * server-side zod refines against this. Stored but not yet honored
+   * by the engine; see the design doc.
+   */
+  thresholdOverride?: number;
   /**
    * Optional CSS-path anchor (F-a subproject 3). When present, the diff
    * engine resolves the region's mask geometry against the candidate's

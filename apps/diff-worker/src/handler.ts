@@ -478,7 +478,27 @@ async function handleDiffJobInner(
           // → all tagged regions apply, matching the no-viewport-tag legacy compat.
           if (r.viewport && r.viewport !== (cs.viewport ?? r.viewport))
             return false;
-          // Dynamic-text regions are only masked when OCR matched the regex.
+          // Per-region mask dispatch — see
+          // furan-design/specs/2026-05-23-region-modes-design.md.
+          //
+          // strict: never masked. The region is a constraint ("must
+          // match here"), not an exclusion. Per-region tolerance
+          // (`thresholdOverride`) is captured on the wire but the
+          // engine doesn't yet honor it — until then, strict is pure
+          // metadata.
+          //
+          // layout + content: behave like `ignore` at L1 in v1 — mask
+          // the pixel diff inside the bbox. The Layout/Content-specific
+          // L2 classification + within-bbox text-diff are deferred
+          // engine work (see same design doc). Storing them as distinct
+          // kinds means the wire shape is already correct when that
+          // engine work lands.
+          //
+          // dynamic-text: existing behavior — mask only when OCR
+          // matched. Unmatched dynamic-text regions fall through to L1.
+          //
+          // ignore (default): always mask.
+          if (r.kind === "strict") return false;
           if (r.kind === "dynamic-text") return matchedIndexes.has(i);
           return true;
         })
@@ -725,9 +745,18 @@ const ignoreAreaParseSchema = z
     height: z.number().int().min(1),
     viewport: z.string().min(1).max(32).optional(),
     paddingPx: z.number().int().min(0).max(32).default(0),
-    kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
+    // Match modes — see furan-design/specs/2026-05-23-region-modes-design.md.
+    // The API zod (apps/api/src/trpc/v1/runs.ts) is the canonical
+    // wire-shape gate; this schema is the worker's defensive re-parse
+    // of the persisted JSON, so it must stay in sync with the wider
+    // enum or live runs will fail to parse and silently fall through to
+    // unmasked diff.
+    kind: z
+      .enum(["ignore", "dynamic-text", "strict", "layout", "content"])
+      .default("ignore"),
     pattern: z.string().min(1).max(500).optional(),
     selector: z.string().min(1).max(500).optional(),
+    thresholdOverride: z.number().min(0).max(1).optional(),
   })
   .refine(
     (r) =>

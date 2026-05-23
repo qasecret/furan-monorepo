@@ -197,6 +197,14 @@ export function ViewerToolbar({
         // row's selector.
         const resolvedSelector =
           selectorOv === null ? undefined : (selectorOv ?? r.selector);
+        // `thresholdOverride` is only valid for strict regions — the
+        // server-side zod rejects it on any other kind. Drop it when the
+        // effective kind is non-strict so a "strict → ignore" kind
+        // override doesn't leak the previously-set tolerance and fail
+        // the save with a confusing 400.
+        const effectiveKind = kindOv?.kind ?? r.kind;
+        const threshold =
+          effectiveKind === "strict" ? r.thresholdOverride : undefined;
         return {
           x: r.x,
           y: r.y,
@@ -204,9 +212,10 @@ export function ViewerToolbar({
           height: r.height,
           viewport: r.viewport,
           paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
-          kind: kindOv?.kind ?? r.kind,
+          kind: effectiveKind,
           pattern: kindOv ? kindOv.pattern : r.pattern,
           selector: resolvedSelector,
+          ...(threshold !== undefined ? { thresholdOverride: threshold } : {}),
         };
       });
     const drafts = draftIgnoreAreas.map((r) => ({
@@ -219,6 +228,9 @@ export function ViewerToolbar({
       kind: r.kind,
       pattern: r.pattern,
       selector: r.selector,
+      ...(r.kind === "strict" && r.thresholdOverride !== undefined
+        ? { thresholdOverride: r.thresholdOverride }
+        : {}),
     }));
     setIgnoreAreas.mutate({
       runId,
@@ -586,22 +598,34 @@ export function ViewerToolbar({
             <Select
               value={selectedKindAndPattern.kind}
               onValueChange={(k) => {
+                // Each kind has its own setter call-shape — dynamic-text
+                // needs a pattern; the other 4 are plain mode flips. The
+                // store's `setKindForSelected` clears `pattern` whenever
+                // kind !== "dynamic-text", so we don't have to forward it.
                 if (k === "dynamic-text") {
                   setKindForSelected(
                     "dynamic-text",
                     selectedKindAndPattern.pattern ??
                       REGION_PATTERN_PRESETS.date,
                   );
-                } else {
-                  setKindForSelected("ignore");
+                } else if (
+                  k === "ignore" ||
+                  k === "strict" ||
+                  k === "layout" ||
+                  k === "content"
+                ) {
+                  setKindForSelected(k);
                 }
               }}
             >
-              <SelectTrigger className="w-32 text-xs">
+              <SelectTrigger className="w-40 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ignore">Ignore</SelectItem>
+                <SelectItem value="strict">Strict</SelectItem>
+                <SelectItem value="layout">Layout</SelectItem>
+                <SelectItem value="content">Content</SelectItem>
                 <SelectItem value="dynamic-text">Dynamic text</SelectItem>
               </SelectContent>
             </Select>
@@ -612,6 +636,24 @@ export function ViewerToolbar({
               onChange={(p) => setKindForSelected("dynamic-text", p)}
             />
           )}
+          {/* Inline behavior hint per kind so reviewers know what each
+              mode actually does at the engine level today vs. what's
+              deferred. Pulled from
+              furan-design/specs/2026-05-23-region-modes-design.md. */}
+          {selectedKindAndPattern.kind !== "ignore" &&
+            selectedKindAndPattern.kind !== "dynamic-text" && (
+              <span
+                className="text-[10px] text-muted-foreground max-w-[260px]"
+                data-testid="region-kind-hint"
+              >
+                {selectedKindAndPattern.kind === "strict" &&
+                  "Strict: not masked (must match). Per-region tolerance is stored but the engine doesn't yet honor it."}
+                {selectedKindAndPattern.kind === "layout" &&
+                  "Layout: pixel diff masked. L2 structural classification is engine work pending."}
+                {selectedKindAndPattern.kind === "content" &&
+                  "Content: pixel diff masked. Text-content compare is engine work pending."}
+              </span>
+            )}
         </div>
       )}
 

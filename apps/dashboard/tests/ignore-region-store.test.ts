@@ -335,6 +335,29 @@ describe("useViewerStore — ignore-region slice", () => {
     });
   });
 
+  test.each(["strict", "layout", "content"] as const)(
+    "setKindForSelected accepts new region mode '%s' on a draft (no pattern)",
+    (newKind) => {
+      const draftId = crypto.randomUUID();
+      useViewerStore.getState().addDraftRegion({
+        id: draftId,
+        x: 10,
+        y: 10,
+        width: 50,
+        height: 50,
+        viewport: "1280x720",
+        paddingPx: 0,
+        kind: "ignore",
+      });
+      useViewerStore.getState().setSelectedIgnoreId(draftId);
+      useViewerStore.getState().setKindForSelected(newKind);
+      const draft = useViewerStore.getState().draftIgnoreAreas[0]!;
+      expect(draft.kind).toBe(newKind);
+      // pattern is dynamic-text-only — must be cleared on a non-dynamic-text flip.
+      expect(draft.pattern).toBeUndefined();
+    },
+  );
+
   test("setKindForSelected to 'ignore' clears pattern in the override", () => {
     useViewerStore.getState().hydrateSavedIgnoreAreas(
       [
