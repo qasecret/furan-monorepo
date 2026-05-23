@@ -9,11 +9,10 @@ interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const VARIANT_CLASSES: Record<Variant, string> = {
-  default: "bg-primary text-primary-foreground hover:bg-primary/80",
-  secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-  destructive:
-    "bg-destructive text-destructive-foreground hover:bg-destructive/80",
-  outline: "border border-input bg-background hover:bg-accent",
+  default: "bg-zinc-900 text-zinc-300 border border-zinc-800",
+  secondary: "bg-zinc-900/50 text-zinc-400 border border-zinc-800",
+  destructive: "bg-red-500/10 text-red-400 border border-red-500/20",
+  outline: "border border-zinc-800 text-zinc-400",
 };
 
 export function Badge({
