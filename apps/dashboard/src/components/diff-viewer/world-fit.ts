@@ -25,28 +25,41 @@ export function computeFitScale(
   return Math.max(scale, MIN_FIT_SCALE);
 }
 
+export interface ViewTransform {
+  /** Multiplicative zoom on top of fit. 1 = fit, 2 = 2x fit. */
+  zoom: number;
+  /** Pan offset in canvas pixels, added on top of the fit-center. */
+  panX: number;
+  panY: number;
+}
+
+const IDENTITY: ViewTransform = { zoom: 1, panX: 0, panY: 0 };
+
 /**
- * Apply scale + center-offset to a "world" container so the image inside
- * fits the application's canvas while preserving aspect ratio. All
- * overlay layers that share `world` as their parent inherit this transform
- * automatically, so we don't have to redo any sprite/graphics math when
- * the canvas resizes.
+ * Apply scale + center-offset (+ optional zoom and pan) to a "world"
+ * container so the image inside fits the application's canvas while
+ * preserving aspect ratio. All overlay layers that share `world` as
+ * their parent inherit this transform automatically, so we don't have
+ * to redo any sprite/graphics math when the canvas resizes, zooms,
+ * or pans.
  */
 export function fitWorldToCanvas(
   app: Application,
   world: Container,
   imgW: number,
   imgH: number,
+  view: ViewTransform = IDENTITY,
 ): void {
-  const scale = computeFitScale(
+  const fitScale = computeFitScale(
     imgW,
     imgH,
     app.screen.width,
     app.screen.height,
   );
+  const scale = fitScale * view.zoom;
   world.scale.set(scale);
   world.position.set(
-    (app.screen.width - imgW * scale) / 2,
-    (app.screen.height - imgH * scale) / 2,
+    (app.screen.width - imgW * scale) / 2 + view.panX,
+    (app.screen.height - imgH * scale) / 2 + view.panY,
   );
 }

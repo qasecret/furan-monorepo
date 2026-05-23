@@ -7,6 +7,10 @@ import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
+import {
+  applyViewToPane,
+  attachCanvasViewControl,
+} from "./useCanvasViewControl";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
 import {
   useViewerStore,
@@ -76,6 +80,7 @@ export function ViewerCanvas({
   const candidateSpriteRef = useRef<Sprite | null>(null);
   const baselineSpriteRef = useRef<Sprite | null>(null);
   const candidateAppRef = useRef<Application | null>(null);
+  const baselineAppRef = useRef<Application | null>(null);
   const singleAppRef = useRef<Application | null>(null);
   // World containers per Application. All overlays (image, regions, diff
   // highlights) parent into the world container so a single
@@ -93,6 +98,10 @@ export function ViewerCanvas({
   const opacity = useViewerStore((s) => s.opacity);
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
+  // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
+  const zoom = useViewerStore((s) => s.zoom);
+  const panX = useViewerStore((s) => s.panX);
+  const panY = useViewerStore((s) => s.panY);
 
   // Ignore-region store slices.
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
@@ -124,6 +133,8 @@ export function ViewerCanvas({
     const ac = new AbortController();
     let baselineRO: ResizeObserver | null = null;
     let candidateRO: ResizeObserver | null = null;
+    let detachBaselineCtrl: (() => void) | null = null;
+    let detachCandidateCtrl: (() => void) | null = null;
 
     (async () => {
       const baselineSize = hostSize(baselineRef.current);
@@ -171,12 +182,19 @@ export function ViewerCanvas({
       // Fit each pane to its canvas. If the sprite never loaded (e.g. no
       // baseline yet, first-ever run), the world stays at identity and
       // the canvas shows just the slate-100 background.
+      // Read zoom + pan from the store at mount time so the initial fit
+      // already reflects any persisted view (e.g. user hit "0" mid-load).
+      const view = (() => {
+        const s = useViewerStore.getState();
+        return { zoom: s.zoom, panX: s.panX, panY: s.panY };
+      })();
       if (baselineSprite) {
         fitWorldToCanvas(
           baselineApp,
           baselineWorld,
           baselineSprite.texture.width,
           baselineSprite.texture.height,
+          view,
         );
       }
       if (candidateSprite) {
@@ -185,6 +203,7 @@ export function ViewerCanvas({
           candidateWorld,
           candidateSprite.texture.width,
           candidateSprite.texture.height,
+          view,
         );
       }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
@@ -192,13 +211,31 @@ export function ViewerCanvas({
       baselineWorldRef.current = baselineWorld;
       candidateWorldRef.current = candidateWorld;
       candidateAppRef.current = candidateApp;
+      baselineAppRef.current = baselineApp;
+      // Zoom/pan listeners on each pane host (not the canvas itself) so
+      // events from the ignore-region overlay div — a sibling of the
+      // canvas — also bubble to these handlers. Wheel zooms about cursor;
+      // middle-mouse (or plain primary when not editing) pans. Detach
+      // tokens kept on the effect closure so cleanup is symmetric.
+      if (baselineRef.current) {
+        detachBaselineCtrl = attachCanvasViewControl(baselineRef.current);
+      }
+      if (candidateRef.current) {
+        detachCandidateCtrl = attachCanvasViewControl(candidateRef.current);
+      }
 
       // Refit on resize so the screenshot follows the viewport without
       // remounting the Pixi Application. ResizeObserver fires once on
       // first observation, which is fine — fit math is cheap.
+      // Helper so the RO callbacks pick up the current zoom/pan rather
+      // than the value captured at mount time.
+      const currentView = () => {
+        const s = useViewerStore.getState();
+        return { zoom: s.zoom, panX: s.panX, panY: s.panY };
+      };
       if (baselineRef.current) {
         baselineRO = new ResizeObserver(() => {
-          if (cancelled || baselineApp.renderer === null) return;
+          if (cancelled || !baselineApp.renderer) return;
           const { w, h } = hostSize(baselineRef.current);
           baselineApp.renderer.resize(w, h);
           if (baselineSpriteRef.current) {
@@ -207,6 +244,7 @@ export function ViewerCanvas({
               baselineWorld,
               baselineSpriteRef.current.texture.width,
               baselineSpriteRef.current.texture.height,
+              currentView(),
             );
           }
         });
@@ -214,7 +252,7 @@ export function ViewerCanvas({
       }
       if (candidateRef.current) {
         candidateRO = new ResizeObserver(() => {
-          if (cancelled || candidateApp.renderer === null) return;
+          if (cancelled || !candidateApp.renderer) return;
           const { w, h } = hostSize(candidateRef.current);
           candidateApp.renderer.resize(w, h);
           if (candidateSpriteRef.current) {
@@ -223,6 +261,7 @@ export function ViewerCanvas({
               candidateWorld,
               candidateSpriteRef.current.texture.width,
               candidateSpriteRef.current.texture.height,
+              currentView(),
             );
           }
         });
@@ -241,7 +280,10 @@ export function ViewerCanvas({
       ac.abort();
       baselineRO?.disconnect();
       candidateRO?.disconnect();
+      detachBaselineCtrl?.();
+      detachCandidateCtrl?.();
       candidateAppRef.current = null;
+      baselineAppRef.current = null;
       candidateWorldRef.current = null;
       baselineWorldRef.current = null;
       candidateSpriteRef.current = null;
@@ -278,6 +320,7 @@ export function ViewerCanvas({
     let cancelled = false;
     const ac = new AbortController();
     let ro: ResizeObserver | null = null;
+    let detachCtrl: (() => void) | null = null;
 
     (async () => {
       const size = hostSize(stageRef.current);
@@ -317,12 +360,17 @@ export function ViewerCanvas({
       // reviewing. Both sprites are at (0,0) and identical aspect for any
       // properly captured run.
       const fitSource = candidateSprite ?? baselineSprite ?? overlaySprite;
+      const initialView = (() => {
+        const s = useViewerStore.getState();
+        return { zoom: s.zoom, panX: s.panX, panY: s.panY };
+      })();
       if (fitSource) {
         fitWorldToCanvas(
           app,
           world,
           fitSource.texture.width,
           fitSource.texture.height,
+          initialView,
         );
       }
 
@@ -340,10 +388,17 @@ export function ViewerCanvas({
       // so the layer doesn't briefly render on an unfit world.
       singleWorldRef.current = world;
       singleAppRef.current = app;
+      if (stageRef.current) {
+        detachCtrl = attachCanvasViewControl(stageRef.current);
+      }
 
+      const currentView = () => {
+        const s = useViewerStore.getState();
+        return { zoom: s.zoom, panX: s.panX, panY: s.panY };
+      };
       if (stageRef.current) {
         ro = new ResizeObserver(() => {
-          if (cancelled || app.renderer === null) return;
+          if (cancelled || !app.renderer) return;
           const { w, h } = hostSize(stageRef.current);
           app.renderer.resize(w, h);
           const refit = candidateSpriteRef.current ?? baselineSpriteRef.current;
@@ -353,6 +408,7 @@ export function ViewerCanvas({
               world,
               refit.texture.width,
               refit.texture.height,
+              currentView(),
             );
           }
         });
@@ -368,6 +424,7 @@ export function ViewerCanvas({
       cancelled = true;
       ac.abort();
       ro?.disconnect();
+      detachCtrl?.();
       singleAppRef.current = null;
       singleWorldRef.current = null;
       candidateSpriteRef.current = null;
@@ -390,6 +447,31 @@ export function ViewerCanvas({
     if (!candidate) return;
     candidate.alpha = opacity;
   }, [mode, opacity]);
+
+  // Reactive zoom + pan: re-apply the world transform on every store
+  // change. Cheap (one matrix update per pane); refs that haven't been
+  // populated yet are skipped by applyViewToPane.
+  useEffect(() => {
+    const view = { zoom, panX, panY };
+    applyViewToPane(
+      baselineAppRef.current,
+      baselineWorldRef.current,
+      baselineSpriteRef.current,
+      view,
+    );
+    applyViewToPane(
+      candidateAppRef.current,
+      candidateWorldRef.current,
+      candidateSpriteRef.current,
+      view,
+    );
+    applyViewToPane(
+      singleAppRef.current,
+      singleWorldRef.current,
+      candidateSpriteRef.current ?? baselineSpriteRef.current,
+      view,
+    );
+  }, [zoom, panX, panY, mode, baselineUrl, candidateUrl, diffOverlayUrl]);
 
   // Remount the IgnoreRegionLayer whenever the store data or edit scope
   // changes. The layer is cheap to construct (one Graphics per region).
@@ -466,6 +548,10 @@ export function ViewerCanvas({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
+    // Non-primary buttons (middle = 1, right = 2) belong to the canvas
+    // view-control listener (pan / context-menu suppression). Only
+    // primary button is drag-draw.
+    if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;
     setDragStart(pt);
@@ -482,6 +568,7 @@ export function ViewerCanvas({
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive || !dragStart) return;
+    if (e.button !== 0) return;
     const pt = toImage(e) ?? dragCurrent;
     setDragStart(null);
     setDragCurrent(null);
