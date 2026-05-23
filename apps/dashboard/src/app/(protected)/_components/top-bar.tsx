@@ -39,6 +39,7 @@ export function TopBar() {
           type="button"
           disabled
           aria-disabled
+          aria-label="Notifications (coming soon)"
           title="Notifications coming soon"
           className="p-2 rounded-md text-zinc-600 opacity-50 cursor-not-allowed"
           data-testid="top-bar-bell"

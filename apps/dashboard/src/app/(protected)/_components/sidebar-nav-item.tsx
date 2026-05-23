@@ -24,7 +24,7 @@ export function SidebarNavItem({ icon: Icon, label, href }: Props) {
   return (
     <Link
       href={href}
-      data-testid={`sidebar-nav-${href.replace(/\//g, "-")}`}
+      data-testid={`sidebar-nav-${href.replace(/^\//, "").replace(/\//g, "-")}`}
       className={cn(
         "relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
         isActive
