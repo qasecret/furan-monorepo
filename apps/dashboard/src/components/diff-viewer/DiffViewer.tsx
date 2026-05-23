@@ -157,17 +157,20 @@ export function DiffViewer({ runId, diffId }: Props) {
   // ignore-edit mode AND the screenshot row has a key. Old runs that
   // predate PR #61 carry `elementMapKey === null`; the hook treats
   // null as "idle" so the proxy is never hit.
-  const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const proposePendingSnap = useViewerStore((s) => s.proposePendingSnap);
   const elementMapKey =
     (candidateScreenshot as { elementMapKey?: string | null } | null)
       ?.elementMapKey ?? null;
-  const enableElementMap = ignoreEditMode !== "off" && Boolean(elementMapKey);
-  const { map: elementMap } = useElementMap(
-    enableElementMap ? elementMapKey : null,
-  );
+  // Load the element map eagerly whenever a sidecar exists for the
+  // candidate. Previously gated on `ignoreEditMode !== "off"`, but the
+  // toolbar's "Pick element" affordance needs to know up front whether
+  // the picker is available — otherwise the user enters edit mode, the
+  // button is briefly disabled while the fetch races, then flips
+  // enabled. The sidecar is small + browser-cached via the proxy's
+  // Cache-Control header, so the unconditional fetch is cheap.
+  const { map: elementMap } = useElementMap(elementMapKey);
 
   // Propose a smallest-containing-element snap for every fresh draft.
   // Idempotent via `pendingSnaps.has(draft.id)`; skipping drafts that
@@ -236,6 +239,7 @@ export function DiffViewer({ runId, diffId }: Props) {
               (data as { diffThresholdOverride?: number | null })
                 ?.diffThresholdOverride ?? null
             }
+            hasElementMap={!!elementMap}
           />
           <div className="flex items-center gap-2 px-3 py-2 border-b">
             <BaselineSourceBadge source={baselineSource} />
@@ -257,6 +261,7 @@ export function DiffViewer({ runId, diffId }: Props) {
                 candidateUrl={candidateUrl}
                 diffOverlayUrl={diffOverlayUrl}
                 regions={regions}
+                elementMap={elementMap ?? null}
               />
             </div>
             <RegionListPanel regions={regions} />

@@ -7,10 +7,12 @@ import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
+import { findSmallestElementAtPoint } from "./snap-to-element";
 import {
   applyViewToPane,
   attachCanvasViewControl,
 } from "./useCanvasViewControl";
+import type { ElementBbox, ElementMap } from "./useElementMap";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
 import {
   useViewerStore,
@@ -24,6 +26,15 @@ interface Props {
   candidateUrl: string | null;
   diffOverlayUrl: string | null;
   regions: DiffRegion[];
+  /**
+   * Element-map sidecar for the candidate screenshot (PR #61). When
+   * present AND the user is in `regionInputMode === "pick"`, the
+   * canvas resolves the cursor to the smallest containing element on
+   * hover + creates a draft region at that element's bbox on click.
+   * `null` when the sidecar is missing — the picker silently degrades
+   * to drag-only.
+   */
+  elementMap?: ElementMap | null;
 }
 
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
@@ -70,6 +81,7 @@ export function ViewerCanvas({
   candidateUrl,
   diffOverlayUrl,
   regions,
+  elementMap,
 }: Props) {
   const baselineRef = useRef<HTMLDivElement>(null);
   const candidateRef = useRef<HTMLDivElement>(null);
@@ -117,6 +129,10 @@ export function ViewerCanvas({
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
+  const regionInputMode = useViewerStore((s) => s.regionInputMode);
+  // Hovered element under the cursor in pick mode. Kept as state so the
+  // ignore-region layer re-renders the preview rect on every hover step.
+  const [pickPreview, setPickPreview] = useState<ElementBbox | null>(null);
 
   // Side-by-side: two pixi Applications, one per pane.
   useEffect(() => {
@@ -506,6 +522,10 @@ export function ViewerCanvas({
       selectedIgnoreId,
       viewport,
       onSelect: (id) => setSelectedIgnoreId(id),
+      pickPreviewBbox:
+        regionInputMode === "pick" && ignoreEditMode !== "off"
+          ? pickPreview
+          : null,
     });
     regionLayerRef.current = layer;
     return () => {
@@ -515,6 +535,8 @@ export function ViewerCanvas({
   }, [
     mode,
     ignoreEditMode,
+    regionInputMode,
+    pickPreview,
     savedRunIgnoreAreas,
     savedVariationIgnoreAreas,
     draftIgnoreAreas,
@@ -546,12 +568,16 @@ export function ViewerCanvas({
 
   const overlayActive = ignoreEditMode !== "off";
 
+  const pickModeActive =
+    overlayActive && regionInputMode === "pick" && !!elementMap;
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
     // Non-primary buttons (middle = 1, right = 2) belong to the canvas
     // view-control listener (pan / context-menu suppression). Only
     // primary button is drag-draw.
     if (e.button !== 0) return;
+    if (pickModeActive) return; // pick fires on pointerup, not down
     const pt = toImage(e);
     if (!pt) return;
     setDragStart(pt);
@@ -560,15 +586,63 @@ export function ViewerCanvas({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!overlayActive || !dragStart) return;
+    if (!overlayActive) return;
+    if (pickModeActive) {
+      const pt = toImage(e);
+      if (!pt) {
+        if (pickPreview) setPickPreview(null);
+        return;
+      }
+      const hit = findSmallestElementAtPoint(pt, elementMap.elements);
+      // Only push state when the hovered bbox changes, to keep the
+      // IgnoreRegionLayer remount effect from re-running on every
+      // sub-pixel mouse step.
+      if (!hit) {
+        if (pickPreview) setPickPreview(null);
+        return;
+      }
+      const same =
+        pickPreview &&
+        pickPreview.x === hit.bbox.x &&
+        pickPreview.y === hit.bbox.y &&
+        pickPreview.width === hit.bbox.width &&
+        pickPreview.height === hit.bbox.height;
+      if (!same) setPickPreview(hit.bbox);
+      return;
+    }
+    if (!dragStart) return;
     const pt = toImage(e);
     if (!pt) return;
     setDragCurrent(pt);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!overlayActive || !dragStart) return;
+    if (!overlayActive) return;
     if (e.button !== 0) return;
+    if (pickModeActive) {
+      const pt = toImage(e);
+      if (!pt) return;
+      const hit = findSmallestElementAtPoint(pt, elementMap.elements);
+      if (!hit) return; // click missed every element — no-op
+      const draft: DraftIgnoreArea = {
+        id: crypto.randomUUID(),
+        x: hit.bbox.x,
+        y: hit.bbox.y,
+        width: hit.bbox.width,
+        height: hit.bbox.height,
+        viewport,
+        paddingPx: 0,
+        kind: "ignore",
+        // Pre-set the selector so the region anchors to the element
+        // immediately — the pick path is a stronger expression of
+        // intent than the post-drag snap suggestion.
+        selector: hit.selector,
+      };
+      addDraftRegion(draft);
+      setPickPreview(null);
+      return;
+    }
+    if (!dragStart) return;
     const pt = toImage(e) ?? dragCurrent;
     setDragStart(null);
     setDragCurrent(null);
@@ -610,6 +684,11 @@ export function ViewerCanvas({
     if (!overlayActive) return;
     setDragStart(null);
     setDragCurrent(null);
+    if (pickPreview) setPickPreview(null);
+  };
+
+  const handlePointerLeave = (_e: React.PointerEvent<HTMLDivElement>) => {
+    if (pickPreview) setPickPreview(null);
   };
 
   // Container layout: the pane wrapper is given an explicit min height so
@@ -639,12 +718,16 @@ export function ViewerCanvas({
           >
             {overlayActive && (
               <div
-                className="absolute inset-0 cursor-crosshair"
+                className={`absolute inset-0 ${
+                  pickModeActive ? "cursor-pointer" : "cursor-crosshair"
+                }`}
                 data-testid="ignore-region-overlay"
+                data-input-mode={regionInputMode}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerCancel}
+                onPointerLeave={handlePointerLeave}
               />
             )}
           </div>
@@ -663,12 +746,16 @@ export function ViewerCanvas({
       >
         {overlayActive && (
           <div
-            className="absolute inset-0 cursor-crosshair"
+            className={`absolute inset-0 ${
+              pickModeActive ? "cursor-pointer" : "cursor-crosshair"
+            }`}
             data-testid="ignore-region-overlay"
+            data-input-mode={regionInputMode}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerCancel}
+            onPointerLeave={handlePointerLeave}
           />
         )}
       </div>

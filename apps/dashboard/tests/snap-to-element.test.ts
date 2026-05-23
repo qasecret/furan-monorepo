@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { findSmallestContainingElement } from "../src/components/diff-viewer/snap-to-element";
+import {
+  findSmallestContainingElement,
+  findSmallestElementAtPoint,
+} from "../src/components/diff-viewer/snap-to-element";
 
 describe("findSmallestContainingElement", () => {
   it("returns the smallest element that fully contains the draft", () => {
@@ -50,5 +53,45 @@ describe("findSmallestContainingElement", () => {
   it("returns null on empty element map", () => {
     const draft = { x: 10, y: 10, width: 50, height: 50 };
     expect(findSmallestContainingElement(draft, {})).toBeNull();
+  });
+});
+
+describe("findSmallestElementAtPoint", () => {
+  const elements = {
+    "html > body": { x: 0, y: 0, width: 1280, height: 720 },
+    "#hero": { x: 0, y: 0, width: 600, height: 300 },
+    "#hero .cta": { x: 50, y: 50, width: 100, height: 40 },
+    "#footer": { x: 0, y: 700, width: 1280, height: 20 },
+  };
+
+  it("returns the smallest element containing the point", () => {
+    const hit = findSmallestElementAtPoint({ x: 75, y: 70 }, elements);
+    expect(hit?.selector).toBe("#hero .cta");
+  });
+
+  it("falls through to the next-smallest when the point misses the deepest", () => {
+    const hit = findSmallestElementAtPoint({ x: 200, y: 100 }, elements);
+    expect(hit?.selector).toBe("#hero");
+  });
+
+  it("returns the only candidate when the point is outside #hero", () => {
+    const hit = findSmallestElementAtPoint({ x: 800, y: 400 }, elements);
+    expect(hit?.selector).toBe("html > body");
+  });
+
+  it("returns null when no element contains the point", () => {
+    const hit = findSmallestElementAtPoint({ x: 2000, y: 100 }, elements);
+    expect(hit).toBeNull();
+  });
+
+  it("treats bbox edges as inclusive (point on the boundary still hits)", () => {
+    // Point at (50,50) is the top-left corner of `#hero .cta` and inside #hero.
+    // We expect the smaller element to win.
+    const hit = findSmallestElementAtPoint({ x: 50, y: 50 }, elements);
+    expect(hit?.selector).toBe("#hero .cta");
+  });
+
+  it("returns null on empty element map", () => {
+    expect(findSmallestElementAtPoint({ x: 10, y: 10 }, {})).toBeNull();
   });
 });

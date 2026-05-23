@@ -65,6 +65,13 @@ interface Props {
   };
   /** Per-run override of the project's diff threshold (0-1, or null = inherit). */
   runDiffThresholdOverride?: number | null;
+  /**
+   * Whether the run's candidate screenshot has an element-map sidecar
+   * captured. When false, the "Pick element" input toggle is disabled
+   * with an explanatory title — the picker depends on the SDK's
+   * PR-#61 element map.
+   */
+  hasElementMap?: boolean;
 }
 
 export function ViewerToolbar({
@@ -72,6 +79,7 @@ export function ViewerToolbar({
   projectId = "",
   project,
   runDiffThresholdOverride = null,
+  hasElementMap = false,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
@@ -84,6 +92,8 @@ export function ViewerToolbar({
 
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const setIgnoreEditMode = useViewerStore((s) => s.setIgnoreEditMode);
+  const regionInputMode = useViewerStore((s) => s.regionInputMode);
+  const setRegionInputMode = useViewerStore((s) => s.setRegionInputMode);
   const savedRunIgnoreAreas = useViewerStore((s) => s.savedRunIgnoreAreas);
   const savedVariationIgnoreAreas = useViewerStore(
     (s) => s.savedVariationIgnoreAreas,
@@ -358,6 +368,37 @@ export function ViewerToolbar({
 
       {editing && (
         <>
+          <div
+            className="flex items-center gap-1"
+            data-testid="region-input-mode-toggle"
+            aria-label="Region input mode"
+          >
+            <Button
+              type="button"
+              variant={regionInputMode === "drag" ? "default" : "secondary"}
+              className="h-7 px-2 text-xs"
+              data-testid="region-input-mode-drag"
+              onClick={() => setRegionInputMode("drag")}
+              title="Drag a rectangle on the canvas"
+            >
+              Drag
+            </Button>
+            <Button
+              type="button"
+              variant={regionInputMode === "pick" ? "default" : "secondary"}
+              className="h-7 px-2 text-xs"
+              data-testid="region-input-mode-pick"
+              disabled={!hasElementMap}
+              onClick={() => setRegionInputMode("pick")}
+              title={
+                hasElementMap
+                  ? "Click an element to capture its bbox as a region"
+                  : "Element picker requires an element-map sidecar (SDK PR #61). Older runs are drag-only."
+              }
+            >
+              Pick element
+            </Button>
+          </div>
           <Button
             type="button"
             variant="default"
