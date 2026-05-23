@@ -18,36 +18,85 @@ import type {
  * become a UX requirement, we'd implement them by drawing segmented
  * line pieces.)
  */
+/**
+ * Per-kind color palette. One entry per `RegionKind`. Colors chosen for
+ * visibility over varied screenshot content and rough conventional mapping:
+ *   ignore       → red    (loud "skip this")
+ *   dynamic-text → purple (existing, conditional mask)
+ *   strict       → green  (positive constraint, "must match")
+ *   layout       → blue   (structural intent)
+ *   content      → orange (text/value intent)
+ *
+ * Saved-active = solid fill + 2px stroke; draft = no fill + 2px stroke
+ * (same kind color, used for the dashed-looking unsaved state). Selected
+ * regions use a 4px stroke regardless. Inactive-scope regions render gray
+ * across all kinds — the gray IS the "you can't edit me here" signal,
+ * not the kind.
+ */
+type StyleEntry = {
+  fill: number;
+  fillAlpha: number;
+  stroke: number;
+  strokeWidth: number;
+};
+type KindStyle = { saved: StyleEntry; draft: StyleEntry };
+const KIND_STYLES: Record<
+  "ignore" | "dynamic-text" | "strict" | "layout" | "content",
+  KindStyle
+> = {
+  ignore: {
+    saved: {
+      fill: 0xff0000,
+      fillAlpha: 0.18,
+      stroke: 0xcc0000,
+      strokeWidth: 2,
+    },
+    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xffcc00, strokeWidth: 2 },
+  },
+  "dynamic-text": {
+    saved: {
+      fill: 0x9333ea,
+      fillAlpha: 0.15,
+      stroke: 0x7e22ce,
+      strokeWidth: 2,
+    },
+    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xa855f7, strokeWidth: 2 },
+  },
+  strict: {
+    saved: {
+      fill: 0x16a34a,
+      fillAlpha: 0.12,
+      stroke: 0x15803d,
+      strokeWidth: 2,
+    },
+    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0x22c55e, strokeWidth: 2 },
+  },
+  layout: {
+    saved: {
+      fill: 0x2563eb,
+      fillAlpha: 0.13,
+      stroke: 0x1d4ed8,
+      strokeWidth: 2,
+    },
+    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0x3b82f6, strokeWidth: 2 },
+  },
+  content: {
+    saved: {
+      fill: 0xea580c,
+      fillAlpha: 0.14,
+      stroke: 0xc2410c,
+      strokeWidth: 2,
+    },
+    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xf97316, strokeWidth: 2 },
+  },
+};
+
 const STYLE = {
-  savedActive: {
-    fill: 0xff0000,
-    fillAlpha: 0.18,
-    stroke: 0xcc0000,
-    strokeWidth: 2,
-  },
-  /** Purple variant of savedActive used for `kind: "dynamic-text"` regions
-   * so reviewers can visually distinguish ignore from dynamic-text regions
-   * at a glance. */
-  savedActiveDynamicText: {
-    fill: 0x9333ea,
-    fillAlpha: 0.15,
-    stroke: 0x7e22ce,
-    strokeWidth: 2,
-  },
   savedInactive: {
     fill: 0x666666,
     fillAlpha: 0.12,
     stroke: 0x666666,
     strokeWidth: 1,
-  },
-  draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xffcc00, strokeWidth: 2 },
-  /** Purple-stroke draft for dynamic-text. Same alpha/fill as `draft` but
-   * stroke color is the lighter purple from the saved variant. */
-  draftDynamicText: {
-    fill: 0x000000,
-    fillAlpha: 0,
-    stroke: 0xa855f7,
-    strokeWidth: 2,
   },
 } as const;
 
@@ -123,7 +172,7 @@ export function mountIgnoreRegionLayer(
 
   const viewportMatches = (rv: string): boolean => !rv || rv === input.viewport;
 
-  // Active scope's saved regions: red. Selectable when editing.
+  // Active scope's saved regions: kind-colored. Selectable when editing.
   const activeSaved =
     input.editMode === "variation"
       ? input.savedVariationIgnoreAreas
@@ -138,10 +187,7 @@ export function mountIgnoreRegionLayer(
       height: r.height,
       paddingPx: r.paddingPx ?? 0,
       kind: r.kind,
-      style:
-        r.kind === "dynamic-text"
-          ? STYLE.savedActiveDynamicText
-          : STYLE.savedActive,
+      style: KIND_STYLES[r.kind].saved,
       selectable: input.editMode !== "off",
       marked: input.markedForDeletion.has(r.id),
     });
@@ -184,10 +230,7 @@ export function mountIgnoreRegionLayer(
         height: r.height,
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind,
-        style:
-          r.kind === "dynamic-text"
-            ? STYLE.savedActiveDynamicText
-            : STYLE.savedActive,
+        style: KIND_STYLES[r.kind].saved,
         selectable: false,
         marked: false,
       });
@@ -205,7 +248,7 @@ export function mountIgnoreRegionLayer(
         height: r.height,
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind,
-        style: r.kind === "dynamic-text" ? STYLE.draftDynamicText : STYLE.draft,
+        style: KIND_STYLES[r.kind].draft,
         selectable: true,
         marked: false,
       });

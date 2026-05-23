@@ -305,9 +305,43 @@ export const runsRouter = t.router({
                 height: z.number().int().min(1),
                 viewport: z.string().min(1).max(32),
                 paddingPx: z.number().int().min(0).max(32).default(0),
-                kind: z.enum(["ignore", "dynamic-text"]).default("ignore"),
+                /**
+                 * Match mode (Applitools-aligned):
+                 * - `ignore`: skip the region entirely (mask in L1, ignored in L2).
+                 * - `dynamic-text`: mask in L1 only when OCR'd text matches `pattern`.
+                 * - `strict`: don't mask; region is informational. When
+                 *   `thresholdOverride` is set, the engine will (TODO)
+                 *   apply that tighter threshold locally. Until the
+                 *   engine work lands, strict regions are pure metadata —
+                 *   useful as visual review markers ("this area MUST
+                 *   match"). See furan-design/specs/2026-05-23-region-modes-design.md.
+                 * - `layout`: mask the region in L1 (suppresses pixel
+                 *   diff inside). v1 ships the masking + visual marker;
+                 *   L2-side layout-only classification is engine work
+                 *   tracked in the same design doc.
+                 * - `content`: same v1 behavior as layout — mask in L1,
+                 *   stored as a distinct kind so the future L2 text-
+                 *   content compare wires up without a wire-shape change.
+                 */
+                kind: z
+                  .enum([
+                    "ignore",
+                    "dynamic-text",
+                    "strict",
+                    "layout",
+                    "content",
+                  ])
+                  .default("ignore"),
                 pattern: z.string().min(1).max(500).optional(),
                 selector: z.string().min(1).max(500).optional(),
+                /**
+                 * Optional per-region threshold override for `kind: "strict"`,
+                 * matching the units of `projects.diffThreshold` (0..1).
+                 * Stored on the region but not yet honored by the engine —
+                 * see design doc. Rejected for non-strict kinds so callers
+                 * can't accidentally smuggle it onto an ignore region.
+                 */
+                thresholdOverride: z.number().min(0).max(1).optional(),
               })
               .refine(
                 (r) =>
@@ -326,6 +360,17 @@ export const runsRouter = t.router({
                       path: ["pattern"],
                     });
                   }
+                }
+                // thresholdOverride is only meaningful for strict regions.
+                // Smuggling it onto an ignore region would silently mask
+                // intent (e.g., "I wanted this to fail if any pixel differs"
+                // becomes "I ignored this entirely") — reject up front.
+                if (r.thresholdOverride !== undefined && r.kind !== "strict") {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `thresholdOverride is only valid for kind="strict" (got "${r.kind}")`,
+                    path: ["thresholdOverride"],
+                  });
                 }
               }),
           )
