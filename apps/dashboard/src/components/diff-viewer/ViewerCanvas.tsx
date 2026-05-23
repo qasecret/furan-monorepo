@@ -92,6 +92,13 @@ export function ViewerCanvas({
     const baselineApp = new Application();
     const candidateApp = new Application();
     let cancelled = false;
+    // AbortController so an in-flight mountImageLayer fetch/decode can be
+    // dropped on effect re-run. Previously the mounts were sequential and
+    // ran without cancellation; a re-run while the candidate fetch was
+    // still pending would let the OLD candidate sprite eventually attach
+    // to the destroyed candidateApp (silently orphaned), and the candidate
+    // pane would render empty even though the NEW effect ran cleanly.
+    const ac = new AbortController();
 
     (async () => {
       await baselineApp.init({
@@ -108,26 +115,35 @@ export function ViewerCanvas({
       baselineRef.current?.appendChild(baselineApp.canvas);
       candidateRef.current?.appendChild(candidateApp.canvas);
 
-      if (baselineUrl) {
-        baselineSpriteRef.current = await mountImageLayer(
-          baselineApp,
-          baselineUrl,
-        );
-      }
-      if (candidateUrl) {
-        candidateSpriteRef.current = await mountImageLayer(
-          candidateApp,
-          candidateUrl,
-        );
-      }
+      // Parallelize: a slow baseline fetch must not block the candidate
+      // pane from rendering. Promise.all keeps both panes symmetric on
+      // re-run (abort cancels both at once instead of one mid-attach).
+      const [baselineSprite, candidateSprite] = await Promise.all([
+        baselineUrl
+          ? mountImageLayer(baselineApp, baselineUrl, ac.signal)
+          : Promise.resolve(null),
+        candidateUrl
+          ? mountImageLayer(candidateApp, candidateUrl, ac.signal)
+          : Promise.resolve(null),
+      ]);
+      if (cancelled) return;
+      baselineSpriteRef.current = baselineSprite;
+      candidateSpriteRef.current = candidateSprite;
       // IgnoreRegionLayer mount effect uses candidateAppRef.current — only set
       // it after the candidate sprite has mounted so the layer doesn't briefly
       // render on an empty stage during init.
       candidateAppRef.current = candidateApp;
-    })();
+    })().catch((err) => {
+      // mountImageLayer's AbortError on effect re-run is expected; don't
+      // log it. Real failures still surface.
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        console.warn("side-by-side mount failed", err);
+      }
+    });
 
     return () => {
       cancelled = true;
+      ac.abort();
       candidateAppRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
@@ -160,6 +176,7 @@ export function ViewerCanvas({
     if (mode === "side-by-side") return;
     const app = new Application();
     let cancelled = false;
+    const ac = new AbortController();
 
     (async () => {
       await app.init({
@@ -170,21 +187,27 @@ export function ViewerCanvas({
       if (cancelled) return;
       stageRef.current?.appendChild(app.canvas);
 
-      if (baselineUrl) {
-        baselineSpriteRef.current = await mountImageLayer(app, baselineUrl);
-      }
-      if (candidateUrl) {
-        candidateSpriteRef.current = await mountImageLayer(app, candidateUrl);
-      }
+      // Parallelize the three loads — symmetric abort on re-run, no
+      // sequential head-of-line blocking on a slow image.
+      const [baselineSprite, candidateSprite, overlaySprite] =
+        await Promise.all([
+          baselineUrl
+            ? mountImageLayer(app, baselineUrl, ac.signal)
+            : Promise.resolve(null),
+          candidateUrl
+            ? mountImageLayer(app, candidateUrl, ac.signal)
+            : Promise.resolve(null),
+          mode === "diff-heatmap" && diffOverlayUrl
+            ? mountImageLayer(app, diffOverlayUrl, ac.signal)
+            : Promise.resolve(null),
+        ]);
+      if (cancelled) return;
+      baselineSpriteRef.current = baselineSprite;
+      candidateSpriteRef.current = candidateSprite;
+      if (overlaySprite) overlaySprite.alpha = 0.6;
 
-      if (mode === "diff-heatmap") {
-        if (diffOverlayUrl) {
-          const overlaySprite = await mountImageLayer(app, diffOverlayUrl);
-          overlaySprite.alpha = 0.6;
-        }
-        if (regions.length > 0) {
-          mountDiffOverlayLayer(app, regions);
-        }
+      if (mode === "diff-heatmap" && regions.length > 0) {
+        mountDiffOverlayLayer(app, regions);
       }
 
       if (
@@ -197,10 +220,15 @@ export function ViewerCanvas({
       // it after all mountImageLayer calls (including the diff-heatmap branch)
       // so the layer doesn't briefly render on an empty stage during init.
       singleAppRef.current = app;
-    })();
+    })().catch((err) => {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        console.warn("single-stage mount failed", err);
+      }
+    });
 
     return () => {
       cancelled = true;
+      ac.abort();
       singleAppRef.current = null;
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;

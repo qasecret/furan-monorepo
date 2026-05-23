@@ -24,8 +24,9 @@ import { type Application, Sprite, Texture } from "pixi.js";
 export async function mountImageLayer(
   app: Application,
   imageUrl: string,
-): Promise<Sprite> {
-  const res = await fetch(imageUrl, { credentials: "include" });
+  signal?: AbortSignal,
+): Promise<Sprite | null> {
+  const res = await fetch(imageUrl, { credentials: "include", signal });
   if (!res.ok) {
     throw new Error(
       `mountImageLayer: ${imageUrl} -> ${res.status} ${res.statusText}`,
@@ -40,7 +41,19 @@ export async function mountImageLayer(
       img.onload = () => resolve();
       img.onerror = () =>
         reject(new Error(`mountImageLayer: decode failed for ${imageUrl}`));
+      // Abort wins over the image decode.
+      signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
     });
+    // Re-check after the await chain finishes: if the effect cleanup
+    // ran while we were decoding, the Application's stage may be
+    // destroyed. Attaching a sprite to a destroyed stage either throws
+    // or silently orphans the sprite (so the new effect's sprite paints
+    // over an empty canvas). Bail before touching app.*.
+    if (signal?.aborted) return null;
     const texture = Texture.from(img);
     const sprite = new Sprite(texture);
     sprite.width = app.screen.width;
