@@ -1,8 +1,12 @@
-import { type Application, Sprite, Texture } from "pixi.js";
+import { type Container, Sprite, Texture } from "pixi.js";
 
 /**
- * Load an image from the api's storage proxy and mount it as a sprite on
- * the given pixi Application's stage.
+ * Load an image from the api's storage proxy and mount it as a sprite in
+ * the given pixi Container (typically the per-canvas "world" container —
+ * see ViewerCanvas). The sprite is added at its natural texture size; the
+ * world container's transform handles fit-to-canvas + zoom/pan, so all
+ * overlays that share the parent (regions, diff highlights) automatically
+ * align with the image without each layer doing its own scale math.
  *
  * Why not just `Assets.load(imageUrl)`?
  *  1. Pixi 8 picks its loader by URL extension; our storage URLs are
@@ -22,7 +26,7 @@ import { type Application, Sprite, Texture } from "pixi.js";
  * 8's destroy chain on `_cancelResize`).
  */
 export async function mountImageLayer(
-  app: Application,
+  parent: Container,
   imageUrl: string,
   signal?: AbortSignal,
 ): Promise<Sprite | null> {
@@ -49,16 +53,15 @@ export async function mountImageLayer(
       );
     });
     // Re-check after the await chain finishes: if the effect cleanup
-    // ran while we were decoding, the Application's stage may be
-    // destroyed. Attaching a sprite to a destroyed stage either throws
-    // or silently orphans the sprite (so the new effect's sprite paints
-    // over an empty canvas). Bail before touching app.*.
+    // ran while we were decoding, the parent container may be destroyed.
+    // Attaching to a destroyed parent either throws or silently orphans
+    // the sprite. Bail before touching it.
     if (signal?.aborted) return null;
+    if (parent.destroyed) return null;
     const texture = Texture.from(img);
     const sprite = new Sprite(texture);
-    sprite.width = app.screen.width;
-    sprite.height = app.screen.height;
-    app.stage.addChild(sprite);
+    // Natural texture size — the world container owns the scale + offset.
+    parent.addChild(sprite);
     return sprite;
   } finally {
     // Texture has copied the pixels at this point; the blob URL is no

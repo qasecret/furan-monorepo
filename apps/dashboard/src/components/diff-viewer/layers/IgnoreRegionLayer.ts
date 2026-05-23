@@ -1,4 +1,4 @@
-import { type Application, Container, Graphics } from "pixi.js";
+import { type Container as PixiContainer, Container, Graphics } from "pixi.js";
 
 import type {
   DraftIgnoreArea,
@@ -84,7 +84,7 @@ interface MountInput {
  * touching the rest of the stage tree.
  */
 export function mountIgnoreRegionLayer(
-  app: Application,
+  parent: PixiContainer,
   input: MountInput,
 ): Container {
   const container = new Container();
@@ -238,6 +238,6 @@ export function mountIgnoreRegionLayer(
     }
   }
 
-  app.stage.addChild(container);
+  parent.addChild(container);
   return container;
 }
