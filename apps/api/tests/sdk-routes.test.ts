@@ -467,6 +467,81 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // POST /runs/:id/screenshots/base64 — JSON body variant
+  // ---------------------------------------------------------------------------
+
+  test("POST /runs/:id/screenshots/base64 (JSON) inserts row + uploads bytes", async () => {
+    h.diffQueueAdd.mockClear();
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${s.runId}/screenshots/base64`,
+      headers: {
+        Authorization: `Bearer ${s.memberJwt}`,
+        "Content-Type": "application/json",
+      },
+      payload: {
+        pngBase64: TINY_PNG.toString("base64"),
+        name: "checkout-snap-b64",
+        viewport: "800x600",
+        browser: "chromium",
+        domHtml: "<html><body>b64</body></html>",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      imageKey: string;
+      domKey: string | null;
+      runId: string;
+      viewport: string;
+      browser: string;
+    };
+    expect(body.imageKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.domKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.viewport).toBe("800x600");
+
+    // Same imageKey + bytes as the multipart variant would produce — the
+    // helper hashes the decoded bytes, not the wire payload.
+    const storage = createStorage();
+    const fetched = Buffer.from(await storage.get(body.imageKey));
+    expect(fetched.equals(TINY_PNG)).toBe(true);
+
+    // Diff job enqueued — same downstream behavior as multipart.
+    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+      runId: s.runId,
+      projectId: s.projectId,
+    });
+  });
+
+  test("POST /runs/:id/screenshots/base64 rejects empty pngBase64", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${s.runId}/screenshots/base64`,
+      headers: {
+        Authorization: `Bearer ${s.memberJwt}`,
+        "Content-Type": "application/json",
+      },
+      payload: { pngBase64: "" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("POST /runs/:id/screenshots/base64 rejects payload over 50 MB decoded", async () => {
+    // 51 MB of base64-decoded data — `A` repeats encode to 4 chars per 3
+    // bytes, so we need ~51 MB worth of input → ~68 MB base64 string.
+    const oversized = "A".repeat(Math.ceil((51 * 1024 * 1024 * 4) / 3));
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${s.runId}/screenshots/base64`,
+      headers: {
+        Authorization: `Bearer ${s.memberJwt}`,
+        "Content-Type": "application/json",
+      },
+      payload: { pngBase64: oversized },
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
+  // ---------------------------------------------------------------------------
   // POST /_telemetry/sdk
   // ---------------------------------------------------------------------------
 
