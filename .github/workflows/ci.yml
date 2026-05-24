@@ -40,7 +40,7 @@ jobs:
       S3_SECRET_KEY: minio_ci_pw_long_enough # gitleaks:allow
       JWT_SECRET: "ci_jwt_secret_at_least_32_chars_long_for_test" # gitleaks:allow
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
