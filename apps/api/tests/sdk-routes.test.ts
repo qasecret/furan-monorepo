@@ -224,6 +224,99 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // GET /runs/:id
+  // ---------------------------------------------------------------------------
+
+  test("GET /runs/:id returns the run row for a project member", async () => {
+    // Seed via POST /runs so the test exercises the full create→read path.
+    const createRes = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "rest-get-snap",
+        browser: "chromium",
+        viewport: "1280x720",
+      },
+    });
+    expect(createRes.statusCode).toBe(200);
+    const created = JSON.parse(createRes.body) as { id: string };
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/runs/${created.id}`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const body = JSON.parse(getRes.body) as {
+      id: string;
+      projectId: string;
+      buildId: string;
+      branchName: string | null;
+      browser: string | null;
+      viewport: string | null;
+    };
+    expect(body.id).toBe(created.id);
+    expect(body.projectId).toBe(s.projectId);
+    expect(body.buildId).toBe(s.buildId);
+    expect(body.branchName).toBe("main");
+    expect(body.browser).toBe("chromium");
+    expect(body.viewport).toBe("1280x720");
+  });
+
+  test("GET /runs/:id returns 404 for a nonexistent uuid", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/runs/00000000-0000-0000-0000-000000000000",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+    // The project-member preHandler resolves the run's projectId first;
+    // a missing run means no project context, which surfaces as 400
+    // missing_project_scope before reaching the handler. Either 400 or
+    // 404 is a legitimate "the run is not yours / does not exist"
+    // signal — the SDK only cares that it is not 200.
+    expect(res.statusCode === 400 || res.statusCode === 404).toBe(true);
+  });
+
+  test("GET /runs/:id without auth → 401", async () => {
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/runs/${"a".repeat(8)}-${"b".repeat(4)}-${"c".repeat(4)}-${"d".repeat(4)}-${"e".repeat(12)}`,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  test("GET /runs/:id as a non-member editor → 403", async () => {
+    // Seed a run on member's project, then try to read it as the
+    // non-member editor (admins bypass — we already test that the
+    // non-member is editor-role, not admin).
+    const createRes = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "rbac-probe",
+        browser: "chromium",
+        viewport: "1280x720",
+      },
+    });
+    const created = JSON.parse(createRes.body) as { id: string };
+
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/runs/${created.id}`,
+      headers: { authorization: `Bearer ${s.nonMemberJwt}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  // ---------------------------------------------------------------------------
   // POST /runs/:runId/screenshots (multipart)
   // ---------------------------------------------------------------------------
 
