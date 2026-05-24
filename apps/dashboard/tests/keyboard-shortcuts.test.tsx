@@ -69,6 +69,20 @@ describe("useDiffViewerShortcuts", () => {
     expect(onApprove).toHaveBeenCalledOnce();
   });
 
+  it("R invokes onReject", () => {
+    const onReject = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onReject }));
+    act(() => press("R"));
+    expect(onReject).toHaveBeenCalledOnce();
+  });
+
+  it("X is an alias for R — also invokes onReject", () => {
+    const onReject = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onReject }));
+    act(() => press("X"));
+    expect(onReject).toHaveBeenCalledOnce();
+  });
+
   it("] cycles the viewport when viewports are set", () => {
     useViewerStore.setState({ viewport: "1280x720" });
     renderHook(() =>
