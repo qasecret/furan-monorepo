@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
+
 import { MembersTable, type MemberRow } from "./_components/members-table";
 
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Members" };
 
 const MEMBERS_PAGE_TOUR = [
   {

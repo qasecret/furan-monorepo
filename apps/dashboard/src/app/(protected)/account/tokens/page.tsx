@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
+
 import { TokensTable, type TokenRow } from "./_components/tokens-table";
 
 import { PageTour } from "@/components/tour/page-tour";
 import { apiGet } from "@/lib/api-client";
 
+export const metadata: Metadata = { title: "Tokens" };
 export const dynamic = "force-dynamic";
 
 const TOKENS_PAGE_TOUR = [

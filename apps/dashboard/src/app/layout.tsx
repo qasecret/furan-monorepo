@@ -17,8 +17,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Furan",
+  // `template` makes per-page exports prefix the brand: a page exporting
+  // `title: "Runs"` becomes the document title "Runs · Furan". Pages
+  // without their own metadata fall back to the `default` below.
+  title: {
+    default: "Furan",
+    template: "%s · Furan",
+  },
   description: "Visual regression testing for small teams",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

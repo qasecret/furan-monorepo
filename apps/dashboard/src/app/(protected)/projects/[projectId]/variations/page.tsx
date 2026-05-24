@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
@@ -5,6 +6,8 @@ import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Variations" };
 
 const VARIATIONS_PAGE_TOUR = [
   {
