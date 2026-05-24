@@ -45,7 +45,7 @@ export function ProjectTabs({ projectId }: Props) {
             href={t.href}
             data-testid={`project-tab-${t.label.toLowerCase()}`}
             className={cn(
-              "relative inline-flex h-10 items-center justify-center px-3 text-sm font-medium transition-colors focus-visible:outline-none",
+              "relative inline-flex h-10 items-center justify-center px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
               isActive
                 ? "text-brand after:absolute after:inset-x-0 after:bottom-[-1px] after:h-px after:bg-brand"
                 : "text-zinc-400 hover:text-zinc-200",
