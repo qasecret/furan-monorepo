@@ -4,6 +4,7 @@ import {
   desc,
   diffRegions,
   eq,
+  ilike,
   inArray,
   isNull,
   lt,
@@ -143,6 +144,21 @@ const listInput = z.object({
   status: runStatusSchema.array().optional(),
   /** Optional filter to runs under a single build (drill-in from Builds tab). */
   buildId: z.string().uuid().optional(),
+  /**
+   * Exact-match filters on the device/environment columns. The legacy
+   * frontend exposed all of these in its DataGrid filter row; furan kept
+   * branch + status only at launch and is now filling the gap. Empty
+   * string is rejected at the boundary (`.min(1)`) so the "no filter"
+   * state is unambiguously `undefined` rather than `""`. customTags is
+   * ILIKE-substring rather than exact because the column is a comma-
+   * separated free-form bag in legacy usage ("smoke,login,critical")
+   * and exact-match would force the caller to know the full string.
+   */
+  browser: z.string().min(1).max(64).optional(),
+  viewport: z.string().min(1).max(32).optional(),
+  os: z.string().min(1).max(64).optional(),
+  device: z.string().min(1).max(64).optional(),
+  customTags: z.string().min(1).max(255).optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -192,6 +208,25 @@ export const runsRouter = t.router({
       // accidental `status IN ()` that would return zero rows.
       if (input.status && input.status.length > 0) {
         conditions.push(inArray(testRuns.status, input.status));
+      }
+      if (input.browser) {
+        conditions.push(eq(testRuns.browser, input.browser));
+      }
+      if (input.viewport) {
+        conditions.push(eq(testRuns.viewport, input.viewport));
+      }
+      if (input.os) {
+        conditions.push(eq(testRuns.os, input.os));
+      }
+      if (input.device) {
+        conditions.push(eq(testRuns.device, input.device));
+      }
+      if (input.customTags) {
+        // ILIKE substring against the comma-separated bag. Matches the
+        // legacy semantics where customTags is a free-form string the
+        // SDK passes through verbatim (e.g. "smoke,login,critical") and
+        // reviewers want to find any run tagged with one substring.
+        conditions.push(ilike(testRuns.customTags, `%${input.customTags}%`));
       }
 
       const rows = await ctx.db

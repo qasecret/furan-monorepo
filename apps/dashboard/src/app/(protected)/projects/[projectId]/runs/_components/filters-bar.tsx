@@ -30,10 +30,29 @@ const STATUS_OPTIONS: readonly RunStatus[] = [
   "passed",
 ];
 
+/**
+ * Device/environment filter shape — mirrors the runs.list tRPC input on
+ * the backend. All optional, all exact-match except customTags which is
+ * ILIKE-substring (the column is a comma-separated bag in legacy usage).
+ */
+export interface DeviceFilters {
+  browser?: string;
+  viewport?: string;
+  os?: string;
+  device?: string;
+  customTags?: string;
+}
+
 interface Props {
   initialBranch?: string;
   initialStatus?: readonly RunStatus[];
-  onChange: (filters: { branch?: string; status?: RunStatus[] }) => void;
+  initialDevice?: DeviceFilters;
+  onChange: (
+    filters: {
+      branch?: string;
+      status?: RunStatus[];
+    } & DeviceFilters,
+  ) => void;
 }
 
 /**
@@ -88,13 +107,27 @@ function dotClass(status: RunStatus): string {
  * `onChange` (and URL rewrite) on initial render, which would clobber
  * the parent's freshly-initialized filter state.
  */
-export function FiltersBar({ initialBranch, initialStatus, onChange }: Props) {
+export function FiltersBar({
+  initialBranch,
+  initialStatus,
+  initialDevice,
+  onChange,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [branch, setBranch] = useState(initialBranch ?? "");
   const [statuses, setStatuses] = useState<ReadonlySet<RunStatus>>(
     () => new Set(initialStatus ?? []),
   );
+  // Device/environment filters — five plain string fields, each
+  // representing exact-match (except customTags which is ILIKE-
+  // substring server-side). Kept as separate useStates rather than a
+  // single object so each Input is cheap to re-render on keystrokes.
+  const [browser, setBrowser] = useState(initialDevice?.browser ?? "");
+  const [viewport, setViewport] = useState(initialDevice?.viewport ?? "");
+  const [os, setOs] = useState(initialDevice?.os ?? "");
+  const [device, setDevice] = useState(initialDevice?.device ?? "");
+  const [customTags, setCustomTags] = useState(initialDevice?.customTags ?? "");
   const [, startTransition] = useTransition();
   const firstRun = useRef(true);
 
@@ -133,14 +166,30 @@ export function FiltersBar({ initialBranch, initialStatus, onChange }: Props) {
       // so stale URL values get dropped quietly.
       next.delete("status");
       for (const s of orderedStatuses) next.append("status", s);
+      // Single-value device/env params — same set/delete pattern as
+      // branch so empty input clears the URL key cleanly.
+      const writeOne = (key: string, value: string) => {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      };
+      writeOne("browser", browser);
+      writeOne("viewport", viewport);
+      writeOne("os", os);
+      writeOne("device", device);
+      writeOne("customTags", customTags);
       startTransition(() => routerRef.current.replace(`?${next.toString()}`));
       onChangeRef.current({
         branch: branch || undefined,
         status: orderedStatuses.length > 0 ? [...orderedStatuses] : undefined,
+        browser: browser || undefined,
+        viewport: viewport || undefined,
+        os: os || undefined,
+        device: device || undefined,
+        customTags: customTags || undefined,
       });
     }, 300);
     return () => clearTimeout(t);
-  }, [branch, orderedStatuses]);
+  }, [branch, orderedStatuses, browser, viewport, os, device, customTags]);
 
   const toggle = (status: RunStatus) => {
     setStatuses((prev) => {
@@ -162,12 +211,12 @@ export function FiltersBar({ initialBranch, initialStatus, onChange }: Props) {
   }, []);
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <Input
         placeholder="Filter by branch…"
         value={branch}
         onChange={(e) => setBranch(e.target.value)}
-        className="max-w-xs"
+        className="w-48"
         data-testid="branch-filter-input"
       />
       <DropdownMenu>
@@ -204,6 +253,46 @@ export function FiltersBar({ initialBranch, initialStatus, onChange }: Props) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      <Input
+        placeholder="browser"
+        value={browser}
+        onChange={(e) => setBrowser(e.target.value)}
+        className="w-32"
+        aria-label="Filter by browser"
+        data-testid="browser-filter-input"
+      />
+      <Input
+        placeholder="viewport"
+        value={viewport}
+        onChange={(e) => setViewport(e.target.value)}
+        className="w-32"
+        aria-label="Filter by viewport"
+        data-testid="viewport-filter-input"
+      />
+      <Input
+        placeholder="os"
+        value={os}
+        onChange={(e) => setOs(e.target.value)}
+        className="w-28"
+        aria-label="Filter by OS"
+        data-testid="os-filter-input"
+      />
+      <Input
+        placeholder="device"
+        value={device}
+        onChange={(e) => setDevice(e.target.value)}
+        className="w-32"
+        aria-label="Filter by device"
+        data-testid="device-filter-input"
+      />
+      <Input
+        placeholder="tag substring"
+        value={customTags}
+        onChange={(e) => setCustomTags(e.target.value)}
+        className="w-36"
+        aria-label="Filter by custom tag (substring)"
+        data-testid="custom-tags-filter-input"
+      />
     </div>
   );
 }

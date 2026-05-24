@@ -4,7 +4,7 @@ import type { RunStatus } from "@furan/shared-types";
 import { useState } from "react";
 
 import { EmptyRunsCta } from "./empty-runs-cta";
-import { FiltersBar } from "./filters-bar";
+import { FiltersBar, type DeviceFilters } from "./filters-bar";
 import { RunRow } from "./run-row";
 
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,12 @@ interface Props {
    * array both mean "no filter, show all statuses".
    */
   initialStatus?: RunStatus[];
+  /**
+   * Device/environment filter pre-fill from the URL (legacy parity:
+   * browser / viewport / os / device / customTags). Each field is
+   * optional; omitting one means "no filter on this column".
+   */
+  initialDevice?: DeviceFilters;
 }
 
 interface RunItem {
@@ -47,14 +53,26 @@ interface RunItem {
  * so the next useQuery call fetches the following page. Filter changes
  * reset both pieces of state.
  */
-export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
-  const [filters, setFilters] = useState<{
-    branch?: string;
-    status?: RunStatus[];
-  }>({
+export function RunsTable({
+  projectId,
+  initialBranch,
+  initialStatus,
+  initialDevice,
+}: Props) {
+  const [filters, setFilters] = useState<
+    {
+      branch?: string;
+      status?: RunStatus[];
+    } & DeviceFilters
+  >({
     branch: initialBranch,
     status:
       initialStatus && initialStatus.length > 0 ? initialStatus : undefined,
+    browser: initialDevice?.browser,
+    viewport: initialDevice?.viewport,
+    os: initialDevice?.os,
+    device: initialDevice?.device,
+    customTags: initialDevice?.customTags,
   });
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunItem[]>([]);
@@ -68,6 +86,11 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
     // so the wire shape matches the spec semantics and the API's
     // `input.status.length > 0` guard sees consistent inputs.
     status: filters.status,
+    browser: filters.browser,
+    viewport: filters.viewport,
+    os: filters.os,
+    device: filters.device,
+    customTags: filters.customTags,
   });
 
   // Dedupe on id: cursor pagination on a non-strictly-monotonic
@@ -97,10 +120,20 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
     setCursor(data.nextCursor);
   };
 
-  const onFiltersChange = (f: { branch?: string; status?: RunStatus[] }) => {
+  const onFiltersChange = (
+    f: {
+      branch?: string;
+      status?: RunStatus[];
+    } & DeviceFilters,
+  ) => {
     setFilters({
       branch: f.branch,
       status: f.status && f.status.length > 0 ? f.status : undefined,
+      browser: f.browser,
+      viewport: f.viewport,
+      os: f.os,
+      device: f.device,
+      customTags: f.customTags,
     });
     setAccumulated([]);
     setCursor(undefined);
@@ -111,6 +144,7 @@ export function RunsTable({ projectId, initialBranch, initialStatus }: Props) {
       <FiltersBar
         initialBranch={initialBranch}
         initialStatus={initialStatus}
+        initialDevice={initialDevice}
         onChange={onFiltersChange}
       />
       {isLoading && !data ? (
