@@ -286,6 +286,16 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(head!.contentType).toBe("image/png");
     const fetched = Buffer.from(await storage.get(body.imageKey));
     expect(fetched.equals(TINY_PNG)).toBe(true);
+
+    // Verify a diff job was enqueued for the run so the diff-worker
+    // moves it out of `running` status. Before this enqueue landed, the
+    // SDK-only ingest path left every uploaded run hanging in `running`
+    // until a reviewer manually triggered a setIgnoreAreas / threshold
+    // mutation from the dashboard.
+    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+      runId: s.runId,
+      projectId: s.projectId,
+    });
   });
 
   test("POST /runs/:id/screenshots accepts elementMapJson + stores sidecar", async () => {

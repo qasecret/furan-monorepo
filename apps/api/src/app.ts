@@ -44,6 +44,7 @@ declare module "fastify" {
     db: DB;
     telemetry: Telemetry;
     env: Env;
+    diffQueue: DiffQueueProducer;
   }
 }
 
@@ -58,6 +59,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("db", deps.db);
   app.decorate("telemetry", deps.telemetry);
   app.decorate("env", deps.env);
+  app.decorate("diffQueue", deps.diffQueue);
 
   // Generic 5xx body so internal failures don't leak SQL, query params, or
   // stack frames to the client. Fastify's default error handler returns
