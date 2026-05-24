@@ -95,10 +95,41 @@ const MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024;
 const MAX_ELEMENT_MAP_BYTES = 1_000_000;
 
 /**
+ * JSON body shape for the base64 SDK ingest path. Same semantic content
+ * as the multipart variant — PNG + optional DOM + optional element map +
+ * trace fields — but bytes are base64-encoded so the whole payload is a
+ * single JSON object. Matches the predecessor frontend's `POST
+ * /test-runs` shape so SDK scripts porting from the legacy backend don't
+ * need to switch transports.
+ *
+ * Use this path when:
+ *  - your HTTP client / CI image makes multipart awkward (some Node
+ *    runtimes, restrictive proxies, hand-written curl)
+ *  - you're streaming structured data and want a single Content-Type
+ *
+ * The multipart variant remains the recommended path for production
+ * SDK use (no encoding overhead, streamed parsing). Both routes call
+ * the same `persistScreenshot` helper after decoding so behavior stays
+ * identical end-to-end (same storage path, same diff-queue enqueue, same
+ * response shape).
+ */
+export const uploadScreenshotJsonBody = z.object({
+  /** Base64-encoded PNG bytes. ~50 MB raw → ~67 MB encoded. */
+  pngBase64: z.string().min(1),
+  name: z.string().max(255).optional(),
+  viewport: z.string().max(32).optional(),
+  browser: z.string().max(32).optional(),
+  domHtml: z.string().optional(),
+  /** Stringified JSON object — same shape as the multipart field. */
+  elementMapJson: z.string().optional(),
+});
+
+/**
  * SDK-facing REST routes (Task 4 of Phase 4):
- *  - POST /runs                          create a test run
- *  - POST /runs/:runId/screenshots       multipart upload (PNG + optional DOM)
- *  - POST /_telemetry/sdk                anonymous SDK telemetry sink (204)
+ *  - POST /runs                            create a test run
+ *  - POST /runs/:runId/screenshots         multipart upload (PNG + optional DOM)
+ *  - POST /runs/:runId/screenshots/base64  JSON body (base64-encoded PNG)
+ *  - POST /_telemetry/sdk                  anonymous SDK telemetry sink (204)
  *
  * Routes intentionally omit the `/api/v1` URL prefix to align with the
  * established API convention (`/auth/login`, `/projects/:id/builds`, etc).
@@ -112,6 +143,154 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     if (!storageSingleton) storageSingleton = createStorage();
     return storageSingleton;
   };
+
+  /**
+   * Persist a screenshot upload's bytes + sidecars and enqueue a diff job.
+   *
+   * Extracted from the multipart route so the base64 JSON variant can reuse
+   * the same downstream behavior — storage paths, element-map JSON
+   * validation, `(run_id, viewport)` onConflictDoNothing semantics, and
+   * the best-effort diff-queue enqueue from PR #99 all live here, exactly
+   * once.
+   *
+   * Returns the response payload the routes send back; throws on neither
+   * caller-fixable nor caller-recoverable errors (the routes have already
+   * validated `pngBytes` is non-null and the schema; failures inside the
+   * helper are limited to storage/db ones, which surface as 5xx). Queue
+   * failures specifically are caught + logged here (not re-thrown), so a
+   * Redis blip doesn't fail a successfully-persisted upload.
+   */
+  async function persistScreenshot(
+    run: typeof testRuns.$inferSelect,
+    inputs: {
+      pngBytes: Buffer;
+      domHtml: string | null;
+      elementMapRaw: string | null;
+      snapName: string;
+      viewport: string;
+      browser: string;
+    },
+    logger: FastifyRequest["log"],
+  ) {
+    const { pngBytes, domHtml, elementMapRaw, snapName, viewport, browser } =
+      inputs;
+
+    logger.info(
+      {
+        runId: run.id,
+        name: snapName,
+        viewport,
+        browser,
+        bytes: pngBytes.length,
+      },
+      "sdk_screenshot_upload",
+    );
+
+    const imageKey = objectKey(pngBytes);
+    await storage().put(imageKey, pngBytes, "image/png");
+
+    let domKey: string | null = null;
+    if (domHtml) {
+      const domBuf = Buffer.from(domHtml, "utf8");
+      domKey = objectKey(domBuf);
+      await storage().put(domKey, domBuf, "text/html");
+    }
+
+    let elementMapKey: string | null = null;
+    if (elementMapRaw !== null) {
+      if (elementMapRaw.length > MAX_ELEMENT_MAP_BYTES) {
+        logger.warn(
+          { runId: run.id, imageKey, bytes: elementMapRaw.length },
+          "element_map_too_large_dropped",
+        );
+        recordElementMapOutcome(app.telemetry.metrics, "too_large");
+      } else {
+        try {
+          JSON.parse(elementMapRaw);
+          const candidateKey = `${imageKey}.elements.json`;
+          await storage().put(
+            candidateKey,
+            Buffer.from(elementMapRaw, "utf8"),
+            "application/json",
+          );
+          elementMapKey = candidateKey;
+          recordElementMapOutcome(app.telemetry.metrics, "ok");
+        } catch (err) {
+          const outcome =
+            err instanceof SyntaxError ? "invalid_json" : "storage_error";
+          logger.warn({ runId: run.id, imageKey, err }, "element_map_dropped");
+          recordElementMapOutcome(app.telemetry.metrics, outcome);
+        }
+      }
+    }
+
+    let isNewScreenshot = false;
+    const inserted = await withProjectScope(
+      app.db,
+      run.projectId,
+      async (tx) => {
+        const result = await tx
+          .insert(screenshots)
+          .values({
+            runId: run.id,
+            projectId: run.projectId,
+            imageKey,
+            domKey,
+            elementMapKey,
+            viewport,
+            browser,
+          })
+          .onConflictDoNothing({
+            target: [screenshots.runId, screenshots.viewport],
+          })
+          .returning();
+        if (result[0]) {
+          isNewScreenshot = true;
+          return result[0];
+        }
+        const [existing] = await tx
+          .select()
+          .from(screenshots)
+          .where(
+            and(
+              eq(screenshots.runId, run.id),
+              eq(screenshots.viewport, viewport),
+            ),
+          )
+          .limit(1);
+        return existing!;
+      },
+    );
+
+    // PR #99 fix — enqueue the diff job so SDK-uploaded runs leave
+    // `running`. Only enqueue when we actually inserted a new screenshot
+    // (idempotent retries on the same (runId, viewport) skip the work).
+    // Best-effort: queue failures log + return without failing the upload.
+    if (isNewScreenshot) {
+      try {
+        await app.diffQueue.add("diff", {
+          runId: run.id,
+          projectId: run.projectId,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, runId: run.id, projectId: run.projectId },
+          "sdk_upload_diff_enqueue_failed",
+        );
+      }
+    }
+
+    return {
+      id: inserted.id ?? randomUUID(),
+      runId: run.id,
+      projectId: run.projectId,
+      imageKey,
+      domKey,
+      viewport,
+      browser,
+      createdAt: inserted.createdAt ?? null,
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // POST /runs — create a run (project-scoped, write-action)
@@ -298,133 +477,103 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ error: "pngBytes_required" });
       }
 
-      req.log.info(
-        {
-          runId: run.id,
-          name: snapName,
-          viewport,
-          browser,
-          bytes: pngBytes.length,
-        },
-        "sdk_screenshot_upload",
+      const result = await persistScreenshot(
+        run,
+        { pngBytes, domHtml, elementMapRaw, snapName, viewport, browser },
+        req.log,
       );
+      return reply.code(200).send(result);
+    },
+  );
 
-      const imageKey = objectKey(pngBytes);
-      await storage().put(imageKey, pngBytes, "image/png");
+  // ---------------------------------------------------------------------------
+  // POST /runs/:runId/screenshots/base64 — JSON body variant of the
+  // multipart screenshot upload. Same persistence path; the only
+  // difference is wire format.
+  //
+  // Preserves parity with the predecessor frontend's POST /test-runs API,
+  // which accepted base64-encoded image bytes in a JSON body. SDK scripts
+  // porting from that backend can hit this route without switching to
+  // multipart. New SDK clients should prefer the multipart route — it
+  // streams, avoids the ~33% base64 encoding overhead, and uses the same
+  // 50 MB limit configured on @fastify/multipart in app.ts.
+  // ---------------------------------------------------------------------------
+  app.post(
+    "/runs/:runId/screenshots/base64",
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("write", {
+          from: {
+            resolver: async (req: FastifyRequest) => {
+              const parsed = screenshotsParams.safeParse(req.params);
+              if (!parsed.success) return null;
+              const row = await app.db
+                .select({ projectId: testRuns.projectId })
+                .from(testRuns)
+                .where(eq(testRuns.id, parsed.data.runId))
+                .limit(1);
+              return row[0]?.projectId ?? null;
+            },
+          },
+        }),
+      ],
+    },
+    async (req, reply) => {
+      const parsedParams = screenshotsParams.safeParse(req.params);
+      if (!parsedParams.success) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const { runId } = parsedParams.data;
 
-      let domKey: string | null = null;
-      if (domHtml) {
-        const domBuf = Buffer.from(domHtml, "utf8");
-        domKey = objectKey(domBuf);
-        await storage().put(domKey, domBuf, "text/html");
+      const parsedBody = uploadScreenshotJsonBody.safeParse(req.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ error: "invalid_body" });
+      }
+      const body = parsedBody.data;
+
+      const runRows = await app.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) {
+        return reply.code(404).send({ error: "run_not_found" });
       }
 
-      let elementMapKey: string | null = null;
-      if (elementMapRaw !== null) {
-        if (elementMapRaw.length > MAX_ELEMENT_MAP_BYTES) {
-          req.log.warn(
-            { runId: run.id, imageKey, bytes: elementMapRaw.length },
-            "element_map_too_large_dropped",
-          );
-          recordElementMapOutcome(app.telemetry.metrics, "too_large");
-        } else {
-          try {
-            JSON.parse(elementMapRaw);
-            const candidateKey = `${imageKey}.elements.json`;
-            await storage().put(
-              candidateKey,
-              Buffer.from(elementMapRaw, "utf8"),
-              "application/json",
-            );
-            elementMapKey = candidateKey;
-            recordElementMapOutcome(app.telemetry.metrics, "ok");
-          } catch (err) {
-            const outcome =
-              err instanceof SyntaxError ? "invalid_json" : "storage_error";
-            req.log.warn(
-              { runId: run.id, imageKey, err },
-              "element_map_dropped",
-            );
-            recordElementMapOutcome(app.telemetry.metrics, outcome);
-          }
-        }
+      // Decode base64. Node's Buffer.from with "base64" is lenient — it
+      // accepts both standard and URL-safe alphabets and silently drops
+      // whitespace, so we don't need a separate normalization pass. The
+      // decoded length is what we check against the size cap (the upload
+      // can have legal padding bytes that don't count against the real
+      // image size, but our cap is on decoded bytes so this is correct).
+      let pngBytes: Buffer;
+      try {
+        pngBytes = Buffer.from(body.pngBase64, "base64");
+      } catch (err) {
+        req.log.warn({ err, runId }, "base64_decode_failed");
+        return reply.code(400).send({ error: "invalid_base64" });
+      }
+      if (pngBytes.length === 0) {
+        return reply.code(400).send({ error: "pngBase64_empty" });
+      }
+      if (pngBytes.length > MAX_SCREENSHOT_BYTES) {
+        return reply.code(413).send({ error: "payload_too_large" });
       }
 
-      let isNewScreenshot = false;
-      const inserted = await withProjectScope(
-        app.db,
-        run.projectId,
-        async (tx) => {
-          const result = await tx
-            .insert(screenshots)
-            .values({
-              runId: run.id,
-              projectId: run.projectId,
-              imageKey,
-              domKey,
-              elementMapKey,
-              viewport,
-              browser,
-            })
-            .onConflictDoNothing({
-              target: [screenshots.runId, screenshots.viewport],
-            })
-            .returning();
-          if (result[0]) {
-            isNewScreenshot = true;
-            return result[0];
-          }
-          // Conflict: load the existing row so the response reflects reality.
-          const [existing] = await tx
-            .select()
-            .from(screenshots)
-            .where(
-              and(
-                eq(screenshots.runId, run.id),
-                eq(screenshots.viewport, viewport),
-              ),
-            )
-            .limit(1);
-          return existing!;
-        },
+      const snapName = body.name ?? "snapshot";
+      const viewport = body.viewport ?? run.viewport ?? "1280x720";
+      const browser = body.browser ?? run.browser ?? "selenium";
+      const domHtml = body.domHtml ?? null;
+      const elementMapRaw = body.elementMapJson ?? null;
+
+      const result = await persistScreenshot(
+        run,
+        { pngBytes, domHtml, elementMapRaw, snapName, viewport, browser },
+        req.log,
       );
-
-      // Enqueue a diff job for the run so the diff-worker picks it up and
-      // moves the run out of `running` status. Without this, SDK-uploaded
-      // runs sit indefinitely until a reviewer manually triggers the diff
-      // via setIgnoreAreas / setDiffThresholdOverride from the dashboard —
-      // which broke the entire SDK ingest flow end-to-end.
-      //
-      // Only enqueue when this upload actually inserted a new screenshot
-      // (`isNewScreenshot`), so a retried SDK upload of the same
-      // (runId, viewport) doesn't trigger redundant diff work. Best-effort:
-      // a queue failure here logs but does NOT fail the upload — the
-      // screenshot bytes are already persisted, and the SDK can re-upload
-      // (idempotent) or the reviewer can re-trigger from the dashboard.
-      if (isNewScreenshot) {
-        try {
-          await app.diffQueue.add("diff", {
-            runId: run.id,
-            projectId: run.projectId,
-          });
-        } catch (err) {
-          req.log.warn(
-            { err, runId: run.id, projectId: run.projectId },
-            "sdk_upload_diff_enqueue_failed",
-          );
-        }
-      }
-
-      return reply.code(200).send({
-        id: inserted.id ?? randomUUID(),
-        runId: run.id,
-        projectId: run.projectId,
-        imageKey,
-        domKey,
-        viewport,
-        browser,
-        createdAt: inserted.createdAt ?? null,
-      });
+      return reply.code(200).send(result);
     },
   );
 
