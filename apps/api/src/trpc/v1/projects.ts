@@ -2,6 +2,10 @@ import { eq, projects } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import {
+  mergeBranchBaselinesImpl,
+  SameBranchError,
+} from "../../lib/branch-merge.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -101,5 +105,61 @@ export const projectsRouter = t.router({
         .returning();
       if (!updated[0]) throw new TRPCError({ code: "NOT_FOUND" });
       return updated[0];
+    }),
+
+  /**
+   * Cross-branch baseline merge — promote every variation's `fromBranch`
+   * baseline onto `toBranch` as a synthetic test run for reviewer approval.
+   *
+   * Mirrors the legacy `/test-variations/merge` endpoint's behavior: each
+   * variation with a baseline on `fromBranch` produces a `merge=true` test
+   * run on `toBranch` in a shared synthetic build. The diff worker then
+   * runs the standard pipeline — byte-identical sources auto-approve via
+   * ADR-032 and become the new toBranch baseline; divergent sources flip
+   * the synthetic run to `unresolved` for explicit reviewer review.
+   *
+   * Spec: furan-design/specs/2026-05-24-cross-branch-baseline-merge-design.md
+   */
+  mergeBranchBaselines: t.procedure
+    .input(
+      z
+        .object({
+          projectId: z.string().uuid(),
+          fromBranch: z.string().min(1).max(255),
+          toBranch: z.string().min(1).max(255),
+        })
+        .refine((v) => v.fromBranch !== v.toBranch, {
+          message: "same_branch: fromBranch and toBranch must differ",
+          path: ["toBranch"],
+        }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ projectId: string }>("write", {
+        from: {
+          resolver: ({
+            input,
+          }: {
+            input: { projectId: string };
+            ctx: Context;
+          }) => Promise.resolve(input.projectId),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await mergeBranchBaselinesImpl(input, {
+          db: ctx.db,
+          diffQueue: ctx.diffQueue,
+          telemetry: ctx.telemetry,
+          userId: ctx.user?.id ?? null,
+          log: ctx.req.log,
+        });
+      } catch (err) {
+        if (err instanceof SameBranchError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: err.message });
+        }
+        throw err;
+      }
     }),
 });
