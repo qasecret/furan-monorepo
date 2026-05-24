@@ -7,6 +7,7 @@ import { BuildRunsDrawer } from "./build-runs-drawer";
 import { PropertiesFilter } from "./properties-filter";
 
 import { Button } from "@/components/ui/button";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
 
@@ -20,6 +21,11 @@ interface Props {
  * `useInfiniteQuery` so filter-change resets are explicit.
  */
 export function BuildsTable({ projectId }: Props) {
+  // Subscribe to the project SSE channel: build/run create/update/delete
+  // events invalidate the builds + runs list caches so this table refetches
+  // automatically when a CI run lands or a reviewer approves.
+  useProjectEvents(projectId);
+
   const [properties, setProperties] = useState<Record<string, string>>({});
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<BuildRowData[]>([]);

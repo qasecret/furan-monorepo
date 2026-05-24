@@ -8,6 +8,7 @@ import { FiltersBar, type DeviceFilters } from "./filters-bar";
 import { RunRow } from "./run-row";
 
 import { Button } from "@/components/ui/button";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -76,6 +77,11 @@ export function RunsTable({
   });
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunItem[]>([]);
+
+  // Subscribe to the project SSE channel so the table refetches when a
+  // run completes or a reviewer mutation lands. The hook ref-counts a
+  // single EventSource across all mounts on the same projectId.
+  useProjectEvents(projectId);
 
   const { data, isLoading, error } = trpc.runs.list.useQuery({
     projectId,
