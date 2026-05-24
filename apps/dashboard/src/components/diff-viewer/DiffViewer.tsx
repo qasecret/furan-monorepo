@@ -232,19 +232,21 @@ export function DiffViewer({ runId, diffId }: Props) {
         />
       ) : (
         <>
-          <ViewerToolbar
-            runId={runId}
-            projectId={data?.projectId ?? ""}
-            project={{
-              dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
-              diffThreshold: project?.diffThreshold ?? null,
-            }}
-            runDiffThresholdOverride={
-              (data as { diffThresholdOverride?: number | null })
-                ?.diffThresholdOverride ?? null
-            }
-            hasElementMap={!!elementMap}
-          />
+          <div id="diff-viewer-toolbar">
+            <ViewerToolbar
+              runId={runId}
+              projectId={data?.projectId ?? ""}
+              project={{
+                dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
+                diffThreshold: project?.diffThreshold ?? null,
+              }}
+              runDiffThresholdOverride={
+                (data as { diffThresholdOverride?: number | null })
+                  ?.diffThresholdOverride ?? null
+              }
+              hasElementMap={!!elementMap}
+            />
+          </div>
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
             <BaselineSourceBadge source={baselineSource} />
             {data.autoApproved && (
@@ -259,7 +261,7 @@ export function DiffViewer({ runId, diffId }: Props) {
             <ViewportSwitcher viewports={uniqueViewports} />
           </div>
           <div className="flex flex-1 overflow-hidden">
-            <div className="flex-1 overflow-auto">
+            <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
               <ViewerCanvas
                 baselineUrl={baselineUrl}
                 candidateUrl={candidateUrl}
@@ -272,11 +274,13 @@ export function DiffViewer({ runId, diffId }: Props) {
           </div>
         </>
       )}
-      <ApprovalBar
-        runId={runId}
-        status={data?.status}
-        diffRegions={data?.diffRegions}
-      />
+      <div id="diff-viewer-approval">
+        <ApprovalBar
+          runId={runId}
+          status={data?.status}
+          diffRegions={data?.diffRegions}
+        />
+      </div>
       <RunCommentPanel runId={runId} />
     </div>
   );

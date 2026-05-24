@@ -1,7 +1,18 @@
 import { MembersTable, type MemberRow } from "./_components/members-table";
 
+import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+const MEMBERS_PAGE_TOUR = [
+  {
+    target: "#members-table",
+    title: "User management",
+    content:
+      "Admins manage all users from here: create new ones, change roles (admin / editor / guest), or deactivate.",
+    placement: "top" as const,
+  },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +58,7 @@ export default async function MembersPage({
 
   return (
     <div className="space-y-4">
+      <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
       <h1 className="text-2xl font-semibold tracking-tight text-white">
         Members
       </h1>
@@ -54,7 +66,9 @@ export default async function MembersPage({
         Manage user access. Admins can create users, change roles, and
         deactivate accounts.
       </p>
-      <MembersTable initialUsers={members} currentUserId={me.data.id} />
+      <div id="members-table">
+        <MembersTable initialUsers={members} currentUserId={me.data.id} />
+      </div>
     </div>
   );
 }
