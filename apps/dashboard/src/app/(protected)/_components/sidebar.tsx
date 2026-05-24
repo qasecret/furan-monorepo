@@ -4,6 +4,8 @@ import type { ComponentType, SVGProps } from "react";
 import { LogoutButton } from "./logout-button";
 import { SidebarNavItem } from "./sidebar-nav-item";
 
+import { cn } from "@/lib/cn";
+
 interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
@@ -19,6 +21,13 @@ interface Props {
   userRole: "admin" | "editor" | "guest";
   userEmail: string;
   userInitial: string;
+  /**
+   * Outer-`<aside>` className override. AppShell passes `hidden md:flex` so
+   * the desktop sidebar only renders at ≥768px; the mobile drawer mounts
+   * the same Sidebar with no override, letting it render full-height
+   * inside the Radix Dialog Content.
+   */
+  className?: string;
 }
 
 /**
@@ -26,7 +35,12 @@ interface Props {
  * `SidebarNavItem` (it needs usePathname). The Admin section is gated on
  * the server-resolved role so non-admins never see those links in the DOM.
  */
-export function Sidebar({ userRole, userEmail, userInitial }: Props) {
+export function Sidebar({
+  userRole,
+  userEmail,
+  userInitial,
+  className,
+}: Props) {
   const sections: NavSection[] = [
     {
       label: "Workspace",
@@ -54,7 +68,10 @@ export function Sidebar({ userRole, userEmail, userInitial }: Props) {
 
   return (
     <aside
-      className="w-60 border-r border-zinc-800 bg-zinc-950 flex flex-col shrink-0"
+      className={cn(
+        "w-60 border-r border-zinc-800 bg-zinc-950 flex flex-col shrink-0",
+        className,
+      )}
       data-testid="app-sidebar"
     >
       <div className="h-14 flex items-center px-4 border-b border-zinc-800 shrink-0">
