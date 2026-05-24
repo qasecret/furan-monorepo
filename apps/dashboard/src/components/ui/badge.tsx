@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/cn";
 
-type Variant = "default" | "secondary" | "destructive" | "outline";
+type Variant = "default" | "secondary" | "destructive" | "outline" | "success";
 
 interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: Variant;
@@ -13,6 +13,7 @@ const VARIANT_CLASSES: Record<Variant, string> = {
   secondary: "bg-zinc-900/50 text-zinc-400 border border-zinc-800",
   destructive: "bg-red-500/10 text-red-400 border border-red-500/20",
   outline: "border border-zinc-800 text-zinc-400",
+  success: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
 };
 
 export function Badge({

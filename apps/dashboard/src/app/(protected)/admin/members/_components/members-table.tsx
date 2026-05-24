@@ -128,7 +128,7 @@ export function MembersTable({
                   </td>
                   <td className="px-4 py-2.5">
                     {u.isActive ? (
-                      <Badge>Active</Badge>
+                      <Badge variant="success">Active</Badge>
                     ) : (
                       <Badge variant="secondary">Disabled</Badge>
                     )}
