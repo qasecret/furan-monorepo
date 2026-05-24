@@ -55,10 +55,10 @@ function relative(date: string | Date): string {
 export function RunRow({ projectId, run }: Props) {
   return (
     <tr
-      className="border-b last:border-0 hover:bg-accent/40"
+      className="hover:bg-zinc-900/30 transition-colors"
       data-testid={`run-row-${run.id}`}
     >
-      <td className="py-2 pr-2">
+      <td className="px-4 py-2.5">
         <Link
           href={`/projects/${projectId}/runs/${run.id}/diffs/${run.id}`}
           className="hover:underline"
@@ -68,7 +68,7 @@ export function RunRow({ projectId, run }: Props) {
         {run.buildId && (
           <Link
             href={`/projects/${projectId}/builds?expand=${run.buildId}`}
-            className="ml-2 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-200"
+            className="ml-2 inline-flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-900/70 hover:text-white transition-colors"
             data-testid={`run-build-chip-${run.id}`}
           >
             {run.buildName ??
@@ -80,27 +80,25 @@ export function RunRow({ projectId, run }: Props) {
         {run.testVariationId && (
           <Link
             href={`/projects/${projectId}/variations/${run.testVariationId}`}
-            className="ml-2 inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 hover:bg-neutral-200"
+            className="ml-2 inline-flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-900/70 hover:text-white transition-colors"
             data-testid={`run-history-chip-${run.id}`}
           >
             History
           </Link>
         )}
       </td>
-      <td className="py-2 pr-2">
+      <td className="px-4 py-2.5">
         <RunStatusBadge status={run.status} />
       </td>
-      <td className="py-2 pr-2">
+      <td className="px-4 py-2.5">
         {run.diffPercent !== null ? `${run.diffPercent.toFixed(2)}%` : "—"}
       </td>
-      <td className="py-2 pr-2">
+      <td className="px-4 py-2.5">
         {run.pixelMisMatchCount !== null
           ? run.pixelMisMatchCount.toLocaleString()
           : "—"}
       </td>
-      <td className="py-2 pr-2 text-muted-foreground">
-        {relative(run.createdAt)}
-      </td>
+      <td className="px-4 py-2.5 text-zinc-500">{relative(run.createdAt)}</td>
     </tr>
   );
 }

@@ -69,7 +69,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
           data-testid="properties-filter-input"
         />
         {draft && filteredPairs.length > 0 && (
-          <div className="absolute z-10 mt-1 w-full rounded-md border border-neutral-200 bg-white shadow-sm max-h-60 overflow-auto">
+          <div className="absolute z-10 mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 shadow-lg max-h-60 overflow-auto">
             {filteredPairs.slice(0, 20).map((p) => (
               <button
                 key={`${p.key}=${p.value}`}
@@ -77,7 +77,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
                   add(p.key, p.value);
                   setDraft("");
                 }}
-                className="block w-full text-left px-2 py-1 text-sm hover:bg-neutral-100"
+                className="block w-full text-left px-2 py-1 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
                 data-testid={`property-suggestion-${p.key}-${p.value}`}
               >
                 {p.key}={p.value}
@@ -90,7 +90,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
         <button
           type="button"
           onClick={() => onChange({})}
-          className="text-sm text-neutral-600 hover:text-neutral-900 hover:underline px-2 py-1"
+          className="text-sm text-zinc-400 hover:text-white hover:underline px-2 py-1 transition-colors"
           data-testid="properties-filter-clear"
         >
           Clear

@@ -28,8 +28,8 @@ export default async function MembersPage({
   ) {
     return (
       <Card>
-        <h1 className="text-xl font-bold">403 — admin only</h1>
-        <p className="text-sm text-neutral-600">
+        <h1 className="text-xl font-semibold text-white">403 — admin only</h1>
+        <p className="text-sm text-zinc-400">
           You need the admin role to manage members.
         </p>
       </Card>
@@ -47,8 +47,10 @@ export default async function MembersPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Members</h1>
-      <p className="text-sm text-neutral-600">
+      <h1 className="text-2xl font-semibold tracking-tight text-white">
+        Members
+      </h1>
+      <p className="text-sm text-zinc-400">
         Manage user access. Admins can create users, change roles, and
         deactivate accounts.
       </p>

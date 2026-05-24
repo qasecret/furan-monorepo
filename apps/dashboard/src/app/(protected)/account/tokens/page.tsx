@@ -9,10 +9,12 @@ export default async function TokensPage() {
   const tokens = Array.isArray(data) ? data : [];
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Personal access tokens</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight text-white">
+          Personal access tokens
+        </h1>
+        <p className="text-sm text-zinc-400">
           Use these tokens to authenticate the Furan SDK or CI uploads. Each
           token grants the same access as your account.
         </p>

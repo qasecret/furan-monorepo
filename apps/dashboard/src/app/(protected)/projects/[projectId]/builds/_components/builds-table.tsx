@@ -76,14 +76,14 @@ export function BuildsTable({ projectId }: Props) {
         onChange={onPropertiesChange}
       />
       {isLoading && !data ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        <div className="text-sm text-zinc-400">Loading…</div>
       ) : error ? (
-        <div className="text-sm text-destructive">Error: {error.message}</div>
+        <div className="text-sm text-red-400">Error: {error.message}</div>
       ) : items.length === 0 ? (
         <EmptyBuildsState projectId={projectId} />
       ) : (
         <div
-          className="rounded-md border border-neutral-200 bg-white"
+          className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden"
           data-testid="builds-table"
         >
           {items.map((b) => (
@@ -118,13 +118,13 @@ export function BuildsTable({ projectId }: Props) {
 
 function EmptyBuildsState({ projectId }: { projectId: string }) {
   return (
-    <div className="rounded-md border border-dashed border-neutral-300 bg-neutral-50 p-6 text-sm text-neutral-700">
-      <p className="font-medium">No builds yet for this project.</p>
-      <p className="mt-1 text-neutral-600">
+    <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 p-6 text-sm text-zinc-300">
+      <p className="font-medium text-white">No builds yet for this project.</p>
+      <p className="mt-1 text-zinc-400">
         Connect the SDK to start sending runs. Project id:{" "}
-        <code className="font-mono text-xs">{projectId}</code>
+        <code className="font-mono text-xs text-zinc-300">{projectId}</code>
       </p>
-      <pre className="mt-3 overflow-x-auto rounded bg-neutral-900 text-neutral-100 p-3 text-xs">
+      <pre className="mt-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900 text-zinc-100 p-3 text-xs">
         {`# Gradle dependency
 implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 

@@ -61,15 +61,16 @@ function summarize(selected: ReadonlySet<RunStatus>): string {
 }
 
 /**
- * Extract the pill background colour from a `STATUS_CONFIG[s].className`
- * so the leading dot in each menu item matches the badge. The className
- * starts with `bg-<colour>-<weight>` per `STATUS_CONFIG` — splitting on
- * whitespace and grabbing the first token isolates that fragment without
- * coupling the filter to the badge's full Tailwind string.
+ * Extract a dot-fill colour from the badge className. After Phase 1's tint
+ * migration STATUS_CONFIG[*].className starts with e.g. `bg-amber-500/10`,
+ * which renders nearly invisibly as a small dot on the zinc-950 popover.
+ * Strip the `/10` suffix so the dot uses the full-alpha variant of the
+ * same hue (e.g. `bg-amber-500`).
  */
 function dotClass(status: RunStatus): string {
   const first = STATUS_CONFIG[status].className.split(/\s+/)[0];
-  return first ?? "bg-neutral-300";
+  const stripped = first?.replace("/10", "");
+  return stripped ?? "bg-zinc-700";
 }
 
 /**

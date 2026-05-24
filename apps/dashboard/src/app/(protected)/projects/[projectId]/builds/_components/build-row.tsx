@@ -71,7 +71,7 @@ export function BuildRow({
 
   return (
     <div
-      className="border-b last:border-0 px-4 py-3 hover:bg-accent/40 cursor-pointer"
+      className="border-b border-zinc-800 last:border-0 px-4 py-3 hover:bg-zinc-900/30 transition-colors cursor-pointer"
       onClick={onToggleExpand}
       data-testid={`build-row-${build.id}`}
     >
@@ -81,12 +81,10 @@ export function BuildRow({
             <span className="font-medium">{displayName(build)}</span>
             <BuildStatusBadge status={build.aggregateStatus} />
             {build.branchName && (
-              <span className="text-xs text-neutral-500">
-                {build.branchName}
-              </span>
+              <span className="text-xs text-zinc-500">{build.branchName}</span>
             )}
           </div>
-          <div className="text-xs text-neutral-600 mt-0.5">{summary}</div>
+          <div className="text-xs text-zinc-400 mt-0.5">{summary}</div>
         </div>
         <div className="flex flex-wrap gap-1 max-w-md">
           {visibleProps.map(([k, v]) => (
@@ -113,10 +111,10 @@ export function BuildRow({
             </Badge>
           )}
         </div>
-        <div className="text-xs text-neutral-500 whitespace-nowrap">
+        <div className="text-xs text-zinc-500 whitespace-nowrap">
           {relative(build.createdAt)}
         </div>
-        <span aria-hidden className="text-neutral-400">
+        <span aria-hidden className="text-zinc-500">
           {expanded ? "▾" : "▸"}
         </span>
       </div>

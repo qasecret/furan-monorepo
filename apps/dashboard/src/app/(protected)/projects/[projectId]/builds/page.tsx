@@ -33,8 +33,10 @@ export default async function ProjectBuildsPage({
   if (project.status === 403 || !project.data) {
     return (
       <Card>
-        <h1 className="text-xl font-bold">403 — not a project member</h1>
-        <p className="text-sm text-neutral-600">
+        <h1 className="text-xl font-semibold text-white">
+          403 — not a project member
+        </h1>
+        <p className="text-sm text-zinc-400">
           You need to be added to this project to view its builds.
         </p>
       </Card>
@@ -44,9 +46,12 @@ export default async function ProjectBuildsPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Builds</h1>
-        <p className="text-sm text-neutral-600">
-          Project: <span className="font-medium">{project.data.name}</span>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">
+          Builds
+        </h1>
+        <p className="text-sm text-zinc-400">
+          Project:{" "}
+          <span className="font-medium text-zinc-200">{project.data.name}</span>
         </p>
       </div>
       <BuildsTable projectId={projectId} />
