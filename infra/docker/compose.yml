@@ -9,6 +9,17 @@
 # also published by the build-images.yml workflow for users who prefer GHCR
 # (signed via cosign keyless, scanned via Trivy, SBOM available as a workflow
 # artifact). Bumping versions is a single tag-replace per service.
+#
+# Storage modes (legacy parity with `STATIC_SERVICE`):
+#   - S3 (default): `COMPOSE_PROFILES=s3` in `.env`. MinIO runs as the
+#     object store; apps read S3_* envs.
+#   - HDD: `COMPOSE_PROFILES=hdd` in `.env` + `STORAGE_KIND=hdd` +
+#     `HDD_ROOT=/var/lib/furan/storage`. MinIO is NOT started; each app
+#     reads/writes the shared `furan_hdd_data` volume.
+# Detailed comparison and migration steps in docs/runbooks/storage-backends.md.
+# .env.example sets `COMPOSE_PROFILES=s3` so a fresh install matches the
+# pre-HDD behavior byte-for-byte. Existing installs whose `.env` predates
+# this change must add the same line — see the runbook.
 
 services:
   postgres:
@@ -40,6 +51,11 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    # `profiles: [s3]` gates the MinIO service behind `COMPOSE_PROFILES=s3`
+    # so HDD-mode installs (`COMPOSE_PROFILES=hdd`) skip it entirely.
+    # Fresh installs ship with `COMPOSE_PROFILES=s3` in .env.example so
+    # the default path is unchanged.
+    profiles: ["s3"]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -55,6 +71,7 @@ services:
 
   minio-init:
     image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    profiles: ["s3"]
     depends_on:
       minio:
         condition: service_healthy
@@ -85,11 +102,21 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+        # `required: false` lets the api start under HDD mode where
+        # MinIO is not in the running set (its profile is `s3`). When
+        # MinIO IS running (S3 mode), the healthcheck still gates boot
+        # so the first S3 op does not race minio-init's bucket create.
+        required: false
     ports: ["3000:3000"]
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
+      # Storage backend selector — see @furan/storage. `s3` (default)
+      # uses MinIO via S3_*; `hdd` writes to HDD_ROOT on the shared
+      # volume below. Unused fields are ignored by the env validator.
+      STORAGE_KIND: ${STORAGE_KIND:-s3}
+      HDD_ROOT: ${HDD_ROOT:-/var/lib/furan/storage}
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${MINIO_BUCKET}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
@@ -106,6 +133,12 @@ services:
       # dashboard from a different origin, e.g. https://furan.example.com.
       FURAN_DASHBOARD_ORIGIN: ${FURAN_DASHBOARD_ORIGIN:-http://localhost:3001}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # Shared HDD-storage mount. Empty + unused in S3 mode (the volume
+      # still exists but nothing writes to it); the capture-worker
+      # writes screenshots and the api/diff-worker read them under HDD.
+      # The mount point matches the HDD_ROOT default above.
+      - furan_hdd_data:/var/lib/furan/storage
     restart: unless-stopped
 
   capture-worker:
@@ -117,15 +150,20 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
+      STORAGE_KIND: ${STORAGE_KIND:-s3}
+      HDD_ROOT: ${HDD_ROOT:-/var/lib/furan/storage}
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${MINIO_BUCKET}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - furan_hdd_data:/var/lib/furan/storage
     restart: unless-stopped
 
   diff-worker:
@@ -137,15 +175,20 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
+      STORAGE_KIND: ${STORAGE_KIND:-s3}
+      HDD_ROOT: ${HDD_ROOT:-/var/lib/furan/storage}
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${MINIO_BUCKET}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - furan_hdd_data:/var/lib/furan/storage
     restart: unless-stopped
 
   integrations:
@@ -188,3 +231,10 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  # Shared filesystem-storage volume used when STORAGE_KIND=hdd. Mounted
+  # at /var/lib/furan/storage on the api, capture-worker, and
+  # diff-worker so screenshots written by capture are readable by diff.
+  # In S3 mode this volume still exists (compose creates it on first
+  # `up`) but no service writes to it — a couple of inodes' worth.
+  # See docs/runbooks/storage-backends.md for backup considerations.
+  furan_hdd_data:
