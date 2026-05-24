@@ -350,6 +350,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      let isNewScreenshot = false;
       const inserted = await withProjectScope(
         app.db,
         run.projectId,
@@ -369,7 +370,10 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               target: [screenshots.runId, screenshots.viewport],
             })
             .returning();
-          if (result[0]) return result[0];
+          if (result[0]) {
+            isNewScreenshot = true;
+            return result[0];
+          }
           // Conflict: load the existing row so the response reflects reality.
           const [existing] = await tx
             .select()
@@ -384,6 +388,32 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           return existing!;
         },
       );
+
+      // Enqueue a diff job for the run so the diff-worker picks it up and
+      // moves the run out of `running` status. Without this, SDK-uploaded
+      // runs sit indefinitely until a reviewer manually triggers the diff
+      // via setIgnoreAreas / setDiffThresholdOverride from the dashboard —
+      // which broke the entire SDK ingest flow end-to-end.
+      //
+      // Only enqueue when this upload actually inserted a new screenshot
+      // (`isNewScreenshot`), so a retried SDK upload of the same
+      // (runId, viewport) doesn't trigger redundant diff work. Best-effort:
+      // a queue failure here logs but does NOT fail the upload — the
+      // screenshot bytes are already persisted, and the SDK can re-upload
+      // (idempotent) or the reviewer can re-trigger from the dashboard.
+      if (isNewScreenshot) {
+        try {
+          await app.diffQueue.add("diff", {
+            runId: run.id,
+            projectId: run.projectId,
+          });
+        } catch (err) {
+          req.log.warn(
+            { err, runId: run.id, projectId: run.projectId },
+            "sdk_upload_diff_enqueue_failed",
+          );
+        }
+      }
 
       return reply.code(200).send({
         id: inserted.id ?? randomUUID(),
