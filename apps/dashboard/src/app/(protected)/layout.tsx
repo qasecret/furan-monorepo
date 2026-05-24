@@ -52,7 +52,7 @@ export default async function ProtectedLayout({
         {children}
       </AppShell>
       <CommandPalette userRole={userRole} />
-      <Toaster richColors position="bottom-right" />
+      <Toaster richColors theme="dark" position="bottom-right" />
     </Providers>
   );
 }

@@ -19,6 +19,20 @@ interface Project {
   name: string;
 }
 
+// Style the cmdk group's heading slot only — putting these classes
+// directly on `<Command.Group className>` propagates `uppercase` (and
+// the other typography modifiers) down to the items, so every entry
+// renders as ALL-CAPS. The `[&_[cmdk-group-heading]]:` arbitrary
+// selector scopes them to the heading element cmdk emits inside the
+// group wrapper.
+const CMD_GROUP_CLASS =
+  "[&_[cmdk-group-heading]]:text-xs " +
+  "[&_[cmdk-group-heading]]:uppercase " +
+  "[&_[cmdk-group-heading]]:tracking-wider " +
+  "[&_[cmdk-group-heading]]:text-muted-foreground " +
+  "[&_[cmdk-group-heading]]:px-2 " +
+  "[&_[cmdk-group-heading]]:pt-2";
+
 interface Props {
   /**
    * User role for conditional admin-only commands. Passed from the
@@ -123,10 +137,7 @@ export function CommandPalette({ userRole }: Props) {
 
             {projects.length > 0 && (
               <>
-                <Command.Group
-                  heading="Projects"
-                  className="text-xs uppercase tracking-wider text-muted-foreground px-2 pt-2"
-                >
+                <Command.Group heading="Projects" className={CMD_GROUP_CLASS}>
                   {projects.map((p) => (
                     <Command.Item
                       key={`project-${p.id}`}
@@ -141,7 +152,7 @@ export function CommandPalette({ userRole }: Props) {
                 </Command.Group>
                 <Command.Group
                   heading="Project settings"
-                  className="text-xs uppercase tracking-wider text-muted-foreground px-2 pt-2"
+                  className={CMD_GROUP_CLASS}
                 >
                   {projects.map((p) => (
                     <Command.Item
@@ -158,10 +169,7 @@ export function CommandPalette({ userRole }: Props) {
               </>
             )}
 
-            <Command.Group
-              heading="Account"
-              className="text-xs uppercase tracking-wider text-muted-foreground px-2 pt-2"
-            >
+            <Command.Group heading="Account" className={CMD_GROUP_CLASS}>
               <Command.Item
                 value="account tokens"
                 onSelect={() => go("/account/tokens")}
@@ -173,10 +181,7 @@ export function CommandPalette({ userRole }: Props) {
             </Command.Group>
 
             {userRole === "admin" && (
-              <Command.Group
-                heading="Admin"
-                className="text-xs uppercase tracking-wider text-muted-foreground px-2 pt-2"
-              >
+              <Command.Group heading="Admin" className={CMD_GROUP_CLASS}>
                 <Command.Item
                   value="admin members"
                   onSelect={() => go("/admin/members")}
