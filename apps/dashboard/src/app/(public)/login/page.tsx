@@ -12,9 +12,16 @@ import { Label } from "@/components/ui/label";
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
+    <main className="flex min-h-screen items-center justify-center bg-black p-4">
       <Card className="w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-bold">Sign in to Furan</h1>
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 bg-brand rounded-sm rotate-12 flex items-center justify-center">
+            <div className="w-1.5 h-1.5 bg-black rounded-full" />
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight text-white">
+            Sign in to Furan
+          </h1>
+        </div>
         <form action={formAction} className="space-y-3">
           <div className="space-y-1">
             <Label htmlFor="email">Email</Label>
@@ -37,7 +44,7 @@ export default function LoginPage() {
             />
           </div>
           {state?.error && (
-            <p className="text-sm text-red-600" role="alert">
+            <p className="text-sm text-red-400" role="alert">
               {state.error === "invalid_credentials"
                 ? "Invalid email or password."
                 : "Invalid input."}
