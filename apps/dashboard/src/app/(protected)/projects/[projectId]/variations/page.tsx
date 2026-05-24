@@ -2,8 +2,19 @@ import { notFound, redirect } from "next/navigation";
 
 import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
 
+import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+const VARIATIONS_PAGE_TOUR = [
+  {
+    target: "#variations-merge-panel",
+    title: "Merge baselines across branches",
+    content:
+      "Promote approved baselines from a feature branch onto your main branch. Variations that already match on both sides are skipped.",
+    placement: "top" as const,
+  },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +72,7 @@ export default async function ProjectVariationsPage({
 
   return (
     <div className="space-y-4">
+      <PageTour pageId="variations-index" steps={VARIATIONS_PAGE_TOUR} />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-white">
           Variations
@@ -70,7 +82,9 @@ export default async function ProjectVariationsPage({
           <span className="font-medium text-zinc-200">{project.data.name}</span>
         </p>
       </div>
-      <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
+      <div id="variations-merge-panel">
+        <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
+      </div>
     </div>
   );
 }

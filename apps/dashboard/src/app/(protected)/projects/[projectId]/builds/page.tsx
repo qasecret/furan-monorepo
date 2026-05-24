@@ -2,8 +2,19 @@ import { notFound, redirect } from "next/navigation";
 
 import { BuildsTable } from "./_components/builds-table";
 
+import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+const BUILDS_PAGE_TOUR = [
+  {
+    target: "#builds-table",
+    title: "Build list",
+    content:
+      "Every CI run that calls the SDK creates a build here. If you see no builds, point your SDK at this server using a project token.",
+    placement: "top" as const,
+  },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +56,7 @@ export default async function ProjectBuildsPage({
 
   return (
     <div className="space-y-4">
+      <PageTour pageId="builds-index" steps={BUILDS_PAGE_TOUR} />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-white">
           Builds
@@ -54,7 +66,9 @@ export default async function ProjectBuildsPage({
           <span className="font-medium text-zinc-200">{project.data.name}</span>
         </p>
       </div>
-      <BuildsTable projectId={projectId} />
+      <div id="builds-table">
+        <BuildsTable projectId={projectId} />
+      </div>
     </div>
   );
 }
