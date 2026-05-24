@@ -80,17 +80,19 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
 
   return (
     <aside
-      className="border-l flex flex-col w-80 max-w-[40vw]"
+      className="border-l border-zinc-800 bg-zinc-950 flex flex-col w-80 max-w-[40vw]"
       data-testid="region-list-panel"
     >
-      <div className="p-2 border-b flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-sm font-medium">Regions ({filtered.length})</span>
+      <div className="p-2 border-b border-zinc-800 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-medium text-zinc-200">
+          Regions ({filtered.length})
+        </span>
         <div className="flex gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs border rounded px-2 py-1 hover:bg-accent"
+                className="text-xs rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
                 data-testid="severity-filter-trigger"
               >
                 {severityFilter === "all"
@@ -114,7 +116,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs border rounded px-2 py-1 hover:bg-accent"
+                className="text-xs rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
                 data-testid="category-filter-trigger"
               >
                 {categoryFilter === "all" ? "All categories" : categoryFilter}
@@ -133,14 +135,14 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             </DropdownMenuContent>
           </DropdownMenu>
           <label
-            className="flex items-center gap-1 text-xs px-2 py-1"
+            className="flex items-center gap-1 text-xs px-2 py-1 text-zinc-400"
             data-testid="show-suppressed-toggle"
           >
             <input
               type="checkbox"
               checked={showSuppressed}
               onChange={(e) => setShowSuppressed(e.target.checked)}
-              className="w-3 h-3"
+              className="w-3 h-3 accent-brand"
             />
             Show suppressed
           </label>
@@ -148,9 +150,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
       </div>
       <div className="overflow-auto flex-1 p-2 space-y-1">
         {filtered.length === 0 ? (
-          <div className="text-sm text-muted-foreground p-2">
-            No regions match.
-          </div>
+          <div className="text-sm text-zinc-400 p-2">No regions match.</div>
         ) : (
           filtered.map((r) => <RegionItem key={r.id} region={r} />)
         )}
