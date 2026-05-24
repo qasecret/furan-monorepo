@@ -4,8 +4,9 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HelpButton } from "../src/components/tour/help-button";
 import { PageTour } from "../src/components/tour/page-tour";
@@ -128,6 +129,71 @@ describe("guided tour", () => {
     renderWithSteps(orphan, "orphan");
     // The state is active but computePosition returns null → no popover.
     expect(screen.queryByTestId("tour-popover")).toBeNull();
+  });
+
+  it("retries positioning when the target appears after first render (dynamic-import race)", async () => {
+    // Reproduces the diff-viewer scenario: the page registers a tour
+    // step before the dynamic chunk paints its target element. The
+    // overlay must keep retrying until the target shows up.
+    const dynamic: TourStep[] = [
+      { target: "#late-anchor", title: "Dynamic", content: "Appears later" },
+    ];
+    render(
+      <TourProvider>
+        <PageTour pageId="dynamic-import-race" steps={dynamic} />
+        <TourOverlay />
+      </TourProvider>,
+    );
+
+    // Anchor does not exist yet — overlay starts polling.
+    expect(screen.queryByTestId("tour-popover")).toBeNull();
+
+    // Inject the target a moment later, mimicking a dynamic-import paint.
+    setTimeout(() => {
+      const el = document.createElement("div");
+      el.id = "late-anchor";
+      el.style.width = "100px";
+      el.style.height = "40px";
+      document.body.appendChild(el);
+    }, 150);
+
+    // Within the 2 s retry window the popover should now appear.
+    await waitFor(
+      () => expect(screen.queryByTestId("tour-popover")).toBeTruthy(),
+      { timeout: 2500 },
+    );
+
+    // Cleanup the injected node so it does not leak across cases.
+    document.getElementById("late-anchor")?.remove();
+  });
+
+  it("scrolls the target into view exactly once per step, not on every scroll event", () => {
+    // The bug being fixed: previously scrollIntoView was called inside
+    // computePosition, which the scroll listener re-invokes on every
+    // scroll event. Smooth-scroll fired scroll events that re-fired
+    // scrollIntoView, creating a feedback loop.
+    const scrollSpy = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollSpy,
+    });
+
+    renderWithSteps(STEPS);
+
+    // First step shown — scrolled once.
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+
+    // Synthesize a scroll event; the listener should reposition the
+    // popover but NOT re-scroll.
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+
+    // Advancing to the next step scrolls exactly one more time.
+    fireEvent.click(screen.getByTestId("tour-next-button"));
+    expect(scrollSpy).toHaveBeenCalledTimes(2);
   });
 
   describe("HelpButton + relaunch", () => {

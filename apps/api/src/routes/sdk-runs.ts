@@ -401,6 +401,54 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ---------------------------------------------------------------------------
+  // GET /runs/:runId — fetch a run by id (parity with POST /runs)
+  //
+  // SDK clients that poll for a run's terminal status (capture-completed,
+  // diff-done, autoApproved) want a thin REST equivalent of the tRPC
+  // `runs.getById` procedure. Returns just the run row's columns; for
+  // the richer dashboard payload (screenshots, diffRegions, baseline
+  // resolution) use tRPC.
+  // ---------------------------------------------------------------------------
+  app.get(
+    "/runs/:runId",
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("read", {
+          from: {
+            resolver: async (req) => {
+              const params = req.params as { runId?: string };
+              if (!params.runId) return null;
+              const rows = await app.db
+                .select({ projectId: testRuns.projectId })
+                .from(testRuns)
+                .where(eq(testRuns.id, params.runId))
+                .limit(1);
+              return rows[0]?.projectId ?? null;
+            },
+          },
+        }),
+      ],
+    },
+    async (req, reply) => {
+      const params = req.params as { runId?: string };
+      if (!params.runId) {
+        return reply.code(400).send({ error: "invalid_run_id" });
+      }
+      const rows = await app.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, params.runId))
+        .limit(1);
+      const row = rows[0];
+      if (!row) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return reply.code(200).send(row);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
   // POST /runs/:runId/screenshots — multipart upload of PNG + optional DOM HTML
   // ---------------------------------------------------------------------------
   app.post(

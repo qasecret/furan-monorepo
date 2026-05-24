@@ -29,9 +29,14 @@ function computePosition(step: TourStep): Position | null {
   const el = document.querySelector(step.target);
   if (!el || !(el instanceof HTMLElement)) return null;
 
-  // Scroll the target into the visible area so the popover anchor is
-  // on-screen. `block: 'center'` keeps it away from sticky headers.
-  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  // Note: scrollIntoView is intentionally NOT called here. The effect
+  // below scrolls the target into view exactly once per step (on first
+  // successful position), then leaves further scrolling to the user.
+  // Re-scrolling on every recompute caused a feedback loop: the smooth
+  // scroll fired `scroll` events, our scroll listener re-ran this
+  // function, which re-scrolled, repeat. Side effect of the loop was
+  // the dismissal flag being set spuriously on some pages (verified
+  // 2026-05-24 e2e validation).
 
   const rect = el.getBoundingClientRect();
   const requested = step.placement ?? "bottom";
@@ -107,16 +112,52 @@ export function TourOverlay() {
   // Recompute on step change + on viewport movement. `useLayoutEffect`
   // so the popover is positioned before paint and we never flash a
   // (0,0) popover for one frame.
+  //
+  // Retry loop: pages that dynamic-import their main component (e.g.
+  // the diff viewer with `next/dynamic ssr:false`) can register a
+  // tour step before its target element has rendered. Without the
+  // retry, `computePosition` returns null on the first attempt and is
+  // never called again — the tour silently no-ops. Poll every 100ms
+  // for up to 2 s; once the target shows up, scroll it into view
+  // once, then settle.
   useLayoutEffect(() => {
     if (!step) {
       setPos(null);
       return;
     }
-    const update = () => setPos(computePosition(step));
-    update();
+    let cancelled = false;
+    let attempts = 0;
+    let scrolledForThisStep = false;
+
+    const tryUpdate = () => {
+      if (cancelled) return;
+      const p = computePosition(step);
+      if (p) {
+        if (!scrolledForThisStep) {
+          scrolledForThisStep = true;
+          // One-shot scroll into view, decoupled from positioning. The
+          // user's subsequent scrolls just reposition the popover via
+          // the `update` listener below; they never re-trigger this.
+          const el = document.querySelector(step.target);
+          if (el instanceof HTMLElement) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }
+        setPos(p);
+      } else if (attempts < 20) {
+        attempts++;
+        setTimeout(tryUpdate, 100);
+      }
+    };
+    tryUpdate();
+
+    const update = () => {
+      if (!cancelled) setPos(computePosition(step));
+    };
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
+      cancelled = true;
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
