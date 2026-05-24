@@ -4,6 +4,10 @@ import { useActionState } from "react";
 
 import { loginAction } from "./action";
 
+// Note: client components can't export `metadata`. The page-level
+// document title is set by the public-segment layout instead — see
+// app/(public)/layout.tsx.
+
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +35,8 @@ export default function LoginPage() {
               type="email"
               required
               autoComplete="email"
+              defaultValue={state?.email ?? ""}
+              autoFocus={!state?.email}
             />
           </div>
           <div className="space-y-1">
@@ -41,6 +47,7 @@ export default function LoginPage() {
               type="password"
               required
               autoComplete="current-password"
+              autoFocus={!!state?.email}
             />
           </div>
           {state?.error && (

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { CreateProjectDialog } from "./_components/create-project-dialog";
@@ -6,6 +7,8 @@ import { EmptyProjectsCta } from "./_components/empty-projects-cta";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Projects" };
 
 const PROJECTS_PAGE_TOUR = [
   {

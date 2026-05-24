@@ -1,7 +1,11 @@
+import type { Metadata } from "next";
+
 import { InstallationsTable } from "./_components/installations-table";
 
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Installations" };
 
 export const dynamic = "force-dynamic";
 

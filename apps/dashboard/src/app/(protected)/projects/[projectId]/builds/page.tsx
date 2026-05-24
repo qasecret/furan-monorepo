@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { BuildsTable } from "./_components/builds-table";
@@ -5,6 +6,8 @@ import { BuildsTable } from "./_components/builds-table";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Builds" };
 
 const BUILDS_PAGE_TOUR = [
   {

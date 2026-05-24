@@ -1,4 +1,5 @@
 import { type RunStatus, runStatusSchema } from "@furan/shared-types";
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { RunsTable } from "./_components/runs-table";
@@ -6,6 +7,8 @@ import { RunsTable } from "./_components/runs-table";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+export const metadata: Metadata = { title: "Runs" };
 
 const RUNS_PAGE_TOUR = [
   {

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { ProjectSettingsForm } from "./_components/project-settings-form";
@@ -5,6 +6,7 @@ import { ProjectSettingsForm } from "./_components/project-settings-form";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
 
+export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 interface Me {
