@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { useActionState, useState } from "react";
 
 import { loginAction } from "./action";
 
@@ -15,6 +16,7 @@ import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
+  const [showPassword, setShowPassword] = useState(false);
   return (
     <main className="flex min-h-screen items-center justify-center bg-black p-4">
       <Card className="w-full max-w-sm space-y-4">
@@ -41,14 +43,42 @@ export default function LoginPage() {
           </div>
           <div className="space-y-1">
             <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              autoFocus={!!state?.email}
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                required
+                autoComplete="current-password"
+                autoFocus={!!state?.email}
+                className="pr-10"
+              />
+              {/*
+                Eye toggle: clicking shows the plaintext so the user can
+                catch typos / caps-lock issues. We intentionally do NOT
+                add `data-testid="password-toggle"` until there is a test
+                that consumes it — keeps the surface clean.
+
+                tabIndex={-1} so the toggle isn't in the tab order between
+                the password field and the submit button. Standard pattern
+                from GitHub / Stripe / Linear logins — keyboard users
+                press Tab once to reach Sign in, not twice.
+              */}
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                tabIndex={-1}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-200 transition-colors"
+                data-testid="password-visibility-toggle"
+              >
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
+            </div>
           </div>
           {state?.error && (
             <p className="text-sm text-red-400" role="alert">

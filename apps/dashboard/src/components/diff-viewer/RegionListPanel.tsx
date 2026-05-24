@@ -150,7 +150,21 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
       </div>
       <div className="overflow-auto flex-1 p-2 space-y-1">
         {filtered.length === 0 ? (
-          <div className="text-sm text-zinc-400 p-2">No regions match.</div>
+          <div
+            className="flex flex-col items-center justify-center gap-1 p-6 text-center"
+            data-testid="regions-empty-state"
+          >
+            <div className="text-sm font-medium text-zinc-300">
+              {regions.length === 0
+                ? "No differences detected"
+                : "No regions match the active filters"}
+            </div>
+            <div className="text-xs text-zinc-500 max-w-[18rem]">
+              {regions.length === 0
+                ? "The candidate matches the baseline pixel-for-pixel for the current sensitivity. Adjust the sensitivity slider if you expected to see diffs."
+                : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
+            </div>
+          </div>
         ) : (
           filtered.map((r) => <RegionItem key={r.id} region={r} />)
         )}

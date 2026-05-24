@@ -30,14 +30,18 @@ interface Props {
 
 /**
  * Display priority for a build's title: explicit `name` (set via SDK) →
- * `#<number>` (the per-project monotonic counter) → first 12 chars of the
- * `ciBuildId` → `(unnamed)`. Matches spec §3.8 acceptance.
+ * `#<number>` (the per-project monotonic counter) → first 12 chars of
+ * the `ciBuildId` → first 8 chars of the build's UUID (a build always
+ * has one; this kills the "(unnamed)" fallback the 2026-05-24 audit
+ * surfaced as a polish issue). Original spec §3.8 said "(unnamed)"
+ * but a uuid-prefix is more useful + the visual is the same shape as
+ * a short git sha so reviewers parse it intuitively.
  */
 function displayName(b: BuildRowData): string {
   if (b.name) return b.name;
   if (b.number !== null) return `#${b.number}`;
   if (b.ciBuildId) return b.ciBuildId.slice(0, 12);
-  return "(unnamed)";
+  return b.id.slice(0, 8);
 }
 
 function relative(date: string | Date): string {
