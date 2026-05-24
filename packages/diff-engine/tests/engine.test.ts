@@ -74,4 +74,54 @@ describe("runDiff", () => {
     });
     expect(result.ranTiers).toEqual(["l1"]);
   });
+
+  it("passed is true when diffPercent is at or below diffThreshold", async () => {
+    // candidate-a-major has a non-trivial pixel diff against baseline-a.
+    // A very permissive threshold (50%) should let it pass even though
+    // pixelMismatchCount > 0 — this is the sensitivity slider's contract
+    // (set 1% / 5% in the UI → diffs under that threshold pass).
+    const result = await runDiff({
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
+      config: {
+        diffThreshold: 0.5,
+        l2Enabled: false,
+        engine: "odiff",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+    expect(result.diffPercent).toBeGreaterThan(0);
+    expect(result.diffPercent).toBeLessThanOrEqual(50);
+    expect(result.passed).toBe(true);
+  });
+
+  it("passed is false when diffPercent exceeds diffThreshold", async () => {
+    const result = await runDiff({
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
+      config: {
+        diffThreshold: 0,
+        l2Enabled: false,
+        engine: "odiff",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+    expect(result.diffPercent).toBeGreaterThan(0);
+    expect(result.passed).toBe(false);
+  });
+
+  it("passed is true on byte-identical inputs (threshold=0)", async () => {
+    const result = await runDiff({
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
+      config: {
+        diffThreshold: 0,
+        l2Enabled: false,
+        engine: "odiff",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+    expect(result.diffPercent).toBe(0);
+    expect(result.passed).toBe(true);
+  });
 });
