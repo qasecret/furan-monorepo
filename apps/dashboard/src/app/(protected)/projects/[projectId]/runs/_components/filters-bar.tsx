@@ -210,20 +210,25 @@ export function FiltersBar({
     }
   }, []);
 
+  // Layout: on mobile the 7 controls collapse to a 2-column grid so a
+  // 375px viewport shows 4 rows instead of 7. Desktop stays as a wrap-
+  // flex so wide screens fit all controls on one line. The grid +
+  // flex split keeps the chips from sprawling 7-tall on phones (P2
+  // polish from the 2026-05-24 UX audit).
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
       <Input
         placeholder="Filter by branch…"
         value={branch}
         onChange={(e) => setBranch(e.target.value)}
-        className="w-48"
+        className="w-full sm:w-48"
         data-testid="branch-filter-input"
       />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="secondary"
-            className="w-44 justify-between"
+            className="w-full sm:w-44 justify-between"
             data-testid="status-filter-trigger"
             aria-label="Filter by status"
           >
@@ -257,7 +262,7 @@ export function FiltersBar({
         placeholder="browser"
         value={browser}
         onChange={(e) => setBrowser(e.target.value)}
-        className="w-32"
+        className="w-full sm:w-32"
         aria-label="Filter by browser"
         data-testid="browser-filter-input"
       />
@@ -265,7 +270,7 @@ export function FiltersBar({
         placeholder="viewport"
         value={viewport}
         onChange={(e) => setViewport(e.target.value)}
-        className="w-32"
+        className="w-full sm:w-32"
         aria-label="Filter by viewport"
         data-testid="viewport-filter-input"
       />
@@ -273,7 +278,7 @@ export function FiltersBar({
         placeholder="os"
         value={os}
         onChange={(e) => setOs(e.target.value)}
-        className="w-28"
+        className="w-full sm:w-28"
         aria-label="Filter by OS"
         data-testid="os-filter-input"
       />
@@ -281,7 +286,7 @@ export function FiltersBar({
         placeholder="device"
         value={device}
         onChange={(e) => setDevice(e.target.value)}
-        className="w-32"
+        className="w-full sm:w-32"
         aria-label="Filter by device"
         data-testid="device-filter-input"
       />
@@ -289,7 +294,7 @@ export function FiltersBar({
         placeholder="tag substring"
         value={customTags}
         onChange={(e) => setCustomTags(e.target.value)}
-        className="w-36"
+        className="col-span-2 sm:col-span-1 sm:w-36"
         aria-label="Filter by custom tag (substring)"
         data-testid="custom-tags-filter-input"
       />
