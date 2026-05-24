@@ -18,8 +18,10 @@ export function EmptyProjectsCta({ role }: Props) {
       <Card>
         <div className="space-y-4 p-2">
           <div>
-            <h2 className="text-lg font-medium">No projects yet</h2>
-            <p className="text-sm text-neutral-600">
+            <h2 className="text-lg font-semibold text-white">
+              No projects yet
+            </h2>
+            <p className="text-sm text-zinc-400">
               Create your first project to get started. You&apos;ll mint a
               personal access token and connect the SDK next.
             </p>
@@ -33,10 +35,10 @@ export function EmptyProjectsCta({ role }: Props) {
   return (
     <Card>
       <div className="space-y-2 p-2">
-        <h2 className="text-lg font-medium">
+        <h2 className="text-lg font-semibold text-white">
           You&apos;re not a member of any project yet
         </h2>
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-zinc-400">
           Ask your administrator to add you to an existing project, or to create
           a new one and grant you access.
         </p>
