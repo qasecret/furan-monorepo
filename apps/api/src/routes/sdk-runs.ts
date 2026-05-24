@@ -383,6 +383,19 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         },
       );
 
+      // Project SSE broadcast — `testRun_created` plus the cascading
+      // `build_updated` that legacy mirrors (events.gateway.ts:38). The
+      // dashboard's runs index invalidates on the run event; the build
+      // detail invalidates its child-run count on the build event.
+      await app.broadcaster.publishProjectEvent(input.projectId, {
+        event: "testRun_created",
+        data: row,
+      });
+      await app.broadcaster.publishProjectEvent(input.projectId, {
+        event: "build_updated",
+        data: { id: row.buildId },
+      });
+
       return reply.code(200).send(row);
     },
   );

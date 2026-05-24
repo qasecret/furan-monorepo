@@ -83,6 +83,57 @@ export interface HandlerDeps {
   metrics?: DiffMetrics;
 }
 
+/**
+ * Best-effort dual-publish: in addition to the existing per-run channel
+ * (`run:{runId}:events`, which the diff viewer subscribes to), also fire
+ * a `testRun_updated` + cascading `build_updated` event on the project
+ * channel so the dashboard's list pages (Builds / Runs index) refresh
+ * without manual reload. Spec
+ * furan-design/specs/2026-05-24-list-level-live-updates-design.md §6.5.
+ *
+ * Payload is minimal (`{id, status}`) — the dashboard invalidates the
+ * tRPC query on receipt and refetches the full row. Keeping the wire
+ * lean avoids racing with stale data from the worker's snapshot of the
+ * row vs whatever's actually in the DB once the listener queries.
+ */
+async function publishProjectRunUpdate(
+  deps: Pick<HandlerDeps, "redis">,
+  args: {
+    projectId: string;
+    runId: string;
+    status: string;
+    buildId?: string | null;
+  },
+  logger: Logger,
+): Promise<void> {
+  const channel = `project:${args.projectId}:events:raw`;
+  try {
+    await deps.redis.publish(
+      channel,
+      JSON.stringify({
+        event: "testRun_updated",
+        data: { id: args.runId, status: args.status },
+        ts: Date.now(),
+      }),
+    );
+    if (args.buildId) {
+      await deps.redis.publish(
+        channel,
+        JSON.stringify({
+          event: "build_updated",
+          data: { id: args.buildId },
+          ts: Date.now(),
+        }),
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, runId: args.runId, projectId: args.projectId },
+      "diff_worker_project_publish_failed",
+    );
+  }
+}
+
 interface PerViewportResult {
   viewport: string | null;
   passed: boolean;
@@ -191,6 +242,12 @@ export async function handleDiffJob(
         "failed_to_publish_aborted_run_completed",
       );
     }
+    // Project channel mirror so the dashboard list pages refresh.
+    await publishProjectRunUpdate(
+      deps,
+      { projectId: data.projectId, runId: data.runId, status: "aborted" },
+      logger,
+    );
     throw err;
   }
 }
@@ -270,6 +327,16 @@ async function handleDiffJobInner(
         branchName: run.branchName,
         numChanges: 0,
       }),
+    );
+    await publishProjectRunUpdate(
+      deps,
+      {
+        projectId: data.projectId,
+        runId: data.runId,
+        status: "new",
+        buildId: run.buildId,
+      },
+      logger,
     );
     logger.info(
       { runId: data.runId, firstBaseline: true },
@@ -364,6 +431,16 @@ async function handleDiffJobInner(
         branchName: run.branchName,
         numChanges: 0,
       }),
+    );
+    await publishProjectRunUpdate(
+      deps,
+      {
+        projectId: data.projectId,
+        runId: data.runId,
+        status: "passed",
+        buildId: run.buildId,
+      },
+      logger,
     );
     logger.info(
       { runId: data.runId, projectId: data.projectId, autoApproved: true },
@@ -829,6 +906,16 @@ async function handleDiffJobInner(
       branchName: run.branchName,
       numChanges: aggregateRegions.length,
     }),
+  );
+  await publishProjectRunUpdate(
+    deps,
+    {
+      projectId: data.projectId,
+      runId: data.runId,
+      status: aggregateStatus,
+      buildId: run.buildId,
+    },
+    logger,
   );
   logger.info(
     {

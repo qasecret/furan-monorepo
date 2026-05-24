@@ -1,11 +1,12 @@
 import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
-import { createQueue } from "@furan/queue";
+import { createQueue, createRedisConnection } from "@furan/queue";
 import { bootstrapTelemetry } from "@furan/telemetry";
 
 import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
 import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
+import { createBroadcaster } from "./lib/broadcast.js";
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -18,8 +19,12 @@ async function main(): Promise<void> {
   });
   const { db, close } = createDb();
   const diffQueue = createQueue("diff");
+  // Dedicated Redis publisher connection for project-channel broadcasts.
+  // The SSE route opens its own subscriber connection per subscriber.
+  const broadcasterRedis = createRedisConnection();
+  const broadcaster = createBroadcaster(broadcasterRedis, telemetry);
 
-  const app = await createApp({ db, telemetry, env, diffQueue });
+  const app = await createApp({ db, telemetry, env, diffQueue, broadcaster });
 
   // First-admin bootstrap. Runs at most once (no-op when users exist).
   // Never throws — operator can fall back to `seed-admin` CLI if it fails.
@@ -29,6 +34,7 @@ async function main(): Promise<void> {
     app.log.info({ signal }, "shutting down");
     await app.close();
     await diffQueue.close();
+    await broadcasterRedis.quit().catch(() => undefined);
     await close();
     await telemetry.shutdown();
     process.exit(0);

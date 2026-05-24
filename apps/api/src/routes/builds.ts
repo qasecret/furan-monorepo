@@ -292,6 +292,15 @@ export async function registerBuildsRoutes(
               row as typeof row & { inserted: boolean },
             )
           : row;
+
+      // Project SSE broadcast — `build_created` on path A or onConflict-
+      // INSERT path B, `build_updated` on onConflict-UPDATE (reattach).
+      // Best-effort, never fails the response.
+      await app.broadcaster.publishProjectEvent(paramsParsed.data.id, {
+        event: result.inserted ? "build_created" : "build_updated",
+        data: result.inserted ? body : { id: row.id },
+      });
+
       return reply.code(result.inserted ? 201 : 200).send(body);
     },
   );

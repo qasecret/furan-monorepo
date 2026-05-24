@@ -3,6 +3,7 @@ import type { DiffJob } from "@furan/queue";
 import type { Telemetry } from "@furan/telemetry";
 import type { FastifyRequest } from "fastify";
 
+import type { Broadcaster } from "../lib/broadcast.js";
 import type { AuthedUser } from "../plugins/auth.js";
 
 // `req.auth` is added by plugins/auth.ts via a Fastify module
@@ -29,6 +30,7 @@ export interface BuildContextDeps {
   db: DB;
   telemetry: Telemetry;
   diffQueue: DiffQueueProducer;
+  broadcaster: Broadcaster;
 }
 
 /**
@@ -42,6 +44,7 @@ export function buildContext(req: FastifyRequest, deps: BuildContextDeps) {
     db: deps.db,
     telemetry: deps.telemetry,
     diffQueue: deps.diffQueue,
+    broadcaster: deps.broadcaster,
     req,
   };
 }
