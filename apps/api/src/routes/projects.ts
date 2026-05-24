@@ -4,6 +4,15 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { requireRole } from "../hooks/require-role.js";
+import {
+  mergeBranchBaselinesImpl,
+  SameBranchError,
+} from "../lib/branch-merge.js";
+
+export const mergeBody = z.object({
+  fromBranch: z.string().min(1).max(255),
+  toBranch: z.string().min(1).max(255),
+});
 
 export const createBody = z.object({
   name: z.string().min(1).max(120),
@@ -103,6 +112,62 @@ export async function registerProjectsRoutes(
         return reply.code(404).send({ error: "not_found" });
       }
       return rows[0];
+    },
+  );
+
+  /**
+   * Cross-branch baseline merge — REST surface for the GitHub App
+   * webhook + any HTTP-only consumer. Delegates to the same
+   * `mergeBranchBaselinesImpl` helper as the tRPC mutation so both
+   * surfaces stay in lock-step.
+   *
+   * Body: { fromBranch, toBranch }
+   * Auth: project_members write action (admin bypasses).
+   *
+   * Why POST, not GET (legacy used GET): this is a mutation — creates a
+   * synthetic build + a fan-out of test_runs + enqueues N diff jobs.
+   * Legacy's NestJS controller used `@Get('merge/')` which was incorrect
+   * REST shape; the rewrite fixes it.
+   */
+  app.post(
+    "/projects/:id/merge",
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("write", { from: { params: "id" } }),
+      ],
+    },
+    async (req, reply) => {
+      const params = paramsId.safeParse(req.params);
+      if (!params.success) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      const body = mergeBody.safeParse(req.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: "invalid_body" });
+      }
+      try {
+        const result = await mergeBranchBaselinesImpl(
+          {
+            projectId: params.data.id,
+            fromBranch: body.data.fromBranch,
+            toBranch: body.data.toBranch,
+          },
+          {
+            db: app.db,
+            diffQueue: app.diffQueue,
+            telemetry: app.telemetry,
+            userId: req.auth?.id ?? null,
+            log: req.log,
+          },
+        );
+        return reply.code(200).send(result);
+      } catch (err) {
+        if (err instanceof SameBranchError) {
+          return reply.code(400).send({ error: "same_branch" });
+        }
+        throw err;
+      }
     },
   );
 }
