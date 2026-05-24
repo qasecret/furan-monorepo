@@ -16,18 +16,18 @@ const LABELS: Record<
 > = {
   this_branch: {
     text: "this branch",
-    className: "bg-green-100 text-green-800 border-green-300",
+    className: "bg-green-500/10 text-green-400 border-green-500/20",
     tooltip: "Baseline comes from the same branch as this run.",
   },
   parent_pr: {
     text: "parent PR",
-    className: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
     tooltip:
       "No baseline on this branch yet — using the parent PR's base branch baseline.",
   },
   default_branch: {
     text: "default branch",
-    className: "bg-gray-100 text-gray-800 border-gray-300",
+    className: "bg-zinc-900 text-zinc-400 border-zinc-800",
     tooltip:
       "No branch-scoped baseline found — using the project's default branch baseline.",
   },
