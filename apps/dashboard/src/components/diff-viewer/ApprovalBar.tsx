@@ -147,14 +147,14 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
   return (
     <TooltipProvider delayDuration={200}>
       <div
-        className="flex flex-wrap items-center gap-3 p-3 border-t bg-background"
+        className="flex flex-wrap items-center gap-3 p-3 border-t border-zinc-800 bg-zinc-950"
         data-testid="approval-bar"
       >
         <div
           className="flex items-center gap-2"
           data-testid="approval-bar-status"
         >
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+          <span className="text-xs uppercase tracking-wide text-zinc-500">
             Status
           </span>
           <RunStatusBadge status={effectiveStatus} />
@@ -268,7 +268,7 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
 
         {error && (
           <span
-            className="text-sm text-red-600 ml-auto"
+            className="text-sm text-red-400 ml-auto"
             role="alert"
             data-testid="approval-error"
           >
@@ -280,7 +280,7 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
           <div
             role="alertdialog"
             data-testid="approve-bulk-confirm"
-            className="flex items-center gap-2 text-xs ml-auto bg-muted px-3 py-2 rounded border"
+            className="flex items-center gap-2 text-xs ml-auto rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-300"
           >
             <span>
               Approve every reviewer-actionable run of this test variation? Each

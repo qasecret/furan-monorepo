@@ -210,10 +210,14 @@ export function DiffViewer({ runId, diffId }: Props) {
     onHelpToggle: () => undefined,
   });
 
-  if (isLoading) return <div className="p-4">Loading…</div>;
+  if (isLoading)
+    return <div className="p-4 text-sm text-zinc-400">Loading…</div>;
   if (error)
-    return <div className="p-4 text-destructive">Error: {error.message}</div>;
-  if (!data) return <div className="p-4">No run data.</div>;
+    return (
+      <div className="p-4 text-sm text-red-400">Error: {error.message}</div>
+    );
+  if (!data)
+    return <div className="p-4 text-sm text-zinc-400">No run data.</div>;
 
   const regions = (data.diffRegions ?? []) as DiffRegion[];
 
@@ -241,11 +245,11 @@ export function DiffViewer({ runId, diffId }: Props) {
             }
             hasElementMap={!!elementMap}
           />
-          <div className="flex items-center gap-2 px-3 py-2 border-b">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
             <BaselineSourceBadge source={baselineSource} />
             {data.autoApproved && (
               <span
-                className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
                 data-testid="auto-approved-badge"
                 title="System-approved: candidate's image bytes matched the baseline exactly."
               >

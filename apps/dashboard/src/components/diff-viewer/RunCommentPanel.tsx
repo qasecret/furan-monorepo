@@ -72,7 +72,7 @@ export function RunCommentPanel({ runId }: Props) {
 
   return (
     <div
-      className="border-t bg-background p-3 space-y-2"
+      className="border-t border-zinc-800 bg-zinc-950 p-3 space-y-2"
       data-testid="comment-panel"
     >
       <div className="flex items-center justify-between">
@@ -96,12 +96,12 @@ export function RunCommentPanel({ runId }: Props) {
         onKeyDown={handleKeyDown}
         maxLength={MAX_LEN}
         rows={4}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-mono text-white placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 focus:ring-1 focus:ring-zinc-700"
         placeholder="Notes on this run…"
         data-testid="comment-textarea"
       />
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-zinc-500">
           {value.length} / {MAX_LEN}
           <span className="ml-2">(Cmd/Ctrl+Enter to save)</span>
         </span>
@@ -117,7 +117,7 @@ export function RunCommentPanel({ runId }: Props) {
       {error && (
         <span
           role="alert"
-          className="text-sm text-red-600"
+          className="text-sm text-red-400"
           data-testid="comment-error"
         >
           {error}

@@ -14,7 +14,11 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   none: "None",
 };
 
-// Shape varies per severity (a11y: don't rely on color alone).
+// Shape varies per severity (a11y: don't rely on color alone). Each tint
+// uses the Phase 1 status-pill family: bg-{hue}-500/10 + text-{hue}-400
+// + border-{hue}-500/20. `variant="outline"` keeps the Badge primitive's
+// border styling consistent. `none` uses zinc since there's no hue for
+// the absence-of-severity state; the dotted border carries the a11y cue.
 const SEVERITY_STYLE: Record<
   Severity,
   {
@@ -23,25 +27,24 @@ const SEVERITY_STYLE: Record<
   }
 > = {
   breaking: {
-    variant: "destructive",
-    className: "border border-red-700",
+    variant: "outline",
+    className: "bg-red-500/10 text-red-400 border-red-500/20",
   },
   major: {
-    variant: "default",
-    className:
-      "border border-orange-500 bg-orange-100 text-orange-900 hover:bg-orange-100/80",
+    variant: "outline",
+    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   },
   minor: {
     variant: "outline",
-    className: "border-yellow-500 text-yellow-700",
+    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
   },
   cosmetic: {
     variant: "outline",
-    className: "border-blue-400 border-dashed text-blue-700",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20 border-dashed",
   },
   none: {
     variant: "outline",
-    className: "border-gray-400 border-dotted text-gray-600",
+    className: "bg-zinc-900 text-zinc-400 border-zinc-800 border-dotted",
   },
 };
 
@@ -77,9 +80,11 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         aria-label={`Dynamic text ${matched ? "matched" : "not matched"}: ${region.ocrText ?? ""}`}
         aria-pressed={isSelected}
         className={cn(
-          "w-full text-left p-2 rounded border border-dashed hover:bg-accent transition-colors flex items-center gap-2",
-          isSelected && "bg-accent ring-2 ring-primary",
-          matched ? "border-purple-400" : "border-amber-400",
+          "w-full text-left p-2 rounded-md border border-dashed transition-colors flex items-center gap-2",
+          isSelected
+            ? "bg-zinc-900 ring-2 ring-brand border-zinc-700"
+            : "border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700",
+          matched ? "" : "border-amber-500/30",
         )}
         data-region-id={region.id}
         data-source="dynamic_text"
@@ -88,13 +93,13 @@ export function RegionItem({ region }: { region: DiffRegion }) {
           variant="outline"
           className={
             matched
-              ? "border-purple-500 text-purple-700"
-              : "border-amber-500 text-amber-700"
+              ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
           }
         >
           {matched ? "Dynamic text · matched" : "Dynamic text · NOT matched"}
         </Badge>
-        <span className="text-xs font-mono truncate">
+        <span className="text-xs font-mono truncate text-zinc-300">
           &quot;{region.ocrText ?? ""}&quot;
         </span>
       </button>
@@ -108,8 +113,10 @@ export function RegionItem({ region }: { region: DiffRegion }) {
       aria-label={`${SEVERITY_LABEL[sev]} ${region.category}: ${region.description}`}
       aria-pressed={isSelected}
       className={cn(
-        "w-full text-left p-2 rounded border hover:bg-accent transition-colors flex flex-col gap-1",
-        isSelected && "bg-accent ring-2 ring-primary",
+        "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1",
+        isSelected
+          ? "bg-zinc-900 ring-2 ring-brand border-zinc-700"
+          : "border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700",
       )}
       data-region-id={region.id}
     >
@@ -121,11 +128,11 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         >
           {SEVERITY_LABEL[sev]}
         </Badge>
-        <span className="text-xs text-muted-foreground capitalize">
+        <span className="text-xs text-zinc-500 capitalize">
           {region.category}
         </span>
       </div>
-      <p className="text-sm line-clamp-2">{region.description}</p>
+      <p className="text-sm text-zinc-200 line-clamp-2">{region.description}</p>
     </button>
   );
 }

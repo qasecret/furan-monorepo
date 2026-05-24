@@ -16,22 +16,26 @@ interface Props {
 export function EmptyRunCard({ projectId, buildId }: Props) {
   return (
     <div
-      className="flex flex-col gap-4 p-8 m-4 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 max-w-2xl"
+      className="flex flex-col gap-4 p-8 m-4 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 max-w-2xl text-sm text-zinc-300"
       data-testid="empty-run-card"
     >
       <div className="flex items-center gap-2">
         <span aria-hidden className="text-2xl">
           📝
         </span>
-        <h2 className="text-lg font-medium">No visual checks recorded</h2>
+        <h2 className="text-lg font-semibold text-white">
+          No visual checks recorded
+        </h2>
       </div>
-      <p className="text-sm text-neutral-700">
+      <p className="text-zinc-400">
         This run completed successfully, but your test didn&apos;t capture any
         screenshots. To compare visuals on every run, add{" "}
-        <code className="font-mono text-xs">furan.snapshot()</code> calls inside
-        your tests:
+        <code className="font-mono text-xs text-zinc-300">
+          furan.snapshot()
+        </code>{" "}
+        calls inside your tests:
       </p>
-      <pre className="overflow-x-auto rounded bg-neutral-900 text-neutral-100 p-3 text-xs">
+      <pre className="overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900 text-zinc-100 p-3 text-xs">
         {`furan.snapshot("checkout-page")
 furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
       </pre>
@@ -40,7 +44,7 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
           href="https://github.com/qasecret/furan-monorepo#sdk"
           target="_blank"
           rel="noreferrer noopener"
-          className="text-blue-700 hover:underline"
+          className="text-brand hover:underline"
           data-testid="empty-run-card-sdk-docs"
         >
           View SDK docs →
@@ -48,7 +52,7 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
         {buildId && (
           <Link
             href={`/projects/${projectId}/runs?buildId=${buildId}`}
-            className="text-blue-700 hover:underline"
+            className="text-brand hover:underline"
             data-testid="empty-run-card-timeline"
           >
             View run timeline →

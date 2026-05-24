@@ -122,7 +122,7 @@ export function SensitivityControl({
         data-testid="sensitivity-popover"
       >
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Diff threshold</span>
+          <span className="text-zinc-400">Diff threshold</span>
           <span className="font-mono" data-testid="sensitivity-pending-value">
             {pending.toFixed(2)}%
           </span>
