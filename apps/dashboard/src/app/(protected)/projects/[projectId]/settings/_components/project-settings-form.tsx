@@ -1,8 +1,8 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useMemo } from "react";
+import { useForm, type UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -28,6 +28,151 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+
+/**
+ * Per-engine knob definitions — drives the structured "Engine knobs"
+ * sub-form. Mirrors the predecessor frontend's modal which exposed every
+ * algorithm-specific option (threshold, antialiasing, layout-fail, etc.)
+ * so reviewers didn't have to hand-edit JSON. Furan stores the raw
+ * config blob in `projects.imageComparisonConfig`; this editor reads +
+ * writes that string while the textarea below remains as an escape hatch
+ * for fields the structured form doesn't know about.
+ *
+ * Defaults match the engine packages' actual defaults so a freshly-
+ * selected engine renders something sensible.
+ */
+const ENGINE_KNOBS: Record<
+  "pixelmatch" | "looks_same" | "odiff",
+  ReadonlyArray<
+    | {
+        kind: "number";
+        key: string;
+        label: string;
+        min: number;
+        max: number;
+        step: number;
+        default: number;
+        help: string;
+      }
+    | {
+        kind: "boolean";
+        key: string;
+        label: string;
+        default: boolean;
+        help: string;
+      }
+  >
+> = {
+  pixelmatch: [
+    {
+      kind: "number",
+      key: "threshold",
+      label: "Threshold",
+      min: 0,
+      max: 1,
+      step: 0.01,
+      default: 0.1,
+      help: "Pixel matching threshold (0 = exact; 1 = anything).",
+    },
+    {
+      kind: "boolean",
+      key: "ignoreAntialiasing",
+      label: "Ignore antialiasing",
+      default: true,
+      help: "Skip anti-aliased pixels in the diff.",
+    },
+    {
+      kind: "boolean",
+      key: "allowDiffDimensions",
+      label: "Allow diff dimensions",
+      default: false,
+      help: "Don't fail when baseline and candidate have different dimensions.",
+    },
+  ],
+  looks_same: [
+    {
+      kind: "boolean",
+      key: "strict",
+      label: "Strict",
+      default: false,
+      help: "Pixel-perfect comparison; disables tolerance.",
+    },
+    {
+      kind: "number",
+      key: "tolerance",
+      label: "Tolerance",
+      min: 0,
+      max: 50,
+      step: 0.1,
+      default: 2.3,
+      help: "Perceptual tolerance in CIEDE2000 units (default ~2.3 matches the library default).",
+    },
+    {
+      kind: "number",
+      key: "antialiasingTolerance",
+      label: "Antialiasing tolerance",
+      min: 0,
+      max: 50,
+      step: 0.1,
+      default: 0,
+      help: "Extra tolerance applied within detected antialiased regions.",
+    },
+    {
+      kind: "boolean",
+      key: "ignoreAntialiasing",
+      label: "Ignore antialiasing",
+      default: true,
+      help: "Skip anti-aliased pixels in the diff.",
+    },
+    {
+      kind: "boolean",
+      key: "ignoreCaret",
+      label: "Ignore caret",
+      default: true,
+      help: "Skip the blinking text-cursor diff (useful for text fields).",
+    },
+    {
+      kind: "boolean",
+      key: "allowDiffDimensions",
+      label: "Allow diff dimensions",
+      default: false,
+      help: "Don't fail when baseline and candidate have different dimensions.",
+    },
+  ],
+  odiff: [
+    {
+      kind: "number",
+      key: "threshold",
+      label: "Threshold",
+      min: 0,
+      max: 1,
+      step: 0.01,
+      default: 0.1,
+      help: "Pixel matching threshold (0 = exact; 1 = anything).",
+    },
+    {
+      kind: "boolean",
+      key: "antialiasing",
+      label: "Antialiasing detection",
+      default: false,
+      help: "Detect and skip anti-aliased pixels (slower; more lenient).",
+    },
+    {
+      kind: "boolean",
+      key: "failOnLayoutDiff",
+      label: "Fail on layout diff",
+      default: true,
+      help: "Fail when image dimensions differ (legacy 'failOnLayoutDiff').",
+    },
+    {
+      kind: "boolean",
+      key: "outputDiffMask",
+      label: "Output diff mask",
+      default: false,
+      help: "Write a mask-only diff image alongside the standard overlay.",
+    },
+  ],
+};
 
 /**
  * Zod schema mirrors `projects.update`'s server schema, with two tweaks
@@ -64,6 +209,123 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+
+/**
+ * Structured per-engine config editor. Reads the current
+ * `imageComparisonConfig` JSON string, parses it, and renders a control
+ * per `ENGINE_KNOBS[engine]` entry. Changes flow back to the form by
+ * re-serializing the merged object — fields the editor doesn't know
+ * about are preserved verbatim, so users with custom keys (set via the
+ * JSON textarea or future engines) don't lose them on save.
+ *
+ * Parse failures fall back to `{}` (empty object) silently — the JSON
+ * textarea below shows the raw value and its own validation message, so
+ * the structured editor stays usable while the user fixes the JSON.
+ */
+function EngineKnobsEditor({
+  engine,
+  form,
+  disabled,
+}: {
+  engine: "pixelmatch" | "looks_same" | "odiff";
+  form: UseFormReturn<FormValues>;
+  disabled: boolean;
+}) {
+  const rawConfig = form.watch("imageComparisonConfig");
+  const parsed = useMemo<Record<string, unknown>>(() => {
+    if (!rawConfig || rawConfig.trim() === "") return {};
+    try {
+      const obj = JSON.parse(rawConfig);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        return obj as Record<string, unknown>;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }, [rawConfig]);
+
+  const knobs = ENGINE_KNOBS[engine];
+
+  const writeKey = (key: string, value: unknown): void => {
+    const next: Record<string, unknown> = { ...parsed, [key]: value };
+    form.setValue("imageComparisonConfig", JSON.stringify(next, null, 2), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+  };
+
+  return (
+    <div
+      className="space-y-3 rounded-md border border-zinc-800 bg-zinc-900/40 p-3"
+      data-testid={`engine-knobs-${engine}`}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+        {engine} knobs
+      </p>
+      {knobs.map((knob) => {
+        if (knob.kind === "boolean") {
+          const value =
+            typeof parsed[knob.key] === "boolean"
+              ? (parsed[knob.key] as boolean)
+              : knob.default;
+          return (
+            <div
+              key={knob.key}
+              className="flex items-start justify-between gap-4"
+            >
+              <div>
+                <label
+                  htmlFor={`engine-${engine}-${knob.key}`}
+                  className="text-sm font-medium text-zinc-200"
+                >
+                  {knob.label}
+                </label>
+                <p className="text-xs text-zinc-500">{knob.help}</p>
+              </div>
+              <Switch
+                id={`engine-${engine}-${knob.key}`}
+                checked={value}
+                onCheckedChange={(v) => writeKey(knob.key, v)}
+                disabled={disabled}
+                data-testid={`engine-${engine}-${knob.key}`}
+              />
+            </div>
+          );
+        }
+        const value =
+          typeof parsed[knob.key] === "number"
+            ? (parsed[knob.key] as number)
+            : knob.default;
+        return (
+          <div key={knob.key} className="space-y-1">
+            <label
+              htmlFor={`engine-${engine}-${knob.key}`}
+              className="block text-sm font-medium text-zinc-200"
+            >
+              {knob.label} ({value})
+            </label>
+            <Input
+              id={`engine-${engine}-${knob.key}`}
+              type="number"
+              min={knob.min}
+              max={knob.max}
+              step={knob.step}
+              value={value}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isNaN(n)) writeKey(knob.key, n);
+              }}
+              disabled={disabled}
+              data-testid={`engine-${engine}-${knob.key}`}
+            />
+            <p className="text-xs text-zinc-500">{knob.help}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface Props {
   projectId: string;
@@ -325,12 +587,17 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                 </FormItem>
               )}
             />
+            <EngineKnobsEditor
+              engine={form.watch("imageComparison")}
+              form={form}
+              disabled={isGuest}
+            />
             <FormField
               control={form.control}
               name="imageComparisonConfig"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Algorithm config (JSON)</FormLabel>
+                  <FormLabel>Algorithm config (JSON — advanced)</FormLabel>
                   <FormControl>
                     <textarea
                       {...field}
@@ -340,7 +607,9 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     />
                   </FormControl>
                   <FormDescription>
-                    Algorithm-specific JSON. Leave empty for defaults.
+                    The structured editor above writes here. Edit directly to
+                    set custom keys the structured form doesn't expose, or leave
+                    blank for engine defaults.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
