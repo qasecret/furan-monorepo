@@ -15,6 +15,7 @@ import Fastify, {
 } from "fastify";
 
 import type { Env } from "./env.js";
+import type { Broadcaster } from "./lib/broadcast.js";
 import { hashToken, isPatFormat } from "./lib/token.js";
 import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
@@ -22,6 +23,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBuildsRoutes } from "./routes/builds.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMembersRoutes } from "./routes/members.js";
+import { registerProjectEventsRoute } from "./routes/project-events.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
 import { registerRunEventsRoute } from "./routes/run-events.js";
 import { registerSdkRoutes } from "./routes/sdk-runs.js";
@@ -37,6 +39,7 @@ export interface AppDeps {
   telemetry: Telemetry;
   env: Env;
   diffQueue: DiffQueueProducer;
+  broadcaster: Broadcaster;
 }
 
 declare module "fastify" {
@@ -45,6 +48,7 @@ declare module "fastify" {
     telemetry: Telemetry;
     env: Env;
     diffQueue: DiffQueueProducer;
+    broadcaster: Broadcaster;
   }
 }
 
@@ -60,6 +64,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("telemetry", deps.telemetry);
   app.decorate("env", deps.env);
   app.decorate("diffQueue", deps.diffQueue);
+  app.decorate("broadcaster", deps.broadcaster);
 
   // Generic 5xx body so internal failures don't leak SQL, query params, or
   // stack frames to the client. Fastify's default error handler returns
@@ -116,6 +121,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerMembersRoutes(app);
   await registerBuildsRoutes(app);
   await registerRunEventsRoute(app);
+  await registerProjectEventsRoute(app);
   await registerSdkRoutes(app);
   await registerStorageProxyRoute(app);
   await registerHealthRoutes(app);
@@ -141,6 +147,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
           db: deps.db,
           telemetry: deps.telemetry,
           diffQueue: deps.diffQueue,
+          broadcaster: deps.broadcaster,
         }),
       onError: ({ error, path }) => {
         app.log.error({ path, err: error }, "trpc_error");

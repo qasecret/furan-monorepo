@@ -11,7 +11,7 @@ import {
 import pino, { type Logger } from "pino";
 import { Registry, collectDefaultMetrics } from "prom-client";
 
-export { Counter, Histogram, Registry } from "prom-client";
+export { Counter, Gauge, Histogram, Registry } from "prom-client";
 
 export interface BootstrapOptions {
   service: string;

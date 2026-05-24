@@ -5,6 +5,7 @@ import { vi, type Mock } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { envSchema, type Env } from "../src/env.js";
+import type { Broadcaster } from "../src/lib/broadcast.js";
 import type { DiffQueueProducer } from "../src/trpc/context.js";
 
 export interface TestApp {
@@ -17,6 +18,12 @@ export interface TestApp {
    * overridden. Reset via `diffQueueAdd.mockReset()` between tests.
    */
   diffQueueAdd: Mock;
+  /**
+   * Spy on `broadcaster.publishProjectEvent` calls. Tests that exercise
+   * the producer wiring assert against this; tests that don't care about
+   * broadcasts ignore it. Reset via `broadcasterPublish.mockReset()`.
+   */
+  broadcasterPublish: Mock;
   close: () => Promise<void>;
 }
 
@@ -30,6 +37,13 @@ export interface CreateTestAppOpts {
   skipReady?: boolean;
   /** Override the default vi.fn() diffQueue mock. */
   diffQueue?: DiffQueueProducer;
+  /**
+   * Override the default vi.fn() broadcaster mock. The project-events
+   * SSE integration test substitutes a real broadcaster wired to a
+   * shared Redis connection so the test can verify the full pub/sub
+   * path end-to-end.
+   */
+  broadcaster?: Broadcaster;
 }
 
 export async function createTestApp(
@@ -67,7 +81,15 @@ export async function createTestApp(
     .mockResolvedValue({ id: "test-job-id" });
   const diffQueue: DiffQueueProducer = opts.diffQueue ?? { add: diffQueueAdd };
 
-  const app = await createApp({ db, telemetry, env, diffQueue });
+  // Mock broadcaster — tests that exercise the producer wiring assert
+  // against `broadcasterPublish`; the project-events SSE integration
+  // test overrides this to a real broadcaster that hits Redis.
+  const broadcasterPublish = vi.fn().mockResolvedValue(undefined);
+  const broadcaster: Broadcaster =
+    opts.broadcaster ??
+    ({ publishProjectEvent: broadcasterPublish } as Broadcaster);
+
+  const app = await createApp({ db, telemetry, env, diffQueue, broadcaster });
   if (!opts.skipReady) {
     await app.ready();
   }
@@ -77,6 +99,7 @@ export async function createTestApp(
     telemetry,
     env,
     diffQueueAdd,
+    broadcasterPublish,
     close: async () => {
       await app.close();
       await closeDb();
