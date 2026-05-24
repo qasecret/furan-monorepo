@@ -705,7 +705,14 @@ export function ViewerCanvas({
             ref={baselineRef}
             data-testid="baseline-canvas-host"
             className="flex-1 min-h-0 relative"
-          />
+          >
+            {!baselineUrl && (
+              <CanvasEmptyState label="No baseline yet">
+                Approve this run to set its candidate as the first baseline for
+                this variation.
+              </CanvasEmptyState>
+            )}
+          </div>
         </div>
         <div className="border rounded flex flex-col overflow-hidden relative">
           <div className="text-xs text-muted-foreground p-1 border-b shrink-0">
@@ -716,6 +723,12 @@ export function ViewerCanvas({
             data-testid="candidate-canvas-host"
             className="flex-1 min-h-0 relative"
           >
+            {!candidateUrl && (
+              <CanvasEmptyState label="Waiting for capture…">
+                The SDK upload for this run hasn’t arrived yet. This panel will
+                fill in automatically when the screenshot lands.
+              </CanvasEmptyState>
+            )}
             {overlayActive && (
               <div
                 className={`absolute inset-0 ${
@@ -744,6 +757,12 @@ export function ViewerCanvas({
         data-testid="single-stage-host"
         data-mode={mode}
       >
+        {!baselineUrl && !candidateUrl && (
+          <CanvasEmptyState label="Nothing to compare yet">
+            This run hasn’t been captured. As soon as the SDK uploads
+            screenshots, the diff renders here.
+          </CanvasEmptyState>
+        )}
         {overlayActive && (
           <div
             className={`absolute inset-0 ${
@@ -759,6 +778,30 @@ export function ViewerCanvas({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Centered placeholder shown when a canvas pane has no image to render.
+ * Replaces the previous bare light-gray rectangle with explicit copy so
+ * users know whether the run is in progress, empty, or pending capture.
+ * Same visual treatment as `EmptyRunCard` to feel native to the viewer.
+ */
+function CanvasEmptyState({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center"
+      data-testid="canvas-empty-state"
+    >
+      <div className="text-sm font-medium text-zinc-300">{label}</div>
+      <div className="text-xs text-zinc-500 max-w-[26rem]">{children}</div>
     </div>
   );
 }

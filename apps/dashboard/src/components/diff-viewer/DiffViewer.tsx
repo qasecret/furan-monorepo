@@ -225,63 +225,91 @@ export function DiffViewer({ runId, diffId }: Props) {
 
   return (
     <div className="flex flex-col h-full" data-diff-id={diffId}>
-      {isEmpty ? (
-        <EmptyRunCard
-          projectId={data.projectId}
-          buildId={data.buildId ?? null}
-        />
-      ) : (
-        <>
-          <div id="diff-viewer-toolbar">
-            <ViewerToolbar
-              runId={runId}
-              projectId={data?.projectId ?? ""}
-              project={{
-                dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
-                diffThreshold: project?.diffThreshold ?? null,
-              }}
-              runDiffThresholdOverride={
-                (data as { diffThresholdOverride?: number | null })
-                  ?.diffThresholdOverride ?? null
-              }
-              hasElementMap={!!elementMap}
-            />
-          </div>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-            <BaselineSourceBadge source={baselineSource} />
-            {data.autoApproved && (
-              <span
-                className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
-                data-testid="auto-approved-badge"
-                title="System-approved: candidate's image bytes matched the baseline exactly."
-              >
-                Auto-approved
-              </span>
-            )}
-            <ViewportSwitcher viewports={uniqueViewports} />
-          </div>
-          <div className="flex flex-1 overflow-hidden">
-            <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
-              <ViewerCanvas
-                baselineUrl={baselineUrl}
-                candidateUrl={candidateUrl}
-                diffOverlayUrl={diffOverlayUrl}
-                regions={regions}
-                elementMap={elementMap ?? null}
+      {/* Mobile gate: the diff viewer's pixi canvases + region sidebar need
+          horizontal real estate the smallest phones don't have. Below the
+          md breakpoint we replace the whole tree with an honest "use a
+          wider screen" message instead of cramming a 320px side-by-side
+          layout onto 375px (verified visually on 2026-05-24 UX audit). */}
+      <div
+        className="md:hidden flex flex-1 items-center justify-center p-6 text-center"
+        data-testid="diff-viewer-mobile-gate"
+      >
+        <div className="max-w-sm space-y-3">
+          <h2 className="text-base font-semibold text-white">
+            Diff review needs a wider screen
+          </h2>
+          <p className="text-sm text-zinc-400">
+            Reviewing pixel diffs and editing ignore regions both need the
+            side-by-side canvas + region sidebar to be visible. Open this run on
+            tablet or desktop to continue.
+          </p>
+          <p className="text-xs text-zinc-500">
+            Run status:{" "}
+            <span className="font-mono text-zinc-300">
+              {data?.status ?? "loading"}
+            </span>
+          </p>
+        </div>
+      </div>
+      <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
+        {isEmpty ? (
+          <EmptyRunCard
+            projectId={data.projectId}
+            buildId={data.buildId ?? null}
+          />
+        ) : (
+          <>
+            <div id="diff-viewer-toolbar">
+              <ViewerToolbar
+                runId={runId}
+                projectId={data?.projectId ?? ""}
+                project={{
+                  dynamicTextEnabled: project?.dynamicTextEnabled ?? false,
+                  diffThreshold: project?.diffThreshold ?? null,
+                }}
+                runDiffThresholdOverride={
+                  (data as { diffThresholdOverride?: number | null })
+                    ?.diffThresholdOverride ?? null
+                }
+                hasElementMap={!!elementMap}
               />
             </div>
-            <RegionListPanel regions={regions} />
-          </div>
-        </>
-      )}
-      <div id="diff-viewer-approval">
-        <ApprovalBar
-          runId={runId}
-          status={data?.status}
-          diffRegions={data?.diffRegions}
-        />
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+              <BaselineSourceBadge source={baselineSource} />
+              {data.autoApproved && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
+                  data-testid="auto-approved-badge"
+                  title="System-approved: candidate's image bytes matched the baseline exactly."
+                >
+                  Auto-approved
+                </span>
+              )}
+              <ViewportSwitcher viewports={uniqueViewports} />
+            </div>
+            <div className="flex flex-1 overflow-hidden">
+              <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
+                <ViewerCanvas
+                  baselineUrl={baselineUrl}
+                  candidateUrl={candidateUrl}
+                  diffOverlayUrl={diffOverlayUrl}
+                  regions={regions}
+                  elementMap={elementMap ?? null}
+                />
+              </div>
+              <RegionListPanel regions={regions} />
+            </div>
+          </>
+        )}
+        <div id="diff-viewer-approval">
+          <ApprovalBar
+            runId={runId}
+            status={data?.status}
+            diffRegions={data?.diffRegions}
+          />
+        </div>
+        <RunCommentPanel runId={runId} />
       </div>
-      <RunCommentPanel runId={runId} />
     </div>
   );
 }
