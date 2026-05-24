@@ -1,4 +1,4 @@
-import { eq, projects } from "@furan/db";
+import { baselines, desc, eq, projects, sql, testVariations } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -161,5 +161,42 @@ export const projectsRouter = t.router({
         }
         throw err;
       }
+    }),
+
+  /**
+   * Distinct `branchName` values that have at least one `baselines` row for
+   * the project, ordered by most-recent activity. Drives the merge-baselines
+   * panel's branch selectors so the reviewer only picks from branches that
+   * actually have approved baselines to promote.
+   *
+   * Uses MAX(createdAt) ordering rather than alphabetical because reviewers
+   * almost always want to merge their most-recent feature branch first.
+   */
+  listBranches: t.procedure
+    .input(projectIdInput)
+    .use(authed)
+    .use(
+      projectMember<ProjectIdInput>("read", {
+        from: {
+          resolver: ({ input }: { input: ProjectIdInput; ctx: Context }) =>
+            Promise.resolve(input.projectId),
+        },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const rows = await ctx.db
+        .select({
+          branchName: baselines.branchName,
+          latestAt: sql<Date>`max(${baselines.createdAt})`.as("latest_at"),
+        })
+        .from(baselines)
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, baselines.testVariationId),
+        )
+        .where(eq(testVariations.projectId, input.projectId))
+        .groupBy(baselines.branchName)
+        .orderBy(desc(sql`max(${baselines.createdAt})`));
+      return rows.map((r) => r.branchName);
     }),
 });

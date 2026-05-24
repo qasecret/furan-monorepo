@@ -28,6 +28,7 @@ export function ProjectTabs({ projectId }: Props) {
   const tabs: Tab[] = [
     { href: `/projects/${projectId}/builds`, label: "Builds" },
     { href: `/projects/${projectId}/runs`, label: "Runs" },
+    { href: `/projects/${projectId}/variations`, label: "Variations" },
     { href: `/projects/${projectId}/settings`, label: "Settings" },
   ];
 
