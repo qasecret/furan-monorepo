@@ -65,6 +65,7 @@ export function DeleteTokenButton({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             onClick={() => void onConfirm()}
             disabled={pending}
             data-testid={`delete-token-confirm-${tokenId}`}

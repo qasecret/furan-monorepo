@@ -89,6 +89,7 @@ export function DeactivateButton({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant={targetActive ? "default" : "destructive"}
             onClick={() => void onConfirm()}
             disabled={pending}
             data-testid={`deactivate-confirm-${userId}`}
