@@ -108,6 +108,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       },
       A: () => optsRef.current.onApprove?.(),
       R: () => optsRef.current.onReject?.(),
+      // `X` is the legacy reject hotkey from the predecessor frontend.
+      // Aliased to onReject so power reviewers carrying muscle memory from
+      // the old viewer hit the same action without retraining.
+      X: () => optsRef.current.onReject?.(),
       C: () => {
         const store = useViewerStore.getState();
         store.setCommentPanelOpen(!store.commentPanelOpen);
