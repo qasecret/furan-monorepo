@@ -129,19 +129,13 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
   const isGuest = userRole === "guest";
 
   if (isLoading) {
-    return (
-      <div className="text-sm text-muted-foreground">Loading settings…</div>
-    );
+    return <div className="text-sm text-zinc-400">Loading settings…</div>;
   }
   if (error) {
-    return (
-      <div className="text-sm text-destructive">Error: {error.message}</div>
-    );
+    return <div className="text-sm text-red-400">Error: {error.message}</div>;
   }
   if (!project) {
-    return (
-      <div className="text-sm text-muted-foreground">No project data.</div>
-    );
+    return <div className="text-sm text-zinc-400">No project data.</div>;
   }
 
   const onSubmit = (values: FormValues): void => {
@@ -341,7 +335,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     <textarea
                       {...field}
                       rows={4}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-mono text-white placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 focus:ring-1 focus:ring-zinc-700"
                       data-testid="image-config-textarea"
                     />
                   </FormControl>
