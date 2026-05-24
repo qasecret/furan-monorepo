@@ -26,17 +26,19 @@ export function VariationHistory({ projectId, variationId }: Props) {
   });
 
   if (variation.isLoading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    return <div className="text-sm text-zinc-400">Loading…</div>;
   }
   if (variation.error?.data?.code === "NOT_FOUND") {
     return (
       <Card>
-        <h1 className="text-xl font-bold">404 — variation not found</h1>
-        <p className="text-sm text-neutral-600">
+        <h1 className="text-xl font-semibold text-white">
+          404 — variation not found
+        </h1>
+        <p className="text-sm text-zinc-400">
           The variation may have been deleted, or the id is invalid.{" "}
           <Link
             href={`/projects/${projectId}/runs`}
-            className="text-blue-700 hover:underline"
+            className="text-brand hover:underline"
           >
             Back to runs
           </Link>
@@ -47,8 +49,10 @@ export function VariationHistory({ projectId, variationId }: Props) {
   if (variation.error?.data?.code === "FORBIDDEN") {
     return (
       <Card>
-        <h1 className="text-xl font-bold">403 — not a project member</h1>
-        <p className="text-sm text-neutral-600">
+        <h1 className="text-xl font-semibold text-white">
+          403 — not a project member
+        </h1>
+        <p className="text-sm text-zinc-400">
           You need to be added to this project to view its variation history.
         </p>
       </Card>
@@ -56,7 +60,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
   }
   if (variation.error || !variation.data) {
     return (
-      <div className="p-6 text-sm text-destructive">
+      <div className="text-sm text-red-400">
         Error: {variation.error?.message ?? "unknown"}
       </div>
     );
@@ -101,29 +105,26 @@ export function VariationHistory({ projectId, variationId }: Props) {
   };
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <header className="flex items-center gap-3 text-sm flex-wrap">
         <Link
           href={`/projects/${projectId}/runs`}
-          className="text-blue-700 hover:underline"
+          className="text-brand hover:underline"
         >
           ← Runs
         </Link>
-        <span className="font-mono font-medium" data-testid="variation-name">
+        <span
+          className="font-mono font-medium text-white"
+          data-testid="variation-name"
+        >
           {variation.data.name}
         </span>
-        <span className="text-neutral-400">·</span>
-        <span className="text-neutral-600">
-          {variation.data.browser ?? "—"}
-        </span>
-        <span className="text-neutral-400">·</span>
-        <span className="text-neutral-600">
-          {variation.data.viewport ?? "—"}
-        </span>
-        <span className="text-neutral-400">·</span>
-        <span className="text-neutral-600">
-          {variation.data.totalRuns} runs
-        </span>
+        <span className="text-zinc-600">·</span>
+        <span className="text-zinc-400">{variation.data.browser ?? "—"}</span>
+        <span className="text-zinc-600">·</span>
+        <span className="text-zinc-400">{variation.data.viewport ?? "—"}</span>
+        <span className="text-zinc-600">·</span>
+        <span className="text-zinc-400">{variation.data.totalRuns} runs</span>
       </header>
       <DiffPercentSparkline runs={sparklineRuns} />
       <HistoryTable
