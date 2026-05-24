@@ -25,7 +25,14 @@ export default async function ProjectsPage() {
     apiGet<Me>("/users/me"),
   ]);
   if (projectsRes.status === 401 || projectsRes.status === 403) {
-    return <p>Not authorized.</p>;
+    return (
+      <Card>
+        <h1 className="text-xl font-semibold text-white">Not authorized</h1>
+        <p className="text-sm text-zinc-400">
+          Your session may have expired. Try signing in again.
+        </p>
+      </Card>
+    );
   }
   const projects = projectsRes.data ?? [];
   const role: Me["role"] = meRes.data?.role ?? "guest";
@@ -37,7 +44,9 @@ export default async function ProjectsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Projects</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">
+          Projects
+        </h1>
         {role === "admin" && <CreateProjectDialog />}
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -45,13 +54,16 @@ export default async function ProjectsPage() {
           <Link
             key={p.id}
             href={`/projects/${p.id}`}
-            className="block rounded-lg outline-offset-2 transition hover:shadow-md focus-visible:outline-2"
+            className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-zinc-700"
             data-testid={`project-card-${p.id}`}
           >
-            <Card>
-              <h2 className="text-lg font-semibold">{p.name}</h2>
-              <p className="text-sm text-neutral-600">
-                Main branch: {p.mainBranchName}
+            <Card className="h-full hover:border-zinc-700 transition-colors">
+              <h2 className="text-lg font-semibold text-white">{p.name}</h2>
+              <p className="text-sm text-zinc-400">
+                Main branch:{" "}
+                <code className="font-mono text-xs text-zinc-300">
+                  {p.mainBranchName}
+                </code>
               </p>
             </Card>
           </Link>
