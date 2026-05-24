@@ -5,6 +5,7 @@ import { Bell, Menu, Search } from "lucide-react";
 import { useMobileSidebarStore } from "./use-mobile-sidebar";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { HelpButton } from "@/components/tour/help-button";
 
 /**
  * App-shell top bar. The "search input" is a button that opens the cmdk
@@ -52,6 +53,7 @@ export function TopBar() {
         </button>
       </div>
       <div className="flex items-center gap-3 shrink-0">
+        <HelpButton />
         <button
           type="button"
           disabled

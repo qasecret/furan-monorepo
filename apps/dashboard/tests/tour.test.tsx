@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { HelpButton } from "../src/components/tour/help-button";
 import { PageTour } from "../src/components/tour/page-tour";
 import {
   TourProvider,
@@ -28,6 +29,7 @@ function renderWithSteps(steps: TourStep[], pageId = "test-page") {
       <div id="anchor-b" style={{ width: 100, height: 40 }}>
         anchor-b
       </div>
+      <HelpButton />
       <PageTour pageId={pageId} steps={steps} />
       <TourOverlay />
     </TourProvider>,
@@ -126,5 +128,72 @@ describe("guided tour", () => {
     renderWithSteps(orphan, "orphan");
     // The state is active but computePosition returns null → no popover.
     expect(screen.queryByTestId("tour-popover")).toBeNull();
+  });
+
+  describe("HelpButton + relaunch", () => {
+    it("HelpButton is hidden when no tour is registered for the current page", () => {
+      render(
+        <TourProvider>
+          <HelpButton />
+        </TourProvider>,
+      );
+      expect(screen.queryByTestId("top-bar-help")).toBeNull();
+    });
+
+    it("HelpButton appears as soon as a page registers steps", () => {
+      renderWithSteps(STEPS);
+      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
+    });
+
+    it("HelpButton stays visible after the user dismisses the tour", () => {
+      renderWithSteps(STEPS, "stays-visible");
+      fireEvent.click(screen.getByTestId("tour-skip-button"));
+      // The popover is gone, but the button remains so the user can
+      // re-launch.
+      expect(screen.queryByTestId("tour-popover")).toBeNull();
+      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
+    });
+
+    it("clicking HelpButton re-launches a dismissed tour from step 1", () => {
+      renderWithSteps(STEPS, "relaunch-test");
+      fireEvent.click(screen.getByTestId("tour-skip-button"));
+      expect(screen.queryByTestId("tour-popover")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("top-bar-help"));
+      expect(screen.getByTestId("tour-popover")).toBeTruthy();
+      // Re-launch resets to step 1, not whatever index the user was on
+      // when they dismissed.
+      expect(screen.getByTestId("tour-progress").textContent).toBe("1 / 2");
+      expect(screen.getByText("Step one")).toBeTruthy();
+    });
+
+    it("re-launch clears the localStorage dismissal flag (next mount auto-starts)", () => {
+      renderWithSteps(STEPS, "flag-clear");
+      fireEvent.click(screen.getByTestId("tour-skip-button"));
+      expect(
+        window.localStorage.getItem("furan:tour:dismissed:flag-clear"),
+      ).toBe("1");
+
+      fireEvent.click(screen.getByTestId("top-bar-help"));
+      // After relaunch, the dismissed flag is removed so the auto-start
+      // path runs again on the next session.
+      expect(
+        window.localStorage.getItem("furan:tour:dismissed:flag-clear"),
+      ).toBeNull();
+    });
+
+    it("a previously-dismissed page still registers (HelpButton visible) on a fresh mount", () => {
+      // Simulate the user dismissing the tour in a prior session.
+      window.localStorage.setItem("furan:tour:dismissed:returning-user", "1");
+      renderWithSteps(STEPS, "returning-user");
+
+      // The tour did NOT auto-start (no popover) — but the page DID
+      // register so the Help button knows where to relaunch from.
+      expect(screen.queryByTestId("tour-popover")).toBeNull();
+      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId("top-bar-help"));
+      expect(screen.getByTestId("tour-popover")).toBeTruthy();
+    });
   });
 });
