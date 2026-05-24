@@ -428,4 +428,82 @@ d("tRPC projects.mergeBranchBaselines", () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  describe("project-event broadcasts", () => {
+    beforeEach(() => {
+      h.broadcasterPublish.mockClear();
+    });
+
+    test("first merge fires build_created + per-run testRun_created + build_updated", async () => {
+      await seedVariationWithBaseline(h, s, "view-1", "hash-1");
+      await seedVariationWithBaseline(h, s, "view-2", "hash-2");
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+
+      const calls = h.broadcasterPublish.mock.calls;
+      const events = calls.map(([, ev]) => (ev as { event: string }).event);
+      expect(events).toContain("build_created");
+      expect(events.filter((e) => e === "testRun_created")).toHaveLength(2);
+      expect(events).toContain("build_updated");
+
+      // build_created carries the synthetic build id.
+      const buildCreated = calls.find(
+        ([, ev]) => (ev as { event: string }).event === "build_created",
+      );
+      expect(buildCreated?.[1]).toEqual({
+        event: "build_created",
+        data: { id: res.buildId },
+      });
+    });
+
+    test("re-merge (retry) does NOT re-fire build_created", async () => {
+      await seedVariationWithBaseline(h, s, "view", "hash");
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+
+      h.broadcasterPublish.mockClear();
+      await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+
+      const events = h.broadcasterPublish.mock.calls.map(
+        ([, ev]) => (ev as { event: string }).event,
+      );
+      expect(events).not.toContain("build_created");
+      expect(events).toContain("testRun_created");
+      expect(events).toContain("build_updated");
+    });
+
+    test("no source baselines: skips broadcasts entirely (no synthetic runs)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+      expect(res.runCount).toBe(0);
+
+      // build_created fires (the synthetic container is still created) but
+      // no testRun_created and no build_updated (skipped because nothing
+      // was enqueued).
+      const events = h.broadcasterPublish.mock.calls.map(
+        ([, ev]) => (ev as { event: string }).event,
+      );
+      expect(events).toContain("build_created");
+      expect(events).not.toContain("testRun_created");
+      expect(events).not.toContain("build_updated");
+    });
+  });
 });

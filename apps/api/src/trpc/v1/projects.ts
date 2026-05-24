@@ -152,6 +152,7 @@ export const projectsRouter = t.router({
           db: ctx.db,
           diffQueue: ctx.diffQueue,
           telemetry: ctx.telemetry,
+          broadcaster: ctx.broadcaster,
           userId: ctx.user?.id ?? null,
           log: ctx.req.log,
         });

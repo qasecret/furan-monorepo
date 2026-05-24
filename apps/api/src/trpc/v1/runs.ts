@@ -464,6 +464,11 @@ export const runsRouter = t.router({
         projectId: run.projectId,
       });
 
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+
       return {
         runId: run.id,
         scope: input.scope,
@@ -582,6 +587,11 @@ export const runsRouter = t.router({
         projectId: run.projectId,
       });
 
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+
       return {
         runId: run.id,
         scope: input.scope,
@@ -649,6 +659,11 @@ export const runsRouter = t.router({
         projectId: run.projectId,
       });
 
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+
       return {
         runId: run.id,
         threshold: input.threshold,
@@ -698,6 +713,17 @@ export const runsRouter = t.router({
         userId: ctx.user.id,
         ...(run.branchName ? { branchName: run.branchName } : {}),
       });
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+      if (run.buildId) {
+        await ctx.broadcaster.publishProjectEvent(run.projectId, {
+          event: "build_updated",
+          data: { id: run.buildId },
+        });
+      }
 
       return { runId: run.id, approved: true };
     }),
@@ -769,6 +795,7 @@ export const runsRouter = t.router({
       // constraint violation; if any row fails, the user retries with a
       // clean state.
       const approvedIds: string[] = [];
+      const affectedBuildIds = new Set<string>();
       await ctx.db.transaction(async (tx) => {
         for (const run of approveTargets) {
           await tx
@@ -783,8 +810,25 @@ export const runsRouter = t.router({
             ...(run.branchName ? { branchName: run.branchName } : {}),
           });
           approvedIds.push(run.id);
+          if (run.buildId) affectedBuildIds.add(run.buildId);
         }
       });
+
+      // Subscribers debounce per event-type, so per-row broadcasts coalesce
+      // into one flush. Deduping build_updated keeps the post-tx loop O(B)
+      // not O(N*B) when many runs share a build.
+      for (const runId of approvedIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      for (const buildId of affectedBuildIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "build_updated",
+          data: { id: buildId },
+        });
+      }
 
       return {
         approved: approvedIds.length,
@@ -828,6 +872,17 @@ export const runsRouter = t.router({
         .update(testRuns)
         .set({ status: "failed", merge: false })
         .where(eq(testRuns.id, input.runId));
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+      if (run.buildId) {
+        await ctx.broadcaster.publishProjectEvent(run.projectId, {
+          event: "build_updated",
+          data: { id: run.buildId },
+        });
+      }
 
       return { runId: run.id, approved: false };
     }),
@@ -901,6 +956,17 @@ export const runsRouter = t.router({
         .update(testRuns)
         .set({ status: nextStatus })
         .where(eq(testRuns.id, input.runId));
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+      if (run.buildId) {
+        await ctx.broadcaster.publishProjectEvent(run.projectId, {
+          event: "build_updated",
+          data: { id: run.buildId },
+        });
+      }
 
       return { runId: run.id, status: nextStatus };
     }),

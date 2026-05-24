@@ -157,6 +157,7 @@ export async function registerProjectsRoutes(
             db: app.db,
             diffQueue: app.diffQueue,
             telemetry: app.telemetry,
+            broadcaster: app.broadcaster,
             userId: req.auth?.id ?? null,
             log: req.log,
           },

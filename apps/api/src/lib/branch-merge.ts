@@ -20,6 +20,7 @@ import {
   recordBranchMergeDuration,
   recordBranchMergeOutcome,
 } from "./branch-merge-metrics.js";
+import type { Broadcaster } from "./broadcast.js";
 
 /**
  * Shared backing implementation for the cross-branch baseline merge.
@@ -53,6 +54,7 @@ export interface BranchMergeDeps {
   db: DB;
   diffQueue: DiffQueueProducer;
   telemetry: Telemetry;
+  broadcaster: Broadcaster;
   /** Caller user id — stamped on the synthetic build as `userId`. */
   userId: string | null;
   log: FastifyBaseLogger;
@@ -104,6 +106,7 @@ export async function mergeBranchBaselinesImpl(
     .limit(1);
 
   let build = existing[0];
+  let buildWasCreated = false;
   if (!build) {
     const created = await deps.db
       .insert(builds)
@@ -122,6 +125,18 @@ export async function mergeBranchBaselinesImpl(
       // surface a typed error so callers don't grovel through err.message.
       throw new Error("merge_build_insert_returned_no_row");
     }
+    buildWasCreated = true;
+  }
+
+  // Retried merges reuse an existing container, so only fire build_created
+  // the first time. Subscribers wouldn't double-up — debouncing keeps the
+  // first-payload semantics — but emitting on every retry would mislead
+  // anyone reading the metric series.
+  if (buildWasCreated) {
+    await deps.broadcaster.publishProjectEvent(projectId, {
+      event: "build_created",
+      data: { id: build.id },
+    });
   }
 
   // 2. Latest baseline per variation on fromBranch — desc by createdAt,
@@ -254,6 +269,21 @@ export async function mergeBranchBaselinesImpl(
 
     enqueued.push({ variationId: source.variationId, runId: run.id });
     recordBranchMergeOutcome(deps.telemetry.metrics, "enqueued");
+
+    await deps.broadcaster.publishProjectEvent(projectId, {
+      event: "testRun_created",
+      data: { id: run.id },
+    });
+  }
+
+  // After all synthetic runs are inserted, signal the build summary to
+  // refresh once (per-run testRun_updated events would also work, but the
+  // build_updated is what bumps the build-list aggregate counters).
+  if (enqueued.length > 0) {
+    await deps.broadcaster.publishProjectEvent(projectId, {
+      event: "build_updated",
+      data: { id: build.id },
+    });
   }
 
   const durationMs = performance.now() - t0;
