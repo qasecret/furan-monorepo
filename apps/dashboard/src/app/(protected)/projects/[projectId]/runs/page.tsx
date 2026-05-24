@@ -41,11 +41,23 @@ export default async function ProjectRunsPage({
   searchParams?: Promise<{
     branch?: string;
     status?: string | string[];
+    browser?: string;
+    viewport?: string;
+    os?: string;
+    device?: string;
+    customTags?: string;
   }>;
 }) {
   const { projectId } = await params;
-  const sp: { branch?: string; status?: string | string[] } =
-    (await searchParams) ?? {};
+  const sp: {
+    branch?: string;
+    status?: string | string[];
+    browser?: string;
+    viewport?: string;
+    os?: string;
+    device?: string;
+    customTags?: string;
+  } = (await searchParams) ?? {};
   // Narrow each raw URL `status` value through the typed enum; unknown
   // values (e.g. stale links from before the enum migration) silently
   // drop out rather than 500ing. Deduplicate to keep the filter set
@@ -97,6 +109,13 @@ export default async function ProjectRunsPage({
         projectId={projectId}
         initialBranch={sp.branch}
         initialStatus={initialStatus}
+        initialDevice={{
+          browser: sp.browser,
+          viewport: sp.viewport,
+          os: sp.os,
+          device: sp.device,
+          customTags: sp.customTags,
+        }}
       />
     </div>
   );

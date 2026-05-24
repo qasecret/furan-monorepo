@@ -299,4 +299,134 @@ d("tRPC runs.list", () => {
     expect(page.items.every((r) => r.buildId === b2.id)).toBe(true);
     expect(page.nextCursor).toBeNull();
   });
+
+  describe("device/environment filters (parity with legacy DataGrid)", () => {
+    // Each test seeds a small set of runs with diverse columns and asserts
+    // the single filter narrows correctly. Shares the project + variation
+    // from the outer seed; uses a fresh build to avoid cursor noise from
+    // the 26 base runs.
+    async function seedDeviceVariants() {
+      const [b] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, ciBuildId: "device-test" })
+        .returning();
+      if (!b) throw new Error("device-test build not seeded");
+      await h.db.insert(testRuns).values([
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          testVariationId: s.variationId,
+          status: "passed",
+          browser: "chromium",
+          viewport: "1280x720",
+          os: "linux",
+          device: "desktop",
+          customTags: "smoke,login,critical",
+          name: "row-1",
+        },
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          testVariationId: s.variationId,
+          status: "passed",
+          browser: "firefox",
+          viewport: "1280x720",
+          os: "linux",
+          device: "desktop",
+          customTags: "regression",
+          name: "row-2",
+        },
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          testVariationId: s.variationId,
+          status: "passed",
+          browser: "chromium",
+          viewport: "375x667",
+          os: "ios",
+          device: "iphone-12",
+          customTags: "smoke,mobile",
+          name: "row-3",
+        },
+      ]);
+      return b.id;
+    }
+
+    test("list: filters by browser", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        browser: "firefox",
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.browser).toBe("firefox");
+    });
+
+    test("list: filters by viewport", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        viewport: "375x667",
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.viewport).toBe("375x667");
+    });
+
+    test("list: filters by os", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        os: "ios",
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.os).toBe("ios");
+    });
+
+    test("list: filters by device", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        device: "iphone-12",
+      });
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.device).toBe("iphone-12");
+    });
+
+    test("list: filters by customTags (ILIKE substring)", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      // 'smoke' matches rows 1 + 3 (both have "smoke" in their tag bag).
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        customTags: "smoke",
+      });
+      expect(page.items).toHaveLength(2);
+      expect(page.items.every((r) => r.customTags?.includes("smoke"))).toBe(
+        true,
+      );
+    });
+
+    test("list: filters compose (browser + viewport)", async () => {
+      const buildId = await seedDeviceVariants();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const page = await client.runs.list.query({
+        projectId: s.projectId,
+        buildId,
+        browser: "chromium",
+        viewport: "375x667",
+      });
+      // Only row-3 matches both.
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.name).toBe("row-3");
+    });
+  });
 });
