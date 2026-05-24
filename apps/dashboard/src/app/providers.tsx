@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { useState, type ReactNode } from "react";
 
+import { TourProvider } from "@/components/tour/tour-context";
+import { TourOverlay } from "@/components/tour/tour-overlay";
 import { browserEnv } from "@/lib/env";
 import { trpc } from "@/lib/trpc";
 
@@ -22,7 +24,12 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <trpc.Provider client={client} queryClient={qc}>
-      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      <QueryClientProvider client={qc}>
+        <TourProvider>
+          {children}
+          <TourOverlay />
+        </TourProvider>
+      </QueryClientProvider>
     </trpc.Provider>
   );
 }

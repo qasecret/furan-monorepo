@@ -3,8 +3,26 @@ import Link from "next/link";
 import { CreateProjectDialog } from "./_components/create-project-dialog";
 import { EmptyProjectsCta } from "./_components/empty-projects-cta";
 
+import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+const PROJECTS_PAGE_TOUR = [
+  {
+    target: "#projects-list",
+    title: "Projects",
+    content:
+      "Each project owns its own builds, test variations, and baselines. Click any card to drill in.",
+    placement: "bottom" as const,
+  },
+  {
+    target: "#projects-create",
+    title: "Create a project",
+    content:
+      "Admins can spin up a new project here. Each project gets its own PAT for SDK auth.",
+    placement: "left" as const,
+  },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +61,21 @@ export default async function ProjectsPage() {
 
   return (
     <div className="space-y-4">
+      <PageTour pageId="projects-index" steps={PROJECTS_PAGE_TOUR} />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight text-white">
           Projects
         </h1>
-        {role === "admin" && <CreateProjectDialog />}
+        {role === "admin" && (
+          <div id="projects-create">
+            <CreateProjectDialog />
+          </div>
+        )}
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div
+        id="projects-list"
+        className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+      >
         {projects.map((p) => (
           <Link
             key={p.id}
