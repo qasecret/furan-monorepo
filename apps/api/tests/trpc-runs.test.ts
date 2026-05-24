@@ -1621,4 +1621,160 @@ d("tRPC runs router", () => {
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("project-event broadcasts", () => {
+    // Per the live-updates spec §7.3, every reviewer/SDK mutation that
+    // mutates a test_run must fan out a project-channel event so the
+    // dashboard list views can react in real time. The 67 surrounding
+    // tests already cover the row-level effects; these assertions narrow
+    // in on the wire shape so a future refactor can't silently drop the
+    // broadcast.
+    beforeEach(() => {
+      h.broadcasterPublish.mockClear();
+    });
+
+    test("approve broadcasts testRun_updated + build_updated", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const buildId = await getSeedBuildId(h, s.runId);
+      await client.runs.approve.mutate({ runId: s.runId });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "build_updated",
+        data: { id: buildId },
+      });
+    });
+
+    test("reject broadcasts testRun_updated + build_updated", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const buildId = await getSeedBuildId(h, s.runId);
+      await client.runs.reject.mutate({ runId: s.runId });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "build_updated",
+        data: { id: buildId },
+      });
+    });
+
+    test("overrideStatus broadcasts testRun_updated + build_updated", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const buildId = await getSeedBuildId(h, s.runId);
+      await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "passed",
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "build_updated",
+        data: { id: buildId },
+      });
+    });
+
+    test("setIgnoreAreas broadcasts testRun_updated (build update deferred to diff completion)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          { x: 0, y: 0, width: 10, height: 10, viewport: "1280x720" },
+        ],
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+      // No build_updated — the diff worker fires it when the re-run lands.
+      expect(h.broadcasterPublish).not.toHaveBeenCalledWith(
+        s.projectId,
+        expect.objectContaining({ event: "build_updated" }),
+      );
+    });
+
+    test("addIgnoreAreas broadcasts testRun_updated", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.addIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [
+          { x: 0, y: 0, width: 10, height: 10, viewport: "1280x720" },
+        ],
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+    });
+
+    test("setDiffThresholdOverride broadcasts testRun_updated", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setDiffThresholdOverride.mutate({
+        runId: s.runId,
+        threshold: 0.05,
+      });
+      expect(h.broadcasterPublish).toHaveBeenCalledWith(s.projectId, {
+        event: "testRun_updated",
+        data: { id: s.runId },
+      });
+    });
+
+    test("bulkApproveByVariation fans out one testRun_updated per approved run + one build_updated per build", async () => {
+      // Seed two sibling runs on the same variation so bulk-approve has
+      // something to fan out over (beyond the seed run).
+      const buildId = await getSeedBuildId(h, s.runId);
+      const [sib1] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          status: "unresolved",
+          name: "sib1",
+        })
+        .returning();
+      const [sib2] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          status: "unresolved",
+          name: "sib2",
+        })
+        .returning();
+
+      h.broadcasterPublish.mockClear();
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.bulkApproveByVariation.mutate({
+        runId: s.runId,
+      });
+      expect(res.approved).toBe(3);
+
+      // 3 testRun_updated + 1 build_updated (all three siblings share the
+      // same build, so the dedupe collapses to one).
+      const testRunCalls = h.broadcasterPublish.mock.calls.filter(
+        ([, ev]) => (ev as { event: string }).event === "testRun_updated",
+      );
+      const buildCalls = h.broadcasterPublish.mock.calls.filter(
+        ([, ev]) => (ev as { event: string }).event === "build_updated",
+      );
+      expect(testRunCalls).toHaveLength(3);
+      expect(buildCalls).toHaveLength(1);
+      expect(buildCalls[0]?.[1]).toEqual({
+        event: "build_updated",
+        data: { id: buildId },
+      });
+      const broadcastRunIds = new Set(
+        testRunCalls.map(([, ev]) => (ev as { data: { id: string } }).data.id),
+      );
+      expect(broadcastRunIds).toEqual(new Set([s.runId, sib1!.id, sib2!.id]));
+    });
+  });
 });
