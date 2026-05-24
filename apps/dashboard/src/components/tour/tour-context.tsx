@@ -38,12 +38,22 @@ interface TourState {
 
 interface TourApi {
   state: TourState;
-  /** Register the steps for the current page; auto-starts unless dismissed. */
-  startIfNew: (pageId: string, steps: TourStep[]) => void;
+  /**
+   * Register the page's steps + auto-start the tour unless the user
+   * previously dismissed this pageId. Even when auto-start is skipped,
+   * the registration still happens so the Help button can re-launch.
+   */
+  register: (pageId: string, steps: TourStep[]) => void;
   next: () => void;
   prev: () => void;
   /** Skip = dismiss for this page + remember the choice across reloads. */
   dismiss: () => void;
+  /**
+   * Re-launch the current page's tour. Clears the dismissal flag for
+   * the registered pageId so a future re-mount auto-starts again.
+   * No-op when the current page has no registered tour.
+   */
+  relaunch: () => void;
 }
 
 const TourContext = createContext<TourApi | null>(null);
@@ -71,6 +81,15 @@ function setDismissed(pageId: string): void {
   }
 }
 
+function clearDismissed(pageId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(DISMISS_PREFIX + pageId);
+  } catch {
+    // ignored
+  }
+}
+
 /**
  * App-root provider. Each page calls `useTourSteps(pageId, steps)` to
  * register its own steps; the provider owns the active-step state and
@@ -89,9 +108,17 @@ export function TourProvider({ children }: { children: ReactNode }) {
     active: false,
   });
 
-  const startIfNew = useCallback((pageId: string, steps: TourStep[]) => {
-    if (steps.length === 0 || isDismissed(pageId)) return;
-    setState({ pageId, steps, index: 0, active: true });
+  const register = useCallback((pageId: string, steps: TourStep[]) => {
+    if (steps.length === 0) return;
+    // Always store pageId + steps so the Help button has a tour to
+    // re-launch even after the user dismissed it. Auto-start only
+    // when this page has not been dismissed before.
+    setState({
+      pageId,
+      steps,
+      index: 0,
+      active: !isDismissed(pageId),
+    });
   }, []);
 
   const next = useCallback(() => {
@@ -120,9 +147,17 @@ export function TourProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const relaunch = useCallback(() => {
+    setState((s) => {
+      if (!s.pageId || s.steps.length === 0) return s;
+      clearDismissed(s.pageId);
+      return { ...s, active: true, index: 0 };
+    });
+  }, []);
+
   const api: TourApi = useMemo(
-    () => ({ state, startIfNew, next, prev, dismiss }),
-    [state, startIfNew, next, prev, dismiss],
+    () => ({ state, register, next, prev, dismiss, relaunch }),
+    [state, register, next, prev, dismiss, relaunch],
   );
 
   return <TourContext.Provider value={api}>{children}</TourContext.Provider>;
@@ -137,6 +172,15 @@ export function useTour(): TourApi {
 }
 
 /**
+ * Variant for shared-chrome components (like the top-bar HelpButton)
+ * that may render in isolated test harnesses without a TourProvider.
+ * Returns null instead of throwing.
+ */
+export function useTourOptional(): TourApi | null {
+  return useContext(TourContext);
+}
+
+/**
  * Page-level hook: registers tour steps on mount, no-op on unmount.
  * Pages call this once at the top of their main client component
  * (typically the page-level client island that already mounts other
@@ -146,15 +190,15 @@ export function useTour(): TourApi {
  * const) so changes do not retrigger the start.
  */
 export function useTourSteps(pageId: string, steps: TourStep[]): void {
-  const { startIfNew } = useTour();
-  // Capture the start call in a ref so we are not bound by exhaustive-
+  const { register } = useTour();
+  // Capture the registration in a ref so we are not bound by exhaustive-
   // deps to re-run on every render. Mount-only side effect.
-  const startedRef = useRef(false);
+  const registeredRef = useRef(false);
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    startIfNew(pageId, steps);
-  }, [pageId, steps, startIfNew]);
+    if (registeredRef.current) return;
+    registeredRef.current = true;
+    register(pageId, steps);
+  }, [pageId, steps, register]);
 }
 
 /** Test-only seam: clears dismissal flags so tests can re-trigger tours. */
