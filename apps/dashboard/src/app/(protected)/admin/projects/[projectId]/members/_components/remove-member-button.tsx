@@ -51,6 +51,7 @@ export function RemoveMemberButton({ projectId, userId, email }: Props) {
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             onClick={() => remove.mutate({ projectId, userId })}
             disabled={remove.isPending}
             data-testid={`remove-confirm-${userId}`}

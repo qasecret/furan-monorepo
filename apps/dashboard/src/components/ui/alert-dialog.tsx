@@ -10,8 +10,15 @@ import { cn } from "@/lib/cn";
  * export a `buttonVariants` factory). Keeping these here means a future
  * refactor to a `cva()`-based Button only needs to update one consumer.
  */
-const ACTION_CLASSES =
-  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 bg-brand text-black hover:bg-brand/90";
+const ACTION_BASE =
+  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50";
+
+const ACTION_VARIANT: Record<"default" | "destructive", string> = {
+  default: "bg-brand text-black hover:bg-brand/90",
+  destructive:
+    "border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20",
+};
+
 const CANCEL_CLASSES =
   "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900 mt-2 sm:mt-0";
 
@@ -102,13 +109,24 @@ const AlertDialogDescription = React.forwardRef<
 AlertDialogDescription.displayName =
   AlertDialogPrimitive.Description.displayName;
 
+interface AlertDialogActionProps extends React.ComponentPropsWithoutRef<
+  typeof AlertDialogPrimitive.Action
+> {
+  /**
+   * Visual treatment for the confirm button. `default` is the brand-lime
+   * primary; `destructive` is the red/10 tint used for delete / revoke /
+   * deactivate confirms so the dangerous action reads as dangerous.
+   */
+  variant?: "default" | "destructive";
+}
+
 const AlertDialogAction = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Action>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action>
->(({ className, ...props }, ref) => (
+  AlertDialogActionProps
+>(({ className, variant = "default", ...props }, ref) => (
   <AlertDialogPrimitive.Action
     ref={ref}
-    className={cn(ACTION_CLASSES, className)}
+    className={cn(ACTION_BASE, ACTION_VARIANT[variant], className)}
     {...props}
   />
 ));
