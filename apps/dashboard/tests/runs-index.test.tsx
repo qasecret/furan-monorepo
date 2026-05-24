@@ -24,6 +24,14 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The RunsTable subscribes to the project SSE channel via useProjectEvents
+// for live invalidation. Mock it out — these tests don't render under a
+// QueryClientProvider, and the hook's behavior has its own dedicated test
+// file (useProjectEvents.test.tsx).
+vi.mock("@/hooks/useProjectEvents", () => ({
+  useProjectEvents: () => undefined,
+}));
+
 // next/navigation hooks used by FiltersBar to sync filter state into the URL.
 const replaceMock = vi.fn();
 let mockSearchParams: URLSearchParams = new URLSearchParams();

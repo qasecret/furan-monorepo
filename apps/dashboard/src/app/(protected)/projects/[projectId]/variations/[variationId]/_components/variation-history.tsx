@@ -7,6 +7,7 @@ import { HistoryTable, type HistoryItem } from "./history-table";
 
 import { DiffPercentSparkline } from "@/components/diff-percent-sparkline";
 import { Card } from "@/components/ui/card";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -15,6 +16,10 @@ interface Props {
 }
 
 export function VariationHistory({ projectId, variationId }: Props) {
+  // testRun_* events on the project SSE channel refresh this variation's
+  // history when a new run lands or a reviewer flips a status.
+  useProjectEvents(projectId);
+
   const variation = trpc.variations.get.useQuery({ projectId, variationId });
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<HistoryItem[]>([]);
