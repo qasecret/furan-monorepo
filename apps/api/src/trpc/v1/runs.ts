@@ -38,6 +38,92 @@ type IgnoreRegion = {
   viewport?: string;
 };
 
+/**
+ * Shape of a single ignore-region element. Extracted to a module-level
+ * const so `setIgnoreAreas` (replace mode) and `addIgnoreAreas` (append
+ * mode) share the same validation rules — Applitools-aligned kinds, regex
+ * pattern requirement for dynamic-text, thresholdOverride only on strict.
+ *
+ * Caller-facing units stay in image-pixel space (matching screenshot
+ * dimensions); the worker re-applies viewport filtering at diff time.
+ */
+const ignoreRegionElementSchema = z
+  .object({
+    x: z.number().int().nonnegative(),
+    y: z.number().int().nonnegative(),
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+    viewport: z.string().min(1).max(32),
+    paddingPx: z.number().int().min(0).max(32).default(0),
+    /**
+     * Match mode (Applitools-aligned):
+     * - `ignore`: skip the region entirely (mask in L1, ignored in L2).
+     * - `dynamic-text`: mask in L1 only when OCR'd text matches `pattern`.
+     * - `strict`: don't mask; region is informational. When
+     *   `thresholdOverride` is set, the engine will (TODO) apply that
+     *   tighter threshold locally. Until the engine work lands, strict
+     *   regions are pure metadata — useful as visual review markers
+     *   ("this area MUST match"). See furan-design/specs/2026-05-23-region-modes-design.md.
+     * - `layout`: mask the region in L1 (suppresses pixel diff inside).
+     *   v1 ships the masking + visual marker; L2-side layout-only
+     *   classification is engine work tracked in the same design doc.
+     * - `content`: same v1 behavior as layout — mask in L1, stored as a
+     *   distinct kind so the future L2 text-content compare wires up
+     *   without a wire-shape change.
+     */
+    kind: z
+      .enum(["ignore", "dynamic-text", "strict", "layout", "content"])
+      .default("ignore"),
+    pattern: z.string().min(1).max(500).optional(),
+    selector: z.string().min(1).max(500).optional(),
+    /**
+     * Optional per-region threshold override for `kind: "strict"`,
+     * matching the units of `projects.diffThreshold` (0..1).
+     * Stored on the region but not yet honored by the engine — see
+     * design doc. Rejected for non-strict kinds so callers can't
+     * accidentally smuggle it onto an ignore region.
+     */
+    thresholdOverride: z.number().min(0).max(1).optional(),
+  })
+  .refine(
+    (r) =>
+      r.kind !== "dynamic-text" ||
+      (r.pattern !== undefined && r.pattern.length > 0),
+    { message: "pattern is required when kind is dynamic-text" },
+  )
+  .superRefine((r, ctx) => {
+    if (r.kind === "dynamic-text" && r.pattern !== undefined) {
+      try {
+        new RegExp(r.pattern, "i");
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Invalid regex: ${(err as Error).message}`,
+          path: ["pattern"],
+        });
+      }
+    }
+    // thresholdOverride is only meaningful for strict regions. Smuggling
+    // it onto an ignore region would silently mask intent (e.g., "I
+    // wanted this to fail if any pixel differs" becomes "I ignored this
+    // entirely") — reject up front.
+    if (r.thresholdOverride !== undefined && r.kind !== "strict") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `thresholdOverride is only valid for kind="strict" (got "${r.kind}")`,
+        path: ["thresholdOverride"],
+      });
+    }
+  });
+
+/**
+ * Total cap on the COMBINED ignore-region list per (scope, run/variation).
+ * Enforced by setIgnoreAreas via `.max(50)` on the array; addIgnoreAreas
+ * checks `existing.length + incoming.length <= MAX_IGNORE_REGIONS` so
+ * append-mode can't exceed the same ceiling.
+ */
+const MAX_IGNORE_REGIONS = 50;
+
 const listInput = z.object({
   projectId: z.string().uuid(),
   cursor: z.string().datetime().optional(),
@@ -296,85 +382,8 @@ export const runsRouter = t.router({
         runId: z.string().uuid(),
         scope: z.enum(["run", "variation"]),
         ignoreAreas: z
-          .array(
-            z
-              .object({
-                x: z.number().int().nonnegative(),
-                y: z.number().int().nonnegative(),
-                width: z.number().int().min(1),
-                height: z.number().int().min(1),
-                viewport: z.string().min(1).max(32),
-                paddingPx: z.number().int().min(0).max(32).default(0),
-                /**
-                 * Match mode (Applitools-aligned):
-                 * - `ignore`: skip the region entirely (mask in L1, ignored in L2).
-                 * - `dynamic-text`: mask in L1 only when OCR'd text matches `pattern`.
-                 * - `strict`: don't mask; region is informational. When
-                 *   `thresholdOverride` is set, the engine will (TODO)
-                 *   apply that tighter threshold locally. Until the
-                 *   engine work lands, strict regions are pure metadata —
-                 *   useful as visual review markers ("this area MUST
-                 *   match"). See furan-design/specs/2026-05-23-region-modes-design.md.
-                 * - `layout`: mask the region in L1 (suppresses pixel
-                 *   diff inside). v1 ships the masking + visual marker;
-                 *   L2-side layout-only classification is engine work
-                 *   tracked in the same design doc.
-                 * - `content`: same v1 behavior as layout — mask in L1,
-                 *   stored as a distinct kind so the future L2 text-
-                 *   content compare wires up without a wire-shape change.
-                 */
-                kind: z
-                  .enum([
-                    "ignore",
-                    "dynamic-text",
-                    "strict",
-                    "layout",
-                    "content",
-                  ])
-                  .default("ignore"),
-                pattern: z.string().min(1).max(500).optional(),
-                selector: z.string().min(1).max(500).optional(),
-                /**
-                 * Optional per-region threshold override for `kind: "strict"`,
-                 * matching the units of `projects.diffThreshold` (0..1).
-                 * Stored on the region but not yet honored by the engine —
-                 * see design doc. Rejected for non-strict kinds so callers
-                 * can't accidentally smuggle it onto an ignore region.
-                 */
-                thresholdOverride: z.number().min(0).max(1).optional(),
-              })
-              .refine(
-                (r) =>
-                  r.kind !== "dynamic-text" ||
-                  (r.pattern !== undefined && r.pattern.length > 0),
-                { message: "pattern is required when kind is dynamic-text" },
-              )
-              .superRefine((r, ctx) => {
-                if (r.kind === "dynamic-text" && r.pattern !== undefined) {
-                  try {
-                    new RegExp(r.pattern, "i");
-                  } catch (err) {
-                    ctx.addIssue({
-                      code: z.ZodIssueCode.custom,
-                      message: `Invalid regex: ${(err as Error).message}`,
-                      path: ["pattern"],
-                    });
-                  }
-                }
-                // thresholdOverride is only meaningful for strict regions.
-                // Smuggling it onto an ignore region would silently mask
-                // intent (e.g., "I wanted this to fail if any pixel differs"
-                // becomes "I ignored this entirely") — reject up front.
-                if (r.thresholdOverride !== undefined && r.kind !== "strict") {
-                  ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: `thresholdOverride is only valid for kind="strict" (got "${r.kind}")`,
-                    path: ["thresholdOverride"],
-                  });
-                }
-              }),
-          )
-          .max(50)
+          .array(ignoreRegionElementSchema)
+          .max(MAX_IGNORE_REGIONS)
           .nullable(),
       }),
     )
@@ -424,6 +433,126 @@ export const runsRouter = t.router({
         runId: run.id,
         scope: input.scope,
         ignoreAreas: input.ignoreAreas,
+        requeued: true as const,
+      };
+    }),
+
+  /**
+   * Append-mode counterpart to `setIgnoreAreas`. Reads the existing
+   * ignore-area list for the given scope, concatenates the incoming
+   * regions, and writes back. The combined list is still bounded by
+   * `MAX_IGNORE_REGIONS` so a caller can't escape the cap by bursting
+   * many `add` calls in a row — the check looks at `existing.length +
+   * incoming.length` and rejects with `BAD_REQUEST` if it would exceed.
+   *
+   * Why a separate procedure (rather than a `mode: "replace" | "append"`
+   * field on `setIgnoreAreas`): the existing mutation has explicit
+   * "pass `null` to clear" semantics, which only makes sense in replace
+   * mode. Mixing append + null-clear in one mutation would force callers
+   * to reason about a three-way state (replace / append / clear) per
+   * call; the predecessor frontend's API also exposed `ignoreAreas/add`
+   * + `ignoreAreas/update` as two distinct endpoints, so this preserves
+   * the same mental model for SDK users porting scripts.
+   *
+   * Like `setIgnoreAreas`, this re-enqueues a diff job so the worker
+   * re-runs with the merged ignore set. SSE consumers can watch
+   * `diff.completed` to know the new result has landed.
+   */
+  addIgnoreAreas: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        scope: z.enum(["run", "variation"]),
+        // No `.nullable()` — append-mode of "append nothing" is meaningless.
+        // Empty array is allowed (no-op) so idempotent retries don't error.
+        ignoreAreas: z.array(ignoreRegionElementSchema).max(MAX_IGNORE_REGIONS),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const runRows = await ctx.db
+        .select({
+          id: testRuns.id,
+          projectId: testRuns.projectId,
+          testVariationId: testRuns.testVariationId,
+          ignoreAreas: testRuns.ignoreAreas,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Read existing for the requested scope.
+      let existing: IgnoreRegion[] = [];
+      if (input.scope === "run") {
+        if (run.ignoreAreas) {
+          try {
+            const parsed = JSON.parse(run.ignoreAreas);
+            if (Array.isArray(parsed)) existing = parsed as IgnoreRegion[];
+          } catch {
+            // Malformed stored payload — treat as empty rather than 500.
+            // The new write replaces it with a well-formed array.
+          }
+        }
+      } else {
+        const variationRows = await ctx.db
+          .select({ ignoreAreas: testVariations.ignoreAreas })
+          .from(testVariations)
+          .where(eq(testVariations.id, run.testVariationId))
+          .limit(1);
+        const raw = variationRows[0]?.ignoreAreas ?? null;
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) existing = parsed as IgnoreRegion[];
+          } catch {
+            // Same as run-scope above.
+          }
+        }
+      }
+
+      if (existing.length + input.ignoreAreas.length > MAX_IGNORE_REGIONS) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Combined ignore-area count (${existing.length + input.ignoreAreas.length}) exceeds the per-scope cap of ${MAX_IGNORE_REGIONS}. Use setIgnoreAreas to replace or delete entries first.`,
+        });
+      }
+
+      const combined = [...existing, ...input.ignoreAreas];
+      const payload = JSON.stringify(combined);
+
+      if (input.scope === "run") {
+        await ctx.db
+          .update(testRuns)
+          .set({ ignoreAreas: payload, updatedAt: new Date() })
+          .where(eq(testRuns.id, input.runId));
+      } else {
+        await ctx.db
+          .update(testVariations)
+          .set({ ignoreAreas: payload, updatedAt: new Date() })
+          .where(eq(testVariations.id, run.testVariationId));
+      }
+
+      await ctx.diffQueue.add("diff", {
+        runId: run.id,
+        projectId: run.projectId,
+      });
+
+      return {
+        runId: run.id,
+        scope: input.scope,
+        added: input.ignoreAreas.length,
+        total: combined.length,
+        ignoreAreas: combined,
         requeued: true as const,
       };
     }),

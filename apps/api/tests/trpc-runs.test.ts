@@ -1465,4 +1465,160 @@ d("tRPC runs router", () => {
       expect(res.ignoreAreas?.[0]).not.toHaveProperty("selector");
     });
   });
+
+  describe("addIgnoreAreas", () => {
+    const VP = "1280x720";
+    const r1 = {
+      x: 1,
+      y: 1,
+      width: 10,
+      height: 10,
+      viewport: VP,
+      paddingPx: 0,
+      kind: "ignore" as const,
+    };
+    const r2 = {
+      x: 100,
+      y: 100,
+      width: 20,
+      height: 20,
+      viewport: VP,
+      paddingPx: 0,
+      kind: "ignore" as const,
+    };
+
+    beforeEach(() => {
+      h.diffQueueAdd.mockClear();
+    });
+
+    test("appends to empty list and enqueues a diff (scope=run)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.addIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [r1],
+      });
+      expect(res).toMatchObject({
+        runId: s.runId,
+        scope: "run",
+        added: 1,
+        total: 1,
+        requeued: true,
+      });
+      expect(res.ignoreAreas).toEqual([r1]);
+
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      expect(row.ignoreAreas).toBe(JSON.stringify([r1]));
+
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+    });
+
+    test("appends to a populated list without overwriting (scope=run)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      // Seed with r1.
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [r1],
+      });
+      h.diffQueueAdd.mockClear();
+      // Append r2 — should now have [r1, r2], not [r2].
+      const res = await client.runs.addIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [r2],
+      });
+      expect(res.added).toBe(1);
+      expect(res.total).toBe(2);
+      expect(res.ignoreAreas).toEqual([r1, r2]);
+
+      const [row] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, s.runId))
+        .limit(1);
+      const parsed = JSON.parse(row.ignoreAreas!) as unknown[];
+      expect(parsed).toHaveLength(2);
+      expect(parsed).toEqual([r1, r2]);
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+    });
+
+    test("appends to variation scope (preserves existing variation areas)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [r1],
+      });
+      h.diffQueueAdd.mockClear();
+      const res = await client.runs.addIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        ignoreAreas: [r2],
+      });
+      expect(res.total).toBe(2);
+
+      const [vRow] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(JSON.parse(vRow.ignoreAreas!)).toEqual([r1, r2]);
+    });
+
+    test("rejects with BAD_REQUEST when combined total would exceed MAX_IGNORE_REGIONS (50)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      // Seed with 49 regions.
+      const seed = Array.from({ length: 49 }, (_, i) => ({
+        x: i,
+        y: i,
+        width: 5,
+        height: 5,
+        viewport: VP,
+        paddingPx: 0,
+        kind: "ignore" as const,
+      }));
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: seed,
+      });
+      h.diffQueueAdd.mockClear();
+      // Try to append 2 more (49 + 2 = 51 > 50).
+      await expect(
+        client.runs.addIgnoreAreas.mutate({
+          runId: s.runId,
+          scope: "run",
+          ignoreAreas: [r1, r2],
+        }),
+      ).rejects.toThrow(/exceeds the per-scope cap/);
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+    });
+
+    test("empty array is a no-op append (does not error, still enqueues diff)", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [r1],
+      });
+      h.diffQueueAdd.mockClear();
+      const res = await client.runs.addIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "run",
+        ignoreAreas: [],
+      });
+      expect(res.added).toBe(0);
+      expect(res.total).toBe(1);
+      expect(res.ignoreAreas).toEqual([r1]);
+      // The write happens (which re-stamps updatedAt) and the diff is
+      // re-enqueued — same semantics as setIgnoreAreas with the existing
+      // payload, useful as a "kick the worker" affordance.
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+    });
+  });
 });
