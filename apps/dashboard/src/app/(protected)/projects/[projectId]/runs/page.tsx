@@ -3,8 +3,26 @@ import { notFound, redirect } from "next/navigation";
 
 import { RunsTable } from "./_components/runs-table";
 
+import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+
+const RUNS_PAGE_TOUR = [
+  {
+    target: "#runs-filters",
+    title: "Filter runs",
+    content:
+      "Slice by branch, status, browser, viewport, OS, device, or custom tags. URL params reflect the filter so links are shareable.",
+    placement: "bottom" as const,
+  },
+  {
+    target: '[data-testid="runs-table"]',
+    title: "Run history",
+    content:
+      "Each row is one test run from the SDK. Click into a row to see its baseline + diff regions in the viewer.",
+    placement: "top" as const,
+  },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -96,6 +114,7 @@ export default async function ProjectRunsPage({
 
   return (
     <div className="space-y-4">
+      <PageTour pageId="runs-index" steps={RUNS_PAGE_TOUR} />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-white">
           Runs

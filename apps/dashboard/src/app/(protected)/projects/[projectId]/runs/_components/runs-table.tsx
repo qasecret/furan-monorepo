@@ -147,12 +147,14 @@ export function RunsTable({
 
   return (
     <div className="space-y-4">
-      <FiltersBar
-        initialBranch={initialBranch}
-        initialStatus={initialStatus}
-        initialDevice={initialDevice}
-        onChange={onFiltersChange}
-      />
+      <div id="runs-filters">
+        <FiltersBar
+          initialBranch={initialBranch}
+          initialStatus={initialStatus}
+          initialDevice={initialDevice}
+          onChange={onFiltersChange}
+        />
+      </div>
       {isLoading && !data ? (
         <div className="text-sm text-zinc-400">Loading…</div>
       ) : error ? (
