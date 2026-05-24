@@ -94,14 +94,22 @@ export function Sidebar({
               </span>
             </div>
             <div className="space-y-0.5">
-              {section.items.map((item) => (
-                <SidebarNavItem
-                  key={item.href}
-                  icon={item.icon}
-                  label={item.label}
-                  href={item.href}
-                />
-              ))}
+              {section.items.map((item) => {
+                // Pre-render the icon as JSX in the server component so
+                // RSC serializes it as an element tree (svg markup) for
+                // the client SidebarNavItem. Passing the bare component
+                // reference (a forwardRef) across the boundary throws
+                // "Functions cannot be passed directly to Client Components".
+                const Icon = item.icon;
+                return (
+                  <SidebarNavItem
+                    key={item.href}
+                    icon={<Icon className="w-4 h-4 shrink-0" />}
+                    label={item.label}
+                    href={item.href}
+                  />
+                );
+              })}
             </div>
           </div>
         ))}

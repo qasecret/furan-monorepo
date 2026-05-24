@@ -2,12 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType, SVGProps } from "react";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
 interface Props {
-  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  /**
+   * Pre-rendered icon JSX (e.g. `<FolderKanban className="w-4 h-4 shrink-0" />`).
+   * Accepting ReactNode rather than `ComponentType<SVGProps>` lets the
+   * parent server-component pass icons across the RSC boundary — passing
+   * the bare component reference fails to serialize because lucide-react
+   * icons are `forwardRef`'d (RSC can't serialize functions as prop values).
+   */
+  icon: ReactNode;
   label: string;
   href: string;
 }
@@ -17,7 +24,7 @@ interface Props {
  * path starts with `href` so deep routes (e.g. `/projects/<id>/runs`)
  * still highlight the "Projects" entry.
  */
-export function SidebarNavItem({ icon: Icon, label, href }: Props) {
+export function SidebarNavItem({ icon, label, href }: Props) {
   const pathname = usePathname();
   const isActive = pathname === href || pathname.startsWith(`${href}/`);
 
@@ -32,7 +39,7 @@ export function SidebarNavItem({ icon: Icon, label, href }: Props) {
           : "text-zinc-400 hover:text-white hover:bg-zinc-900/50",
       )}
     >
-      <Icon className="w-4 h-4 shrink-0" />
+      {icon}
       <span className="truncate">{label}</span>
     </Link>
   );
