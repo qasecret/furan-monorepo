@@ -1,18 +1,15 @@
 package io.furan.sdk.config
 
-import java.time.Instant
-
 /**
- * Marker interface for all events that flow through the (future)
- * Furan SDK event bus. Defined in the config package for Phase 1
- * (only ConfigReloadedEvent exists); Phase 2 will move it to a
- * top-level `io.furan.sdk.event` package with a typealias here for
- * source compatibility.
+ * Source-compatibility typealias. The canonical home of `FuranEvent`
+ * moved to [io.furan.sdk.event.FuranEvent] in Phase 2; this alias
+ * keeps Phase 1 callers (and the still-located-here `ConfigReloadedEvent`)
+ * resolving without a breaking import change.
  *
- * Every event carries a timestamp and an optional correlation id so
- * subscribers can stitch related events together across subsystems.
+ * Prefer `io.furan.sdk.event.FuranEvent` in new code.
  */
-interface FuranEvent {
-    val timestamp: Instant
-    val correlationId: String?
-}
+@Deprecated(
+    "Moved to io.furan.sdk.event.FuranEvent",
+    ReplaceWith("FuranEvent", "io.furan.sdk.event.FuranEvent"),
+)
+typealias FuranEvent = io.furan.sdk.event.FuranEvent
