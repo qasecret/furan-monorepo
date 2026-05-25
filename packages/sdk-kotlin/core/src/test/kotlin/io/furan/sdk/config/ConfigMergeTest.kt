@@ -1,9 +1,9 @@
 package io.furan.sdk.config
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 class ConfigMergeTest {
 
@@ -98,7 +98,7 @@ class ConfigMergeTest {
 
     @Test
     fun `empty layers compose to empty map`() {
-        assertEquals(emptyMap(), ConfigMerge.deepMerge(emptyMap(), emptyMap()))
+        assertEquals(emptyMap<String, Any?>(), ConfigMerge.deepMerge(emptyMap(), emptyMap()))
     }
 
     @Test

@@ -20,7 +20,6 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
-kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 selenium-java = { module = "org.seleniumhq.selenium:selenium-java", version.ref = "selenium" }
 
 [plugins]
