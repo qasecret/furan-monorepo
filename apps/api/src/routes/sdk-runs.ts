@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import {
   and,
+  baselines,
   builds,
   eq,
+  isNull,
   screenshots,
   testRuns,
   testVariations,
@@ -405,9 +407,18 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   //
   // SDK clients that poll for a run's terminal status (capture-completed,
   // diff-done, autoApproved) want a thin REST equivalent of the tRPC
-  // `runs.getById` procedure. Returns just the run row's columns; for
-  // the richer dashboard payload (screenshots, diffRegions, baseline
-  // resolution) use tRPC.
+  // `runs.getById` procedure. Returns the run row's columns PLUS the
+  // derived `autoApproved` flag (true iff a baselines row with a NULL
+  // userId exists for this run — same derivation as ADR-032 and the
+  // tRPC procedure). The richer dashboard payload (screenshots,
+  // diffRegions, baseline resolution) remains tRPC-only.
+  //
+  // `autoApproved` is derived (not a column) because the diff worker's
+  // first-baseline + pixel-identical paths both insert an auto-baseline
+  // row (userId IS NULL) without touching test_runs. The SDK's
+  // snapshotAndAwait() polling loop reads this field as its "is this
+  // run actually done" signal — without it, first-baseline runs poll
+  // forever (verified 2026-05-25 in PR #128 CI).
   // ---------------------------------------------------------------------------
   app.get(
     "/runs/:runId",
@@ -444,7 +455,18 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       if (!row) {
         return reply.code(404).send({ error: "not_found" });
       }
-      return reply.code(200).send(row);
+      // Derive autoApproved the same way the tRPC procedure does
+      // (apps/api/src/trpc/v1/runs.ts:308–318). One PK-indexed lookup
+      // on the baselines table.
+      const autoApprovedRows = await app.db
+        .select({ id: baselines.id })
+        .from(baselines)
+        .where(
+          and(eq(baselines.testRunId, params.runId), isNull(baselines.userId)),
+        )
+        .limit(1);
+      const autoApproved = autoApprovedRows.length > 0;
+      return reply.code(200).send({ ...row, autoApproved });
     },
   );
 
