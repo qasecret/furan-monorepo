@@ -161,6 +161,17 @@ class HttpTransport(private val config: FuranConfig) : Closeable {
     }
 }
 
-/** Non-retriable HTTP error (4xx other than 408/429). */
-class HttpException(val statusCode: Int, val responseBody: String) :
-    RuntimeException("HTTP $statusCode: $responseBody")
+/**
+ * Non-retriable HTTP error (4xx other than 408/429).
+ *
+ * Extends [io.furan.sdk.FuranTransportException] so user code can
+ * catch `FuranException` to handle "anything the SDK can throw" in one
+ * branch. The underlying [statusCode] + [responseBody] fields stay
+ * the same as v1.0.14 for API back-compat.
+ */
+class HttpException(statusCode: Int, responseBody: String) :
+    io.furan.sdk.FuranTransportException(
+        statusCode = statusCode,
+        responseBody = responseBody,
+        message = "HTTP $statusCode: $responseBody",
+    )

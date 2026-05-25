@@ -62,17 +62,35 @@ data class FuranConfig(
 
     companion object {
         /**
-         * Build a config from FURAN_* env vars. Throws [IllegalStateException] if required vars are missing.
+         * Build a config from FURAN_* env vars. Throws
+         * [FuranConfigException] on missing/invalid env (wraps any
+         * underlying [IllegalArgumentException] / [IllegalStateException]
+         * from the [FuranConfig] init block so user code only needs to
+         * catch one exception type).
          *
-         * FURAN_VIEWPORTS uses a compact comma-separated `WIDTHxHEIGHT` format, e.g.
-         * `1280x720,375x812`. (Defensible deviation from the spec's JSON-array sketch:
-         * the spec note explicitly authorizes this simpler format. Avoids pulling
-         * kotlinx-serialization into config bootstrap.)
+         * FURAN_VIEWPORTS uses a compact comma-separated `WIDTHxHEIGHT`
+         * format, e.g. `1280x720,375x812`. (Defensible deviation from the
+         * spec's JSON-array sketch: the spec note explicitly authorizes
+         * this simpler format. Avoids pulling kotlinx-serialization into
+         * config bootstrap.)
          */
-        fun fromEnv(env: Map<String, String> = System.getenv()): FuranConfig {
-            val apiUrl = env["FURAN_API_URL"] ?: error("FURAN_API_URL is required")
-            val apiToken = env["FURAN_API_TOKEN"] ?: error("FURAN_API_TOKEN is required")
-            val projectId = env["FURAN_PROJECT_ID"] ?: error("FURAN_PROJECT_ID is required")
+        fun fromEnv(env: Map<String, String> = System.getenv()): FuranConfig = try {
+            buildFromEnv(env)
+        } catch (e: FuranConfigException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        } catch (e: IllegalStateException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        }
+
+        private fun buildFromEnv(env: Map<String, String>): FuranConfig {
+            val apiUrl = env["FURAN_API_URL"]
+                ?: throw FuranConfigException("FURAN_API_URL is required")
+            val apiToken = env["FURAN_API_TOKEN"]
+                ?: throw FuranConfigException("FURAN_API_TOKEN is required")
+            val projectId = env["FURAN_PROJECT_ID"]
+                ?: throw FuranConfigException("FURAN_PROJECT_ID is required")
             return FuranConfig(
                 apiUrl = apiUrl,
                 apiToken = apiToken,

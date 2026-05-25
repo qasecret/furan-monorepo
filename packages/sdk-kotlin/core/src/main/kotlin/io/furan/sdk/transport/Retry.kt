@@ -12,7 +12,23 @@ data class RetryPolicy(
     val jitter: Double = 0.25,
 )
 
-class RetriableException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+/**
+ * Internal transport signal that a request should be retried (5xx / 408 /
+ * 429). Caught by [withRetry] within the retry budget; if retries are
+ * exhausted, the loop re-throws as-is. User code shouldn't see this
+ * directly — wrap before bubbling up to a public boundary (see
+ * `FuranClient.postOrThrow` / `getOrThrow`).
+ *
+ * Extends [io.furan.sdk.FuranTransportException] so a leaked instance
+ * still satisfies the "catch FuranException" contract.
+ */
+class RetriableException(message: String, cause: Throwable? = null) :
+    io.furan.sdk.FuranTransportException(
+        statusCode = null,
+        responseBody = null,
+        message = message,
+        cause = cause,
+    )
 
 suspend fun <T> withRetry(
     policy: RetryPolicy = RetryPolicy(),
