@@ -1,5 +1,7 @@
 package io.furan.sdk.event
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.delay
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -8,6 +10,7 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SharedFlowEventBusTest {
 
     private data class FooEvent(
@@ -24,7 +27,7 @@ class SharedFlowEventBusTest {
 
     @Test
     fun `published events reach an all-events subscriber`() = runTest {
-        val bus = SharedFlowEventBus()
+        val bus = SharedFlowEventBus(coroutineContext = UnconfinedTestDispatcher(testScheduler))
         val received = CopyOnWriteArrayList<FuranEvent>()
         val sub = bus.subscribe { received += it }
 
@@ -44,7 +47,7 @@ class SharedFlowEventBusTest {
 
     @Test
     fun `type-filtered subscriber only sees matching events`() = runTest {
-        val bus = SharedFlowEventBus()
+        val bus = SharedFlowEventBus(coroutineContext = UnconfinedTestDispatcher(testScheduler))
         val onlyFoo = CopyOnWriteArrayList<FooEvent>()
         bus.subscribe(FooEvent::class) { onlyFoo += it }
 
@@ -61,7 +64,7 @@ class SharedFlowEventBusTest {
 
     @Test
     fun `cancelled subscription stops receiving events`() = runTest {
-        val bus = SharedFlowEventBus()
+        val bus = SharedFlowEventBus(coroutineContext = UnconfinedTestDispatcher(testScheduler))
         val received = CopyOnWriteArrayList<FuranEvent>()
         val sub = bus.subscribe { received += it }
 
@@ -79,7 +82,7 @@ class SharedFlowEventBusTest {
 
     @Test
     fun `close stops the internal scope`() = runTest {
-        val bus = SharedFlowEventBus()
+        val bus = SharedFlowEventBus(coroutineContext = UnconfinedTestDispatcher(testScheduler))
         bus.close()
         // Subscribing after close should still return a Subscription
         // (no NPE), but no events will flow because publish is a no-op.

@@ -21,16 +21,19 @@ import kotlin.reflect.KClass
  *
  * Defaults:
  *  - `bufferCapacity = 1024` events; `DROP_OLDEST` on overflow.
- *  - Subscribers collect on [Dispatchers.Unconfined] by default —
- *    handlers are invoked on the emitting thread and must not block.
- *    Pass an explicit [coroutineContext] (e.g. [Dispatchers.Default])
- *    if background dispatch is required.
+ *  - Subscribers collect on [Dispatchers.Default] — handlers must
+ *    not perform blocking I/O.
+ *
+ * Tests using `kotlinx-coroutines-test` should inject
+ * `UnconfinedTestDispatcher(testScheduler)` via the `coroutineContext`
+ * parameter so subscriber collection integrates with `runTest`'s
+ * virtual-time scheduler.
  *
  * Closing is idempotent. Publishing after close is a no-op.
  */
 class SharedFlowEventBus(
     bufferCapacity: Int = DEFAULT_BUFFER_CAPACITY,
-    coroutineContext: CoroutineContext = Dispatchers.Unconfined,
+    coroutineContext: CoroutineContext = Dispatchers.Default,
 ) : EventBus, AutoCloseable {
 
     private val supervisor = SupervisorJob()
