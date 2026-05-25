@@ -1780,6 +1780,47 @@
                     "maxLength": 64,
                     "type": "string"
                   },
+                  "diffTolerance": {
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "ignoreAreas": {
+                    "items": {
+                      "properties": {
+                        "height": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "viewport": {
+                          "maxLength": 32,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "width": {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "x": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "y": {
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 50,
+                    "type": "array"
+                  },
                   "name": {
                     "maxLength": 255,
                     "minLength": 1,

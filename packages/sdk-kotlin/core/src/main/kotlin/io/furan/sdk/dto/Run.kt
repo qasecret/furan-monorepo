@@ -3,9 +3,14 @@ package io.furan.sdk.dto
 import kotlinx.serialization.Serializable
 
 /**
- * Request body for POST /api/v1/runs (added in Task 4).
- * Mirrors the shape implied by `test_runs` columns in
- * `packages/db/src/schema/test_runs.ts`. Task 4 implements the route to accept this shape.
+ * Request body for POST /runs. Mirrors the shape implied by `test_runs`
+ * columns in `packages/db/src/schema/test_runs.ts`.
+ *
+ * `diffTolerance` + `ignoreAreas` are per-run overrides the diff worker
+ * applies on the first diff job — no separate `setIgnoreAreas` /
+ * `setDiffThresholdOverride` round-trip needed. Matches the legacy
+ * Java SDK's `TestRunRequest` shape (`diffTollerancePercent` +
+ * `ignoreAreas`).
  */
 @Serializable
 data class CreateRunRequest(
@@ -19,6 +24,18 @@ data class CreateRunRequest(
     val os: String? = null,
     val viewport: String? = null, // "1280x720"
     val customTags: String? = null,
+    /**
+     * 0.0–1.0 fraction (e.g. 0.005 = 0.5%). When set, the diff worker
+     * uses this instead of the project default. Out-of-range values are
+     * 400 server-side.
+     */
+    val diffTolerance: Double? = null,
+    /**
+     * Per-run ignore regions. Capped at 50 entries server-side
+     * (matches the dashboard's `MAX_IGNORE_REGIONS`). Subsequent
+     * tweaks go through tRPC `runs.setIgnoreAreas`.
+     */
+    val ignoreAreas: List<IgnoreArea>? = null,
 )
 
 /**

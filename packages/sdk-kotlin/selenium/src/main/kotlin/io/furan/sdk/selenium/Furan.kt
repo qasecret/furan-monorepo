@@ -6,6 +6,7 @@ import io.furan.sdk.FuranConfig
 import io.furan.sdk.Viewport
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.CreateRunRequest
+import io.furan.sdk.dto.IgnoreArea
 import io.furan.sdk.dto.Snapshot
 import io.furan.sdk.dto.SnapshotResult
 import kotlinx.coroutines.runBlocking
@@ -35,7 +36,26 @@ import java.io.Closeable
 class Furan(
     private val driver: WebDriver,
     val config: FuranConfig,
+    /**
+     * Optional per-test diff tolerance override (0.0–1.0). When set,
+     * the diff worker uses this instead of the project default for
+     * every run created by this Furan instance. Matches the legacy
+     * Java SDK's `enableSoftAssert` + `diffTollerancePercent` shape.
+     * Null = inherit project default.
+     */
+    private val diffTolerance: Double? = null,
+    /**
+     * Optional per-test ignore regions, applied by the diff worker
+     * on the first diff job. Capped at 50 entries server-side.
+     */
+    private val ignoreAreas: List<IgnoreArea>? = null,
 ) : Closeable {
+    init {
+        require(diffTolerance == null || diffTolerance in 0.0..1.0) {
+            "diffTolerance must be in 0.0..1.0 (got $diffTolerance)"
+        }
+    }
+
     private val client = FuranClient(config, adapter = "selenium")
     private val createRunMutex = Mutex()
 
@@ -161,6 +181,12 @@ class Furan(
                     name = "snapshot-run",
                     browser = "selenium",
                     viewport = viewportStr,
+                    // Inline per-test overrides land on the initial
+                    // insert so the first diff job uses them — no
+                    // setIgnoreAreas + re-enqueue trip. The dashboard
+                    // can still amend later via tRPC mutations.
+                    diffTolerance = diffTolerance,
+                    ignoreAreas = ignoreAreas,
                 ),
             )
             runId = run.id

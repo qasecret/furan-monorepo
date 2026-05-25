@@ -209,6 +209,136 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  test("POST /runs with diffTolerance + ignoreAreas stores them on the run row", async () => {
+    // Lets SDK consumers declare per-test diff tolerance + ignore
+    // regions at run-create time — no separate setIgnoreAreas /
+    // setDiffThresholdOverride round-trip + diff-worker re-enqueue.
+    // Matches the legacy Java SDK's TestRunRequest shape.
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "tolerance-and-ignore",
+        browser: "chromium",
+        viewport: "1280x720",
+        diffTolerance: 0.05,
+        ignoreAreas: [
+          { x: 0, y: 0, width: 100, height: 40, viewport: "1280x720" },
+          { x: 50, y: 200, width: 300, height: 80 },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { id: string };
+
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.id))
+      .limit(1);
+    const row = rows[0]!;
+    // diffThresholdOverride is a Drizzle numeric column. The PG driver
+    // returns it as a number for non-integer values; assert numerically.
+    expect(Number(row.diffThresholdOverride)).toBeCloseTo(0.05, 5);
+    // ignore_areas is a text column holding JSON
+    expect(row.ignoreAreas).not.toBeNull();
+    const parsedIgnoreAreas = JSON.parse(row.ignoreAreas!) as Array<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      viewport?: string;
+    }>;
+    expect(parsedIgnoreAreas).toHaveLength(2);
+    expect(parsedIgnoreAreas[0]).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 40,
+      viewport: "1280x720",
+    });
+    expect(parsedIgnoreAreas[1]).toEqual({
+      x: 50,
+      y: 200,
+      width: 300,
+      height: 80,
+    });
+  });
+
+  test("POST /runs rejects diffTolerance outside the 0..1 range", async () => {
+    // 0–1 is the same range as `projects.diffThreshold` — a value >1
+    // would never trigger a failure regardless of the diff, so the
+    // server fails closed.
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "bad-tolerance",
+        diffTolerance: 1.5,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("POST /runs caps ignoreAreas at 50 entries", async () => {
+    // Matches the dashboard's MAX_IGNORE_REGIONS cap in
+    // apps/api/src/trpc/v1/runs.ts so /runs and setIgnoreAreas share
+    // the same ceiling.
+    const tooMany = Array.from({ length: 51 }, (_, i) => ({
+      x: i,
+      y: 0,
+      width: 10,
+      height: 10,
+    }));
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "too-many-areas",
+        ignoreAreas: tooMany,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("POST /runs without diffTolerance + ignoreAreas leaves the columns null (back-compat)", async () => {
+    // Existing SDK consumers that don't supply these fields must see
+    // identical behavior to v1.0.13 — null columns, server applies the
+    // project default at diff time.
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "default-fields",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { id: string };
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.id))
+      .limit(1);
+    expect(rows[0]!.diffThresholdOverride).toBeNull();
+    expect(rows[0]!.ignoreAreas).toBeNull();
+  });
+
   test("POST /runs as a non-member editor → 403", async () => {
     const res = await h.app.inject({
       method: "POST",

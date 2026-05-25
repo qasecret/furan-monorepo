@@ -18,6 +18,23 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 
+/**
+ * Per-run ignore region. Carried inline in POST /runs so SDK consumers
+ * can declare ignore regions at run-creation time and the diff worker
+ * picks them up on the first diff job — no separate setIgnoreAreas
+ * call + re-enqueue cycle. Matches the legacy Java SDK's IgnoreAreas
+ * shape verbatim except for the optional `viewport` field (which lets
+ * multi-viewport runs apply the right mask per screenshot, same as
+ * the dashboard's typed ignore-region schema in `apps/api/src/trpc/v1/runs.ts`).
+ */
+export const ignoreAreaSchema = z.object({
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+  viewport: z.string().min(1).max(32).optional(),
+});
+
 export const createRunBody = z.object({
   projectId: z.string().uuid(),
   buildId: z.string().uuid(),
@@ -29,6 +46,20 @@ export const createRunBody = z.object({
   os: z.string().max(64).optional(),
   viewport: z.string().max(32).optional(),
   customTags: z.string().max(1024).optional(),
+  /**
+   * Per-run diff tolerance override (0–1 fraction, same units as
+   * `projects.diffThreshold`). When set, the diff worker compares
+   * against this threshold instead of the project default. Java SDK
+   * parity (`diffTollerancePercent` in `TestRunRequest`).
+   */
+  diffTolerance: z.number().min(0).max(1).optional(),
+  /**
+   * Per-run ignore regions, applied by the diff worker on the first
+   * diff job. Cap matches the dashboard's `addIgnoreAreas` cap
+   * (`MAX_IGNORE_REGIONS = 50`); going over is a 400. Subsequent
+   * tweaks go through tRPC `runs.setIgnoreAreas`.
+   */
+  ignoreAreas: z.array(ignoreAreaSchema).max(50).optional(),
 });
 
 export const screenshotsParams = z.object({ runId: z.string().uuid() });
@@ -364,6 +395,14 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      // Serialize the inline ignore-areas as JSON for the
+      // `test_runs.ignore_areas` text column. Matches the shape the
+      // dashboard's `setIgnoreAreas` mutation writes, so downstream
+      // tRPC reads + the diff worker see one consistent format.
+      const ignoreAreasJson =
+        input.ignoreAreas && input.ignoreAreas.length > 0
+          ? JSON.stringify(input.ignoreAreas)
+          : null;
       const row = await withProjectScope(
         app.db,
         input.projectId,
@@ -379,6 +418,13 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
               browser,
               viewport,
               status: "running",
+              // Inline diff-tolerance + ignore-areas land on the
+              // initial insert so the first diff job uses them
+              // without a separate setIgnoreAreas + re-enqueue trip.
+              ...(input.diffTolerance !== undefined
+                ? { diffThresholdOverride: input.diffTolerance }
+                : {}),
+              ...(ignoreAreasJson ? { ignoreAreas: ignoreAreasJson } : {}),
             })
             .returning();
           return created!;
