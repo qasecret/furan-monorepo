@@ -49,4 +49,17 @@ class FuranRuntimeTest {
 
         assertEquals(RuntimeState.TERMINATED, rt.state)
     }
+
+    @Test
+    fun `close on INITIALIZING runtime transitions straight to TERMINATED`() {
+        val config = io.furan.sdk.config.DefaultConfigRegistry(emptyMap())
+        val bus = io.furan.sdk.event.SharedFlowEventBus()
+        // Do NOT transition to READY — leave at INITIALIZING.
+        val sm = StateMachine(bus)
+        val rt = FuranRuntime(config = config, eventBus = bus, stateMachine = sm)
+
+        rt.close()
+
+        assertEquals(RuntimeState.TERMINATED, rt.state)
+    }
 }

@@ -2,7 +2,6 @@ package io.furan.sdk.runtime
 
 import io.furan.sdk.config.ConfigRegistry
 import io.furan.sdk.event.EventBus
-import io.furan.sdk.event.SharedFlowEventBus
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -35,17 +34,32 @@ class FuranRuntime internal constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
 
-        // Best-effort transitions; if we're already past SHUTTING_DOWN
-        // (e.g. a test put us in TERMINATED directly) skip the move.
-        val current = stateMachine.current()
-        if (current != RuntimeState.SHUTTING_DOWN && current != RuntimeState.TERMINATED) {
-            stateMachine.transition(RuntimeState.SHUTTING_DOWN)
-        }
-        if (stateMachine.current() != RuntimeState.TERMINATED) {
-            stateMachine.transition(RuntimeState.TERMINATED)
-        }
+        try {
+            val current = stateMachine.current()
+            when (current) {
+                // INITIALIZING aborts directly to TERMINATED (spec §11
+                // allows INITIALIZING → TERMINATED as the abort path).
+                RuntimeState.INITIALIZING -> stateMachine.transition(RuntimeState.TERMINATED)
 
-        // Dispose the bus's internal scope if we own a closeable impl.
-        (eventBus as? SharedFlowEventBus)?.close()
+                // Already past the lifecycle — nothing to do.
+                RuntimeState.SHUTTING_DOWN -> {
+                    if (stateMachine.current() != RuntimeState.TERMINATED) {
+                        stateMachine.transition(RuntimeState.TERMINATED)
+                    }
+                }
+                RuntimeState.TERMINATED -> { /* already done */ }
+
+                // Normal shutdown path from READY / DEGRADED / RELOADING.
+                else -> {
+                    stateMachine.transition(RuntimeState.SHUTTING_DOWN)
+                    stateMachine.transition(RuntimeState.TERMINATED)
+                }
+            }
+        } finally {
+            // Dispose the bus if it owns resources to release. Future
+            // impls (instrumented wrappers, test doubles) just need to
+            // implement AutoCloseable to participate.
+            (eventBus as? AutoCloseable)?.close()
+        }
     }
 }

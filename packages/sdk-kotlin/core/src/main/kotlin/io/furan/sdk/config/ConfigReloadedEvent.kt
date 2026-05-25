@@ -1,5 +1,6 @@
 package io.furan.sdk.config
 
+import io.furan.sdk.event.FuranEvent
 import java.time.Instant
 
 /**
