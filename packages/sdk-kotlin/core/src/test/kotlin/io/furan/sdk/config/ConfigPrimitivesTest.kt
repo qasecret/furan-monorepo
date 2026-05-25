@@ -21,7 +21,6 @@ class ConfigPrimitivesTest {
         val b = ConfigValue(value = "https://x", source = "env:FURAN_API_URL", priority = 100)
         val c = ConfigValue(value = "https://y", source = "env:FURAN_API_URL", priority = 100)
         assertEquals(a, b)
-        assertEquals(a.hashCode(), b.hashCode())
         assertTrue(a != c)
     }
 

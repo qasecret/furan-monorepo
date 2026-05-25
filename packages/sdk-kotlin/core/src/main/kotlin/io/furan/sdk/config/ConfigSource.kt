@@ -14,8 +14,7 @@ interface ConfigSource {
     /** Diagnostic name surfaced in [ConfigValue.source]. */
     val name: String
 
-    /** Higher value wins on overlap. See [ConfigPriority] for the
-     *  canonical ladder. */
+    /** Higher value wins on overlap. See [ConfigPriority] for the canonical ladder. */
     val priority: Int
 
     /** Returns the source's contribution as dotted-key map. */
@@ -30,5 +29,6 @@ interface ConfigSource {
 object ConfigPriority {
     const val ENV: Int = 100
     const val SYSPROP: Int = 90
+    // Gap is intentional: future external sources (yaml, spring, vault) slot between SYSPROP and DEFAULTS.
     const val DEFAULTS: Int = 10
 }
