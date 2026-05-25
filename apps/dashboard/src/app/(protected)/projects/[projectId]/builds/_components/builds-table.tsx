@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { BuildRow, type BuildRowData } from "./build-row";
@@ -8,6 +9,7 @@ import { PropertiesFilter } from "./properties-filter";
 
 import { Button } from "@/components/ui/button";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
+import { browserEnv } from "@/lib/env";
 import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
 
@@ -135,13 +137,22 @@ function EmptyBuildsState({ projectId }: { projectId: string }) {
 implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 
 # Env vars for CI
-FURAN_API_URL=https://furan.example.com
+FURAN_API_URL=${browserEnv.NEXT_PUBLIC_API_URL}
 FURAN_API_TOKEN=furan_pat_…           # create one at /account/tokens
 FURAN_PROJECT_ID=${projectId}
 FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}
+
+# Optional labels (example values — customize for your CI):
 FURAN_BUILD_NAME="nightly main"
 FURAN_BUILD_PROPERTIES=region=us-east-1,shard=\${SHARD:-1}`}
       </pre>
+      <Link
+        href="/account/tokens"
+        className="mt-3 inline-block text-brand hover:underline"
+        data-testid="empty-builds-cta-token-link"
+      >
+        Create a personal access token →
+      </Link>
     </div>
   );
 }

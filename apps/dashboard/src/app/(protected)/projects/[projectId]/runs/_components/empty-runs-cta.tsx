@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { browserEnv } from "@/lib/env";
 import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 
 interface Props {
@@ -29,7 +30,7 @@ export function EmptyRunsCta({ projectId }: Props) {
 implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 
 # Env vars for CI
-FURAN_API_URL=https://furan.example.com
+FURAN_API_URL=${browserEnv.NEXT_PUBLIC_API_URL}
 FURAN_API_TOKEN=furan_pat_…           # create one at /account/tokens
 FURAN_PROJECT_ID=${projectId}
 FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}`}
