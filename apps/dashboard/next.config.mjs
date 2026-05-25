@@ -1,3 +1,18 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Read the Kotlin SDK version from its source-of-truth file so the
+// onboarding snippets on /projects/<id>/builds + /runs always pin the
+// current Maven Central release. release-please bumps version.txt; the
+// next dashboard build picks it up automatically — no manual mirror.
+const sdkVersion = readFileSync(
+  path.resolve(__dirname, "../../packages/sdk-kotlin/version.txt"),
+  "utf8",
+).trim();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -12,5 +27,8 @@ const nextConfig = {
   // Next emits a build-time warning and the standalone output is missing
   // workspace package files.
   outputFileTracingRoot: new URL("../../", import.meta.url).pathname,
+  env: {
+    NEXT_PUBLIC_FURAN_SDK_VERSION: sdkVersion,
+  },
 };
 export default nextConfig;
