@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.8.1...sdk/v0.9.0) (2026-05-25)
+
+
+### Features
+
+* **sdk-kotlin:** furan-junit5 module with @FuranTest extension ([#133](https://github.com/qasecret/furan-monorepo/issues/133)) ([c18dd8e](https://github.com/qasecret/furan-monorepo/commit/c18dd8ed1aea3d3a13f29b7cf73595c4c4322b30))
+* **sdk-kotlin:** FuranException hierarchy expansion + transport wrapping ([#132](https://github.com/qasecret/furan-monorepo/issues/132)) ([e624e15](https://github.com/qasecret/furan-monorepo/commit/e624e1538399296806056a5b6f8e5ba45900285f))
+* **sdk-kotlin:** typed RunStatus, SnapshotResult, snapshotAndAwait ([#128](https://github.com/qasecret/furan-monorepo/issues/128)) ([c140249](https://github.com/qasecret/furan-monorepo/commit/c1402499fcbcdd77625ae10261f3f941d4c94f52))
+* **sdk,api:** per-run diffTolerance + typed ignoreAreas on POST /runs ([#131](https://github.com/qasecret/furan-monorepo/issues/131)) ([cde0d37](https://github.com/qasecret/furan-monorepo/commit/cde0d37558429f5990c4af2802f48b1fcdfcea2b))
+
 ## [0.8.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.8.0...sdk/v0.8.1) (2026-05-23)
 
 
