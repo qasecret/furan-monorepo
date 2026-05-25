@@ -8,4 +8,4 @@ dependencyResolutionManagement {
     // Version catalog auto-imported from gradle/libs.versions.toml
 }
 
-include("core", "selenium")
+include("core", "selenium", "junit5")
