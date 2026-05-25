@@ -110,4 +110,21 @@ class ConfigMergeTest {
         assertEquals("yaml-proj", merged["furan.project"])
         assertEquals("https://env", merged["furan.endpoint"])
     }
+
+    @Test
+    fun `inherit accepts string "true" not just Boolean true`() {
+        // env / sysprop sources stringify values, so a YAML-equivalent
+        // override coming from env reads as "true" rather than true.
+        val low = mapOf(
+            "furan.retry" to mapOf("maxAttempts" to 3, "initialBackoff" to "250ms"),
+        )
+        val high = mapOf(
+            "furan.retry" to mapOf("inherit" to "true", "maxAttempts" to 5),
+        )
+        val merged = ConfigMerge.deepMerge(low, high)
+        val retry = merged["furan.retry"] as Map<*, *>
+        assertEquals(5, retry["maxAttempts"])
+        assertEquals("250ms", retry["initialBackoff"])  // inherited
+        assertEquals(false, retry.containsKey("inherit"))
+    }
 }

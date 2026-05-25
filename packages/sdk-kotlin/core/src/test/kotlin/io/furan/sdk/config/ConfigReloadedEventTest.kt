@@ -11,11 +11,11 @@ class ConfigReloadedEventTest {
     fun `event captures changed keys and a timestamp`() {
         val before = Instant.now()
         val ev = ConfigReloadedEvent(
-            changedKeys = setOf("furan.endpoint", "furan.retry.maxAttempts"),
+            changed = setOf("furan.endpoint", "furan.retry.maxAttempts"),
             correlationId = "reload-1",
         )
         val after = Instant.now()
-        assertEquals(setOf("furan.endpoint", "furan.retry.maxAttempts"), ev.changedKeys)
+        assertEquals(setOf("furan.endpoint", "furan.retry.maxAttempts"), ev.changed)
         assertEquals("reload-1", ev.correlationId)
         assertTrue(!ev.timestamp.isBefore(before))
         assertTrue(!ev.timestamp.isAfter(after))
@@ -23,7 +23,7 @@ class ConfigReloadedEventTest {
 
     @Test
     fun `event is a FuranEvent`() {
-        val ev: FuranEvent = ConfigReloadedEvent(changedKeys = emptySet())
-        assertEquals(emptySet<String>(), (ev as ConfigReloadedEvent).changedKeys)
+        val ev: FuranEvent = ConfigReloadedEvent(changed = emptySet())
+        assertEquals(emptySet<String>(), (ev as ConfigReloadedEvent).changed)
     }
 }

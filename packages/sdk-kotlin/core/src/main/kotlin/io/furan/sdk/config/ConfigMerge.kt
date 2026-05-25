@@ -29,6 +29,19 @@ object ConfigMerge {
     fun mergeAll(layers: List<Map<String, Any?>>): Map<String, Any?> =
         layers.fold(emptyMap()) { acc, layer -> deepMerge(acc, layer) }
 
+    /**
+     * Recognises both `Boolean true` (from typed sources like YAML
+     * after deserialization) and the string `"true"` (from env or
+     * sysprop sources which return all values as String). Anything
+     * else — including `false`, `"false"`, `null`, or a missing key
+     * — disables the inherit behaviour.
+     */
+    private fun isInheritDirective(value: Any?): Boolean = when (value) {
+        true -> true
+        "true" -> true
+        else -> false
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun mergeValue(low: Any?, high: Any?): Any? {
         // 1. Explicit null clears.
@@ -37,7 +50,7 @@ object ConfigMerge {
         // 2. Both maps → check inherit directive.
         if (low is Map<*, *> && high is Map<*, *>) {
             val highMap = high as Map<String, Any?>
-            val inheritsLower = highMap[INHERIT_DIRECTIVE] == true
+            val inheritsLower = isInheritDirective(highMap[INHERIT_DIRECTIVE])
             return if (inheritsLower) {
                 val merged = LinkedHashMap<String, Any?>(low as Map<String, Any?>)
                 for ((k, v) in highMap) {

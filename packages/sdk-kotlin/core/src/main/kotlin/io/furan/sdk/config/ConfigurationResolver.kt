@@ -14,9 +14,14 @@ class ConfigurationResolver(
 ) {
     fun resolve(): ConfigRegistry {
         val sorted = sources.sortedBy { it.priority }
+        // Snapshot each source's contribution exactly once to avoid
+        // TOCTOU races (System.getProperties() is mutable) and to
+        // halve the I/O cost of the provenance pass below.
+        val snapshots: List<Pair<ConfigSource, Map<String, Any?>>> =
+            sorted.map { it to it.load() }
 
         // First pass: merged values via ConfigMerge.
-        val merged = ConfigMerge.mergeAll(sorted.map { it.load() })
+        val merged = ConfigMerge.mergeAll(snapshots.map { it.second })
 
         // Second pass: for each merged key, find the highest-priority
         // source that contributed it. A higher source that set a key
@@ -24,7 +29,7 @@ class ConfigurationResolver(
         // from).
         val provenance = LinkedHashMap<String, ConfigValue<*>>()
         for ((key, value) in merged) {
-            val winner = highestSourceFor(key, sorted)
+            val winner = highestSourceFor(key, snapshots)
                 ?: error("internal: no source contributed key $key")
             provenance[key] = ConfigValue(value, winner.name, winner.priority)
         }
@@ -32,10 +37,13 @@ class ConfigurationResolver(
         return DefaultConfigRegistry(provenance)
     }
 
-    private fun highestSourceFor(key: String, sortedSources: List<ConfigSource>): ConfigSource? {
-        // sortedSources is lowest-priority-first; iterate reversed.
-        for (src in sortedSources.asReversed()) {
-            if (src.load().containsKey(key)) return src
+    private fun highestSourceFor(
+        key: String,
+        snapshots: List<Pair<ConfigSource, Map<String, Any?>>>,
+    ): ConfigSource? {
+        // snapshots is lowest-priority-first; iterate reversed.
+        for ((src, data) in snapshots.asReversed()) {
+            if (data.containsKey(key)) return src
         }
         return null
     }
