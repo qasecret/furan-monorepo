@@ -94,7 +94,7 @@ services:
   # read:packages scope if the GHCR packages are private). Use
   # `compose.dev.yml` to expose host ports.
   api:
-    image: docker.io/qasecret/furan-api:v1.0.13
+    image: docker.io/qasecret/furan-api:v1.0.14
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,7 +142,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: docker.io/qasecret/furan-capture-worker:v1.0.13
+    image: docker.io/qasecret/furan-capture-worker:v1.0.14
     depends_on:
       postgres:
         condition: service_healthy
@@ -167,7 +167,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: docker.io/qasecret/furan-diff-worker:v1.0.13
+    image: docker.io/qasecret/furan-diff-worker:v1.0.14
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,7 +192,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: docker.io/qasecret/furan-integrations:v1.0.13
+    image: docker.io/qasecret/furan-integrations:v1.0.14
     depends_on:
       postgres:
         condition: service_healthy
@@ -213,7 +213,7 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: docker.io/qasecret/furan-dashboard:v1.0.13
+    image: docker.io/qasecret/furan-dashboard:v1.0.14
     depends_on:
       - api
     ports: ["3001:3001"]
