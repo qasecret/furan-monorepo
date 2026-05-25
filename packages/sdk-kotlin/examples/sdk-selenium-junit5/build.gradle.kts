@@ -6,11 +6,15 @@ java { toolchain.languageVersion.set(JavaLanguageVersion.of(21)) }
 // 0.6.0 artifact (which still has the JSON-null bug) and our local
 // publishToMavenLocal would be a no-op against the build cache.
 repositories { mavenLocal(); mavenCentral() }
+// Read packages/sdk-kotlin/version.txt at config time and pin the example
+// to whatever the in-tree SDK currently publishes. Avoids the recurring
+// "I added a new SDK type but the example still uses last release's
+// version and CI fails on Unresolved reference" foot-gun (verified
+// 2026-05-25 after PR #128 hit it). release-please bumps version.txt;
+// this file now auto-tracks.
+val sdkVersion: String = file("../../version.txt").readText().trim()
 dependencies {
-    // Keep in lockstep with packages/sdk-kotlin/version.txt — release-please
-    // bumps that file but does NOT update this pin, so each version bump that
-    // adds new SDK behavior needed by the example must bump this line too.
-    testImplementation("io.github.qasecret:furan-selenium:0.6.1")
+    testImplementation("io.github.qasecret:furan-selenium:$sdkVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
