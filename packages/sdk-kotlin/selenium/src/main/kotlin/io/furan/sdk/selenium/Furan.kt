@@ -7,6 +7,7 @@ import io.furan.sdk.Viewport
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.CreateRunRequest
 import io.furan.sdk.dto.Snapshot
+import io.furan.sdk.dto.SnapshotResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -75,6 +76,57 @@ class Furan(
                 ),
             )
         }
+    }
+
+    /**
+     * Capture + upload a single snapshot, then BLOCK until the diff
+     * worker produces a terminal status. Returns a typed
+     * [SnapshotResult] for assertion-friendly access.
+     *
+     * Unlike [snapshot], this path bypasses the SDK's snapshot batch
+     * (a batch flush would defeat the point of awaiting a single
+     * result) and only captures the FIRST viewport — diffing across
+     * multiple viewports in one synchronous call is an anti-pattern
+     * (the caller can't act on per-viewport failures distinctly).
+     * Callers wanting multi-viewport should loop and call this once
+     * per viewport.
+     *
+     * Throws [io.furan.sdk.FuranAssertionException] on UNRESOLVED /
+     * FAILED / ABORTED unless `config.softAssert == true`. Throws
+     * [io.furan.sdk.FuranTimeoutException] if no terminal status
+     * arrives within `config.pollTimeoutSeconds`.
+     *
+     * ```
+     * val result = furan.snapshotAndAwait("checkout-page")
+     * assertEquals(RunStatus.PASSED, result.status)
+     * println("Review: ${result.diffViewerUrl}")
+     * ```
+     */
+    fun snapshotAndAwait(
+        name: String,
+        mask: List<String> = emptyList(),
+        viewport: Viewport? = null,
+    ): SnapshotResult = runBlocking {
+        val vp = viewport ?: config.viewports.first()
+        val resolvedRunId = ensureRun(vp)
+
+        driver.manage().window().size = Dimension(vp.width, vp.height)
+        val pngBytes = captureScreenshot(driver)
+        val domHtml = runCatching { captureDom(driver) }.getOrNull()
+        val elementMapJson = captureElementBboxes(driver)
+
+        client.snapshotAndAwait(
+            runId = resolvedRunId,
+            snap = Snapshot(
+                name = name,
+                viewport = vp,
+                pngBytes = pngBytes,
+                domHtml = domHtml,
+                elementMapJson = elementMapJson,
+                mask = mask,
+                browser = "selenium",
+            ),
+        )
     }
 
     /**

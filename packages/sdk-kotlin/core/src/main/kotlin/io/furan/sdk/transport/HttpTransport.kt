@@ -12,6 +12,7 @@ import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -113,6 +114,26 @@ class HttpTransport(private val config: FuranConfig) : Closeable {
             header("X-Request-Id", UUID.randomUUID().toString())
             contentType(ContentType.Application.Json)
             setBody(body)
+        }
+        if (!response.status.isSuccess()) {
+            val text = response.bodyAsText()
+            val code = response.status.value
+            if (code in 500..599 || code == 408 || code == 429) {
+                throw RetriableException("HTTP $code: ${redact(text)}")
+            }
+            throw HttpException(code, text)
+        }
+        response.body()
+    }
+
+    /**
+     * GET [path]; decode response into [TRes]. Same retry rules as [post].
+     * Backs the polling loop in `FuranClient.snapshotAndAwait()` — see
+     * `core/src/main/kotlin/io/furan/sdk/FuranClient.kt`.
+     */
+    suspend inline fun <reified TRes : Any> get(path: String): TRes = withRetry { _ ->
+        val response = client.get(path) {
+            header("X-Request-Id", UUID.randomUUID().toString())
         }
         if (!response.status.isSuccess()) {
             val text = response.bodyAsText()
