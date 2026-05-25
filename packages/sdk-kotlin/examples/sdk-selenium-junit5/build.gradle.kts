@@ -15,6 +15,7 @@ repositories { mavenLocal(); mavenCentral() }
 val sdkVersion: String = file("../../version.txt").readText().trim()
 dependencies {
     testImplementation("io.github.qasecret:furan-selenium:$sdkVersion")
+    testImplementation("io.github.qasecret:furan-junit5:$sdkVersion")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
