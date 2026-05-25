@@ -3,6 +3,7 @@ package io.furan.sdk
 import io.furan.sdk.dto.RunResponse
 import io.furan.sdk.dto.RunStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -96,6 +97,43 @@ class FuranClientTest {
         try {
             val r = client.composeResult(runRow(), RunStatus.PASSED)
             assertNull(r.diffViewerUrl)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `composeResult translates first-baseline (NEW + autoApproved=true) to PASSED`() {
+        // Wire shape from the server for a first-baseline run: status
+        // stays `new` permanently, but autoApproved flips true once the
+        // diff worker has accepted it as the new baseline. From an SDK
+        // consumer's POV that's a successful terminal — assertions need
+        // to read `assertEquals(PASSED, result.status)` for both
+        // "first baseline" AND "subsequent matching run".
+        val client = FuranClient(testConfig(), adapter = "test")
+        try {
+            val run = runRow(status = RunStatus.NEW, autoApproved = true)
+            val r = client.composeResult(run, RunStatus.NEW)
+            assertEquals(RunStatus.PASSED, r.status)
+            assertTrue(r.autoApproved)
+            assertTrue(r.isPassed())
+            assertFalse(r.isFailure())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `composeResult preserves NEW status when not auto-approved`() {
+        // Defensive: the polling loop shouldn't pass us a non-auto-approved
+        // NEW (it's not done yet), but if it did the SDK should preserve the
+        // wire status — not silently coerce it to PASSED.
+        val client = FuranClient(testConfig(), adapter = "test")
+        try {
+            val run = runRow(status = RunStatus.NEW, autoApproved = null)
+            val r = client.composeResult(run, RunStatus.NEW)
+            assertEquals(RunStatus.NEW, r.status)
+            assertEquals(false, r.autoApproved)
         } finally {
             client.close()
         }

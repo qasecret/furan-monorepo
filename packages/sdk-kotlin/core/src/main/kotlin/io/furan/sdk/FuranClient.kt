@@ -184,10 +184,11 @@ class FuranClient(
     }
 
     /**
-     * Polls [getRun] until the status is terminal (or [FuranConfig.pollTimeoutSeconds]
-     * elapses) and composes a [SnapshotResult]. Exposed publicly so a caller
-     * who used the fire-and-forget [uploadSnapshot] path can later block on
-     * a specific run's result without duplicating the polling logic.
+     * Polls [getRun] until the run is done (terminal status OR first-baseline
+     * auto-approved) or [FuranConfig.pollTimeoutSeconds] elapses, then
+     * composes a [SnapshotResult]. Exposed publicly so a caller who used the
+     * fire-and-forget [uploadSnapshot] path can later block on a specific
+     * run's result without duplicating the polling logic.
      */
     suspend fun awaitRunResult(runId: String): SnapshotResult {
         val mark = TimeSource.Monotonic.markNow()
@@ -198,7 +199,7 @@ class FuranClient(
             val run = getRun(runId)
             last = run
             val status = run.status
-            if (status != null && status.isTerminal()) {
+            if (status != null && isDone(run, status)) {
                 val result = composeResult(run, status)
                 if (result.isFailure() && !config.softAssert) {
                     throw FuranAssertionException(result)
@@ -214,11 +215,34 @@ class FuranClient(
         )
     }
 
-    internal fun composeResult(run: RunResponse, status: RunStatus): SnapshotResult =
-        SnapshotResult(
+    /**
+     * Whether the diff worker is done with this run. The classic terminal
+     * statuses (passed/unresolved/failed/aborted/empty) qualify, plus the
+     * first-baseline edge case: `status=new` with `autoApproved=true` is
+     * the dashboard's marker for "this run created the first baseline for
+     * this variation, no prior baseline existed to compare against, the
+     * worker is done." That's a SUCCESSFUL terminal from a test's POV
+     * even though the wire status stays `new` forever (the dashboard uses
+     * `status=new` to render the "first baseline" pill).
+     *
+     * Verified 2026-05-25 — full-e2e CI surfaced this when a fresh
+     * project's first `snapshotAndAwait` always timed out: every CI run
+     * is a first-baseline by definition.
+     */
+    private fun isDone(run: RunResponse, status: RunStatus): Boolean =
+        status.isTerminal() || (status == RunStatus.NEW && run.autoApproved == true)
+
+    internal fun composeResult(run: RunResponse, status: RunStatus): SnapshotResult {
+        // First-baseline-auto-approved is wire `status=new` but is
+        // semantically a pass from the SDK consumer's POV. Translate so
+        // user assertions read cleanly: `assertEquals(PASSED, result.status)`
+        // works for both "new baseline" and "subsequent matching run".
+        val effective =
+            if (status == RunStatus.NEW && run.autoApproved == true) RunStatus.PASSED else status
+        return SnapshotResult(
             runId = run.id,
             buildId = run.buildId,
-            status = status,
+            status = effective,
             diffPercent = run.diffPercent,
             autoApproved = run.autoApproved == true,
             baselineSource = run.baselineSource,
@@ -231,6 +255,7 @@ class FuranClient(
                 "$base/projects/${run.projectId}/runs/${run.id}/diffs/${run.id}"
             },
         )
+    }
 
     /** Posts the anonymous telemetry snapshot if enabled. Fire-and-forget. */
     private suspend fun postTelemetry() {
