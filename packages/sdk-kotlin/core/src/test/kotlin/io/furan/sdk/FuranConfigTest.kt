@@ -33,10 +33,30 @@ class FuranConfigTest {
     }
 
     @Test
-    fun `fromEnv missing required throws`() {
-        assertThrows<IllegalStateException> {
+    fun `fromEnv missing required throws FuranConfigException`() {
+        // SDK contract from PR #4: every SDK throw extends FuranException
+        // so user code can catch one branch. Missing required env was
+        // previously bare IllegalStateException — now wrapped.
+        val ex = assertThrows<FuranConfigException> {
             FuranConfig.fromEnv(emptyMap())
         }
+        // Message preserves the env var name so users see what to set.
+        assertTrue(ex.message?.contains("FURAN_API_URL") == true)
+    }
+
+    @Test
+    fun `init validation surfaces as FuranConfigException via fromEnv`() {
+        // The init block uses `require(...)` which throws
+        // IllegalArgumentException. fromEnv() wraps so callers catch
+        // one type for all config errors.
+        val env = mapOf(
+            "FURAN_API_URL" to "https://x",
+            "FURAN_API_TOKEN" to "tok",
+            "FURAN_PROJECT_ID" to "pid",
+            "FURAN_BATCH_SIZE" to "0", // invalid — init requires >= 1
+        )
+        val ex = assertThrows<FuranConfigException> { FuranConfig.fromEnv(env) }
+        assertTrue(ex.cause is IllegalArgumentException, "expected IllegalArgumentException cause, got ${ex.cause}")
     }
 
     @Test
