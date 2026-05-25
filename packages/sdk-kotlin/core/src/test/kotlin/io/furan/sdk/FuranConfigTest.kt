@@ -40,6 +40,65 @@ class FuranConfigTest {
     }
 
     @Test
+    fun `fromEnv parses snapshotAndAwait config fields`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "https://furan.example.com",
+            "FURAN_API_TOKEN" to "tok",
+            "FURAN_PROJECT_ID" to "pid",
+            "FURAN_SOFT_ASSERT" to "true",
+            "FURAN_POLL_TIMEOUT_SECONDS" to "120",
+            "FURAN_POLL_INTERVAL_SECONDS" to "5",
+            "FURAN_DASHBOARD_URL" to "http://localhost:3001/",
+        )
+        val cfg = FuranConfig.fromEnv(env)
+        assertEquals(true, cfg.softAssert)
+        assertEquals(120L, cfg.pollTimeoutSeconds)
+        assertEquals(5L, cfg.pollIntervalSeconds)
+        // Trailing slash trimmed so result composition produces clean URLs.
+        assertEquals("http://localhost:3001", cfg.dashboardUrl)
+    }
+
+    @Test
+    fun `fromEnv softAssert defaults to false when unset or truthy-string mismatched`() {
+        val base = mapOf(
+            "FURAN_API_URL" to "https://furan.example.com",
+            "FURAN_API_TOKEN" to "tok",
+            "FURAN_PROJECT_ID" to "pid",
+        )
+        // Unset: default false.
+        assertEquals(false, FuranConfig.fromEnv(base).softAssert)
+        // "yes" / "on" are not recognized (we only accept 1 / true).
+        assertEquals(false, FuranConfig.fromEnv(base + ("FURAN_SOFT_ASSERT" to "yes")).softAssert)
+        assertEquals(true, FuranConfig.fromEnv(base + ("FURAN_SOFT_ASSERT" to "1")).softAssert)
+        assertEquals(true, FuranConfig.fromEnv(base + ("FURAN_SOFT_ASSERT" to "TRUE")).softAssert)
+    }
+
+    @Test
+    fun `init rejects pollIntervalSeconds greater than pollTimeoutSeconds`() {
+        assertThrows<IllegalArgumentException> {
+            FuranConfig(
+                apiUrl = "https://x",
+                apiToken = "t",
+                projectId = "p",
+                pollTimeoutSeconds = 10,
+                pollIntervalSeconds = 30,
+            )
+        }
+    }
+
+    @Test
+    fun `fromEnv dashboardUrl null when env var unset`() {
+        val cfg = FuranConfig.fromEnv(
+            mapOf(
+                "FURAN_API_URL" to "https://furan.example.com",
+                "FURAN_API_TOKEN" to "tok",
+                "FURAN_PROJECT_ID" to "pid",
+            ),
+        )
+        assertEquals(null, cfg.dashboardUrl)
+    }
+
+    @Test
     fun `require blank apiUrl rejected`() {
         assertThrows<IllegalArgumentException> {
             FuranConfig(apiUrl = "  ", apiToken = "tok", projectId = "pid")

@@ -22,8 +22,11 @@ data class CreateRunRequest(
 )
 
 /**
- * Response body for POST /api/v1/runs (added in Task 4).
- * Mirrors a `test_runs` row.
+ * Response body for POST /runs and GET /runs/{id}. Mirrors a `test_runs` row.
+ *
+ * `status` is decoded via [RunStatus.TolerantSerializer] — unknown wire
+ * values fall back to [RunStatus.UNRESOLVED] so a server that adds new
+ * statuses does not break old SDK clients.
  */
 @Serializable
 data class RunResponse(
@@ -33,11 +36,29 @@ data class RunResponse(
     val testVariationId: String? = null,
     val branchName: String? = null,
     val name: String? = null,
-    val status: String? = null,
+    val status: RunStatus? = null,
     val browser: String? = null,
     val device: String? = null,
     val os: String? = null,
     val viewport: String? = null,
     val environment: String = "default",
     val createdAt: String? = null,
+    /**
+     * Diff percentage as reported by the diff worker on a terminal run.
+     * Null while the run is still `new`/`running`. Surfaced on
+     * [io.furan.sdk.dto.SnapshotResult] for assertion-friendly access.
+     */
+    val diffPercent: Double? = null,
+    /**
+     * True when the run's screenshot bytes matched the baseline pixel-for-
+     * pixel and the diff worker auto-approved it (ADR-032). The user did
+     * not have to review.
+     */
+    val autoApproved: Boolean? = null,
+    /**
+     * Where the baseline used for this diff came from — `this_branch`,
+     * `main_fallback`, `auto`, etc. Useful in test assertions that care
+     * about branch-isolation correctness.
+     */
+    val baselineSource: String? = null,
 )

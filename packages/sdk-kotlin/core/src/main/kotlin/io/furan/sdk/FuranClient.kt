@@ -4,7 +4,9 @@ import io.furan.sdk.dto.BuildResponse
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.CreateRunRequest
 import io.furan.sdk.dto.RunResponse
+import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.Snapshot
+import io.furan.sdk.dto.SnapshotResult
 import io.furan.sdk.telemetry.AnonymousCounter
 import io.furan.sdk.telemetry.SdkTelemetryPayload
 import io.furan.sdk.transport.Batch
@@ -19,9 +21,12 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import java.io.Closeable
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * Top-level SDK orchestrator. Composes [HttpTransport] + [Batch] + telemetry.
@@ -145,6 +150,111 @@ class FuranClient(
     /** Drain any partially-filled batch. */
     suspend fun flush() {
         batch.flush()
+    }
+
+    /** Fetch a run's current state. Backs [snapshotAndAwait]'s polling loop. */
+    suspend fun getRun(runId: String): RunResponse =
+        transport.get<RunResponse>("runs/$runId")
+
+    /**
+     * Upload a snapshot and BLOCK until the diff worker reaches a
+     * terminal status for the resulting run. Returns a typed
+     * [SnapshotResult] for assertion-friendly access.
+     *
+     * Failure terminals (`UNRESOLVED`/`FAILED`/`ABORTED`) throw
+     * [FuranAssertionException] by default. Set
+     * [FuranConfig.softAssert] = true to receive the result instead;
+     * the caller then asserts explicitly:
+     *
+     *     val r = client.snapshotAndAwait(runId, snap)
+     *     assertEquals(RunStatus.PASSED, r.status)
+     *
+     * Polls every [FuranConfig.pollIntervalSeconds] up to
+     * [FuranConfig.pollTimeoutSeconds]. Throws
+     * [FuranTimeoutException] if no terminal arrives in that window.
+     *
+     * This bypasses the batch (it would defeat the purpose of waiting
+     * to flush a single snapshot) — sends the multipart upload
+     * directly. Callers using the original fire-and-forget
+     * [uploadSnapshot] keep the batched path.
+     */
+    suspend fun snapshotAndAwait(runId: String, snap: Snapshot): SnapshotResult {
+        uploadSnapshotInner(snap.copy(runId = runId))
+        return awaitRunResult(runId)
+    }
+
+    /**
+     * Polls [getRun] until the run is done (terminal status OR first-baseline
+     * auto-approved) or [FuranConfig.pollTimeoutSeconds] elapses, then
+     * composes a [SnapshotResult]. Exposed publicly so a caller who used the
+     * fire-and-forget [uploadSnapshot] path can later block on a specific
+     * run's result without duplicating the polling logic.
+     */
+    suspend fun awaitRunResult(runId: String): SnapshotResult {
+        val mark = TimeSource.Monotonic.markNow()
+        val timeout = config.pollTimeoutSeconds.seconds
+        val interval = config.pollIntervalSeconds.seconds
+        var last: RunResponse? = null
+        while (mark.elapsedNow() < timeout) {
+            val run = getRun(runId)
+            last = run
+            val status = run.status
+            if (status != null && isDone(run, status)) {
+                val result = composeResult(run, status)
+                if (result.isFailure() && !config.softAssert) {
+                    throw FuranAssertionException(result)
+                }
+                return result
+            }
+            delay(interval)
+        }
+        throw FuranTimeoutException(
+            runId = runId,
+            lastStatus = last?.status,
+            timeoutSeconds = config.pollTimeoutSeconds,
+        )
+    }
+
+    /**
+     * Whether the diff worker is done with this run. The classic terminal
+     * statuses (passed/unresolved/failed/aborted/empty) qualify, plus the
+     * first-baseline edge case: `status=new` with `autoApproved=true` is
+     * the dashboard's marker for "this run created the first baseline for
+     * this variation, no prior baseline existed to compare against, the
+     * worker is done." That's a SUCCESSFUL terminal from a test's POV
+     * even though the wire status stays `new` forever (the dashboard uses
+     * `status=new` to render the "first baseline" pill).
+     *
+     * Verified 2026-05-25 — full-e2e CI surfaced this when a fresh
+     * project's first `snapshotAndAwait` always timed out: every CI run
+     * is a first-baseline by definition.
+     */
+    private fun isDone(run: RunResponse, status: RunStatus): Boolean =
+        status.isTerminal() || (status == RunStatus.NEW && run.autoApproved == true)
+
+    internal fun composeResult(run: RunResponse, status: RunStatus): SnapshotResult {
+        // First-baseline-auto-approved is wire `status=new` but is
+        // semantically a pass from the SDK consumer's POV. Translate so
+        // user assertions read cleanly: `assertEquals(PASSED, result.status)`
+        // works for both "new baseline" and "subsequent matching run".
+        val effective =
+            if (status == RunStatus.NEW && run.autoApproved == true) RunStatus.PASSED else status
+        return SnapshotResult(
+            runId = run.id,
+            buildId = run.buildId,
+            status = effective,
+            diffPercent = run.diffPercent,
+            autoApproved = run.autoApproved == true,
+            baselineSource = run.baselineSource,
+            diffViewerUrl = config.dashboardUrl?.let { base ->
+                // Mirrors the dashboard's route shape:
+                // /projects/{projectId}/runs/{runId}/diffs/{runId}
+                // The "diff id == run id" assumption is the v1.0 dashboard's
+                // convention (one diff per run; multi-viewport composites
+                // are a v1.1+ ask).
+                "$base/projects/${run.projectId}/runs/${run.id}/diffs/${run.id}"
+            },
+        )
     }
 
     /** Posts the anonymous telemetry snapshot if enabled. Fire-and-forget. */

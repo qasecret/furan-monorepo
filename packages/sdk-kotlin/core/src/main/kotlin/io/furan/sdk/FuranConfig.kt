@@ -17,12 +17,47 @@ data class FuranConfig(
     val logLevel: String = "info",
     val telemetryEnabled: Boolean = true,
     val caCertPath: String? = null,
+    /**
+     * Controls `FuranClient.snapshotAndAwait()` behavior on failure
+     * terminals. When `false` (default — matches the Java SDK), the
+     * client throws [io.furan.sdk.FuranAssertionException] on
+     * `UNRESOLVED`/`FAILED`/`ABORTED`. When `true`, the client returns
+     * the [io.furan.sdk.dto.SnapshotResult] and the caller asserts
+     * explicitly. From `FURAN_SOFT_ASSERT` (truthy = true).
+     */
+    val softAssert: Boolean = false,
+    /**
+     * Max time `snapshotAndAwait()` waits for the diff worker to
+     * produce a terminal status before throwing
+     * [io.furan.sdk.FuranTimeoutException]. From `FURAN_POLL_TIMEOUT_SECONDS`.
+     * 60 s covers cold-start diff queues; bump to 300+ for slow CI.
+     */
+    val pollTimeoutSeconds: Long = 60,
+    /**
+     * Polling cadence within the timeout window. From
+     * `FURAN_POLL_INTERVAL_SECONDS`. Smaller values shorten happy-path
+     * latency but hammer the api; 2 s is the same default the dashboard
+     * uses for analogous polling.
+     */
+    val pollIntervalSeconds: Long = 2,
+    /**
+     * Dashboard origin (no trailing slash). When set, `SnapshotResult`s
+     * carry a `diffViewerUrl` deep link for CI logs. From
+     * `FURAN_DASHBOARD_URL`. Null = no link composition (matches v1.0
+     * behavior).
+     */
+    val dashboardUrl: String? = null,
 ) {
     init {
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
         require(apiToken.isNotBlank()) { "apiToken must be non-blank" }
         require(projectId.isNotBlank()) { "projectId must be non-blank" }
         require(batchSize >= 1) { "batchSize must be >= 1" }
+        require(pollTimeoutSeconds >= 1) { "pollTimeoutSeconds must be >= 1" }
+        require(pollIntervalSeconds >= 1) { "pollIntervalSeconds must be >= 1" }
+        require(pollIntervalSeconds <= pollTimeoutSeconds) {
+            "pollIntervalSeconds ($pollIntervalSeconds) must be <= pollTimeoutSeconds ($pollTimeoutSeconds)"
+        }
     }
 
     companion object {
@@ -51,6 +86,10 @@ data class FuranConfig(
                 logLevel = env["FURAN_LOG_LEVEL"] ?: "info",
                 telemetryEnabled = env["FURAN_TELEMETRY"]?.let { it != "0" && it.lowercase() != "false" } ?: true,
                 caCertPath = env["FURAN_CA_CERT_PATH"],
+                softAssert = env["FURAN_SOFT_ASSERT"]?.let { it == "1" || it.lowercase() == "true" } ?: false,
+                pollTimeoutSeconds = env["FURAN_POLL_TIMEOUT_SECONDS"]?.toLongOrNull() ?: 60,
+                pollIntervalSeconds = env["FURAN_POLL_INTERVAL_SECONDS"]?.toLongOrNull() ?: 2,
+                dashboardUrl = env["FURAN_DASHBOARD_URL"]?.trimEnd('/')?.takeIf { it.isNotEmpty() },
             )
         }
 

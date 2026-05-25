@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 
 import {
+  baselines,
   builds,
   eq,
   projectMembers,
@@ -258,6 +259,7 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       branchName: string | null;
       browser: string | null;
       viewport: string | null;
+      autoApproved: boolean;
     };
     expect(body.id).toBe(created.id);
     expect(body.projectId).toBe(s.projectId);
@@ -265,6 +267,92 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(body.branchName).toBe("main");
     expect(body.browser).toBe("chromium");
     expect(body.viewport).toBe("1280x720");
+    // No baselines row exists yet for a freshly-created run — autoApproved
+    // is derived from `EXISTS baselines WHERE test_run_id = ? AND user_id IS NULL`
+    // so the default-safe value is false.
+    expect(body.autoApproved).toBe(false);
+  });
+
+  test("GET /runs/:id sets autoApproved=true when an auto-baseline row exists", async () => {
+    // Reproduces the scenario PR #128 CI surfaced: the diff worker's
+    // first-baseline + pixel-identical-auto-approve paths both INSERT
+    // a baselines row with userId IS NULL but DON'T set a column on
+    // test_runs. The SDK polling loop relies on autoApproved as its
+    // "is this run done" signal — this test locks in the GET-side
+    // derivation so the SDK can trust it.
+    const createRes = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "auto-approve-derivation",
+        browser: "chromium",
+        viewport: "1280x720",
+      },
+    });
+    const created = JSON.parse(createRes.body) as {
+      id: string;
+      testVariationId: string;
+    };
+
+    // Simulate what the diff worker does on first-baseline:
+    // insert a baselines row with userId omitted (NULL).
+    await h.db.insert(baselines).values({
+      baselineName: "auto",
+      testVariationId: created.testVariationId,
+      testRunId: created.id,
+      // userId omitted → NULL → auto-baseline signal
+    });
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/runs/${created.id}`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const body = JSON.parse(getRes.body) as { autoApproved: boolean };
+    expect(body.autoApproved).toBe(true);
+  });
+
+  test("GET /runs/:id sets autoApproved=false when the baseline has a userId (manual approve)", async () => {
+    // Counter-test: a user-driven approve flow inserts a baselines row
+    // WITH userId set. That's not an auto-approval — autoApproved
+    // should be false even though a baseline exists.
+    const createRes = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "main",
+        name: "manual-approve-baseline",
+        browser: "chromium",
+        viewport: "1280x720",
+      },
+    });
+    const created = JSON.parse(createRes.body) as {
+      id: string;
+      testVariationId: string;
+    };
+
+    await h.db.insert(baselines).values({
+      baselineName: "auto",
+      testVariationId: created.testVariationId,
+      testRunId: created.id,
+      userId: s.memberId, // manual-approve signal
+    });
+
+    const getRes = await h.app.inject({
+      method: "GET",
+      url: `/runs/${created.id}`,
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+    });
+    const body = JSON.parse(getRes.body) as { autoApproved: boolean };
+    expect(body.autoApproved).toBe(false);
   });
 
   test("GET /runs/:id returns 404 for a nonexistent uuid", async () => {
