@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.10.0...sdk/v0.11.0) (2026-05-26)
+
+
+### Features
+
+* **sdk-kotlin:** RuntimeDiagnostics snapshot (Phase 6 of SDK v2 spec) ([#142](https://github.com/qasecret/furan-monorepo/issues/142)) ([fea1d2d](https://github.com/qasecret/furan-monorepo/commit/fea1d2d184fa609bf05afd58692ec57835bf92d2))
+* **sdk-kotlin:** Weighted/Canary/TenantAffinity resolvers (Phase 7 partial of SDK v2 spec) ([#144](https://github.com/qasecret/furan-monorepo/issues/144)) ([3b2326c](https://github.com/qasecret/furan-monorepo/commit/3b2326c818885343510d131b580194fb6e34f9f9))
+
 ## [0.10.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.9.0...sdk/v0.10.0) (2026-05-26)
 
 
