@@ -40,7 +40,14 @@ class PluginRegistry {
 
     /** Discover plugins via [ServiceLoader] and add each one in the
      *  order returned by the JDK (deterministic per classpath order
-     *  on the JVM). Idempotent — calling twice does not re-add. */
+     *  on the JVM). Idempotent across SEQUENTIAL calls — invoking
+     *  this twice from the same thread does not re-add.
+     *
+     *  Note: NOT safe under concurrent invocation. Two threads
+     *  calling [loadFromClasspath] simultaneously can both snapshot
+     *  the same pre-existing set and both append the same plugin.
+     *  Registry mutation is expected to happen only during bootstrap
+     *  (single-threaded by convention) — see the class-level KDoc. */
     fun loadFromClasspath() {
         val loader = ServiceLoader.load(FuranPlugin::class.java)
         val alreadyRegistered = plugins.map { it.javaClass.name }.toSet()

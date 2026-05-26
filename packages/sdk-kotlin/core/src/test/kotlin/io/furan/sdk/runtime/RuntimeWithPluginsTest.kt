@@ -7,6 +7,7 @@ import io.furan.sdk.plugin.PluginContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CopyOnWriteArrayList
@@ -73,5 +74,45 @@ class RuntimeWithPluginsTest {
         assertTrue(rt.capabilities!!.has(Capability.Tracing))
 
         rt.close()
+    }
+
+    @Test
+    fun `bootstrap calls shutdown on already-initialized plugins when a later plugin fails initialize`() {
+        val initLog = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val shutdownLog = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+        class GoodPlugin(override val name: String) : io.furan.sdk.plugin.FuranPlugin {
+            override fun initialize(context: io.furan.sdk.plugin.PluginContext) { initLog += name }
+            override fun shutdown() { shutdownLog += name }
+        }
+        class BadPlugin : io.furan.sdk.plugin.FuranPlugin {
+            override val name: String = "bad-plugin"
+            override fun initialize(context: io.furan.sdk.plugin.PluginContext) {
+                initLog += name
+                error("simulated init failure")
+            }
+            override fun shutdown() { shutdownLog += name }
+        }
+
+        val ex = assertThrows(IllegalStateException::class.java) {
+            FuranBootstrapper(
+                sources = listOf(io.furan.sdk.config.sources.DefaultsConfigSource()),
+                plugins = listOf(
+                    GoodPlugin("good-1"),
+                    GoodPlugin("good-2"),
+                    BadPlugin(),
+                ),
+            ).bootstrap()
+        }
+        assertTrue(ex.message!!.contains("simulated init failure"))
+
+        // good-1 + good-2 + bad were all attempted to initialize; bad threw.
+        assertTrue(initLog.containsAll(listOf("good-1", "good-2", "bad-plugin")))
+
+        // CRITICAL ASSERTION: good-1 and good-2 must have had shutdown() called
+        // so they could release any resources they acquired in initialize().
+        // bad-plugin's shutdown() is also called (best-effort — it may not have
+        // acquired anything but the contract is to call shutdown on all initialized plugins).
+        assertTrue(shutdownLog.containsAll(listOf("good-1", "good-2")))
     }
 }

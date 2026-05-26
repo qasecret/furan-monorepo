@@ -77,7 +77,17 @@ class FuranBootstrapper(
             eventBus = eventBus,
             capabilities = capabilityRegistry,
         )
-        pluginRegistry.initializeAll(ctx)
+        // Critical: if any plugin's initialize() throws, ensure the
+        // already-initialized plugins get their shutdown() called so
+        // they release any resources they acquired (HTTP clients,
+        // file watchers, etc). Then re-throw so bootstrap() fails
+        // fast — partial-init runtimes are never returned to callers.
+        try {
+            pluginRegistry.initializeAll(ctx)
+        } catch (t: Throwable) {
+            runCatching { pluginRegistry.shutdownAll() }
+            throw t
+        }
 
         return pluginRegistry to capabilityRegistry
     }
