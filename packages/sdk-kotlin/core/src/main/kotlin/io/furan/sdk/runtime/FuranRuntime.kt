@@ -29,6 +29,7 @@ class FuranRuntime internal constructor(
     val plugins: io.furan.sdk.plugin.PluginRegistry? = null,
     val capabilities: io.furan.sdk.plugin.CapabilityRegistry? = null,
     val diagnostics: io.furan.sdk.diagnostics.RuntimeDiagnostics? = null,
+    val httpTransport: io.furan.sdk.http.HttpTransport? = null,
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)
@@ -45,6 +46,11 @@ class FuranRuntime internal constructor(
             // before those go away. Each shutdown is failure-isolated
             // inside PluginRegistry.shutdownAll().
             plugins?.shutdownAll()
+            // Close the HTTP transport before tearing down the bus —
+            // a long-running request might still be in flight on the
+            // transport's coroutine scope, and that scope is logically
+            // upstream of the event bus.
+            httpTransport?.close()
             // RecentEventsBuffer (when diagnostics is wired) holds an
             // EventBus subscription; it's cancelled automatically when
             // the bus closes below (supervisor scope cancellation).

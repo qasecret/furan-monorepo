@@ -30,6 +30,7 @@ class FuranBootstrapper(
     private val plugins: List<io.furan.sdk.plugin.FuranPlugin> = emptyList(),
     private val loadPluginsFromClasspath: Boolean = false,
     private val enableDiagnostics: Boolean = true,
+    private val httpTransportFactory: (() -> io.furan.sdk.http.HttpTransport)? = null,
 ) {
 
     @OptIn(kotlin.time.ExperimentalTime::class)
@@ -62,6 +63,8 @@ class FuranBootstrapper(
             )
         } else null
 
+        val httpTransport = httpTransportFactory?.invoke()
+
         val runtime = FuranRuntime(
             config = registry,
             eventBus = eventBus,
@@ -71,6 +74,7 @@ class FuranBootstrapper(
             plugins = pluginRegistry,
             capabilities = capabilityRegistry,
             diagnostics = diagnostics,
+            httpTransport = httpTransport,
         )
         stateMachine.transition(RuntimeState.READY)
         return runtime
