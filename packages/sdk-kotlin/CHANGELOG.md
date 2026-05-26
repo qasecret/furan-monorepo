@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.9.0...sdk/v0.10.0) (2026-05-26)
+
+
+### Features
+
+* **sdk-kotlin:** Bootstrap + Runtime spine (Phase 2 of SDK v2 spec) ([#138](https://github.com/qasecret/furan-monorepo/issues/138)) ([a85dd1f](https://github.com/qasecret/furan-monorepo/commit/a85dd1fd29967f72b51c0b836aad21e6ed28a49b))
+* **sdk-kotlin:** EndpointResolver chain (Phase 3 of SDK v2 spec) ([#139](https://github.com/qasecret/furan-monorepo/issues/139)) ([ade0f7b](https://github.com/qasecret/furan-monorepo/commit/ade0f7b14f9cb9eb2e74d60cd1f3368615970b44))
+* **sdk-kotlin:** layered ConfigSource subsystem (Phase 1 of SDK v2 spec) ([#136](https://github.com/qasecret/furan-monorepo/issues/136)) ([980cded](https://github.com/qasecret/furan-monorepo/commit/980cded40e40c6595a92ce599006ed26c4d0a11e))
+* **sdk-kotlin:** Plugin + Capability Registry (Phase 4 of SDK v2 spec) ([#140](https://github.com/qasecret/furan-monorepo/issues/140)) ([ac768a5](https://github.com/qasecret/furan-monorepo/commit/ac768a52d0605be7b8fd4755288ef1286be2cc77))
+
 ## [0.9.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.8.1...sdk/v0.9.0) (2026-05-25)
 
 
