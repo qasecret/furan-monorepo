@@ -28,6 +28,7 @@ class FuranRuntime internal constructor(
     val endpointFeedback: io.furan.sdk.endpoint.EndpointFeedback? = null,
     val plugins: io.furan.sdk.plugin.PluginRegistry? = null,
     val capabilities: io.furan.sdk.plugin.CapabilityRegistry? = null,
+    val diagnostics: io.furan.sdk.diagnostics.RuntimeDiagnostics? = null,
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)
@@ -44,6 +45,9 @@ class FuranRuntime internal constructor(
             // before those go away. Each shutdown is failure-isolated
             // inside PluginRegistry.shutdownAll().
             plugins?.shutdownAll()
+            // RecentEventsBuffer (when diagnostics is wired) holds an
+            // EventBus subscription; it's cancelled automatically when
+            // the bus closes below (supervisor scope cancellation).
 
             val current = stateMachine.current()
             when (current) {
