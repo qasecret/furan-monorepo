@@ -30,6 +30,10 @@ const baseProject = {
   diffThreshold: 0.001,
   l2Enabled: true,
   autoApproveFeature: false,
+  // Differs from useForm's default "odiff" so form.reset triggers the
+  // value transition that previously crashed via Radix Select firing
+  // onValueChange("") before SelectItems registered.
+  imageComparison: "pixelmatch" as const,
   retentionDays: 90,
   maxBuildAllowed: 100,
   maxBranchLifetime: 30,
@@ -140,6 +144,19 @@ describe("ProjectSettingsForm", () => {
         imageComparisonConfig: "{}",
       }),
     );
+  });
+
+  test("renders the engine knobs panel for the loaded imageComparison value", async () => {
+    // Regression for the Radix Select v2 race: when the project's
+    // imageComparison ("pixelmatch" here) differs from the form's
+    // default ("odiff"), form.reset causes the controlled Select to
+    // re-render, and Radix's hidden form-control <select> fires
+    // onValueChange("") before SelectItems register. The form filters
+    // that empty string and EngineKnobsEditor short-circuits, so the
+    // pixelmatch knobs panel must still render.
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
+    expect(await screen.findByTestId("engine-knobs-pixelmatch")).toBeTruthy();
+    expect(screen.getByTestId("engine-pixelmatch-threshold")).toBeTruthy();
   });
 
   test("guest sees Save button disabled with an explanatory tooltip", async () => {

@@ -245,7 +245,15 @@ function EngineKnobsEditor({
     }
   }, [rawConfig]);
 
+  // Radix UI Select v2 fires `onValueChange("")` from its hidden form-control
+  // `<select>` when the controlled value changes before SelectItems have
+  // registered (SelectContent renders into a DocumentFragment set via a
+  // layout effect, so on the first sync after `form.reset` the native
+  // `<select>` has zero `<option>`s and silently falls back to ""). The
+  // imageComparison Select below filters that empty string out, but guard
+  // here too so a future regression can't crash render.
   const knobs = ENGINE_KNOBS[engine];
+  if (!knobs) return null;
 
   const writeKey = (key: string, value: unknown): void => {
     const next: Record<string, unknown> = { ...parsed, [key]: value };
@@ -566,7 +574,12 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Algorithm</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={(v) => {
+                      if (v) field.onChange(v);
+                    }}
+                  >
                     <FormControl>
                       <SelectTrigger data-testid="image-comparison-select">
                         <SelectValue />
