@@ -34,11 +34,17 @@ class FuranBootstrapper(
         val eventBus = eventBusFactory()
         val stateMachine = StateMachine(eventBus)
         val endpointResolver = buildEndpointResolver(endpointConfig)
+        // The feedback channel is exposed iff the resolver itself implements it.
+        // Today only FailoverEndpointResolver does; future decorators wrapping
+        // Failover should ALSO implement EndpointFeedback (forwarding to inner)
+        // to keep this path working through the chain.
+        val endpointFeedback = endpointResolver as? io.furan.sdk.endpoint.EndpointFeedback
         val runtime = FuranRuntime(
             config = registry,
             eventBus = eventBus,
             stateMachine = stateMachine,
             endpointResolver = endpointResolver,
+            endpointFeedback = endpointFeedback,
         )
         stateMachine.transition(RuntimeState.READY)
         return runtime

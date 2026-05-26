@@ -35,7 +35,13 @@ class Phase3EndToEndTest {
         assertEquals("https://primary.example.com", r1.primary)
 
         // Simulate the future transport observing a 5xx on the primary.
-        (resolver as FailoverEndpointResolver).markFailed("https://primary.example.com")
+        // Use the EndpointFeedback interface rather than downcasting —
+        // decouples the caller from the concrete Failover type so a future
+        // decorator wrapping Failover can implement EndpointFeedback and the
+        // transport keeps working.
+        val feedback = rt.endpointFeedback
+        org.junit.jupiter.api.Assertions.assertNotNull(feedback)
+        feedback!!.markFailed("https://primary.example.com")
 
         // Next resolve: first fallback promoted.
         val r2 = resolver.resolve()
@@ -44,7 +50,7 @@ class Phase3EndToEndTest {
         assertEquals("failover[static]", r2.source)
 
         // Simulate the first fallback also failing.
-        resolver.markFailed("https://fb1.example.com")
+        feedback.markFailed("https://fb1.example.com")
         val r3 = resolver.resolve()
         assertEquals("https://fb2.example.com", r3.primary)
         assertEquals(emptyList<String>(), r3.fallbacks)
@@ -84,5 +90,18 @@ class Phase3EndToEndTest {
         // last-resort path, not an exception.
         assertEquals("https://p", r.primary)
         assertEquals(emptyList<String>(), r.fallbacks)
+    }
+
+    @Test
+    fun `rt endpointFeedback is null when no FailoverEndpointResolver in the chain`() {
+        val rt = FuranBootstrapper(
+            sources = listOf(DefaultsConfigSource()),
+            endpointConfig = EndpointResolutionConfig(
+                primary = "https://api.example.com",
+                failoverEnabled = false,  // static-only chain
+            ),
+        ).bootstrap()
+        org.junit.jupiter.api.Assertions.assertNull(rt.endpointFeedback)
+        rt.close()
     }
 }

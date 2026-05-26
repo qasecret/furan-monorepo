@@ -34,7 +34,7 @@ class FailoverEndpointResolver(
     private val inner: EndpointResolver,
     private val demoteWindow: Duration = 30.seconds,
     private val timeSource: TimeSource = TimeSource.Monotonic,
-) : EndpointResolver {
+) : EndpointResolver, EndpointFeedback {
 
     init {
         require(demoteWindow > Duration.ZERO) {
@@ -48,7 +48,7 @@ class FailoverEndpointResolver(
     /** Record that [url] failed. Demotes it from the active rotation
      *  for [demoteWindow] from now. Idempotent across repeated calls
      *  — each call refreshes the demote window. */
-    fun markFailed(url: String) {
+    override fun markFailed(url: String) {
         demoted[url] = timeSource.markNow()
     }
 
@@ -79,13 +79,11 @@ class FailoverEndpointResolver(
     }
 
     private fun pruneExpired() {
-        val iterator = demoted.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (entry.value.elapsedNow() >= demoteWindow) {
-                iterator.remove()
-            }
-        }
+        // ConcurrentHashMap.entries.removeIf is atomic per entry —
+        // a concurrent markFailed() that replaces the TimeMark mid-check
+        // does NOT cause the freshly-refreshed entry to be removed,
+        // because the predicate sees the new TimeMark and returns false.
+        demoted.entries.removeIf { (_, mark) -> mark.elapsedNow() >= demoteWindow }
     }
 
     private companion object {

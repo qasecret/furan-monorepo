@@ -46,4 +46,15 @@ class StaticEndpointResolverTest {
         }
         assertEquals("StaticEndpointResolver.ttl must be > 0", ex.message)
     }
+
+    @Test
+    fun `blank fallback URL fails fast at construction`() {
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            StaticEndpointResolver(
+                primary = "https://x",
+                fallbacks = listOf("https://ok.example.com", "  "),
+            )
+        }
+        assertEquals("StaticEndpointResolver.fallbacks must not contain blank URLs", ex.message)
+    }
 }

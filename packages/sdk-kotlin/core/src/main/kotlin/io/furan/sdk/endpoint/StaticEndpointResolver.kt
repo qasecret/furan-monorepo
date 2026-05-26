@@ -18,6 +18,9 @@ class StaticEndpointResolver(
 
     init {
         require(primary.isNotBlank()) { "StaticEndpointResolver.primary must not be blank" }
+        require(fallbacks.all { it.isNotBlank() }) {
+            "StaticEndpointResolver.fallbacks must not contain blank URLs"
+        }
         require(ttl > Duration.ZERO) { "StaticEndpointResolver.ttl must be > 0" }
     }
 
