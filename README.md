@@ -146,31 +146,31 @@ Add Furan as a test dependency:
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:0.9.0")
+testImplementation("io.github.qasecret:furan-selenium:0.12.0")
 ```
 
 In your test:
 
 ```kotlin
-import io.github.qasecret.furan.Furan
-import io.github.qasecret.furan.FuranConfig
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.selenium.Furan
+import org.junit.jupiter.api.Test
 import org.openqa.selenium.chrome.ChromeDriver
 
 class CheckoutTest {
     @Test
     fun `checkout page renders correctly`() {
         val driver = ChromeDriver()
-        val furan = Furan(driver, FuranConfig.fromEnv())
-        try {
+        Furan(driver, FuranConfig.fromEnv()).use { furan ->
             driver.get("https://app.example.com/checkout")
             furan.snapshot("checkout-page")
-        } finally {
-            furan.close()
-            driver.quit()
         }
+        driver.quit()
     }
 }
 ```
+
+See [`packages/sdk-kotlin/README.md`](packages/sdk-kotlin/README.md) for the full SDK reference, including `snapshotAndAwait` for synchronous assertion-style tests, the `@FuranTest` JUnit 5 annotation, ignore regions, and the v2 runtime architecture.
 
 Set three environment variables (locally for development, as CI secrets in production):
 
