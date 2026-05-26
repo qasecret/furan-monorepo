@@ -26,6 +26,8 @@ class FuranRuntime internal constructor(
     val stateMachine: StateMachine,
     val endpointResolver: io.furan.sdk.endpoint.EndpointResolver? = null,
     val endpointFeedback: io.furan.sdk.endpoint.EndpointFeedback? = null,
+    val plugins: io.furan.sdk.plugin.PluginRegistry? = null,
+    val capabilities: io.furan.sdk.plugin.CapabilityRegistry? = null,
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)
@@ -37,6 +39,12 @@ class FuranRuntime internal constructor(
         if (!closed.compareAndSet(false, true)) return
 
         try {
+            // Shut down plugins first so they can drain any background
+            // work that depends on the event bus / config / capabilities
+            // before those go away. Each shutdown is failure-isolated
+            // inside PluginRegistry.shutdownAll().
+            plugins?.shutdownAll()
+
             val current = stateMachine.current()
             when (current) {
                 // INITIALIZING aborts directly to TERMINATED (spec §11

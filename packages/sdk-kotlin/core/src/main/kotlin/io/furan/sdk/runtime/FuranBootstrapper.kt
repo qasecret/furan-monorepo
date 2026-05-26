@@ -27,6 +27,8 @@ class FuranBootstrapper(
     private val sources: List<ConfigSource> = autoDiscoverSources(),
     private val eventBusFactory: () -> EventBus = ::SharedFlowEventBus,
     private val endpointConfig: io.furan.sdk.endpoint.EndpointResolutionConfig? = null,
+    private val plugins: List<io.furan.sdk.plugin.FuranPlugin> = emptyList(),
+    private val loadPluginsFromClasspath: Boolean = false,
 ) {
 
     fun bootstrap(): FuranRuntime {
@@ -39,15 +41,55 @@ class FuranBootstrapper(
         // Failover should ALSO implement EndpointFeedback (forwarding to inner)
         // to keep this path working through the chain.
         val endpointFeedback = endpointResolver as? io.furan.sdk.endpoint.EndpointFeedback
+
+        val (pluginRegistry, capabilityRegistry) = buildPluginRegistries(registry, eventBus)
+
         val runtime = FuranRuntime(
             config = registry,
             eventBus = eventBus,
             stateMachine = stateMachine,
             endpointResolver = endpointResolver,
             endpointFeedback = endpointFeedback,
+            plugins = pluginRegistry,
+            capabilities = capabilityRegistry,
         )
         stateMachine.transition(RuntimeState.READY)
         return runtime
+    }
+
+    private fun buildPluginRegistries(
+        config: io.furan.sdk.config.ConfigRegistry,
+        eventBus: EventBus,
+    ): Pair<io.furan.sdk.plugin.PluginRegistry?, io.furan.sdk.plugin.CapabilityRegistry?> {
+        if (plugins.isEmpty() && !loadPluginsFromClasspath) {
+            return null to null
+        }
+
+        val pluginRegistry = io.furan.sdk.plugin.PluginRegistry()
+        plugins.forEach(pluginRegistry::add)
+        if (loadPluginsFromClasspath) {
+            pluginRegistry.loadFromClasspath()
+        }
+
+        val capabilityRegistry = io.furan.sdk.plugin.DefaultCapabilityRegistry()
+        val ctx = io.furan.sdk.plugin.PluginContext(
+            config = config,
+            eventBus = eventBus,
+            capabilities = capabilityRegistry,
+        )
+        // Critical: if any plugin's initialize() throws, ensure the
+        // already-initialized plugins get their shutdown() called so
+        // they release any resources they acquired (HTTP clients,
+        // file watchers, etc). Then re-throw so bootstrap() fails
+        // fast — partial-init runtimes are never returned to callers.
+        try {
+            pluginRegistry.initializeAll(ctx)
+        } catch (t: Throwable) {
+            runCatching { pluginRegistry.shutdownAll() }
+            throw t
+        }
+
+        return pluginRegistry to capabilityRegistry
     }
 
     private fun buildEndpointResolver(
