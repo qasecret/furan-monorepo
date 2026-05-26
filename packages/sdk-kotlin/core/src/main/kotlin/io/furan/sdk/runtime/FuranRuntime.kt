@@ -24,6 +24,7 @@ class FuranRuntime internal constructor(
     val config: ConfigRegistry,
     val eventBus: EventBus,
     val stateMachine: StateMachine,
+    val endpointResolver: io.furan.sdk.endpoint.EndpointResolver? = null,
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)

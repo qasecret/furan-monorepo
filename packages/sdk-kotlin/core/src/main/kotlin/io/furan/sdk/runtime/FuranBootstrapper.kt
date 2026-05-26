@@ -26,19 +26,39 @@ import io.furan.sdk.event.SharedFlowEventBus
 class FuranBootstrapper(
     private val sources: List<ConfigSource> = autoDiscoverSources(),
     private val eventBusFactory: () -> EventBus = ::SharedFlowEventBus,
+    private val endpointConfig: io.furan.sdk.endpoint.EndpointResolutionConfig? = null,
 ) {
 
     fun bootstrap(): FuranRuntime {
         val registry = ConfigurationResolver(sources).resolve()
         val eventBus = eventBusFactory()
         val stateMachine = StateMachine(eventBus)
+        val endpointResolver = buildEndpointResolver(endpointConfig)
         val runtime = FuranRuntime(
             config = registry,
             eventBus = eventBus,
             stateMachine = stateMachine,
+            endpointResolver = endpointResolver,
         )
         stateMachine.transition(RuntimeState.READY)
         return runtime
+    }
+
+    private fun buildEndpointResolver(
+        cfg: io.furan.sdk.endpoint.EndpointResolutionConfig?,
+    ): io.furan.sdk.endpoint.EndpointResolver? {
+        if (cfg == null || cfg.primary == null) return null
+        val static = io.furan.sdk.endpoint.StaticEndpointResolver(
+            primary = cfg.primary,
+            fallbacks = cfg.fallbacks,
+            ttl = cfg.ttl,
+        )
+        return if (cfg.failoverEnabled) {
+            io.furan.sdk.endpoint.FailoverEndpointResolver(
+                inner = static,
+                demoteWindow = cfg.failoverDemoteWindow,
+            )
+        } else static
     }
 
     companion object {
