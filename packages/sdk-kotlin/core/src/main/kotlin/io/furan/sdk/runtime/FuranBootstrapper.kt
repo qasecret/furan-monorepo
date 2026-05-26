@@ -29,8 +29,10 @@ class FuranBootstrapper(
     private val endpointConfig: io.furan.sdk.endpoint.EndpointResolutionConfig? = null,
     private val plugins: List<io.furan.sdk.plugin.FuranPlugin> = emptyList(),
     private val loadPluginsFromClasspath: Boolean = false,
+    private val enableDiagnostics: Boolean = true,
 ) {
 
+    @OptIn(kotlin.time.ExperimentalTime::class)
     fun bootstrap(): FuranRuntime {
         val registry = ConfigurationResolver(sources).resolve()
         val eventBus = eventBusFactory()
@@ -44,6 +46,22 @@ class FuranBootstrapper(
 
         val (pluginRegistry, capabilityRegistry) = buildPluginRegistries(registry, eventBus)
 
+        val diagnostics = if (enableDiagnostics) {
+            val timeSource = kotlin.time.TimeSource.Monotonic
+            val startMark = timeSource.markNow()
+            val eventsBuffer = io.furan.sdk.diagnostics.RecentEventsBuffer()
+            eventsBuffer.attach(eventBus)
+            io.furan.sdk.diagnostics.DefaultRuntimeDiagnostics(
+                stateProvider = { stateMachine.current() },
+                startTime = startMark,
+                timeSource = timeSource,
+                configRegistry = registry,
+                pluginRegistry = pluginRegistry,
+                capabilityRegistry = capabilityRegistry,
+                recentEvents = eventsBuffer,
+            )
+        } else null
+
         val runtime = FuranRuntime(
             config = registry,
             eventBus = eventBus,
@@ -52,6 +70,7 @@ class FuranBootstrapper(
             endpointFeedback = endpointFeedback,
             plugins = pluginRegistry,
             capabilities = capabilityRegistry,
+            diagnostics = diagnostics,
         )
         stateMachine.transition(RuntimeState.READY)
         return runtime
