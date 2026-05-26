@@ -7,8 +7,9 @@ way a downstream user would.
 
 ## Layout
 
-- `build.gradle.kts` — declares `io.github.qasecret:furan-selenium:0.5.0` from
-  `mavenLocal()` / `mavenCentral()`.
+- `build.gradle.kts` — declares `io.github.qasecret:furan-selenium:$sdkVersion`
+  from `mavenLocal()` / `mavenCentral()`. The version is read at config time
+  from `../../version.txt` so it tracks release-please bumps automatically.
 - `settings.gradle.kts` — standalone root project (`sdk-selenium-junit5`).
 - `src/test/kotlin/CheckoutTest.kt` — minimal smoke test that boots Chrome
   via Selenium Manager and takes two snapshots on a `data:` URL.
