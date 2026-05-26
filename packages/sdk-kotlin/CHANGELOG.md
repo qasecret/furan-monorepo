@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.11.0...sdk/v0.12.0) (2026-05-26)
+
+
+### Features
+
+* **sdk-kotlin:** HttpTransport SPI (Phase 3.5 of SDK v2 spec — abstraction layer only) ([#145](https://github.com/qasecret/furan-monorepo/issues/145)) ([80bd3e3](https://github.com/qasecret/furan-monorepo/commit/80bd3e3198ee393c97f568e4f44acba1bdaf194a))
+
 ## [0.11.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.10.0...sdk/v0.11.0) (2026-05-26)
 
 
