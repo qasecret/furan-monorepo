@@ -54,11 +54,6 @@ export const envSchema = z.object({
   // self-host setup), so cross-origin POSTs with JSON bodies trigger a
   // preflight that 404s without an explicit CORS plugin.
   FURAN_DASHBOARD_ORIGIN: z.string().min(1).default("http://localhost:3001"),
-
-  // Feature flag: triage-queue / inbox router (v1 staged rollout).
-  // Set to true to enable the inbox.{list,count,approve,reject} tRPC procedures.
-  // Defaults to false so the router is invisible until explicitly enabled.
-  INBOX_ENABLED: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

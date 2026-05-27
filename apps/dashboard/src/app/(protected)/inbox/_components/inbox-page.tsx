@@ -31,19 +31,19 @@ export function InboxPage({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  const list = trpc.inbox!.list.useQuery({
+  const list = trpc.inbox.list.useQuery({
     status: initialStatus,
     window: initialWindow,
     cursor,
   });
-  const approve = trpc.inbox!.approve.useMutation({
+  const approve = trpc.inbox.approve.useMutation({
     onSuccess: () => {
       toast.success("Approved");
       void list.refetch();
     },
     onError: (e) => toast.error(e.message),
   });
-  const reject = trpc.inbox!.reject.useMutation({
+  const reject = trpc.inbox.reject.useMutation({
     onSuccess: () => {
       toast.success("Rejected");
       void list.refetch();
