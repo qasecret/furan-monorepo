@@ -7,6 +7,7 @@ import {
   inArray,
   projectMembers,
   projects,
+  runReviewerDecisions,
   sql,
   testRuns,
   testVariations,
@@ -17,6 +18,7 @@ import {
   inboxCountInput,
   inboxListInput,
   inboxListOutput,
+  inboxRejectInput,
 } from "@furan/shared-types";
 import { z } from "zod";
 
@@ -233,5 +235,50 @@ export const inboxRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       return approveRun(ctx, input.runId);
+    }),
+
+  /**
+   * Mark a test run as rejected by inserting a `runReviewerDecisions` row with
+   * decision="rejected". Re-rejecting the same (runId, userId) pair is an UPSERT
+   * that updates the reason — idempotent by design.
+   *
+   * Critically, this procedure does NOT touch `test_runs.status`. The rejection
+   * is a reviewer's marker only; status changes are driven by the approval/baseline
+   * acceptance path or external CI signals.
+   */
+  reject: t.procedure
+    .input(inboxRejectInput)
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; reason?: string | null }>("write", {
+        from: {
+          resolver: async ({ input, ctx }) => {
+            const rows = await ctx.db
+              .select({ projectId: testRuns.projectId })
+              .from(testRuns)
+              .where(eq(testRuns.id, input.runId))
+              .limit(1);
+            return rows[0]?.projectId ?? null;
+          },
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      await ctx.db
+        .insert(runReviewerDecisions)
+        .values({
+          runId: input.runId,
+          userId: ctx.user.id,
+          decision: "rejected",
+          reason: input.reason ?? null,
+        })
+        .onConflictDoUpdate({
+          target: [runReviewerDecisions.runId, runReviewerDecisions.userId],
+          set: {
+            decision: "rejected",
+            reason: input.reason ?? null,
+          },
+        });
+      return { ok: true as const };
     }),
 });

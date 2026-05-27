@@ -6,6 +6,7 @@ import {
   eq,
   projectMembers,
   projects,
+  runReviewerDecisions,
   screenshots,
   testRuns,
   testVariations,
@@ -48,6 +49,7 @@ d("trpc inbox.list", () => {
   async function wipe() {
     await h.db.delete(diffRegions);
     await h.db.delete(screenshots);
+    await h.db.delete(runReviewerDecisions);
     await h.db.delete(testRuns);
     await h.db.delete(testVariations);
     await h.db.delete(builds);
@@ -549,6 +551,149 @@ d("trpc inbox.list", () => {
       .from(testRuns)
       .where(eq(testRuns.id, run.id));
     expect(updated?.status).toBe("passed");
+  });
+
+  test("reject inserts a runReviewerDecisions row and does NOT change run.status", async () => {
+    await wipe();
+
+    const [admin] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-reject-basic@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Re",
+        lastName: "Ject",
+        role: "admin",
+        isActive: true,
+      })
+      .returning();
+    if (!admin) throw new Error("admin not seeded");
+
+    const adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-project-reject-basic" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ projectId: project.id, name: "home-reject-basic" })
+      .returning();
+    if (!variation) throw new Error("variation not seeded");
+
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: build.id,
+        testVariationId: variation.id,
+        status: "unresolved",
+      })
+      .returning();
+    if (!run) throw new Error("run not seeded");
+
+    const caller = makeClient(adminJwt);
+    const result = await caller.inbox.reject.mutate({
+      runId: run.id,
+      reason: "real regression",
+    });
+
+    expect(result.ok).toBe(true);
+
+    // Assert: 1 row in runReviewerDecisions with correct fields.
+    const decisions = await h.db
+      .select()
+      .from(runReviewerDecisions)
+      .where(eq(runReviewerDecisions.runId, run.id));
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.runId).toBe(run.id);
+    expect(decisions[0]?.userId).toBe(admin.id);
+    expect(decisions[0]?.decision).toBe("rejected");
+    expect(decisions[0]?.reason).toBe("real regression");
+
+    // Assert: run.status is still 'unresolved' — NOT changed.
+    const [updated] = await h.db
+      .select({ status: testRuns.status })
+      .from(testRuns)
+      .where(eq(testRuns.id, run.id));
+    expect(updated?.status).toBe("unresolved");
+  });
+
+  test("reject is idempotent on (runId, userId) — second call updates reason", async () => {
+    await wipe();
+
+    const [admin] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-reject-idempotent@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Re",
+        lastName: "Ject2",
+        role: "admin",
+        isActive: true,
+      })
+      .returning();
+    if (!admin) throw new Error("admin not seeded");
+
+    const adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-project-reject-idempotent" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ projectId: project.id, name: "home-reject-idempotent" })
+      .returning();
+    if (!variation) throw new Error("variation not seeded");
+
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: build.id,
+        testVariationId: variation.id,
+        status: "unresolved",
+      })
+      .returning();
+    if (!run) throw new Error("run not seeded");
+
+    const caller = makeClient(adminJwt);
+
+    // First call.
+    await caller.inbox.reject.mutate({ runId: run.id, reason: "first reason" });
+
+    // Second call with a different reason.
+    await caller.inbox.reject.mutate({
+      runId: run.id,
+      reason: "updated reason",
+    });
+
+    // Assert: still only 1 row in runReviewerDecisions.
+    const decisions = await h.db
+      .select()
+      .from(runReviewerDecisions)
+      .where(eq(runReviewerDecisions.runId, run.id));
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.reason).toBe("updated reason");
   });
 
   test("paginates via cursor", async () => {
