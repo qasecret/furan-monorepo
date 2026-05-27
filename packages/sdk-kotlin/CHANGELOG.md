@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.12.0...sdk/v0.13.0) (2026-05-27)
+
+
+### Features
+
+* **sdk-kotlin:** example tests for ignore regions + v2 runtime spine ([#149](https://github.com/qasecret/furan-monorepo/issues/149)) ([d99d9bd](https://github.com/qasecret/furan-monorepo/commit/d99d9bd8c62d2de7b81157d35ae85d69ca4c7f67))
+
 ## [0.12.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.11.0...sdk/v0.12.0) (2026-05-26)
 
 
