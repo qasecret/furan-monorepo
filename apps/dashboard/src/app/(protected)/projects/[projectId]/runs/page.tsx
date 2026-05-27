@@ -62,6 +62,7 @@ export default async function ProjectRunsPage({
   searchParams?: Promise<{
     branch?: string;
     status?: string | string[];
+    filter?: string;
     browser?: string;
     viewport?: string;
     os?: string;
@@ -73,17 +74,23 @@ export default async function ProjectRunsPage({
   const sp: {
     branch?: string;
     status?: string | string[];
+    filter?: string;
     browser?: string;
     viewport?: string;
     os?: string;
     device?: string;
     customTags?: string;
   } = (await searchParams) ?? {};
+  // `?filter=needs-review` is a shorthand for status=unresolved&status=failed.
+  // Explicit `?status=` params are merged in after so that a caller may
+  // combine the two (e.g. link generators that don't know about the shorthand).
+  const needsReviewStatuses: string[] =
+    sp.filter === "needs-review" ? ["unresolved", "failed"] : [];
   // Narrow each raw URL `status` value through the typed enum; unknown
   // values (e.g. stale links from before the enum migration) silently
   // drop out rather than 500ing. Deduplicate to keep the filter set
   // canonical.
-  const rawStatuses = asArray(sp.status);
+  const rawStatuses = [...needsReviewStatuses, ...asArray(sp.status)];
   const parsed: RunStatus[] = [];
   const seen = new Set<RunStatus>();
   for (const raw of rawStatuses) {
