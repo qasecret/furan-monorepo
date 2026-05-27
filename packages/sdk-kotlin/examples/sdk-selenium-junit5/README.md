@@ -8,11 +8,31 @@ way a downstream user would.
 ## Layout
 
 - `build.gradle.kts` — declares `io.github.qasecret:furan-selenium:$sdkVersion`
-  from `mavenLocal()` / `mavenCentral()`. The version is read at config time
-  from `../../version.txt` so it tracks release-please bumps automatically.
+  and `io.github.qasecret:furan-junit5:$sdkVersion` from `mavenLocal()` /
+  `mavenCentral()`. The version is read at config time from `../../version.txt`
+  so it tracks release-please bumps automatically.
 - `settings.gradle.kts` — standalone root project (`sdk-selenium-junit5`).
-- `src/test/kotlin/CheckoutTest.kt` — minimal smoke test that boots Chrome
-  via Selenium Manager and takes two snapshots on a `data:` URL.
+- `src/test/kotlin/`
+  - `CheckoutTest.kt` — fire-and-forget `furan.snapshot()`. The
+    minimal-onboarding shape: boot Chrome, take two snapshots, close.
+  - `CheckoutAwaitTest.kt` — `furan.snapshotAndAwait()` typed-result
+    path. Blocks until the diff worker produces a terminal status and
+    throws `FuranAssertionException` on non-PASSED (unless `softAssert`).
+  - `CheckoutJUnit5ExtensionTest.kt` — `@FuranTest` annotation: the
+    JUnit5 extension parameter-resolves a `FuranConfig` for each test
+    method, removing `FuranConfig.fromEnv()` boilerplate.
+  - `CheckoutIgnoreRegionsTest.kt` — per-test `ignoreAreas` + `diffTolerance`
+    on the `Furan` constructor, plus a per-snapshot CSS-selector `mask`.
+    The two modes compose: rectangles for fixed-position banners,
+    selectors for layout-shifting widgets.
+  - `CheckoutWithRuntimeTest.kt` — opt-in v2 runtime spine. Bootstraps
+    a `FuranRuntime` via `FuranBootstrapper`, subscribes to the event
+    bus, takes a snapshot via the ordinary `Furan` adapter, and dumps
+    `runtime.diagnostics.snapshot()` for operator visibility. See the
+    SDK README's "v2 runtime architecture" section for when this matters.
+  - `CheckoutCandidateTest.kt` — paired with `CheckoutTest` to seed a
+    CANDIDATE run that diverges from the baseline. Used by the local
+    QA pass with a second `FURAN_BUILD_ID` + feature-branch `FURAN_BRANCH`.
 
 ## Prereqs
 
