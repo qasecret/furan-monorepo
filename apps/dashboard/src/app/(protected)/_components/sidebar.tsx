@@ -1,6 +1,7 @@
-import { FolderKanban, Key, Puzzle, Users } from "lucide-react";
-import type { ComponentType, SVGProps } from "react";
+import { FolderKanban, Inbox, Key, Puzzle, Users } from "lucide-react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 
+import { InboxBadge } from "./inbox-badge";
 import { LogoutButton } from "./logout-button";
 import { SidebarNavItem } from "./sidebar-nav-item";
 
@@ -10,6 +11,7 @@ interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
   href: string;
+  badge?: ReactNode;
 }
 
 interface NavSection {
@@ -44,7 +46,15 @@ export function Sidebar({
   const sections: NavSection[] = [
     {
       label: "Workspace",
-      items: [{ icon: FolderKanban, label: "Projects", href: "/projects" }],
+      items: [
+        {
+          icon: Inbox,
+          label: "Inbox",
+          href: "/inbox",
+          badge: <InboxBadge />,
+        },
+        { icon: FolderKanban, label: "Projects", href: "/projects" },
+      ],
     },
     {
       label: "Account",
@@ -107,6 +117,7 @@ export function Sidebar({
                     icon={<Icon className="w-4 h-4 shrink-0" />}
                     label={item.label}
                     href={item.href}
+                    badge={item.badge}
                   />
                 );
               })}
