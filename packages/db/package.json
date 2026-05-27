@@ -23,6 +23,7 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate-concurrent": "tsx src/apply-concurrent-migrations.ts",
     "db:reset": "drizzle-kit drop && drizzle-kit migrate"
   },
   "dependencies": {
