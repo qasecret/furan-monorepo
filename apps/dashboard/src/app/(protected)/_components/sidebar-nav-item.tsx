@@ -17,6 +17,12 @@ interface Props {
   icon: ReactNode;
   label: string;
   href: string;
+  /**
+   * Optional badge rendered flush-right in the nav row (e.g. an unread count).
+   * Must be a client-safe ReactNode — passed across the RSC boundary as
+   * serialised JSX by the server-component Sidebar.
+   */
+  badge?: ReactNode;
 }
 
 /**
@@ -24,7 +30,7 @@ interface Props {
  * path starts with `href` so deep routes (e.g. `/projects/<id>/runs`)
  * still highlight the "Projects" entry.
  */
-export function SidebarNavItem({ icon, label, href }: Props) {
+export function SidebarNavItem({ icon, label, href, badge }: Props) {
   const pathname = usePathname();
   const isActive = pathname === href || pathname.startsWith(`${href}/`);
 
@@ -41,6 +47,7 @@ export function SidebarNavItem({ icon, label, href }: Props) {
     >
       {icon}
       <span className="truncate">{label}</span>
+      {badge}
     </Link>
   );
 }
