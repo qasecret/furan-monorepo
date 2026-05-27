@@ -5,6 +5,9 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/hooks/useInboxRealtime", () => ({
   useInboxRealtime: () => undefined,
 }));
+vi.mock("@/lib/telemetry", () => ({
+  recordTelemetry: vi.fn(),
+}));
 
 const listMock = vi.fn();
 const approveMock = vi.fn();

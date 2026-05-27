@@ -21,6 +21,7 @@ import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBuildsRoutes } from "./routes/builds.js";
+import { registerDashboardTelemetryRoutes } from "./routes/dashboard-telemetry.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectEventsRoute } from "./routes/project-events.js";
@@ -114,6 +115,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     limits: { fileSize: 50 * 1024 * 1024 },
   });
   await registerAuthRoutes(app);
+  await registerDashboardTelemetryRoutes(app);
   await registerTokensRoutes(app);
   await registerUsersRoutes(app);
   await registerUsersAdminRoutes(app);
