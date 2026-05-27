@@ -77,11 +77,17 @@ export function InboxPage({
       }}
     >
       <div className="flex h-full flex-col">
-        <header className="border-b border-zinc-900 px-4 py-4">
+        <header
+          id="inbox-header"
+          className="border-b border-zinc-900 px-4 py-4"
+        >
           <h1 className="text-xl font-semibold">Inbox</h1>
           <p className="text-sm text-zinc-400">
             All open runs across your projects · Press{" "}
-            <kbd className="rounded border border-zinc-800 bg-zinc-900 px-1 text-xs">
+            <kbd
+              id="inbox-shortcut-hint"
+              className="rounded border border-zinc-800 bg-zinc-900 px-1 text-xs"
+            >
               ?
             </kbd>{" "}
             for shortcuts
@@ -97,7 +103,11 @@ export function InboxPage({
         ) : items.length === 0 ? (
           <EmptyState />
         ) : (
-          <ul role="list" className="flex-1 overflow-y-auto">
+          <ul
+            id="inbox-queue-list"
+            role="list"
+            className="flex-1 overflow-y-auto"
+          >
             {items.map((row, idx) => (
               <QueueRow
                 key={row.runId}
