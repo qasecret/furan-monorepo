@@ -6,7 +6,13 @@ import org.openqa.selenium.chrome.ChromeDriver
 import org.openqa.selenium.chrome.ChromeOptions
 
 /**
- * Smoke example for the Furan Selenium adapter.
+ * Smoke example for the Furan Selenium adapter — the canonical
+ * fire-and-forget `furan.snapshot()` path. See sibling tests for:
+ *  - [CheckoutAwaitTest] — typed-result + assertion semantics.
+ *  - [CheckoutJUnit5ExtensionTest] — `@FuranTest` config injection.
+ *  - [CheckoutIgnoreRegionsTest] — ignoreAreas + diffTolerance + CSS mask.
+ *  - [CheckoutWithRuntimeTest] — opt-in v2 runtime spine for diagnostics.
+ *  - [CheckoutCandidateTest] — paired baseline-vs-candidate seed.
  *
  * Skipped unless `FURAN_API_URL` is set, since the SDK requires a running
  * apps/api + a valid API token to upload snapshots. Run locally via:
