@@ -48,7 +48,7 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
       {row.thumbnailUrl !== null ? (
         <img
           src={row.thumbnailUrl}
-          alt="screenshot thumbnail"
+          alt=""
           loading="lazy"
           className="h-10 w-16 shrink-0 rounded border border-zinc-800 object-cover"
         />
