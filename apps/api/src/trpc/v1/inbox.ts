@@ -1,6 +1,7 @@
 import {
   and,
   builds,
+  count,
   desc,
   eq,
   inArray,
@@ -12,7 +13,12 @@ import {
   type DB,
   type RunStatus,
 } from "@furan/db";
-import { inboxListInput, inboxListOutput } from "@furan/shared-types";
+import {
+  inboxCountInput,
+  inboxListInput,
+  inboxListOutput,
+} from "@furan/shared-types";
+import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
 import { t } from "../trpc.js";
@@ -160,5 +166,39 @@ export const inboxRouter = t.router({
       }));
 
       return { items, nextCursor };
+    }),
+
+  /**
+   * Returns the total count of UNRESOLVED + FAILED test runs across all
+   * projects the caller is a member of (admins see all projects).
+   *
+   * Used by the sidebar badge to show the number of open items.
+   */
+  count: t.procedure
+    .input(inboxCountInput)
+    .use(authed)
+    .output(z.object({ total: z.number().int() }))
+    .query(async ({ input, ctx }) => {
+      const memberProjectIds = await listMemberProjectIds(ctx.db, ctx.user);
+      if (memberProjectIds.length === 0) return { total: 0 };
+
+      const interval = WINDOW_INTERVAL[input.window];
+      const windowFilter =
+        interval === null
+          ? sql`true`
+          : sql`${testRuns.createdAt} >= now() - ${interval}::interval`;
+
+      const [row] = await ctx.db
+        .select({ total: count() })
+        .from(testRuns)
+        .where(
+          and(
+            inArray(testRuns.projectId, memberProjectIds),
+            sql`${testRuns.status} IN ('unresolved', 'failed')`,
+            windowFilter,
+          ),
+        );
+
+      return { total: Number(row?.total ?? 0) };
     }),
 });

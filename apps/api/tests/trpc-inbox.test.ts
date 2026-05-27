@@ -417,6 +417,74 @@ d("trpc inbox.list", () => {
     expect(ids).not.toContain(passedRun.id);
   });
 
+  test("count returns the total of unresolved + failed across member projects", async () => {
+    await wipe();
+
+    // Seed an admin so project-member path is bypassed, keeping setup minimal.
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-count@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Co",
+        lastName: "Unt",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-project-count" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ projectId: project.id, name: "home-count" })
+      .returning();
+    if (!variation) throw new Error("variation not seeded");
+
+    // 1 unresolved + 1 failed + 1 passed.
+    await h.db.insert(testRuns).values({
+      projectId: project.id,
+      buildId: build.id,
+      testVariationId: variation.id,
+      status: "unresolved",
+    });
+    await h.db.insert(testRuns).values({
+      projectId: project.id,
+      buildId: build.id,
+      testVariationId: variation.id,
+      status: "failed",
+    });
+    await h.db.insert(testRuns).values({
+      projectId: project.id,
+      buildId: build.id,
+      testVariationId: variation.id,
+      status: "passed",
+    });
+
+    const caller = makeClient(jwt);
+    const result = await caller.inbox.count.query({ window: "all" });
+
+    // Exactly 2: unresolved + failed; passed must NOT be counted.
+    expect(result.total).toBe(2);
+  });
+
   test("paginates via cursor", async () => {
     await wipe();
 
