@@ -28,7 +28,7 @@ export const runReviewerDecisions = pgTable(
       .references(() => testRuns.id, { onDelete: "cascade" }),
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     decision: text("decision").notNull(),
     reason: text("reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
