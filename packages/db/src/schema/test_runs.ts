@@ -2,6 +2,7 @@ import {
   pgTable,
   uuid,
   text,
+  varchar,
   integer,
   doublePrecision,
   boolean,
@@ -60,6 +61,7 @@ export const testRuns = pgTable(
     tempIgnoreAreas: text("temp_ignore_areas"),
     environment: environmentEnum("environment").notNull().default("default"),
     baselineSource: baselineSourceEnum("baseline_source"),
+    thumbnailUrl: varchar("thumbnail_url", { length: 1024 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
