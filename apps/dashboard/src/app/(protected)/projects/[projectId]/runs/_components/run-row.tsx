@@ -56,7 +56,7 @@ export function RunRow({ projectId, run }: Props) {
   return (
     <tr
       className="hover:bg-zinc-900/30 transition-colors"
-      data-testid={`run-row-${run.id}`}
+      data-testid={`queue-row-${run.id}`}
     >
       <td className="px-4 py-2.5">
         <Link

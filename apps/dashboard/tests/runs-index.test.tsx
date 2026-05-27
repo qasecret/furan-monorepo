@@ -144,8 +144,8 @@ describe("RunsTable", () => {
   test("renders the runs returned by trpc.runs.list.useQuery", () => {
     render(<RunsTable projectId={PROJECT_ID} />);
     expect(screen.getByTestId("runs-table")).toBeDefined();
-    expect(screen.getByTestId("run-row-r1")).toBeDefined();
-    expect(screen.getByTestId("run-row-r2")).toBeDefined();
+    expect(screen.getByTestId("queue-row-r1")).toBeDefined();
+    expect(screen.getByTestId("queue-row-r2")).toBeDefined();
     expect(screen.getByText("main")).toBeDefined();
     expect(screen.getByText("feature/x")).toBeDefined();
     // RunStatusBadge renders the title-cased label + a status-keyed
