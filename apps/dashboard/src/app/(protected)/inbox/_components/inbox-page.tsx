@@ -1,7 +1,7 @@
 "use client";
 
 import type { InboxStatusFilter, InboxWindowFilter } from "@furan/shared-types";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { EmptyState } from "./empty-state";
@@ -12,6 +12,7 @@ import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
 import { ShortcutsDialog } from "@/components/triage/shortcuts-dialog";
 import { useInboxRealtime } from "@/hooks/useInboxRealtime";
+import { recordTelemetry } from "@/lib/telemetry";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -30,6 +31,8 @@ export function InboxPage({
   const [cursor, setCursor] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  const actionsCountRef = useRef(0);
 
   const list = trpc.inbox.list.useQuery({
     status: initialStatus,
@@ -62,6 +65,51 @@ export function InboxPage({
     [items.length],
   );
 
+  // Fire inbox.viewed once on mount with current filter state.
+  useEffect(() => {
+    recordTelemetry("inbox.viewed", {
+      filterStatus: initialStatus,
+      filterWindow: initialWindow,
+      groupBy: initialGroup,
+      itemCount: items.length,
+    });
+  }, []); // intentionally empty — fires once per mount
+
+  // Record session_duration on unmount.
+  useEffect(() => {
+    const startMs = Date.now();
+    actionsCountRef.current = 0;
+    return () => {
+      recordTelemetry("inbox.session_duration", {
+        durationMs: Date.now() - startMs,
+        actionsTaken: actionsCountRef.current,
+      });
+    };
+  }, []); // intentionally empty — captures mount time, cleans up on unmount
+
+  const fireAction = useCallback(
+    (
+      action: "approve" | "reject",
+      row: (typeof items)[number],
+      viaKeyboard: boolean,
+    ) => {
+      actionsCountRef.current += 1;
+      recordTelemetry("inbox.row_action", {
+        action,
+        viaKeyboard,
+        rowAge: Math.floor(
+          (Date.now() - new Date(row.createdAt).getTime()) / 1000,
+        ),
+      });
+      if (action === "approve") {
+        approve.mutate({ runId: row.runId });
+      } else {
+        reject.mutate({ runId: row.runId, reason: null });
+      }
+    },
+    [approve, reject],
+  );
+
   return (
     <KeyboardScope
       bindings={{
@@ -69,9 +117,8 @@ export function InboxPage({
         ArrowUp: () => moveSelection(-1),
         j: () => moveSelection(1),
         k: () => moveSelection(-1),
-        a: () => current && approve.mutate({ runId: current.runId }),
-        r: () =>
-          current && reject.mutate({ runId: current.runId, reason: null }),
+        a: () => current && fireAction("approve", current, true),
+        r: () => current && fireAction("reject", current, true),
         "?": () => setShortcutsOpen(true),
         Escape: () => setShortcutsOpen(false),
       }}
@@ -113,10 +160,8 @@ export function InboxPage({
                 key={row.runId}
                 row={row}
                 selected={idx === selectedIndex}
-                onApprove={() => approve.mutate({ runId: row.runId })}
-                onReject={() =>
-                  reject.mutate({ runId: row.runId, reason: null })
-                }
+                onApprove={() => fireAction("approve", row, false)}
+                onReject={() => fireAction("reject", row, false)}
               />
             ))}
           </ul>
