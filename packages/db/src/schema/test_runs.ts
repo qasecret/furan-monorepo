@@ -60,6 +60,7 @@ export const testRuns = pgTable(
     tempIgnoreAreas: text("temp_ignore_areas"),
     environment: environmentEnum("environment").notNull().default("default"),
     baselineSource: baselineSourceEnum("baseline_source"),
+    thumbnailUrl: text("thumbnail_url"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

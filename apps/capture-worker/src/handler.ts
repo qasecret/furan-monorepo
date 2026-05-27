@@ -1,5 +1,7 @@
 import {
+  and,
   eq,
+  isNull,
   screenshots,
   testRuns,
   withProjectScope,
@@ -140,7 +142,32 @@ async function handleCaptureJobInner(
       await deps.storage.put(imageKey, webp, "image/webp");
       await deps.storage.put(domKey, domBuf, "text/html");
 
+      // Generate a 256×160 thumbnail for inbox row previews.
+      // Best-effort: failure must NOT fail the screenshot capture.
+      let thumbnailKey: string | null = null;
+      try {
+        const thumbBuf = await sharp(screenshotBuf)
+          .resize({ width: 256, height: 160, fit: "cover" })
+          .webp({ quality: 70 })
+          .toBuffer();
+        thumbnailKey = objectKey(thumbBuf);
+        await deps.storage.put(thumbnailKey, thumbBuf, "image/webp");
+      } catch (err) {
+        logger.warn({ err, runId: data.runId }, "thumbnail_generation_failed");
+      }
+
       await withProjectScope(deps.db, data.projectId, async (tx) => {
+        if (thumbnailKey !== null) {
+          await tx
+            .update(testRuns)
+            .set({ thumbnailUrl: thumbnailKey })
+            .where(
+              and(
+                eq(testRuns.id, data.runId),
+                isNull(testRuns.thumbnailUrl), // first writer wins — URL stays stable
+              ),
+            );
+        }
         await tx
           .insert(screenshots)
           .values({
