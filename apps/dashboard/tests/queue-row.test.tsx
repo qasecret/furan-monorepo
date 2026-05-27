@@ -35,7 +35,11 @@ describe("QueueRow", () => {
   });
 
   test("renders thumbnail when URL provided, placeholder otherwise", () => {
-    const { rerender } = render(
+    // The thumbnail is decorative (alt=""): the row's aria-label already
+    // announces variation + project + status for screen-reader users.
+    // alt="" makes the img a "presentation" role, so getByRole("img")
+    // won't find it — query the DOM directly instead.
+    const { container, rerender } = render(
       <QueueRow
         row={row}
         selected={false}
@@ -43,7 +47,7 @@ describe("QueueRow", () => {
         onReject={vi.fn()}
       />,
     );
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
 
     rerender(
       <QueueRow
@@ -53,8 +57,8 @@ describe("QueueRow", () => {
         onReject={vi.fn()}
       />,
     );
-    expect((screen.getByRole("img") as HTMLImageElement).src).toBe(
-      "https://x/y.webp",
-    );
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect((img as HTMLImageElement).src).toBe("https://x/y.webp");
   });
 });
