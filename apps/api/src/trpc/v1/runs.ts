@@ -162,6 +162,81 @@ const listInput = z.object({
 });
 type ListInput = z.infer<typeof listInput>;
 
+/**
+ * The legal source statuses for any reviewer-driven status mutation
+ * (`approve`, `reject`, `overrideStatus`) per spec §3.3. Excludes
+ * `running` (no diff outcome yet) and the terminal system states
+ * `new | aborted | empty` (re-run instead of overriding).
+ */
+const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "passed",
+  "unresolved",
+  "failed",
+]);
+
+/**
+ * Approve a single test run: transitions status → passed, sets merge=true,
+ * snapshots into baselines, and publishes broadcaster events. Shared by
+ * `runs.approve` and `inbox.approve` so both callers apply identical side
+ * effects without duplicating logic.
+ *
+ * Throws TRPCError NOT_FOUND if the run doesn't exist, BAD_REQUEST if its
+ * status isn't in REVIEWER_LEGAL_FROM.
+ */
+export async function approveRun(
+  ctx: {
+    db: import("@furan/db").DB;
+    broadcaster: import("../../lib/broadcast.js").Broadcaster;
+    user: { id: string };
+  },
+  runId: string,
+): Promise<{ runId: string; approved: true }> {
+  const runRows = await ctx.db
+    .select()
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .limit(1);
+  const run = runRows[0];
+  if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+  // Per spec §3.3: only terminal review states can be approved. Reject
+  // mid-flight (`running`) and terminal system states (`new`, `aborted`,
+  // `empty`) — for those the right response is to re-run, not override.
+  if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
+    });
+  }
+
+  await ctx.db
+    .update(testRuns)
+    .set({ status: "passed", merge: true })
+    .where(eq(testRuns.id, runId));
+
+  // Snapshot the approved run into baselines (branch-scoped, §4.7).
+  await ctx.db.insert(baselines).values({
+    baselineName: run.baselineName ?? run.name ?? "auto",
+    testVariationId: run.testVariationId,
+    testRunId: run.id,
+    userId: ctx.user.id,
+    ...(run.branchName ? { branchName: run.branchName } : {}),
+  });
+
+  await ctx.broadcaster.publishProjectEvent(run.projectId, {
+    event: "testRun_updated",
+    data: { id: run.id },
+  });
+  if (run.buildId) {
+    await ctx.broadcaster.publishProjectEvent(run.projectId, {
+      event: "build_updated",
+      data: { id: run.buildId },
+    });
+  }
+
+  return { runId: run.id, approved: true };
+}
+
 async function resolveRunProjectId(
   input: RunIdInput,
   ctx: Context,
@@ -682,50 +757,7 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const runRows = await ctx.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, input.runId))
-        .limit(1);
-      const run = runRows[0];
-      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
-
-      // Per spec §3.3: only terminal review states can be approved. Reject
-      // mid-flight (`running`) and terminal system states (`new`, `aborted`,
-      // `empty`) — for those the right response is to re-run, not override.
-      if (!REVIEWER_LEGAL_FROM.has(run.status)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
-        });
-      }
-
-      await ctx.db
-        .update(testRuns)
-        .set({ status: "passed", merge: true })
-        .where(eq(testRuns.id, input.runId));
-
-      // Snapshot the approved run into baselines (branch-scoped, §4.7).
-      await ctx.db.insert(baselines).values({
-        baselineName: run.baselineName ?? run.name ?? "auto",
-        testVariationId: run.testVariationId,
-        testRunId: run.id,
-        userId: ctx.user.id,
-        ...(run.branchName ? { branchName: run.branchName } : {}),
-      });
-
-      await ctx.broadcaster.publishProjectEvent(run.projectId, {
-        event: "testRun_updated",
-        data: { id: run.id },
-      });
-      if (run.buildId) {
-        await ctx.broadcaster.publishProjectEvent(run.projectId, {
-          event: "build_updated",
-          data: { id: run.buildId },
-        });
-      }
-
-      return { runId: run.id, approved: true };
+      return approveRun(ctx, input.runId);
     }),
 
   /**
@@ -971,15 +1003,3 @@ export const runsRouter = t.router({
       return { runId: run.id, status: nextStatus };
     }),
 });
-
-/**
- * The legal source statuses for any reviewer-driven status mutation
- * (`approve`, `reject`, `overrideStatus`) per spec §3.3. Excludes
- * `running` (no diff outcome yet) and the terminal system states
- * `new | aborted | empty` (re-run instead of overriding).
- */
-const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
-  "passed",
-  "unresolved",
-  "failed",
-]);

@@ -21,7 +21,10 @@ import {
 import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
+import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
+
+import { approveRun } from "./runs.js";
 
 /** Map the window filter to a Postgres interval literal, or null for "all". */
 const WINDOW_INTERVAL: Record<"24h" | "7d" | "30d" | "all", string | null> = {
@@ -200,5 +203,35 @@ export const inboxRouter = t.router({
         );
 
       return { total: Number(row?.total ?? 0) };
+    }),
+
+  /**
+   * Approve a single test run from the inbox view. Delegates entirely to the
+   * shared `approveRun` helper (same side effects as `runs.approve`): status
+   * → passed, merge=true, baseline snapshot, broadcaster events.
+   *
+   * Project membership is resolved from the run row so callers only need to
+   * supply the runId — consistent with how the inbox list surfaces items
+   * without requiring the caller to track projectId separately.
+   */
+  approve: t.procedure
+    .input(z.object({ runId: z.string().uuid() }))
+    .use(authed)
+    .use(
+      projectMember<{ runId: string }>("write", {
+        from: {
+          resolver: async ({ input, ctx }) => {
+            const rows = await ctx.db
+              .select({ projectId: testRuns.projectId })
+              .from(testRuns)
+              .where(eq(testRuns.id, input.runId))
+              .limit(1);
+            return rows[0]?.projectId ?? null;
+          },
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      return approveRun(ctx, input.runId);
     }),
 });

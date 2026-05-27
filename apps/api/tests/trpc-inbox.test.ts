@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import {
   builds,
   diffRegions,
+  eq,
   projectMembers,
   projects,
   screenshots,
@@ -483,6 +484,71 @@ d("trpc inbox.list", () => {
 
     // Exactly 2: unresolved + failed; passed must NOT be counted.
     expect(result.total).toBe(2);
+  });
+
+  test("approve transitions an UNRESOLVED run to PASSED via the existing approval path", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-approve@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Ap",
+        lastName: "Prove",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-project-approve" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ projectId: project.id, name: "home-approve" })
+      .returning();
+    if (!variation) throw new Error("variation not seeded");
+
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: build.id,
+        testVariationId: variation.id,
+        status: "unresolved",
+      })
+      .returning();
+    if (!run) throw new Error("run not seeded");
+
+    const caller = makeClient(jwt);
+    const result = await caller.inbox.approve.mutate({ runId: run.id });
+
+    expect(result.runId).toBe(run.id);
+    expect(result.approved).toBe(true);
+
+    // Verify the DB row was updated to 'passed'.
+    const [updated] = await h.db
+      .select({ status: testRuns.status })
+      .from(testRuns)
+      .where(eq(testRuns.id, run.id));
+    expect(updated?.status).toBe("passed");
   });
 
   test("paginates via cursor", async () => {
