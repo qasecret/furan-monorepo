@@ -218,16 +218,16 @@ jobs:
           FURAN_BUILD_ID: ${{ steps.seed.outputs.build_id }}
           FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: ../../gradlew -p . test --no-daemon
-      - name: Assert a test_run was created
-        # The Selenium adapter (packages/sdk-kotlin/selenium/.../Furan.kt
-        # ensureRun) creates exactly one test_runs row per Furan() instance
-        # with `name = "snapshot-run"`, regardless of how many
-        # snapshot() calls follow. The example's CheckoutTest issues two
-        # snapshots; both attach to the same run. We assert >= 1 row.
+      - name: Assert test_runs were created
+        # Per ADR-037, the Selenium adapter creates one test_run per
+        # `snapshot(name)` call (rather than one per Furan() instance with
+        # a hardcoded "snapshot-run" name). The example suite issues
+        # multiple snapshots with distinct names — assert >= 1 row to
+        # confirm the SDK reached the api end-to-end.
         run: |
           COUNT=$(PGPASSWORD=cipw psql -h localhost -U furan -d furan_ci -tAc \
-            "SELECT count(*) FROM test_runs WHERE name = 'snapshot-run'")
-          echo "snapshot-run rows: $COUNT"
+            "SELECT count(*) FROM test_runs")
+          echo "test_runs rows: $COUNT"
           test "$COUNT" -ge 1
       - name: Tail app logs (always, last 200 lines)
         if: always()
