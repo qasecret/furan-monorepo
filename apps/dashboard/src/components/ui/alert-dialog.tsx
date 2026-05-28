@@ -11,7 +11,7 @@ import { cn } from "@/lib/cn";
  * refactor to a `cva()`-based Button only needs to update one consumer.
  */
 const ACTION_BASE =
-  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950 disabled:opacity-50";
 
 const ACTION_VARIANT: Record<"default" | "destructive", string> = {
   default: "bg-brand text-black hover:bg-brand/90",
@@ -20,7 +20,7 @@ const ACTION_VARIANT: Record<"default" | "destructive", string> = {
 };
 
 const CANCEL_CLASSES =
-  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:opacity-50 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900 mt-2 sm:mt-0";
+  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950 disabled:opacity-50 border border-zinc-200 text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 mt-2 sm:mt-0 dark:border-zinc-800 dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900";
 
 const AlertDialog = AlertDialogPrimitive.Root;
 const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
@@ -47,7 +47,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border border-zinc-800 bg-zinc-950 p-6 shadow-lg rounded-xl",
+        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border border-zinc-200 bg-white text-zinc-950 p-6 shadow-lg rounded-xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-white",
         className,
       )}
       {...props}
@@ -90,7 +90,10 @@ const AlertDialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold text-white", className)}
+    className={cn(
+      "text-lg font-semibold text-zinc-950 dark:text-white",
+      className,
+    )}
     {...props}
   />
 ));
@@ -102,7 +105,7 @@ const AlertDialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-zinc-400", className)}
+    className={cn("text-sm text-zinc-600 dark:text-zinc-400", className)}
     {...props}
   />
 ));

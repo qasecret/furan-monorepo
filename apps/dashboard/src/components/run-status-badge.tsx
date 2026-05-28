@@ -26,7 +26,8 @@ type StatusConfig = {
 export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   new: {
     label: "New",
-    className: "bg-zinc-900 text-zinc-300 border-zinc-800",
+    className:
+      "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800",
     tooltip: "First run for this test — baseline created",
   },
   running: {
@@ -56,7 +57,8 @@ export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   },
   empty: {
     label: "Empty",
-    className: "bg-zinc-900/50 text-zinc-500 border-zinc-800",
+    className:
+      "bg-zinc-100/70 text-zinc-500 border-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-800",
     tooltip: "Run completed but recorded no checks",
   },
 };

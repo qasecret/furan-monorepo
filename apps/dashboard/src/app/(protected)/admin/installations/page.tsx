@@ -29,8 +29,10 @@ export default async function InstallationsAdminPage() {
   ) {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-white">403 — admin only</h1>
-        <p className="text-sm text-zinc-400">
+        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+          403 — admin only
+        </h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           You need the admin role to manage GitHub App installations.
         </p>
       </Card>
@@ -39,10 +41,10 @@ export default async function InstallationsAdminPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-white">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
         GitHub App installations
       </h1>
-      <p className="text-sm text-zinc-400">
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
         Link each GitHub App installation to a Furan project so its webhook
         events (PR runs, status checks) route to the right place. Changes save
         immediately.

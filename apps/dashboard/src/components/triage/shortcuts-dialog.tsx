@@ -38,7 +38,6 @@ export function ShortcutsDialog({ open, onOpenChange }: Props) {
               key={s.keys}
               className="flex items-center justify-between gap-4"
             >
-              {/* TODO(light-theme-phase-1.x): Dialog wrapper bg (bg-zinc-950) needs conversion in @/components/ui/dialog.tsx */}
               <kbd className="rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs dark:border-zinc-800 dark:bg-zinc-900">
                 {s.keys}
               </kbd>

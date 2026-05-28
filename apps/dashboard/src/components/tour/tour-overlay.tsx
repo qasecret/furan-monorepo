@@ -212,18 +212,20 @@ export function TourOverlay() {
           width: POPOVER_WIDTH,
           zIndex: 1001,
         }}
-        className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-xl"
+        className="rounded-lg border border-zinc-300 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
       >
         {step.title && (
           <h3
             id="tour-step-title"
-            className="mb-2 text-sm font-semibold text-white"
+            className="mb-2 text-sm font-semibold text-zinc-950 dark:text-white"
           >
             {step.title}
           </h3>
         )}
-        <p className="text-sm text-zinc-300">{step.content}</p>
-        <div className="mt-4 flex items-center justify-between text-xs text-zinc-500">
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          {step.content}
+        </p>
+        <div className="mt-4 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-500">
           <span data-testid="tour-progress">
             {state.index + 1} / {state.steps.length}
           </span>

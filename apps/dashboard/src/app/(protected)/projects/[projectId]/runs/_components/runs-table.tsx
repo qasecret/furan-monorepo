@@ -156,9 +156,11 @@ export function RunsTable({
         />
       </div>
       {isLoading && !data ? (
-        <div className="text-sm text-zinc-400">Loading…</div>
+        <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
       ) : error ? (
-        <div className="text-sm text-red-400">Error: {error.message}</div>
+        <div className="text-sm text-red-600 dark:text-red-400">
+          Error: {error.message}
+        </div>
       ) : items.length === 0 ? (
         filters.branch === undefined &&
         (!filters.status || filters.status.length === 0) ? (

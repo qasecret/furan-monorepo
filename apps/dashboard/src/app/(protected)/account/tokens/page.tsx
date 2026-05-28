@@ -26,10 +26,10 @@ export default async function TokensPage() {
     <div className="space-y-4">
       <PageTour pageId="account-tokens" steps={TOKENS_PAGE_TOUR} />
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-white">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
           Personal access tokens
         </h1>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Use these tokens to authenticate the Furan SDK or CI uploads. Each
           token grants the same access as your account.
         </p>

@@ -41,9 +41,9 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
       <div className="flex justify-end">
         <CreateTokenDialog onCreated={() => router.refresh()} />
       </div>
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+      <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-950">
         <table className="w-full text-sm" data-testid="tokens-table">
-          <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
+          <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
             <tr>
               <th className="px-4 py-2.5 font-medium">Label</th>
               <th className="px-4 py-2.5 font-medium">Created</th>
@@ -51,12 +51,12 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
               <th className="px-4 py-2.5 font-medium text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {tokens.length === 0 ? (
               <tr>
                 <td
                   colSpan={4}
-                  className="px-4 py-8 text-center text-zinc-500"
+                  className="px-4 py-8 text-center text-zinc-500 dark:text-zinc-500"
                   data-testid="tokens-empty"
                 >
                   No tokens yet. Create one above.
@@ -66,14 +66,14 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
               tokens.map((t) => (
                 <tr
                   key={t.id}
-                  className="hover:bg-zinc-900/30 transition-colors"
+                  className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
                   data-testid={`token-row-${t.id}`}
                 >
                   <td className="px-4 py-2.5 font-medium">{t.label}</td>
-                  <td className="px-4 py-2.5 text-zinc-500">
+                  <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-500">
                     {relative(t.createdAt)}
                   </td>
-                  <td className="px-4 py-2.5 text-zinc-500">
+                  <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-500">
                     {relative(t.lastUsedAt)}
                   </td>
                   <td className="px-4 py-2.5 text-right">

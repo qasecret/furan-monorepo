@@ -24,7 +24,8 @@ const styles: Record<BuildAggregateStatus, { label: string; classes: string }> =
     },
     aborted: {
       label: "Aborted",
-      classes: "bg-zinc-900 text-zinc-400 ring-zinc-800",
+      classes:
+        "bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800",
     },
     passed: {
       label: "Passed",
@@ -32,7 +33,8 @@ const styles: Record<BuildAggregateStatus, { label: string; classes: string }> =
     },
     empty: {
       label: "Empty",
-      classes: "bg-zinc-900/50 text-zinc-500 ring-zinc-800",
+      classes:
+        "bg-zinc-100/70 text-zinc-500 ring-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-500 dark:ring-zinc-800",
     },
   };
 

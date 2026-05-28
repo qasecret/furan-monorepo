@@ -30,16 +30,25 @@ export function InstallationsTable() {
   });
 
   if (isLoading) {
-    return <div className="text-sm text-zinc-400">Loading…</div>;
+    return (
+      <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
+    );
   }
   if (error) {
-    return <div className="text-sm text-red-400">Error: {error.message}</div>;
+    return (
+      <div className="text-sm text-red-600 dark:text-red-400">
+        Error: {error.message}
+      </div>
+    );
   }
   const { installations = [], projects = [] } = data ?? {};
 
   if (installations.length === 0) {
     return (
-      <div data-testid="installations-empty" className="text-sm text-zinc-400">
+      <div
+        data-testid="installations-empty"
+        className="text-sm text-zinc-600 dark:text-zinc-400"
+      >
         No installations yet — install the Furan GitHub App on a repo to
         populate this list.
       </div>
@@ -47,9 +56,9 @@ export function InstallationsTable() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-950">
       <table className="w-full text-sm" data-testid="installations-table">
-        <thead className="bg-zinc-900/50 border-b border-zinc-800 text-zinc-400 text-left">
+        <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
           <tr>
             <th className="px-4 py-2.5 font-medium">Account</th>
             <th className="px-4 py-2.5 font-medium">Installation ID</th>
@@ -57,11 +66,11 @@ export function InstallationsTable() {
             <th className="px-4 py-2.5 font-medium">Project</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-800">
+        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {installations.map((inst) => (
             <tr
               key={inst.id}
-              className="hover:bg-zinc-900/30 transition-colors"
+              className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
               data-testid={`install-row-${inst.id}`}
             >
               <td className="px-4 py-2.5">{inst.accountLogin}</td>
