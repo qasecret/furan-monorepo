@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v1.0.0...sdk/v1.0.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **api,sdk-kotlin,dashboard:** per-name visual checkpoints + ignore-region UX (ADR-037) ([#183](https://github.com/qasecret/furan-monorepo/issues/183)) ([413ddc2](https://github.com/qasecret/furan-monorepo/commit/413ddc2e3f8053b4415927ceadb3aa782f730f32))
+
 ## [1.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.15.0...sdk/v1.0.0) (2026-05-28)
 
 
