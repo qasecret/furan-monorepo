@@ -1,9 +1,11 @@
 import {
   and,
+  asc,
   baselines,
   desc,
   diffRegions,
   eq,
+  gt,
   ilike,
   inArray,
   isNull,
@@ -380,6 +382,38 @@ export const runsRouter = t.router({
         }
       }
 
+      // Sibling runs of the same variation, ordered by created_at.
+      // prevRunId = the run immediately OLDER than this one (ArrowLeft goes
+      // back in time); nextRunId = the run immediately NEWER (ArrowRight).
+      // Each query is bounded to 1 row via .limit(1); both hit the
+      // (test_variation_id, created_at) index path so they're cheap.
+      const prevRun = await ctx.db
+        .select({ id: testRuns.id })
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.testVariationId, run.testVariationId),
+            lt(testRuns.createdAt, run.createdAt),
+          ),
+        )
+        .orderBy(desc(testRuns.createdAt))
+        .limit(1);
+
+      const nextRun = await ctx.db
+        .select({ id: testRuns.id })
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.testVariationId, run.testVariationId),
+            gt(testRuns.createdAt, run.createdAt),
+          ),
+        )
+        .orderBy(asc(testRuns.createdAt)) // ASC — closest newer
+        .limit(1);
+
+      const prevRunId = prevRun[0]?.id ?? null;
+      const nextRunId = nextRun[0]?.id ?? null;
+
       // ADR-032: autoApproved is true iff at least one baselines row
       // exists for this run with userId IS NULL (the system-approved
       // signal). Single PK-indexed lookup; cheap.
@@ -447,6 +481,8 @@ export const runsRouter = t.router({
         baselineSource,
         variationIgnoreAreas,
         autoApproved,
+        prevRunId,
+        nextRunId,
       };
     }),
 

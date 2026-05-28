@@ -982,6 +982,70 @@ d("tRPC runs router", () => {
     expect(data.autoApproved).toBe(false);
   });
 
+  test("getById returns prevRunId + nextRunId for the same variation", async () => {
+    // Seed: 1 variation, 3 runs in order (older → middle → newer).
+    // The seed() helper already inserted one run (s.runId = middle candidate
+    // here). We insert an older and a newer sibling on the same variation.
+    const buildId = await getSeedBuildId(h, s.runId);
+
+    // Insert older run — created_at must be strictly before s.runId's row.
+    // We rely on DB-default now() ordering; to guarantee ordering we update
+    // created_at explicitly after insert.
+    const [olderRun] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        status: "passed",
+        name: "older-sibling",
+      })
+      .returning();
+    await h.db
+      .update(testRuns)
+      .set({ createdAt: new Date("2000-01-01T00:00:00Z") })
+      .where(eq(testRuns.id, olderRun!.id));
+
+    // Update the seed run (middle) to a known mid-point timestamp.
+    await h.db
+      .update(testRuns)
+      .set({ createdAt: new Date("2000-01-02T00:00:00Z") })
+      .where(eq(testRuns.id, s.runId));
+
+    // Insert newer run.
+    const [newerRun] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        status: "unresolved",
+        name: "newer-sibling",
+      })
+      .returning();
+    await h.db
+      .update(testRuns)
+      .set({ createdAt: new Date("2000-01-03T00:00:00Z") })
+      .where(eq(testRuns.id, newerRun!.id));
+
+    const client = makeClient(baseUrl, s.memberJwt);
+
+    // Middle run → oldest as prev, newest as next.
+    const middle = await client.runs.getById.query({ runId: s.runId });
+    expect(middle.prevRunId).toBe(olderRun!.id);
+    expect(middle.nextRunId).toBe(newerRun!.id);
+
+    // Oldest run → no prev, middle as next.
+    const older = await client.runs.getById.query({ runId: olderRun!.id });
+    expect(older.prevRunId).toBeNull();
+    expect(older.nextRunId).toBe(s.runId);
+
+    // Newest run → middle as prev, no next.
+    const newer = await client.runs.getById.query({ runId: newerRun!.id });
+    expect(newer.prevRunId).toBe(s.runId);
+    expect(newer.nextRunId).toBeNull();
+  });
+
   // ADR-031: per-run ignore-regions editor + re-diff trigger.
   describe("setIgnoreAreas", () => {
     const VP = "1280x720";
