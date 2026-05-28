@@ -125,9 +125,14 @@ class FuranClientTest {
 
     @Test
     fun `composeResult preserves NEW status when not auto-approved`() {
-        // Defensive: the polling loop shouldn't pass us a non-auto-approved
-        // NEW (it's not done yet), but if it did the SDK should preserve the
-        // wire status — not silently coerce it to PASSED.
+        // ADR-036: when a project has `autoApproveFeature = false`, the
+        // first-baseline run lands as NEW with no auto-seeded baseline.
+        // The polling loop NOW reaches this case as a real terminal
+        // (isDone treats NEW as terminal regardless of autoApproved),
+        // and composeResult must preserve the wire status — not coerce
+        // to PASSED, since there's nothing to "pass" against yet.
+        // Callers see NEW and either approve manually in the dashboard
+        // (creates the baseline) or use softAssert=true to tolerate it.
         val client = FuranClient(testConfig(), adapter = "test")
         try {
             val run = runRow(status = RunStatus.NEW, autoApproved = null)

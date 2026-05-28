@@ -217,26 +217,35 @@ class FuranClient(
 
     /**
      * Whether the diff worker is done with this run. The classic terminal
-     * statuses (passed/unresolved/failed/aborted/empty) qualify, plus the
-     * first-baseline edge case: `status=new` with `autoApproved=true` is
-     * the dashboard's marker for "this run created the first baseline for
-     * this variation, no prior baseline existed to compare against, the
-     * worker is done." That's a SUCCESSFUL terminal from a test's POV
-     * even though the wire status stays `new` forever (the dashboard uses
-     * `status=new` to render the "first baseline" pill).
+     * statuses (passed/unresolved/failed/aborted/empty) qualify, plus
+     * `status=new` regardless of `autoApproved` — there is no further
+     * worker transition out of `new`, so blocking on it would always
+     * timeout (per ADR-036, first-run-no-baseline lands as `new` and
+     * waits for a reviewer when the project's `autoApproveFeature` is
+     * off; with the flag on, the auto-seeded baseline also lands as
+     * `new` + `autoApproved=true`).
      *
      * Verified 2026-05-25 — full-e2e CI surfaced this when a fresh
-     * project's first `snapshotAndAwait` always timed out: every CI run
-     * is a first-baseline by definition.
+     * project's first `snapshotAndAwait` always timed out before the
+     * first-baseline marker was wired up. Now `new` is terminal in both
+     * directions: a test's POV decides via [composeResult].
      */
     private fun isDone(run: RunResponse, status: RunStatus): Boolean =
-        status.isTerminal() || (status == RunStatus.NEW && run.autoApproved == true)
+        status.isTerminal() || status == RunStatus.NEW
 
     internal fun composeResult(run: RunResponse, status: RunStatus): SnapshotResult {
         // First-baseline-auto-approved is wire `status=new` but is
-        // semantically a pass from the SDK consumer's POV. Translate so
-        // user assertions read cleanly: `assertEquals(PASSED, result.status)`
-        // works for both "new baseline" and "subsequent matching run".
+        // semantically a pass from the SDK consumer's POV (the worker
+        // auto-seeded a baseline). Translate so user assertions read
+        // cleanly: `assertEquals(PASSED, result.status)` works for both
+        // "new baseline auto-seeded" and "subsequent matching run".
+        //
+        // When `autoApproved=false` and status is `new`, the wire status
+        // is kept as NEW — there is no baseline yet, the test is waiting
+        // on a reviewer. Downstream `Furan.snapshotAndAwait` throws
+        // `FuranAssertionException` for non-passed terminals (when
+        // `softAssert=false`, the default), matching the legacy
+        // backend's "first run fails until approved" contract.
         val effective =
             if (status == RunStatus.NEW && run.autoApproved == true) RunStatus.PASSED else status
         return SnapshotResult(

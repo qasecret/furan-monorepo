@@ -399,6 +399,42 @@ d("tRPC runs router", () => {
     expect(err?.data?.code).toBe("BAD_REQUEST");
   });
 
+  test("approve: accepts run.status='new' and materialises baseline (ADR-036)", async () => {
+    // First-baseline-with-autoApproveFeature=false path: diff-worker
+    // lands the run as 'new' without seeding a baseline. The reviewer's
+    // approve must materialise it (legacy backend's `approve()` parity).
+    await h.db
+      .update(testRuns)
+      .set({ status: "new", merge: true })
+      .where(eq(testRuns.id, s.runId));
+    // Sanity: no baseline exists for this run yet.
+    const beforeBaselines = await h.db
+      .select()
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    expect(beforeBaselines.length).toBe(0);
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.approve.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: true });
+
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(rows[0]?.status).toBe("passed");
+    expect(rows[0]?.merge).toBe(true);
+
+    const afterBaselines = await h.db
+      .select()
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    expect(afterBaselines.length).toBe(1);
+    // userId set → manually approved (not auto-seeded).
+    expect(afterBaselines[0]?.userId).not.toBeNull();
+  });
+
   test("approve: idempotent no-op when run.status='passed'", async () => {
     await h.db
       .update(testRuns)
