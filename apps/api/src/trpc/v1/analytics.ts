@@ -43,6 +43,40 @@ export const analyticsRouter = t.router({
         WHERE created_at >= now() - (${input.days} || ' days')::interval
       `);
 
+      // Separate query for medianTimeToFirstActionMs via sessionId join.
+      const ttfaRows = await ctx.db.execute(sql`
+        WITH session_viewed AS (
+          SELECT
+            props->>'sessionId' AS session_id,
+            min(created_at) AS viewed_at
+          FROM ${dashboardTelemetryEvents}
+          WHERE event = 'inbox.viewed'
+            AND props->>'sessionId' IS NOT NULL
+            AND created_at >= now() - (${input.days} || ' days')::interval
+          GROUP BY props->>'sessionId'
+        ),
+        session_first_action AS (
+          SELECT
+            props->>'sessionId' AS session_id,
+            min(created_at) AS first_action_at
+          FROM ${dashboardTelemetryEvents}
+          WHERE event = 'inbox.row_action'
+            AND props->>'sessionId' IS NOT NULL
+            AND created_at >= now() - (${input.days} || ' days')::interval
+          GROUP BY props->>'sessionId'
+        )
+        SELECT
+          coalesce(
+            percentile_cont(0.5) WITHIN GROUP (
+              ORDER BY extract(epoch FROM (a.first_action_at - v.viewed_at)) * 1000
+            ),
+            0
+          )::bigint AS median_time_to_first_action_ms
+        FROM session_viewed v
+        JOIN session_first_action a USING (session_id)
+        WHERE a.first_action_at > v.viewed_at
+      `);
+
       // ctx.db.execute returns whatever the driver hands back. Drizzle's
       // postgres-js driver returns an array of plain objects. Read the
       // first row defensively.
@@ -54,6 +88,12 @@ export const analyticsRouter = t.router({
       const sessions = Number(row.sessions ?? 0);
       const medianMsPerAction = Number(row.median_ms_per_action ?? 0);
 
+      const ttfaRow =
+        (ttfaRows as unknown as Array<Record<string, unknown>>)[0] ?? {};
+      const medianTimeToFirstActionMs = Number(
+        ttfaRow.median_time_to_first_action_ms ?? 0,
+      );
+
       return {
         totalActions,
         approves,
@@ -61,6 +101,7 @@ export const analyticsRouter = t.router({
         viaKeyboard,
         sessions,
         medianMsPerAction,
+        medianTimeToFirstActionMs,
         // Pre-compute the ratios so the client doesn't divide-by-zero.
         approveRate: totalActions === 0 ? 0 : approves / totalActions,
         rejectRate: totalActions === 0 ? 0 : rejects / totalActions,

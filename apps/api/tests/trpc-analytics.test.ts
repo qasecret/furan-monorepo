@@ -107,17 +107,29 @@ d("trpc analytics", () => {
       {
         userId: admin.id,
         event: "inbox.row_action",
-        props: { action: "approve", viaKeyboard: true },
+        props: {
+          sessionId: "s-summary-1",
+          action: "approve",
+          viaKeyboard: true,
+        },
       },
       {
         userId: admin.id,
         event: "inbox.row_action",
-        props: { action: "approve", viaKeyboard: false },
+        props: {
+          sessionId: "s-summary-2",
+          action: "approve",
+          viaKeyboard: false,
+        },
       },
       {
         userId: admin.id,
         event: "inbox.row_action",
-        props: { action: "reject", viaKeyboard: false },
+        props: {
+          sessionId: "s-summary-3",
+          action: "reject",
+          viaKeyboard: false,
+        },
       },
     ]);
 
@@ -127,17 +139,17 @@ d("trpc analytics", () => {
       {
         userId: admin.id,
         event: "inbox.session_duration",
-        props: { durationMs: 9000, actionsTaken: 3 },
+        props: { sessionId: "s-summary-1", durationMs: 9000, actionsTaken: 3 },
       },
       {
         userId: admin.id,
         event: "inbox.session_duration",
-        props: { durationMs: 15000, actionsTaken: 3 },
+        props: { sessionId: "s-summary-2", durationMs: 15000, actionsTaken: 3 },
       },
       {
         userId: admin.id,
         event: "inbox.session_duration",
-        props: { durationMs: 30000, actionsTaken: 3 },
+        props: { sessionId: "s-summary-3", durationMs: 30000, actionsTaken: 3 },
       },
     ]);
 
@@ -294,5 +306,99 @@ d("trpc analytics", () => {
     await expect(
       caller.analytics.summary.query({ days: 7 }),
     ).rejects.toMatchObject({ data: { code: "FORBIDDEN" } });
+  });
+
+  test("summary computes medianTimeToFirstActionMs via sessionId join", async () => {
+    // session A: viewed at T+0, first row_action at T+3000  -> delta 3000 ms
+    // session B: viewed at T+0, first row_action at T+9000  -> delta 9000 ms
+    // session C: viewed at T+0, first row_action at T+15000 -> delta 15000 ms
+    // Median across 3 = 9000 ms.
+    //
+    // session D: viewed but no row_action -> excluded from median
+    // session E: row_action without sessionId on viewed event -> excluded
+    await wipe();
+
+    const admin = await seedAdmin("ttfa");
+    const adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
+
+    const now = Date.now();
+
+    // Session A
+    await h.db.insert(dashboardTelemetryEvents).values([
+      {
+        userId: admin.id,
+        event: "inbox.viewed",
+        props: { sessionId: "ttfa-a" },
+        createdAt: new Date(now - 10000),
+      },
+      {
+        userId: admin.id,
+        event: "inbox.row_action",
+        props: { sessionId: "ttfa-a", action: "approve", viaKeyboard: false },
+        createdAt: new Date(now - 10000 + 3000),
+      },
+    ]);
+
+    // Session B
+    await h.db.insert(dashboardTelemetryEvents).values([
+      {
+        userId: admin.id,
+        event: "inbox.viewed",
+        props: { sessionId: "ttfa-b" },
+        createdAt: new Date(now - 10000),
+      },
+      {
+        userId: admin.id,
+        event: "inbox.row_action",
+        props: { sessionId: "ttfa-b", action: "approve", viaKeyboard: false },
+        createdAt: new Date(now - 10000 + 9000),
+      },
+    ]);
+
+    // Session C
+    await h.db.insert(dashboardTelemetryEvents).values([
+      {
+        userId: admin.id,
+        event: "inbox.viewed",
+        props: { sessionId: "ttfa-c" },
+        createdAt: new Date(now - 10000),
+      },
+      {
+        userId: admin.id,
+        event: "inbox.row_action",
+        props: { sessionId: "ttfa-c", action: "approve", viaKeyboard: false },
+        createdAt: new Date(now - 10000 + 15000),
+      },
+    ]);
+
+    // Session D: viewed but no row_action -> excluded
+    await h.db.insert(dashboardTelemetryEvents).values({
+      userId: admin.id,
+      event: "inbox.viewed",
+      props: { sessionId: "ttfa-d" },
+      createdAt: new Date(now - 10000),
+    });
+
+    // Session E: row_action without sessionId on the viewed event -> excluded
+    await h.db.insert(dashboardTelemetryEvents).values([
+      {
+        userId: admin.id,
+        event: "inbox.viewed",
+        props: {},
+        createdAt: new Date(now - 10000),
+      },
+      {
+        userId: admin.id,
+        event: "inbox.row_action",
+        props: { action: "approve", viaKeyboard: false },
+        createdAt: new Date(now - 10000 + 5000),
+      },
+    ]);
+
+    const caller = makeClient(adminJwt);
+    const result = await caller.analytics.summary.query({ days: 7 });
+
+    // Median of [3000, 9000, 15000] = 9000
+    expect(result.medianTimeToFirstActionMs).toBe(9000);
   });
 });

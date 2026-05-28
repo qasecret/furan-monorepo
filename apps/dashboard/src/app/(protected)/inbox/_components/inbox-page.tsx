@@ -31,6 +31,7 @@ export function InboxPage({
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const actionsCountRef = useRef(0);
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   const list = trpc.inbox.list.useQuery({
     status: initialStatus,
@@ -66,6 +67,7 @@ export function InboxPage({
   // Fire inbox.viewed once on mount with current filter state.
   useEffect(() => {
     recordTelemetry("inbox.viewed", {
+      sessionId: sessionIdRef.current,
       filterStatus: initialStatus,
       filterWindow: initialWindow,
       groupBy: initialGroup,
@@ -79,6 +81,7 @@ export function InboxPage({
     actionsCountRef.current = 0;
     return () => {
       recordTelemetry("inbox.session_duration", {
+        sessionId: sessionIdRef.current,
         durationMs: Date.now() - startMs,
         actionsTaken: actionsCountRef.current,
       });
@@ -93,6 +96,7 @@ export function InboxPage({
     ) => {
       actionsCountRef.current += 1;
       recordTelemetry("inbox.row_action", {
+        sessionId: sessionIdRef.current,
         action,
         viaKeyboard,
         rowAge: Math.floor(
