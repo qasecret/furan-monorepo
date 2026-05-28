@@ -41,8 +41,8 @@ export function SidebarNavItem({ icon, label, href, badge }: Props) {
       className={cn(
         "relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
         isActive
-          ? "bg-zinc-900 text-brand border-l-2 border-brand pl-[10px] -ml-px"
-          : "text-zinc-400 hover:text-white hover:bg-zinc-900/50",
+          ? "bg-zinc-100 text-zinc-900 border-l-2 border-brand pl-[10px] -ml-px dark:bg-zinc-900 dark:text-brand"
+          : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/60 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50",
       )}
     >
       {icon}
