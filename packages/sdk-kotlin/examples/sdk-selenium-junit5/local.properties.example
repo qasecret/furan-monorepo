@@ -1,0 +1,46 @@
+# Local development overrides for the Furan SDK Selenium example.
+#
+# Copy this file to `local.properties` and fill in the four marked values.
+# `local.properties` is in .gitignore — never commit it (real PATs leak).
+#
+# `build.gradle.kts` reads this file at configuration time and feeds every
+# FURAN_* entry into the test task's environment. `FuranConfig.fromEnv()`
+# (used by every test in this project) then picks them up at runtime.
+#
+# How to fill in:
+#
+# 1. FURAN_API_URL — the Furan API origin.
+#    - Local docker compose: http://localhost:3000
+#    - Self-hosted deployment: https://furan.your-domain.com
+#
+# 2. FURAN_API_TOKEN — a Personal Access Token (NOT your JWT).
+#    Mint via the dashboard: /tokens → "New token" → copy the
+#    furan_pat_* value once (it's shown only once). Or via curl:
+#
+#      JWT=$(curl -sS -X POST $FURAN_API_URL/auth/login \
+#        -H 'Content-Type: application/json' \
+#        -d '{"email":"you@example.com","password":"…"}' | jq -r .token)
+#      curl -sS -X POST $FURAN_API_URL/account/tokens \
+#        -H "Authorization: Bearer $JWT" \
+#        -H 'Content-Type: application/json' \
+#        -d '{"label":"sdk-example-local"}' | jq -r .token
+#
+# 3. FURAN_PROJECT_ID — UUID of the project the example will write to.
+#    Find via the dashboard URL when viewing a project: the UUID in
+#    /projects/<this>/runs is what you want. Or via curl:
+#
+#      curl -sS $FURAN_API_URL/projects \
+#        -H "Authorization: Bearer $JWT" | jq '.[].id'
+#
+# 4. FURAN_BRANCH — git branch name to tag the run with. For local
+#    smoke runs `main` is fine; in CI use the actual feature branch.
+#
+# 5. FURAN_DASHBOARD_URL (optional) — when set, the SDK composes a
+#    `diffViewerUrl` deep link in `SnapshotResult` so test logs can
+#    print "Review: https://…" pointing at the diff.
+
+FURAN_API_URL=http://localhost:3000
+FURAN_API_TOKEN=furan_pat_REPLACE_WITH_REAL_TOKEN
+FURAN_PROJECT_ID=00000000-0000-0000-0000-000000000000
+FURAN_BRANCH=main
+FURAN_DASHBOARD_URL=http://localhost:3001

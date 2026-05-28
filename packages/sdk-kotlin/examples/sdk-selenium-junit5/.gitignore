@@ -1,0 +1,10 @@
+# Gradle
+.gradle/
+build/
+
+# IntelliJ
+.idea/
+*.iml
+
+# Local config — contains a real Furan PAT; copy from local.properties.example
+local.properties

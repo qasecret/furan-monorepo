@@ -58,8 +58,28 @@ publish step.
 ## Running the test
 
 `./gradlew build` compiles the test but does not execute it (the test is
-gated on `FURAN_API_URL` via JUnit 5's `@EnabledIfEnvironmentVariable`). To
-actually run against a Furan stack:
+gated on `FURAN_API_URL` via JUnit 5's `@EnabledIfEnvironmentVariable`).
+There are two ways to feed the SDK its credentials at run time:
+
+### Option A — `local.properties` (recommended for local dev)
+
+Copy [`local.properties.example`](./local.properties.example) → `local.properties` and fill in the four
+marked values (`FURAN_API_TOKEN`, `FURAN_PROJECT_ID`, etc.). The file is
+gitignored; `build.gradle.kts` loads it at config time and feeds every
+`FURAN_*` key into the test task's environment, so `gradle test` works
+with no env-var prefix.
+
+```bash
+cp local.properties.example local.properties
+$EDITOR local.properties
+gradle test
+```
+
+The example file documents how to mint a PAT (the dashboard's `/tokens`
+page, or a one-liner against `POST /account/tokens`) and how to find your
+project's UUID.
+
+### Option B — inline env vars (CI / one-off)
 
 ```bash
 export FURAN_API_URL=http://localhost:3000
