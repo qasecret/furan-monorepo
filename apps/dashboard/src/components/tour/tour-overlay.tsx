@@ -140,7 +140,14 @@ export function TourOverlay() {
           // the `update` listener below; they never re-trigger this.
           const el = document.querySelector(step.target);
           if (el instanceof HTMLElement) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            const reduceMotion =
+              typeof window !== "undefined" &&
+              typeof window.matchMedia === "function" &&
+              window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            el.scrollIntoView({
+              behavior: reduceMotion ? "auto" : "smooth",
+              block: "center",
+            });
           }
         }
         setPos(p);

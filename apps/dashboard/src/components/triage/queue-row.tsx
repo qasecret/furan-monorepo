@@ -39,7 +39,7 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
           <span className="truncate text-sm font-medium text-white">
             {row.variationName}
           </span>
-          <span className="truncate text-xs text-zinc-500">
+          <span className="truncate text-xs text-zinc-400">
             · {row.projectName}
           </span>
           <StatusPill status={row.status} />
@@ -85,6 +85,7 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
           href={diffHref}
           className="rounded p-1.5 hover:bg-zinc-800"
           title="Open diff viewer (Enter)"
+          aria-label={`Open diff viewer for ${row.variationName}`}
         >
           <ExternalLink className="h-4 w-4 text-zinc-300" />
         </Link>

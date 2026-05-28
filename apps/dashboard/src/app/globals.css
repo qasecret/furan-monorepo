@@ -58,3 +58,19 @@ body {
   background: rgb(168 255 83 / 0.3);
   color: #a8ff53;
 }
+
+/* Honor system motion preference. Resets animation + transition durations
+ * to near-zero so users who request reduced motion don't get fade-ins,
+ * slides, smooth scrolls, or Radix dialog/tooltip enter/exit animations.
+ * The `01ms` value is the WCAG-recommended "near-zero, not zero" — zero
+ * can cause some animation-end handlers to fail to fire. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

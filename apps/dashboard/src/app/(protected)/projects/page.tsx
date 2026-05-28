@@ -83,7 +83,7 @@ export default async function ProjectsPage() {
           <Link
             key={p.id}
             href={`/projects/${p.id}`}
-            className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-zinc-700"
+            className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
             data-testid={`project-card-${p.id}`}
           >
             <Card className="h-full hover:border-zinc-700 transition-colors">

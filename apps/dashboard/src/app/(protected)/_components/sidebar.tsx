@@ -107,7 +107,7 @@ export function Sidebar({
         {sections.map((section) => (
           <div key={section.label}>
             <div className="px-3 mb-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-600">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
                 {section.label}
               </span>
             </div>

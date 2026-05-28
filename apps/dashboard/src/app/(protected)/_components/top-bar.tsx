@@ -47,7 +47,7 @@ export function TopBar() {
         >
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
           <span className="truncate">Jump to project, settings, account…</span>
-          <span className="hidden md:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-600 font-mono border border-zinc-800 rounded px-1.5 py-0.5">
+          <span className="hidden md:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-mono border border-zinc-800 rounded px-1.5 py-0.5">
             ⌘K
           </span>
         </button>

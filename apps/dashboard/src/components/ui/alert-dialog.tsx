@@ -11,7 +11,7 @@ import { cn } from "@/lib/cn";
  * refactor to a `cva()`-based Button only needs to update one consumer.
  */
 const ACTION_BASE =
-  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:opacity-50";
 
 const ACTION_VARIANT: Record<"default" | "destructive", string> = {
   default: "bg-brand text-black hover:bg-brand/90",
@@ -20,7 +20,7 @@ const ACTION_VARIANT: Record<"default" | "destructive", string> = {
 };
 
 const CANCEL_CLASSES =
-  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900 mt-2 sm:mt-0";
+  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:opacity-50 border border-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-900 mt-2 sm:mt-0";
 
 const AlertDialog = AlertDialogPrimitive.Root;
 const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
