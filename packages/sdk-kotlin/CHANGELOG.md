@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.13.0...sdk/v0.14.0) (2026-05-28)
+
+
+### Features
+
+* **sdk-example:** local.properties for one-liner local dev runs ([#157](https://github.com/qasecret/furan-monorepo/issues/157)) ([05d7513](https://github.com/qasecret/furan-monorepo/commit/05d7513f8c003c4d0919d9be612dd89b22bc0778))
+* **sdk-kotlin:** application.yml/yaml config source + FuranConfig.fromYaml() bridge ([#158](https://github.com/qasecret/furan-monorepo/issues/158)) ([ab68fb0](https://github.com/qasecret/furan-monorepo/commit/ab68fb09c9a701957a279ee7f0e1451041ba15b0))
+
 ## [0.13.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.12.0...sdk/v0.13.0) (2026-05-27)
 
 
