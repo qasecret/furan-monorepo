@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.15.0...sdk/v1.0.0) (2026-05-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api,sdk-kotlin:** gate first-baseline auto-seed on project.autoApproveFeature (ADR-036) ([#181](https://github.com/qasecret/furan-monorepo/issues/181))
+
+### Features
+
+* **api,sdk-kotlin:** gate first-baseline auto-seed on project.autoApproveFeature (ADR-036) ([#181](https://github.com/qasecret/furan-monorepo/issues/181)) ([ef9b6ea](https://github.com/qasecret/furan-monorepo/commit/ef9b6ea77b18ffa679252ef1924307b7e2ea139c))
+
 ## [0.15.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.14.0...sdk/v0.15.0) (2026-05-28)
 
 
