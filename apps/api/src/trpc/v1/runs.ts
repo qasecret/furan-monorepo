@@ -243,9 +243,12 @@ export async function approveRun(
 
   // ADR-037: persist run.ignoreAreas onto variation.ignoreAreas so future
   // runs of the same variation inherit the reviewer's choices as defaults.
-  // Mirrors legacy backend's approve() at test-runs.service.ts:129-137.
-  // Idempotent: writing the same value twice is a no-op; null run.ignoreAreas
-  // means the reviewer drew nothing — keep variation unchanged.
+  // Differs from the legacy backend's approve() at
+  // test-runs.service.ts:109-137, which guarded this copy on a
+  // branch-fork path; Furan's baselines are already branch-scoped via
+  // baselines.branch_name, so a variation-level ignoreAreas copy is
+  // unconditional. Null run.ignoreAreas means the reviewer drew
+  // nothing — keep variation unchanged.
   if (run.ignoreAreas) {
     await ctx.db
       .update(testVariations)
@@ -907,6 +910,19 @@ export const runsRouter = t.router({
           });
           approvedIds.push(run.id);
           if (run.buildId) affectedBuildIds.add(run.buildId);
+        }
+
+        // ADR-037: also persist the seed run's ignoreAreas onto the
+        // variation. Bulk approve carries the seed's reviewer decision
+        // (the run the user explicitly initiated the bulk on) as the
+        // canonical variation-level value. Other runs' ignoreAreas
+        // aren't merged — a variation can only hold one set, and the
+        // seed is the most recent reviewer intent.
+        if (seed.ignoreAreas) {
+          await tx
+            .update(testVariations)
+            .set({ ignoreAreas: seed.ignoreAreas, updatedAt: new Date() })
+            .where(eq(testVariations.id, seed.testVariationId));
         }
       });
 

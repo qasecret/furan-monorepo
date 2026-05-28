@@ -1908,5 +1908,50 @@ d("tRPC runs router", () => {
       );
       expect(broadcastRunIds).toEqual(new Set([s.runId, sib1!.id, sib2!.id]));
     });
+
+    test("bulkApproveByVariation persists seed.ignoreAreas onto variation.ignoreAreas (ADR-037)", async () => {
+      // Code-quality follow-up to c90091c: bulkApproveByVariation inlines its
+      // own update loop and used to bypass the variation ignoreAreas copy
+      // that runs.approve performs. The seed run (the one the user clicked
+      // bulk-approve from) carries the canonical reviewer intent — its
+      // ignoreAreas should land on the variation.
+      const ignoreAreasPayload = JSON.stringify([
+        { x: 10, y: 20, width: 100, height: 50 },
+      ]);
+      const buildId = await getSeedBuildId(h, s.runId);
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved", ignoreAreas: ignoreAreasPayload })
+        .where(eq(testRuns.id, s.runId));
+      // Sibling run on the same variation — bulk-approve still covers it,
+      // but its (null) ignoreAreas must not overwrite the seed's payload.
+      await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          status: "unresolved",
+          name: "sib1",
+        })
+        .returning();
+      // Sanity: variation starts with no ignoreAreas.
+      const beforeVariation = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(beforeVariation[0]?.ignoreAreas).toBeNull();
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.bulkApproveByVariation.mutate({ runId: s.runId });
+
+      const afterVariation = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
+        .limit(1);
+      expect(afterVariation[0]?.ignoreAreas).toBe(ignoreAreasPayload);
+    });
   });
 });
