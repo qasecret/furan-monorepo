@@ -172,8 +172,19 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
             testId="approve-button"
             variant="default"
             onClick={() => approve.mutate({ runId })}
+            title={
+              effectiveStatus === "new"
+                ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
+                : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
+            }
           >
-            {approve.isPending ? "Approving…" : "Approve"}
+            {approve.isPending
+              ? effectiveStatus === "new"
+                ? "Saving…"
+                : "Approving…"
+              : effectiveStatus === "new"
+                ? "Save as baseline"
+                : "Approve"}
           </DisabledAwareButton>
           {canReview ? (
             <DropdownMenu>
@@ -327,6 +338,7 @@ function DisabledAwareButton({
   variant,
   onClick,
   children,
+  title,
 }: {
   disabled: boolean;
   reason: string | null;
@@ -334,6 +346,7 @@ function DisabledAwareButton({
   variant: "default" | "secondary" | "destructive";
   onClick: () => void;
   children: React.ReactNode;
+  title?: string;
 }) {
   const button = (
     <Button
@@ -341,6 +354,7 @@ function DisabledAwareButton({
       onClick={onClick}
       disabled={disabled}
       data-testid={testId}
+      title={title}
     >
       {children}
     </Button>
