@@ -177,6 +177,21 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
 ]);
 
 /**
+ * Statuses that the `approve` mutation accepts. Superset of
+ * REVIEWER_LEGAL_FROM that additionally allows `new` per ADR-036:
+ * when `project.autoApproveFeature = false`, first-baseline runs land
+ * with status=new and no `baselines` row. The reviewer's approve
+ * materialises the baseline (mirroring the legacy backend's
+ * `approve()` semantics). Reject + overrideStatus stay on the strict
+ * REVIEWER_LEGAL_FROM set — there's no diff outcome to reject and no
+ * status to override before a baseline exists.
+ */
+const APPROVE_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  ...REVIEWER_LEGAL_FROM,
+  "new",
+]);
+
+/**
  * Approve a single test run: transitions status → passed, sets merge=true,
  * snapshots into baselines, and publishes broadcaster events. Shared by
  * `runs.approve` and `inbox.approve` so both callers apply identical side
@@ -201,10 +216,11 @@ export async function approveRun(
   const run = runRows[0];
   if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-  // Per spec §3.3: only terminal review states can be approved. Reject
-  // mid-flight (`running`) and terminal system states (`new`, `aborted`,
-  // `empty`) — for those the right response is to re-run, not override.
-  if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+  // Per spec §3.3 + ADR-036: review terminal states plus `new`
+  // (first-baseline when autoApproveFeature=false). Reject mid-flight
+  // (`running`) and other system states (`aborted`, `empty`) — for
+  // those the right response is to re-run.
+  if (!APPROVE_LEGAL_FROM.has(run.status)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,

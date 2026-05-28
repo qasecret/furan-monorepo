@@ -606,6 +606,86 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     expect(seededBaselines[0]!.userId).toBeNull();
   }, 60_000);
 
+  test("first-baseline path (autoApproveFeature=false): no prior baseline → status='new', merge=true, NO baselines row inserted (ADR-036)", async () => {
+    const uniq = Date.now() + 100;
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `dw-new-manual-${uniq}@x.test`,
+        hashedPassword: "x",
+        firstName: "dw",
+        lastName: "new-manual",
+        role: "admin",
+      })
+      .returning();
+    const [p] = await db
+      .insert(projects)
+      .values({
+        name: `dw-new-manual-${uniq}`,
+        mainBranchName: "main",
+        autoApproveFeature: false,
+      })
+      .returning();
+    cleanupProjectIds.push(p.id);
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId: p.id, userId: u.id, isRunning: true })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "1280x720",
+      })
+      .returning();
+    const [run] = await db
+      .insert(testRuns)
+      .values({
+        name: "first-run-manual",
+        projectId: p.id,
+        testVariationId: v.id,
+        buildId: b.id,
+        branchName: "main",
+        status: "running",
+      })
+      .returning();
+
+    const fixtureBytes = FIXTURE("baseline-a.png");
+    const key = objectKey(fixtureBytes);
+    await storage.put(key, fixtureBytes, "image/png");
+    await db.delete(screenshots).where(eq(screenshots.imageKey, key));
+    await db.insert(screenshots).values({
+      runId: run.id,
+      projectId: p.id,
+      imageKey: key,
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    await handleDiffJob({ runId: run.id, projectId: p.id }, mockLogger, {
+      db,
+      storage,
+      redis,
+    });
+
+    const updated = await db.query.testRuns.findFirst({
+      where: eq(testRuns.id, run.id),
+    });
+    expect(updated!.status).toBe("new");
+    expect(updated!.merge).toBe(true);
+
+    // ADR-036: with autoApproveFeature=false, the handler must NOT
+    // auto-seed a baseline. The reviewer's `runs.approve` mutation is
+    // responsible for materialising the baseline row.
+    const seededBaselines = await db.query.baselines.findMany({
+      where: eq(baselines.testRunId, run.id),
+    });
+    expect(seededBaselines.length).toBe(0);
+  }, 60_000);
+
   test("uncaught exception path: handler throws → status='aborted' (best-effort) + publishes run.completed", async () => {
     const uniq = Date.now() + 1;
     const [u] = await db

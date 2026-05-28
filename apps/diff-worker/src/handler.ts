@@ -289,31 +289,46 @@ async function handleDiffJobInner(
 
   if (!baseline) {
     // First-baseline: no prior baseline existed for this variation+branch.
-    // Per spec §3.2 this is the terminal "new" status — the candidate run
-    // becomes the seed baseline. Write status=new + merge=true and snapshot
-    // the run into the baselines table so future runs of this variation
-    // have something to diff against. Emit both `diff.completed` and
-    // `run.completed` so the integrations subscriber can react.
+    // Two paths, gated on `project.autoApproveFeature` (ADR-036):
+    //
+    //   autoApproveFeature = true  → auto-seed: candidate becomes the
+    //     baseline atomically. `userId = NULL` marks it as auto. The wire
+    //     status stays `new` and the SDK reports it as a pass via the
+    //     `autoApproved=true` derived flag. Matches the v1.0 default
+    //     behavior so existing CI keeps working.
+    //
+    //   autoApproveFeature = false → manual-approve required: no
+    //     baselines row inserted, status stays `new`. The dashboard
+    //     renders its "No baseline yet — Approve to set as baseline"
+    //     empty state and the user explicitly approves to create the
+    //     baseline. Matches the legacy backend's first-run semantics.
+    //
+    // Either way: status=new, merge=true, emit the same SSE events; the
+    // only difference is whether a `baselines` row gets written here.
+    const seedBaseline = project.autoApproveFeature === true;
     await withProjectScope(deps.db, data.projectId, async (tx) => {
       await tx
         .update(testRuns)
         .set({ status: "new", merge: true })
         .where(eq(testRuns.id, data.runId));
-      await tx.insert(baselines).values({
-        baselineName: run.baselineName ?? run.name ?? "auto",
-        testVariationId: run.testVariationId,
-        testRunId: run.id,
-        // userId omitted → defaults to NULL → signals auto-baseline.
-        ...(run.branchName ? { branchName: run.branchName } : {}),
-      });
+      if (seedBaseline) {
+        await tx.insert(baselines).values({
+          baselineName: run.baselineName ?? run.name ?? "auto",
+          testVariationId: run.testVariationId,
+          testRunId: run.id,
+          // userId omitted → defaults to NULL → signals auto-baseline.
+          ...(run.branchName ? { branchName: run.branchName } : {}),
+        });
+      }
     });
     await deps.redis.publish(
       `run:${data.runId}:events`,
       JSON.stringify({
         type: "diff.completed",
         runId: data.runId,
-        passed: true,
+        passed: seedBaseline,
         firstBaseline: true,
+        autoApproved: seedBaseline,
       }),
     );
     await deps.redis.publish(
@@ -339,7 +354,7 @@ async function handleDiffJobInner(
       logger,
     );
     logger.info(
-      { runId: data.runId, firstBaseline: true },
+      { runId: data.runId, firstBaseline: true, autoSeeded: seedBaseline },
       "diff_completed_first_baseline",
     );
     return;
