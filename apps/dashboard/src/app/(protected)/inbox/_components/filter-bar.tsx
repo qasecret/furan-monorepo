@@ -69,7 +69,7 @@ export function FilterBar({ status, window, groupBy }: Props) {
           type="checkbox"
           checked={groupBy}
           onChange={(e) => update("group", e.target.checked ? "project" : null)}
-          className="h-4 w-4 cursor-pointer rounded border border-zinc-700 accent-white"
+          className="h-4 w-4 cursor-pointer rounded border border-zinc-300 accent-brand dark:border-zinc-700 dark:accent-white"
         />
         Group by project
       </label>

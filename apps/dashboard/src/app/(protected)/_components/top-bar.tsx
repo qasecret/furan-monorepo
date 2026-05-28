@@ -62,7 +62,7 @@ export function TopBar() {
           aria-disabled
           aria-label="Notifications (coming soon)"
           title="Notifications coming soon"
-          className="p-2 rounded-md text-zinc-600 opacity-50 cursor-not-allowed"
+          className="p-2 rounded-md text-zinc-600 opacity-50 cursor-not-allowed dark:text-zinc-400"
           data-testid="top-bar-bell"
         >
           <Bell className="w-5 h-5" />

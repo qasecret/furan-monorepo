@@ -9,11 +9,16 @@ interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const VARIANT_CLASSES: Record<Variant, string> = {
-  default: "bg-zinc-900 text-zinc-300 border border-zinc-800",
-  secondary: "bg-zinc-900/50 text-zinc-400 border border-zinc-800",
-  destructive: "bg-red-500/10 text-red-400 border border-red-500/20",
-  outline: "border border-zinc-800 text-zinc-400",
-  success: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+  default:
+    "bg-zinc-100 text-zinc-700 border border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800",
+  secondary:
+    "bg-zinc-100/70 text-zinc-600 border border-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-400 dark:border-zinc-800",
+  destructive:
+    "bg-red-100 text-red-700 border border-red-300 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
+  outline:
+    "border border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-400",
+  success:
+    "bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20",
 };
 
 export function Badge({

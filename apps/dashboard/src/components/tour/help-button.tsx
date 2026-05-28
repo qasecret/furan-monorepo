@@ -32,7 +32,7 @@ export function HelpButton() {
       aria-label="Replay tour for this page"
       title="Replay tour"
       data-testid="top-bar-help"
-      className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-900/50 transition-colors"
+      className="p-2 rounded-md text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100/60 transition-colors dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50"
     >
       <HelpCircle className="w-5 h-5" />
     </button>

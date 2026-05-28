@@ -31,7 +31,9 @@ export function VariationHistory({ projectId, variationId }: Props) {
   });
 
   if (variation.isLoading) {
-    return <div className="text-sm text-zinc-400">Loading…</div>;
+    return (
+      <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
+    );
   }
   if (variation.error?.data?.code === "NOT_FOUND") {
     return (
