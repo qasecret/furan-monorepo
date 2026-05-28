@@ -8,6 +8,7 @@ import { EmptyRunCard } from "./EmptyRunCard";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
+import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
@@ -65,6 +66,35 @@ function useAuthedImage(key: string | null | undefined): string | null {
     };
   }, [key]);
   return url;
+}
+
+/**
+ * Resolves the natural pixel dimensions of an image URL. Creates a
+ * temporary Image() object, fires on `load`, then returns the measured
+ * width + height. Returns null until the image has loaded or if the URL is
+ * absent. The effect re-runs whenever the URL changes (e.g. viewport
+ * switch), keeping the chip in sync.
+ */
+function useImageDimensions(
+  url: string | null,
+): { width: number; height: number } | null {
+  const [dims, setDims] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!url) {
+      setDims(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () =>
+      setDims({ width: img.naturalWidth, height: img.naturalHeight });
+    img.src = url;
+    return () => {
+      img.onload = null;
+    };
+  }, [url]);
+  return dims;
 }
 
 export function DiffViewer({ runId, diffId }: Props) {
@@ -200,11 +230,18 @@ export function DiffViewer({ runId, diffId }: Props) {
   const candidateUrl = useAuthedImage(candidateScreenshot?.imageKey);
   const diffOverlayUrl = useAuthedImage(diffOverlayKey);
 
+  const baselineDims = useImageDimensions(baselineUrl);
+  const candidateDims = useImageDimensions(candidateUrl);
+
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
-    prevDiffHref: null, // wired when runs.list lands (Phase 3)
-    nextDiffHref: null,
+    prevDiffHref: data?.prevRunId
+      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
+      : null,
+    nextDiffHref: data?.nextRunId
+      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
+      : null,
     onApprove: () => approveKb.mutate({ runId }),
     onReject: () => rejectKb.mutate({ runId }),
     onHelpToggle: () => undefined,
@@ -286,6 +323,9 @@ export function DiffViewer({ runId, diffId }: Props) {
                 </span>
               )}
               <ViewportSwitcher viewports={uniqueViewports} />
+              {baselineDims && candidateDims && (
+                <SizeChip baseline={baselineDims} candidate={candidateDims} />
+              )}
             </div>
             <div className="flex flex-1 overflow-hidden">
               <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
