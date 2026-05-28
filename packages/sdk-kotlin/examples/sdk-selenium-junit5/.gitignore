@@ -8,3 +8,6 @@ build/
 
 # Local config — contains a real Furan PAT; copy from local.properties.example
 local.properties
+
+# YAML config — contains a real Furan PAT; copy from application.yml.example
+application.yml

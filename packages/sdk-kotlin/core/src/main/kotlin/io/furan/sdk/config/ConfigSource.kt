@@ -29,6 +29,7 @@ interface ConfigSource {
 object ConfigPriority {
     const val ENV: Int = 100
     const val SYSPROP: Int = 90
-    // Gap is intentional: future external sources (yaml, spring, vault) slot between SYSPROP and DEFAULTS.
+    /** Spring-style: command-line/env > yaml > defaults. */
+    const val YAML: Int = 50
     const val DEFAULTS: Int = 10
 }

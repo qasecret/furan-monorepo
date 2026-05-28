@@ -1,0 +1,5 @@
+furan:
+  apiUrl: http://classpath-test:3000
+  apiToken: test-token-for-classpath-loading
+  projectId: classpath-project-id
+  branchName: classpath-branch

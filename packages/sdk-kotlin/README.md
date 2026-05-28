@@ -123,13 +123,16 @@ sequenceDiagram
 | `logLevel`            | `FURAN_LOG_LEVEL`             | `"info"`   | `trace` / `debug` / `info` / `none`.                                         |
 | `caCertPath`          | `FURAN_CA_CERT_PATH`          | —          | PEM file for custom CA (corporate-proxy / self-signed TLS).                  |
 
-Three ways to build a `FuranConfig`:
+Four ways to build a `FuranConfig`:
 
 ```kotlin
 // 1. From env vars (recommended for CI):
 val config = FuranConfig.fromEnv()
 
-// 2. Explicit:
+// 2. From a YAML file (handy for local dev and declarative test setup):
+val config = FuranConfig.fromYaml(Path.of("application.yml"))
+
+// 3. Explicit:
 val config = FuranConfig(
     apiUrl = "https://furan.acme.com",
     apiToken = System.getenv("FURAN_API_TOKEN"),
@@ -138,13 +141,23 @@ val config = FuranConfig(
     softAssert = true,
 )
 
-// 3. Copy + override (data class):
+// 4. Copy + override (data class):
 val ci = FuranConfig.fromEnv().copy(
     buildId = System.getenv("GITHUB_RUN_ID"),
     name = "nightly-main",
     properties = mapOf("region" to "us-east-1"),
 )
 ```
+
+### YAML
+
+`application.yml` driven config — handy for declarative test setup:
+
+```kotlin
+val config = FuranConfig.fromYaml(Path.of("application.yml"))
+```
+
+The companion `YamlConfigSource` slots into the v2 `FuranBootstrapper` chain at priority 50 (between sysprop and defaults). Env vars still override every YAML entry, so CI doesn't have to rewrite the file.
 
 ## API
 
