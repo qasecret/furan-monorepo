@@ -10,7 +10,7 @@ interface Props {
 export function Pagination({ hasMore, onNext }: Props) {
   if (!hasMore) return null;
   return (
-    <div className="border-t border-zinc-900 px-4 py-3">
+    <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-900">
       <Button variant="ghost" onClick={onNext}>
         Load more
       </Button>
