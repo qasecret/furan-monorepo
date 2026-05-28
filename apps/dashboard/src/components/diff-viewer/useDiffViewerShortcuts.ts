@@ -147,6 +147,8 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (store.ignoreEditMode !== "off") {
           store.setIgnoreEditMode("off");
         }
+        // Also clear the selected diff region (RegionListPanel selection).
+        store.setSelected(null);
       },
       // F-b: region copy/paste. `$mod` is tinykeys' cross-platform alias
       // (Ctrl on Win/Linux, Cmd on Mac). Plain `C` is already bound to

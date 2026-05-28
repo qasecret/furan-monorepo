@@ -126,6 +126,8 @@ export function ViewerCanvas({
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
+  const selectedRegionId = useViewerStore((s) => s.selectedRegionId);
+  const setSelected = useViewerStore((s) => s.setSelected);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
@@ -391,7 +393,7 @@ export function ViewerCanvas({
       }
 
       if (mode === "diff-heatmap" && regions.length > 0) {
-        mountDiffOverlayLayer(world, regions);
+        mountDiffOverlayLayer(world, regions, selectedRegionId);
       }
 
       if (
@@ -454,7 +456,14 @@ export function ViewerCanvas({
         console.warn("single-stage Application.destroy threw (non-fatal)", err);
       }
     };
-  }, [mode, baselineUrl, candidateUrl, diffOverlayUrl, regions]);
+  }, [
+    mode,
+    baselineUrl,
+    candidateUrl,
+    diffOverlayUrl,
+    regions,
+    selectedRegionId,
+  ]);
 
   // Live opacity update.
   useEffect(() => {
@@ -570,6 +579,38 @@ export function ViewerCanvas({
 
   const pickModeActive =
     overlayActive && regionInputMode === "pick" && !!elementMap;
+
+  // Click on the diff-heatmap canvas (not the ignore-region overlay) to
+  // select / deselect a diff region. Only active in diff-heatmap mode;
+  // other modes don't show the overlay so clicking there is a no-op for
+  // region selection. Gated on primary button (button === 0) to avoid
+  // clobbering middle-mouse pan and right-click context menu.
+  const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (mode !== "diff-heatmap") return;
+    if (e.button !== 0) return;
+    const pt = toImage(e);
+    if (!pt) return;
+    const bboxRegions = regions.flatMap((r) => {
+      if (
+        !r.bbox ||
+        typeof r.bbox !== "object" ||
+        !("x" in r.bbox) ||
+        !("y" in r.bbox) ||
+        !("width" in r.bbox) ||
+        !("height" in r.bbox)
+      )
+        return [];
+      const bbox = r.bbox as {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+      return [{ id: r.id, ...bbox }];
+    });
+    const hit = hitTest(pt, bboxRegions);
+    setSelected(hit);
+  };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
@@ -756,6 +797,7 @@ export function ViewerCanvas({
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
+        onPointerUp={handleDiffRegionClick}
       >
         {!baselineUrl && !candidateUrl && (
           <CanvasEmptyState label="Nothing to compare yet">
