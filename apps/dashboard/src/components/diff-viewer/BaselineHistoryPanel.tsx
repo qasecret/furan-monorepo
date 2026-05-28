@@ -46,7 +46,7 @@ export function BaselineHistoryPanel({
     <>
       <Button
         variant="ghost"
-        className="h-7 gap-1 px-2 text-xs text-zinc-400 hover:text-white"
+        className="h-7 gap-1 px-2 text-xs text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
         onClick={() => setOpen(true)}
         data-testid="diff-viewer-baseline-history-button"
       >
@@ -55,19 +55,19 @@ export function BaselineHistoryPanel({
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="fixed inset-y-0 right-0 left-auto h-full w-96 max-w-[90vw] translate-x-0 translate-y-0 -translate-x-0 -translate-y-0 rounded-none border-l border-zinc-800 bg-zinc-950 p-0 sm:max-w-md"
+          className="fixed inset-y-0 right-0 left-auto h-full w-96 max-w-[90vw] translate-x-0 translate-y-0 -translate-x-0 -translate-y-0 rounded-none border-l border-zinc-200 bg-white p-0 sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950"
           style={{ transform: "none", top: 0, margin: 0 }}
           data-testid="baseline-history-panel"
         >
           <div className="flex h-full flex-col">
-            <DialogHeader className="flex flex-row items-center justify-between border-b border-zinc-800 px-4 py-3">
-              <DialogTitle className="text-base font-semibold text-white">
+            <DialogHeader className="flex flex-row items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+              <DialogTitle className="text-base font-semibold text-zinc-950 dark:text-white">
                 Baseline history
               </DialogTitle>
               <DialogClose asChild>
                 <Button
                   variant="ghost"
-                  className="h-7 w-7 p-0 text-zinc-400 hover:text-white"
+                  className="h-7 w-7 p-0 text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
                   aria-label="Close baseline history"
                 >
                   <X className="h-4 w-4" />
@@ -76,9 +76,11 @@ export function BaselineHistoryPanel({
             </DialogHeader>
             <div className="flex-1 overflow-y-auto px-4 py-3">
               {isLoading ? (
-                <p className="mt-4 text-sm text-zinc-400">Loading…</p>
+                <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+                  Loading…
+                </p>
               ) : !data || data.items.length === 0 ? (
-                <p className="mt-4 text-sm text-zinc-400">
+                <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
                   No baselines accepted yet.
                 </p>
               ) : (
@@ -94,11 +96,11 @@ export function BaselineHistoryPanel({
                         className={
                           isCurrent
                             ? "rounded border border-[color:var(--color-brand)]/40 bg-[color:var(--color-brand)]/5 p-3"
-                            : "rounded border border-zinc-800 bg-zinc-900/40 p-3"
+                            : "rounded border border-zinc-200 bg-zinc-100/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
                         }
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-white">
+                          <span className="text-sm font-medium text-zinc-950 dark:text-white">
                             {b.isAuto
                               ? "System (auto-approved)"
                               : (b.approverEmail ?? "Unknown")}
@@ -109,7 +111,7 @@ export function BaselineHistoryPanel({
                             </span>
                           )}
                         </div>
-                        <div className="mt-1 font-mono text-xs tabular-nums text-zinc-400">
+                        <div className="mt-1 font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                           {new Date(b.createdAt).toLocaleString()} ·{" "}
                           {b.branchName}
                         </div>

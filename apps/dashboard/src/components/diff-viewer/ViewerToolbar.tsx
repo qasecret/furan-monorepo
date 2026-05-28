@@ -253,7 +253,7 @@ export function ViewerToolbar({
   };
 
   return (
-    <div className="flex items-center gap-4 flex-wrap p-2 border-b border-zinc-800 bg-zinc-950">
+    <div className="flex items-center gap-4 flex-wrap p-2 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
       <Tabs value={mode} onValueChange={(v) => setMode(v as ViewerMode)}>
         <TabsList>
           {MODES.map((m) => (
@@ -485,7 +485,7 @@ export function ViewerToolbar({
         <div
           role="alertdialog"
           data-testid="scope-switch-confirm"
-          className="flex items-center gap-2 text-xs"
+          className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
         >
           <span>Discard unsaved changes and switch scope?</span>
           <Button
@@ -511,7 +511,9 @@ export function ViewerToolbar({
 
       {editing && selectedIgnoreId && (
         <div className="flex items-center gap-2" data-testid="padding-control">
-          <span className="text-xs text-zinc-400">Padding</span>
+          <span className="text-xs text-zinc-600 dark:text-zinc-400">
+            Padding
+          </span>
           <input
             type="range"
             min={0}
@@ -524,7 +526,7 @@ export function ViewerToolbar({
             aria-label={`Padding for selected region, ${selectedPaddingPx} pixels`}
           />
           <span
-            className="text-xs font-mono w-10 text-right text-zinc-300"
+            className="text-xs font-mono w-10 text-right text-zinc-700 dark:text-zinc-300"
             data-testid="padding-value"
           >
             {selectedPaddingPx}px
@@ -539,7 +541,9 @@ export function ViewerToolbar({
             className="flex items-center gap-2"
             data-testid="strict-tolerance-control"
           >
-            <span className="text-xs text-zinc-400">Tolerance</span>
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              Tolerance
+            </span>
             <input
               type="range"
               min={0}
@@ -554,7 +558,7 @@ export function ViewerToolbar({
               aria-label={`Strict region tolerance, ${((selectedThresholdOverride ?? 0) * 100).toFixed(2)} percent`}
             />
             <span
-              className="text-xs font-mono w-14 text-right text-zinc-300"
+              className="text-xs font-mono w-14 text-right text-zinc-700 dark:text-zinc-300"
               data-testid="strict-tolerance-value"
             >
               {((selectedThresholdOverride ?? 0) * 100).toFixed(2)}%
@@ -636,7 +640,7 @@ export function ViewerToolbar({
           className="flex items-center gap-2"
           data-testid="region-kind-control"
         >
-          <span className="text-xs text-zinc-400">Kind</span>
+          <span className="text-xs text-zinc-600 dark:text-zinc-400">Kind</span>
           <div data-testid="region-kind-select">
             <Select
               value={selectedKindAndPattern.kind}
@@ -686,7 +690,7 @@ export function ViewerToolbar({
           {selectedKindAndPattern.kind !== "ignore" &&
             selectedKindAndPattern.kind !== "dynamic-text" && (
               <span
-                className="text-[10px] text-zinc-500 max-w-[260px]"
+                className="text-[10px] text-zinc-500 max-w-[260px] dark:text-zinc-500"
                 data-testid="region-kind-hint"
               >
                 {selectedKindAndPattern.kind === "strict" &&
@@ -705,7 +709,9 @@ export function ViewerToolbar({
           className="flex items-center gap-2 min-w-[200px]"
           data-testid="opacity-slider-wrap"
         >
-          <span className="text-xs text-zinc-400">{sliderLabel}</span>
+          <span className="text-xs text-zinc-600 dark:text-zinc-400">
+            {sliderLabel}
+          </span>
           <Slider
             value={[Math.round(opacity * 100)]}
             onValueChange={([v]) => setOpacity((v ?? 0) / 100)}
