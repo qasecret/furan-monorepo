@@ -6,6 +6,7 @@ import { useMobileSidebarStore } from "./use-mobile-sidebar";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { HelpButton } from "@/components/tour/help-button";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
  * App-shell top bar. The "search input" is a button that opens the cmdk
@@ -54,6 +55,7 @@ export function TopBar() {
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <HelpButton />
+        <ThemeToggle />
         <button
           type="button"
           disabled
