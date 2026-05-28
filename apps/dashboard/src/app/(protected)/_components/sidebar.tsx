@@ -1,4 +1,11 @@
-import { FolderKanban, Inbox, Key, Puzzle, Users } from "lucide-react";
+import {
+  BarChart3,
+  FolderKanban,
+  Inbox,
+  Key,
+  Puzzle,
+  Users,
+} from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
 
 import { InboxBadge } from "./inbox-badge";
@@ -66,6 +73,7 @@ export function Sidebar({
     sections.push({
       label: "Admin",
       items: [
+        { icon: BarChart3, label: "Analytics", href: "/analytics" },
         { icon: Users, label: "Members", href: "/admin/members" },
         {
           icon: Puzzle,
