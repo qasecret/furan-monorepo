@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
+import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { EmptyRunCard } from "./EmptyRunCard";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -325,6 +326,12 @@ export function DiffViewer({ runId, diffId }: Props) {
               <ViewportSwitcher viewports={uniqueViewports} />
               {baselineDims && candidateDims && (
                 <SizeChip baseline={baselineDims} candidate={candidateDims} />
+              )}
+              {data.testVariationId && (
+                <BaselineHistoryPanel
+                  testVariationId={data.testVariationId}
+                  currentBaselineKey={data.baselineName ?? null}
+                />
               )}
             </div>
             <div className="flex flex-1 overflow-hidden">
