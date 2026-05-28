@@ -50,7 +50,7 @@ CVE-2026-0861
 # confirm which entries are still flagged before deleting any.
 #
 # Owner: @qasecret-maintainer
-# Last reviewed: 2026-05-17 (v1.0.3 build-images run on v1.60.0-noble)
+# Last reviewed: 2026-05-28 (v1.0.17 build-images run on v1.60.0-noble)
 
 # Go stdlib in upstream-bundled Go CLIs (curl, kubectl, gh, docker, etc.)
 # inside the Playwright image. 2 CRITICAL + 18 HIGH on v1.60.0-noble.
@@ -60,8 +60,11 @@ CVE-2023-45283
 CVE-2023-45288
 CVE-2024-24790
 CVE-2024-34156
+CVE-2025-22871
 CVE-2025-47907
+CVE-2025-47912
 CVE-2025-58183
+CVE-2025-58189
 CVE-2025-61726
 CVE-2025-61728
 CVE-2025-61729
