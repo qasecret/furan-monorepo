@@ -39,7 +39,7 @@ export function SidebarNavItem({ icon, label, href, badge }: Props) {
       href={href}
       data-testid={`sidebar-nav-${href.replace(/^\//, "").replace(/\//g, "-")}`}
       className={cn(
-        "relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+        "relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
         isActive
           ? "bg-zinc-900 text-brand border-l-2 border-brand pl-[10px] -ml-px"
           : "text-zinc-400 hover:text-white hover:bg-zinc-900/50",

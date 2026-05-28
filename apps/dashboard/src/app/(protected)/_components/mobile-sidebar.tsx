@@ -57,7 +57,7 @@ export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
             Sidebar navigation: workspace, account, and admin sections.
           </DialogPrimitive.Description>
           <DialogPrimitive.Close
-            className="absolute right-3 top-3 z-10 rounded-md p-1 text-zinc-400 hover:text-white hover:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+            className="absolute right-3 top-3 z-10 rounded-md p-1 text-zinc-400 hover:text-white hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
             data-testid="mobile-sidebar-close"
             aria-label="Close navigation"
           >

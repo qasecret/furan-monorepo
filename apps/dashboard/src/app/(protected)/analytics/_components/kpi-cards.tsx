@@ -60,7 +60,7 @@ export function KpiCards({ summary, isLoading }: Props) {
           <div className="mt-2 text-2xl font-semibold text-white tabular-nums">
             {isLoading ? "…" : c.value}
           </div>
-          <div className="mt-1 text-xs text-zinc-500">{c.sub}</div>
+          <div className="mt-1 text-xs text-zinc-400">{c.sub}</div>
         </div>
       ))}
     </div>
