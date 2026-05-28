@@ -58,6 +58,8 @@ interface MockData {
   variationIgnoreAreas: unknown;
   autoApproved: boolean;
   status: RunStatusLite;
+  prevRunId: string | null;
+  nextRunId: string | null;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -76,6 +78,8 @@ const defaultMockData: MockData = {
   // to drive its enabled-state + status pill. Default `unresolved` so the
   // embedded ApprovalBar is in its canonical reviewable state.
   status: "unresolved",
+  prevRunId: null,
+  nextRunId: null,
 };
 let mockGetByIdData: MockData = { ...defaultMockData };
 
