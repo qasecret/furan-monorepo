@@ -87,17 +87,17 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "w-60 border-r border-zinc-800 bg-zinc-950 flex flex-col shrink-0",
+        "w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 flex flex-col shrink-0",
         className,
       )}
       data-testid="app-sidebar"
     >
-      <div className="h-14 flex items-center px-4 border-b border-zinc-800 shrink-0">
+      <div className="h-14 flex items-center px-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 bg-brand rounded-sm rotate-12 flex items-center justify-center">
             <div className="w-1.5 h-1.5 bg-black rounded-full" />
           </div>
-          <span className="font-semibold text-lg tracking-tight text-white">
+          <span className="font-semibold text-lg tracking-tight text-zinc-950 dark:text-white">
             Furan
           </span>
         </div>
@@ -107,7 +107,7 @@ export function Sidebar({
         {sections.map((section) => (
           <div key={section.label}>
             <div className="px-3 mb-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
                 {section.label}
               </span>
             </div>
@@ -134,16 +134,16 @@ export function Sidebar({
         ))}
       </div>
 
-      <div className="border-t border-zinc-800 shrink-0">
+      <div className="border-t border-zinc-200 dark:border-zinc-800 shrink-0">
         <div
           className="p-3 flex items-center gap-3"
           data-testid="sidebar-user-chip"
         >
-          <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-300 shrink-0">
+          <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-700 dark:text-zinc-300 shrink-0">
             {userInitial}
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-medium text-zinc-200 truncate">
+            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
               {userEmail || "Signed in"}
             </span>
             <span className="text-xs text-zinc-500 truncate capitalize">

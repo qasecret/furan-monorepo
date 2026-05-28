@@ -31,7 +31,7 @@ export function AppShell({
   children,
 }: Props) {
   return (
-    <div className="flex h-screen bg-black text-white overflow-hidden">
+    <div className="flex h-screen bg-white text-zinc-950 dark:bg-black dark:text-white overflow-hidden">
       <Sidebar
         userRole={userRole}
         userEmail={userEmail}
@@ -45,7 +45,7 @@ export function AppShell({
       />
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar />
-        <main className="flex-1 overflow-auto bg-[#050505]">
+        <main className="flex-1 overflow-auto bg-zinc-50 dark:bg-[#050505]">
           <div className="px-6 py-6 max-w-7xl mx-auto">{children}</div>
         </main>
       </div>

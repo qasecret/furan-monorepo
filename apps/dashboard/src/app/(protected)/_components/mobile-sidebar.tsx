@@ -47,7 +47,7 @@ export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
           data-testid="mobile-sidebar-overlay"
         />
         <DialogPrimitive.Content
-          className="fixed inset-y-0 left-0 z-50 w-60 bg-zinc-950 border-r border-zinc-800 flex flex-col shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left md:hidden"
+          className="fixed inset-y-0 left-0 z-50 w-60 bg-white border-r border-zinc-200 dark:bg-zinc-950 dark:border-zinc-800 flex flex-col shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left md:hidden"
           data-testid="mobile-sidebar"
         >
           <DialogPrimitive.Title className="sr-only">
@@ -57,7 +57,7 @@ export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
             Sidebar navigation: workspace, account, and admin sections.
           </DialogPrimitive.Description>
           <DialogPrimitive.Close
-            className="absolute right-3 top-3 z-10 rounded-md p-1 text-zinc-400 hover:text-white hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+            className="absolute right-3 top-3 z-10 rounded-md p-1 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
             data-testid="mobile-sidebar-close"
             aria-label="Close navigation"
           >

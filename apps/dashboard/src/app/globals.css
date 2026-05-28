@@ -44,11 +44,20 @@
 
 html,
 body {
-  background: #000000;
-  color: #ffffff;
+  /* Defaults are the LIGHT theme — Phase 0 sets <html class="dark"> by
+   * default, so dark is still what every user sees today. The light
+   * branch kicks in when ThemeToggle flips the class to "light". */
+  background-color: #fafafa;   /* zinc-50 */
+  color: #18181b;              /* zinc-900 */
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+html.dark,
+html.dark body {
+  background-color: #000000;
+  color: #ffffff;
 }
 
 body {

@@ -26,14 +26,14 @@ export function TopBar() {
 
   return (
     <header
-      className="h-14 border-b border-zinc-800 bg-zinc-950/50 flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
+      className="h-14 border-b border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-950/50 flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <button
           type="button"
           onClick={() => setMobileSidebarOpen(true)}
-          className="md:hidden p-2 -ml-2 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-900/50 transition-colors shrink-0"
+          className="md:hidden p-2 -ml-2 rounded-md text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/60 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50 transition-colors shrink-0"
           data-testid="top-bar-menu"
           aria-label="Open navigation"
         >
@@ -42,13 +42,13 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="relative w-full md:w-72 flex items-center bg-zinc-900 border border-zinc-800 rounded-md pl-9 pr-3 md:pr-16 py-1.5 text-sm text-zinc-500 hover:text-zinc-300 hover:border-zinc-700 transition-colors text-left truncate"
+          className="relative w-full md:w-72 flex items-center bg-zinc-50 border border-zinc-200 rounded-md pl-9 pr-3 md:pr-16 py-1.5 text-sm text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-300 dark:hover:border-zinc-700 transition-colors text-left truncate"
           data-testid="top-bar-search"
           aria-label="Open command palette"
         >
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
           <span className="truncate">Jump to project, settings, account…</span>
-          <span className="hidden md:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-mono border border-zinc-800 rounded px-1.5 py-0.5">
+          <span className="hidden md:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500 font-mono border border-zinc-200 bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400 rounded px-1.5 py-0.5">
             ⌘K
           </span>
         </button>
