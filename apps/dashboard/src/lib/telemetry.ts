@@ -10,16 +10,18 @@
  * The JWT cookie (`furan_jwt`, HttpOnly) attaches automatically via
  * `credentials: "include"`. Returns nothing — caller never awaits.
  */
+import { browserEnv } from "./env";
+
 export function recordTelemetry(
   event: string,
   props: Record<string, unknown> = {},
 ): void {
   if (typeof window === "undefined") return; // no-op on server
 
-  // Use the env-configured API origin (same as the tRPC client uses).
-  // NEXT_PUBLIC_API_URL is the browser-safe env var validated in lib/env.ts.
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "";
-  const url = `${base}/dashboard/telemetry`;
+  // browserEnv validates + defaults NEXT_PUBLIC_API_URL to http://localhost:3000
+  // (raw process.env.NEXT_PUBLIC_API_URL is undefined when not set at build
+  // time and would 404 against the dashboard's own origin — use the schema).
+  const url = `${browserEnv.NEXT_PUBLIC_API_URL}/dashboard/telemetry`;
 
   void fetch(url, {
     method: "POST",

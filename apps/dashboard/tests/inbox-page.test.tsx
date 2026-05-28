@@ -2,8 +2,8 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-vi.mock("@/hooks/useInboxRealtime", () => ({
-  useInboxRealtime: () => undefined,
+vi.mock("@/hooks/InboxRealtime", () => ({
+  InboxRealtime: () => null,
 }));
 vi.mock("@/lib/telemetry", () => ({
   recordTelemetry: vi.fn(),
