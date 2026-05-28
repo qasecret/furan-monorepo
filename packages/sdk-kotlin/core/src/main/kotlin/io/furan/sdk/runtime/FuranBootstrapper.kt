@@ -5,6 +5,7 @@ import io.furan.sdk.config.ConfigurationResolver
 import io.furan.sdk.config.sources.DefaultsConfigSource
 import io.furan.sdk.config.sources.EnvConfigSource
 import io.furan.sdk.config.sources.SystemPropertyConfigSource
+import io.furan.sdk.config.sources.YamlConfigSource
 import io.furan.sdk.event.EventBus
 import io.furan.sdk.event.SharedFlowEventBus
 
@@ -134,12 +135,18 @@ class FuranBootstrapper(
 
     companion object {
         /**
-         * Default source list: env + sysprop + built-in defaults.
-         * Operators add YAML / Spring sources by passing an explicit
-         * list to the constructor.
+         * Default source list: env + sysprop + classpath `application.yml`
+         * + built-in defaults. Mirrors the ReportPortal / Spring Boot
+         * pattern — drop an `application.yml` on the classpath and it
+         * gets picked up automatically; absent file = empty contribution
+         * (non-fatal). Precedence (high → low) is fixed by each source's
+         * `ConfigPriority`: env > sysprop > yaml > defaults, regardless
+         * of list order. Operators add additional sources by passing an
+         * explicit list to the constructor.
          */
         fun autoDiscoverSources(): List<ConfigSource> = listOf(
             DefaultsConfigSource(),
+            YamlConfigSource.forClasspath("application.yml"),
             SystemPropertyConfigSource.forSystem(),
             EnvConfigSource.forSystem(),
         )
