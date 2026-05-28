@@ -139,6 +139,114 @@ data class FuranConfig(
             return out.toMap()
         }
 
+        /**
+         * Build a config from a YAML file at [path], falling back to [env]
+         * for any field not present in the YAML. Env wins per the SDK's
+         * Spring-style precedence (env > yaml).
+         *
+         * Useful for v1 callers (those using `FuranConfig.fromEnv()` today)
+         * who want declarative config without switching to the v2
+         * `FuranBootstrapper` chain.
+         *
+         * Throws [FuranConfigException] if the resulting config is invalid
+         * (missing required fields, malformed values).
+         *
+         * Expected YAML shape (all under `furan.`):
+         * ```yaml
+         * furan:
+         *   apiUrl: ...        # required
+         *   apiToken: ...      # required
+         *   projectId: ...     # required
+         *   branchName: main
+         *   buildId: null
+         *   viewports:
+         *     - { width: 1280, height: 720 }
+         *   pollTimeoutSeconds: 60
+         *   ...                # all other FuranConfig fields supported
+         * ```
+         */
+        fun fromYaml(
+            path: java.nio.file.Path,
+            env: Map<String, String> = System.getenv(),
+        ): FuranConfig = try {
+            val yamlSource = io.furan.sdk.config.sources.YamlConfigSource.forFile(path)
+            val yaml = yamlSource.load()
+            buildMerged(yaml, env)
+        } catch (e: FuranConfigException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        } catch (e: IllegalStateException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        }
+
+        private fun buildMerged(yaml: Map<String, Any?>, env: Map<String, String>): FuranConfig {
+            fun yamlString(key: String): String? = yaml["furan.$key"]?.toString()
+            fun yamlLong(key: String): Long? =
+                (yaml["furan.$key"] as? Number)?.toLong() ?: yamlString(key)?.toLongOrNull()
+            fun yamlInt(key: String): Int? =
+                (yaml["furan.$key"] as? Number)?.toInt() ?: yamlString(key)?.toIntOrNull()
+            fun yamlBool(key: String): Boolean? =
+                (yaml["furan.$key"] as? Boolean)
+                    ?: yamlString(key)?.let { it == "true" || it == "1" }
+
+            // Env wins for required fields. YAML provides a fallback.
+            val apiUrl = env["FURAN_API_URL"] ?: yamlString("apiUrl")
+                ?: throw FuranConfigException("FURAN_API_URL or furan.apiUrl is required")
+            val apiToken = env["FURAN_API_TOKEN"] ?: yamlString("apiToken")
+                ?: throw FuranConfigException("FURAN_API_TOKEN or furan.apiToken is required")
+            val projectId = env["FURAN_PROJECT_ID"] ?: yamlString("projectId")
+                ?: throw FuranConfigException("FURAN_PROJECT_ID or furan.projectId is required")
+
+            val viewports: List<Viewport> = run {
+                val envValue = env["FURAN_VIEWPORTS"]
+                if (envValue != null) return@run parseViewports(envValue)
+                val yamlValue = yaml["furan.viewports"]
+                if (yamlValue is List<*>) {
+                    yamlValue.mapNotNull { item ->
+                        if (item !is Map<*, *>) return@mapNotNull null
+                        val w = (item["width"] as? Number)?.toInt() ?: return@mapNotNull null
+                        val h = (item["height"] as? Number)?.toInt() ?: return@mapNotNull null
+                        val dsf = (item["deviceScaleFactor"] as? Number)?.toDouble()
+                        Viewport(w, h, dsf)
+                    }.ifEmpty { listOf(Viewport(1280, 720)) }
+                } else {
+                    listOf(Viewport(1280, 720))
+                }
+            }
+
+            return FuranConfig(
+                apiUrl = apiUrl,
+                apiToken = apiToken,
+                projectId = projectId,
+                buildId = env["FURAN_BUILD_ID"] ?: yamlString("buildId"),
+                branchName = env["FURAN_BRANCH"] ?: yamlString("branchName") ?: "main",
+                name = (env["FURAN_BUILD_NAME"] ?: yamlString("name"))?.trim()?.takeIf { it.isNotEmpty() },
+                properties = parseProperties(env["FURAN_BUILD_PROPERTIES"])
+                    .ifEmpty {
+                        @Suppress("UNCHECKED_CAST")
+                        (yaml["furan.properties"] as? Map<String, Any?>)
+                            ?.mapValues { it.value.toString() } ?: emptyMap()
+                    },
+                viewports = viewports,
+                batchSize = env["FURAN_BATCH_SIZE"]?.toIntOrNull() ?: yamlInt("batchSize") ?: 16,
+                logLevel = env["FURAN_LOG_LEVEL"] ?: yamlString("logLevel") ?: "info",
+                telemetryEnabled = env["FURAN_TELEMETRY"]
+                    ?.let { it != "0" && it.lowercase() != "false" }
+                    ?: yamlBool("telemetryEnabled") ?: true,
+                caCertPath = env["FURAN_CA_CERT_PATH"] ?: yamlString("caCertPath"),
+                softAssert = env["FURAN_SOFT_ASSERT"]
+                    ?.let { it == "1" || it.lowercase() == "true" }
+                    ?: yamlBool("softAssert") ?: false,
+                pollTimeoutSeconds = env["FURAN_POLL_TIMEOUT_SECONDS"]?.toLongOrNull()
+                    ?: yamlLong("pollTimeoutSeconds") ?: 60,
+                pollIntervalSeconds = env["FURAN_POLL_INTERVAL_SECONDS"]?.toLongOrNull()
+                    ?: yamlLong("pollIntervalSeconds") ?: 2,
+                dashboardUrl = (env["FURAN_DASHBOARD_URL"] ?: yamlString("dashboardUrl"))
+                    ?.trimEnd('/')?.takeIf { it.isNotEmpty() },
+            )
+        }
+
         /** Parses `1280x720,375x812` into a list of [Viewport]. */
         private fun parseViewports(raw: String): List<Viewport> =
             raw.split(",")
