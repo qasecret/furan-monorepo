@@ -54,13 +54,15 @@ export function KpiCards({ summary, isLoading }: Props) {
       {cards.map((c) => (
         <div
           key={c.label}
-          className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4"
+          className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50"
         >
-          <div className="text-xs text-zinc-400">{c.label}</div>
-          <div className="mt-2 text-2xl font-semibold text-white tabular-nums">
+          <div className="text-xs text-zinc-600 dark:text-zinc-400">
+            {c.label}
+          </div>
+          <div className="mt-2 text-2xl font-semibold text-zinc-950 tabular-nums dark:text-white">
             {isLoading ? "…" : c.value}
           </div>
-          <div className="mt-1 text-xs text-zinc-400">{c.sub}</div>
+          <div className="mt-1 text-xs text-zinc-500">{c.sub}</div>
         </div>
       ))}
     </div>

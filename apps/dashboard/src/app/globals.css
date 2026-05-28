@@ -85,3 +85,32 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Recharts color palette — light defaults, dark overrides via .dark.
+ * The brand stays the same in both modes (lime is a colored accent in
+ * either case). Axis + grid + tooltip surfaces flip. */
+:root {
+  --chart-grid: #e4e4e7;          /* zinc-200 */
+  --chart-axis: #52525b;          /* zinc-600 */
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #e4e4e7;  /* zinc-200 */
+  --chart-tooltip-label: #71717a;  /* zinc-500 */
+  --chart-approves: #65a30d;       /* lime-700: brand is 1.5:1 on white, drop one step */
+  --chart-approves-fill: #65a30d;
+  --chart-rejects: #dc2626;        /* red-600 — saturated red reads fine on white */
+  --chart-rejects-fill: #dc2626;
+  --chart-bar: #65a30d;            /* lime-700 (matches approves) */
+}
+
+html.dark {
+  --chart-grid: #27272a;           /* zinc-800 */
+  --chart-axis: #71717a;           /* zinc-500 */
+  --chart-tooltip-bg: #09090b;     /* zinc-950 */
+  --chart-tooltip-border: #27272a; /* zinc-800 */
+  --chart-tooltip-label: #a1a1aa;  /* zinc-400 */
+  --chart-approves: #a8ff53;       /* brand lime — works on dark */
+  --chart-approves-fill: #a8ff53;
+  --chart-rejects: #f87171;        /* red-400 — saturated red reads fine on dark */
+  --chart-rejects-fill: #f87171;
+  --chart-bar: #a8ff53;            /* brand */
+}
