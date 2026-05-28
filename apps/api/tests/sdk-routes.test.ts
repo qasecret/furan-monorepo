@@ -180,6 +180,92 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(rows[0]!.viewport).toBe("1440x900");
   });
 
+  test("POST /runs with distinct names produces distinct variations under one build (ADR-037)", async () => {
+    // Server-side variation-by-name routing at apps/api/src/routes/sdk-runs.ts:367-396.
+    // The lookup key is (projectId, name, browser, viewport) — branchName is
+    // stored on creation but NOT part of the lookup key. This test pins the
+    // behavior so the SDK refactor (next task) — which calls POST /runs per
+    // snapshot(name) — has a regression net.
+    const common = {
+      projectId: s.projectId,
+      buildId: s.buildId,
+      branchName: "feature/multi-snap",
+      browser: "chromium",
+      viewport: "1280x720",
+    };
+
+    const resA = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: { ...common, name: "checkout-page" },
+    });
+    expect(resA.statusCode).toBe(200);
+    const bodyA = JSON.parse(resA.body) as {
+      id: string;
+      buildId: string;
+      testVariationId: string;
+    };
+
+    const resB = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: { ...common, name: "login-page" },
+    });
+    expect(resB.statusCode).toBe(200);
+    const bodyB = JSON.parse(resB.body) as {
+      id: string;
+      buildId: string;
+      testVariationId: string;
+    };
+
+    // Distinct runs, distinct variations, same build.
+    expect(bodyA.id).not.toBe(bodyB.id);
+    expect(bodyA.testVariationId).not.toBe(bodyB.testVariationId);
+    expect(bodyA.buildId).toBe(s.buildId);
+    expect(bodyB.buildId).toBe(s.buildId);
+
+    // The two test_variations rows actually exist with the supplied names
+    // and share the same (projectId, browser, viewport) — name is the
+    // only differing dimension that produced the split.
+    const varA = await h.db
+      .select()
+      .from(testVariations)
+      .where(eq(testVariations.id, bodyA.testVariationId))
+      .limit(1);
+    const varB = await h.db
+      .select()
+      .from(testVariations)
+      .where(eq(testVariations.id, bodyB.testVariationId))
+      .limit(1);
+    expect(varA[0]!.name).toBe("checkout-page");
+    expect(varB[0]!.name).toBe("login-page");
+    expect(varA[0]!.projectId).toBe(s.projectId);
+    expect(varB[0]!.projectId).toBe(s.projectId);
+    expect(varA[0]!.browser).toBe("chromium");
+    expect(varB[0]!.browser).toBe("chromium");
+    expect(varA[0]!.viewport).toBe("1280x720");
+    expect(varB[0]!.viewport).toBe("1280x720");
+
+    // Re-posting the SAME name resolves to the SAME variation (idempotency
+    // of the resolve-or-create lookup) — the SDK retry loop relies on this.
+    const resARepeat = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: { ...common, name: "checkout-page" },
+    });
+    expect(resARepeat.statusCode).toBe(200);
+    const bodyARepeat = JSON.parse(resARepeat.body) as {
+      id: string;
+      testVariationId: string;
+    };
+    expect(bodyARepeat.testVariationId).toBe(bodyA.testVariationId);
+    // Distinct run row though — every POST /runs creates a fresh run.
+    expect(bodyARepeat.id).not.toBe(bodyA.id);
+  });
+
   test("POST /runs with nonexistent buildId returns 400", async () => {
     const res = await h.app.inject({
       method: "POST",

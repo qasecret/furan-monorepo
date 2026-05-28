@@ -27,11 +27,12 @@ import type {
  *   layout       → blue   (structural intent)
  *   content      → orange (text/value intent)
  *
- * Saved-active = solid fill + 2px stroke; draft = no fill + 2px stroke
- * (same kind color, used for the dashed-looking unsaved state). Selected
- * regions use a 4px stroke regardless. Inactive-scope regions render gray
- * across all kinds — the gray IS the "you can't edit me here" signal,
- * not the kind.
+ * Saved-active = solid fill + 2px stroke; draft = translucent fill
+ * (same kind color at ~0.10 alpha) + 2px stroke, so the drag-to-draw
+ * preview is visible against the candidate image while staying clearly
+ * subordinate to saved regions. Selected regions use a 4px stroke
+ * regardless. Inactive-scope regions render gray across all kinds —
+ * the gray IS the "you can't edit me here" signal, not the kind.
  */
 type StyleEntry = {
   fill: number;
@@ -51,7 +52,7 @@ const KIND_STYLES: Record<
       stroke: 0xcc0000,
       strokeWidth: 2,
     },
-    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xffcc00, strokeWidth: 2 },
+    draft: { fill: 0xff0000, fillAlpha: 0.1, stroke: 0xffcc00, strokeWidth: 2 },
   },
   "dynamic-text": {
     saved: {
@@ -60,7 +61,7 @@ const KIND_STYLES: Record<
       stroke: 0x7e22ce,
       strokeWidth: 2,
     },
-    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xa855f7, strokeWidth: 2 },
+    draft: { fill: 0x9333ea, fillAlpha: 0.1, stroke: 0xa855f7, strokeWidth: 2 },
   },
   strict: {
     saved: {
@@ -69,7 +70,7 @@ const KIND_STYLES: Record<
       stroke: 0x15803d,
       strokeWidth: 2,
     },
-    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0x22c55e, strokeWidth: 2 },
+    draft: { fill: 0x16a34a, fillAlpha: 0.1, stroke: 0x22c55e, strokeWidth: 2 },
   },
   layout: {
     saved: {
@@ -78,7 +79,7 @@ const KIND_STYLES: Record<
       stroke: 0x1d4ed8,
       strokeWidth: 2,
     },
-    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0x3b82f6, strokeWidth: 2 },
+    draft: { fill: 0x2563eb, fillAlpha: 0.1, stroke: 0x3b82f6, strokeWidth: 2 },
   },
   content: {
     saved: {
@@ -87,7 +88,7 @@ const KIND_STYLES: Record<
       stroke: 0xc2410c,
       strokeWidth: 2,
     },
-    draft: { fill: 0x000000, fillAlpha: 0, stroke: 0xf97316, strokeWidth: 2 },
+    draft: { fill: 0xea580c, fillAlpha: 0.1, stroke: 0xf97316, strokeWidth: 2 },
   },
 };
 

@@ -6,6 +6,7 @@ import { ApprovalBar } from "./ApprovalBar";
 import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { EmptyRunCard } from "./EmptyRunCard";
+import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
@@ -191,6 +192,23 @@ export function DiffViewer({ runId, diffId }: Props) {
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const proposePendingSnap = useViewerStore((s) => s.proposePendingSnap);
+  // Phase 1.4: list panel mount gate + delete wiring. Reads here so they
+  // sit alongside the other ignore-editor selectors (the actual JSX
+  // mount is next to RegionListPanel below).
+  const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
+  const activeViewport = useViewerStore((s) => s.viewport);
+  const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
+  const deleteSelected = useViewerStore((s) => s.deleteSelected);
+  const handleDeleteIgnoreRegion = useCallback(
+    (regionId: string) => {
+      // The store exposes `deleteSelected` (operates on selectedIgnoreId);
+      // emulate "delete by id" by selecting first, then deleting. Mirrors
+      // the click-then-delete UX from the canvas/keyboard path.
+      setSelectedIgnoreId(regionId);
+      deleteSelected();
+    },
+    [setSelectedIgnoreId, deleteSelected],
+  );
   const elementMapKey =
     (candidateScreenshot as { elementMapKey?: string | null } | null)
       ?.elementMapKey ?? null;
@@ -353,6 +371,12 @@ export function DiffViewer({ runId, diffId }: Props) {
                 />
               </div>
               <RegionListPanel regions={regions} />
+              {ignoreEditMode !== "off" && (
+                <IgnoreRegionListPanel
+                  viewport={activeViewport || null}
+                  onDelete={handleDeleteIgnoreRegion}
+                />
+              )}
             </div>
           </>
         )}
