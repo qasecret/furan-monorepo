@@ -48,13 +48,17 @@ COPY tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/capture-worker/ apps/capture-worker/
 
-# Re-install WITH scripts so sharp's prebuilt binary lands in node_modules.
+# Re-install with --ignore-scripts to skip the workspace-root `prepare`
+# (which calls `lefthook install` and needs git on PATH — `node:22-bookworm-slim`
+# doesn't ship git), then explicitly run `pnpm rebuild sharp` so sharp's
+# prebuilt binary lands in node_modules.
+#
 # Playwright's browser download is suppressed via PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
 # because the runtime image ships chromium itself (saves ~300MB of redundant
 # downloads in the build layer).
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN pnpm install --frozen-lockfile --filter @furan/capture-worker... --prefer-offline \
-  || pnpm rebuild sharp
+RUN pnpm install --frozen-lockfile --filter @furan/capture-worker... --prefer-offline --ignore-scripts \
+  && pnpm rebuild sharp
 
 RUN pnpm --filter @furan/capture-worker... build
 
