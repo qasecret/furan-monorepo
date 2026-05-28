@@ -18,6 +18,12 @@
  *      (priority [ConfigPriority.SYSPROP])
  *      reads `-Dfuran.*` JVM properties verbatim; the literal string
  *      `"null"` is decoded to `null` for explicit clears.
+ *  - [io.furan.sdk.config.sources.YamlConfigSource]
+ *      (priority [ConfigPriority.YAML])
+ *      reads `application.yml` (or any YAML file / classpath resource);
+ *      flattens nested maps to dotted keys rooted at `furan.`. Lists
+ *      are kept as-is; scalar `null` / string `"null"` clear inherited
+ *      values per the null-clears merge rule.
  *  - [io.furan.sdk.config.sources.DefaultsConfigSource]
  *      (priority [ConfigPriority.DEFAULTS])
  *      SDK-shipped fallback values.
@@ -40,11 +46,10 @@
  *
  * ## What's NOT in this phase
  *
- *  - YAML / Properties file sources (planned for a follow-up).
  *  - Spring Environment integration (Phase 4 of the v2 spec).
  *  - Hot reload + EventBus publishing (Phase 2 of the v2 spec).
  *  - Binding into a typed `FuranConfig` (kept in the existing
- *    `FuranConfig.fromEnv()` path; integration deferred to a
- *    non-breaking follow-up).
+ *    `FuranConfig.fromEnv()` / `FuranConfig.fromYaml()` paths;
+ *    deep v2 integration deferred to a non-breaking follow-up).
  */
 package io.furan.sdk.config

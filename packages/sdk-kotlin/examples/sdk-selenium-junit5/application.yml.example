@@ -1,0 +1,25 @@
+# Furan SDK configuration — copy to `application.yml` (gitignored) and
+# fill in the four marked values.
+#
+# Loaded by `FuranConfig.fromYaml(path)` or by `FuranBootstrapper` when
+# `YamlConfigSource.forClasspath("application.yml")` is added to the
+# source list. Env vars (FURAN_*) still override every entry — handy
+# for CI without rewriting the YAML.
+#
+# How to fill in (same as local.properties.example):
+# 1. apiUrl: http://localhost:3000 (local) or your prod URL.
+# 2. apiToken: mint via dashboard /tokens or `POST /account/tokens`.
+# 3. projectId: UUID from `GET /projects`.
+# 4. branchName: usually `main` for local smoke; CI uses the feature branch.
+
+furan:
+  apiUrl: http://localhost:3000
+  apiToken: REPLACE_WITH_REAL_TOKEN
+  projectId: 00000000-0000-0000-0000-000000000000
+  branchName: main
+  dashboardUrl: http://localhost:3001
+  pollTimeoutSeconds: 60
+  pollIntervalSeconds: 2
+  viewports:
+    - { width: 1280, height: 720 }
+    - { width: 375, height: 812 }
