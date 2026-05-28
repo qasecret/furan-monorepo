@@ -129,14 +129,14 @@ export function InboxPage({
       <div className="flex h-full flex-col">
         <header
           id="inbox-header"
-          className="border-b border-zinc-900 px-4 py-4"
+          className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-900"
         >
           <h1 className="text-xl font-semibold">Inbox</h1>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
             All open runs across your projects · Press{" "}
             <kbd
               id="inbox-shortcut-hint"
-              className="rounded border border-zinc-800 bg-zinc-900 px-1 text-xs"
+              className="rounded border border-zinc-200 bg-zinc-50 px-1 text-xs dark:border-zinc-800 dark:bg-zinc-900"
             >
               ?
             </kbd>{" "}
@@ -188,14 +188,14 @@ function SkeletonList() {
       {Array.from({ length: 6 }).map((_, i) => (
         <li
           key={i}
-          className="flex items-center gap-3 border-b border-zinc-900 px-4 py-3"
+          className="flex items-center gap-3 border-b border-zinc-100 px-4 py-3 dark:border-zinc-900"
         >
-          <div className="h-4 w-4 animate-pulse rounded bg-zinc-800" />
+          <div className="h-4 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-4 w-1/3 animate-pulse rounded bg-zinc-800" />
-            <div className="h-3 w-1/4 animate-pulse rounded bg-zinc-900" />
+            <div className="h-4 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-3 w-1/4 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
           </div>
-          <div className="h-10 w-16 animate-pulse rounded bg-zinc-900" />
+          <div className="h-10 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
         </li>
       ))}
     </ul>

@@ -18,12 +18,16 @@ const VARIANT: Partial<
 > = {
   unresolved: {
     label: "Unresolved",
-    color: "bg-amber-400/15 text-amber-300 border-amber-500/30",
+    color:
+      "bg-amber-100 text-amber-900 border-amber-300 " +
+      "dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-500/30",
     Icon: AlertTriangle,
   },
   failed: {
     label: "Failed",
-    color: "bg-red-400/15 text-red-300 border-red-500/30",
+    color:
+      "bg-red-100 text-red-900 border-red-300 " +
+      "dark:bg-red-400/15 dark:text-red-300 dark:border-red-500/30",
     Icon: CircleAlert,
   },
 };

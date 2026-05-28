@@ -35,7 +35,7 @@ export function FilterBar({ status, window, groupBy }: Props) {
   return (
     <div
       data-testid="inbox-filter-bar"
-      className="sticky top-0 z-10 flex items-center gap-3 border-b border-zinc-900 bg-[#050505] px-4 py-3"
+      className="sticky top-0 z-10 flex items-center gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-900 dark:bg-[#050505]"
     >
       <Select
         value={status}
@@ -64,7 +64,7 @@ export function FilterBar({ status, window, groupBy }: Props) {
           <SelectItem value="all">All time</SelectItem>
         </SelectContent>
       </Select>
-      <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-300">
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
         <input
           type="checkbox"
           checked={groupBy}
