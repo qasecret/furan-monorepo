@@ -72,7 +72,7 @@ export function RunCommentPanel({ runId }: Props) {
 
   return (
     <div
-      className="border-t border-zinc-800 bg-zinc-950 p-3 space-y-2"
+      className="border-t border-zinc-200 bg-white p-3 space-y-2 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="comment-panel"
     >
       <div className="flex items-center justify-between">
@@ -96,7 +96,7 @@ export function RunCommentPanel({ runId }: Props) {
         onKeyDown={handleKeyDown}
         maxLength={MAX_LEN}
         rows={4}
-        className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-mono text-white placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-700 focus-visible:ring-1 focus-visible:ring-brand"
+        className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
         placeholder="Notes on this run…"
         data-testid="comment-textarea"
       />

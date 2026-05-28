@@ -28,23 +28,28 @@ const SEVERITY_STYLE: Record<
 > = {
   breaking: {
     variant: "outline",
-    className: "bg-red-500/10 text-red-400 border-red-500/20",
+    className:
+      "bg-red-100 text-red-900 border-red-300 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
   },
   major: {
     variant: "outline",
-    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    className:
+      "bg-orange-100 text-orange-900 border-orange-300 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20",
   },
   minor: {
     variant: "outline",
-    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    className:
+      "bg-yellow-100 text-yellow-900 border-yellow-300 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
   },
   cosmetic: {
     variant: "outline",
-    className: "bg-blue-500/10 text-blue-400 border-blue-500/20 border-dashed",
+    className:
+      "bg-blue-100 text-blue-900 border-blue-300 border-dashed dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
   },
   none: {
     variant: "outline",
-    className: "bg-zinc-900 text-zinc-400 border-zinc-800 border-dotted",
+    className:
+      "bg-zinc-100 text-zinc-700 border-zinc-200 border-dotted dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800",
   },
 };
 
@@ -82,9 +87,9 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         className={cn(
           "w-full text-left p-2 rounded-md border border-dashed transition-colors flex items-center gap-2",
           isSelected
-            ? "bg-zinc-900 ring-2 ring-brand border-zinc-700"
-            : "border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700",
-          matched ? "" : "border-amber-500/30",
+            ? "bg-zinc-200 ring-2 ring-brand border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+            : "border-zinc-200 hover:bg-zinc-100/70 hover:border-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-900/50 dark:hover:border-zinc-700",
+          matched ? "" : "border-amber-300 dark:border-amber-500/30",
         )}
         data-region-id={region.id}
         data-source="dynamic_text"
@@ -93,13 +98,13 @@ export function RegionItem({ region }: { region: DiffRegion }) {
           variant="outline"
           className={
             matched
-              ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
-              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20"
+              : "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
           }
         >
           {matched ? "Dynamic text · matched" : "Dynamic text · NOT matched"}
         </Badge>
-        <span className="text-xs font-mono truncate text-zinc-300">
+        <span className="text-xs font-mono truncate text-zinc-700 dark:text-zinc-300">
           &quot;{region.ocrText ?? ""}&quot;
         </span>
       </button>
@@ -115,8 +120,8 @@ export function RegionItem({ region }: { region: DiffRegion }) {
       className={cn(
         "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1",
         isSelected
-          ? "bg-zinc-900 ring-2 ring-brand border-zinc-700"
-          : "border-zinc-800 hover:bg-zinc-900/50 hover:border-zinc-700",
+          ? "bg-zinc-200 ring-2 ring-brand border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
+          : "border-zinc-200 hover:bg-zinc-100/70 hover:border-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-900/50 dark:hover:border-zinc-700",
       )}
       data-region-id={region.id}
     >
@@ -132,7 +137,9 @@ export function RegionItem({ region }: { region: DiffRegion }) {
           {region.category}
         </span>
       </div>
-      <p className="text-sm text-zinc-200 line-clamp-2">{region.description}</p>
+      <p className="text-sm text-zinc-800 line-clamp-2 dark:text-zinc-200">
+        {region.description}
+      </p>
     </button>
   );
 }

@@ -80,11 +80,11 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
 
   return (
     <aside
-      className="border-l border-zinc-800 bg-zinc-950 flex flex-col w-80 max-w-[40vw]"
+      className="border-l border-zinc-200 bg-white flex flex-col w-80 max-w-[40vw] dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="region-list-panel"
     >
-      <div className="p-2 border-b border-zinc-800 flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-sm font-medium text-zinc-200">
+      <div className="p-2 border-b border-zinc-200 flex items-center justify-between gap-2 flex-wrap dark:border-zinc-800">
+        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
           Regions ({filtered.length})
         </span>
         <div className="flex gap-1">
@@ -92,7 +92,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
+                className="text-xs rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 transition-colors dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
                 data-testid="severity-filter-trigger"
               >
                 {severityFilter === "all"
@@ -116,7 +116,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs rounded-md border border-zinc-800 px-2 py-1 text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
+                className="text-xs rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 transition-colors dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
                 data-testid="category-filter-trigger"
               >
                 {categoryFilter === "all" ? "All categories" : categoryFilter}
@@ -135,7 +135,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             </DropdownMenuContent>
           </DropdownMenu>
           <label
-            className="flex items-center gap-1 text-xs px-2 py-1 text-zinc-400"
+            className="flex items-center gap-1 text-xs px-2 py-1 text-zinc-600 dark:text-zinc-400"
             data-testid="show-suppressed-toggle"
           >
             <input
@@ -154,7 +154,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
             className="flex flex-col items-center justify-center gap-1 p-6 text-center"
             data-testid="regions-empty-state"
           >
-            <div className="text-sm font-medium text-zinc-300">
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               {regions.length === 0
                 ? "No differences detected"
                 : "No regions match the active filters"}

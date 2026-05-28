@@ -249,13 +249,21 @@ export function DiffViewer({ runId, diffId }: Props) {
   });
 
   if (isLoading)
-    return <div className="p-4 text-sm text-zinc-400">Loading…</div>;
+    return (
+      <div className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
+        Loading…
+      </div>
+    );
   if (error)
     return (
       <div className="p-4 text-sm text-red-400">Error: {error.message}</div>
     );
   if (!data)
-    return <div className="p-4 text-sm text-zinc-400">No run data.</div>;
+    return (
+      <div className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
+        No run data.
+      </div>
+    );
 
   const regions = (data.diffRegions ?? []) as DiffRegion[];
 
@@ -273,17 +281,17 @@ export function DiffViewer({ runId, diffId }: Props) {
         data-testid="diff-viewer-mobile-gate"
       >
         <div className="max-w-sm space-y-3">
-          <h2 className="text-base font-semibold text-white">
+          <h2 className="text-base font-semibold text-zinc-950 dark:text-white">
             Diff review needs a wider screen
           </h2>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Reviewing pixel diffs and editing ignore regions both need the
             side-by-side canvas + region sidebar to be visible. Open this run on
             tablet or desktop to continue.
           </p>
           <p className="text-xs text-zinc-500">
             Run status:{" "}
-            <span className="font-mono text-zinc-300">
+            <span className="font-mono text-zinc-700 dark:text-zinc-300">
               {data?.status ?? "loading"}
             </span>
           </p>
@@ -312,11 +320,11 @@ export function DiffViewer({ runId, diffId }: Props) {
                 hasElementMap={!!elementMap}
               />
             </div>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
               <BaselineSourceBadge source={baselineSource} />
               {data.autoApproved && (
                 <span
-                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-300"
+                  className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
                   data-testid="auto-approved-badge"
                   title="System-approved: candidate's image bytes matched the baseline exactly."
                 >
