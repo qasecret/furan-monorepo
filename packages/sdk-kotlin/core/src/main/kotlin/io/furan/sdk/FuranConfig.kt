@@ -180,6 +180,39 @@ data class FuranConfig(
             throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
         }
 
+        /**
+         * Auto-discovery factory: looks up [resource] (default
+         * `application.yml`) on the JVM classpath via the context class
+         * loader. Mirrors `YamlConfigSource.forClasspath()` and matches
+         * the ReportPortal `reportportal.properties` pattern — drop the
+         * file under `src/test/resources/` (or any classpath root) and
+         * the SDK picks it up without an explicit path.
+         *
+         * Same precedence as [fromYaml]: env vars override YAML values.
+         * Missing resource is fatal here (callers asked for classpath
+         * discovery and got nothing); use [fromYaml] with [java.nio.file.Files.exists]
+         * if you want a tolerant fallback.
+         */
+        fun fromClasspath(
+            resource: String = "application.yml",
+            env: Map<String, String> = System.getenv(),
+        ): FuranConfig = try {
+            val yamlSource = io.furan.sdk.config.sources.YamlConfigSource.forClasspath(resource)
+            val yaml = yamlSource.load()
+            if (yaml.isEmpty() && env["FURAN_API_TOKEN"] == null) {
+                throw FuranConfigException(
+                    "Classpath resource '$resource' not found and FURAN_* env vars are unset",
+                )
+            }
+            buildMerged(yaml, env)
+        } catch (e: FuranConfigException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        } catch (e: IllegalStateException) {
+            throw FuranConfigException(e.message ?: "Invalid FuranConfig", e)
+        }
+
         private fun buildMerged(yaml: Map<String, Any?>, env: Map<String, String>): FuranConfig {
             fun yamlString(key: String): String? = yaml["furan.$key"]?.toString()
             fun yamlLong(key: String): Long? =
