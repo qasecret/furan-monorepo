@@ -3,12 +3,16 @@ import io.furan.sdk.selenium.Furan
 import org.junit.jupiter.api.Test
 import org.openqa.selenium.By
 import org.openqa.selenium.chrome.ChromeDriver
+import org.openqa.selenium.chrome.ChromeOptions
 
 class GoogleTest {
 
   @Test
   fun googleTest() {
-    val driver = ChromeDriver()
+    val options = ChromeOptions().apply {
+      addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
+    }
+    val driver = ChromeDriver(options)
     val furan = Furan(driver, FuranConfig.fromClasspath())
     try {
       driver.get("https://google.com")
