@@ -22,6 +22,7 @@ vi.mock("@/lib/trpc", () => ({
             viaKeyboard: 9,
             sessions: 5,
             medianMsPerAction: 4500,
+            medianTimeToFirstActionMs: 8000,
             approveRate: 0.667,
             rejectRate: 0.333,
             keyboardRate: 0.75,

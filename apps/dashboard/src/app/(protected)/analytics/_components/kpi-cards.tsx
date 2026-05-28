@@ -5,6 +5,7 @@ interface Summary {
   approveRate: number;
   keyboardRate: number;
   medianMsPerAction: number;
+  medianTimeToFirstActionMs: number;
 }
 
 interface Props {
@@ -42,9 +43,9 @@ export function KpiCards({ summary, isLoading }: Props) {
       sub: "a/r vs mouse click",
     },
     {
-      label: "Median pace",
-      value: summary ? fmtMs(summary.medianMsPerAction) : "—",
-      sub: "per action",
+      label: "Time to first action",
+      value: summary ? fmtMs(summary.medianTimeToFirstActionMs) : "—",
+      sub: "median across sessions",
     },
   ];
 
