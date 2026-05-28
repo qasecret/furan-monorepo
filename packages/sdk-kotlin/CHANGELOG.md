@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.14.0...sdk/v0.15.0) (2026-05-28)
+
+
+### Features
+
+* **sdk-kotlin:** auto-discover classpath application.yml + FuranConfig.fromClasspath() ([#178](https://github.com/qasecret/furan-monorepo/issues/178)) ([b15b745](https://github.com/qasecret/furan-monorepo/commit/b15b745f4737469ab4620bcce65c7b1baf82fa77))
+
 ## [0.14.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v0.13.0...sdk/v0.14.0) (2026-05-28)
 
 
