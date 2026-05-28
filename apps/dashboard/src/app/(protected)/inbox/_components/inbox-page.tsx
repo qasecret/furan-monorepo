@@ -11,7 +11,7 @@ import { Pagination } from "./pagination";
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
 import { ShortcutsDialog } from "@/components/triage/shortcuts-dialog";
-import { useInboxRealtime } from "@/hooks/useInboxRealtime";
+import { InboxRealtime } from "@/hooks/InboxRealtime";
 import { recordTelemetry } from "@/lib/telemetry";
 import { trpc } from "@/lib/trpc";
 
@@ -26,8 +26,6 @@ export function InboxPage({
   initialWindow,
   initialGroup,
 }: Props) {
-  useInboxRealtime();
-
   const [cursor, setCursor] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -123,6 +121,7 @@ export function InboxPage({
         Escape: () => setShortcutsOpen(false),
       }}
     >
+      <InboxRealtime />
       <div className="flex h-full flex-col">
         <header
           id="inbox-header"
