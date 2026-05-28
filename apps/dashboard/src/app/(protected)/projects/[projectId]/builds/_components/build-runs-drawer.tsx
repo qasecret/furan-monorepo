@@ -42,7 +42,11 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
   });
 
   if (isLoading) {
-    return <div className="px-6 py-3 text-sm text-zinc-400">Loading…</div>;
+    return (
+      <div className="px-6 py-3 text-sm text-zinc-600 dark:text-zinc-400">
+        Loading…
+      </div>
+    );
   }
   if (error) {
     return (
@@ -55,16 +59,21 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
 
   return (
     <div
-      className="border-t border-zinc-800 bg-zinc-900/40 px-6 py-3 space-y-2"
+      className="border-t border-zinc-200 bg-zinc-100/60 px-6 py-3 space-y-2 dark:border-zinc-800 dark:bg-zinc-900/40"
       data-testid={`build-runs-drawer-${buildId}`}
     >
       {items.length === 0 ? (
-        <div className="text-sm text-zinc-400">No runs in this build.</div>
+        <div className="text-sm text-zinc-600 dark:text-zinc-400">
+          No runs in this build.
+        </div>
       ) : (
         <table className="w-full text-sm">
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {items.map((r) => (
-              <tr key={r.id} className="hover:bg-zinc-900/30 transition-colors">
+              <tr
+                key={r.id}
+                className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
+              >
                 <td className="py-1.5 px-2">
                   <Link
                     href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
@@ -81,7 +90,7 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
                     ? `${r.diffPercent.toFixed(2)}%`
                     : "—"}
                 </td>
-                <td className="py-1.5 px-2 text-zinc-500">
+                <td className="py-1.5 px-2 text-zinc-500 dark:text-zinc-500">
                   {relative(r.createdAt)}
                 </td>
               </tr>

@@ -91,7 +91,7 @@ export function BuildsTable({ projectId }: Props) {
         <EmptyBuildsState projectId={projectId} />
       ) : (
         <div
-          className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden"
+          className="rounded-xl border border-zinc-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-950"
           data-testid="builds-table"
         >
           {items.map((b) => (
@@ -126,13 +126,17 @@ export function BuildsTable({ projectId }: Props) {
 
 function EmptyBuildsState({ projectId }: { projectId: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 p-6 text-sm text-zinc-300">
-      <p className="font-medium text-white">No builds yet for this project.</p>
-      <p className="mt-1 text-zinc-400">
-        Connect the SDK to start sending runs. Project id:{" "}
-        <code className="font-mono text-xs text-zinc-300">{projectId}</code>
+    <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-6 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-300">
+      <p className="font-medium text-zinc-950 dark:text-white">
+        No builds yet for this project.
       </p>
-      <pre className="mt-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900 text-zinc-100 p-3 text-xs">
+      <p className="mt-1 text-zinc-600 dark:text-zinc-400">
+        Connect the SDK to start sending runs. Project id:{" "}
+        <code className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+          {projectId}
+        </code>
+      </p>
+      <pre className="mt-3 overflow-x-auto rounded-md border border-zinc-200 bg-zinc-100 text-zinc-900 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
         {`# Gradle dependency
 implementation("io.github.qasecret:furan-selenium:${FURAN_SDK_VERSION}")
 

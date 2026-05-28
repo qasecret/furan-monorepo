@@ -112,10 +112,10 @@ export default async function ProjectRunsPage({
   if (project.status === 403 || !project.data) {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-white">
+        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
           403 — not a project member
         </h1>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           You need to be added to this project to view its runs.
         </p>
       </Card>
@@ -126,12 +126,14 @@ export default async function ProjectRunsPage({
     <div className="space-y-4">
       <PageTour pageId="runs-index" steps={RUNS_PAGE_TOUR} />
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-white">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
           Runs
         </h1>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Project:{" "}
-          <span className="font-medium text-zinc-200">{project.data.name}</span>
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">
+            {project.data.name}
+          </span>
         </p>
       </div>
       <RunsTable

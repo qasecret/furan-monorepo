@@ -48,8 +48,10 @@ export default async function ProjectsPage() {
   if (projectsRes.status === 401 || projectsRes.status === 403) {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-white">Not authorized</h1>
-        <p className="text-sm text-zinc-400">
+        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+          Not authorized
+        </h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Your session may have expired. Try signing in again.
         </p>
       </Card>
@@ -66,7 +68,7 @@ export default async function ProjectsPage() {
     <div className="space-y-4">
       <PageTour pageId="projects-index" steps={PROJECTS_PAGE_TOUR} />
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
           Projects
         </h1>
         {role === "admin" && (
@@ -86,11 +88,13 @@ export default async function ProjectsPage() {
             className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
             data-testid={`project-card-${p.id}`}
           >
-            <Card className="h-full hover:border-zinc-700 transition-colors">
-              <h2 className="text-lg font-semibold text-white">{p.name}</h2>
-              <p className="text-sm text-zinc-400">
+            <Card className="h-full hover:border-zinc-300 transition-colors dark:hover:border-zinc-700">
+              <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
+                {p.name}
+              </h2>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
                 Main branch:{" "}
-                <code className="font-mono text-xs text-zinc-300">
+                <code className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
                   {p.mainBranchName}
                 </code>
               </p>

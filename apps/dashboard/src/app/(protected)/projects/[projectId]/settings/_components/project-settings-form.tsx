@@ -265,10 +265,10 @@ function EngineKnobsEditor({
 
   return (
     <div
-      className="space-y-3 rounded-md border border-zinc-800 bg-zinc-900/40 p-3"
+      className="space-y-3 rounded-md border border-zinc-200 bg-zinc-100/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
       data-testid={`engine-knobs-${engine}`}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
         {engine} knobs
       </p>
       {knobs.map((knob) => {
@@ -285,11 +285,13 @@ function EngineKnobsEditor({
               <div>
                 <label
                   htmlFor={`engine-${engine}-${knob.key}`}
-                  className="text-sm font-medium text-zinc-200"
+                  className="text-sm font-medium text-zinc-800 dark:text-zinc-200"
                 >
                   {knob.label}
                 </label>
-                <p className="text-xs text-zinc-500">{knob.help}</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                  {knob.help}
+                </p>
               </div>
               <Switch
                 id={`engine-${engine}-${knob.key}`}
@@ -309,7 +311,7 @@ function EngineKnobsEditor({
           <div key={knob.key} className="space-y-1">
             <label
               htmlFor={`engine-${engine}-${knob.key}`}
-              className="block text-sm font-medium text-zinc-200"
+              className="block text-sm font-medium text-zinc-800 dark:text-zinc-200"
             >
               {knob.label} ({value})
             </label>
@@ -327,7 +329,9 @@ function EngineKnobsEditor({
               disabled={disabled}
               data-testid={`engine-${engine}-${knob.key}`}
             />
-            <p className="text-xs text-zinc-500">{knob.help}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+              {knob.help}
+            </p>
           </div>
         );
       })}
@@ -399,13 +403,21 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
   const isGuest = userRole === "guest";
 
   if (isLoading) {
-    return <div className="text-sm text-zinc-400">Loading settings…</div>;
+    return (
+      <div className="text-sm text-zinc-600 dark:text-zinc-400">
+        Loading settings…
+      </div>
+    );
   }
   if (error) {
     return <div className="text-sm text-red-400">Error: {error.message}</div>;
   }
   if (!project) {
-    return <div className="text-sm text-zinc-400">No project data.</div>;
+    return (
+      <div className="text-sm text-zinc-600 dark:text-zinc-400">
+        No project data.
+      </div>
+    );
   }
 
   const onSubmit = (values: FormValues): void => {
@@ -615,7 +627,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     <textarea
                       {...field}
                       rows={4}
-                      className="w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-mono text-white placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-700 focus-visible:ring-1 focus-visible:ring-brand"
+                      className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
                       data-testid="image-config-textarea"
                     />
                   </FormControl>

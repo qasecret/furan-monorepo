@@ -75,7 +75,7 @@ export function BuildRow({
 
   return (
     <div
-      className="border-b border-zinc-800 last:border-0 px-4 py-3 hover:bg-zinc-900/30 transition-colors cursor-pointer"
+      className="border-b border-zinc-200 last:border-0 px-4 py-3 hover:bg-zinc-100/60 transition-colors cursor-pointer dark:border-zinc-800 dark:hover:bg-zinc-900/30"
       onClick={onToggleExpand}
       data-testid={`build-row-${build.id}`}
     >
@@ -85,10 +85,14 @@ export function BuildRow({
             <span className="font-medium">{displayName(build)}</span>
             <BuildStatusBadge status={build.aggregateStatus} />
             {build.branchName && (
-              <span className="text-xs text-zinc-500">{build.branchName}</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-500">
+                {build.branchName}
+              </span>
             )}
           </div>
-          <div className="text-xs text-zinc-400 mt-0.5">{summary}</div>
+          <div className="text-xs text-zinc-600 mt-0.5 dark:text-zinc-400">
+            {summary}
+          </div>
         </div>
         <div className="flex flex-wrap gap-1 max-w-md">
           {visibleProps.map(([k, v]) => (
@@ -115,10 +119,10 @@ export function BuildRow({
             </Badge>
           )}
         </div>
-        <div className="text-xs text-zinc-500 whitespace-nowrap">
+        <div className="text-xs text-zinc-500 whitespace-nowrap dark:text-zinc-500">
           {relative(build.createdAt)}
         </div>
-        <span aria-hidden className="text-zinc-500">
+        <span aria-hidden className="text-zinc-500 dark:text-zinc-500">
           {expanded ? "▾" : "▸"}
         </span>
       </div>

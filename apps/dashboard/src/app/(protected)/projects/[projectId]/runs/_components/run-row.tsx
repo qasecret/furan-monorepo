@@ -55,7 +55,7 @@ function relative(date: string | Date): string {
 export function RunRow({ projectId, run }: Props) {
   return (
     <tr
-      className="hover:bg-zinc-900/30 transition-colors"
+      className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
       data-testid={`queue-row-${run.id}`}
     >
       <td className="px-4 py-2.5">
@@ -68,7 +68,7 @@ export function RunRow({ projectId, run }: Props) {
         {run.buildId && (
           <Link
             href={`/projects/${projectId}/builds?expand=${run.buildId}`}
-            className="ml-2 inline-flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-900/70 hover:text-white transition-colors"
+            className="ml-2 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
             data-testid={`run-build-chip-${run.id}`}
           >
             {run.buildName ??
@@ -80,7 +80,7 @@ export function RunRow({ projectId, run }: Props) {
         {run.testVariationId && (
           <Link
             href={`/projects/${projectId}/variations/${run.testVariationId}`}
-            className="ml-2 inline-flex items-center rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-900/70 hover:text-white transition-colors"
+            className="ml-2 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
             data-testid={`run-history-chip-${run.id}`}
           >
             History

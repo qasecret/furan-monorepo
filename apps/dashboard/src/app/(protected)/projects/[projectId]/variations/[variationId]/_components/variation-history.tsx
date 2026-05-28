@@ -36,10 +36,10 @@ export function VariationHistory({ projectId, variationId }: Props) {
   if (variation.error?.data?.code === "NOT_FOUND") {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-white">
+        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
           404 — variation not found
         </h1>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           The variation may have been deleted, or the id is invalid.{" "}
           <Link
             href={`/projects/${projectId}/runs`}
@@ -54,10 +54,10 @@ export function VariationHistory({ projectId, variationId }: Props) {
   if (variation.error?.data?.code === "FORBIDDEN") {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-white">
+        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
           403 — not a project member
         </h1>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
           You need to be added to this project to view its variation history.
         </p>
       </Card>
@@ -119,17 +119,23 @@ export function VariationHistory({ projectId, variationId }: Props) {
           ← Runs
         </Link>
         <span
-          className="font-mono font-medium text-white"
+          className="font-mono font-medium text-zinc-950 dark:text-white"
           data-testid="variation-name"
         >
           {variation.data.name}
         </span>
-        <span className="text-zinc-600">·</span>
-        <span className="text-zinc-400">{variation.data.browser ?? "—"}</span>
-        <span className="text-zinc-600">·</span>
-        <span className="text-zinc-400">{variation.data.viewport ?? "—"}</span>
-        <span className="text-zinc-600">·</span>
-        <span className="text-zinc-400">{variation.data.totalRuns} runs</span>
+        <span className="text-zinc-400 dark:text-zinc-600">·</span>
+        <span className="text-zinc-600 dark:text-zinc-400">
+          {variation.data.browser ?? "—"}
+        </span>
+        <span className="text-zinc-400 dark:text-zinc-600">·</span>
+        <span className="text-zinc-600 dark:text-zinc-400">
+          {variation.data.viewport ?? "—"}
+        </span>
+        <span className="text-zinc-400 dark:text-zinc-600">·</span>
+        <span className="text-zinc-600 dark:text-zinc-400">
+          {variation.data.totalRuns} runs
+        </span>
       </header>
       <DiffPercentSparkline runs={sparklineRuns} />
       <HistoryTable

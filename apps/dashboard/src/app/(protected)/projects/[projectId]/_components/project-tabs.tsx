@@ -34,7 +34,7 @@ export function ProjectTabs({ projectId }: Props) {
 
   return (
     <nav
-      className="flex items-center gap-1 border-b border-zinc-800"
+      className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800"
       data-testid="project-tabs"
     >
       {tabs.map((t) => {
@@ -48,8 +48,8 @@ export function ProjectTabs({ projectId }: Props) {
             className={cn(
               "relative inline-flex h-10 items-center justify-center px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
               isActive
-                ? "text-brand after:absolute after:inset-x-0 after:bottom-[-1px] after:h-px after:bg-brand"
-                : "text-zinc-400 hover:text-zinc-200",
+                ? "text-zinc-900 after:absolute after:inset-x-0 after:bottom-[-1px] after:h-px after:bg-brand dark:text-brand"
+                : "text-zinc-600 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200",
             )}
           >
             {t.label}
