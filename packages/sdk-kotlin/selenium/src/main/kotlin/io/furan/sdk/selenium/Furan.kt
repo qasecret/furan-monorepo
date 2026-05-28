@@ -29,9 +29,10 @@ import java.io.Closeable
  * furan.close()
  * ```
  *
- * Lazy-initializes a Build + Run on the first `snapshot()` call. Subsequent
- * snapshots reuse the same run id. `close()` flushes any buffered snapshots
- * and posts anonymous telemetry.
+ * Lazy-initializes a Build on the first `snapshot()` call; each subsequent
+ * `snapshot(name)` / `snapshotAndAwait(name)` creates its OWN test_run under
+ * that build (Applitools/VRT parity, ADR-037). `close()` flushes any
+ * buffered snapshots and posts anonymous telemetry.
  */
 class Furan(
     private val driver: WebDriver,
@@ -57,13 +58,15 @@ class Furan(
     }
 
     private val client = FuranClient(config, adapter = "selenium")
-    private val createRunMutex = Mutex()
+    private val ensureBuildMutex = Mutex()
 
-    @Volatile private var runId: String? = null
     @Volatile private var buildId: String? = config.buildId
 
     /**
-     * Capture a screenshot + DOM at each viewport and upload.
+     * Capture a screenshot + DOM at each viewport and upload. Each call
+     * creates its own test_variation + test_run keyed by `name` on the
+     * server (Applitools/VRT parity, ADR-037). All runs from this Furan
+     * instance share the same build.
      *
      * @param name Logical snapshot name (e.g., "checkout-page").
      * @param mask Optional CSS selectors to mask in the diff (server honors these).
@@ -76,15 +79,32 @@ class Furan(
         viewports: List<Viewport>? = null,
     ) = runBlocking {
         val targets = viewports ?: config.viewports
-        val resolvedRunId = ensureRun(targets.firstOrNull())
+        val resolvedBuildId = ensureBuild()
 
         for (vp in targets) {
+            val runId = client.createRun(
+                CreateRunRequest(
+                    projectId = config.projectId,
+                    buildId = resolvedBuildId,
+                    branchName = config.branchName,
+                    name = name,
+                    browser = "selenium",
+                    viewport = "${vp.width}x${vp.height}",
+                    // Inline per-test overrides land on the initial
+                    // insert so the first diff job uses them — no
+                    // setIgnoreAreas + re-enqueue trip. The dashboard
+                    // can still amend later via tRPC mutations.
+                    diffTolerance = diffTolerance,
+                    ignoreAreas = ignoreAreas,
+                ),
+            ).id
+
             driver.manage().window().size = Dimension(vp.width, vp.height)
             val pngBytes = captureScreenshot(driver)
             val domHtml = runCatching { captureDom(driver) }.getOrNull()
             val elementMapJson = captureElementBboxes(driver)
             client.uploadSnapshot(
-                runId = resolvedRunId,
+                runId = runId,
                 snap = Snapshot(
                     name = name,
                     viewport = vp,
@@ -101,7 +121,8 @@ class Furan(
     /**
      * Capture + upload a single snapshot, then BLOCK until the diff
      * worker produces a terminal status. Returns a typed
-     * [SnapshotResult] for assertion-friendly access.
+     * [SnapshotResult] for assertion-friendly access. Each call creates
+     * its own test_run keyed by `name` (ADR-037).
      *
      * Unlike [snapshot], this path bypasses the SDK's snapshot batch
      * (a batch flush would defeat the point of awaiting a single
@@ -128,7 +149,24 @@ class Furan(
         viewport: Viewport? = null,
     ): SnapshotResult = runBlocking {
         val vp = viewport ?: config.viewports.first()
-        val resolvedRunId = ensureRun(vp)
+        val resolvedBuildId = ensureBuild()
+
+        val runId = client.createRun(
+            CreateRunRequest(
+                projectId = config.projectId,
+                buildId = resolvedBuildId,
+                branchName = config.branchName,
+                name = name,
+                browser = "selenium",
+                viewport = "${vp.width}x${vp.height}",
+                // Inline per-test overrides land on the initial
+                // insert so the first diff job uses them — no
+                // setIgnoreAreas + re-enqueue trip. The dashboard
+                // can still amend later via tRPC mutations.
+                diffTolerance = diffTolerance,
+                ignoreAreas = ignoreAreas,
+            ),
+        ).id
 
         driver.manage().window().size = Dimension(vp.width, vp.height)
         val pngBytes = captureScreenshot(driver)
@@ -136,7 +174,7 @@ class Furan(
         val elementMapJson = captureElementBboxes(driver)
 
         client.snapshotAndAwait(
-            runId = resolvedRunId,
+            runId = runId,
             snap = Snapshot(
                 name = name,
                 viewport = vp,
@@ -150,48 +188,27 @@ class Furan(
     }
 
     /**
-     * Double-checked-locking via a coroutine Mutex (avoids returning from inside
-     * a `synchronized { return runBlocking { ... } }` block, which doesn't
-     * compile cleanly when the outer fn is suspend).
+     * Build is shared across all snapshot() / snapshotAndAwait() calls
+     * from one Furan instance. Double-checked-locking via a coroutine
+     * Mutex (avoids returning from inside a `synchronized { return
+     * runBlocking { ... } }` block, which doesn't compile cleanly when
+     * the outer fn is suspend).
      */
-    private suspend fun ensureRun(firstViewport: Viewport?): String {
-        runId?.let { return it }
-        createRunMutex.withLock {
-            runId?.let { return it }
-
-            val resolvedBuildId = buildId ?: run {
-                val build = client.createBuild(
-                    CreateBuildRequest(
-                        ciBuildId = config.buildId,
-                        branchName = config.branchName,
-                        name = config.name,
-                        properties = config.properties.takeIf { it.isNotEmpty() },
-                    ),
-                )
-                buildId = build.id
-                build.id
-            }
-
-            val viewportStr = firstViewport?.let { "${it.width}x${it.height}" }
-            val run = client.createRun(
-                CreateRunRequest(
-                    projectId = config.projectId,
-                    buildId = resolvedBuildId,
+    private suspend fun ensureBuild(): String {
+        buildId?.let { return it }
+        ensureBuildMutex.withLock {
+            buildId?.let { return it }
+            val build = client.createBuild(
+                CreateBuildRequest(
+                    ciBuildId = config.buildId,
                     branchName = config.branchName,
-                    name = "snapshot-run",
-                    browser = "selenium",
-                    viewport = viewportStr,
-                    // Inline per-test overrides land on the initial
-                    // insert so the first diff job uses them — no
-                    // setIgnoreAreas + re-enqueue trip. The dashboard
-                    // can still amend later via tRPC mutations.
-                    diffTolerance = diffTolerance,
-                    ignoreAreas = ignoreAreas,
+                    name = config.name,
+                    properties = config.properties.takeIf { it.isNotEmpty() },
                 ),
             )
-            runId = run.id
+            buildId = build.id
         }
-        return runId!!
+        return buildId!!
     }
 
     override fun close() {
