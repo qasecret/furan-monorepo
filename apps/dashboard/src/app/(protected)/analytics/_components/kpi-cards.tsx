@@ -17,8 +17,12 @@ function fmtPercent(n: number): string {
   return `${(n * 100).toFixed(0)}%`;
 }
 
-function fmtMs(ms: number): string {
-  if (ms <= 0) return "—";
+function fmtMs(ms: number | null | undefined): string {
+  // Guard NaN / Infinity / null / undefined / non-positive — all collapse
+  // to the "no data" em-dash. Without this, `medianTimeToFirstActionMs`
+  // returning null/undefined (no qualifying sessions in the window)
+  // produced "NaNm" via `(NaN / 60).toFixed(1)`.
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "—";
   if (ms < 1000) return `${ms.toFixed(0)}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
