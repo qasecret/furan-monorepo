@@ -20,23 +20,25 @@ export function AnalyticsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-zinc-900 px-4 py-4">
+      <header className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-900">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">Analytics</h1>
-            <p className="text-sm text-zinc-400">
+            <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+              Analytics
+            </h1>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
               Reviewer activity, sourced from dashboard telemetry events.
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 p-1">
+          <div className="flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
             {WINDOWS.map((w) => (
               <button
                 key={w}
                 onClick={() => setDays(w)}
                 className={
                   w === days
-                    ? "rounded px-2 py-1 text-xs font-medium bg-zinc-700 text-white"
-                    : "rounded px-2 py-1 text-xs font-medium text-zinc-400 hover:text-white"
+                    ? "rounded px-2 py-1 text-xs font-medium bg-zinc-300 text-zinc-950 dark:bg-zinc-700 dark:text-white"
+                    : "rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
                 }
                 data-testid={`analytics-window-${w}d`}
               >
@@ -51,7 +53,7 @@ export function AnalyticsPage() {
         <KpiCards summary={summary.data} isLoading={summary.isLoading} />
 
         <section>
-          <h2 className="mb-3 text-sm font-medium text-zinc-300">
+          <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Actions per day
           </h2>
           <ActionsByDayChart
@@ -61,7 +63,7 @@ export function AnalyticsPage() {
         </section>
 
         <section>
-          <h2 className="mb-3 text-sm font-medium text-zinc-300">
+          <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Top reviewers
           </h2>
           <TopReviewers

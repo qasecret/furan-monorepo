@@ -24,19 +24,19 @@ interface Props {
 export function TopReviewers({ items, isLoading }: Props) {
   if (isLoading) {
     return (
-      <div className="h-64 rounded-lg border border-zinc-800 bg-zinc-900/30 animate-pulse" />
+      <div className="h-64 rounded-lg border border-zinc-200 bg-zinc-50 animate-pulse dark:border-zinc-800 dark:bg-zinc-900/30" />
     );
   }
   if (items.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/30 text-sm text-zinc-500">
+      <div className="flex h-64 items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-500">
         No reviewer activity in this window.
       </div>
     );
   }
   // Recharts horizontal bars: pass `layout="vertical"` and X = number, Y = category.
   return (
-    <div className="h-64 rounded-lg border border-zinc-800 bg-zinc-900/30 p-3">
+    <div className="h-64 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           layout="vertical"
@@ -48,31 +48,35 @@ export function TopReviewers({ items, isLoading }: Props) {
         >
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="#27272a"
+            stroke="var(--chart-grid)"
             horizontal={false}
           />
           <XAxis
             type="number"
-            stroke="#71717a"
+            stroke="var(--chart-axis)"
             fontSize={11}
             allowDecimals={false}
           />
           <YAxis
             type="category"
             dataKey="email"
-            stroke="#71717a"
+            stroke="var(--chart-axis)"
             fontSize={11}
             width={150}
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: "#09090b",
-              border: "1px solid #27272a",
+              backgroundColor: "var(--chart-tooltip-bg)",
+              border: "1px solid var(--chart-tooltip-border)",
               borderRadius: 6,
               fontSize: 12,
             }}
           />
-          <Bar dataKey="actions" fill="#a8ff53" radius={[0, 4, 4, 0]} />
+          <Bar
+            dataKey="actions"
+            fill="var(--chart-bar)"
+            radius={[0, 4, 4, 0]}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
