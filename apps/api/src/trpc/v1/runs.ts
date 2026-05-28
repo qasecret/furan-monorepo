@@ -241,6 +241,18 @@ export async function approveRun(
     ...(run.branchName ? { branchName: run.branchName } : {}),
   });
 
+  // ADR-037: persist run.ignoreAreas onto variation.ignoreAreas so future
+  // runs of the same variation inherit the reviewer's choices as defaults.
+  // Mirrors legacy backend's approve() at test-runs.service.ts:129-137.
+  // Idempotent: writing the same value twice is a no-op; null run.ignoreAreas
+  // means the reviewer drew nothing — keep variation unchanged.
+  if (run.ignoreAreas) {
+    await ctx.db
+      .update(testVariations)
+      .set({ ignoreAreas: run.ignoreAreas, updatedAt: new Date() })
+      .where(eq(testVariations.id, run.testVariationId));
+  }
+
   await ctx.broadcaster.publishProjectEvent(run.projectId, {
     event: "testRun_updated",
     data: { id: run.id },
