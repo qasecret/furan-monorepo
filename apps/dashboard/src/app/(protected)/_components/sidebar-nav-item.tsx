@@ -39,13 +39,15 @@ export function SidebarNavItem({ icon, label, href, badge }: Props) {
       href={href}
       data-testid={`sidebar-nav-${href.replace(/^\//, "").replace(/\//g, "-")}`}
       className={cn(
-        "relative flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+        "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950",
         isActive
-          ? "bg-zinc-100 text-zinc-900 border-l-2 border-brand pl-[10px] -ml-px dark:bg-zinc-900 dark:text-brand"
-          : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/60 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50",
+          ? "border-brand/30 bg-brand/10 text-zinc-900 dark:text-brand"
+          : "border-transparent text-zinc-600 hover:bg-zinc-100/60 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/60 dark:hover:text-white",
       )}
     >
-      {icon}
+      <span className={cn(isActive ? "text-brand" : "text-current")}>
+        {icon}
+      </span>
       <span className="truncate">{label}</span>
       {badge}
     </Link>

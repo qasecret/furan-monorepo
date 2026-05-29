@@ -7,6 +7,7 @@ import { ApprovalBar } from "./ApprovalBar";
 import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
+import { ContextualHeader } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -387,6 +388,28 @@ export function DiffViewer({
         </div>
       </div>
       <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
+        <ContextualHeader
+          breadcrumb={[
+            { label: "Projects", href: "/projects" },
+            {
+              label: project?.name ?? "Project",
+              href: `/projects/${data.projectId}`,
+            },
+            { label: "Runs", href: `/projects/${data.projectId}/runs` },
+            { label: data.name ?? `Run ${data.id.slice(0, 8)}` },
+          ]}
+          title={data.name ?? "Untitled run"}
+          status={data.status}
+          metadata={{
+            branch: data.branchName,
+            checkpointCount:
+              data.checkpointCount ??
+              checkpointsQuery.data?.items?.length ??
+              null,
+            startedAt: data.createdAt,
+            completedAt: data.completedAt,
+          }}
+        />
         {isEmpty ? (
           <EmptyRunCard
             projectId={data.projectId}
