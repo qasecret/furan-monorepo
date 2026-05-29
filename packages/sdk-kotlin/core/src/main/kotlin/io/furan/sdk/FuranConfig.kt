@@ -47,6 +47,13 @@ data class FuranConfig(
      * behavior).
      */
     val dashboardUrl: String? = null,
+    /**
+     * Controls whether [io.furan.sdk.selenium.Furan.close] throws
+     * [FuranDiffException] when the run ends with unresolved/failed
+     * checkpoints. From `FURAN_FAIL_ON_DIFF` (None/AfterEach/AfterAll).
+     * Default: [FailOnDiff.None].
+     */
+    val failOnDiff: FailOnDiff = FailOnDiff.None,
 ) {
     init {
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
@@ -108,6 +115,10 @@ data class FuranConfig(
                 pollTimeoutSeconds = env["FURAN_POLL_TIMEOUT_SECONDS"]?.toLongOrNull() ?: 60,
                 pollIntervalSeconds = env["FURAN_POLL_INTERVAL_SECONDS"]?.toLongOrNull() ?: 2,
                 dashboardUrl = env["FURAN_DASHBOARD_URL"]?.trimEnd('/')?.takeIf { it.isNotEmpty() },
+                failOnDiff = env["FURAN_FAIL_ON_DIFF"]?.let { v ->
+                    FailOnDiff.entries.firstOrNull { it.name.equals(v, ignoreCase = true) }
+                        ?: throw FuranConfigException("invalid FURAN_FAIL_ON_DIFF: $v")
+                } ?: FailOnDiff.None,
             )
         }
 
@@ -277,6 +288,15 @@ data class FuranConfig(
                     ?: yamlLong("pollIntervalSeconds") ?: 2,
                 dashboardUrl = (env["FURAN_DASHBOARD_URL"] ?: yamlString("dashboardUrl"))
                     ?.trimEnd('/')?.takeIf { it.isNotEmpty() },
+                failOnDiff = run {
+                    val raw = env["FURAN_FAIL_ON_DIFF"] ?: yamlString("failOnDiff")
+                    if (raw != null) {
+                        FailOnDiff.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+                            ?: throw FuranConfigException("invalid FURAN_FAIL_ON_DIFF: $raw")
+                    } else {
+                        FailOnDiff.None
+                    }
+                },
             )
         }
 
