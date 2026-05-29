@@ -157,7 +157,8 @@ export async function registerProjectEventsRoute(
       req.raw.socket?.setTimeout?.(0);
       incConnections(app.telemetry.metrics);
 
-      // Per-connection state: 6 buffers + 6 debouncers, keyed by event name.
+      // Per-connection state: 9 buffers + 9 debouncers, keyed by event name.
+      // 6 legacy names + 3 ADR-038 checkpoint-lifecycle names.
       const buffers: Record<ProjectEventName, unknown[]> = {
         build_created: [],
         build_updated: [],
@@ -165,6 +166,10 @@ export async function registerProjectEventsRoute(
         testRun_created: [],
         testRun_updated: [],
         testRun_deleted: [],
+        // ADR-038: checkpoint lifecycle events
+        "run.checkpoint_added": [],
+        "run.checkpoint_diffed": [],
+        "run.completed": [],
       };
 
       const makeFlush = (ev: ProjectEventName) =>
@@ -193,6 +198,10 @@ export async function registerProjectEventsRoute(
         testRun_created: makeFlush("testRun_created"),
         testRun_updated: makeFlush("testRun_updated"),
         testRun_deleted: makeFlush("testRun_deleted"),
+        // ADR-038: checkpoint lifecycle events
+        "run.checkpoint_added": makeFlush("run.checkpoint_added"),
+        "run.checkpoint_diffed": makeFlush("run.checkpoint_diffed"),
+        "run.completed": makeFlush("run.completed"),
       } satisfies Record<ProjectEventName, ReturnType<typeof makeFlush>>;
 
       const subscriber = createRedisConnection();

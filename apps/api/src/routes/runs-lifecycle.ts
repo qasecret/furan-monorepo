@@ -2,9 +2,29 @@ import { eq, testRuns } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { requireProjectMember } from "../hooks/require-project-member.js";
 import { rollupRunStatus } from "../lib/checkpoint-rollup.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
+
+/**
+ * Looks up the projectId for a run by its UUID. Returns null when the UUID
+ * is malformed or no matching row exists — the requireProjectMember gate
+ * will return 400 in that case (missing_project_scope).
+ */
+async function resolveRunProjectId(
+  app: FastifyInstance,
+  runId: string,
+): Promise<string | null> {
+  const parsed = runIdParam.safeParse({ id: runId });
+  if (!parsed.success) return null;
+  const rows = await app.db
+    .select({ projectId: testRuns.projectId })
+    .from(testRuns)
+    .where(eq(testRuns.id, parsed.data.id))
+    .limit(1);
+  return rows[0]?.projectId ?? null;
+}
 
 export async function registerRunLifecycleRoutes(
   app: FastifyInstance,
@@ -12,7 +32,20 @@ export async function registerRunLifecycleRoutes(
   // POST /runs/:id/complete — explicit close from SDK 2.0.x.
   app.post(
     "/runs/:id/complete",
-    { preHandler: app.authenticate },
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("write", {
+          from: {
+            resolver: async (req) => {
+              const params = req.params as Record<string, unknown>;
+              const id = typeof params.id === "string" ? params.id : "";
+              return resolveRunProjectId(app, id);
+            },
+          },
+        }),
+      ],
+    },
     async (req, reply) => {
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });
@@ -54,7 +87,20 @@ export async function registerRunLifecycleRoutes(
   // POST /runs/:id/abort — explicit abort from SDK 2.0.x.
   app.post(
     "/runs/:id/abort",
-    { preHandler: app.authenticate },
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("write", {
+          from: {
+            resolver: async (req) => {
+              const params = req.params as Record<string, unknown>;
+              const id = typeof params.id === "string" ? params.id : "";
+              return resolveRunProjectId(app, id);
+            },
+          },
+        }),
+      ],
+    },
     async (req, reply) => {
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });

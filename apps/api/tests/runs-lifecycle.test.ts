@@ -23,6 +23,7 @@ const d = skip ? describe.skip : describe;
 interface LifecycleSeeded {
   memberId: string;
   memberJwt: string;
+  outsiderJwt: string;
   projectId: string;
   buildId: string;
 }
@@ -46,6 +47,20 @@ async function seedBase(h: TestApp): Promise<LifecycleSeeded> {
     })
     .returning();
 
+  // A second user with no membership in any project — used to verify the
+  // project-member gate rejects non-members with 403.
+  const [outsider] = await h.db
+    .insert(users)
+    .values({
+      email: "lifecycle-outsider@t.example",
+      hashedPassword: await hashPassword("x"),
+      firstName: "Out",
+      lastName: "Sider",
+      role: "editor",
+      isActive: true,
+    })
+    .returning();
+
   const [project] = await h.db
     .insert(projects)
     .values({ name: "lifecycle-proj" })
@@ -63,14 +78,19 @@ async function seedBase(h: TestApp): Promise<LifecycleSeeded> {
   return {
     memberId: member!.id,
     memberJwt: h.app.jwt.sign({ sub: member!.id, role: "editor" }),
+    outsiderJwt: h.app.jwt.sign({ sub: outsider!.id, role: "editor" }),
     projectId: project!.id,
     buildId: build!.id,
   };
 }
 
-async function seedAuthedRunNoCheckpoints(
-  h: TestApp,
-): Promise<{ runId: string; headers: Record<string, string> }> {
+interface SeededRun {
+  runId: string;
+  headers: Record<string, string>;
+  outsiderHeaders: Record<string, string>;
+}
+
+async function seedAuthedRunNoCheckpoints(h: TestApp): Promise<SeededRun> {
   const s = await seedBase(h);
   const [run] = await h.db
     .insert(testRuns)
@@ -85,6 +105,7 @@ async function seedAuthedRunNoCheckpoints(
   return {
     runId: run!.id,
     headers: { authorization: `Bearer ${s.memberJwt}` },
+    outsiderHeaders: { authorization: `Bearer ${s.outsiderJwt}` },
   };
 }
 
@@ -167,6 +188,39 @@ d("POST /runs/:id/complete + /abort", () => {
       url: "/runs/not-a-uuid/complete",
       headers,
     });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("non-member cannot complete another project's run → 403", async () => {
+    const { runId, outsiderHeaders } = await seedAuthedRunNoCheckpoints(h);
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${runId}/complete`,
+      headers: outsiderHeaders,
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  test("non-member cannot abort another project's run → 403", async () => {
+    const { runId, outsiderHeaders } = await seedAuthedRunNoCheckpoints(h);
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${runId}/abort`,
+      headers: outsiderHeaders,
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  test("complete with unknown run id → 400 (no project scope)", async () => {
+    const { headers } = await seedAuthedRunNoCheckpoints(h);
+    const unknownId = "00000000-0000-0000-0000-000000000000";
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${unknownId}/complete`,
+      headers,
+    });
+    // requireProjectMember returns 400 when the resolver returns null
+    // (run not found → no project scope).
     expect(res.statusCode).toBe(400);
   });
 });

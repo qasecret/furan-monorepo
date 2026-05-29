@@ -4,10 +4,14 @@ import type { Telemetry } from "@furan/telemetry";
 import { recordPublished } from "./broadcast-metrics.js";
 
 /**
- * Six broadcast event names — verbatim parity with the predecessor's
- * Socket.io gateway (`/Users/rabindrabiswal/Workspace/backend/src/shared/events/events.gateway.ts`).
- * Dashboard SDK consumers porting from the legacy backend's
- * `SocketProvider` listen for exactly these strings.
+ * Broadcast event names emitted on the project SSE channel. The first six
+ * are verbatim parity with the predecessor's Socket.io gateway
+ * (`/Users/rabindrabiswal/Workspace/backend/src/shared/events/events.gateway.ts`).
+ * Dashboard SDK consumers porting from the legacy backend's `SocketProvider`
+ * listen for exactly those strings.
+ *
+ * ADR-038 adds three checkpoint-lifecycle events so the dashboard's
+ * CheckpointStrip and DiffViewer receive live updates without polling.
  */
 export type ProjectEventName =
   | "build_created"
@@ -15,7 +19,11 @@ export type ProjectEventName =
   | "build_deleted"
   | "testRun_created"
   | "testRun_updated"
-  | "testRun_deleted";
+  | "testRun_deleted"
+  // ADR-038: checkpoint lifecycle events
+  | "run.checkpoint_added"
+  | "run.checkpoint_diffed"
+  | "run.completed";
 
 export interface ProjectBroadcastEvent {
   event: ProjectEventName;
