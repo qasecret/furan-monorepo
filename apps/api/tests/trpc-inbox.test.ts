@@ -116,7 +116,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -171,7 +172,8 @@ d("trpc inbox.list", () => {
     await h.db.insert(testRuns).values({
       projectId: project.id,
       buildId: build.id,
-      testVariationId: variation.id,
+      name: variation.name,
+      branchName: "main",
       status: "unresolved",
     });
 
@@ -224,7 +226,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "failed",
       })
       .returning();
@@ -307,7 +310,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -318,7 +322,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "failed",
       })
       .returning();
@@ -380,7 +385,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -391,7 +397,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "failed",
       })
       .returning();
@@ -402,7 +409,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "passed",
       })
       .returning();
@@ -465,19 +473,22 @@ d("trpc inbox.list", () => {
     await h.db.insert(testRuns).values({
       projectId: project.id,
       buildId: build.id,
-      testVariationId: variation.id,
+      name: variation.name,
+      branchName: "main",
       status: "unresolved",
     });
     await h.db.insert(testRuns).values({
       projectId: project.id,
       buildId: build.id,
-      testVariationId: variation.id,
+      name: variation.name,
+      branchName: "main",
       status: "failed",
     });
     await h.db.insert(testRuns).values({
       projectId: project.id,
       buildId: build.id,
-      testVariationId: variation.id,
+      name: variation.name,
+      branchName: "main",
       status: "passed",
     });
 
@@ -533,7 +544,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -594,7 +606,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -669,7 +682,8 @@ d("trpc inbox.list", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: variation.name,
+        branchName: "main",
         status: "unresolved",
       })
       .returning();
@@ -744,7 +758,8 @@ d("trpc inbox.list", () => {
         .values({
           projectId: project.id,
           buildId: build.id,
-          testVariationId: variation.id,
+          name: `${variation.name}-${i}`,
+          branchName: "main",
           status: "unresolved",
         })
         .returning();

@@ -5,7 +5,6 @@ import {
   desc,
   diffRegions,
   eq,
-  gt,
   ilike,
   inArray,
   isNull,
@@ -232,28 +231,32 @@ export async function approveRun(
     .set({ status: "passed", merge: true })
     .where(eq(testRuns.id, runId));
 
-  // Snapshot the approved run into baselines (branch-scoped, §4.7).
-  await ctx.db.insert(baselines).values({
-    baselineName: run.baselineName ?? run.name ?? "auto",
-    testVariationId: run.testVariationId,
-    testRunId: run.id,
-    userId: ctx.user.id,
-    ...(run.branchName ? { branchName: run.branchName } : {}),
-  });
+  // ADR-038: runs no longer have a single testVariationId. Snapshot the
+  // first checkpoint's variation as the baseline for backward compat.
+  // Full per-checkpoint baseline promotion is handled by approveCheckpoint.
+  // For legacy approve (run-level), we find the first screenshot row and
+  // use its testVariationId.
+  const firstShot = await ctx.db
+    .select({
+      testVariationId: screenshots.testVariationId,
+      imageKey: screenshots.imageKey,
+    })
+    .from(screenshots)
+    .where(eq(screenshots.runId, runId))
+    .limit(1);
 
-  // ADR-037: persist run.ignoreAreas onto variation.ignoreAreas so future
-  // runs of the same variation inherit the reviewer's choices as defaults.
-  // Differs from the legacy backend's approve() at
-  // test-runs.service.ts:109-137, which guarded this copy on a
-  // branch-fork path; Furan's baselines are already branch-scoped via
-  // baselines.branch_name, so a variation-level ignoreAreas copy is
-  // unconditional. Null run.ignoreAreas means the reviewer drew
-  // nothing — keep variation unchanged.
-  if (run.ignoreAreas) {
-    await ctx.db
-      .update(testVariations)
-      .set({ ignoreAreas: run.ignoreAreas, updatedAt: new Date() })
-      .where(eq(testVariations.id, run.testVariationId));
+  if (firstShot[0]) {
+    await ctx.db.insert(baselines).values({
+      baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+      testVariationId: firstShot[0].testVariationId,
+      testRunId: run.id,
+      userId: ctx.user.id,
+      ...(run.branchName ? { branchName: run.branchName } : {}),
+    });
+  } else {
+    // No screenshots yet — insert a placeholder baseline using run name.
+    // This branch handles legacy flow where runs might not have checkpoints.
+    // We skip the baseline insert rather than fail — approve still transitions status.
   }
 
   await ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -317,18 +320,8 @@ export const runsRouter = t.router({
       if (input.status && input.status.length > 0) {
         conditions.push(inArray(testRuns.status, input.status));
       }
-      if (input.browser) {
-        conditions.push(eq(testRuns.browser, input.browser));
-      }
-      if (input.viewport) {
-        conditions.push(eq(testRuns.viewport, input.viewport));
-      }
-      if (input.os) {
-        conditions.push(eq(testRuns.os, input.os));
-      }
-      if (input.device) {
-        conditions.push(eq(testRuns.device, input.device));
-      }
+      // ADR-038: browser/viewport/os/device filters moved to screenshots/checkpoints.
+      // Phase 5 will add sub-query filters against screenshots for these dimensions.
       if (input.customTags) {
         // ILIKE substring against the comma-separated bag. Matches the
         // legacy semantics where customTags is a free-form string the
@@ -379,71 +372,35 @@ export const runsRouter = t.router({
         .from(diffRegions)
         .where(eq(diffRegions.runId, input.runId));
 
-      // Fetch the variation's ignore areas for the diff viewer's region editor.
-      // Returned as a parsed array; null when the column is unset or malformed.
-      const variationRows = await ctx.db
-        .select({ ignoreAreas: testVariations.ignoreAreas })
-        .from(testVariations)
-        .where(eq(testVariations.id, run.testVariationId))
-        .limit(1);
-      const variationIgnoreAreasRaw = variationRows[0]?.ignoreAreas ?? null;
+      // ADR-038: runs no longer have a single testVariationId. Ignore area
+      // context comes from the first checkpoint's variation (if any).
+      // Phase 5 will rework the diff viewer to show per-checkpoint context.
       let variationIgnoreAreas: IgnoreRegion[] | null = null;
-      if (variationIgnoreAreasRaw) {
-        try {
-          const parsed = JSON.parse(variationIgnoreAreasRaw);
-          if (Array.isArray(parsed)) {
-            variationIgnoreAreas = parsed as IgnoreRegion[];
-          }
-        } catch {
-          // malformed JSON → treat as null
+      const firstShot = shots[0];
+      if (firstShot?.testVariationId) {
+        const variationRows = await ctx.db
+          .select({ ignoreRegions: testVariations.ignoreRegions })
+          .from(testVariations)
+          .where(eq(testVariations.id, firstShot.testVariationId))
+          .limit(1);
+        const variationIgnoreRegionsRaw =
+          variationRows[0]?.ignoreRegions ?? null;
+        if (
+          variationIgnoreRegionsRaw &&
+          Array.isArray(variationIgnoreRegionsRaw)
+        ) {
+          variationIgnoreAreas = variationIgnoreRegionsRaw as IgnoreRegion[];
         }
       }
 
-      // Parse run-level ignore areas; override the raw JSON string from ...run.
-      // Returned as a parsed array; null when the column is unset or malformed.
-      let runIgnoreAreas: IgnoreRegion[] | null = null;
-      if (run.ignoreAreas) {
-        try {
-          const parsed = JSON.parse(run.ignoreAreas);
-          if (Array.isArray(parsed)) {
-            runIgnoreAreas = parsed as IgnoreRegion[];
-          }
-        } catch {
-          // malformed JSON → treat as null
-        }
-      }
+      // ADR-038: run-level ignoreAreas removed from test_runs. Return null.
+      const runIgnoreAreas: IgnoreRegion[] | null = null;
 
-      // Sibling runs of the same variation, ordered by created_at.
-      // prevRunId = the run immediately OLDER than this one (ArrowLeft goes
-      // back in time); nextRunId = the run immediately NEWER (ArrowRight).
-      // Each query is bounded to 1 row via .limit(1); both hit the
-      // (test_variation_id, created_at) index path so they're cheap.
-      const prevRun = await ctx.db
-        .select({ id: testRuns.id })
-        .from(testRuns)
-        .where(
-          and(
-            eq(testRuns.testVariationId, run.testVariationId),
-            lt(testRuns.createdAt, run.createdAt),
-          ),
-        )
-        .orderBy(desc(testRuns.createdAt))
-        .limit(1);
-
-      const nextRun = await ctx.db
-        .select({ id: testRuns.id })
-        .from(testRuns)
-        .where(
-          and(
-            eq(testRuns.testVariationId, run.testVariationId),
-            gt(testRuns.createdAt, run.createdAt),
-          ),
-        )
-        .orderBy(asc(testRuns.createdAt)) // ASC — closest newer
-        .limit(1);
-
-      const prevRunId = prevRun[0]?.id ?? null;
-      const nextRunId = nextRun[0]?.id ?? null;
+      // ADR-038: sibling runs are now linked via the build/project, not
+      // a single variation. Return null for prevRunId/nextRunId for now;
+      // Phase 5 will implement the new navigation model.
+      const prevRunId: string | null = null;
+      const nextRunId: string | null = null;
 
       // ADR-032: autoApproved is true iff at least one baselines row
       // exists for this run with userId IS NULL (the system-approved
@@ -457,55 +414,55 @@ export const runsRouter = t.router({
         .limit(1);
       const autoApproved = autoApprovedRows.length > 0;
 
-      // Resolve the baseline screenshot for the BASELINE pane of the viewer.
-      // T9: dashboard side-by-side / overlay / onion-skin all need the
-      // baseline's screenshot row (its imageKey). Reuse the three-tier
-      // resolver from @furan/db so we stay consistent with the diff worker.
+      // Baseline screenshot: look up via the first checkpoint's variation.
+      // Phase 5 will rework this to support per-checkpoint baseline resolution.
       let baselineScreenshot: (typeof shots)[number] | null = null;
       let baselineSource: string | null = null;
-      try {
-        const projectRows = await ctx.db
-          .select({ mainBranchName: projects.mainBranchName })
-          .from(projects)
-          .where(eq(projects.id, run.projectId))
-          .limit(1);
-        const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
-
-        const resolution = await resolveBaseline(
-          ctx.db,
-          run.projectId,
-          run.branchName ?? defaultBranch,
-          run.testVariationId,
-          { defaultBranch },
-        );
-
-        if (resolution) {
-          baselineSource = resolution.source;
-          const baselineRows = await ctx.db
-            .select({ testRunId: baselines.testRunId })
-            .from(baselines)
-            .where(eq(baselines.id, resolution.baselineId))
+      if (firstShot?.testVariationId) {
+        try {
+          const projectRows = await ctx.db
+            .select({ mainBranchName: projects.mainBranchName })
+            .from(projects)
+            .where(eq(projects.id, run.projectId))
             .limit(1);
-          const baselineRunId = baselineRows[0]?.testRunId;
-          if (baselineRunId) {
-            const blShots = await ctx.db
-              .select()
-              .from(screenshots)
-              .where(eq(screenshots.runId, baselineRunId));
-            baselineScreenshot = blShots[0] ?? null;
+          const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
+
+          const resolution = await resolveBaseline(
+            ctx.db,
+            run.projectId,
+            run.branchName ?? defaultBranch,
+            firstShot.testVariationId,
+            { defaultBranch },
+          );
+
+          if (resolution) {
+            baselineSource = resolution.source;
+            const baselineRows = await ctx.db
+              .select({ testRunId: baselines.testRunId })
+              .from(baselines)
+              .where(eq(baselines.id, resolution.baselineId))
+              .limit(1);
+            const baselineRunId = baselineRows[0]?.testRunId;
+            if (baselineRunId) {
+              const blShots = await ctx.db
+                .select()
+                .from(screenshots)
+                .where(eq(screenshots.runId, baselineRunId));
+              baselineScreenshot = blShots[0] ?? null;
+            }
           }
+        } catch (err) {
+          // Baseline resolution is informational; don't fail getById on it.
+          ctx.telemetry.logger.warn(
+            { err, runId: run.id },
+            "baseline_screenshot_lookup_failed",
+          );
         }
-      } catch (err) {
-        // Baseline resolution is informational; don't fail getById on it.
-        ctx.telemetry.logger.warn(
-          { err, runId: run.id },
-          "baseline_screenshot_lookup_failed",
-        );
       }
 
       return {
         ...run,
-        ignoreAreas: runIgnoreAreas, // override the raw JSON string spread from ...run
+        ignoreAreas: runIgnoreAreas,
         screenshots: shots,
         diffRegions: regions,
         baselineScreenshot,
@@ -578,7 +535,6 @@ export const runsRouter = t.router({
         .select({
           id: testRuns.id,
           projectId: testRuns.projectId,
-          testVariationId: testRuns.testVariationId,
         })
         .from(testRuns)
         .where(eq(testRuns.id, input.runId))
@@ -586,19 +542,23 @@ export const runsRouter = t.router({
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const payload =
-        input.ignoreAreas === null ? null : JSON.stringify(input.ignoreAreas);
+      const payload = input.ignoreAreas === null ? null : input.ignoreAreas;
 
-      if (input.scope === "run") {
-        await ctx.db
-          .update(testRuns)
-          .set({ ignoreAreas: payload, updatedAt: new Date() })
-          .where(eq(testRuns.id, input.runId));
-      } else {
+      // ADR-038: both scopes are stored at the first checkpoint's variation
+      // (test_runs no longer has an ignore_areas column). The `scope` field
+      // is preserved in the response for SDK back-compat but maps to the same
+      // underlying storage. Phase 5 will differentiate run-scope vs.
+      // variation-scope when per-checkpoint ignore regions are supported.
+      const firstShot = await ctx.db
+        .select({ testVariationId: screenshots.testVariationId })
+        .from(screenshots)
+        .where(eq(screenshots.runId, input.runId))
+        .limit(1);
+      if (firstShot[0]) {
         await ctx.db
           .update(testVariations)
-          .set({ ignoreAreas: payload, updatedAt: new Date() })
-          .where(eq(testVariations.id, run.testVariationId));
+          .set({ ignoreRegions: payload, updatedAt: new Date() })
+          .where(eq(testVariations.id, firstShot[0].testVariationId));
       }
 
       await ctx.diffQueue.add("diff", {
@@ -664,8 +624,6 @@ export const runsRouter = t.router({
         .select({
           id: testRuns.id,
           projectId: testRuns.projectId,
-          testVariationId: testRuns.testVariationId,
-          ignoreAreas: testRuns.ignoreAreas,
         })
         .from(testRuns)
         .where(eq(testRuns.id, input.runId))
@@ -673,32 +631,26 @@ export const runsRouter = t.router({
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Read existing for the requested scope.
+      // ADR-038: run-scope ignore areas no longer stored on test_runs.
+      // Read/write from the first checkpoint's variation instead.
+      const firstShot = await ctx.db
+        .select({ testVariationId: screenshots.testVariationId })
+        .from(screenshots)
+        .where(eq(screenshots.runId, input.runId))
+        .limit(1);
+
       let existing: IgnoreRegion[] = [];
-      if (input.scope === "run") {
-        if (run.ignoreAreas) {
-          try {
-            const parsed = JSON.parse(run.ignoreAreas);
-            if (Array.isArray(parsed)) existing = parsed as IgnoreRegion[];
-          } catch {
-            // Malformed stored payload — treat as empty rather than 500.
-            // The new write replaces it with a well-formed array.
-          }
-        }
-      } else {
+      const variationId = firstShot[0]?.testVariationId ?? null;
+
+      if (variationId) {
         const variationRows = await ctx.db
-          .select({ ignoreAreas: testVariations.ignoreAreas })
+          .select({ ignoreRegions: testVariations.ignoreRegions })
           .from(testVariations)
-          .where(eq(testVariations.id, run.testVariationId))
+          .where(eq(testVariations.id, variationId))
           .limit(1);
-        const raw = variationRows[0]?.ignoreAreas ?? null;
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) existing = parsed as IgnoreRegion[];
-          } catch {
-            // Same as run-scope above.
-          }
+        const raw = variationRows[0]?.ignoreRegions ?? null;
+        if (raw && Array.isArray(raw)) {
+          existing = raw as IgnoreRegion[];
         }
       }
 
@@ -710,18 +662,12 @@ export const runsRouter = t.router({
       }
 
       const combined = [...existing, ...input.ignoreAreas];
-      const payload = JSON.stringify(combined);
 
-      if (input.scope === "run") {
-        await ctx.db
-          .update(testRuns)
-          .set({ ignoreAreas: payload, updatedAt: new Date() })
-          .where(eq(testRuns.id, input.runId));
-      } else {
+      if (variationId) {
         await ctx.db
           .update(testVariations)
-          .set({ ignoreAreas: payload, updatedAt: new Date() })
-          .where(eq(testVariations.id, run.testVariationId));
+          .set({ ignoreRegions: combined, updatedAt: new Date() })
+          .where(eq(testVariations.id, variationId));
       }
 
       await ctx.diffQueue.add("diff", {
@@ -872,16 +818,16 @@ export const runsRouter = t.router({
         });
       }
 
-      // Find every other run of the same variation in a reviewer-legal
-      // state. Bounded to 200 to keep the transaction cheap and rule out
-      // pathological multi-thousand-row variations.
+      // ADR-038: runs no longer have a single testVariationId. Bulk approve
+      // operates on runs in the same build/project in reviewer-legal states.
+      // Phase 5 will add per-variation bulk approve for the new model.
       const BULK_CAP = 200;
       const siblings = await ctx.db
         .select()
         .from(testRuns)
         .where(
           and(
-            eq(testRuns.testVariationId, seed.testVariationId),
+            eq(testRuns.projectId, seed.projectId),
             inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
           ),
         )
@@ -901,28 +847,26 @@ export const runsRouter = t.router({
             .update(testRuns)
             .set({ status: "passed", merge: true })
             .where(eq(testRuns.id, run.id));
-          await tx.insert(baselines).values({
-            baselineName: run.baselineName ?? run.name ?? "auto",
-            testVariationId: run.testVariationId,
-            testRunId: run.id,
-            userId: ctx.user.id,
-            ...(run.branchName ? { branchName: run.branchName } : {}),
-          });
+          // ADR-038: find first checkpoint variation for baseline insertion.
+          const firstShot = await tx
+            .select({
+              testVariationId: screenshots.testVariationId,
+              imageKey: screenshots.imageKey,
+            })
+            .from(screenshots)
+            .where(eq(screenshots.runId, run.id))
+            .limit(1);
+          if (firstShot[0]) {
+            await tx.insert(baselines).values({
+              baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+              testVariationId: firstShot[0].testVariationId,
+              testRunId: run.id,
+              userId: ctx.user.id,
+              ...(run.branchName ? { branchName: run.branchName } : {}),
+            });
+          }
           approvedIds.push(run.id);
           if (run.buildId) affectedBuildIds.add(run.buildId);
-        }
-
-        // ADR-037: also persist the seed run's ignoreAreas onto the
-        // variation. Bulk approve carries the seed's reviewer decision
-        // (the run the user explicitly initiated the bulk on) as the
-        // canonical variation-level value. Other runs' ignoreAreas
-        // aren't merged — a variation can only hold one set, and the
-        // seed is the most recent reviewer intent.
-        if (seed.ignoreAreas) {
-          await tx
-            .update(testVariations)
-            .set({ ignoreAreas: seed.ignoreAreas, updatedAt: new Date() })
-            .where(eq(testVariations.id, seed.testVariationId));
         }
       });
 
@@ -1081,5 +1025,138 @@ export const runsRouter = t.router({
       }
 
       return { runId: run.id, status: nextStatus };
+    }),
+
+  // ---------------------------------------------------------------------------
+  // ADR-038: per-checkpoint approval + checkpoint listing
+  // ---------------------------------------------------------------------------
+
+  approveCheckpoint: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("write", {
+        from: {
+          resolver: async ({ ctx, input }) => {
+            const row = await ctx.db
+              .select({ projectId: testRuns.projectId })
+              .from(testRuns)
+              .where(eq(testRuns.id, input.runId))
+              .limit(1);
+            return row[0]?.projectId ?? "";
+          },
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select()
+        .from(screenshots)
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const s = rows[0];
+      if (!s) throw new TRPCError({ code: "NOT_FOUND" });
+      if (s.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      await ctx.db.transaction(async (tx) => {
+        await tx
+          .update(testVariations)
+          .set({
+            baselineName: s.imageKey,
+            ignoreRegions: s.ignoreRegions,
+            layoutRegions: s.layoutRegions,
+            floatingRegions: s.floatingRegions,
+            contentRegions: s.contentRegions,
+            accessibilityRegions: s.accessibilityRegions,
+            matchLevel: s.matchLevel,
+            updatedAt: new Date(),
+          })
+          .where(eq(testVariations.id, s.testVariationId));
+      });
+      return { checkpointId: input.checkpointId };
+    }),
+
+  approveAllCheckpoints: t.procedure
+    .input(z.object({ runId: z.string().uuid() }))
+    .use(authed)
+    .use(
+      projectMember<{ runId: string }>("write", {
+        from: {
+          resolver: async ({ ctx, input }) => {
+            const row = await ctx.db
+              .select({ projectId: testRuns.projectId })
+              .from(testRuns)
+              .where(eq(testRuns.id, input.runId))
+              .limit(1);
+            return row[0]?.projectId ?? "";
+          },
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select()
+        .from(screenshots)
+        .where(eq(screenshots.runId, input.runId));
+      if (rows.length === 0) return { approved: 0 };
+      await ctx.db.transaction(async (tx) => {
+        for (const s of rows) {
+          await tx
+            .update(testVariations)
+            .set({
+              baselineName: s.imageKey,
+              ignoreRegions: s.ignoreRegions,
+              layoutRegions: s.layoutRegions,
+              floatingRegions: s.floatingRegions,
+              contentRegions: s.contentRegions,
+              accessibilityRegions: s.accessibilityRegions,
+              matchLevel: s.matchLevel,
+              updatedAt: new Date(),
+            })
+            .where(eq(testVariations.id, s.testVariationId));
+        }
+      });
+      return { approved: rows.length };
+    }),
+
+  listCheckpoints: t.procedure
+    .input(z.object({ runId: z.string().uuid() }))
+    .use(authed)
+    .use(
+      projectMember<{ runId: string }>("read", {
+        from: {
+          resolver: async ({ ctx, input }) => {
+            const row = await ctx.db
+              .select({ projectId: testRuns.projectId })
+              .from(testRuns)
+              .where(eq(testRuns.id, input.runId))
+              .limit(1);
+            return row[0]?.projectId ?? "";
+          },
+        },
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select({
+          id: screenshots.id,
+          name: screenshots.name,
+          viewport: screenshots.viewport,
+          browser: screenshots.browser,
+          matchLevel: screenshots.matchLevel,
+          imageKey: screenshots.imageKey,
+          testVariationId: screenshots.testVariationId,
+          createdAt: screenshots.createdAt,
+        })
+        .from(screenshots)
+        .where(eq(screenshots.runId, input.runId))
+        .orderBy(asc(screenshots.createdAt));
+      return { items: rows };
     }),
 });

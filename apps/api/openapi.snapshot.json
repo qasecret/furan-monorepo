@@ -1764,90 +1764,25 @@
                     "minLength": 1,
                     "type": "string"
                   },
-                  "browser": {
-                    "maxLength": 32,
-                    "type": "string"
-                  },
                   "buildId": {
                     "format": "uuid",
                     "type": "string"
-                  },
-                  "customTags": {
-                    "maxLength": 1024,
-                    "type": "string"
-                  },
-                  "device": {
-                    "maxLength": 64,
-                    "type": "string"
-                  },
-                  "diffTolerance": {
-                    "maximum": 1,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "ignoreAreas": {
-                    "items": {
-                      "properties": {
-                        "height": {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "viewport": {
-                          "maxLength": 32,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "width": {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        "x": {
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "y": {
-                          "minimum": 0,
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "x",
-                        "y",
-                        "width",
-                        "height"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 50,
-                    "type": "array"
                   },
                   "name": {
                     "maxLength": 255,
                     "minLength": 1,
                     "type": "string"
                   },
-                  "os": {
-                    "maxLength": 64,
-                    "type": "string"
-                  },
                   "projectId": {
                     "format": "uuid",
-                    "type": "string"
-                  },
-                  "testVariationId": {
-                    "format": "uuid",
-                    "type": "string"
-                  },
-                  "viewport": {
-                    "maxLength": 32,
                     "type": "string"
                   }
                 },
                 "required": [
                   "projectId",
                   "buildId",
-                  "branchName",
-                  "name"
+                  "name",
+                  "branchName"
                 ],
                 "type": "object"
               }
@@ -1860,58 +1795,21 @@
               "application/json": {
                 "schema": {
                   "properties": {
-                    "branchName": {
-                      "type": "string"
-                    },
-                    "browser": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "buildId": {
-                      "format": "uuid",
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "id": {
-                      "format": "uuid",
-                      "type": "string"
-                    },
                     "name": {
                       "type": "string"
                     },
-                    "projectId": {
+                    "runId": {
                       "format": "uuid",
                       "type": "string"
                     },
                     "status": {
                       "type": "string"
-                    },
-                    "testVariationId": {
-                      "format": "uuid",
-                      "type": "string"
-                    },
-                    "viewport": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
                     }
                   },
                   "required": [
-                    "id",
-                    "name",
-                    "projectId",
-                    "testVariationId",
-                    "buildId",
-                    "branchName",
-                    "browser",
-                    "viewport",
+                    "runId",
                     "status",
-                    "createdAt"
+                    "name"
                   ],
                   "type": "object"
                 }
@@ -1981,7 +1879,7 @@
               "schema": {
                 "properties": {
                   "browser": {
-                    "description": "Browser id. Defaults to run browser.",
+                    "description": "Browser id.",
                     "type": "string"
                   },
                   "domHtml": {
@@ -1990,7 +1888,7 @@
                     "type": "string"
                   },
                   "name": {
-                    "description": "Snapshot name (logged for traceability).",
+                    "description": "Checkpoint name (required in v1.1+ shape; logged for traceability).",
                     "type": "string"
                   },
                   "pngBytes": {
@@ -1999,7 +1897,7 @@
                     "type": "string"
                   },
                   "viewport": {
-                    "description": "Viewport string e.g. `1280x720`. Defaults to run viewport.",
+                    "description": "Viewport string e.g. `1280x720`.",
                     "type": "string"
                   }
                 },
@@ -2017,50 +1915,23 @@
               "application/json": {
                 "schema": {
                   "properties": {
-                    "browser": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "domKey": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "id": {
+                    "checkpointId": {
                       "format": "uuid",
                       "type": "string"
                     },
-                    "imageKey": {
-                      "description": "sha256 hex of PNG bytes (content-addressed storage key).",
-                      "type": "string"
-                    },
-                    "projectId": {
+                    "screenshotId": {
                       "format": "uuid",
                       "type": "string"
                     },
-                    "runId": {
+                    "testVariationId": {
                       "format": "uuid",
-                      "type": "string"
-                    },
-                    "viewport": {
                       "type": "string"
                     }
                   },
                   "required": [
-                    "id",
-                    "runId",
-                    "projectId",
-                    "imageKey",
-                    "domKey",
-                    "viewport",
-                    "browser",
-                    "createdAt"
+                    "screenshotId",
+                    "checkpointId",
+                    "testVariationId"
                   ],
                   "type": "object"
                 }

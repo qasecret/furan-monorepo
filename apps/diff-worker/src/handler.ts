@@ -276,11 +276,25 @@ async function handleDiffJobInner(
     throw new Error(`run_missing_branch_name:${data.runId}`);
   }
 
+  // ADR-038: testVariationId is no longer stored on test_runs — it lives on
+  // each screenshots row (one checkpoint = one variation). Resolve the
+  // primary variation from the first screenshot so we can locate the
+  // baseline and read per-variation ignore regions.
+  const firstShotRow = await deps.db
+    .select({ testVariationId: screenshots.testVariationId })
+    .from(screenshots)
+    .where(eq(screenshots.runId, data.runId))
+    .limit(1);
+  if (!firstShotRow[0]) {
+    throw new Error(`run_has_no_screenshots:${data.runId}`);
+  }
+  const runTestVariationId = firstShotRow[0].testVariationId;
+
   const baseline = await resolveBaseline(
     deps.db,
     data.projectId,
     run.branchName,
-    run.testVariationId,
+    runTestVariationId,
     {
       defaultBranch: project.mainBranchName,
       parentPrBaseBranch: data.parentPrBaseBranch ?? null,
@@ -315,7 +329,7 @@ async function handleDiffJobInner(
       if (seedBaseline) {
         await tx.insert(baselines).values({
           baselineName: run.baselineName ?? run.name ?? "auto",
-          testVariationId: run.testVariationId,
+          testVariationId: runTestVariationId,
           testRunId: run.id,
           // userId omitted → defaults to NULL → signals auto-baseline.
           ...(run.branchName ? { branchName: run.branchName } : {}),
@@ -416,7 +430,7 @@ async function handleDiffJobInner(
         .where(eq(testRuns.id, data.runId));
       await tx.insert(baselines).values({
         baselineName: run.baselineName ?? run.name ?? "auto",
-        testVariationId: run.testVariationId,
+        testVariationId: runTestVariationId,
         testRunId: run.id,
         // userId omitted → defaults to NULL → signals auto-approve.
         ...(run.branchName ? { branchName: run.branchName } : {}),
@@ -469,12 +483,18 @@ async function handleDiffJobInner(
   // of {x,y,width,height,viewport?}. The viewport tag is filtered against
   // each candidate screenshot's viewport inside the per-viewport loop
   // below. Legacy rows without `viewport` apply universally.
+  //
+  // ADR-038: testVariationId is no longer on test_runs; use the variation
+  // resolved from the first screenshot. Run-level ignoreAreas was removed
+  // from test_runs, so only the variation's ignoreRegions apply.
   const variationRow = await deps.db.query.testVariations.findFirst({
-    where: eq(testVariations.id, run.testVariationId),
+    where: eq(testVariations.id, runTestVariationId),
   });
-  const variationRegions = parseIgnoreAreas(variationRow?.ignoreAreas) ?? [];
-  const runRegions = parseIgnoreAreas(run.ignoreAreas) ?? [];
-  const allRegions = dedupeRegions([...variationRegions, ...runRegions]);
+  // ignoreRegions is jsonb (already parsed by Drizzle); parseIgnoreAreas
+  // handles both string and pre-parsed values.
+  const variationRegions = parseIgnoreAreas(variationRow?.ignoreRegions) ?? [];
+  // ADR-038: run-level ignoreAreas column was removed from test_runs.
+  const allRegions = dedupeRegions([...variationRegions]);
   const perViewport: PerViewportResult[] = [];
   // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
   // string and the per-region OCR results, so we can persist a synthetic
@@ -1016,11 +1036,14 @@ function dedupeRegions(rs: ParsedIgnoreArea[]): ParsedIgnoreArea[] {
 }
 
 function parseIgnoreAreas(
-  value: string | null | undefined,
+  value: string | unknown | null | undefined,
 ): ParsedIgnoreArea[] | undefined {
-  if (!value) return undefined;
+  if (value === null || value === undefined || value === "") return undefined;
   try {
-    const parsed = JSON.parse(value);
+    // ADR-038: ignoreRegions is stored as jsonb (already parsed by Drizzle).
+    // Legacy ignore_areas was stored as a text column (JSON string). Handle
+    // both: if the value is already an array/object, skip JSON.parse.
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
     if (!Array.isArray(parsed)) return undefined;
     const out: ParsedIgnoreArea[] = [];
     for (const item of parsed) {

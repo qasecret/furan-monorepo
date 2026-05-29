@@ -8,9 +8,10 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { projects } from "./projects.js";
+
 import { builds } from "./builds.js";
 import { baselineSourceEnum, environmentEnum, runStatusEnum } from "./enums.js";
+import { projects } from "./projects.js";
 
 export const testRuns = pgTable(
   "test_runs",

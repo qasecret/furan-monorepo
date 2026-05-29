@@ -137,7 +137,6 @@ async function seedVariationWithBaseline(
     .values({
       projectId: s.projectId,
       buildId: s.fromBuildId,
-      testVariationId: v.id,
       branchName: "feature/x",
       status: "passed",
       merge: true,
@@ -149,6 +148,8 @@ async function seedVariationWithBaseline(
     await h.db.insert(screenshots).values({
       runId: r.id,
       projectId: s.projectId,
+      testVariationId: v.id,
+      name,
       imageKey: `${imageKey}-${vp}`,
       viewport: vp,
       browser: "chromium",
@@ -356,8 +357,8 @@ d("tRPC projects.mergeBranchBaselines", () => {
       .values({
         projectId: s.projectId,
         buildId: s.fromBuildId,
-        testVariationId: v1,
         branchName: "feature/x",
+        name: "v1",
         status: "passed",
         merge: true,
       })
@@ -365,6 +366,8 @@ d("tRPC projects.mergeBranchBaselines", () => {
     await h.db.insert(screenshots).values({
       runId: olderRun.id,
       projectId: s.projectId,
+      testVariationId: v1,
+      name: "v1",
       imageKey: "hash-v1-old",
       viewport: "1280x720",
       browser: "chromium",

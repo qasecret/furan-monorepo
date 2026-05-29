@@ -132,19 +132,22 @@ d("tRPC builds router", () => {
       {
         projectId: s.projectId,
         buildId: b.id,
-        testVariationId: v.id,
+        name: "test1",
+        branchName: "main",
         status: "passed",
       },
       {
         projectId: s.projectId,
         buildId: b.id,
-        testVariationId: v.id,
+        name: "test2",
+        branchName: "main",
         status: "unresolved",
       },
       {
         projectId: s.projectId,
         buildId: b.id,
-        testVariationId: v.id,
+        name: "test3",
+        branchName: "main",
         status: "failed",
       },
     ]);

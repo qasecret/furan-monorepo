@@ -164,26 +164,45 @@ d("tRPC variations router", () => {
   });
 
   test("get returns variation row + totalRuns count", async () => {
-    await h.db.insert(testRuns).values([
-      {
+    // ADR-038: runs are linked to variations through screenshots.
+    // Insert 3 runs, each with a screenshot referencing s.variationId.
+    const runs = await h.db
+      .insert(testRuns)
+      .values([
+        {
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "run-a",
+          branchName: "main",
+          status: "passed",
+        },
+        {
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "run-b",
+          branchName: "main",
+          status: "unresolved",
+        },
+        {
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "run-c",
+          branchName: "main",
+          status: "failed",
+        },
+      ])
+      .returning();
+    for (const run of runs) {
+      await h.db.insert(screenshots).values({
+        runId: run.id,
         projectId: s.projectId,
-        buildId: s.buildId,
         testVariationId: s.variationId,
-        status: "passed",
-      },
-      {
-        projectId: s.projectId,
-        buildId: s.buildId,
-        testVariationId: s.variationId,
-        status: "unresolved",
-      },
-      {
-        projectId: s.projectId,
-        buildId: s.buildId,
-        testVariationId: s.variationId,
-        status: "failed",
-      },
-    ]);
+        name: "LoginPage.darkMode",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "aaaa",
+      });
+    }
     const client = mkClient(h, s.editorJwt);
     const res = await client.variations.get.query({
       projectId: s.projectId,
@@ -242,11 +261,23 @@ d("tRPC variations router", () => {
     const inserts = Array.from({ length: 5 }, (_, i) => ({
       projectId: s.projectId,
       buildId: s.buildId,
-      testVariationId: s.variationId,
+      name: `run-${i}`,
+      branchName: "main",
       status: "passed" as const,
       createdAt: new Date(now - i * 1000),
     }));
-    await h.db.insert(testRuns).values(inserts);
+    const runs = await h.db.insert(testRuns).values(inserts).returning();
+    for (const run of runs) {
+      await h.db.insert(screenshots).values({
+        runId: run.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "LoginPage.darkMode",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "aaaa",
+      });
+    }
 
     const client = mkClient(h, s.editorJwt);
     const res = await client.variations.history.query({
@@ -267,11 +298,23 @@ d("tRPC variations router", () => {
     const inserts = Array.from({ length: 30 }, (_, i) => ({
       projectId: s.projectId,
       buildId: s.buildId,
-      testVariationId: s.variationId,
+      name: `run-${i}`,
+      branchName: "main",
       status: "passed" as const,
       createdAt: new Date(Date.now() - i * 1000),
     }));
-    await h.db.insert(testRuns).values(inserts);
+    const runs = await h.db.insert(testRuns).values(inserts).returning();
+    for (const run of runs) {
+      await h.db.insert(screenshots).values({
+        runId: run.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "LoginPage.darkMode",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "aaaa",
+      });
+    }
 
     const client = mkClient(h, s.editorJwt);
     const first = await client.variations.history.query({
@@ -297,20 +340,45 @@ d("tRPC variations router", () => {
   });
 
   test("history excludes other variations' runs", async () => {
-    await h.db.insert(testRuns).values([
-      {
+    const [runA] = await h.db
+      .insert(testRuns)
+      .values({
         projectId: s.projectId,
         buildId: s.buildId,
-        testVariationId: s.variationId,
+        name: "run-a",
+        branchName: "main",
         status: "passed",
-      },
-      {
+      })
+      .returning();
+    const [runB] = await h.db
+      .insert(testRuns)
+      .values({
         projectId: s.projectId,
         buildId: s.buildId,
-        testVariationId: s.otherVariationId,
+        name: "run-b",
+        branchName: "main",
         status: "passed",
-      },
-    ]);
+      })
+      .returning();
+    // runA linked to s.variationId, runB linked to s.otherVariationId
+    await h.db.insert(screenshots).values({
+      runId: runA!.id,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "LoginPage.darkMode",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
+    });
+    await h.db.insert(screenshots).values({
+      runId: runB!.id,
+      projectId: s.projectId,
+      testVariationId: s.otherVariationId,
+      name: "Checkout.summary",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "bbbb",
+    });
     const client = mkClient(h, s.editorJwt);
     const res = await client.variations.history.query({
       projectId: s.projectId,
@@ -321,11 +389,24 @@ d("tRPC variations router", () => {
   });
 
   test("history joins build number from builds table", async () => {
-    await h.db.insert(testRuns).values({
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "run-x",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    await h.db.insert(screenshots).values({
+      runId: run!.id,
       projectId: s.projectId,
-      buildId: s.buildId,
       testVariationId: s.variationId,
-      status: "passed",
+      name: "LoginPage.darkMode",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
     });
     const client = mkClient(h, s.editorJwt);
     const res = await client.variations.history.query({
@@ -339,11 +420,24 @@ d("tRPC variations router", () => {
   test("history returns null buildNumber when run has no build (defensive)", async () => {
     // test_runs.buildId is notNull in the schema, so the LEFT JOIN's NULL branch
     // is exercised only if a build row is missing — guard against that path anyway.
-    await h.db.insert(testRuns).values({
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "run-y",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    await h.db.insert(screenshots).values({
+      runId: run!.id,
       projectId: s.projectId,
-      buildId: s.buildId,
       testVariationId: s.variationId,
-      status: "passed",
+      name: "LoginPage.darkMode",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
     });
     // Delete the build to simulate orphan FK (cascade would actually fire — so
     // we delete the buildId reference via raw update to bypass FK):

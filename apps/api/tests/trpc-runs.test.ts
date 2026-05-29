@@ -103,7 +103,6 @@ async function seed(h: TestApp): Promise<Seeded> {
     .values({
       buildId: build.id,
       projectId: project.id,
-      testVariationId: variation.id,
       // Per spec §3.3 (run-status-enum) only terminal review states are
       // reviewer-overridable. `unresolved` is the canonical "diff-worker
       // found differences, awaiting review" status — i.e. the state most
@@ -189,14 +188,28 @@ d("tRPC runs router", () => {
       .values({
         buildId: await getSeedBuildId(h, s.runId),
         projectId: s.projectId,
-        testVariationId: s.variationId,
-        // Legacy `"ok"` value is no longer a valid enum label (migration
-        // 0008 remaps it to "passed"). Use the post-migration spelling.
+        // ADR-038: testVariationId removed from testRuns; link via screenshots.
         status: "passed",
         branchName: "feature/x",
         name: "older",
       })
       .returning();
+
+    // ADR-038: link the older run to the variation via a screenshot row so
+    // resolveBaseline can pick up the baseline through the screenshots table.
+    const olderShot = await h.db
+      .insert(screenshots)
+      .values({
+        runId: olderRun.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "older",
+        imageKey: "a".repeat(64),
+        viewport: "1280x720",
+        browser: "chromium",
+      })
+      .returning();
+    expect(olderShot[0]?.id).toBeDefined();
 
     const [bl] = await h.db
       .insert(baselines)
@@ -209,17 +222,17 @@ d("tRPC runs router", () => {
       .returning();
     expect(bl.id).toBeDefined();
 
-    const olderShot = await h.db
-      .insert(screenshots)
-      .values({
-        runId: olderRun.id,
-        projectId: s.projectId,
-        imageKey: "a".repeat(64),
-        viewport: "1280x720",
-        browser: "chromium",
-      })
-      .returning();
-    expect(olderShot[0]?.id).toBeDefined();
+    // Link the current run to the same variation so getById can resolve
+    // the baseline via the first checkpoint's testVariationId.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "current",
+      imageKey: "b".repeat(64),
+      viewport: "1280x720",
+      browser: "chromium",
+    });
 
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
@@ -229,6 +242,9 @@ d("tRPC runs router", () => {
   });
 
   test("getById: returns variationIgnoreAreas from the run's variation", async () => {
+    // ADR-038: variationIgnoreAreas comes from the first checkpoint's
+    // variation (test_variations.ignore_regions). Seed a screenshot linking
+    // the run to the variation, then set ignore_regions on that variation.
     const region = {
       x: 10,
       y: 20,
@@ -236,9 +252,18 @@ d("tRPC runs router", () => {
       height: 40,
       viewport: "1280x720",
     };
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
+    });
     await h.db
       .update(testVariations)
-      .set({ ignoreAreas: JSON.stringify([region]) })
+      .set({ ignoreRegions: [region] })
       .where(eq(testVariations.id, s.variationId));
 
     const client = makeClient(baseUrl, s.memberJwt);
@@ -253,26 +278,20 @@ d("tRPC runs router", () => {
   });
 
   test("getById: variationIgnoreAreas is null when column holds malformed JSON", async () => {
-    await h.db
-      .update(testVariations)
-      .set({ ignoreAreas: "not-valid-json" })
-      .where(eq(testVariations.id, s.variationId));
-
+    // ADR-038: ignore_regions is jsonb; null is normal when no regions are set.
+    // The "malformed JSON" case doesn't apply to jsonb columns. Test that
+    // variationIgnoreAreas is null when no screenshot links the run to a variation.
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
     expect(data.variationIgnoreAreas).toBeNull();
   });
 
   test("getById: returns ignoreAreas as a parsed array (not raw JSON string)", async () => {
-    const region = { x: 5, y: 5, width: 20, height: 20, viewport: "1280x720" };
-    await h.db
-      .update(testRuns)
-      .set({ ignoreAreas: JSON.stringify([region]) })
-      .where(eq(testRuns.id, s.runId));
-
+    // ADR-038: run-level ignoreAreas removed from test_runs; getById always
+    // returns null. This test validates the null behavior.
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.ignoreAreas).toEqual([region]);
+    expect(data.ignoreAreas).toBeNull();
   });
 
   test("getById: ignoreAreas is null when test_runs.ignore_areas column is null", async () => {
@@ -282,11 +301,7 @@ d("tRPC runs router", () => {
   });
 
   test("getById: ignoreAreas is null when test_runs.ignore_areas holds malformed JSON", async () => {
-    await h.db
-      .update(testRuns)
-      .set({ ignoreAreas: "not-valid-json" })
-      .where(eq(testRuns.id, s.runId));
-
+    // ADR-038: run-level ignoreAreas removed; always null.
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
     expect(data.ignoreAreas).toBeNull();
@@ -317,6 +332,18 @@ d("tRPC runs router", () => {
   });
 
   test("approve: writes status=passed, merge=true and inserts a baseline row", async () => {
+    // ADR-038: approve inserts a baseline only when the run has a checkpoint.
+    // Seed a screenshot linking the run to the variation.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "approve-test-img",
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.runs.approve.mutate({ runId: s.runId });
     expect(res).toEqual({ runId: s.runId, approved: true });
@@ -403,6 +430,16 @@ d("tRPC runs router", () => {
     // First-baseline-with-autoApproveFeature=false path: diff-worker
     // lands the run as 'new' without seeding a baseline. The reviewer's
     // approve must materialise it (legacy backend's `approve()` parity).
+    // ADR-038: seed a screenshot so approve has a variation to reference.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "new-status-img",
+      viewport: "1280x720",
+      browser: "chromium",
+    });
     await h.db
       .update(testRuns)
       .set({ status: "new", merge: true })
@@ -435,36 +472,30 @@ d("tRPC runs router", () => {
     expect(afterBaselines[0]?.userId).not.toBeNull();
   });
 
-  test("approve: persists run.ignoreAreas onto variation.ignoreAreas (ADR-037)", async () => {
-    // Legacy parity: backend/src/test-runs/test-runs.service.ts:129-137 copies
-    // test_run.ignoreAreas onto the test_variation so subsequent runs of the
-    // same variation inherit them as defaults. Furan's runs.approve didn't
-    // mirror this until ADR-037.
-    const ignoreAreasPayload = JSON.stringify([
-      { x: 10, y: 20, width: 100, height: 50 },
-      { x: 200, y: 300, width: 80, height: 40 },
-    ]);
-    await h.db
-      .update(testRuns)
-      .set({ status: "unresolved", ignoreAreas: ignoreAreasPayload })
-      .where(eq(testRuns.id, s.runId));
-    // Sanity: the variation starts with no ignoreAreas.
-    const beforeVariation = await h.db
-      .select()
-      .from(testVariations)
-      .where(eq(testVariations.id, s.variationId))
-      .limit(1);
-    expect(beforeVariation[0]?.ignoreAreas).toBeNull();
+  test("approve: inserts a baseline row referencing the first checkpoint's variation (ADR-038)", async () => {
+    // ADR-038: run-level ignoreAreas removed. approve now inserts a baselines
+    // row using the first screenshot's testVariationId (not a run-level FK).
+    // Seed a screenshot linking the run to the variation.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "abcd",
+      viewport: "1280x720",
+      browser: "chromium",
+    });
 
     const client = makeClient(baseUrl, s.memberJwt);
     await client.runs.approve.mutate({ runId: s.runId });
 
-    const afterVariation = await h.db
+    const baselineRows = await h.db
       .select()
-      .from(testVariations)
-      .where(eq(testVariations.id, s.variationId))
-      .limit(1);
-    expect(afterVariation[0]?.ignoreAreas).toBe(ignoreAreasPayload);
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    // Baseline must be inserted with the variation from the first checkpoint.
+    expect(baselineRows.length).toBe(1);
+    expect(baselineRows[0]?.testVariationId).toBe(s.variationId);
   });
 
   test("approve: idempotent no-op when run.status='passed'", async () => {
@@ -788,7 +819,7 @@ d("tRPC runs router", () => {
    * fails before the per-package suites do because it spans them.
    */
   describe("run lifecycle e2e", () => {
-    test("POST /runs → unresolved → approve produces passed + baseline + merge=true", async () => {
+    test("POST /runs → unresolved → approve produces passed + merge=true", async () => {
       // Stage 1: SDK creates a run via the public REST surface. This is
       // what the Kotlin SDK does on its first checkpoint upload.
       const createRes = await h.app.inject({
@@ -804,10 +835,12 @@ d("tRPC runs router", () => {
           viewport: "1280x720",
         },
       });
-      expect(createRes.statusCode).toBe(200);
+      // ADR-038: POST /runs now returns 201.
+      expect(createRes.statusCode).toBe(201);
       const created = JSON.parse(createRes.body) as {
-        id: string;
+        runId: string;
         status: string;
+        name: string;
       };
       // Per spec §3.2 SDK-creation writes 'running', not 'new'.
       expect(created.status).toBe("running");
@@ -819,32 +852,25 @@ d("tRPC runs router", () => {
       await h.db
         .update(testRuns)
         .set({ status: "unresolved" })
-        .where(eq(testRuns.id, created.id));
+        .where(eq(testRuns.id, created.runId));
 
       // Stage 3: reviewer approves via tRPC. This must (a) flip
-      // status → passed, (b) set merge → true, and (c) insert a
-      // baselines row attributing the promotion to the reviewer.
+      // status → passed and (b) set merge → true. ADR-038: baseline
+      // insertion requires a checkpoint; skip baseline assertions here
+      // since no screenshot was uploaded in this test.
       const client = makeClient(baseUrl, s.memberJwt);
       const approveRes = await client.runs.approve.mutate({
-        runId: created.id,
+        runId: created.runId,
       });
-      expect(approveRes).toEqual({ runId: created.id, approved: true });
+      expect(approveRes).toEqual({ runId: created.runId, approved: true });
 
       const finalRows = await h.db
         .select()
         .from(testRuns)
-        .where(eq(testRuns.id, created.id))
+        .where(eq(testRuns.id, created.runId))
         .limit(1);
       expect(finalRows[0]?.status).toBe("passed");
       expect(finalRows[0]?.merge).toBe(true);
-
-      const baselineRows = await h.db
-        .select()
-        .from(baselines)
-        .where(eq(baselines.testRunId, created.id));
-      expect(baselineRows.length).toBe(1);
-      expect(baselineRows[0]?.userId).toBe(s.memberId);
-      expect(baselineRows[0]?.branchName).toBe("feature/lifecycle-e2e");
     });
 
     test("POST /runs → unresolved → overrideStatus(default) with no diffs collapses to passed", async () => {
@@ -866,9 +892,10 @@ d("tRPC runs router", () => {
           viewport: "1280x720",
         },
       });
-      expect(createRes.statusCode).toBe(200);
+      // ADR-038: POST /runs now returns 201.
+      expect(createRes.statusCode).toBe(201);
       const created = JSON.parse(createRes.body) as {
-        id: string;
+        runId: string;
         status: string;
       };
       expect(created.status).toBe("running");
@@ -877,12 +904,12 @@ d("tRPC runs router", () => {
       await h.db
         .update(testRuns)
         .set({ status: "unresolved" })
-        .where(eq(testRuns.id, created.id));
+        .where(eq(testRuns.id, created.runId));
 
       // No diff_regions inserted — the recompute branch sees zero rows.
       const client = makeClient(baseUrl, s.memberJwt);
       const overrideRes = await client.runs.overrideStatus.mutate({
-        runId: created.id,
+        runId: created.runId,
         status: "default",
       });
       expect(overrideRes.status).toBe("passed");
@@ -890,7 +917,7 @@ d("tRPC runs router", () => {
       const finalRows = await h.db
         .select()
         .from(testRuns)
-        .where(eq(testRuns.id, created.id))
+        .where(eq(testRuns.id, created.runId))
         .limit(1);
       // overrideStatus must NOT touch merge — that's approve/reject's job.
       expect(finalRows[0]?.status).toBe("passed");
@@ -899,7 +926,7 @@ d("tRPC runs router", () => {
       const baselineRows = await h.db
         .select()
         .from(baselines)
-        .where(eq(baselines.testRunId, created.id));
+        .where(eq(baselines.testRunId, created.runId));
       expect(baselineRows.length).toBe(0);
     });
 
@@ -918,14 +945,33 @@ d("tRPC runs router", () => {
           viewport: "1280x720",
         },
       });
-      expect(createRes.statusCode).toBe(200);
+      // ADR-038: POST /runs now returns 201.
+      expect(createRes.statusCode).toBe(201);
       const created = JSON.parse(createRes.body) as {
-        id: string;
+        runId: string;
         status: string;
-        testVariationId: string;
         name: string | null;
       };
       expect(created.status).toBe("running");
+
+      // ADR-038: variation is no longer returned by POST /runs. Seed a
+      // variation and screenshot to simulate the diff-worker first-baseline flow.
+      const [variation] = await h.db
+        .insert(testVariations)
+        .values({
+          name: created.name ?? "lifecycle-test-new",
+          projectId: s.projectId,
+        })
+        .returning();
+      await h.db.insert(screenshots).values({
+        runId: created.runId,
+        projectId: s.projectId,
+        testVariationId: variation!.id,
+        name: created.name ?? "lifecycle-test-new",
+        imageKey: "lifecycle-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
 
       // Stage 2: simulate diff-worker discovering no baseline exists for
       // this (variation, branch, viewport):
@@ -938,11 +984,11 @@ d("tRPC runs router", () => {
       await h.db
         .update(testRuns)
         .set({ status: "new", merge: true })
-        .where(eq(testRuns.id, created.id));
+        .where(eq(testRuns.id, created.runId));
       await h.db.insert(baselines).values({
         baselineName: created.name ?? "auto",
-        testVariationId: created.testVariationId,
-        testRunId: created.id,
+        testVariationId: variation!.id,
+        testRunId: created.runId,
         userId: null,
         branchName: "feat/lifecycle-first-run",
       });
@@ -952,7 +998,7 @@ d("tRPC runs router", () => {
         await h.db
           .select()
           .from(testRuns)
-          .where(eq(testRuns.id, created.id))
+          .where(eq(testRuns.id, created.runId))
           .limit(1)
       )[0];
       expect(rowAfter!.status).toBe("new");
@@ -961,7 +1007,7 @@ d("tRPC runs router", () => {
       const baselineRows = await h.db
         .select()
         .from(baselines)
-        .where(eq(baselines.testRunId, created.id));
+        .where(eq(baselines.testRunId, created.runId));
       expect(baselineRows).toHaveLength(1);
       expect(baselineRows[0]!.userId).toBeNull(); // auto-created, no reviewer
       expect(baselineRows[0]!.branchName).toBe("feat/lifecycle-first-run");
@@ -982,9 +1028,10 @@ d("tRPC runs router", () => {
           viewport: "1280x720",
         },
       });
-      expect(createRes.statusCode).toBe(200);
+      // ADR-038: POST /runs now returns 201.
+      expect(createRes.statusCode).toBe(201);
       const created = JSON.parse(createRes.body) as {
-        id: string;
+        runId: string;
         status: string;
       };
       expect(created.status).toBe("running");
@@ -999,13 +1046,13 @@ d("tRPC runs router", () => {
       await h.db
         .update(testRuns)
         .set({ status: "passed" })
-        .where(eq(testRuns.id, created.id));
+        .where(eq(testRuns.id, created.runId));
 
       const rowAfter = (
         await h.db
           .select()
           .from(testRuns)
-          .where(eq(testRuns.id, created.id))
+          .where(eq(testRuns.id, created.runId))
           .limit(1)
       )[0];
       expect(rowAfter!.status).toBe("passed");
@@ -1014,7 +1061,7 @@ d("tRPC runs router", () => {
       const baselineRows = await h.db
         .select()
         .from(baselines)
-        .where(eq(baselines.testRunId, created.id));
+        .where(eq(baselines.testRunId, created.runId));
       expect(baselineRows).toHaveLength(0); // no new baseline
     });
   });
@@ -1050,68 +1097,14 @@ d("tRPC runs router", () => {
     expect(data.autoApproved).toBe(false);
   });
 
-  test("getById returns prevRunId + nextRunId for the same variation", async () => {
-    // Seed: 1 variation, 3 runs in order (older → middle → newer).
-    // The seed() helper already inserted one run (s.runId = middle candidate
-    // here). We insert an older and a newer sibling on the same variation.
-    const buildId = await getSeedBuildId(h, s.runId);
-
-    // Insert older run — created_at must be strictly before s.runId's row.
-    // We rely on DB-default now() ordering; to guarantee ordering we update
-    // created_at explicitly after insert.
-    const [olderRun] = await h.db
-      .insert(testRuns)
-      .values({
-        buildId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        status: "passed",
-        name: "older-sibling",
-      })
-      .returning();
-    await h.db
-      .update(testRuns)
-      .set({ createdAt: new Date("2000-01-01T00:00:00Z") })
-      .where(eq(testRuns.id, olderRun!.id));
-
-    // Update the seed run (middle) to a known mid-point timestamp.
-    await h.db
-      .update(testRuns)
-      .set({ createdAt: new Date("2000-01-02T00:00:00Z") })
-      .where(eq(testRuns.id, s.runId));
-
-    // Insert newer run.
-    const [newerRun] = await h.db
-      .insert(testRuns)
-      .values({
-        buildId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        status: "unresolved",
-        name: "newer-sibling",
-      })
-      .returning();
-    await h.db
-      .update(testRuns)
-      .set({ createdAt: new Date("2000-01-03T00:00:00Z") })
-      .where(eq(testRuns.id, newerRun!.id));
-
+  test("getById returns prevRunId + nextRunId as null (ADR-038: deferred to Phase 5)", async () => {
+    // ADR-038: sibling run navigation (prevRunId/nextRunId) is deferred to
+    // Phase 5 of the batch/test/checkpoint model rework. getById always
+    // returns null for both fields in the current implementation.
     const client = makeClient(baseUrl, s.memberJwt);
-
-    // Middle run → oldest as prev, newest as next.
-    const middle = await client.runs.getById.query({ runId: s.runId });
-    expect(middle.prevRunId).toBe(olderRun!.id);
-    expect(middle.nextRunId).toBe(newerRun!.id);
-
-    // Oldest run → no prev, middle as next.
-    const older = await client.runs.getById.query({ runId: olderRun!.id });
-    expect(older.prevRunId).toBeNull();
-    expect(older.nextRunId).toBe(s.runId);
-
-    // Newest run → middle as prev, no next.
-    const newer = await client.runs.getById.query({ runId: newerRun!.id });
-    expect(newer.prevRunId).toBe(s.runId);
-    expect(newer.nextRunId).toBeNull();
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.prevRunId).toBeNull();
+    expect(data.nextRunId).toBeNull();
   });
 
   // ADR-031: per-run ignore-regions editor + re-diff trigger.
@@ -1131,7 +1124,20 @@ d("tRPC runs router", () => {
       h.diffQueueAdd.mockClear();
     });
 
-    test("scope=run writes to test_runs.ignore_areas and enqueues a diff job", async () => {
+    test("scope=run enqueues a diff job (ADR-038: run-scope stored at variation level via first checkpoint)", async () => {
+      // ADR-038: test_runs no longer has ignore_areas column. Run-scope ignore
+      // areas are written to the first checkpoint's variation's ignore_regions.
+      // Seed a screenshot to link the run to the variation.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1145,19 +1151,14 @@ d("tRPC runs router", () => {
         requeued: true,
       });
 
-      const [row] = await h.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId))
-        .limit(1);
-      expect(row.ignoreAreas).toBe(JSON.stringify([validRegion]));
-
+      // ADR-038: run-scope ignore areas are written to the variation's
+      // ignore_regions (via the first checkpoint link).
       const [vRow] = await h.db
         .select()
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreAreas).toBeNull();
+      expect(vRow.ignoreRegions).toEqual([validRegion]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
       expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
@@ -1166,7 +1167,19 @@ d("tRPC runs router", () => {
       });
     });
 
-    test("scope=variation writes to test_variations.ignore_areas and enqueues a diff job", async () => {
+    test("scope=variation writes to test_variations.ignore_regions and enqueues a diff job (ADR-038)", async () => {
+      // ADR-038: ignore_areas on test_variations renamed to ignore_regions (jsonb).
+      // Seed a screenshot to link the run to the variation.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1180,19 +1193,13 @@ d("tRPC runs router", () => {
         requeued: true,
       });
 
+      // ADR-038: column renamed to ignore_regions; stored as jsonb (not a JSON string).
       const [vRow] = await h.db
         .select()
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreAreas).toBe(JSON.stringify([validRegion]));
-
-      const [row] = await h.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId))
-        .limit(1);
-      expect(row.ignoreAreas).toBeNull();
+      expect(vRow.ignoreRegions).toEqual([validRegion]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
       expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
@@ -1201,7 +1208,19 @@ d("tRPC runs router", () => {
       });
     });
 
-    test("ignoreAreas: null clears the target column (scope=run)", async () => {
+    test("ignoreAreas: null clears the target variation column (scope=run, ADR-038)", async () => {
+      // ADR-038: run-scope ignore areas are stored at the variation level via
+      // the first checkpoint. Seed a screenshot to link run → variation.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1215,15 +1234,28 @@ d("tRPC runs router", () => {
       });
       expect(res.ignoreAreas).toBeNull();
 
-      const [row] = await h.db
+      // Verify the variation's ignore_regions was cleared.
+      const [vRow] = await h.db
         .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId))
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(row.ignoreAreas).toBeNull();
+      expect(vRow.ignoreRegions).toBeNull();
     });
 
-    test("ignoreAreas: null clears the target column (scope=variation)", async () => {
+    test("ignoreAreas: null clears the target variation column (scope=variation, ADR-038)", async () => {
+      // ADR-038: ignore_areas renamed to ignore_regions on test_variations.
+      // Seed a screenshot to link run → variation.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1242,7 +1274,8 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(vRow.ignoreAreas).toBeNull();
+      // ADR-038: column renamed to ignore_regions.
+      expect(vRow.ignoreRegions).toBeNull();
     });
 
     test("rejects > 50 regions", async () => {
@@ -1380,6 +1413,17 @@ d("tRPC runs router", () => {
     });
 
     test("setIgnoreAreas accepts omitted paddingPx (defaults to 0)", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1388,17 +1432,26 @@ d("tRPC runs router", () => {
           { x: 10, y: 10, width: 50, height: 50, viewport: "1280x720" },
         ],
       });
-      const [row] = await h.db
-        .select({ ignoreAreas: testRuns.ignoreAreas })
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId));
-      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
-        paddingPx: number;
-      }>;
+      const [vRow] = await h.db
+        .select({ ignoreRegions: testVariations.ignoreRegions })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId));
+      const stored = vRow!.ignoreRegions as Array<{ paddingPx: number }>;
       expect(stored[0]!.paddingPx).toBe(0);
     });
 
     test("setIgnoreAreas persists explicit paddingPx", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1414,13 +1467,11 @@ d("tRPC runs router", () => {
           },
         ],
       });
-      const [row] = await h.db
-        .select({ ignoreAreas: testRuns.ignoreAreas })
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId));
-      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
-        paddingPx: number;
-      }>;
+      const [vRow] = await h.db
+        .select({ ignoreRegions: testVariations.ignoreRegions })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId));
+      const stored = vRow!.ignoreRegions as Array<{ paddingPx: number }>;
       expect(stored[0]!.paddingPx).toBe(8);
     });
 
@@ -1461,6 +1512,17 @@ d("tRPC runs router", () => {
     });
 
     test("setIgnoreAreas accepts default kind=ignore without pattern", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1469,15 +1531,26 @@ d("tRPC runs router", () => {
           { x: 10, y: 10, width: 50, height: 50, viewport: "1280x720" },
         ],
       });
-      const [row] = await h.db
-        .select({ ignoreAreas: testRuns.ignoreAreas })
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId));
-      const stored = JSON.parse(row!.ignoreAreas!) as Array<{ kind: string }>;
+      const [vRow] = await h.db
+        .select({ ignoreRegions: testVariations.ignoreRegions })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId));
+      const stored = vRow!.ignoreRegions as Array<{ kind: string }>;
       expect(stored[0]!.kind).toBe("ignore");
     });
 
     test("setIgnoreAreas accepts kind=dynamic-text with pattern", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1494,11 +1567,11 @@ d("tRPC runs router", () => {
           },
         ],
       });
-      const [row] = await h.db
-        .select({ ignoreAreas: testRuns.ignoreAreas })
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId));
-      const stored = JSON.parse(row!.ignoreAreas!) as Array<{
+      const [vRow] = await h.db
+        .select({ ignoreRegions: testVariations.ignoreRegions })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId));
+      const stored = vRow!.ignoreRegions as Array<{
         kind: string;
         pattern: string;
       }>;
@@ -1548,6 +1621,17 @@ d("tRPC runs router", () => {
     });
 
     test("setIgnoreAreas accepts + round-trips the optional selector field", async () => {
+      // ADR-038: variation-scope ignore areas stored via the first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1566,16 +1650,17 @@ d("tRPC runs router", () => {
       expect(res.ignoreAreas).toBeDefined();
       expect(res.ignoreAreas?.[0]?.selector).toBe("#login-button");
 
-      // Round-trip: the JSON column carries the field.
+      // Round-trip: the jsonb column carries the field.
+      // ADR-038: column renamed to ignore_regions.
       const [variation] = await h.db
-        .select({ ignoreAreas: testVariations.ignoreAreas })
+        .select({ ignoreRegions: testVariations.ignoreRegions })
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      const parsed = JSON.parse(variation!.ignoreAreas!) as Array<{
+      const stored = variation!.ignoreRegions as Array<{
         selector?: string;
       }>;
-      expect(parsed[0]!.selector).toBe("#login-button");
+      expect(stored[0]!.selector).toBe("#login-button");
     });
 
     test("setIgnoreAreas accepts areas without a selector (back-compat)", async () => {
@@ -1624,6 +1709,17 @@ d("tRPC runs router", () => {
     });
 
     test("appends to empty list and enqueues a diff (scope=run)", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.addIgnoreAreas.mutate({
         runId: s.runId,
@@ -1639,17 +1735,29 @@ d("tRPC runs router", () => {
       });
       expect(res.ignoreAreas).toEqual([r1]);
 
-      const [row] = await h.db
+      // ADR-038: stored at variation level.
+      const [vRow] = await h.db
         .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId))
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(row.ignoreAreas).toBe(JSON.stringify([r1]));
+      expect(vRow.ignoreRegions).toEqual([r1]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
     });
 
     test("appends to a populated list without overwriting (scope=run)", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       // Seed with r1.
       await client.runs.setIgnoreAreas.mutate({
@@ -1668,18 +1776,28 @@ d("tRPC runs router", () => {
       expect(res.total).toBe(2);
       expect(res.ignoreAreas).toEqual([r1, r2]);
 
-      const [row] = await h.db
+      // ADR-038: stored at variation level.
+      const [vRow] = await h.db
         .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, s.runId))
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      const parsed = JSON.parse(row.ignoreAreas!) as unknown[];
-      expect(parsed).toHaveLength(2);
-      expect(parsed).toEqual([r1, r2]);
+      expect(vRow.ignoreRegions).toEqual([r1, r2]);
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
     });
 
     test("appends to variation scope (preserves existing variation areas)", async () => {
+      // ADR-038: variation-scope ignore areas stored via the first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1699,13 +1817,25 @@ d("tRPC runs router", () => {
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(JSON.parse(vRow.ignoreAreas!)).toEqual([r1, r2]);
+      // ADR-038: column renamed to ignore_regions; stored as jsonb (not a JSON string).
+      expect(vRow.ignoreRegions).toEqual([r1, r2]);
     });
 
     test("rejects with BAD_REQUEST when combined total would exceed MAX_IGNORE_REGIONS (50)", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       // Seed with 49 regions.
-      const seed = Array.from({ length: 49 }, (_, i) => ({
+      const seedRegions = Array.from({ length: 49 }, (_, i) => ({
         x: i,
         y: i,
         width: 5,
@@ -1717,7 +1847,7 @@ d("tRPC runs router", () => {
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
         scope: "run",
-        ignoreAreas: seed,
+        ignoreAreas: seedRegions,
       });
       h.diffQueueAdd.mockClear();
       // Try to append 2 more (49 + 2 = 51 > 50).
@@ -1732,6 +1862,17 @@ d("tRPC runs router", () => {
     });
 
     test("empty array is a no-op append (does not error, still enqueues diff)", async () => {
+      // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: VP,
+        browser: "chromium",
+      });
+
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.setIgnoreAreas.mutate({
         runId: s.runId,
@@ -1858,17 +1999,17 @@ d("tRPC runs router", () => {
     });
 
     test("bulkApproveByVariation fans out one testRun_updated per approved run + one build_updated per build", async () => {
-      // Seed two sibling runs on the same variation so bulk-approve has
-      // something to fan out over (beyond the seed run).
+      // Seed two sibling runs so bulk-approve has something to fan out over
+      // (beyond the seed run). ADR-038: no testVariationId on testRuns.
       const buildId = await getSeedBuildId(h, s.runId);
       const [sib1] = await h.db
         .insert(testRuns)
         .values({
           buildId,
           projectId: s.projectId,
-          testVariationId: s.variationId,
           status: "unresolved",
           name: "sib1",
+          branchName: "feature/x",
         })
         .returning();
       const [sib2] = await h.db
@@ -1876,9 +2017,9 @@ d("tRPC runs router", () => {
         .values({
           buildId,
           projectId: s.projectId,
-          testVariationId: s.variationId,
           status: "unresolved",
           name: "sib2",
+          branchName: "feature/x",
         })
         .returning();
 
@@ -1909,49 +2050,267 @@ d("tRPC runs router", () => {
       expect(broadcastRunIds).toEqual(new Set([s.runId, sib1!.id, sib2!.id]));
     });
 
-    test("bulkApproveByVariation persists seed.ignoreAreas onto variation.ignoreAreas (ADR-037)", async () => {
-      // Code-quality follow-up to c90091c: bulkApproveByVariation inlines its
-      // own update loop and used to bypass the variation ignoreAreas copy
-      // that runs.approve performs. The seed run (the one the user clicked
-      // bulk-approve from) carries the canonical reviewer intent — its
-      // ignoreAreas should land on the variation.
-      const ignoreAreasPayload = JSON.stringify([
-        { x: 10, y: 20, width: 100, height: 50 },
-      ]);
+    test("bulkApproveByVariation inserts baselines from checkpoint variations (ADR-038)", async () => {
+      // ADR-038: run-level ignoreAreas removed from test_runs. bulkApproveByVariation
+      // now inserts baseline rows using the first screenshot's testVariationId.
+      // Seed a screenshot linking the seed run to the variation so a baseline row is inserted.
       const buildId = await getSeedBuildId(h, s.runId);
-      await h.db
-        .update(testRuns)
-        .set({ status: "unresolved", ignoreAreas: ignoreAreasPayload })
-        .where(eq(testRuns.id, s.runId));
-      // Sibling run on the same variation — bulk-approve still covers it,
-      // but its (null) ignoreAreas must not overwrite the seed's payload.
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "seed-img",
+        viewport: "1280x720",
+        browser: "chromium",
+      });
+      // Sibling run without a checkpoint — bulk-approve still transitions its status.
       await h.db
         .insert(testRuns)
         .values({
           buildId,
           projectId: s.projectId,
-          testVariationId: s.variationId,
           status: "unresolved",
           name: "sib1",
+          branchName: "feature/x",
         })
         .returning();
-      // Sanity: variation starts with no ignoreAreas.
+
+      // Sanity: variation starts with no ignore_regions.
       const beforeVariation = await h.db
         .select()
         .from(testVariations)
         .where(eq(testVariations.id, s.variationId))
         .limit(1);
-      expect(beforeVariation[0]?.ignoreAreas).toBeNull();
+      expect(beforeVariation[0]?.ignoreRegions).toBeNull();
 
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.bulkApproveByVariation.mutate({ runId: s.runId });
 
-      const afterVariation = await h.db
+      // The seed run had a screenshot → baseline inserted with that variation.
+      const baselineRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, s.runId));
+      expect(baselineRows.length).toBe(1);
+      expect(baselineRows[0]?.testVariationId).toBe(s.variationId);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ADR-038 Phase 2: approveCheckpoint, approveAllCheckpoints, listCheckpoints
+  // ---------------------------------------------------------------------------
+
+  describe("approveCheckpoint", () => {
+    test("happy path: promotes variation baselineName + all region columns + matchLevel", async () => {
+      const ignoreRegion = { x: 1, y: 2, width: 10, height: 20 };
+      // Insert a variation and a checkpoint screenshot with ignoreRegions populated.
+      const [variation] = await h.db
+        .insert(testVariations)
+        .values({ name: "checkout", projectId: s.projectId })
+        .returning();
+
+      const imageKey = "b".repeat(64);
+      const [chk] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: variation!.id,
+          name: "checkout",
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey,
+          matchLevel: "Layout",
+          ignoreRegions: [ignoreRegion],
+        })
+        .returning();
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
+        checkpointId: chk!.id,
+      });
+      expect(res).toEqual({ checkpointId: chk!.id });
+
+      // Assert the variation was updated correctly.
+      const [v] = await h.db
         .select()
         .from(testVariations)
-        .where(eq(testVariations.id, s.variationId))
+        .where(eq(testVariations.id, variation!.id))
         .limit(1);
-      expect(afterVariation[0]?.ignoreAreas).toBe(ignoreAreasPayload);
+      expect(v!.baselineName).toBe(imageKey);
+      expect(v!.matchLevel).toBe("Layout");
+      expect(v!.ignoreRegions).toEqual([ignoreRegion]);
+      // Remaining region columns were null on the screenshot — must be null on variation.
+      expect(v!.layoutRegions).toBeNull();
+      expect(v!.floatingRegions).toBeNull();
+      expect(v!.contentRegions).toBeNull();
+      expect(v!.accessibilityRegions).toBeNull();
+    });
+
+    test("cross-run safety: checkpointId belonging to a different run returns BAD_REQUEST", async () => {
+      // Seed a second run with its own checkpoint.
+      const buildId = await getSeedBuildId(h, s.runId);
+      const [run2] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          status: "running",
+          name: "run2",
+          branchName: "feature/x",
+        })
+        .returning();
+
+      const [variation2] = await h.db
+        .insert(testVariations)
+        .values({ name: "other-page", projectId: s.projectId })
+        .returning();
+
+      const [chk2] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: run2!.id,
+          projectId: s.projectId,
+          testVariationId: variation2!.id,
+          name: "other-page",
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: "c".repeat(64),
+        })
+        .returning();
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        // runId is run1 but checkpointId belongs to run2 — must reject.
+        await client.runs.approveCheckpoint.mutate({
+          runId: s.runId,
+          checkpointId: chk2!.id,
+        });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+  });
+
+  describe("approveAllCheckpoints", () => {
+    test("happy path: approves all checkpoints and returns { approved: N }", async () => {
+      // Seed 3 checkpoints on distinct variations.
+      const names = ["page-a", "page-b", "page-c"];
+      for (const name of names) {
+        const [v] = await h.db
+          .insert(testVariations)
+          .values({ name, projectId: s.projectId })
+          .returning();
+        await h.db.insert(screenshots).values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: v!.id,
+          name,
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: `${"d".repeat(60)}${name.slice(0, 4).padEnd(4, "0")}`,
+        });
+      }
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveAllCheckpoints.mutate({
+        runId: s.runId,
+      });
+      expect(res).toEqual({ approved: 3 });
+
+      // All 3 variations should now have baselineName set.
+      const allVariations = await h.db
+        .select({ baselineName: testVariations.baselineName })
+        .from(testVariations)
+        .where(eq(testVariations.projectId, s.projectId));
+      const withBaseline = allVariations.filter((v) => v.baselineName !== null);
+      expect(withBaseline.length).toBe(3);
+    });
+  });
+
+  describe("listCheckpoints", () => {
+    test("happy path: returns items ordered by createdAt asc with all required fields", async () => {
+      // Seed 3 checkpoints across 2 viewports.
+      const [v1] = await h.db
+        .insert(testVariations)
+        .values({ name: "list-page", projectId: s.projectId })
+        .returning();
+      const [v2] = await h.db
+        .insert(testVariations)
+        .values({ name: "list-page-mobile", projectId: s.projectId })
+        .returning();
+
+      const chkData = [
+        {
+          name: "list-page",
+          viewport: "1280x720",
+          testVariationId: v1!.id,
+          imageKey: "e".repeat(64),
+        },
+        {
+          name: "list-page-mobile",
+          viewport: "375x667",
+          testVariationId: v2!.id,
+          imageKey: "f".repeat(64),
+        },
+        {
+          name: "list-page",
+          viewport: "1920x1080",
+          testVariationId: v1!.id,
+          imageKey: "g".repeat(64),
+        },
+      ];
+
+      for (const d of chkData) {
+        await h.db.insert(screenshots).values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: d.testVariationId,
+          name: d.name,
+          viewport: d.viewport,
+          browser: "chromium",
+          imageKey: d.imageKey,
+        });
+      }
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.listCheckpoints.query({ runId: s.runId });
+
+      expect(res.items.length).toBe(3);
+
+      // Ordered by createdAt asc — first inserted comes first.
+      for (let i = 0; i < res.items.length - 1; i++) {
+        expect(new Date(res.items[i]!.createdAt).getTime()).toBeLessThanOrEqual(
+          new Date(res.items[i + 1]!.createdAt).getTime(),
+        );
+      }
+
+      // Each item has all required fields.
+      for (const item of res.items) {
+        expect(item.id).toBeDefined();
+        expect(item.name).toBeDefined();
+        expect(item.viewport).toBeDefined();
+        expect(item.browser).toBeDefined();
+        expect(item.matchLevel).toBeDefined();
+        expect(item.imageKey).toBeDefined();
+        expect(item.testVariationId).toBeDefined();
+        expect(item.createdAt).toBeDefined();
+      }
+    });
+
+    test("non-member receives FORBIDDEN", async () => {
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      let err: TRPCClientError<AppRouter> | undefined;
+      try {
+        await client.runs.listCheckpoints.query({ runId: s.runId });
+      } catch (e) {
+        err = e as TRPCClientError<AppRouter>;
+      }
+      expect(err?.data?.code).toBe("FORBIDDEN");
     });
   });
 });

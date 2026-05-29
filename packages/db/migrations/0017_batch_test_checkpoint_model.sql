@@ -48,6 +48,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 --> statement-breakpoint
+DROP INDEX IF EXISTS screenshots_run_id_viewport_unique;
+--> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'screenshots_run_id_name_viewport_unique'

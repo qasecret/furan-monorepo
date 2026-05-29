@@ -4,7 +4,9 @@ import {
   desc,
   eq,
   ilike,
+  inArray,
   lt,
+  screenshots,
   sql,
   testRuns,
   testVariations,
@@ -122,10 +124,14 @@ export const variationsRouter = t.router({
       const row = rows[0];
       if (!row) throw new TRPCError({ code: "NOT_FOUND" });
 
+      // ADR-038: runs are linked to variations through screenshots.
+      // Count distinct runs that have at least one screenshot with this variation.
       const aggRows = await ctx.db
-        .select({ totalRuns: sql<number>`count(*)::int` })
-        .from(testRuns)
-        .where(eq(testRuns.testVariationId, input.variationId));
+        .select({
+          totalRuns: sql<number>`count(distinct ${screenshots.runId})::int`,
+        })
+        .from(screenshots)
+        .where(eq(screenshots.testVariationId, input.variationId));
       const totalRuns = aggRows[0]?.totalRuns ?? 0;
       return { ...row, totalRuns };
     }),
@@ -149,9 +155,22 @@ export const variationsRouter = t.router({
       }),
     )
     .query(async ({ input, ctx }) => {
+      // ADR-038: runs are linked to variations through screenshots.
+      // First, find all run IDs that have a screenshot with this variation.
+      const linkedRunIds = await ctx.db
+        .select({ runId: screenshots.runId })
+        .from(screenshots)
+        .where(eq(screenshots.testVariationId, input.variationId));
+
+      if (linkedRunIds.length === 0) {
+        return { items: [], nextCursor: null };
+      }
+
+      const runIdList = linkedRunIds.map((r) => r.runId);
+
       const conditions = [
         eq(testRuns.projectId, input.projectId),
-        eq(testRuns.testVariationId, input.variationId),
+        inArray(testRuns.id, runIdList),
       ];
       if (input.cursor) {
         conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));

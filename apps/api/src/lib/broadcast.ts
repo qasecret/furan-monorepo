@@ -22,11 +22,33 @@ export interface ProjectBroadcastEvent {
   data: unknown;
 }
 
+/**
+ * ADR-038: per-run event types for the run-level SSE channel.
+ * Phase 5 will tighten payload typing for the dashboard side.
+ */
+export type RunEventType =
+  | "run.checkpoint_added"
+  | "run.checkpoint_diffed"
+  | "run.completed";
+
+export interface RunBroadcastEvent {
+  type: RunEventType;
+  runId: string;
+  payload: Record<string, unknown>;
+}
+
 export interface Broadcaster {
   publishProjectEvent(
     projectId: string,
     ev: ProjectBroadcastEvent,
   ): Promise<void>;
+  /**
+   * Best-effort per-run event publish. Used by the lifecycle routes
+   * (complete, abort) and the screenshot upload path. Callers must not
+   * fail their write path when this rejects — it is best-effort, same as
+   * publishProjectEvent.
+   */
+  publishRunEvent?(ev: RunBroadcastEvent): Promise<void>;
 }
 
 /**
@@ -81,6 +103,24 @@ export function createBroadcaster(
         telemetry.logger.warn(
           { err, projectId, event: ev.event },
           "broadcast_metric_record_failed",
+        );
+      }
+    },
+
+    async publishRunEvent(ev) {
+      const channel = `run:${ev.runId}:events`;
+      const payload = JSON.stringify({
+        type: ev.type,
+        runId: ev.runId,
+        payload: ev.payload,
+        ts: Date.now(),
+      });
+      try {
+        await redis.publish(channel, payload);
+      } catch (err) {
+        telemetry.logger.warn(
+          { err, runId: ev.runId, type: ev.type },
+          "broadcast_run_event_failed",
         );
       }
     },
