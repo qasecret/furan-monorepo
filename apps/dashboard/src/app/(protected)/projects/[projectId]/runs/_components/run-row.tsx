@@ -1,6 +1,7 @@
 "use client";
 
 import type { RunStatus } from "@furan/shared-types";
+import { GitBranch, History as HistoryIcon, Package } from "lucide-react";
 import Link from "next/link";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
@@ -59,18 +60,41 @@ export function RunRow({ projectId, run }: Props) {
       data-testid={`queue-row-${run.id}`}
     >
       <td className="px-4 py-2.5">
-        <Link
-          href={`/projects/${projectId}/runs/${run.id}/diffs/${run.id}`}
-          className="hover:underline"
-        >
-          {run.branchName ?? "—"}
-        </Link>
+        {/*
+          Three sibling links live in the same cell: the branch link
+          (primary — opens the diff viewer), a build chip, and a history
+          chip. Without explicit aria-labels each link's accessible name
+          was just its visible text — "main", "build", "History" — and a
+          screen reader read the cell as the phrase "main build
+          History". The labels below name each link in terms of what it
+          does, leaving the cell's text content intact for visual users.
+        */}
+        <span className="inline-flex items-center gap-1.5">
+          <GitBranch
+            className="h-3.5 w-3.5 text-zinc-500 dark:text-zinc-400"
+            aria-hidden
+          />
+          <Link
+            href={`/projects/${projectId}/runs/${run.id}/diffs/${run.id}`}
+            className="hover:underline"
+            aria-label={`Open diff viewer for run on branch ${run.branchName ?? "(unknown)"}`}
+          >
+            {run.branchName ?? "—"}
+          </Link>
+        </span>
         {run.buildId && (
           <Link
             href={`/projects/${projectId}/builds?expand=${run.buildId}`}
-            className="ml-2 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
+            className="ml-2 inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
             data-testid={`run-build-chip-${run.id}`}
+            aria-label={`Open build ${
+              run.buildName ??
+              (run.buildNumber !== null && run.buildNumber !== undefined
+                ? `#${run.buildNumber}`
+                : "for this run")
+            }`}
           >
+            <Package className="h-3 w-3" aria-hidden />
             {run.buildName ??
               (run.buildNumber !== null && run.buildNumber !== undefined
                 ? `#${run.buildNumber}`
@@ -80,9 +104,11 @@ export function RunRow({ projectId, run }: Props) {
         {run.testVariationId && (
           <Link
             href={`/projects/${projectId}/variations/${run.testVariationId}`}
-            className="ml-2 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
+            className="ml-2 inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900/70 dark:hover:text-white"
             data-testid={`run-history-chip-${run.id}`}
+            aria-label="View baseline history for this test"
           >
+            <HistoryIcon className="h-3 w-3" aria-hidden />
             History
           </Link>
         )}
