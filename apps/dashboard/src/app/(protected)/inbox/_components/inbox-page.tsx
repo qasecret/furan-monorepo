@@ -10,7 +10,6 @@ import { Pagination } from "./pagination";
 
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
-import { ShortcutsDialog } from "@/components/triage/shortcuts-dialog";
 import { InboxRealtime } from "@/hooks/InboxRealtime";
 import { recordTelemetry } from "@/lib/telemetry";
 import { trpc } from "@/lib/trpc";
@@ -28,7 +27,6 @@ export function InboxPage({
 }: Props) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const actionsCountRef = useRef(0);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
@@ -121,8 +119,6 @@ export function InboxPage({
         k: () => moveSelection(-1),
         a: () => current && fireAction("approve", current, true),
         r: () => current && fireAction("reject", current, true),
-        "?": () => setShortcutsOpen(true),
-        Escape: () => setShortcutsOpen(false),
       }}
     >
       <InboxRealtime />
@@ -176,7 +172,6 @@ export function InboxPage({
           }
           onNext={() => setCursor(list.data?.nextCursor ?? null)}
         />
-        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       </div>
     </KeyboardScope>
   );
