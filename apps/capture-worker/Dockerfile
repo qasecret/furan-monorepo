@@ -62,14 +62,20 @@ RUN pnpm install --frozen-lockfile --filter @furan/capture-worker... --prefer-of
 
 RUN pnpm --filter @furan/capture-worker... build
 
-# Strip devDependencies from node_modules so dev/build-time binaries
-# (esbuild, lefthook, vitest, etc. — including their pre-compiled Go
-# binaries) don't leak into the runtime image. Without this, Trivy
-# flags Go-stdlib CVEs in dormant binaries that the runtime never
-# invokes. pnpm prune (without -r — pnpm 9 doesn't accept it on prune)
-# runs at the workspace root which is where the .pnpm/ store lives,
-# so removing devDep references here clears the bundled binaries.
-RUN pnpm prune --prod
+# Re-install with NODE_ENV=production to strip dev/build-time deps
+# (esbuild via tsx & vitest, lefthook, vitest, etc.) from node_modules.
+# `pnpm prune --prod` only sweeps the workspace ROOT manifest's devDeps;
+# tsx/vitest are declared in apps/capture-worker/package.json devDeps,
+# so prune leaves their transitive @esbuild Go binaries in place where
+# Trivy flags them as dormant stdlib CVE sources.
+#
+# Rebuild-from-scratch is the most predictable fix: delete node_modules,
+# re-resolve with NODE_ENV=production so pnpm skips every devDep section
+# (root and per-package), then rebuild sharp's prebuilt binary.
+ENV NODE_ENV=production
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules \
+  && pnpm install --frozen-lockfile --filter @furan/capture-worker... --prefer-offline --ignore-scripts \
+  && pnpm rebuild sharp
 
 #####################################################################
 # Stage 3: runtime — Playwright base (jammy)                         #
