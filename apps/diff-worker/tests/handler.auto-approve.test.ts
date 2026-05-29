@@ -149,6 +149,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     baselineRunId: string;
     candidateRunId: string;
     projectId: string;
+    variationId: string;
     viewports: string[];
   }): Promise<void> {
     const bytes = FIXTURE("baseline-a.png");
@@ -160,24 +161,28 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         .values({
           runId: opts.baselineRunId,
           projectId: opts.projectId,
+          testVariationId: opts.variationId,
+          name: "home",
           imageKey: sharedKey,
           viewport: vp,
           browser: "chromium",
         })
         .onConflictDoNothing({
-          target: [screenshots.runId, screenshots.viewport],
+          target: [screenshots.runId, screenshots.name, screenshots.viewport],
         });
       await db
         .insert(screenshots)
         .values({
           runId: opts.candidateRunId,
           projectId: opts.projectId,
+          testVariationId: opts.variationId,
+          name: "home",
           imageKey: sharedKey,
           viewport: vp,
           browser: "chromium",
         })
         .onConflictDoNothing({
-          target: [screenshots.runId, screenshots.viewport],
+          target: [screenshots.runId, screenshots.name, screenshots.viewport],
         });
     }
   }
@@ -186,6 +191,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     baselineRunId: string;
     candidateRunId: string;
     projectId: string;
+    variationId: string;
     mismatchOnMobile: boolean;
   }): Promise<void> {
     const baselineBytes = FIXTURE("baseline-a.png");
@@ -205,24 +211,28 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .values({
         runId: opts.baselineRunId,
         projectId: opts.projectId,
+        testVariationId: opts.variationId,
+        name: "home",
         imageKey: baselineKey,
         viewport: VP_DESKTOP,
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
     await db
       .insert(screenshots)
       .values({
         runId: opts.candidateRunId,
         projectId: opts.projectId,
+        testVariationId: opts.variationId,
+        name: "home",
         imageKey: baselineKey,
         viewport: VP_DESKTOP,
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
     // Mobile: baseline always uses baselineKey; candidate uses
     // candidateMobileKey which may differ.
@@ -231,24 +241,28 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .values({
         runId: opts.baselineRunId,
         projectId: opts.projectId,
+        testVariationId: opts.variationId,
+        name: "home",
         imageKey: baselineKey,
         viewport: VP_MOBILE,
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
     await db
       .insert(screenshots)
       .values({
         runId: opts.candidateRunId,
         projectId: opts.projectId,
+        testVariationId: opts.variationId,
+        name: "home",
         imageKey: candidateMobileKey,
         viewport: VP_MOBILE,
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
   }
 
@@ -348,6 +362,9 @@ desc("handleDiffJob — auto-approve (integration)", () => {
 
   it("first-baseline (no prior baseline) takes first-baseline path, not auto-approve", async () => {
     // Setup: project + a candidate run with NO baselines pointer row.
+    // ADR-038: the handler resolves testVariationId from the first screenshot,
+    // so we must seed at least one screenshot for the first-baseline path to
+    // fire (without it the handler throws run_has_no_screenshots).
     const uniq = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
     const [p] = await db
       .insert(projects)
@@ -375,6 +392,22 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         name: "home",
       })
       .returning();
+
+    // Seed a screenshot so the handler can resolve the testVariationId.
+    // No baselines row → resolveBaseline returns null → first-baseline path.
+    const fixtureBytes = FIXTURE("baseline-a.png");
+    const imageKey = `${uniq}-fb-${objectKey(fixtureBytes)}`;
+    await storage.put(imageKey, fixtureBytes, "image/png");
+    await db.insert(screenshots).values({
+      runId: cr.id,
+      projectId: p.id,
+      testVariationId: v.id,
+      name: "home",
+      imageKey,
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
     // Note: no baselines row inserted, so resolveBaseline returns null and
     // the handler takes the first-baseline branch (which, per spec §3.2,
     // ALSO seeds a baselines row — distinct from the auto-approve fast
