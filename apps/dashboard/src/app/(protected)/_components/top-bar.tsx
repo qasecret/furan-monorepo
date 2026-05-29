@@ -26,7 +26,7 @@ export function TopBar() {
 
   return (
     <header
-      className="h-14 border-b border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-950/50 flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
+      className="h-14 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/50 flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -42,7 +42,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="relative w-full md:w-72 flex items-center bg-zinc-50 border border-zinc-200 rounded-md pl-9 pr-3 md:pr-16 py-1.5 text-sm text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-300 dark:hover:border-zinc-700 transition-colors text-left truncate"
+          className="relative w-full md:w-72 flex items-center bg-white border border-zinc-200 rounded-md pl-9 pr-3 md:pr-16 py-1.5 text-sm text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-300 dark:hover:border-zinc-700 transition-colors text-left truncate"
           data-testid="top-bar-search"
           aria-label="Open command palette"
         >

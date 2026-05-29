@@ -12,7 +12,10 @@
    * follow-on cleanup once all stragglers are gone.
    */
 
-  /* Brand */
+  /* Brand — dark mode default. The light-mode override below swaps to a
+   * deeper lime so the accent reads on white surfaces (the bright neon
+   * #a8ff53 has ~1.5:1 contrast on white and disappears as a button bg
+   * or active-state tint). */
   --color-brand: #a8ff53;
   --color-brand-foreground: #000000;
 
@@ -44,14 +47,26 @@
 
 html,
 body {
-  /* Defaults are the LIGHT theme — Phase 0 sets <html class="dark"> by
-   * default, so dark is still what every user sees today. The light
-   * branch kicks in when ThemeToggle flips the class to "light". */
-  background-color: #fafafa;   /* zinc-50 */
+  /* Light mode: pure white canvas (was zinc-50). The off-white shifts to
+   * the sidebar + top bar so the main content area reads as the brightest
+   * surface — matches the pixelproof reference where the neon brand pops
+   * against a clean white field instead of a recessed grey canvas. */
+  background-color: #ffffff;
   color: #18181b;              /* zinc-900 */
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* Light-mode brand override. The dark-mode default #a8ff53 (set in @theme)
+ * is a bright neon lime that disappears on white surfaces (~1.5:1 contrast).
+ * On light we collapse to lime-600 #65a30d — same value used for
+ * --chart-approves in light mode below — so buttons, sidebar active tints,
+ * the tab underline, and the workspace-chip icon all retain visual weight.
+ * Foreground stays white (paired with the darker green) instead of black. */
+html:not(.dark) {
+  --color-brand: #65a30d;
+  --color-brand-foreground: #ffffff;
 }
 
 html.dark,
@@ -67,7 +82,7 @@ body {
 
 ::selection {
   background: rgb(168 255 83 / 0.3);
-  color: #a8ff53;
+  color: var(--color-brand);
 }
 
 /* Honor system motion preference. Resets animation + transition durations

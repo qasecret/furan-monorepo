@@ -71,7 +71,7 @@ export function CheckpointRail({
 
   return (
     <aside
-      className="flex w-[260px] shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+      className="flex w-[260px] shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/40"
       data-testid="checkpoint-rail"
     >
       {/* Header — count summary + filter + Changes only toggle */}
