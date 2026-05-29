@@ -66,10 +66,10 @@ RUN pnpm --filter @furan/capture-worker... build
 # (esbuild, lefthook, vitest, etc. — including their pre-compiled Go
 # binaries) don't leak into the runtime image. Without this, Trivy
 # flags Go-stdlib CVEs in dormant binaries that the runtime never
-# invokes. Recursive prune walks every workspace package + the root
-# manifest so root-level devDeps (lefthook) and transitive devDeps
-# (esbuild via tsx/vite) are both removed from the .pnpm/ store.
-RUN pnpm -r prune --prod
+# invokes. pnpm prune (without -r — pnpm 9 doesn't accept it on prune)
+# runs at the workspace root which is where the .pnpm/ store lives,
+# so removing devDep references here clears the bundled binaries.
+RUN pnpm prune --prod
 
 #####################################################################
 # Stage 3: runtime — Playwright base (jammy)                         #
