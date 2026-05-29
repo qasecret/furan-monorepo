@@ -13,6 +13,7 @@ import { LogoutButton } from "./logout-button";
 import { SidebarNavItem } from "./sidebar-nav-item";
 
 import { cn } from "@/lib/cn";
+import { browserEnv } from "@/lib/env";
 
 interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
@@ -92,22 +93,29 @@ export function Sidebar({
       )}
       data-testid="app-sidebar"
     >
-      <div className="h-14 flex items-center px-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 bg-brand rounded-sm rotate-12 flex items-center justify-center">
-            <div className="w-1.5 h-1.5 bg-black rounded-full" />
+      <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-6 h-6 bg-brand rounded-md flex items-center justify-center shrink-0">
+            <div className="w-2.5 h-2.5 bg-black rounded-sm" />
           </div>
           <span className="font-semibold text-lg tracking-tight text-zinc-950 dark:text-white">
             Furan
           </span>
         </div>
+        <span
+          className="px-2 py-0.5 rounded-md bg-zinc-100 text-[11px] font-medium text-zinc-600 border border-zinc-200 truncate max-w-[7.5rem] dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
+          data-testid="sidebar-workspace-chip"
+          title={browserEnv.NEXT_PUBLIC_WORKSPACE_NAME}
+        >
+          {browserEnv.NEXT_PUBLIC_WORKSPACE_NAME}
+        </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+      <div className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
         {sections.map((section) => (
           <div key={section.label}>
-            <div className="px-3 mb-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+            <div className="px-2 mb-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
                 {section.label}
               </span>
             </div>
@@ -139,14 +147,14 @@ export function Sidebar({
           className="p-3 flex items-center gap-3"
           data-testid="sidebar-user-chip"
         >
-          <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-700 dark:text-zinc-300 shrink-0">
+          <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center text-xs font-medium text-zinc-700 border border-zinc-200 shrink-0 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
             {userInitial}
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
               {userEmail || "Signed in"}
             </span>
-            <span className="text-xs text-zinc-500 truncate capitalize">
+            <span className="text-[11px] text-zinc-500 truncate capitalize">
               {userRole}
             </span>
           </div>

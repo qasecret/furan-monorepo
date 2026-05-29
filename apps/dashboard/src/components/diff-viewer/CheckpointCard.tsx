@@ -2,7 +2,7 @@
 
 import type { RunStatus } from "@furan/shared-types";
 
-import { RunStatusBadge } from "@/components/run-status-badge";
+import { cn } from "@/lib/cn";
 
 export interface CheckpointSummary {
   id: string;
@@ -10,7 +10,24 @@ export interface CheckpointSummary {
   status: RunStatus;
   diffPercent: number | null;
   thumbnailUrl?: string;
+  testVariationId?: string | null;
 }
+
+/**
+ * Status → dot color mapping. Mirrors `STATUS_CONFIG` in run-status-badge
+ * but renders as a tiny solid dot — used in the rail where the full pill
+ * would dominate the row. The two mappings are coupled by convention; if
+ * `STATUS_CONFIG` shifts a status color, update this too.
+ */
+const STATUS_DOT_CLASS: Record<RunStatus, string> = {
+  new: "bg-zinc-400 dark:bg-zinc-500",
+  running: "bg-blue-500",
+  passed: "bg-emerald-500",
+  unresolved: "bg-amber-500",
+  failed: "bg-red-500",
+  aborted: "bg-yellow-500",
+  empty: "bg-zinc-300 dark:bg-zinc-700",
+};
 
 export function CheckpointCard({
   item,
@@ -26,34 +43,78 @@ export function CheckpointCard({
       type="button"
       onClick={onClick}
       aria-current={selected ? "true" : undefined}
-      className={
-        "flex w-full items-start gap-2 rounded-md border px-2 py-2 text-left transition " +
-        (selected
-          ? "border-zinc-300 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900"
-          : "border-transparent hover:bg-zinc-50 dark:hover:bg-zinc-900/40")
-      }
+      className={cn(
+        "group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        selected
+          ? "bg-zinc-100 dark:bg-zinc-900"
+          : "hover:bg-zinc-100/60 dark:hover:bg-zinc-900/40",
+      )}
       data-testid={`checkpoint-card-${item.id}`}
     >
-      <div className="h-10 w-10 flex-none rounded bg-zinc-200 dark:bg-zinc-800">
+      {selected ? (
+        <span
+          className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-brand"
+          aria-hidden
+        />
+      ) : null}
+      <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
         {item.thumbnailUrl ? (
           <img
             src={item.thumbnailUrl}
             alt=""
-            className="h-full w-full rounded object-cover"
+            className="h-full w-full object-cover"
           />
         ) : null}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+      </span>
+      <span className="min-w-0 flex-1">
+        <span
+          className={cn(
+            "block truncate text-sm",
+            selected
+              ? "font-medium text-zinc-900 dark:text-white"
+              : "text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-white",
+          )}
+        >
           {item.name}
-        </div>
-        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
-          <RunStatusBadge status={item.status} />
-          {item.diffPercent !== null ? (
-            <span>{item.diffPercent.toFixed(1)}%</span>
-          ) : null}
-        </div>
-      </div>
+        </span>
+        {item.diffPercent !== null ? (
+          <span className="block text-[10px] font-mono text-zinc-500 dark:text-zinc-500">
+            {item.diffPercent.toFixed(1)}%
+          </span>
+        ) : null}
+      </span>
+      <StatusDot status={item.status} />
     </button>
+  );
+}
+
+function StatusDot({ status }: { status: RunStatus }) {
+  const dotClass = STATUS_DOT_CLASS[status];
+  if (status === "running") {
+    // Animated ping for in-flight runs so reviewers see live progress.
+    return (
+      <span
+        className="relative inline-flex h-2 w-2 shrink-0"
+        data-testid="checkpoint-card-status-dot"
+        title="Running"
+      >
+        <span
+          className={cn(
+            "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+            dotClass,
+          )}
+        />
+        <span
+          className={cn("relative inline-flex h-2 w-2 rounded-full", dotClass)}
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn("inline-block h-2 w-2 shrink-0 rounded-full", dotClass)}
+      data-testid="checkpoint-card-status-dot"
+      title={status}
+    />
   );
 }

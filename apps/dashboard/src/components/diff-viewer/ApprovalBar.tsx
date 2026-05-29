@@ -179,21 +179,23 @@ export function ApprovalBar({
   return (
     <TooltipProvider delayDuration={200}>
       <div
-        className="flex flex-wrap items-center gap-3 p-3 border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+        className="flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95"
         data-testid="approval-bar"
       >
         <div
           className="flex items-center gap-2"
           data-testid="approval-bar-status"
         >
-          <span className="text-xs uppercase tracking-wide text-zinc-500">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
             Status
           </span>
           <RunStatusBadge status={effectiveStatus} />
           <AggregateSeverityPill regions={diffRegions ?? []} />
         </div>
 
-        <div className="flex items-center gap-2">
+        <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
+
+        <div className="flex flex-wrap items-center gap-2 md:ml-auto">
           {/* ADR-038: when a checkpointId is present, the primary action is
               "Approve this checkpoint" and the secondary is "Approve all checkpoints".
               Legacy path (no checkpointId) keeps the old single-run approve. */}
