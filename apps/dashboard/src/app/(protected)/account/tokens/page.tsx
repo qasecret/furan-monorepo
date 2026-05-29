@@ -13,7 +13,7 @@ const TOKENS_PAGE_TOUR = [
     target: "#tokens-table",
     title: "Personal access tokens",
     content:
-      "Mint a token here, then paste it into your CI as the FURAN_API_KEY env var. Each token shows once on creation — copy it immediately.",
+      "Mint a token here, then paste it into your CI as the FURAN_API_TOKEN env var. Each token shows once on creation — copy it immediately.",
     placement: "top" as const,
   },
 ];

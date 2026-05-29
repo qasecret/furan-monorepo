@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ProjectMembersTable } from "./_components/project-members-table";
@@ -6,6 +7,10 @@ import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Members",
+};
 
 interface Me {
   id: string;

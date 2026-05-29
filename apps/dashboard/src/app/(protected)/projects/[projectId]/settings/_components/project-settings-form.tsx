@@ -716,8 +716,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     />
                   </FormControl>
                   <FormDescription>
-                    Old runs are deleted after this many days. Enforcement lands
-                    in v0.5.
+                    Old runs are deleted after this many days. Enforced nightly
+                    by the diff-worker retention job; set to 0 to disable.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
