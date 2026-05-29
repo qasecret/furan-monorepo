@@ -420,12 +420,23 @@ export function DiffViewer({
               {baselineDims && candidateDims && (
                 <SizeChip baseline={baselineDims} candidate={candidateDims} />
               )}
-              {data.testVariationId && (
-                <BaselineHistoryPanel
-                  testVariationId={data.testVariationId}
-                  currentBaselineKey={data.baselineName ?? null}
-                />
-              )}
+              {/*
+                ADR-038: BaselineHistoryPanel binds to the currently-selected
+                checkpoint's testVariationId, not the run's (the run no longer
+                has one — it has N checkpoints with one variation each).
+              */}
+              {(() => {
+                const selectedCheckpoint = checkpointsQuery.data?.items?.find(
+                  (c) => c.id === selectedCheckpointId,
+                );
+                if (!selectedCheckpoint?.testVariationId) return null;
+                return (
+                  <BaselineHistoryPanel
+                    testVariationId={selectedCheckpoint.testVariationId}
+                    currentBaselineKey={data.baselineName ?? null}
+                  />
+                );
+              })()}
             </div>
             {/* ADR-038: checkpoint rail left column + canvas/right-rail */}
             <div className="flex flex-1 overflow-hidden">

@@ -4,6 +4,8 @@ import { useEffect } from "react";
 
 import { CheckpointCard, type CheckpointSummary } from "./CheckpointCard";
 
+export type { CheckpointSummary };
+
 export function CheckpointRail({
   items,
   selectedId,
