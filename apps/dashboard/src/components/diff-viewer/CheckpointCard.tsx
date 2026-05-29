@@ -90,21 +90,30 @@ export function CheckpointCard({
 
 function StatusDot({ status }: { status: RunStatus }) {
   const dotClass = STATUS_DOT_CLASS[status];
+  // Capitalized label so screen readers say "Status: Running" not "running".
+  // The visible status pill in ApprovalBar already carries the text label; this
+  // dot is the rail-only visual cue, so without an aria-label colourblind +
+  // screen-reader users can't distinguish unresolved (amber) from failed (red).
+  const ariaLabel = `Status: ${status.charAt(0).toUpperCase()}${status.slice(1)}`;
   if (status === "running") {
     // Animated ping for in-flight runs so reviewers see live progress.
     return (
       <span
+        role="img"
+        aria-label={ariaLabel}
         className="relative inline-flex h-2 w-2 shrink-0"
         data-testid="checkpoint-card-status-dot"
         title="Running"
       >
         <span
+          aria-hidden
           className={cn(
             "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
             dotClass,
           )}
         />
         <span
+          aria-hidden
           className={cn("relative inline-flex h-2 w-2 rounded-full", dotClass)}
         />
       </span>
@@ -112,6 +121,8 @@ function StatusDot({ status }: { status: RunStatus }) {
   }
   return (
     <span
+      role="img"
+      aria-label={ariaLabel}
       className={cn("inline-block h-2 w-2 shrink-0 rounded-full", dotClass)}
       data-testid="checkpoint-card-status-dot"
       title={status}
