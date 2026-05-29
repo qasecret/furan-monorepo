@@ -11,7 +11,10 @@ import {
 } from "recharts";
 
 interface Item {
-  userId: string;
+  // null when the action's user row has been deleted (FK is set to
+  // null on delete). The chart still surfaces these as "(deleted user)"
+  // so the row count matches the summary card's totalActions.
+  userId: string | null;
   email: string | null;
   actions: number;
 }
@@ -41,7 +44,9 @@ export function TopReviewers({ items, isLoading }: Props) {
         <BarChart
           layout="vertical"
           data={items.map((i) => ({
-            email: i.email ?? i.userId.slice(0, 8),
+            email:
+              i.email ??
+              (i.userId == null ? "(deleted user)" : i.userId.slice(0, 8)),
             actions: i.actions,
           }))}
           margin={{ left: 60 }}

@@ -17,7 +17,12 @@ export const projects = pgTable("projects", {
   buildsCounter: integer("builds_counter").notNull().default(0),
   maxBuildAllowed: integer("max_build_allowed").notNull().default(100),
   maxBranchLifetime: integer("max_branch_lifetime").notNull().default(30),
-  autoApproveFeature: boolean("auto_approve_feature").notNull().default(true),
+  // Default flipped to false in migration 0016 (audit 2026-05-29): new
+  // projects now require an explicit Save-as-baseline for the first run
+  // of each test variation, which is the ADR-036/ADR-037 first-baseline
+  // path users expect. Existing projects keep whatever they were saved
+  // with; flip per-project from /projects/:id/settings.
+  autoApproveFeature: boolean("auto_approve_feature").notNull().default(false),
   imageComparison: imageComparisonEnum("image_comparison")
     .notNull()
     .default("odiff"),

@@ -3,6 +3,7 @@
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -31,6 +32,9 @@ export function ShortcutsDialog({ open, onOpenChange }: Props) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogDescription>
+            Reference for the keys that drive list navigation and row actions.
+          </DialogDescription>
         </DialogHeader>
         <ul className="space-y-2 text-sm">
           {SHORTCUTS.map((s) => (

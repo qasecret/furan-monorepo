@@ -76,11 +76,30 @@ export async function registerProjectsRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_body" });
       }
+      const creatorId = req.auth!.id;
       try {
-        const [row] = await app.db
-          .insert(projects)
-          .values(parsed.data)
-          .returning();
+        const row = await app.db.transaction(async (tx) => {
+          const inserted = await tx
+            .insert(projects)
+            .values(parsed.data)
+            .returning();
+          const created = inserted[0];
+          if (!created) {
+            throw new Error("project insert returned no rows");
+          }
+          // Auto-add the creator as a project member with write access.
+          // Admins already bypass the membership gate everywhere, but the
+          // row materializes their relationship for: (a) the project's
+          // member list under /admin/projects/:id/members, (b) the future
+          // RLS flip (ADR-022) where admin-bypass is on a separate axis,
+          // (c) less-than-admin co-creators in environments that drop a
+          // user to editor post-bootstrap.
+          await tx
+            .insert(projectMembers)
+            .values({ projectId: created.id, userId: creatorId })
+            .onConflictDoNothing();
+          return created;
+        });
         return reply.code(201).send(row);
       } catch (err) {
         // UNIQUE violation on projects.name

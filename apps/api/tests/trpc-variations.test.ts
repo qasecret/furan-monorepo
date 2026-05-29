@@ -366,4 +366,38 @@ d("tRPC variations router", () => {
       }),
     ).rejects.toThrow(/FORBIDDEN/);
   });
+
+  test("list returns variations newest-first scoped to project", async () => {
+    const client = mkClient(h, s.editorJwt);
+    const res = await client.variations.list.query({ projectId: s.projectId });
+    // Two variations seeded for s.projectId; otherProjectId has none.
+    expect(res.items.length).toBe(2);
+    const names = res.items.map((v) => v.name);
+    expect(names).toContain("LoginPage.darkMode");
+    expect(names).toContain("Checkout.summary");
+    for (let i = 1; i < res.items.length; i++) {
+      const prev = res.items[i - 1]!;
+      const cur = res.items[i]!;
+      expect(new Date(prev.createdAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(cur.createdAt).getTime(),
+      );
+    }
+  });
+
+  test("list search filters by name substring (case-insensitive)", async () => {
+    const client = mkClient(h, s.editorJwt);
+    const res = await client.variations.list.query({
+      projectId: s.projectId,
+      search: "checkout",
+    });
+    expect(res.items.length).toBe(1);
+    expect(res.items[0]!.name).toBe("Checkout.summary");
+  });
+
+  test("list rejects non-member with FORBIDDEN", async () => {
+    const client = mkClient(h, s.outsiderJwt);
+    await expect(
+      client.variations.list.query({ projectId: s.projectId }),
+    ).rejects.toThrow(/FORBIDDEN/);
+  });
 });

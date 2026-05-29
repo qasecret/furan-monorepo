@@ -3,6 +3,7 @@ import {
   builds,
   desc,
   eq,
+  ilike,
   lt,
   sql,
   testRuns,
@@ -29,7 +30,68 @@ const historyInput = z.object({
 });
 type HistoryInput = z.infer<typeof historyInput>;
 
+const listInput = z.object({
+  projectId: z.string().uuid(),
+  search: z.string().max(120).optional(),
+  cursor: z.string().datetime().optional(),
+  limit: z.number().int().min(1).max(100).default(25),
+});
+type ListInput = z.infer<typeof listInput>;
+
 export const variationsRouter = t.router({
+  /**
+   * Cursor-paginated list of variations for a project, newest-first.
+   *
+   * Feeds the project-level /variations index page so reviewers can
+   * browse every test checkpoint the SDK has registered, search by
+   * name, and drill into the per-variation history. The createdAt
+   * cursor mirrors `runs.list`.
+   *
+   * `search`, when present, ILIKE-matches the variation name on the
+   * fly. The substring filter is intentional — variation names land
+   * via the SDK and we don't expect curated taxonomies, so prefix-only
+   * search would miss the common case ("payment" matching
+   * "checkout-payment-step").
+   */
+  list: t.procedure
+    .input(listInput)
+    .use(authed)
+    .use(
+      projectMember<ListInput>("read", {
+        from: { resolver: ({ input }) => Promise.resolve(input.projectId) },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const conditions = [eq(testVariations.projectId, input.projectId)];
+      if (input.search && input.search.trim().length > 0) {
+        conditions.push(ilike(testVariations.name, `%${input.search.trim()}%`));
+      }
+      if (input.cursor) {
+        conditions.push(lt(testVariations.createdAt, new Date(input.cursor)));
+      }
+      const rows = await ctx.db
+        .select({
+          id: testVariations.id,
+          name: testVariations.name,
+          branchName: testVariations.branchName,
+          browser: testVariations.browser,
+          viewport: testVariations.viewport,
+          os: testVariations.os,
+          device: testVariations.device,
+          baselineName: testVariations.baselineName,
+          createdAt: testVariations.createdAt,
+        })
+        .from(testVariations)
+        .where(and(...conditions))
+        .orderBy(desc(testVariations.createdAt))
+        .limit(input.limit + 1);
+      const hasMore = rows.length > input.limit;
+      const items = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = items[items.length - 1];
+      const nextCursor = hasMore && last ? last.createdAt.toISOString() : null;
+      return { items, nextCursor };
+    }),
+
   /**
    * Variation identity + total run count. Used to render the history-page
    * header (name · browser · viewport · totalRuns).

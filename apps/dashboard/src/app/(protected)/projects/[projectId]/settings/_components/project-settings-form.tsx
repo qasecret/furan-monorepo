@@ -139,6 +139,14 @@ const ENGINE_KNOBS: Record<
       help: "Don't fail when baseline and candidate have different dimensions.",
     },
   ],
+  // Odiff knobs map onto the shared EngineConfig (packages/diff-engine
+  // /src/types.ts): {threshold, ignoreAntialiasing, allowDiffDimensions}.
+  // Earlier revisions of this form wrote `antialiasing`, `failOnLayoutDiff`,
+  // and `outputDiffMask` — keys the engine never read. The toggles
+  // looked like they were doing something but had no effect on diff
+  // output, and the structured form rendered "Antialiasing detection"
+  // as OFF for projects whose saved JSON had `ignoreAntialiasing:true`.
+  // Align the odiff section with the keys the engine actually consumes.
   odiff: [
     {
       kind: "number",
@@ -152,24 +160,17 @@ const ENGINE_KNOBS: Record<
     },
     {
       kind: "boolean",
-      key: "antialiasing",
-      label: "Antialiasing detection",
-      default: false,
-      help: "Detect and skip anti-aliased pixels (slower; more lenient).",
-    },
-    {
-      kind: "boolean",
-      key: "failOnLayoutDiff",
-      label: "Fail on layout diff",
+      key: "ignoreAntialiasing",
+      label: "Ignore antialiasing",
       default: true,
-      help: "Fail when image dimensions differ (legacy 'failOnLayoutDiff').",
+      help: "Skip anti-aliased pixels in the diff (more lenient, slightly slower).",
     },
     {
       kind: "boolean",
-      key: "outputDiffMask",
-      label: "Output diff mask",
+      key: "allowDiffDimensions",
+      label: "Allow diff dimensions",
       default: false,
-      help: "Write a mask-only diff image alongside the standard overlay.",
+      help: "Don't fail when baseline and candidate have different dimensions.",
     },
   ],
 };
@@ -716,8 +717,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     />
                   </FormControl>
                   <FormDescription>
-                    Old runs are deleted after this many days. Enforcement lands
-                    in v0.5.
+                    Old runs are deleted after this many days. Enforced nightly
+                    by the diff-worker retention job; set to 0 to disable.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -173,7 +173,7 @@ describe("ApprovalBar", () => {
     expect(approveMutate).not.toHaveBeenCalled();
   });
 
-  it.each([["running"], ["new"], ["aborted"], ["empty"]] as const)(
+  it.each([["running"], ["aborted"], ["empty"]] as const)(
     "disables review controls when status='%s'",
     (status) => {
       render(<ApprovalBar runId={RUN_ID} status={status} />);
@@ -188,7 +188,7 @@ describe("ApprovalBar", () => {
     },
   );
 
-  it.each([["passed"], ["unresolved"], ["failed"]] as const)(
+  it.each([["new"], ["passed"], ["unresolved"], ["failed"]] as const)(
     "enables review controls when status='%s'",
     (status) => {
       render(<ApprovalBar runId={RUN_ID} status={status} />);

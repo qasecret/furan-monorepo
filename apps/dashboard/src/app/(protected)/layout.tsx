@@ -5,6 +5,7 @@ import { AppShell } from "./_components/app-shell";
 
 import { Providers } from "@/app/providers";
 import { CommandPalette } from "@/components/cmdk/command-palette";
+import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
 import { apiGet } from "@/lib/api-client";
 import { requireJwt } from "@/lib/auth";
 
@@ -52,6 +53,7 @@ export default async function ProtectedLayout({
         {children}
       </AppShell>
       <CommandPalette userRole={userRole} />
+      <GlobalShortcuts />
       <Toaster richColors theme="dark" position="bottom-right" />
     </Providers>
   );
