@@ -107,7 +107,7 @@ export function HistoryTable({
                     {r.buildId && r.buildNumber !== null ? (
                       <Link
                         href={`/projects/${projectId}/builds?expand=${r.buildId}`}
-                        className="text-brand hover:underline"
+                        className="text-brand-text hover:underline"
                         data-testid={`history-row-build-${r.id}`}
                       >
                         #{r.buildNumber}
@@ -117,7 +117,7 @@ export function HistoryTable({
                   <td className="px-4 py-2.5">
                     <Link
                       href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
-                      className="text-brand hover:underline"
+                      className="text-brand-text hover:underline"
                       data-testid={`history-row-view-diff-${r.id}`}
                     >
                       View diff →

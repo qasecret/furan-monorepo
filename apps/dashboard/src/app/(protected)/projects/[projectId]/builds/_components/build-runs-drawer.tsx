@@ -68,6 +68,17 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
         </div>
       ) : (
         <table className="w-full text-sm">
+          {/* sr-only thead so screen-reader users hear "Branch, Status, Diff
+              percent, Created" before each row, even though we don't render
+              a visible header band (the drawer is dense by design). */}
+          <thead className="sr-only">
+            <tr>
+              <th scope="col">Branch</th>
+              <th scope="col">Status</th>
+              <th scope="col">Diff percent</th>
+              <th scope="col">Created</th>
+            </tr>
+          </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {items.map((r) => (
               <tr
@@ -100,7 +111,7 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
       )}
       <Link
         href={`/projects/${projectId}/runs?buildId=${buildId}`}
-        className="text-xs text-brand hover:underline"
+        className="inline-block text-sm font-medium text-brand-text underline underline-offset-4 decoration-brand-text/40 hover:decoration-brand-text"
       >
         Open full run list for this build →
       </Link>

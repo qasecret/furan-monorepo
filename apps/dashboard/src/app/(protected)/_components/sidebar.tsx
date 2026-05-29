@@ -88,7 +88,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "w-60 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 flex flex-col shrink-0",
+        "w-60 border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 flex flex-col shrink-0",
         className,
       )}
       data-testid="app-sidebar"

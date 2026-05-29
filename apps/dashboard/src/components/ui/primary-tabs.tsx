@@ -32,7 +32,7 @@ export function PrimaryTabs({ tabs }: { tabs: PrimaryTabDef[] }) {
     >
       {tabs.map((tab) => {
         const baseClasses =
-          "relative -mb-px inline-flex items-center gap-2 border-b-2 py-2.5 text-sm font-medium transition-colors";
+          "relative -mb-px inline-flex items-center gap-2 border-b-2 py-2.5 text-sm font-medium transition-all duration-150";
         const stateClasses = tab.isActive
           ? "border-brand text-zinc-900 dark:text-white"
           : tab.disabled

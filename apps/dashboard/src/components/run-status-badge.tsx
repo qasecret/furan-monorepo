@@ -23,6 +23,13 @@ type StatusConfig = {
   tooltip: string;
 };
 
+/*
+ * Per-mode color values. Dark mode keeps the original `text-{c}-400 bg-{c}-500/10`
+ * scheme (the dark surface gives high contrast against the lighter text).
+ * Light mode darkens the text so the badge passes WCAG-AA against a near-white
+ * tinted bg (`bg-{c}-500/10` over white ≈ #EAF…). The original light-mode values
+ * measured at ~1.6–2.5:1; the new shades hit ≥4.5:1.
+ */
 export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   new: {
     label: "New",
@@ -32,33 +39,38 @@ export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   },
   running: {
     label: "Running",
-    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    className:
+      "bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400 dark:border-blue-500/20",
     tooltip: "Run is in progress",
   },
   passed: {
     label: "Passed",
-    className: "bg-green-500/10 text-green-400 border-green-500/20",
+    className:
+      "bg-green-500/10 text-green-800 border-green-500/30 dark:text-green-400 dark:border-green-500/20",
     tooltip: "No visual differences",
   },
   unresolved: {
     label: "Unresolved",
-    className: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    className:
+      "bg-amber-500/10 text-amber-800 border-amber-500/30 dark:text-amber-400 dark:border-amber-500/20",
     tooltip: "Visual differences found — awaiting review",
   },
   failed: {
     label: "Failed",
-    className: "bg-red-500/10 text-red-400 border-red-500/20",
+    className:
+      "bg-red-500/10 text-red-700 border-red-500/30 dark:text-red-400 dark:border-red-500/20",
     tooltip: "Differences rejected",
   },
   aborted: {
     label: "Aborted",
-    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    className:
+      "bg-yellow-500/10 text-yellow-800 border-yellow-500/30 dark:text-yellow-400 dark:border-yellow-500/20",
     tooltip: "Run terminated before completion (worker issue)",
   },
   empty: {
     label: "Empty",
     className:
-      "bg-zinc-100/70 text-zinc-500 border-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-800",
+      "bg-zinc-100/70 text-zinc-600 border-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-800",
     tooltip: "Run completed but recorded no checks",
   },
 };

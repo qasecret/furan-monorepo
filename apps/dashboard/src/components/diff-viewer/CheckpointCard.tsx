@@ -44,19 +44,16 @@ export function CheckpointCard({
       onClick={onClick}
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        // transition-all (not transition-colors) so the inset-shadow left bar
+        // also animates when selection moves between cards via click or j/k.
+        // Matches the sidebar-nav-item active-indicator pattern for consistency.
+        "group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all duration-150",
         selected
-          ? "bg-zinc-100 dark:bg-zinc-900"
+          ? "bg-zinc-100 shadow-[inset_2px_0_0_0_var(--color-brand)] dark:bg-zinc-900"
           : "hover:bg-zinc-100/60 dark:hover:bg-zinc-900/40",
       )}
       data-testid={`checkpoint-card-${item.id}`}
     >
-      {selected ? (
-        <span
-          className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-brand"
-          aria-hidden
-        />
-      ) : null}
       <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
         {item.thumbnailUrl ? (
           <img
@@ -90,21 +87,30 @@ export function CheckpointCard({
 
 function StatusDot({ status }: { status: RunStatus }) {
   const dotClass = STATUS_DOT_CLASS[status];
+  // Capitalized label so screen readers say "Status: Running" not "running".
+  // The visible status pill in ApprovalBar already carries the text label; this
+  // dot is the rail-only visual cue, so without an aria-label colourblind +
+  // screen-reader users can't distinguish unresolved (amber) from failed (red).
+  const ariaLabel = `Status: ${status.charAt(0).toUpperCase()}${status.slice(1)}`;
   if (status === "running") {
     // Animated ping for in-flight runs so reviewers see live progress.
     return (
       <span
+        role="img"
+        aria-label={ariaLabel}
         className="relative inline-flex h-2 w-2 shrink-0"
         data-testid="checkpoint-card-status-dot"
         title="Running"
       >
         <span
+          aria-hidden
           className={cn(
             "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
             dotClass,
           )}
         />
         <span
+          aria-hidden
           className={cn("relative inline-flex h-2 w-2 rounded-full", dotClass)}
         />
       </span>
@@ -112,6 +118,8 @@ function StatusDot({ status }: { status: RunStatus }) {
   }
   return (
     <span
+      role="img"
+      aria-label={ariaLabel}
       className={cn("inline-block h-2 w-2 shrink-0 rounded-full", dotClass)}
       data-testid="checkpoint-card-status-dot"
       title={status}

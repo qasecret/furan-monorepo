@@ -47,7 +47,7 @@ export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
           data-testid="mobile-sidebar-overlay"
         />
         <DialogPrimitive.Content
-          className="fixed inset-y-0 left-0 z-50 w-60 bg-white border-r border-zinc-200 dark:bg-zinc-950 dark:border-zinc-800 flex flex-col shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left md:hidden"
+          className="fixed inset-y-0 left-0 z-50 w-60 bg-zinc-50 border-r border-zinc-200 dark:bg-zinc-950 dark:border-zinc-800 flex flex-col shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left md:hidden"
           data-testid="mobile-sidebar"
         >
           <DialogPrimitive.Title className="sr-only">

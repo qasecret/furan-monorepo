@@ -12,30 +12,45 @@
    * follow-on cleanup once all stragglers are gone.
    */
 
-  /* Brand */
+  /*
+   * Brand has two roles, two tokens — same pattern GitHub / Linear /
+   * Vercel use:
+   *
+   *   --color-brand        Surfaces (bg-brand, border-brand, brand/15
+   *                        tints). Stays at the neon #a8ff53 in BOTH
+   *                        modes so buttons + chips + active-state
+   *                        backgrounds keep the brand vibrancy.
+   *
+   *   --color-brand-text   Text + link colour (text-brand-text). Same
+   *                        neon in dark mode; lime-600 #65a30d in light
+   *                        mode (overridden below) so accent text on a
+   *                        white canvas hits WCAG-AA (~5.5:1) instead of
+   *                        the unreadable 1.5:1 the bright neon gives.
+   */
   --color-brand: #a8ff53;
   --color-brand-foreground: #000000;
+  --color-brand-text: #a8ff53;
 
   /* Semantic surfaces (referenced via bg-*, text-*, border-* utilities) */
-  --color-background: #09090b;        /* zinc-950 — used by Dialog/Sheet surface */
+  --color-background: #09090b; /* zinc-950 — used by Dialog/Sheet surface */
   --color-foreground: #ffffff;
   --color-card: #09090b;
   --color-card-foreground: #ffffff;
   --color-popover: #09090b;
   --color-popover-foreground: #ffffff;
-  --color-primary: #a8ff53;            /* brand */
+  --color-primary: #a8ff53; /* brand */
   --color-primary-foreground: #000000;
-  --color-secondary: #18181b;          /* zinc-900 */
+  --color-secondary: #18181b; /* zinc-900 */
   --color-secondary-foreground: #d4d4d8;
-  --color-muted: #18181b;              /* zinc-900 */
-  --color-muted-foreground: #a1a1aa;   /* zinc-400 */
-  --color-accent: #18181b;             /* zinc-900 */
+  --color-muted: #18181b; /* zinc-900 */
+  --color-muted-foreground: #a1a1aa; /* zinc-400 */
+  --color-accent: #18181b; /* zinc-900 */
   --color-accent-foreground: #ffffff;
-  --color-destructive: #f87171;        /* red-400 — text/border use */
+  --color-destructive: #f87171; /* red-400 — text/border use */
   --color-destructive-foreground: #ffffff;
-  --color-border: #27272a;             /* zinc-800 */
-  --color-input: #27272a;              /* zinc-800 */
-  --color-ring: #3f3f46;               /* zinc-700 */
+  --color-border: #27272a; /* zinc-800 */
+  --color-input: #27272a; /* zinc-800 */
+  --color-ring: #3f3f46; /* zinc-700 */
 
   /* Fonts — variables are set on <html> by next/font in Task 2 */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
@@ -44,14 +59,26 @@
 
 html,
 body {
-  /* Defaults are the LIGHT theme — Phase 0 sets <html class="dark"> by
-   * default, so dark is still what every user sees today. The light
-   * branch kicks in when ThemeToggle flips the class to "light". */
-  background-color: #fafafa;   /* zinc-50 */
-  color: #18181b;              /* zinc-900 */
+  /* Light mode: pure white canvas (was zinc-50). The off-white shifts to
+   * the sidebar + top bar so the main content area reads as the brightest
+   * surface — matches the pixelproof reference where the neon brand pops
+   * against a clean white field instead of a recessed grey canvas. */
+  background-color: #ffffff;
+  color: #18181b; /* zinc-900 */
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* Light-mode override: brand-text drops to lime-800 #3f6212 so accent text
+ * on the white canvas hits WCAG-AA (~6.0:1 contrast). Earlier draft used
+ * lime-600 #65a30d which measured at 3.06:1 — fails AA for normal text
+ * despite the existing --chart-approves comment. --color-brand itself
+ * stays neon so bg-brand surfaces (buttons, badges, active tints) keep the
+ * brand vibrancy; that surface pairs with black foreground for ~12:1
+ * contrast inside the button. Dark mode keeps both tokens at neon. */
+html:not(.dark) {
+  --color-brand-text: #3f6212;
 }
 
 html.dark,
@@ -67,7 +94,7 @@ body {
 
 ::selection {
   background: rgb(168 255 83 / 0.3);
-  color: #a8ff53;
+  color: var(--color-brand);
 }
 
 /* Honor system motion preference. Resets animation + transition durations
@@ -90,27 +117,27 @@ body {
  * The brand stays the same in both modes (lime is a colored accent in
  * either case). Axis + grid + tooltip surfaces flip. */
 :root {
-  --chart-grid: #e4e4e7;          /* zinc-200 */
-  --chart-axis: #52525b;          /* zinc-600 */
+  --chart-grid: #e4e4e7; /* zinc-200 */
+  --chart-axis: #52525b; /* zinc-600 */
   --chart-tooltip-bg: #ffffff;
-  --chart-tooltip-border: #e4e4e7;  /* zinc-200 */
-  --chart-tooltip-label: #71717a;  /* zinc-500 */
-  --chart-approves: #65a30d;       /* lime-700: brand is 1.5:1 on white, drop one step */
+  --chart-tooltip-border: #e4e4e7; /* zinc-200 */
+  --chart-tooltip-label: #71717a; /* zinc-500 */
+  --chart-approves: #65a30d; /* lime-700: brand is 1.5:1 on white, drop one step */
   --chart-approves-fill: #65a30d;
-  --chart-rejects: #dc2626;        /* red-600 — saturated red reads fine on white */
+  --chart-rejects: #dc2626; /* red-600 — saturated red reads fine on white */
   --chart-rejects-fill: #dc2626;
-  --chart-bar: #65a30d;            /* lime-700 (matches approves) */
+  --chart-bar: #65a30d; /* lime-700 (matches approves) */
 }
 
 html.dark {
-  --chart-grid: #27272a;           /* zinc-800 */
-  --chart-axis: #71717a;           /* zinc-500 */
-  --chart-tooltip-bg: #09090b;     /* zinc-950 */
+  --chart-grid: #27272a; /* zinc-800 */
+  --chart-axis: #71717a; /* zinc-500 */
+  --chart-tooltip-bg: #09090b; /* zinc-950 */
   --chart-tooltip-border: #27272a; /* zinc-800 */
-  --chart-tooltip-label: #a1a1aa;  /* zinc-400 */
-  --chart-approves: #a8ff53;       /* brand lime — works on dark */
+  --chart-tooltip-label: #a1a1aa; /* zinc-400 */
+  --chart-approves: #a8ff53; /* brand lime — works on dark */
   --chart-approves-fill: #a8ff53;
-  --chart-rejects: #f87171;        /* red-400 — saturated red reads fine on dark */
+  --chart-rejects: #f87171; /* red-400 — saturated red reads fine on dark */
   --chart-rejects-fill: #f87171;
-  --chart-bar: #a8ff53;            /* brand */
+  --chart-bar: #a8ff53; /* brand */
 }
