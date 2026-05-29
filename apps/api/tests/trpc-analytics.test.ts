@@ -237,9 +237,11 @@ d("trpc analytics", () => {
     expect(result.items[2]!.rejects).toBe(1);
   });
 
-  test("topReviewers excludes null-user events and orders by count DESC", async () => {
-    // Seed: 5 events for user A, 3 for user B, 1 for null (auto/system), 2 for user C.
-    // Expect items=[A:5, B:3, C:2], no null entry.
+  test("topReviewers includes null-user events (deleted-user bucket) and orders by count DESC", async () => {
+    // Seed: 5 events for user A, 3 for user B, 1 for null (deleted user),
+    // 2 for user C. Expect 4 items so the chart's totals reconcile with the
+    // summary card (which counts all rows). The null row surfaces as
+    // userId=null so the dashboard can label it "(deleted user)".
     await wipe();
 
     const admin = await seedAdmin("top-rev-admin");
@@ -286,13 +288,14 @@ d("trpc analytics", () => {
       limit: 10,
     });
 
-    // No null entry
-    expect(result.items.every((i) => i.userId !== null)).toBe(true);
-    // Ordered DESC by actions
+    // Ordered DESC by actions; null-user row is included as a separate bucket
+    // (orphaned-user attribution — see analytics.ts comment).
     expect(result.items[0]!.actions).toBe(5);
     expect(result.items[1]!.actions).toBe(3);
     expect(result.items[2]!.actions).toBe(2);
-    expect(result.items).toHaveLength(3);
+    expect(result.items[3]!.actions).toBe(1);
+    expect(result.items[3]!.userId).toBeNull();
+    expect(result.items).toHaveLength(4);
   });
 
   test("non-admin gets FORBIDDEN", async () => {
