@@ -34,16 +34,13 @@ class CheckoutTest {
             addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
         }
         val driver = ChromeDriver(options)
-        val furan = Furan(driver, FuranConfig.fromEnv())
-        try {
+        Furan.use(FuranConfig.fromEnv(), driver, testName = "captures two snapshots on a static page") { furan ->
             driver.get("data:text/html,<html><body><h1>Checkout</h1><p>Step 1</p></body></html>")
             furan.snapshot("checkout-step-1")
 
             driver.get("data:text/html,<html><body><h1>Checkout</h1><p>Step 2</p></body></html>")
             furan.snapshot("checkout-step-2")
-        } finally {
-            furan.close()
-            driver.quit()
         }
+        driver.quit()
     }
 }

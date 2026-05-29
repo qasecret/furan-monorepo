@@ -25,8 +25,8 @@ class CheckoutCandidateTest {
             addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
         }
         val driver = ChromeDriver(options)
-        val furan = Furan(driver, FuranConfig.fromEnv())
-        try {
+        // SDK 2.0.0 constructor order: Furan(config, driver).
+        Furan.use(FuranConfig.fromEnv(), driver, testName = "captures a different snapshot for the candidate branch") { furan ->
             // No quotes inside the data: URL — Chrome treats unencoded
             // single-quotes as part of the URL value and the page ends up
             // blank. Use a quote-free style attribute (color word) and
@@ -39,9 +39,7 @@ class CheckoutCandidateTest {
                     "</body></html>",
             )
             furan.snapshot("checkout-step-1")
-        } finally {
-            furan.close()
-            driver.quit()
         }
+        driver.quit()
     }
 }
