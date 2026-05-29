@@ -20,6 +20,7 @@ desc("screenshots element_map_key column (0011)", () => {
   let close: () => Promise<void>;
   let projectId: string;
   let runId: string;
+  let variationId: string;
 
   beforeAll(async () => {
     const created = createDb();
@@ -55,12 +56,12 @@ desc("screenshots element_map_key column (0011)", () => {
       .insert(testVariations)
       .values({ name: "home", projectId })
       .returning();
+    variationId = v!.id;
     const [r] = await db
       .insert(testRuns)
       .values({
         buildId: b!.id,
         projectId,
-        testVariationId: v!.id,
         status: "new",
         branchName: "main",
         name: "home",
@@ -75,6 +76,8 @@ desc("screenshots element_map_key column (0011)", () => {
       .values({
         runId,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: "a".repeat(64),
         viewport: "1280x720",
         browser: "selenium",
@@ -90,6 +93,8 @@ desc("screenshots element_map_key column (0011)", () => {
       .values({
         runId,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: "b".repeat(64),
         viewport: "1280x720",
         browser: "selenium",
@@ -102,6 +107,8 @@ desc("screenshots element_map_key column (0011)", () => {
     await db.insert(screenshots).values({
       runId,
       projectId,
+      testVariationId: variationId,
+      name: "home",
       imageKey: "c".repeat(64),
       viewport: "1280x720",
       browser: "selenium",

@@ -1,14 +1,15 @@
 import {
+  index,
+  jsonb,
   pgTable,
-  uuid,
   text,
   timestamp,
-  uniqueIndex,
-  index,
+  unique,
+  uuid,
 } from "drizzle-orm/pg-core";
-
 import { projects } from "./projects.js";
 import { testRuns } from "./test_runs.js";
+import { testVariations } from "./test_variations.js";
 
 export const screenshots = pgTable(
   "screenshots",
@@ -20,26 +21,36 @@ export const screenshots = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    testVariationId: uuid("test_variation_id")
+      .notNull()
+      .references(() => testVariations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // ADR-038: checkpoint name from snapshot(name)
+    viewport: text("viewport").notNull(),
+    browser: text("browser").notNull(),
+    os: text("os"),
+    device: text("device"),
+    matchLevel: text("match_level").notNull().default("Strict"),
     imageKey: text("image_key").notNull(),
     domKey: text("dom_key"),
     elementMapKey: text("element_map_key"),
-    viewport: text("viewport").notNull(),
-    browser: text("browser").notNull(),
+    ignoreRegions: jsonb("ignore_regions"),
+    layoutRegions: jsonb("layout_regions"),
+    floatingRegions: jsonb("floating_regions"),
+    contentRegions: jsonb("content_regions"),
+    accessibilityRegions: jsonb("accessibility_regions"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
-    // ADR-033: compound uniqueness for capture-worker retry idempotency.
-    // Replaces the prior global UNIQUE on image_key, which blocked
-    // legitimate bytes-identical cross-run captures.
-    runViewportUnique: uniqueIndex("screenshots_run_id_viewport_unique").on(
+    runNameViewportUnique: unique("screenshots_run_id_name_viewport_unique").on(
       t.runId,
+      t.name,
       t.viewport,
     ),
     runIdx: index("screenshots_run_idx").on(t.runId),
-    // Non-unique index for content-addressed lookups (ADR-032 auto-approve
-    // match query reads runs by image_key).
-    imageKeyIdx: index("screenshots_image_key_idx").on(t.imageKey),
+    testVariationIdx: index("screenshots_test_variation_id_idx").on(
+      t.testVariationId,
+    ),
   }),
 );

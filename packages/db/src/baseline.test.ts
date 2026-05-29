@@ -64,7 +64,7 @@ describe.runIf(RUN_INTEGRATION)("resolveBaseline (integration)", () => {
       .values({
         buildId: b!.id,
         projectId,
-        testVariationId: variationId,
+        name: "v1",
         branchName: "feature/x",
       })
       .returning({ id: testRuns.id });
