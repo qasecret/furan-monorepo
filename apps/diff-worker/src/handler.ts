@@ -12,8 +12,12 @@ import {
 } from "@furan/db";
 import {
   runDiff,
+  runL2,
+  classifyRegions,
   DEFAULT_ENGINE_CONFIG,
+  configForMatchLevel,
   type EngineConfig,
+  type MatchLevel,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
@@ -651,32 +655,71 @@ async function handleDiffJobInner(
         }),
     );
 
-    const result = await runDiff({
-      baseline: {
-        image: Buffer.from(baselineBytes),
-        ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
-      },
-      candidate: {
-        image: Buffer.from(candidateBytes),
-        ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
-      },
-      config: {
-        // Per-run override (set via the in-viewer sensitivity slider) wins
-        // over the project default. Null/undefined means "inherit," so the
-        // existing project setting still drives every run that hasn't been
-        // tuned by hand.
-        diffThreshold:
-          run.diffThresholdOverride ?? project.diffThreshold ?? 0.001,
-        l2Enabled: project.l2Enabled ?? true,
-        ignoreAreas: resolvedIgnoreAreas,
-        engine: project.imageComparison,
-        engineConfig: parseEngineConfig(
-          project.imageComparisonConfig,
-          logger,
-          project.id,
-        ),
-      },
-    });
+    // ADR-038 §7.2: route through configForMatchLevel before calling the
+    // engine. matchLevel is stored per-screenshot; fall back to "Strict"
+    // for legacy rows that predate Phase 3 (SDK 2.0.0).
+    const screenshotMatchLevel = (cs.matchLevel as MatchLevel) ?? "Strict";
+    const baseEngineConfig = parseEngineConfig(
+      project.imageComparisonConfig,
+      logger,
+      project.id,
+    );
+    const {
+      config: routedEngineConfig,
+      runL1: shouldRunL1,
+      runL2Only,
+    } = configForMatchLevel(baseEngineConfig, screenshotMatchLevel);
+
+    const diffThreshold =
+      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+
+    let result: Awaited<ReturnType<typeof runDiff>>;
+    if (runL2Only) {
+      // Layout mode: skip L1 pixel diff entirely, run only DOM-level diff.
+      // We construct a DiffResult-compatible object directly from runL2's
+      // output. diffPercent and pixelMismatchCount are 0 because no pixel
+      // diff was performed; passed is determined purely by L2 region count.
+      const t2 = performance.now();
+      const l2Regions =
+        baselineDom !== undefined && candidateDom !== undefined
+          ? await runL2(baselineDom, candidateDom)
+          : [];
+      const l2Duration = performance.now() - t2;
+      const allL2Regions = classifyRegions(l2Regions);
+      result = {
+        passed: allL2Regions.length === 0,
+        diffPercent: 0,
+        pixelMismatchCount: 0,
+        diffImageBytes: Buffer.alloc(0),
+        regions: allL2Regions,
+        ranTiers: ["l2"],
+        durationMs: { l1: 0, l2: l2Duration },
+      };
+    } else {
+      result = await runDiff({
+        baseline: {
+          image: Buffer.from(baselineBytes),
+          ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
+        },
+        candidate: {
+          image: Buffer.from(candidateBytes),
+          ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
+        },
+        config: {
+          // Per-run override (set via the in-viewer sensitivity slider) wins
+          // over the project default. Null/undefined means "inherit," so the
+          // existing project setting still drives every run that hasn't been
+          // tuned by hand.
+          diffThreshold,
+          l2Enabled: project.l2Enabled ?? true,
+          ignoreAreas: resolvedIgnoreAreas,
+          engine: project.imageComparison,
+          // Use the matchLevel-adjusted engine config (e.g. Content raises
+          // threshold + enables ignoreAntialiasing).
+          engineConfig: routedEngineConfig,
+        },
+      });
+    }
 
     // --- Region modes v2 engine pipeline (after L1+L2, before persist) ---
     //
@@ -795,13 +838,16 @@ async function handleDiffJobInner(
     }
     // --- End region modes v2 pipeline ---
 
-    // Observe L1 latency labelled by engine. durationMs.l1 is always set
-    // (every runDiff invocation runs L1); converting ms -> seconds to
-    // match the histogram's seconds-based bucket boundaries and the
-    // OpenMetrics convention.
-    deps.metrics?.l1Duration
-      .labels({ engine: project.imageComparison })
-      .observe(result.durationMs.l1 / 1000);
+    // Observe L1 latency labelled by engine. durationMs.l1 is 0 for
+    // Layout (L2-only) runs where the pixel diff was skipped; for all
+    // other matchLevels it reflects the real L1 duration. Convert ms
+    // to seconds to match the histogram's seconds-based bucket
+    // boundaries and the OpenMetrics convention.
+    if (shouldRunL1) {
+      deps.metrics?.l1Duration
+        .labels({ engine: project.imageComparison })
+        .observe(result.durationMs.l1 / 1000);
+    }
 
     let diffImageKey: string | null = null;
     if (result.diffImageBytes.length > 0) {
