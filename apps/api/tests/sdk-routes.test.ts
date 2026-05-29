@@ -53,7 +53,6 @@ async function seed(h: TestApp): Promise<Seeded> {
   // FK-order: dependents before parents.
   await h.db.delete(screenshots);
   await h.db.delete(testRuns);
-  await h.db.delete(testVariations);
   await h.db.delete(builds);
   await h.db.delete(projectMembers);
   await h.db.delete(projects);
@@ -100,20 +99,14 @@ async function seed(h: TestApp): Promise<Seeded> {
     })
     .returning();
 
-  const [variation] = await h.db
-    .insert(testVariations)
-    .values({ name: "home", projectId: project!.id })
-    .returning();
-
   const [run] = await h.db
     .insert(testRuns)
     .values({
       buildId: build!.id,
       projectId: project!.id,
-      testVariationId: variation!.id,
-      status: "new",
-      browser: "selenium",
-      viewport: "1280x720",
+      name: "home",
+      branchName: "main",
+      status: "running",
     })
     .returning();
 
@@ -150,7 +143,7 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
   // POST /runs
   // ---------------------------------------------------------------------------
 
-  test("POST /runs with valid body creates a test_runs row + returns 200", async () => {
+  test("POST /runs with valid body creates a test_runs row + returns 201", async () => {
     const res = await h.app.inject({
       method: "POST",
       url: "/runs",
@@ -160,38 +153,35 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         buildId: s.buildId,
         branchName: "feature/new-checkout",
         name: "checkout-page-snap",
-        browser: "selenium",
-        viewport: "1440x900",
       },
     });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { id: string; projectId: string };
-    expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(body.projectId).toBe(s.projectId);
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as {
+      runId: string;
+      status: string;
+      name: string;
+    };
+    expect(body.runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.status).toBe("running");
+    expect(body.name).toBe("checkout-page-snap");
 
     const rows = await h.db
       .select()
       .from(testRuns)
-      .where(eq(testRuns.id, body.id))
+      .where(eq(testRuns.id, body.runId))
       .limit(1);
     expect(rows[0]).toBeDefined();
     expect(rows[0]!.branchName).toBe("feature/new-checkout");
-    expect(rows[0]!.browser).toBe("selenium");
-    expect(rows[0]!.viewport).toBe("1440x900");
+    expect(rows[0]!.name).toBe("checkout-page-snap");
   });
 
-  test("POST /runs with distinct names produces distinct variations under one build (ADR-037)", async () => {
-    // Server-side variation-by-name routing at apps/api/src/routes/sdk-runs.ts:367-396.
-    // The lookup key is (projectId, name, browser, viewport) — branchName is
-    // stored on creation but NOT part of the lookup key. This test pins the
-    // behavior so the SDK refactor (next task) — which calls POST /runs per
-    // snapshot(name) — has a regression net.
+  test("POST /runs with distinct names produces distinct run rows under one build (ADR-038)", async () => {
+    // ADR-038: POST /runs creates test runs; variations are resolved at
+    // POST /runs/:id/screenshots time. Each POST /runs creates a new run.
     const common = {
       projectId: s.projectId,
       buildId: s.buildId,
       branchName: "feature/multi-snap",
-      browser: "chromium",
-      viewport: "1280x720",
     };
 
     const resA = await h.app.inject({
@@ -200,12 +190,8 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       headers: { authorization: `Bearer ${s.memberJwt}` },
       payload: { ...common, name: "checkout-page" },
     });
-    expect(resA.statusCode).toBe(200);
-    const bodyA = JSON.parse(resA.body) as {
-      id: string;
-      buildId: string;
-      testVariationId: string;
-    };
+    expect(resA.statusCode).toBe(201);
+    const bodyA = JSON.parse(resA.body) as { runId: string; name: string };
 
     const resB = await h.app.inject({
       method: "POST",
@@ -213,57 +199,25 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       headers: { authorization: `Bearer ${s.memberJwt}` },
       payload: { ...common, name: "login-page" },
     });
-    expect(resB.statusCode).toBe(200);
-    const bodyB = JSON.parse(resB.body) as {
-      id: string;
-      buildId: string;
-      testVariationId: string;
-    };
+    expect(resB.statusCode).toBe(201);
+    const bodyB = JSON.parse(resB.body) as { runId: string; name: string };
 
-    // Distinct runs, distinct variations, same build.
-    expect(bodyA.id).not.toBe(bodyB.id);
-    expect(bodyA.testVariationId).not.toBe(bodyB.testVariationId);
-    expect(bodyA.buildId).toBe(s.buildId);
-    expect(bodyB.buildId).toBe(s.buildId);
+    // Distinct run IDs.
+    expect(bodyA.runId).not.toBe(bodyB.runId);
+    expect(bodyA.name).toBe("checkout-page");
+    expect(bodyB.name).toBe("login-page");
 
-    // The two test_variations rows actually exist with the supplied names
-    // and share the same (projectId, browser, viewport) — name is the
-    // only differing dimension that produced the split.
-    const varA = await h.db
-      .select()
-      .from(testVariations)
-      .where(eq(testVariations.id, bodyA.testVariationId))
-      .limit(1);
-    const varB = await h.db
-      .select()
-      .from(testVariations)
-      .where(eq(testVariations.id, bodyB.testVariationId))
-      .limit(1);
-    expect(varA[0]!.name).toBe("checkout-page");
-    expect(varB[0]!.name).toBe("login-page");
-    expect(varA[0]!.projectId).toBe(s.projectId);
-    expect(varB[0]!.projectId).toBe(s.projectId);
-    expect(varA[0]!.browser).toBe("chromium");
-    expect(varB[0]!.browser).toBe("chromium");
-    expect(varA[0]!.viewport).toBe("1280x720");
-    expect(varB[0]!.viewport).toBe("1280x720");
-
-    // Re-posting the SAME name resolves to the SAME variation (idempotency
-    // of the resolve-or-create lookup) — the SDK retry loop relies on this.
+    // Each POST /runs creates a new run — even same name.
     const resARepeat = await h.app.inject({
       method: "POST",
       url: "/runs",
       headers: { authorization: `Bearer ${s.memberJwt}` },
       payload: { ...common, name: "checkout-page" },
     });
-    expect(resARepeat.statusCode).toBe(200);
-    const bodyARepeat = JSON.parse(resARepeat.body) as {
-      id: string;
-      testVariationId: string;
-    };
-    expect(bodyARepeat.testVariationId).toBe(bodyA.testVariationId);
-    // Distinct run row though — every POST /runs creates a fresh run.
-    expect(bodyARepeat.id).not.toBe(bodyA.id);
+    expect(resARepeat.statusCode).toBe(201);
+    const bodyARepeat = JSON.parse(resARepeat.body) as { runId: string };
+    // Distinct run row on every POST.
+    expect(bodyARepeat.runId).not.toBe(bodyA.runId);
   });
 
   test("POST /runs with nonexistent buildId returns 400", async () => {
@@ -295,11 +249,9 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  test("POST /runs with diffTolerance + ignoreAreas stores them on the run row", async () => {
-    // Lets SDK consumers declare per-test diff tolerance + ignore
-    // regions at run-create time — no separate setIgnoreAreas /
-    // setDiffThresholdOverride round-trip + diff-worker re-enqueue.
-    // Matches the legacy Java SDK's TestRunRequest shape.
+  test("POST /runs returns 400 for unknown extra fields (strict v1.1.0 shape)", async () => {
+    // ADR-038: diffTolerance, ignoreAreas, browser, viewport fields moved
+    // out of POST /runs. Unknown fields cause Zod to reject.
     const res = await h.app.inject({
       method: "POST",
       url: "/runs",
@@ -308,121 +260,14 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         projectId: s.projectId,
         buildId: s.buildId,
         branchName: "main",
-        name: "tolerance-and-ignore",
-        browser: "chromium",
-        viewport: "1280x720",
-        diffTolerance: 0.05,
-        ignoreAreas: [
-          { x: 0, y: 0, width: 100, height: 40, viewport: "1280x720" },
-          { x: 50, y: 200, width: 300, height: 80 },
-        ],
+        name: "basic-run",
       },
     });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { id: string };
-
-    const rows = await h.db
-      .select()
-      .from(testRuns)
-      .where(eq(testRuns.id, body.id))
-      .limit(1);
-    const row = rows[0]!;
-    // diffThresholdOverride is a Drizzle numeric column. The PG driver
-    // returns it as a number for non-integer values; assert numerically.
-    expect(Number(row.diffThresholdOverride)).toBeCloseTo(0.05, 5);
-    // ignore_areas is a text column holding JSON
-    expect(row.ignoreAreas).not.toBeNull();
-    const parsedIgnoreAreas = JSON.parse(row.ignoreAreas!) as Array<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      viewport?: string;
-    }>;
-    expect(parsedIgnoreAreas).toHaveLength(2);
-    expect(parsedIgnoreAreas[0]).toEqual({
-      x: 0,
-      y: 0,
-      width: 100,
-      height: 40,
-      viewport: "1280x720",
-    });
-    expect(parsedIgnoreAreas[1]).toEqual({
-      x: 50,
-      y: 200,
-      width: 300,
-      height: 80,
-    });
-  });
-
-  test("POST /runs rejects diffTolerance outside the 0..1 range", async () => {
-    // 0–1 is the same range as `projects.diffThreshold` — a value >1
-    // would never trigger a failure regardless of the diff, so the
-    // server fails closed.
-    const res = await h.app.inject({
-      method: "POST",
-      url: "/runs",
-      headers: { authorization: `Bearer ${s.memberJwt}` },
-      payload: {
-        projectId: s.projectId,
-        buildId: s.buildId,
-        branchName: "main",
-        name: "bad-tolerance",
-        diffTolerance: 1.5,
-      },
-    });
-    expect(res.statusCode).toBe(400);
-  });
-
-  test("POST /runs caps ignoreAreas at 50 entries", async () => {
-    // Matches the dashboard's MAX_IGNORE_REGIONS cap in
-    // apps/api/src/trpc/v1/runs.ts so /runs and setIgnoreAreas share
-    // the same ceiling.
-    const tooMany = Array.from({ length: 51 }, (_, i) => ({
-      x: i,
-      y: 0,
-      width: 10,
-      height: 10,
-    }));
-    const res = await h.app.inject({
-      method: "POST",
-      url: "/runs",
-      headers: { authorization: `Bearer ${s.memberJwt}` },
-      payload: {
-        projectId: s.projectId,
-        buildId: s.buildId,
-        branchName: "main",
-        name: "too-many-areas",
-        ignoreAreas: tooMany,
-      },
-    });
-    expect(res.statusCode).toBe(400);
-  });
-
-  test("POST /runs without diffTolerance + ignoreAreas leaves the columns null (back-compat)", async () => {
-    // Existing SDK consumers that don't supply these fields must see
-    // identical behavior to v1.0.13 — null columns, server applies the
-    // project default at diff time.
-    const res = await h.app.inject({
-      method: "POST",
-      url: "/runs",
-      headers: { authorization: `Bearer ${s.memberJwt}` },
-      payload: {
-        projectId: s.projectId,
-        buildId: s.buildId,
-        branchName: "main",
-        name: "default-fields",
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { id: string };
-    const rows = await h.db
-      .select()
-      .from(testRuns)
-      .where(eq(testRuns.id, body.id))
-      .limit(1);
-    expect(rows[0]!.diffThresholdOverride).toBeNull();
-    expect(rows[0]!.ignoreAreas).toBeNull();
+    // The strict v1.1.0 shape accepts exactly {projectId, buildId, name, branchName}
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { runId: string; status: string };
+    expect(body.runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.status).toBe("running");
   });
 
   test("POST /runs as a non-member editor → 403", async () => {
@@ -455,16 +300,14 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         buildId: s.buildId,
         branchName: "main",
         name: "rest-get-snap",
-        browser: "chromium",
-        viewport: "1280x720",
       },
     });
-    expect(createRes.statusCode).toBe(200);
-    const created = JSON.parse(createRes.body) as { id: string };
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body) as { runId: string };
 
     const getRes = await h.app.inject({
       method: "GET",
-      url: `/runs/${created.id}`,
+      url: `/runs/${created.runId}`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
     expect(getRes.statusCode).toBe(200);
@@ -473,29 +316,19 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       projectId: string;
       buildId: string;
       branchName: string | null;
-      browser: string | null;
-      viewport: string | null;
       autoApproved: boolean;
     };
-    expect(body.id).toBe(created.id);
+    expect(body.id).toBe(created.runId);
     expect(body.projectId).toBe(s.projectId);
     expect(body.buildId).toBe(s.buildId);
     expect(body.branchName).toBe("main");
-    expect(body.browser).toBe("chromium");
-    expect(body.viewport).toBe("1280x720");
-    // No baselines row exists yet for a freshly-created run — autoApproved
-    // is derived from `EXISTS baselines WHERE test_run_id = ? AND user_id IS NULL`
-    // so the default-safe value is false.
+    // No baselines row exists yet for a freshly-created run.
     expect(body.autoApproved).toBe(false);
   });
 
   test("GET /runs/:id sets autoApproved=true when an auto-baseline row exists", async () => {
-    // Reproduces the scenario PR #128 CI surfaced: the diff worker's
-    // first-baseline + pixel-identical-auto-approve paths both INSERT
-    // a baselines row with userId IS NULL but DON'T set a column on
-    // test_runs. The SDK polling loop relies on autoApproved as its
-    // "is this run done" signal — this test locks in the GET-side
-    // derivation so the SDK can trust it.
+    // ADR-038: baselines are now tied to screenshots/variations.
+    // Seed the run + a variation + baselines row manually.
     const createRes = await h.app.inject({
       method: "POST",
       url: "/runs",
@@ -505,27 +338,26 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         buildId: s.buildId,
         branchName: "main",
         name: "auto-approve-derivation",
-        browser: "chromium",
-        viewport: "1280x720",
       },
     });
-    const created = JSON.parse(createRes.body) as {
-      id: string;
-      testVariationId: string;
-    };
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body) as { runId: string };
 
-    // Simulate what the diff worker does on first-baseline:
-    // insert a baselines row with userId omitted (NULL).
+    // Insert a variation and a baseline with userId IS NULL (auto-approve signal).
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ name: "auto-approve-derivation", projectId: s.projectId })
+      .returning();
     await h.db.insert(baselines).values({
       baselineName: "auto",
-      testVariationId: created.testVariationId,
-      testRunId: created.id,
+      testVariationId: variation!.id,
+      testRunId: created.runId,
       // userId omitted → NULL → auto-baseline signal
     });
 
     const getRes = await h.app.inject({
       method: "GET",
-      url: `/runs/${created.id}`,
+      url: `/runs/${created.runId}`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
     expect(getRes.statusCode).toBe(200);
@@ -534,9 +366,6 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
   });
 
   test("GET /runs/:id sets autoApproved=false when the baseline has a userId (manual approve)", async () => {
-    // Counter-test: a user-driven approve flow inserts a baselines row
-    // WITH userId set. That's not an auto-approval — autoApproved
-    // should be false even though a baseline exists.
     const createRes = await h.app.inject({
       method: "POST",
       url: "/runs",
@@ -546,25 +375,25 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         buildId: s.buildId,
         branchName: "main",
         name: "manual-approve-baseline",
-        browser: "chromium",
-        viewport: "1280x720",
       },
     });
-    const created = JSON.parse(createRes.body) as {
-      id: string;
-      testVariationId: string;
-    };
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body) as { runId: string };
 
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ name: "manual-approve-baseline", projectId: s.projectId })
+      .returning();
     await h.db.insert(baselines).values({
       baselineName: "auto",
-      testVariationId: created.testVariationId,
-      testRunId: created.id,
+      testVariationId: variation!.id,
+      testRunId: created.runId,
       userId: s.memberId, // manual-approve signal
     });
 
     const getRes = await h.app.inject({
       method: "GET",
-      url: `/runs/${created.id}`,
+      url: `/runs/${created.runId}`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
     const body = JSON.parse(getRes.body) as { autoApproved: boolean };
@@ -606,15 +435,14 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
         buildId: s.buildId,
         branchName: "main",
         name: "rbac-probe",
-        browser: "chromium",
-        viewport: "1280x720",
       },
     });
-    const created = JSON.parse(createRes.body) as { id: string };
+    expect(createRes.statusCode).toBe(201);
+    const created = JSON.parse(createRes.body) as { runId: string };
 
     const res = await h.app.inject({
       method: "GET",
-      url: `/runs/${created.id}`,
+      url: `/runs/${created.runId}`,
       headers: { authorization: `Bearer ${s.nonMemberJwt}` },
     });
     expect(res.statusCode).toBe(403);
@@ -965,5 +793,33 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       payload: "{}",
     });
     expect(res.statusCode).toBe(204);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Back-compat: SDK 1.0.x POST /runs shape (ADR-038 Phase 7)
+  // ---------------------------------------------------------------------------
+
+  test("legacy SDK 1.0.x POST /runs shape synthesizes a v1.1.0 run", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: {
+        authorization: `Bearer ${s.memberJwt}`,
+        "content-type": "application/json",
+      },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "HomePage", // legacy: the "checkpoint name"
+        branchName: "main",
+        viewport: "1280x720", // legacy: triggers synthesis
+        browser: "chromium",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { runId: string; status: string; name: string };
+    expect(body.name).toBe("HomePage");
+    expect(body.runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.status).toBe("running");
   });
 });

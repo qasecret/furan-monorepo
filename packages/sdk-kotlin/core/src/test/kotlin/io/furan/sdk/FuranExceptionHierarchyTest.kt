@@ -1,5 +1,6 @@
 package io.furan.sdk
 
+import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.SnapshotResult
 import io.furan.sdk.transport.HttpException
@@ -98,6 +99,27 @@ class FuranExceptionHierarchyTest {
         // server-error so test infra can retry it the same way as 5xx.
         assertTrue(unknown.isServerError)
         assertFalse(unknown.isClientError)
+    }
+
+    @Test
+    fun `FuranDiffException is a FuranException carrying RunResult`() {
+        val runResult = RunResult(
+            runId = "run-1",
+            status = RunStatus.UNRESOLVED,
+            checkpointCount = 2,
+        )
+        val ex = FuranDiffException(runResult)
+        assertTrue(ex is FuranException)
+        assertEquals(runResult, ex.runResult)
+        assertTrue(ex.message?.contains("run-1") == true)
+        assertTrue(ex.message?.contains("2") == true)
+    }
+
+    @Test
+    fun `FuranDiffException allows custom message override`() {
+        val runResult = RunResult(runId = "r", status = RunStatus.FAILED, checkpointCount = 1)
+        val ex = FuranDiffException(runResult, "custom message")
+        assertEquals("custom message", ex.message)
     }
 
     @Test

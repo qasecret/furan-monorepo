@@ -68,7 +68,6 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
       .values({
         buildId,
         projectId,
-        testVariationId: variationId,
         status: "new",
         branchName: "main",
         name: "home",
@@ -85,6 +84,8 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
     await db.insert(screenshots).values({
       runId: runA,
       projectId,
+      testVariationId: variationId,
+      name: "home",
       imageKey: sharedImageKey,
       viewport: "1280x720",
       browser: "chromium",
@@ -92,6 +93,8 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
     await db.insert(screenshots).values({
       runId: runB,
       projectId,
+      testVariationId: variationId,
+      name: "home",
       imageKey: sharedImageKey,
       viewport: "1280x720",
       browser: "chromium",
@@ -104,12 +107,14 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
     expect(rows.length).toBe(2);
   });
 
-  it("blocks two screenshots rows with the same (run_id, viewport)", async () => {
+  it("blocks two screenshots rows with the same (run_id, name, viewport)", async () => {
     const runA = await makeRun();
 
     await db.insert(screenshots).values({
       runId: runA,
       projectId,
+      testVariationId: variationId,
+      name: "home",
       imageKey: "a".repeat(64),
       viewport: "1280x720",
       browser: "chromium",
@@ -120,6 +125,8 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
       await db.insert(screenshots).values({
         runId: runA,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: "b".repeat(64),
         viewport: "1280x720",
         browser: "chromium",
@@ -133,10 +140,10 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
     // PostgresError cause, not in the top-level message which only carries
     // the "Failed query: ..." wrapper text.
     const errorJson = JSON.stringify(err, Object.getOwnPropertyNames(err));
-    expect(errorJson).toMatch(/screenshots_run_id_viewport_unique/);
+    expect(errorJson).toMatch(/screenshots_run_id_name_viewport_unique/);
   });
 
-  it("onConflictDoNothing on (run_id, viewport) is idempotent", async () => {
+  it("onConflictDoNothing on (run_id, name, viewport) is idempotent", async () => {
     const runA = await makeRun();
 
     await db
@@ -144,24 +151,28 @@ desc("screenshots image_key uniqueness (ADR-033)", () => {
       .values({
         runId: runA,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: "a".repeat(64),
         viewport: "1280x720",
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
     await db
       .insert(screenshots)
       .values({
         runId: runA,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: "a".repeat(64),
         viewport: "1280x720",
         browser: "chromium",
       })
       .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.viewport],
+        target: [screenshots.runId, screenshots.name, screenshots.viewport],
       });
 
     const rows = await db

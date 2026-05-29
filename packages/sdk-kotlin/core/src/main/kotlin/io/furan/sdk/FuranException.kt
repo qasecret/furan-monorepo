@@ -1,5 +1,6 @@
 package io.furan.sdk
 
+import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SnapshotResult
 
 /**
@@ -103,6 +104,20 @@ class FuranConfigException(message: String, cause: Throwable? = null) :
  *  - 5xx / null → server unhealthy (transient — safe to retry once
  *    in test infra)
  */
+/**
+ * Raised by [io.furan.sdk.selenium.Furan.close] when
+ * [FuranConfig.failOnDiff] is [FailOnDiff.AfterEach] (or at JVM exit
+ * for [FailOnDiff.AfterAll]) and the run ended with at least one
+ * unresolved or failed checkpoint.
+ *
+ * The underlying [runResult] is always attached so callers can inspect
+ * checkpoint details (e.g., diff viewer URLs) even after the throw.
+ */
+class FuranDiffException(
+    val runResult: RunResult,
+    message: String = "${runResult.checkpointCount} checkpoint(s) failed or unresolved in run ${runResult.runId}",
+) : FuranException(message)
+
 open class FuranTransportException(
     /** HTTP status code, or null when the failure was pre-flight (no response). */
     val statusCode: Int?,

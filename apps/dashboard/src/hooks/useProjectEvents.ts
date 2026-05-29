@@ -12,6 +12,8 @@ import { browserEnv } from "@/lib/env";
  * (1.5s wait / 3s max-wait) and flushed as `event: <name>\ndata:
  * <items[]>\n\n` frames.
  *
+ * ADR-038 adds three new names for checkpoint lifecycle events.
+ *
  * Spec: furan-design/specs/2026-05-24-list-level-live-updates-design.md
  */
 const PROJECT_EVENT_NAMES = [
@@ -21,8 +23,19 @@ const PROJECT_EVENT_NAMES = [
   "testRun_created",
   "testRun_updated",
   "testRun_deleted",
+  // ADR-038: checkpoint lifecycle events
+  "run.checkpoint_added",
+  "run.checkpoint_diffed",
+  "run.completed",
 ] as const;
 type ProjectEventName = (typeof PROJECT_EVENT_NAMES)[number];
+
+/** ADR-038: events that should also invalidate the checkpoints cache namespace. */
+const CHECKPOINT_EVENT_NAMES = new Set<ProjectEventName>([
+  "run.checkpoint_added",
+  "run.checkpoint_diffed",
+  "run.completed",
+]);
 
 type EventHandler = () => void;
 
@@ -31,6 +44,8 @@ interface PoolEntry {
   refCount: number;
   /** Hook-instance handlers, fanned out on each frame. */
   subscribers: Set<EventHandler>;
+  /** Hook-instance handlers for checkpoint events (ADR-038). */
+  checkpointSubscribers: Set<EventHandler>;
   /** Cached DOM listeners so we can remove the right reference on close. */
   domHandlers: Record<ProjectEventName, (m: MessageEvent) => void>;
 }
@@ -55,16 +70,21 @@ function open(projectId: string): PoolEntry {
   const es = new EventSource(url, { withCredentials: true });
 
   const subscribers = new Set<EventHandler>();
+  const checkpointSubscribers = new Set<EventHandler>();
   const fanOut = (): void => {
     for (const fn of subscribers) fn();
   };
+  const checkpointFanOut = (): void => {
+    for (const fn of checkpointSubscribers) fn();
+  };
 
-  // One DOM listener per event name. All 6 funnel through fanOut so
-  // subscribers don't have to differentiate by event type — every
-  // event invalidates the same two query namespaces anyway. Parsing
-  // the frame is best-effort; malformed data drops silently.
+  // One DOM listener per event name. Legacy events funnel through fanOut;
+  // ADR-038 checkpoint events also call checkpointFanOut so subscribers can
+  // invalidate the [["checkpoints"]] cache namespace independently.
+  // Parsing the frame is best-effort; malformed data drops silently.
   const domHandlers = {} as Record<ProjectEventName, (m: MessageEvent) => void>;
   for (const name of PROJECT_EVENT_NAMES) {
+    const isCheckpointEvent = CHECKPOINT_EVENT_NAMES.has(name);
     const handler = (m: MessageEvent): void => {
       try {
         const items: unknown = JSON.parse(m.data);
@@ -73,12 +93,19 @@ function open(projectId: string): PoolEntry {
         return;
       }
       fanOut();
+      if (isCheckpointEvent) checkpointFanOut();
     };
     domHandlers[name] = handler;
     es.addEventListener(name, handler as EventListener);
   }
 
-  const entry: PoolEntry = { es, refCount: 0, subscribers, domHandlers };
+  const entry: PoolEntry = {
+    es,
+    refCount: 0,
+    subscribers,
+    checkpointSubscribers,
+    domHandlers,
+  };
   pool.set(projectId, entry);
   return entry;
 }
@@ -110,6 +137,17 @@ function invalidateLists(qc: QueryClient): void {
 }
 
 /**
+ * ADR-038: cache invalidation for checkpoint events.
+ * `run.checkpoint_added` and `run.checkpoint_diffed` invalidate the
+ * checkpoints namespace so the CheckpointRail and CheckpointStrip
+ * refetch fresh data.
+ */
+function invalidateCheckpoints(qc: QueryClient): void {
+  void qc.invalidateQueries({ queryKey: [["runs"]] });
+  void qc.invalidateQueries({ queryKey: [["checkpoints"]] });
+}
+
+/**
  * Subscribes the calling page to the project's SSE channel. Mount it
  * once per page; multiple mounts on the same projectId share one
  * EventSource via the pool.
@@ -125,11 +163,14 @@ export function useProjectEvents(projectId: string | null): void {
     if (!projectId) return;
     const entry = open(projectId);
     const handler: EventHandler = () => invalidateLists(qc);
+    const checkpointHandler: EventHandler = () => invalidateCheckpoints(qc);
     entry.subscribers.add(handler);
+    entry.checkpointSubscribers.add(checkpointHandler);
     entry.refCount += 1;
 
     return () => {
       entry.subscribers.delete(handler);
+      entry.checkpointSubscribers.delete(checkpointHandler);
       entry.refCount -= 1;
       if (entry.refCount === 0) close(projectId);
     };

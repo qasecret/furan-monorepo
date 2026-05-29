@@ -13,25 +13,27 @@ import org.openqa.selenium.chrome.ChromeOptions
  *
  * CI does NOT run this by default. The maintainer invokes it before tagging.
  *
- * Task 3's upload path is stubbed (Task 4 wires the real multipart POST);
- * this test currently verifies wiring + capture without asserting server-side
- * persistence.
+ * ADR-038 SDK 2.0.0 lifecycle: open → snapshot → close.
  */
 @EnabledIfEnvironmentVariable(named = "FURAN_SDK_INTEGRATION", matches = "1")
 class SnapshotIntegrationTest {
 
     @Test
-    fun `snapshot captures screenshot + DOM and routes through FuranClient`() {
+    fun `open-snapshot-close routes through FuranClient`() {
         val opts = ChromeOptions().apply {
             addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
         }
         val driver = ChromeDriver(opts)
-        val furan = Furan(driver, FuranConfig.fromEnv())
+        val furan = Furan(FuranConfig.fromEnv(), driver)
         try {
+            furan.open("integration-test-example")
             driver.get("https://example.com")
             furan.snapshot("integration-test-example")
-        } finally {
             furan.close()
+        } catch (e: Throwable) {
+            furan.abort()
+            throw e
+        } finally {
             driver.quit()
         }
     }

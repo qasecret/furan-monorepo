@@ -181,6 +181,8 @@ desc(
         await db.insert(screenshots).values({
           runId: baselineRunId,
           projectId,
+          testVariationId: variationId,
+          name: "home",
           imageKey: bKey,
           viewport: vp,
           browser: "chromium",
@@ -188,6 +190,8 @@ desc(
         await db.insert(screenshots).values({
           runId: candidateRunId,
           projectId,
+          testVariationId: variationId,
+          name: "home",
           imageKey: cKey,
           viewport: vp,
           browser: "chromium",
@@ -199,14 +203,18 @@ desc(
       await db.delete(screenshots);
       await db.delete(baselines);
       await db.delete(testRuns);
-      // Reset variation.ignoreAreas back to null between tests.
+      // Reset variation.ignoreRegions back to null between tests.
       await db
         .update(testVariations)
-        .set({ ignoreAreas: null })
+        .set({ ignoreRegions: null })
         .where(eq(testVariations.id, variationId));
     });
 
-    it("merges variation + run ignore areas, both reach the engine", async () => {
+    it("variation ignore regions reach the engine (ADR-038: run-level ignoreAreas removed)", async () => {
+      // ADR-038 removed run-level ignoreAreas. All ignore regions now live on
+      // the variation (ignoreRegions jsonb). Both regionA and regionB are
+      // stored on the variation to prove multiple regions are all passed to
+      // the engine.
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP] });
 
       const regionA = {
@@ -225,12 +233,8 @@ desc(
       };
       await db
         .update(testVariations)
-        .set({ ignoreAreas: JSON.stringify([regionA]) })
+        .set({ ignoreRegions: [regionA, regionB] })
         .where(eq(testVariations.id, variationId));
-      await db
-        .update(testRuns)
-        .set({ ignoreAreas: JSON.stringify([regionB]) })
-        .where(eq(testRuns.id, candidateRunId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -255,6 +259,7 @@ desc(
       // Aggregate diff_percent on the run row = MAX(desktop=0, mobile>0) > 0.
       // FALSIFIABILITY: if the viewport filter were stripped (region applies
       // to both viewports), both would be masked, aggregate would be 0.
+      // ADR-038: region is stored on the variation (run-level ignoreAreas removed).
       const desktopFullCover = {
         x: 0,
         y: 0,
@@ -263,9 +268,9 @@ desc(
         viewport: VP_DESKTOP,
       };
       await db
-        .update(testRuns)
-        .set({ ignoreAreas: JSON.stringify([desktopFullCover]) })
-        .where(eq(testRuns.id, candidateRunId));
+        .update(testVariations)
+        .set({ ignoreRegions: [desktopFullCover] })
+        .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -286,11 +291,12 @@ desc(
       // aggregate = MAX(0, 0) = 0. FALSIFIABILITY: if untagged regions
       // were skipped instead of applied-to-all, neither viewport would be
       // masked, aggregate would be > 0.
+      // ADR-038: region is stored on the variation (run-level ignoreAreas removed).
       const legacyFullCover = { x: 0, y: 0, width: 10000, height: 10000 };
       await db
-        .update(testRuns)
-        .set({ ignoreAreas: JSON.stringify([legacyFullCover]) })
-        .where(eq(testRuns.id, candidateRunId));
+        .update(testVariations)
+        .set({ ignoreRegions: [legacyFullCover] })
+        .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -303,21 +309,17 @@ desc(
       expect(row.diffPercent).toBe(0);
     }, 60_000);
 
-    it("malformed variation JSON falls back to run-only (no crash)", async () => {
+    it("malformed variation JSON falls back to empty ignoreRegions (no crash)", async () => {
+      // ADR-038: run-level ignoreAreas removed; only variation-level regions apply.
+      // A malformed variation.ignoreRegions (stored as raw jsonb with bad shape)
+      // should be silently ignored by parseIgnoreAreas, leaving allRegions empty
+      // — the engine proceeds with no mask and the handler does not throw.
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP] });
 
       await db
         .update(testVariations)
-        .set({ ignoreAreas: "{not-json" })
+        .set({ ignoreRegions: "{not-json" as unknown as null })
         .where(eq(testVariations.id, variationId));
-      await db
-        .update(testRuns)
-        .set({
-          ignoreAreas: JSON.stringify([
-            { x: 1, y: 1, width: 10, height: 10, viewport: VP_DESKTOP },
-          ]),
-        })
-        .where(eq(testRuns.id, candidateRunId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await expect(
@@ -350,12 +352,13 @@ desc(
       // order over `allRegions`; the mock's mockResolvedValueOnce queue
       // pops in that order: first region → "Mar 5, 2026" (matches date),
       // second → "ORDER-XYZ" (does NOT match).
+      // ADR-038: run-level ignoreAreas removed; regions are stored on the variation.
       const datePattern = String.raw`\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*[\s\-\/]+\d{1,2},?\s+\d{2,4}\b`;
       const orderPattern = String.raw`^ORDER-\d+$`;
       await db
-        .update(testRuns)
+        .update(testVariations)
         .set({
-          ignoreAreas: JSON.stringify([
+          ignoreRegions: [
             {
               x: 0,
               y: 0,
@@ -374,9 +377,9 @@ desc(
               kind: "dynamic-text",
               pattern: orderPattern,
             },
-          ]),
+          ],
         })
-        .where(eq(testRuns.id, candidateRunId));
+        .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -485,6 +488,8 @@ desc(
       await db.insert(screenshots).values({
         runId: br.id,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: bKey,
         viewport: VP,
         browser: "chromium",
@@ -492,6 +497,8 @@ desc(
       await db.insert(screenshots).values({
         runId: cr.id,
         projectId,
+        testVariationId: variationId,
+        name: "home",
         imageKey: cKey,
         elementMapKey,
         viewport: VP,
@@ -503,7 +510,7 @@ desc(
       await db
         .update(testVariations)
         .set({
-          ignoreAreas: JSON.stringify([
+          ignoreRegions: [
             {
               x: 0,
               y: 0,
@@ -512,7 +519,7 @@ desc(
               viewport: VP,
               selector: "#center",
             },
-          ]),
+          ],
         })
         .where(eq(testVariations.id, variationId));
 
@@ -538,10 +545,11 @@ desc(
 
       await seedBaselineAndCandidate({ viewports: [VP_DESKTOP] });
 
+      // ADR-038: run-level ignoreAreas removed; dynamic-text regions are stored on the variation.
       await db
-        .update(testRuns)
+        .update(testVariations)
         .set({
-          ignoreAreas: JSON.stringify([
+          ignoreRegions: [
             {
               x: 0,
               y: 0,
@@ -551,9 +559,9 @@ desc(
               kind: "dynamic-text",
               pattern: ".+",
             },
-          ]),
+          ],
         })
-        .where(eq(testRuns.id, candidateRunId));
+        .where(eq(testVariations.id, variationId));
 
       const job: DiffJob = { runId: candidateRunId, projectId };
       await handleDiffJob(job, mockLogger, { db, storage, redis });

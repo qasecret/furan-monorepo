@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import io.furan.sdk.FailOnDiff
 
 class FuranConfigTest {
     @Test
@@ -212,5 +213,66 @@ class FuranConfigTest {
             "FURAN_PROJECT_ID" to "p",
         )
         assertEquals(emptyMap<String, String>(), FuranConfig.fromEnv(env).properties)
+    }
+
+    @Test
+    fun `fromEnv FURAN_FAIL_ON_DIFF defaults to None when unset`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+        )
+        assertEquals(FailOnDiff.None, FuranConfig.fromEnv(env).failOnDiff)
+    }
+
+    @Test
+    fun `fromEnv FURAN_FAIL_ON_DIFF AfterEach parses correctly`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_FAIL_ON_DIFF" to "AfterEach",
+        )
+        assertEquals(FailOnDiff.AfterEach, FuranConfig.fromEnv(env).failOnDiff)
+    }
+
+    @Test
+    fun `fromEnv FURAN_FAIL_ON_DIFF AfterAll parses correctly`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_FAIL_ON_DIFF" to "AfterAll",
+        )
+        assertEquals(FailOnDiff.AfterAll, FuranConfig.fromEnv(env).failOnDiff)
+    }
+
+    @Test
+    fun `fromEnv FURAN_FAIL_ON_DIFF is case-insensitive`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_FAIL_ON_DIFF" to "aftereach",
+        )
+        assertEquals(FailOnDiff.AfterEach, FuranConfig.fromEnv(env).failOnDiff)
+    }
+
+    @Test
+    fun `fromEnv FURAN_FAIL_ON_DIFF invalid value throws FuranConfigException`() {
+        val env = mapOf(
+            "FURAN_API_URL" to "u",
+            "FURAN_API_TOKEN" to "t",
+            "FURAN_PROJECT_ID" to "p",
+            "FURAN_FAIL_ON_DIFF" to "BOGUS",
+        )
+        val ex = assertThrows<FuranConfigException> { FuranConfig.fromEnv(env) }
+        assertTrue(ex.message?.contains("BOGUS") == true)
+    }
+
+    @Test
+    fun `failOnDiff field defaults to None in direct construction`() {
+        val cfg = FuranConfig(apiUrl = "u", apiToken = "t", projectId = "p")
+        assertEquals(FailOnDiff.None, cfg.failOnDiff)
     }
 }

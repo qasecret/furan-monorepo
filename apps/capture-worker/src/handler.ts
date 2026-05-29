@@ -168,18 +168,23 @@ async function handleCaptureJobInner(
               ),
             );
         }
+        // ADR-038: screenshots now require name + testVariationId.
+        // The capture-worker uses the viewport string as the checkpoint name
+        // (one checkpoint per viewport) and the job's testVariationId.
         await tx
           .insert(screenshots)
           .values({
             runId: data.runId,
             projectId: data.projectId,
+            testVariationId: data.testVariationId,
+            name: viewportStr,
             imageKey,
             domKey,
             viewport: viewportStr,
             browser: data.browser,
           })
           .onConflictDoNothing({
-            target: [screenshots.runId, screenshots.viewport],
+            target: [screenshots.runId, screenshots.name, screenshots.viewport],
           });
       });
 

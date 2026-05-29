@@ -10,7 +10,6 @@ import {
   runReviewerDecisions,
   sql,
   testRuns,
-  testVariations,
   type DB,
   type RunStatus,
 } from "@furan/db";
@@ -116,7 +115,8 @@ export const inboxRouter = t.router({
           runId: testRuns.id,
           projectId: testRuns.projectId,
           projectName: projects.name,
-          variationName: testVariations.name,
+          // ADR-038: runs no longer have a single variation; use run name instead.
+          variationName: testRuns.name,
           buildNumber: builds.number,
           branch: builds.branchName,
           status: testRuns.status,
@@ -126,10 +126,6 @@ export const inboxRouter = t.router({
         .from(testRuns)
         .innerJoin(projects, eq(projects.id, testRuns.projectId))
         .innerJoin(builds, eq(builds.id, testRuns.buildId))
-        .innerJoin(
-          testVariations,
-          eq(testVariations.id, testRuns.testVariationId),
-        )
         .where(
           and(
             inArray(testRuns.projectId, filterProjects),

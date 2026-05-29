@@ -27,6 +27,7 @@ import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectEventsRoute } from "./routes/project-events.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
 import { registerRunEventsRoute } from "./routes/run-events.js";
+import { registerRunLifecycleRoutes } from "./routes/runs-lifecycle.js";
 import { registerSdkRoutes } from "./routes/sdk-runs.js";
 import { registerStorageProxyRoute } from "./routes/storage-proxy.js";
 import { registerTokensRoutes } from "./routes/tokens.js";
@@ -133,6 +134,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerRunEventsRoute(app);
   await registerProjectEventsRoute(app);
   await registerSdkRoutes(app);
+  await registerRunLifecycleRoutes(app);
   await registerStorageProxyRoute(app);
   await registerHealthRoutes(app);
   await app.register(docsPlugin);

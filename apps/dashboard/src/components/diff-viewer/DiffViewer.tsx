@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
+import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -25,7 +27,12 @@ import { trpc } from "@/lib/trpc";
 
 interface Props {
   runId: string;
-  diffId: string;
+  /** @deprecated use initialCheckpointId + projectId. Kept for legacy diffs route compat. */
+  diffId?: string;
+  /** ADR-038: project id for building canonical checkpoint URLs. */
+  projectId?: string;
+  /** ADR-038: checkpoint id to display initially; "_first" means use the first checkpoint. */
+  initialCheckpointId?: string;
 }
 
 /**
@@ -99,8 +106,65 @@ function useImageDimensions(
   return dims;
 }
 
-export function DiffViewer({ runId, diffId }: Props) {
+export function DiffViewer({
+  runId,
+  diffId,
+  projectId,
+  initialCheckpointId,
+}: Props) {
+  const router = useRouter();
   const utils = trpc.useUtils();
+
+  // ADR-038: checkpoint selection state
+  const [selectedCheckpointId, setSelectedCheckpointId] = useState<string>(
+    initialCheckpointId ?? diffId ?? "_first",
+  );
+
+  // ADR-038: fetch the checkpoint list for the rail
+  const checkpointsQuery = trpc.runs.listCheckpoints.useQuery({ runId });
+
+  // ADR-038: resolve "_first" sentinel to the real first checkpoint id
+  useEffect(() => {
+    if (
+      selectedCheckpointId === "_first" &&
+      checkpointsQuery.data?.items?.length
+    ) {
+      const firstId = checkpointsQuery.data.items[0]?.id;
+      if (firstId) {
+        setSelectedCheckpointId(firstId);
+        if (projectId) {
+          router.replace(
+            `/projects/${projectId}/runs/${runId}/checkpoints/${firstId}`,
+          );
+        }
+      }
+    }
+  }, [selectedCheckpointId, checkpointsQuery.data, projectId, runId, router]);
+
+  // ADR-038: sync URL when user navigates between checkpoints
+  const handleCheckpointSelect = useCallback(
+    (id: string) => {
+      setSelectedCheckpointId(id);
+      if (projectId) {
+        router.replace(
+          `/projects/${projectId}/runs/${runId}/checkpoints/${id}`,
+        );
+      }
+    },
+    [projectId, runId, router],
+  );
+
+  // ADR-038: map checkpoint items to CheckpointSummary[] for the rail
+  const checkpointSummaries: CheckpointSummary[] = useMemo(() => {
+    return (checkpointsQuery.data?.items ?? []).map((item) => ({
+      id: item.id,
+      name: item.name ?? item.id,
+      // Phase 6 will wire real status/diffPercent per checkpoint;
+      // for now fall back to "running" / null (safe sentinel values).
+      status: "running" as const,
+      diffPercent: null,
+    }));
+  }, [checkpointsQuery.data]);
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
@@ -288,7 +352,10 @@ export function DiffViewer({ runId, diffId }: Props) {
   const isEmpty = data?.status === "empty";
 
   return (
-    <div className="flex flex-col h-full" data-diff-id={diffId}>
+    <div
+      className="flex flex-col h-full"
+      data-diff-id={diffId ?? selectedCheckpointId}
+    >
       {/* Mobile gate: the diff viewer's pixi canvases + region sidebar need
           horizontal real estate the smallest phones don't have. Below the
           md breakpoint we replace the whole tree with an honest "use a
@@ -353,14 +420,35 @@ export function DiffViewer({ runId, diffId }: Props) {
               {baselineDims && candidateDims && (
                 <SizeChip baseline={baselineDims} candidate={candidateDims} />
               )}
-              {data.testVariationId && (
-                <BaselineHistoryPanel
-                  testVariationId={data.testVariationId}
-                  currentBaselineKey={data.baselineName ?? null}
-                />
-              )}
+              {/*
+                ADR-038: BaselineHistoryPanel binds to the currently-selected
+                checkpoint's testVariationId, not the run's (the run no longer
+                has one — it has N checkpoints with one variation each).
+              */}
+              {(() => {
+                const selectedCheckpoint = checkpointsQuery.data?.items?.find(
+                  (c) => c.id === selectedCheckpointId,
+                );
+                if (!selectedCheckpoint?.testVariationId) return null;
+                return (
+                  <BaselineHistoryPanel
+                    testVariationId={selectedCheckpoint.testVariationId}
+                    currentBaselineKey={data.baselineName ?? null}
+                  />
+                );
+              })()}
             </div>
+            {/* ADR-038: checkpoint rail left column + canvas/right-rail */}
             <div className="flex flex-1 overflow-hidden">
+              {/* Checkpoint rail: 240px left column listing all checkpoints */}
+              {checkpointSummaries.length > 0 &&
+                selectedCheckpointId !== "_first" && (
+                  <CheckpointRail
+                    items={checkpointSummaries}
+                    selectedId={selectedCheckpointId}
+                    onSelect={handleCheckpointSelect}
+                  />
+                )}
               <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
                 <ViewerCanvas
                   baselineUrl={baselineUrl}
@@ -383,6 +471,11 @@ export function DiffViewer({ runId, diffId }: Props) {
         <div id="diff-viewer-approval">
           <ApprovalBar
             runId={runId}
+            checkpointId={
+              selectedCheckpointId !== "_first"
+                ? selectedCheckpointId
+                : undefined
+            }
             status={data?.status}
             diffRegions={data?.diffRegions}
           />

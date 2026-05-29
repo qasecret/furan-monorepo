@@ -211,18 +211,18 @@ export async function mergeBranchBaselinesImpl(
     // matches legacy diffTollerancePercent: 0. The diff worker takes over
     // from here — byte-identical → ADR-032 auto-approve, divergent →
     // unresolved.
+    //
+    // ADR-038: test_runs no longer carries testVariationId/browser/viewport/
+    // os/device — those live on test_variations and screenshots. We create the
+    // run with only project/build/name/branch, then insert screenshot rows
+    // that reference the source variation directly.
     const runRows = await deps.db
       .insert(testRuns)
       .values({
         projectId,
         buildId: build.id,
-        testVariationId: source.variationId,
         branchName: toBranch,
         name: variation.name,
-        browser: variation.browser,
-        device: variation.device,
-        os: variation.os,
-        viewport: variation.viewport,
         customTags: variation.customTags,
         status: "running",
         merge: true,
@@ -240,18 +240,22 @@ export async function mergeBranchBaselinesImpl(
     }
 
     // Screenshot rows — reference the same content-addressed imageKey as
-    // the source. ADR-033 keeps screenshots.image_key non-unique; the
-    // unique constraint is (run_id, viewport) so we can insert without
-    // re-uploading bytes.
+    // the source. ADR-038: unique constraint is (run_id, name, viewport);
+    // we copy the source checkpoint's identity columns for traceability.
     for (const shot of sourceShots) {
       await deps.db.insert(screenshots).values({
         runId: run.id,
         projectId,
+        testVariationId: shot.testVariationId,
+        name: shot.name,
         imageKey: shot.imageKey,
         domKey: shot.domKey,
         elementMapKey: shot.elementMapKey,
         viewport: shot.viewport,
         browser: shot.browser,
+        os: shot.os,
+        device: shot.device,
+        matchLevel: shot.matchLevel,
       });
     }
 

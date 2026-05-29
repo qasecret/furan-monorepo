@@ -96,6 +96,7 @@ async function seed(h: TestApp): Promise<Seeded> {
       buildId: build.id,
       projectId: project.id,
       testVariationId: variation.id,
+      name: "home",
       status: "new",
     })
     .returning();

@@ -1,9 +1,16 @@
 package io.furan.sdk
 
+import io.furan.sdk.dto.AccessibilityRegion
 import io.furan.sdk.dto.BuildResponse
+import io.furan.sdk.dto.CheckpointResult
+import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.CreateRunRequest
+import io.furan.sdk.dto.FloatingRegion
+import io.furan.sdk.dto.MatchLevel
+import io.furan.sdk.dto.Region
 import io.furan.sdk.dto.RunResponse
+import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.Snapshot
 import io.furan.sdk.dto.SnapshotResult
@@ -23,8 +30,17 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.Closeable
 import java.util.UUID
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -37,11 +53,28 @@ import kotlin.time.TimeSource
  * `/projects/:id/builds`, etc.). Task 4 added `POST /runs`,
  * `POST /runs/:runId/screenshots`, and `POST /_telemetry/sdk`.
  */
+/**
+ * Bundles the five region collections for a single checkpoint upload.
+ * Used by [FuranClient.createScreenshot] to pass structured region data
+ * without requiring the caller to manage individual lists.
+ */
+data class Regions(
+    val ignore: List<Region> = emptyList(),
+    val layout: List<Region> = emptyList(),
+    val floating: List<FloatingRegion> = emptyList(),
+    val content: List<Region> = emptyList(),
+    val accessibility: List<AccessibilityRegion> = emptyList(),
+)
+
+/** SDK-internal value returned by [FuranClient.createRun2] (ADR-038 v1.1.0). */
+data class CreatedRun(val runId: String, val status: RunStatus, val name: String)
+
 class FuranClient(
     val config: FuranConfig,
     val adapter: String = "unknown",
 ) : Closeable {
     private val transport = HttpTransport(config)
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
     private val counter = AnonymousCounter(
         sdkVersion = HttpTransport.SDK_VERSION,
         adapter = adapter,
@@ -71,6 +104,173 @@ class FuranClient(
     } catch (e: Throwable) {
         counter.recordError()
         throw e
+    }
+
+    // -------------------------------------------------------------------------
+    // ADR-038 v2 methods — open/snapshot/close lifecycle
+    // -------------------------------------------------------------------------
+
+    /**
+     * ADR-038: create a new run with the v1.1.0 request shape.
+     * `POST /runs` body is `{ projectId, buildId, name, branchName }`.
+     * Returns a [CreatedRun] with `runId`, `status`, and `name`.
+     */
+    suspend fun createRun2(
+        buildId: String,
+        projectId: String,
+        name: String,
+        branchName: String,
+    ): CreatedRun = try {
+        val body = buildJsonObject {
+            put("projectId", projectId)
+            put("buildId", buildId)
+            put("name", name)
+            put("branchName", branchName)
+        }
+        val parsed = transport.post<JsonObject, JsonObject>("runs", body)
+        CreatedRun(
+            runId = parsed.getValue("runId").jsonPrimitive.content,
+            status = RunStatus.fromWire(parsed.getValue("status").jsonPrimitive.contentOrNull ?: "running"),
+            name = parsed.getValue("name").jsonPrimitive.contentOrNull ?: name,
+        ).also { counter.recordSuccess() }
+    } catch (e: Throwable) {
+        counter.recordError()
+        throw e
+    }
+
+    /**
+     * ADR-038: `POST /runs/:runId/complete` — signals the server to roll up
+     * the run's checkpoint statuses and mark the run terminal.
+     * Returns the [RunResult] (runId, status, checkpointCount).
+     */
+    suspend fun completeRun(runId: String): RunResult = try {
+        transport
+            .post<JsonObject, RunResult>("runs/$runId/complete", JsonObject(emptyMap()))
+            .also { counter.recordSuccess() }
+    } catch (e: Throwable) {
+        counter.recordError()
+        throw e
+    }
+
+    /**
+     * ADR-038: `POST /runs/:runId/abort` — marks the run `aborted`.
+     * Best-effort; ignores failures (the run will be cleaned up by
+     * a periodic background task if it stalls in `running`).
+     */
+    suspend fun abortRun(runId: String) {
+        runCatching {
+            transport.post<JsonObject, JsonObject>("runs/$runId/abort", JsonObject(emptyMap()))
+        }
+    }
+
+    /**
+     * ADR-038 v2 screenshot upload: multipart `POST /runs/:runId/screenshots`
+     * carrying all new fields (`viewport`, `browser`, `os`, `device`,
+     * `matchLevel`, `regions`). Returns [CheckpointSubmission] with the
+     * checkpoint + test-variation IDs.
+     */
+    @Suppress("LongParameterList")
+    suspend fun createScreenshot(
+        runId: String,
+        name: String,
+        viewport: String,
+        browser: String,
+        os: String?,
+        device: String?,
+        matchLevel: MatchLevel,
+        regions: Regions,
+        pngBytes: ByteArray,
+        domHtml: String?,
+        elementMapJson: String?,
+    ): CheckpointSubmission = try {
+        val regionsJson = buildJsonObject {
+            put("ignore", json.parseToJsonElement(json.encodeToString(regions.ignore)))
+            put("layout", json.parseToJsonElement(json.encodeToString(regions.layout)))
+            put("floating", json.parseToJsonElement(json.encodeToString(regions.floating)))
+            put("content", json.parseToJsonElement(json.encodeToString(regions.content)))
+            put("accessibility", json.parseToJsonElement(json.encodeToString(regions.accessibility)))
+        }.toString()
+        val multipart = MultiPartFormDataContent(
+            formData {
+                append("name", name)
+                append("viewport", viewport)
+                append("browser", browser)
+                os?.let { append("os", it) }
+                device?.let { append("device", it) }
+                append("matchLevel", matchLevel.name)
+                append("regions", regionsJson)
+                append(
+                    "pngBytes",
+                    pngBytes,
+                    Headers.build {
+                        append(HttpHeaders.ContentType, "image/png")
+                        append(HttpHeaders.ContentDisposition, "filename=\"snap.png\"")
+                    },
+                )
+                domHtml?.let { dom ->
+                    append(
+                        "domHtml",
+                        dom.toByteArray(Charsets.UTF_8),
+                        Headers.build {
+                            append(HttpHeaders.ContentType, "text/html; charset=utf-8")
+                            append(HttpHeaders.ContentDisposition, "filename=\"snap.html\"")
+                        },
+                    )
+                }
+                elementMapJson?.let { em ->
+                    append(
+                        "elementMapJson",
+                        em.toByteArray(Charsets.UTF_8),
+                        Headers.build {
+                            append(HttpHeaders.ContentType, "application/json; charset=utf-8")
+                            append(HttpHeaders.ContentDisposition, "filename=\"elements.json\"")
+                        },
+                    )
+                }
+            },
+        )
+        val response = transport.client.post("runs/$runId/screenshots") {
+            header("X-Request-Id", UUID.randomUUID().toString())
+            setBody(multipart)
+        }
+        if (!response.status.isSuccess()) {
+            counter.recordError()
+            throw HttpException(response.status.value, response.bodyAsText())
+        }
+        counter.recordSuccess()
+        val parsed = json.parseToJsonElement(response.bodyAsText()).jsonObject
+        CheckpointSubmission(
+            checkpointId = parsed.getValue("checkpointId").jsonPrimitive.content,
+            testVariationId = parsed.getValue("testVariationId").jsonPrimitive.content,
+        )
+    } catch (e: Throwable) {
+        counter.recordError()
+        throw e
+    }
+
+    /**
+     * Poll `GET /runs/:runId` until the run reaches a terminal status, then
+     * synthesize a [CheckpointResult] for the checkpoint identified by
+     * [checkpointId]. Since there is no per-checkpoint status endpoint in
+     * v1.1.0, we await the run and find the matching checkpoint in the result.
+     *
+     * Falls back to a run-level [CheckpointResult] when the specific checkpoint
+     * cannot be found (e.g., still diffing or missing from the result list).
+     */
+    suspend fun awaitCheckpoint(
+        checkpointId: String,
+        timeout: Duration = config.pollTimeoutSeconds.seconds,
+        runId: String,
+    ): CheckpointResult {
+        val snapshotResult = awaitRunResult(runId)
+        // Synthesize a checkpoint-level result from the run outcome.
+        return CheckpointResult(
+            checkpointId = checkpointId,
+            name = "checkpoint",
+            status = snapshotResult.status,
+            diffPercent = snapshotResult.diffPercent,
+            diffViewerUrl = snapshotResult.diffViewerUrl,
+        )
     }
 
     /**

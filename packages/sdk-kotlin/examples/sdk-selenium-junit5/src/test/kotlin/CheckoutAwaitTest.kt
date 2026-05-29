@@ -1,4 +1,3 @@
-import io.furan.sdk.FuranAssertionException
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.selenium.Furan
@@ -11,8 +10,8 @@ import org.openqa.selenium.chrome.ChromeOptions
 /**
  * Demonstrates the typed-result API: `snapshotAndAwait()` blocks until
  * the diff worker produces a terminal status, returns a typed
- * [io.furan.sdk.dto.SnapshotResult], and throws
- * [FuranAssertionException] on UNRESOLVED / FAILED / ABORTED unless
+ * [io.furan.sdk.dto.CheckpointResult], and throws
+ * [io.furan.sdk.FuranAssertionException] on UNRESOLVED / FAILED / ABORTED unless
  * the caller opts into soft-assert via `FURAN_SOFT_ASSERT=true`.
  *
  * Compare to CheckoutTest (fire-and-forget `snapshot()`) — that path
@@ -32,8 +31,7 @@ class CheckoutAwaitTest {
             addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
         }
         val driver = ChromeDriver(options)
-        val furan = Furan(driver, FuranConfig.fromEnv())
-        try {
+        Furan.use(FuranConfig.fromEnv(), driver, testName = "awaits the diff result and asserts PASSED") { furan ->
             driver.get(
                 "data:text/html,<html><body><h1>Await Checkout</h1>" +
                     "<p>Stable copy</p></body></html>",
@@ -41,8 +39,8 @@ class CheckoutAwaitTest {
 
             // Blocks until the diff worker reports a terminal status.
             // Throws FuranAssertionException if non-PASSED (unless
-            // FURAN_SOFT_ASSERT=true in env). Returns SnapshotResult
-            // on success — useful for logging the run id + diff URL.
+            // FURAN_SOFT_ASSERT=true in env). Returns CheckpointResult
+            // on success — useful for logging the checkpoint id + diff URL.
             val result = furan.snapshotAndAwait("checkout-await-step-1")
 
             // First baseline for this variation auto-approves to PASSED;
@@ -54,9 +52,7 @@ class CheckoutAwaitTest {
             // CI log breadcrumb: print the dashboard link so a reviewer
             // can hop straight to the diff viewer for failures.
             result.diffViewerUrl?.let { println("[furan] Review: $it") }
-        } finally {
-            furan.close()
-            driver.quit()
         }
+        driver.quit()
     }
 }

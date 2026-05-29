@@ -151,6 +151,8 @@ desc("handleDiffJob (integration)", () => {
       {
         runId: baselineRun.id,
         projectId: p.id,
+        testVariationId: v.id,
+        name: "checkpoint-1",
         imageKey: baselineImageKey,
         domKey: baselineDomKey,
         viewport: "1280x720",
@@ -159,6 +161,8 @@ desc("handleDiffJob (integration)", () => {
       {
         runId: candidateRun.id,
         projectId: p.id,
+        testVariationId: v.id,
+        name: "checkpoint-1",
         imageKey: candidateImageKey,
         domKey: candidateDomKey,
         viewport: "1280x720",
@@ -366,6 +370,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     await db.insert(screenshots).values({
       runId: baselineRun.id,
       projectId: p.id,
+      testVariationId: v.id,
+      name: "checkpoint-1",
       imageKey: key1280Baseline,
       domKey: domBaselineKey,
       viewport: "1280x720",
@@ -383,6 +389,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       await db.insert(screenshots).values({
         runId: candidateRun.id,
         projectId: p.id,
+        testVariationId: v.id,
+        name: "checkpoint-1",
         imageKey: key375Candidate,
         domKey: domBaselineKey,
         viewport: "375x812",
@@ -399,6 +407,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       await db.insert(screenshots).values({
         runId: candidateRun.id,
         projectId: p.id,
+        testVariationId: v.id,
+        name: "checkpoint-1",
         imageKey: suffixedKey,
         domKey: domBaselineKey,
         viewport: "375x812",
@@ -410,6 +420,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     await db.insert(screenshots).values({
       runId: candidateRun.id,
       projectId: p.id,
+      testVariationId: v.id,
+      name: "checkpoint-2",
       imageKey: key1280Candidate,
       domKey: domCandidateKey,
       viewport: "1280x720",
@@ -539,9 +551,15 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
         role: "admin",
       })
       .returning();
+    // autoApproveFeature=true so the handler auto-seeds the baselines row on
+    // first run. The second test covers the autoApproveFeature=false path.
     const [p] = await db
       .insert(projects)
-      .values({ name: `dw-new-${uniq}`, mainBranchName: "main" })
+      .values({
+        name: `dw-new-${uniq}`,
+        mainBranchName: "main",
+        autoApproveFeature: true,
+      })
       .returning();
     cleanupProjectIds.push(p.id);
     const [b] = await db
@@ -580,6 +598,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     await db.insert(screenshots).values({
       runId: run.id,
       projectId: p.id,
+      testVariationId: v.id,
+      name: "checkpoint-1",
       imageKey: key,
       viewport: "1280x720",
       browser: "chromium",
@@ -660,6 +680,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     await db.insert(screenshots).values({
       runId: run.id,
       projectId: p.id,
+      testVariationId: v.id,
+      name: "checkpoint-1",
       imageKey: key,
       viewport: "1280x720",
       browser: "chromium",
@@ -763,7 +785,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     mockLogger.error.mockClear();
 
     // Force the exception: no candidate screenshot rows → handler throws
-    // `missing_screenshot:candidate=0`. The wrapper try/catch should
+    // `run_has_no_screenshots:<runId>` (ADR-038: testVariationId is now
+    // resolved from screenshots, not test_runs). The wrapper try/catch should
     // catch, log diff_job_failed with the original err, write
     // status=aborted, publish run.completed, and re-throw.
     await expect(
@@ -772,7 +795,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
         storage,
         redis,
       }),
-    ).rejects.toThrow(/missing_screenshot/);
+    ).rejects.toThrow(/run_has_no_screenshots/);
 
     // Loud error log: primary err is logged with diff_job_failed so the
     // BullMQ failedReason isn't the only place the cause lives.
@@ -787,7 +810,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     };
     expect(failedPayload.runId).toBe(candidateRun.id);
     expect(failedPayload.projectId).toBe(p.id);
-    expect(String(failedPayload.err)).toMatch(/missing_screenshot/);
+    expect(String(failedPayload.err)).toMatch(/run_has_no_screenshots/);
 
     const updated = await db.query.testRuns.findFirst({
       where: eq(testRuns.id, candidateRun.id),

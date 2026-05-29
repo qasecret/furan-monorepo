@@ -168,6 +168,8 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
     await db.insert(screenshots).values({
       runId: baselineRun.id,
       projectId: seedProject.id,
+      testVariationId: v.id,
+      name: "checkpoint-1",
       imageKey: baselineImageKey,
       domKey: baselineDomKey,
       viewport: "1280x720",
@@ -240,6 +242,8 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       await db.insert(screenshots).values({
         runId: candidateRun.id,
         projectId: p.id,
+        testVariationId: variationId,
+        name: "checkpoint-1",
         imageKey: candidateImageKey,
         domKey: candidateDomKey,
         viewport: "1280x720",
@@ -310,6 +314,8 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
     await db.insert(screenshots).values({
       runId: candidateRun.id,
       projectId: p.id,
+      testVariationId: variationId,
+      name: "checkpoint-1",
       imageKey: candidateImageKey,
       domKey: candidateDomKey,
       viewport: "1280x720",

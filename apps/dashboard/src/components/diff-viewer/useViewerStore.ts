@@ -20,6 +20,19 @@ export type RegionKind =
   | "layout"
   | "content";
 
+/**
+ * ADR-038 region kind tab — the kind filter shown above RegionListPanel.
+ * Distinct from `RegionKind` (ignore-region type) — this maps to the
+ * ADR-038 diff-region classification (Ignore / Layout / Floating / Content /
+ * A11y) and drives which tab is active in `RegionKindTabs`.
+ */
+export type RegionKindTab =
+  | "ignore"
+  | "layout"
+  | "floating"
+  | "content"
+  | "accessibility";
+
 /** ADR-031: a single ignore region in image-pixel space. */
 export interface IgnoreArea {
   /** Client-side id assigned at hydration; not persisted server-side. */
@@ -196,6 +209,13 @@ interface State {
   /** Increment current pan by (dx,dy) in canvas-CSS pixels. */
   panBy: (dx: number, dy: number) => void;
 
+  /** ADR-038: which region-kind tab is active above RegionListPanel. */
+  selectedRegionKind: RegionKindTab;
+  setSelectedRegionKind: (k: RegionKindTab) => void;
+  /** ADR-038: which checkpoint is currently open in the diff viewer. */
+  selectedCheckpointId: string | null;
+  setSelectedCheckpointId: (id: string | null) => void;
+
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   setRegionInputMode: (mode: RegionInputMode) => void;
   hydrateSavedIgnoreAreas: (
@@ -275,6 +295,9 @@ export const useViewerStore = create<State>((set) => ({
   panX: 0,
   panY: 0,
 
+  selectedRegionKind: "ignore",
+  selectedCheckpointId: null,
+
   ignoreEditMode: "off",
   regionInputMode: "drag",
   savedRunIgnoreAreas: [],
@@ -328,6 +351,10 @@ export const useViewerStore = create<State>((set) => ({
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
   resetZoom: () => set({ zoom: 1, panX: 0, panY: 0 }),
   panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
+
+  setSelectedRegionKind: (selectedRegionKind) => set({ selectedRegionKind }),
+  setSelectedCheckpointId: (selectedCheckpointId) =>
+    set({ selectedCheckpointId }),
 
   setIgnoreEditMode: (ignoreEditMode) =>
     set((s) => ({

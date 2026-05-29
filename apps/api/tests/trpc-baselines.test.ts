@@ -107,7 +107,8 @@ d("trpc baselines.listForVariation", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: "home-page",
+        branchName: "main",
         status: "passed",
       })
       .returning();
@@ -118,7 +119,8 @@ d("trpc baselines.listForVariation", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: "home-page",
+        branchName: "main",
         status: "passed",
       })
       .returning();
@@ -129,7 +131,8 @@ d("trpc baselines.listForVariation", () => {
       .values({
         projectId: project.id,
         buildId: build.id,
-        testVariationId: variation.id,
+        name: "home-page",
+        branchName: "main",
         status: "passed",
       })
       .returning();

@@ -14,7 +14,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Demonstrates the v2 runtime spine (`FuranBootstrapper` → `FuranRuntime`)
- * alongside ordinary `Furan(driver, config)` snapshot calls.
+ * alongside ordinary `Furan(config, driver)` snapshot calls.
  *
  * The v2 runtime is orthogonal to the snapshot path: it owns config
  * provenance, the event bus, the lifecycle state machine, the
@@ -64,25 +64,23 @@ class CheckoutWithRuntimeTest {
             }
 
             // 3. Take a snapshot via the ordinary v1 Furan adapter.
+            //    SDK 2.0.0 constructor order: Furan(config, driver).
             //    The runtime does not participate in the snapshot
             //    upload path (Phase 3.5 ships HttpTransport SPI as
             //    abstraction only). Use the same FuranConfig you
             //    would otherwise — the two layers compose freely.
-            val options = ChromeOptions().apply {
+            val chromeOptions = ChromeOptions().apply {
                 addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
             }
-            val driver = ChromeDriver(options)
-            val furan = Furan(driver, FuranConfig.fromEnv())
-            try {
+            val driver = ChromeDriver(chromeOptions)
+            Furan.use(FuranConfig.fromEnv(), driver, testName = "bootstraps v2 runtime, subscribes to events, then takes a snapshot") { furan ->
                 driver.get(
                     "data:text/html,<html><body><h1>Runtime-aware Checkout</h1>" +
                         "<p>v2 spine + v1 snapshot</p></body></html>",
                 )
                 furan.snapshot("runtime-aware-step-1")
-            } finally {
-                furan.close()
-                driver.quit()
             }
+            driver.quit()
 
             // 4. Dump diagnostics. The snapshot is composed at call
             //    time (no caching, no background work). Suitable for

@@ -357,6 +357,8 @@ desc("handleRetentionJob (integration)", () => {
     await db.insert(screenshots).values({
       runId: old.id,
       projectId,
+      testVariationId: variationId,
+      name: "checkpoint-1",
       imageKey,
       viewport: "1280x720",
       browser: "chromium",

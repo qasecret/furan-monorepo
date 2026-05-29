@@ -26,6 +26,13 @@ import { trpc } from "@/lib/trpc";
 interface Props {
   runId: string;
   /**
+   * ADR-038: the currently-selected checkpoint id. When present, the
+   * "Approve this checkpoint" button calls `runs.approveCheckpoint`;
+   * "Approve all checkpoints" always calls `runs.approveAllCheckpoints`.
+   * When absent (legacy path), falls back to the old `runs.approve` single-run flow.
+   */
+  checkpointId?: string;
+  /**
    * Current `test_runs.status`. Drives:
    * - The status pill rendered at the top of the bar.
    * - Whether approve/reject/override are enabled (legality matrix
@@ -82,7 +89,12 @@ const DISABLED_REASON: Record<
  * detail; the predicate is resilient to minor encoder changes between tRPC
  * patch releases.
  */
-export function ApprovalBar({ runId, status, diffRegions }: Props) {
+export function ApprovalBar({
+  runId,
+  checkpointId,
+  status,
+  diffRegions,
+}: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
 
@@ -95,6 +107,26 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
   const approve = trpc.runs.approve.useMutation({
     onMutate: () => setError(null),
     onSuccess: () => invalidate(),
+    onError: (e) => setError(e.message),
+  });
+  // ADR-038: per-checkpoint approval
+  const approveCheckpoint = trpc.runs.approveCheckpoint.useMutation({
+    onMutate: () => setError(null),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Checkpoint approved");
+    },
+    onError: (e) => setError(e.message),
+  });
+  // ADR-038: approve all checkpoints in the run
+  const approveAllCheckpoints = trpc.runs.approveAllCheckpoints.useMutation({
+    onMutate: () => setError(null),
+    onSuccess: (res) => {
+      invalidate();
+      toast.success(
+        `Approved ${res.approved} checkpoint${res.approved === 1 ? "" : "s"}`,
+      );
+    },
     onError: (e) => setError(e.message),
   });
   const bulkApprove = trpc.runs.bulkApproveByVariation.useMutation({
@@ -134,6 +166,8 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
 
   const pending =
     approve.isPending ||
+    approveCheckpoint.isPending ||
+    approveAllCheckpoints.isPending ||
     reject.isPending ||
     override.isPending ||
     bulkApprove.isPending;
@@ -160,53 +194,91 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Split-button pattern: primary action is single-run approve;
-              chevron exposes bulk-approve. Keeps the most common path one
-              click and pushes the riskier multi-row write behind a
-              confirmation step. */}
-          <DisabledAwareButton
-            disabled={!canReview || pending}
-            reason={disabledReason}
-            testId="approve-button"
-            variant="default"
-            onClick={() => approve.mutate({ runId })}
-            title={
-              effectiveStatus === "new"
-                ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
-                : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
-            }
-          >
-            {approve.isPending
-              ? effectiveStatus === "new"
-                ? "Saving…"
-                : "Approving…"
-              : effectiveStatus === "new"
-                ? "Save as baseline"
-                : "Approve"}
-          </DisabledAwareButton>
-          {canReview ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="default"
-                  disabled={pending}
-                  data-testid="approve-more-menu"
-                  aria-label="More approve actions"
-                  className="px-2"
+          {/* ADR-038: when a checkpointId is present, the primary action is
+              "Approve this checkpoint" and the secondary is "Approve all checkpoints".
+              Legacy path (no checkpointId) keeps the old single-run approve. */}
+          {checkpointId ? (
+            <>
+              <DisabledAwareButton
+                disabled={!canReview || pending}
+                reason={disabledReason}
+                testId="approve-checkpoint-button"
+                variant="default"
+                onClick={() =>
+                  approveCheckpoint.mutate({ runId, checkpointId })
+                }
+                title="Promotes this checkpoint's candidate as the new baseline for its test variation."
+              >
+                {approveCheckpoint.isPending
+                  ? "Approving…"
+                  : "Approve this checkpoint"}
+              </DisabledAwareButton>
+              {canReview ? (
+                <DisabledAwareButton
+                  disabled={!canReview || pending}
+                  reason={disabledReason}
+                  testId="approve-all-checkpoints-button"
+                  variant="secondary"
+                  onClick={() => approveAllCheckpoints.mutate({ runId })}
+                  title="Promotes all checkpoints in this run as new baselines."
                 >
-                  ▾
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  data-testid="approve-bulk-variation"
-                  onSelect={() => setConfirmBulk(true)}
-                >
-                  Approve all runs of this test
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+                  {approveAllCheckpoints.isPending
+                    ? "Approving all…"
+                    : "Approve all checkpoints"}
+                </DisabledAwareButton>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {/* Split-button pattern: primary action is single-run approve;
+                  chevron exposes bulk-approve. Keeps the most common path one
+                  click and pushes the riskier multi-row write behind a
+                  confirmation step. */}
+              <DisabledAwareButton
+                disabled={!canReview || pending}
+                reason={disabledReason}
+                testId="approve-button"
+                variant="default"
+                onClick={() => approve.mutate({ runId })}
+                title={
+                  effectiveStatus === "new"
+                    ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
+                    : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
+                }
+              >
+                {approve.isPending
+                  ? effectiveStatus === "new"
+                    ? "Saving…"
+                    : "Approving…"
+                  : effectiveStatus === "new"
+                    ? "Save as baseline"
+                    : "Approve"}
+              </DisabledAwareButton>
+              {canReview ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="default"
+                      disabled={pending}
+                      data-testid="approve-more-menu"
+                      aria-label="More approve actions"
+                      className="px-2"
+                    >
+                      ▾
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      data-testid="approve-bulk-variation"
+                      onSelect={() => setConfirmBulk(true)}
+                    >
+                      Approve all runs of this test
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </>
+          )}
           <DisabledAwareButton
             disabled={!canReview || pending}
             reason={disabledReason}

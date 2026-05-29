@@ -42,7 +42,7 @@ describe("createBroadcaster", () => {
     ).resolves.toBeUndefined();
   });
 
-  test("each of the six event names round-trips on the wire shape", async () => {
+  test("each of the nine event names round-trips on the wire shape", async () => {
     const publish = vi.fn().mockResolvedValue(1);
     const redis = { publish } as unknown as Redis;
     const telemetry = makeTelemetry();
@@ -55,6 +55,10 @@ describe("createBroadcaster", () => {
       "testRun_created",
       "testRun_updated",
       "testRun_deleted",
+      // ADR-038: checkpoint lifecycle events
+      "run.checkpoint_added",
+      "run.checkpoint_diffed",
+      "run.completed",
     ] as const;
     for (const ev of events) {
       await b.publishProjectEvent("p1", { event: ev, data: { x: 1 } });

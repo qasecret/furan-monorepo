@@ -12,8 +12,12 @@ import {
 } from "@furan/db";
 import {
   runDiff,
+  runL2,
+  classifyRegions,
   DEFAULT_ENGINE_CONFIG,
+  configForMatchLevel,
   type EngineConfig,
+  type MatchLevel,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
@@ -276,11 +280,25 @@ async function handleDiffJobInner(
     throw new Error(`run_missing_branch_name:${data.runId}`);
   }
 
+  // ADR-038: testVariationId is no longer stored on test_runs — it lives on
+  // each screenshots row (one checkpoint = one variation). Resolve the
+  // primary variation from the first screenshot so we can locate the
+  // baseline and read per-variation ignore regions.
+  const firstShotRow = await deps.db
+    .select({ testVariationId: screenshots.testVariationId })
+    .from(screenshots)
+    .where(eq(screenshots.runId, data.runId))
+    .limit(1);
+  if (!firstShotRow[0]) {
+    throw new Error(`run_has_no_screenshots:${data.runId}`);
+  }
+  const runTestVariationId = firstShotRow[0].testVariationId;
+
   const baseline = await resolveBaseline(
     deps.db,
     data.projectId,
     run.branchName,
-    run.testVariationId,
+    runTestVariationId,
     {
       defaultBranch: project.mainBranchName,
       parentPrBaseBranch: data.parentPrBaseBranch ?? null,
@@ -315,7 +333,7 @@ async function handleDiffJobInner(
       if (seedBaseline) {
         await tx.insert(baselines).values({
           baselineName: run.baselineName ?? run.name ?? "auto",
-          testVariationId: run.testVariationId,
+          testVariationId: runTestVariationId,
           testRunId: run.id,
           // userId omitted → defaults to NULL → signals auto-baseline.
           ...(run.branchName ? { branchName: run.branchName } : {}),
@@ -416,7 +434,7 @@ async function handleDiffJobInner(
         .where(eq(testRuns.id, data.runId));
       await tx.insert(baselines).values({
         baselineName: run.baselineName ?? run.name ?? "auto",
-        testVariationId: run.testVariationId,
+        testVariationId: runTestVariationId,
         testRunId: run.id,
         // userId omitted → defaults to NULL → signals auto-approve.
         ...(run.branchName ? { branchName: run.branchName } : {}),
@@ -469,12 +487,18 @@ async function handleDiffJobInner(
   // of {x,y,width,height,viewport?}. The viewport tag is filtered against
   // each candidate screenshot's viewport inside the per-viewport loop
   // below. Legacy rows without `viewport` apply universally.
+  //
+  // ADR-038: testVariationId is no longer on test_runs; use the variation
+  // resolved from the first screenshot. Run-level ignoreAreas was removed
+  // from test_runs, so only the variation's ignoreRegions apply.
   const variationRow = await deps.db.query.testVariations.findFirst({
-    where: eq(testVariations.id, run.testVariationId),
+    where: eq(testVariations.id, runTestVariationId),
   });
-  const variationRegions = parseIgnoreAreas(variationRow?.ignoreAreas) ?? [];
-  const runRegions = parseIgnoreAreas(run.ignoreAreas) ?? [];
-  const allRegions = dedupeRegions([...variationRegions, ...runRegions]);
+  // ignoreRegions is jsonb (already parsed by Drizzle); parseIgnoreAreas
+  // handles both string and pre-parsed values.
+  const variationRegions = parseIgnoreAreas(variationRow?.ignoreRegions) ?? [];
+  // ADR-038: run-level ignoreAreas column was removed from test_runs.
+  const allRegions = dedupeRegions([...variationRegions]);
   const perViewport: PerViewportResult[] = [];
   // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
   // string and the per-region OCR results, so we can persist a synthetic
@@ -631,32 +655,71 @@ async function handleDiffJobInner(
         }),
     );
 
-    const result = await runDiff({
-      baseline: {
-        image: Buffer.from(baselineBytes),
-        ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
-      },
-      candidate: {
-        image: Buffer.from(candidateBytes),
-        ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
-      },
-      config: {
-        // Per-run override (set via the in-viewer sensitivity slider) wins
-        // over the project default. Null/undefined means "inherit," so the
-        // existing project setting still drives every run that hasn't been
-        // tuned by hand.
-        diffThreshold:
-          run.diffThresholdOverride ?? project.diffThreshold ?? 0.001,
-        l2Enabled: project.l2Enabled ?? true,
-        ignoreAreas: resolvedIgnoreAreas,
-        engine: project.imageComparison,
-        engineConfig: parseEngineConfig(
-          project.imageComparisonConfig,
-          logger,
-          project.id,
-        ),
-      },
-    });
+    // ADR-038 §7.2: route through configForMatchLevel before calling the
+    // engine. matchLevel is stored per-screenshot; fall back to "Strict"
+    // for legacy rows that predate Phase 3 (SDK 2.0.0).
+    const screenshotMatchLevel = (cs.matchLevel as MatchLevel) ?? "Strict";
+    const baseEngineConfig = parseEngineConfig(
+      project.imageComparisonConfig,
+      logger,
+      project.id,
+    );
+    const {
+      config: routedEngineConfig,
+      runL1: shouldRunL1,
+      runL2Only,
+    } = configForMatchLevel(baseEngineConfig, screenshotMatchLevel);
+
+    const diffThreshold =
+      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+
+    let result: Awaited<ReturnType<typeof runDiff>>;
+    if (runL2Only) {
+      // Layout mode: skip L1 pixel diff entirely, run only DOM-level diff.
+      // We construct a DiffResult-compatible object directly from runL2's
+      // output. diffPercent and pixelMismatchCount are 0 because no pixel
+      // diff was performed; passed is determined purely by L2 region count.
+      const t2 = performance.now();
+      const l2Regions =
+        baselineDom !== undefined && candidateDom !== undefined
+          ? await runL2(baselineDom, candidateDom)
+          : [];
+      const l2Duration = performance.now() - t2;
+      const allL2Regions = classifyRegions(l2Regions);
+      result = {
+        passed: allL2Regions.length === 0,
+        diffPercent: 0,
+        pixelMismatchCount: 0,
+        diffImageBytes: Buffer.alloc(0),
+        regions: allL2Regions,
+        ranTiers: ["l2"],
+        durationMs: { l1: 0, l2: l2Duration },
+      };
+    } else {
+      result = await runDiff({
+        baseline: {
+          image: Buffer.from(baselineBytes),
+          ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
+        },
+        candidate: {
+          image: Buffer.from(candidateBytes),
+          ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
+        },
+        config: {
+          // Per-run override (set via the in-viewer sensitivity slider) wins
+          // over the project default. Null/undefined means "inherit," so the
+          // existing project setting still drives every run that hasn't been
+          // tuned by hand.
+          diffThreshold,
+          l2Enabled: project.l2Enabled ?? true,
+          ignoreAreas: resolvedIgnoreAreas,
+          engine: project.imageComparison,
+          // Use the matchLevel-adjusted engine config (e.g. Content raises
+          // threshold + enables ignoreAntialiasing).
+          engineConfig: routedEngineConfig,
+        },
+      });
+    }
 
     // --- Region modes v2 engine pipeline (after L1+L2, before persist) ---
     //
@@ -775,13 +838,16 @@ async function handleDiffJobInner(
     }
     // --- End region modes v2 pipeline ---
 
-    // Observe L1 latency labelled by engine. durationMs.l1 is always set
-    // (every runDiff invocation runs L1); converting ms -> seconds to
-    // match the histogram's seconds-based bucket boundaries and the
-    // OpenMetrics convention.
-    deps.metrics?.l1Duration
-      .labels({ engine: project.imageComparison })
-      .observe(result.durationMs.l1 / 1000);
+    // Observe L1 latency labelled by engine. durationMs.l1 is 0 for
+    // Layout (L2-only) runs where the pixel diff was skipped; for all
+    // other matchLevels it reflects the real L1 duration. Convert ms
+    // to seconds to match the histogram's seconds-based bucket
+    // boundaries and the OpenMetrics convention.
+    if (shouldRunL1) {
+      deps.metrics?.l1Duration
+        .labels({ engine: project.imageComparison })
+        .observe(result.durationMs.l1 / 1000);
+    }
 
     let diffImageKey: string | null = null;
     if (result.diffImageBytes.length > 0) {
@@ -1016,11 +1082,14 @@ function dedupeRegions(rs: ParsedIgnoreArea[]): ParsedIgnoreArea[] {
 }
 
 function parseIgnoreAreas(
-  value: string | null | undefined,
+  value: string | unknown | null | undefined,
 ): ParsedIgnoreArea[] | undefined {
-  if (!value) return undefined;
+  if (value === null || value === undefined || value === "") return undefined;
   try {
-    const parsed = JSON.parse(value);
+    // ADR-038: ignoreRegions is stored as jsonb (already parsed by Drizzle).
+    // Legacy ignore_areas was stored as a text column (JSON string). Handle
+    // both: if the value is already an array/object, skip JSON.parse.
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
     if (!Array.isArray(parsed)) return undefined;
     const out: ParsedIgnoreArea[] = [];
     for (const item of parsed) {

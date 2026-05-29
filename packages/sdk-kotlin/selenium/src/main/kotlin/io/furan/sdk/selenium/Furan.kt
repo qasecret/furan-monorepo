@@ -1,14 +1,17 @@
 package io.furan.sdk.selenium
 
 import io.furan.sdk.ELEMENT_BBOX_SCRIPT
+import io.furan.sdk.FailOnDiff
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
+import io.furan.sdk.FuranDiffException
+import io.furan.sdk.Regions
 import io.furan.sdk.Viewport
+import io.furan.sdk.dto.CheckpointOptions
+import io.furan.sdk.dto.CheckpointResult
+import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
-import io.furan.sdk.dto.CreateRunRequest
-import io.furan.sdk.dto.IgnoreArea
-import io.furan.sdk.dto.Snapshot
-import io.furan.sdk.dto.SnapshotResult
+import io.furan.sdk.dto.RunResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,183 +19,184 @@ import org.openqa.selenium.Dimension
 import org.openqa.selenium.JavascriptExecutor
 import org.openqa.selenium.WebDriver
 import org.slf4j.LoggerFactory
-import java.io.Closeable
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
- * Public API for Furan's Selenium-Java adapter.
+ * Public API for Furan's Selenium-Java adapter (SDK 2.0.0, ADR-038).
  *
- * ```
- * val driver = ChromeDriver()
- * val furan = Furan(driver, FuranConfig.fromEnv())
- * furan.snapshot("checkout-page")
- * furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))
- * furan.close()
+ * Explicit lifecycle — callers must open before snapshotting:
+ *
+ * ```kotlin
+ * val furan = Furan(FuranConfig.fromEnv(), driver)
+ * furan.open("GoogleSearchFlow")
+ * furan.snapshot("HomePage")
+ * furan.snapshot("ResultsPage")
+ * val result = furan.close()   // returns RunResult?
  * ```
  *
- * Lazy-initializes a Build on the first `snapshot()` call; each subsequent
- * `snapshot(name)` / `snapshotAndAwait(name)` creates its OWN test_run under
- * that build (Applitools/VRT parity, ADR-037). `close()` flushes any
- * buffered snapshots and posts anonymous telemetry.
+ * On test failure:
+ * ```kotlin
+ * try {
+ *     furan.open("MyTest")
+ *     furan.snapshot("step1")
+ *     // ... test logic
+ *     furan.close()
+ * } catch (e: Throwable) {
+ *     furan.abort()
+ *     throw e
+ * }
+ * ```
+ *
+ * Or use the convenience [Furan.use] companion:
+ * ```kotlin
+ * Furan.use(config, driver, "MyTest") { furan ->
+ *     furan.snapshot("step1")
+ * }
+ * ```
+ *
+ * [FailOnDiff.AfterEach] (set on [FuranConfig.failOnDiff]) causes [close]
+ * to throw [FuranDiffException] when the run ends with any non-passing status.
  */
 class Furan(
-    private val driver: WebDriver,
     val config: FuranConfig,
-    /**
-     * Optional per-test diff tolerance override (0.0–1.0). When set,
-     * the diff worker uses this instead of the project default for
-     * every run created by this Furan instance. Matches the legacy
-     * Java SDK's `enableSoftAssert` + `diffTollerancePercent` shape.
-     * Null = inherit project default.
-     */
-    private val diffTolerance: Double? = null,
-    /**
-     * Optional per-test ignore regions, applied by the diff worker
-     * on the first diff job. Capped at 50 entries server-side.
-     */
-    private val ignoreAreas: List<IgnoreArea>? = null,
-) : Closeable {
-    init {
-        require(diffTolerance == null || diffTolerance in 0.0..1.0) {
-            "diffTolerance must be in 0.0..1.0 (got $diffTolerance)"
-        }
-    }
-
+    private val driver: WebDriver,
+) {
     private val client = FuranClient(config, adapter = "selenium")
     private val ensureBuildMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
+    @Volatile private var runId: String? = null
 
     /**
-     * Capture a screenshot + DOM at each viewport and upload. Each call
-     * creates its own test_variation + test_run keyed by `name` on the
-     * server (Applitools/VRT parity, ADR-037). All runs from this Furan
-     * instance share the same build.
+     * Opens a new test run with the given [testName]. Ensures a build exists
+     * (lazy, mutex-guarded) then calls `POST /runs`.
      *
-     * @param name Logical snapshot name (e.g., "checkout-page").
-     * @param mask Optional CSS selectors to mask in the diff (server honors these).
-     * @param viewports Override the per-call viewport list. Defaults to
-     *     [FuranConfig.viewports].
+     * @throws IllegalStateException if a run is already open on this instance.
+     */
+    fun open(testName: String): Unit = runBlocking {
+        check(runId == null) {
+            "a run is already open; call close() or abort() before opening a new run"
+        }
+        val bid = ensureBuild()
+        val created = client.createRun2(
+            buildId = bid,
+            projectId = config.projectId,
+            name = testName,
+            branchName = config.branchName,
+        )
+        runId = created.runId
+    }
+
+    /**
+     * Capture a screenshot + optional DOM from the current driver state and
+     * upload to the open run as a checkpoint. Uses the first configured
+     * viewport by default.
+     *
+     * @throws IllegalStateException if no run is open (call [open] first).
      */
     fun snapshot(
         name: String,
-        mask: List<String> = emptyList(),
-        viewports: List<Viewport>? = null,
-    ) = runBlocking {
-        val targets = viewports ?: config.viewports
-        val resolvedBuildId = ensureBuild()
+        options: CheckpointOptions = CheckpointOptions(),
+        viewport: Viewport? = null,
+    ): CheckpointSubmission {
+        val rid = runId ?: error("call furan.open(testName) before snapshot()")
+        return runBlocking { snapshotSuspend(rid, name, options, viewport) }
+    }
 
-        for (vp in targets) {
-            val runId = client.createRun(
-                CreateRunRequest(
-                    projectId = config.projectId,
-                    buildId = resolvedBuildId,
-                    branchName = config.branchName,
-                    name = name,
-                    browser = "selenium",
-                    viewport = "${vp.width}x${vp.height}",
-                    // Inline per-test overrides land on the initial
-                    // insert so the first diff job uses them — no
-                    // setIgnoreAreas + re-enqueue trip. The dashboard
-                    // can still amend later via tRPC mutations.
-                    diffTolerance = diffTolerance,
-                    ignoreAreas = ignoreAreas,
-                ),
-            ).id
-
-            driver.manage().window().size = Dimension(vp.width, vp.height)
-            val pngBytes = captureScreenshot(driver)
-            val domHtml = runCatching { captureDom(driver) }.getOrNull()
-            val elementMapJson = captureElementBboxes(driver)
-            client.uploadSnapshot(
-                runId = runId,
-                snap = Snapshot(
-                    name = name,
-                    viewport = vp,
-                    pngBytes = pngBytes,
-                    domHtml = domHtml,
-                    elementMapJson = elementMapJson,
-                    mask = mask,
-                    browser = "selenium",
-                ),
+    /**
+     * Capture + upload a single snapshot, then block until the diff worker
+     * reaches a terminal status. Returns a [CheckpointResult].
+     *
+     * Unlike [snapshot], this bypasses the snapshot batch and only processes
+     * the first viewport.
+     *
+     * @throws IllegalStateException if no run is open.
+     * @throws io.furan.sdk.FuranTimeoutException if no terminal status arrives
+     *   within [timeout].
+     */
+    fun snapshotAndAwait(
+        name: String,
+        options: CheckpointOptions = CheckpointOptions(),
+        viewport: Viewport? = null,
+        timeout: Duration = config.pollTimeoutSeconds.seconds,
+    ): CheckpointResult {
+        val rid = runId ?: error("call furan.open(testName) before snapshot()")
+        return runBlocking {
+            val submission = snapshotSuspend(rid, name, options, viewport)
+            client.awaitCheckpoint(
+                checkpointId = submission.checkpointId,
+                timeout = timeout,
+                runId = rid,
             )
         }
     }
 
-    /**
-     * Capture + upload a single snapshot, then BLOCK until the diff
-     * worker produces a terminal status. Returns a typed
-     * [SnapshotResult] for assertion-friendly access. Each call creates
-     * its own test_run keyed by `name` (ADR-037).
-     *
-     * Unlike [snapshot], this path bypasses the SDK's snapshot batch
-     * (a batch flush would defeat the point of awaiting a single
-     * result) and only captures the FIRST viewport — diffing across
-     * multiple viewports in one synchronous call is an anti-pattern
-     * (the caller can't act on per-viewport failures distinctly).
-     * Callers wanting multi-viewport should loop and call this once
-     * per viewport.
-     *
-     * Throws [io.furan.sdk.FuranAssertionException] on UNRESOLVED /
-     * FAILED / ABORTED unless `config.softAssert == true`. Throws
-     * [io.furan.sdk.FuranTimeoutException] if no terminal status
-     * arrives within `config.pollTimeoutSeconds`.
-     *
-     * ```
-     * val result = furan.snapshotAndAwait("checkout-page")
-     * assertEquals(RunStatus.PASSED, result.status)
-     * println("Review: ${result.diffViewerUrl}")
-     * ```
-     */
-    fun snapshotAndAwait(
+    /** Internal suspend implementation of screenshot capture + upload. */
+    private suspend fun snapshotSuspend(
+        rid: String,
         name: String,
-        mask: List<String> = emptyList(),
-        viewport: Viewport? = null,
-    ): SnapshotResult = runBlocking {
+        options: CheckpointOptions,
+        viewport: Viewport?,
+    ): CheckpointSubmission {
         val vp = viewport ?: config.viewports.first()
-        val resolvedBuildId = ensureBuild()
-
-        val runId = client.createRun(
-            CreateRunRequest(
-                projectId = config.projectId,
-                buildId = resolvedBuildId,
-                branchName = config.branchName,
-                name = name,
-                browser = "selenium",
-                viewport = "${vp.width}x${vp.height}",
-                // Inline per-test overrides land on the initial
-                // insert so the first diff job uses them — no
-                // setIgnoreAreas + re-enqueue trip. The dashboard
-                // can still amend later via tRPC mutations.
-                diffTolerance = diffTolerance,
-                ignoreAreas = ignoreAreas,
-            ),
-        ).id
-
         driver.manage().window().size = Dimension(vp.width, vp.height)
         val pngBytes = captureScreenshot(driver)
-        val domHtml = runCatching { captureDom(driver) }.getOrNull()
-        val elementMapJson = captureElementBboxes(driver)
-
-        client.snapshotAndAwait(
-            runId = runId,
-            snap = Snapshot(
-                name = name,
-                viewport = vp,
-                pngBytes = pngBytes,
-                domHtml = domHtml,
-                elementMapJson = elementMapJson,
-                mask = mask,
-                browser = "selenium",
+        val domHtml = options.domHtml ?: runCatching { captureDom(driver) }.getOrNull()
+        val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
+        return client.createScreenshot(
+            runId = rid,
+            name = name,
+            viewport = "${vp.width}x${vp.height}",
+            browser = "selenium",
+            os = null,
+            device = null,
+            matchLevel = options.matchLevel,
+            regions = Regions(
+                ignore = options.ignoreRegions,
+                layout = options.layoutRegions,
+                floating = options.floatingRegions,
+                content = options.contentRegions,
+                accessibility = options.accessibilityRegions,
             ),
+            pngBytes = pngBytes,
+            domHtml = domHtml,
+            elementMapJson = elementMapJson,
         )
     }
 
     /**
-     * Build is shared across all snapshot() / snapshotAndAwait() calls
-     * from one Furan instance. Double-checked-locking via a coroutine
-     * Mutex (avoids returning from inside a `synchronized { return
-     * runBlocking { ... } }` block, which doesn't compile cleanly when
-     * the outer fn is suspend).
+     * Complete the open run: calls `POST /runs/:id/complete` and resets
+     * the run state. Returns the [RunResult] for assertion.
+     *
+     * If [FuranConfig.failOnDiff] is [FailOnDiff.AfterEach] and the run
+     * ended with a non-passing status, throws [FuranDiffException].
+     *
+     * @return the [RunResult], or null if no run was open.
+     */
+    fun close(): RunResult? = runBlocking {
+        val rid = runId ?: return@runBlocking null
+        runId = null
+        val result = client.completeRun(rid)
+        if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
+            throw FuranDiffException(result)
+        }
+        result
+    }
+
+    /**
+     * Abort the open run (marks it `aborted` on the server) and reset state.
+     * Idempotent — safe to call even if no run is open.
+     */
+    fun abort(): Unit = runBlocking {
+        val rid = runId ?: return@runBlocking
+        runId = null
+        client.abortRun(rid)
+    }
+
+    /**
+     * Build is shared across all open() calls on one Furan instance.
+     * Double-checked-locking via a coroutine Mutex.
      */
     private suspend fun ensureBuild(): String {
         buildId?.let { return it }
@@ -211,13 +215,38 @@ class Furan(
         return buildId!!
     }
 
-    override fun close() {
-        client.close()
-    }
-
     companion object {
         private val log = LoggerFactory.getLogger(Furan::class.java)
         private const val MAX_ELEMENT_MAP_BYTES = 1_000_000
+
+        /**
+         * Convenience factory: opens a run, runs [block], closes on success,
+         * aborts on exception. Returns the block's result.
+         *
+         * ```kotlin
+         * val result = Furan.use(config, driver, "MyTest") { furan ->
+         *     furan.snapshot("step1")
+         *     furan.close()
+         * }
+         * ```
+         */
+        fun <R> use(
+            config: FuranConfig,
+            driver: WebDriver,
+            testName: String,
+            block: (Furan) -> R,
+        ): R {
+            val furan = Furan(config, driver)
+            return try {
+                furan.open(testName)
+                val result = block(furan)
+                furan.close()
+                result
+            } catch (e: Throwable) {
+                runCatching { furan.abort() }
+                throw e
+            }
+        }
 
         /**
          * Best-effort: drops the map silently on any failure (non-JS driver,
@@ -248,3 +277,7 @@ class Furan(
         }
     }
 }
+
+/** Extension on RunStatus used internally to decide whether to throw FuranDiffException. */
+private fun io.furan.sdk.dto.RunStatus.isPassing(): Boolean =
+    this == io.furan.sdk.dto.RunStatus.PASSED

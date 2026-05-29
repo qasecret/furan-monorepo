@@ -96,6 +96,33 @@ vi.mock("@/lib/trpc", () => ({
           isPending: false,
         }),
       },
+      // ADR-038: per-checkpoint approval mutations — minimal noop shape.
+      approveCheckpoint: {
+        useMutation: (opts?: {
+          onMutate?: () => void;
+          onSuccess?: () => void;
+          onError?: (e: { message: string }) => void;
+        }) => ({
+          mutate: (_input: { runId: string; checkpointId: string }) => {
+            opts?.onMutate?.();
+            opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
+      },
+      approveAllCheckpoints: {
+        useMutation: (opts?: {
+          onMutate?: () => void;
+          onSuccess?: (res: { approved: number }) => void;
+          onError?: (e: { message: string }) => void;
+        }) => ({
+          mutate: (_input: { runId: string }) => {
+            opts?.onMutate?.();
+            opts?.onSuccess?.({ approved: 0 });
+          },
+          isPending: false,
+        }),
+      },
     },
   },
 }));

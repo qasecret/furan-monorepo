@@ -14,17 +14,12 @@ import org.openqa.selenium.chrome.ChromeOptions
  * every method). The extension loads + caches the config once per
  * test class and parameter-resolves it into @Test methods.
  *
- * Compare to CheckoutTest (the long-form ergonomics that #128
- * introduced):
+ * The test uses [Furan.use] (Option C) to manage the open/close
+ * lifecycle around the snapshot call. The injected config is passed
+ * to [Furan.use] alongside the caller-managed driver — Furan adapters
+ * are driver-agnostic and browser lifecycle stays with the test author.
  *
- *   val driver = ChromeDriver(opts)
- *   val furan = Furan(driver, FuranConfig.fromEnv())   <-- gone
- *   try { ... } finally { furan.close(); driver.quit() }
- *
- * With @FuranTest the FuranConfig is injected; the user still
- * supplies the driver (deliberately — Furan adapters are
- * driver-agnostic and #5's scope didn't include browser
- * lifecycle management).
+ * Constructor order (SDK 2.0.0 / ADR-038): Furan(config, driver).
  *
  * Skipped unless FURAN_API_URL is set, same as the other examples.
  */
@@ -36,7 +31,7 @@ class CheckoutJUnit5ExtensionTest {
     fun `injected FuranConfig + snapshot round-trip`(config: FuranConfig) {
         // Asserts the JUnit5 extension wiring — config injected,
         // snapshot upload + diff worker complete a round-trip and
-        // return a typed SnapshotResult with a real runId.
+        // return a typed CheckpointResult with a real checkpointId.
         //
         // Soft-assert mode (FURAN_SOFT_ASSERT=true): all 4 example
         // test classes share one project + one variation
@@ -52,22 +47,19 @@ class CheckoutJUnit5ExtensionTest {
             addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
         }
         val driver = ChromeDriver(options)
-        val furan = Furan(driver, softConfig)
-        try {
+        Furan.use(softConfig, driver, testName = "injected FuranConfig + snapshot round-trip") { furan ->
             driver.get(
                 "data:text/html,<html><body><h1>JUnit5 Extension</h1>" +
                     "<p>Stable</p></body></html>",
             )
             val result = furan.snapshotAndAwait("junit5-ext-step-1")
-            // The snapshot result must always have a real run id +
+            // The snapshot result must always have a real checkpoint id +
             // terminal status, regardless of pass/fail (softAssert
             // means failure terminals come back as a result instead
             // of throwing).
-            assertNotNull(result.runId)
+            assertNotNull(result.checkpointId)
             assertTrue(result.status.isTerminal(), "Expected terminal status, got ${result.status}")
-        } finally {
-            furan.close()
-            driver.quit()
         }
+        driver.quit()
     }
 }
