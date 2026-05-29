@@ -1,4 +1,4 @@
-import { builds, projectMembers, projects, users } from "@furan/db";
+import { builds, eq, projectMembers, projects, users } from "@furan/db";
 import {
   afterAll,
   beforeAll,
@@ -187,6 +187,19 @@ describe("project-isolation matrix", () => {
       payload: { name: "gamma" },
     });
     expect(res.statusCode).toBe(201);
+    const body = res.json();
+    // Creator should be auto-added to project_members so the row shows
+    // up in /admin/projects/:id/members rather than relying on the
+    // admin-bypass to surface it. Membership is per-action; querying
+    // any action gate for (creator, projectId) is the cheapest probe.
+    const memberRows = await h.db
+      .select()
+      .from(projectMembers)
+      .where(eq(projectMembers.projectId, body.id));
+    expect(memberRows.length).toBe(1);
+    expect(memberRows[0]?.userId).toBe(
+      h.app.jwt.decode<{ sub: string }>(adminJwt)?.sub,
+    );
   });
 
   test("11. POST /projects/:idA/members as editor -> 403", async () => {
