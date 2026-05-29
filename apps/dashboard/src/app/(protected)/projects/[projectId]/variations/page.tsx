@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
 import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
+import { VariationsList } from "./_components/variations-list";
 
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
@@ -90,6 +91,7 @@ export default async function ProjectVariationsPage({
       <div id="variations-merge-panel">
         <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
       </div>
+      <VariationsList projectId={projectId} />
     </div>
   );
 }
