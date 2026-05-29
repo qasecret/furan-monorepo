@@ -294,14 +294,15 @@ async function handleDiffJobInner(
     //   autoApproveFeature = true  → auto-seed: candidate becomes the
     //     baseline atomically. `userId = NULL` marks it as auto. The wire
     //     status stays `new` and the SDK reports it as a pass via the
-    //     `autoApproved=true` derived flag. Matches the v1.0 default
-    //     behavior so existing CI keeps working.
+    //     `autoApproved=true` derived flag. Opt-in for projects that want
+    //     to keep the pre-ADR-036 behavior on existing CI.
     //
     //   autoApproveFeature = false → manual-approve required: no
     //     baselines row inserted, status stays `new`. The dashboard
-    //     renders its "No baseline yet — Approve to set as baseline"
-    //     empty state and the user explicitly approves to create the
-    //     baseline. Matches the legacy backend's first-run semantics.
+    //     renders its "No baseline yet — Save as baseline" CTA and the
+    //     user explicitly approves to create the baseline. Matches the
+    //     legacy backend's first-run semantics and is the column default
+    //     for projects created after migration 0016.
     //
     // Either way: status=new, merge=true, emit the same SSE events; the
     // only difference is whether a `baselines` row gets written here.

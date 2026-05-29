@@ -113,6 +113,13 @@
       "when": 1779898636963,
       "tag": "0015_faithful_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1779958800000,
+      "tag": "0016_autoapprove_default_false",
+      "breakpoints": true
     }
   ]
 }
