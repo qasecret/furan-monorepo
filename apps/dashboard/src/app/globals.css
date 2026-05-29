@@ -58,16 +58,10 @@ body {
   overscroll-behavior: none;
 }
 
-/* Light-mode brand override. The dark-mode default #a8ff53 (set in @theme)
- * is a bright neon lime that disappears on white surfaces (~1.5:1 contrast).
- * On light we collapse to lime-600 #65a30d — same value used for
- * --chart-approves in light mode below — so buttons, sidebar active tints,
- * the tab underline, and the workspace-chip icon all retain visual weight.
- * Foreground stays white (paired with the darker green) instead of black. */
-html:not(.dark) {
-  --color-brand: #65a30d;
-  --color-brand-foreground: #ffffff;
-}
+/* Brand stays at the neon #a8ff53 in both modes — user-preferred. The
+ * lower contrast on white surfaces is an accepted trade-off for brand
+ * consistency; bg-brand uses pair with black text (--color-brand-foreground)
+ * which is high-contrast against the light lime. */
 
 html.dark,
 html.dark body {
