@@ -44,19 +44,16 @@ export function CheckpointCard({
       onClick={onClick}
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        // transition-all (not transition-colors) so the inset-shadow left bar
+        // also animates when selection moves between cards via click or j/k.
+        // Matches the sidebar-nav-item active-indicator pattern for consistency.
+        "group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all duration-150",
         selected
-          ? "bg-zinc-100 dark:bg-zinc-900"
+          ? "bg-zinc-100 shadow-[inset_2px_0_0_0_var(--color-brand)] dark:bg-zinc-900"
           : "hover:bg-zinc-100/60 dark:hover:bg-zinc-900/40",
       )}
       data-testid={`checkpoint-card-${item.id}`}
     >
-      {selected ? (
-        <span
-          className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-brand"
-          aria-hidden
-        />
-      ) : null}
       <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
         {item.thumbnailUrl ? (
           <img
