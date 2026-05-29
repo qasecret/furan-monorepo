@@ -62,6 +62,15 @@ RUN pnpm install --frozen-lockfile --filter @furan/capture-worker... --prefer-of
 
 RUN pnpm --filter @furan/capture-worker... build
 
+# Strip devDependencies from node_modules so dev/build-time binaries
+# (esbuild, lefthook, vitest, etc. — including their pre-compiled Go
+# binaries) don't leak into the runtime image. Without this, Trivy
+# flags Go-stdlib CVEs in dormant binaries that the runtime never
+# invokes. pnpm prune (without -r — pnpm 9 doesn't accept it on prune)
+# runs at the workspace root which is where the .pnpm/ store lives,
+# so removing devDep references here clears the bundled binaries.
+RUN pnpm prune --prod
+
 #####################################################################
 # Stage 3: runtime — Playwright base (jammy)                         #
 #####################################################################
