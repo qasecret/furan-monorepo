@@ -41,7 +41,7 @@ FURAN_BUILD_ID=\${GITHUB_RUN_ID:-local}`}
       </pre>
       <Link
         href="/account/tokens"
-        className="mt-3 inline-block text-brand hover:underline"
+        className="mt-3 inline-block text-brand-text hover:underline"
         data-testid="empty-runs-cta-token-link"
       >
         Create a personal access token →

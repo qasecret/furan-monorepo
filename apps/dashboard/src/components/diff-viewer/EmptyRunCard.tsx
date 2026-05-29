@@ -44,7 +44,7 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
           href="https://github.com/qasecret/furan-monorepo#sdk"
           target="_blank"
           rel="noreferrer noopener"
-          className="text-brand hover:underline"
+          className="text-brand-text hover:underline"
           data-testid="empty-run-card-sdk-docs"
         >
           View SDK docs →
@@ -52,7 +52,7 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
         {buildId && (
           <Link
             href={`/projects/${projectId}/runs?buildId=${buildId}`}
-            className="text-brand hover:underline"
+            className="text-brand-text hover:underline"
             data-testid="empty-run-card-timeline"
           >
             View run timeline →

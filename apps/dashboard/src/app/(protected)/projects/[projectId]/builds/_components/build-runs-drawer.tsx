@@ -100,7 +100,7 @@ export function BuildRunsDrawer({ projectId, buildId }: Props) {
       )}
       <Link
         href={`/projects/${projectId}/runs?buildId=${buildId}`}
-        className="text-xs text-brand hover:underline"
+        className="inline-block text-sm font-medium text-brand-text underline underline-offset-4 decoration-brand-text/40 hover:decoration-brand-text"
       >
         Open full run list for this build →
       </Link>

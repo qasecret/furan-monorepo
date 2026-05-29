@@ -12,12 +12,24 @@
    * follow-on cleanup once all stragglers are gone.
    */
 
-  /* Brand — dark mode default. The light-mode override below swaps to a
-   * deeper lime so the accent reads on white surfaces (the bright neon
-   * #a8ff53 has ~1.5:1 contrast on white and disappears as a button bg
-   * or active-state tint). */
+  /*
+   * Brand has two roles, two tokens — same pattern GitHub / Linear /
+   * Vercel use:
+   *
+   *   --color-brand        Surfaces (bg-brand, border-brand, brand/15
+   *                        tints). Stays at the neon #a8ff53 in BOTH
+   *                        modes so buttons + chips + active-state
+   *                        backgrounds keep the brand vibrancy.
+   *
+   *   --color-brand-text   Text + link colour (text-brand-text). Same
+   *                        neon in dark mode; lime-600 #65a30d in light
+   *                        mode (overridden below) so accent text on a
+   *                        white canvas hits WCAG-AA (~5.5:1) instead of
+   *                        the unreadable 1.5:1 the bright neon gives.
+   */
   --color-brand: #a8ff53;
   --color-brand-foreground: #000000;
+  --color-brand-text: #a8ff53;
 
   /* Semantic surfaces (referenced via bg-*, text-*, border-* utilities) */
   --color-background: #09090b; /* zinc-950 — used by Dialog/Sheet surface */
@@ -58,10 +70,13 @@ body {
   overscroll-behavior: none;
 }
 
-/* Brand stays at the neon #a8ff53 in both modes — user-preferred. The
- * lower contrast on white surfaces is an accepted trade-off for brand
- * consistency; bg-brand uses pair with black text (--color-brand-foreground)
- * which is high-contrast against the light lime. */
+/* Light-mode override: brand-text drops to lime-600 #65a30d so accent text
+ * on the white canvas hits WCAG-AA (~5.5:1 contrast). --color-brand itself
+ * stays neon so bg-brand surfaces (buttons, badges, active tints) keep the
+ * brand vibrancy. Dark mode keeps both tokens at neon. */
+html:not(.dark) {
+  --color-brand-text: #65a30d;
+}
 
 html.dark,
 html.dark body {

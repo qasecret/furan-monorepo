@@ -154,7 +154,7 @@ FURAN_BUILD_PROPERTIES=region=us-east-1,shard=\${SHARD:-1}`}
       </pre>
       <Link
         href="/account/tokens"
-        className="mt-3 inline-block text-brand hover:underline"
+        className="mt-3 inline-block text-brand-text hover:underline"
         data-testid="empty-builds-cta-token-link"
       >
         Create a personal access token →

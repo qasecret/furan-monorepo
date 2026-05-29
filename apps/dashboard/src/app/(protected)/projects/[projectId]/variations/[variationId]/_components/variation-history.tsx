@@ -45,7 +45,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
           The variation may have been deleted, or the id is invalid.{" "}
           <Link
             href={`/projects/${projectId}/runs`}
-            className="text-brand hover:underline"
+            className="text-brand-text hover:underline"
           >
             Back to runs
           </Link>
@@ -116,7 +116,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
       <header className="flex items-center gap-3 text-sm flex-wrap">
         <Link
           href={`/projects/${projectId}/runs`}
-          className="text-brand hover:underline"
+          className="text-brand-text hover:underline"
         >
           ← Runs
         </Link>
