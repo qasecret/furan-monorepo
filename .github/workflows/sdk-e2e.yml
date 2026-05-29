@@ -187,6 +187,18 @@ jobs:
           if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
             echo "project create failed"; exit 1
           fi
+          # ADR-036 (migration 0016) flipped the column default to false so
+          # new projects no longer auto-baseline the first run for each
+          # variation. The example tests in this folder were written for
+          # the pre-flip default and assert RunStatus.PASSED on the first
+          # snapshot. Opt the CI project into the legacy auto-approve flow
+          # via the tRPC update mutation (no REST surface for this field).
+          # Wire format: tRPC v11 batched POST, no transformer, so the
+          # body is the bare {"0":{...}} envelope.
+          curl -fsS -X POST "http://localhost:3000/trpc/projects.update?batch=1" \
+            -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+            -d "{\"0\":{\"projectId\":\"$PROJECT_ID\",\"autoApproveFeature\":true}}" \
+            > /dev/null
           BRANCH_NAME='${{ github.head_ref || github.ref_name }}'
           BUILD_ID=$(curl -fsS -X POST "http://localhost:3000/projects/$PROJECT_ID/builds" \
             -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
