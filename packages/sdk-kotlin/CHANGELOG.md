@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v1.0.1...sdk/v2.0.0) (2026-05-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* snapshot() before open() now throws IllegalStateException; return types changed from RunResult to CheckpointSubmission/CheckpointResult; Furan constructor signature changed to (config, driver) order. SDK 2.0.0 via release-please when this lands.
+
+### Features
+
+* batch/test/checkpoint model (ADR-038) ([#189](https://github.com/qasecret/furan-monorepo/issues/189)) ([0f8cba1](https://github.com/qasecret/furan-monorepo/commit/0f8cba1c442a0fb4c344a66c1c9390bbca775ff1))
+
 ## [1.0.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v1.0.0...sdk/v1.0.1) (2026-05-28)
 
 
