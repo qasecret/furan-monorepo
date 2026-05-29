@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -61,9 +62,14 @@ export function BaselineHistoryPanel({
         >
           <div className="flex h-full flex-col">
             <DialogHeader className="flex flex-row items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-              <DialogTitle className="text-base font-semibold text-zinc-950 dark:text-white">
-                Baseline history
-              </DialogTitle>
+              <div className="flex flex-col">
+                <DialogTitle className="text-base font-semibold text-zinc-950 dark:text-white">
+                  Baseline history
+                </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Past baselines accepted for this test variation, newest first.
+                </DialogDescription>
+              </div>
               <DialogClose asChild>
                 <Button
                   variant="ghost"
