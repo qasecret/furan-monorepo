@@ -54,11 +54,19 @@ declare module "fastify" {
 }
 
 export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
+  // Fastify's default bodyLimit is 1 MB, which is fine for JSON RPCs but
+  // trips the outer content-type-parser before @fastify/multipart can run
+  // its per-file fileSize check (50 MB, set below). The screenshots route
+  // tolerates an oversized `elementMapJson` part by dropping it silently
+  // — that contract is unreachable when the whole multipart envelope is
+  // rejected with 413 first. Lift the bodyLimit to match the multipart
+  // file ceiling so the route owns the truncation behaviour, not Fastify.
   const app = Fastify({
     loggerInstance: deps.telemetry.logger as unknown as FastifyBaseLogger,
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
+    bodyLimit: 50 * 1024 * 1024,
   });
 
   app.decorate("db", deps.db);
