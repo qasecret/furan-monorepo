@@ -1143,6 +1143,17 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
+      // Per-checkpoint status derived from two signals:
+      //   1. test_variations.baseline_name IS NULL → "new" (first run for
+      //      this variation; the candidate is the would-be baseline).
+      //   2. Otherwise, look at diff_regions for (run_id, viewport): any
+      //      row with severity != 'none' → "unresolved"; else → "passed".
+      //
+      // Known v1.1.0 limitation: diff_regions is keyed on (run_id, viewport),
+      // not (screenshot_id). When two checkpoints share a viewport in the
+      // same run (e.g., HomePage + searchResult both at 1280x720), they
+      // get the same status. Tightening this requires a diff_regions
+      // screenshot_id column (deferred to a separate ADR per the spec).
       const rows = await ctx.db
         .select({
           id: screenshots.id,
@@ -1153,10 +1164,53 @@ export const runsRouter = t.router({
           imageKey: screenshots.imageKey,
           testVariationId: screenshots.testVariationId,
           createdAt: screenshots.createdAt,
+          baselineName: testVariations.baselineName,
         })
         .from(screenshots)
+        .leftJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
         .where(eq(screenshots.runId, input.runId))
         .orderBy(asc(screenshots.createdAt));
-      return { items: rows };
+
+      if (rows.length === 0) return { items: [] };
+
+      // Single round-trip: which viewports in this run have unresolved diff
+      // regions? Group by viewport so we can attribute one of three statuses
+      // (new / unresolved / passed) per checkpoint with a single query.
+      const unresolvedByViewport = await ctx.db
+        .select({ viewport: diffRegions.viewport })
+        .from(diffRegions)
+        .where(
+          sql`${diffRegions.runId} = ${input.runId} AND ${diffRegions.severity} != 'none'`,
+        )
+        .groupBy(diffRegions.viewport);
+      const unresolvedSet = new Set(
+        unresolvedByViewport
+          .map((r) => r.viewport)
+          .filter((v): v is string => v !== null),
+      );
+
+      const items = rows.map((r) => {
+        const status: RunStatus =
+          r.baselineName === null
+            ? "new"
+            : unresolvedSet.has(r.viewport)
+              ? "unresolved"
+              : "passed";
+        return {
+          id: r.id,
+          name: r.name,
+          viewport: r.viewport,
+          browser: r.browser,
+          matchLevel: r.matchLevel,
+          imageKey: r.imageKey,
+          testVariationId: r.testVariationId,
+          createdAt: r.createdAt,
+          status,
+        };
+      });
+      return { items };
     }),
 });
