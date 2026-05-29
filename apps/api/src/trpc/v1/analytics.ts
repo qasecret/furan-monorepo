@@ -152,6 +152,13 @@ export const analyticsRouter = t.router({
     .query(async ({ ctx, input }) => {
       requireAdmin(ctx.user?.role);
 
+      // Group all rows whose user has been deleted (FK is ON DELETE
+      // SET NULL) under a single synthetic "(deleted user)" bucket so
+      // the summary card's totalActions reconciles with the sum of
+      // topReviewers rather than disappearing entirely when the only
+      // reviewer leaves. The summary card had been showing
+      // "Actions: 4" with "No reviewer activity" — the unattributed
+      // bucket fixes that mismatch.
       const rows = await ctx.db.execute(sql`
         SELECT
           dte.user_id,
@@ -160,7 +167,6 @@ export const analyticsRouter = t.router({
         FROM ${dashboardTelemetryEvents} dte
         LEFT JOIN ${users} u ON u.id = dte.user_id
         WHERE dte.event = 'inbox.row_action'
-          AND dte.user_id IS NOT NULL
           AND dte.created_at >= now() - (${input.days} || ' days')::interval
         GROUP BY dte.user_id, u.email
         ORDER BY actions DESC
@@ -169,7 +175,7 @@ export const analyticsRouter = t.router({
 
       const items = (rows as unknown as Array<Record<string, unknown>>).map(
         (r) => ({
-          userId: String(r.user_id),
+          userId: r.user_id == null ? null : String(r.user_id),
           email: r.email == null ? null : String(r.email),
           actions: Number(r.actions ?? 0),
         }),
