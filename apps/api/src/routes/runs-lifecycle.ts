@@ -50,13 +50,19 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });
 
-      // Wait up to 60s for outstanding diff jobs (best-effort poll).
-      const deadline = Date.now() + 60_000;
-      let rollup = await rollupRunStatus(app.db, params.data.id);
-      while (rollup.status === "running" && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 500));
-        rollup = await rollupRunStatus(app.db, params.data.id);
-      }
+      // Roll up the current diff_regions state into a run status. We do
+      // NOT block here on outstanding diff jobs — earlier drafts polled
+      // for `rollup.status === "running"`, which rollupRunStatus never
+      // returns (it surfaces empty / passed / unresolved). The dashboard
+      // SSE (run.checkpoint_diffed / run.completed) refreshes the row
+      // as each checkpoint's diff settles, so the SDK gets a fast
+      // "synchronous-looking" reply here and the eventual final status
+      // arrives via the live channel.
+      //
+      // Tightening this to a real synchronous wait requires either a
+      // per-checkpoint diff_outcome column or a queue.getJobs filter on
+      // the BullMQ side — both deferred as v1.1.2+ polish.
+      const rollup = await rollupRunStatus(app.db, params.data.id);
 
       await app.db
         .update(testRuns)

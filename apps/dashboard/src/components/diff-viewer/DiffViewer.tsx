@@ -154,14 +154,18 @@ export function DiffViewer({
     [projectId, runId, router],
   );
 
-  // ADR-038: map checkpoint items to CheckpointSummary[] for the rail
+  // ADR-038: map checkpoint items to CheckpointSummary[] for the rail.
+  // listCheckpoints now returns a derived per-checkpoint status:
+  //   "new"        if the variation has no baseline yet
+  //   "unresolved" if any diff_regions exist for the (run_id, viewport)
+  //   "passed"     otherwise
+  // diffPercent stays null until diff_regions gains a screenshot_id column
+  // (deferred — see runs.ts listCheckpoints comment).
   const checkpointSummaries: CheckpointSummary[] = useMemo(() => {
     return (checkpointsQuery.data?.items ?? []).map((item) => ({
       id: item.id,
       name: item.name ?? item.id,
-      // Phase 6 will wire real status/diffPercent per checkpoint;
-      // for now fall back to "running" / null (safe sentinel values).
-      status: "running" as const,
+      status: item.status,
       diffPercent: null,
     }));
   }, [checkpointsQuery.data]);
