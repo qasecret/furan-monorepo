@@ -47,24 +47,22 @@ interface Props {
   diffRegions?: { severity: string }[];
 }
 
-/**
- * Per spec §3.3: only terminal review states can be approved / rejected
- * / overridden. `running` is mid-flight; `new | aborted | empty` are
- * terminal system states where the right action is re-run / fix SDK
- * usage, not override.
- */
+// ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
+// approve promotes the candidate to baseline and persists ignoreAreas.
+// `passed | unresolved | failed` are the post-diff review states.
+// `running | aborted | empty` are non-reviewable system states.
 const REVIEW_LEGAL: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "new",
   "passed",
   "unresolved",
   "failed",
 ]);
 
 const DISABLED_REASON: Record<
-  Exclude<RunStatus, "passed" | "unresolved" | "failed">,
+  Exclude<RunStatus, "new" | "passed" | "unresolved" | "failed">,
   string
 > = {
   running: "Run is still in progress — wait for the diff to finish.",
-  new: "First run for this test — there's no baseline to compare against yet.",
   aborted: "Run was aborted before completion — re-run the test instead.",
   empty: "Run recorded no checks — verify your SDK integration.",
 };
@@ -130,7 +128,7 @@ export function ApprovalBar({ runId, status, diffRegions }: Props) {
     : DISABLED_REASON[
         effectiveStatus as Exclude<
           RunStatus,
-          "passed" | "unresolved" | "failed"
+          "new" | "passed" | "unresolved" | "failed"
         >
       ];
 
