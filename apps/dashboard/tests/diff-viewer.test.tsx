@@ -103,6 +103,14 @@ vi.mock("../src/lib/trpc", () => {
             error: null,
           }),
         },
+        // ADR-038: checkpoint list — returns empty items so the rail doesn't render
+        listCheckpoints: {
+          useQuery: () => ({
+            data: { items: [] },
+            isLoading: false,
+            error: null,
+          }),
+        },
         approve: { useMutation: noopMutation },
         reject: { useMutation: noopMutation },
         overrideStatus: { useMutation: noopMutation },
@@ -110,6 +118,8 @@ vi.mock("../src/lib/trpc", () => {
         setIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
         bulkApproveByVariation: { useMutation: noopMutation },
+        approveCheckpoint: { useMutation: noopMutation },
+        approveAllCheckpoints: { useMutation: noopMutation },
       },
       projects: {
         getById: {
@@ -172,7 +182,9 @@ describe("DiffViewer", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
-    expect(r.getByRole("tablist")).toBeDefined();
+    // ADR-038: RegionKindTabs adds a second tablist (region kinds); use
+    // getAllByRole and check there's at least one tablist rendered.
+    expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
     expect(r.getByRole("tab", { name: /side-by-side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /onion-skin/i })).toBeDefined();

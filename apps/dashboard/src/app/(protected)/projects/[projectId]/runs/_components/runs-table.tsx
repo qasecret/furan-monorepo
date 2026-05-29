@@ -173,8 +173,9 @@ export function RunsTable({
             >
               <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
                 <tr>
-                  <th className="px-4 py-2.5 font-medium">Branch</th>
+                  <th className="px-4 py-2.5 font-medium">Branch / Test</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Checkpoints</th>
                   <th className="px-4 py-2.5 font-medium">Diff %</th>
                   <th className="px-4 py-2.5 font-medium">Mismatched px</th>
                   <th className="px-4 py-2.5 font-medium">When</th>
@@ -183,7 +184,7 @@ export function RunsTable({
               <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-8 text-center text-zinc-500"
                   >
                     No runs match.
@@ -202,8 +203,9 @@ export function RunsTable({
             >
               <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
                 <tr>
-                  <th className="px-4 py-2.5 font-medium">Branch</th>
+                  <th className="px-4 py-2.5 font-medium">Branch / Test</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Checkpoints</th>
                   <th className="px-4 py-2.5 font-medium">Diff %</th>
                   <th className="px-4 py-2.5 font-medium">Mismatched px</th>
                   <th className="px-4 py-2.5 font-medium">When</th>
