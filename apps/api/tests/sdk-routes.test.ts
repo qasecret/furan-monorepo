@@ -794,4 +794,32 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     });
     expect(res.statusCode).toBe(204);
   });
+
+  // ---------------------------------------------------------------------------
+  // Back-compat: SDK 1.0.x POST /runs shape (ADR-038 Phase 7)
+  // ---------------------------------------------------------------------------
+
+  test("legacy SDK 1.0.x POST /runs shape synthesizes a v1.1.0 run", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: {
+        authorization: `Bearer ${s.memberJwt}`,
+        "content-type": "application/json",
+      },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "HomePage", // legacy: the "checkpoint name"
+        branchName: "main",
+        viewport: "1280x720", // legacy: triggers synthesis
+        browser: "chromium",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { runId: string; status: string; name: string };
+    expect(body.name).toBe("HomePage");
+    expect(body.runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.status).toBe("running");
+  });
 });

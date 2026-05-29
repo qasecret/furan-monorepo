@@ -17,6 +17,8 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 
+import { tryLegacyCreateRunSynthesis } from "./sdk-runs-back-compat.js";
+
 // ADR-038: POST /runs creates a test run; checkpoint identity (name,
 // viewport, browser, os, device) moves to POST /runs/:id/screenshots.
 //
@@ -474,6 +476,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const parsed = createRunBody.safeParse(req.body);
       if (!parsed.success) {
+        const synthesized = await tryLegacyCreateRunSynthesis(app, req);
+        if (synthesized) return reply.code(201).send(synthesized);
         return reply
           .code(400)
           .send({ error: "invalid_body", details: parsed.error.flatten() });

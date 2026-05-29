@@ -16,6 +16,7 @@ import {
   createRetentionMetrics,
   handleRetentionJob,
 } from "./retention-handler.js";
+import { sweepStaleRuns } from "./sweeper.js";
 
 /** Cron pattern for the nightly retention sweep. 3am UTC keeps it well
  *  outside business hours for both NA and EU while leaving wide breathing
@@ -88,6 +89,14 @@ async function main(): Promise<void> {
     },
   );
 
+  // Every 30 s, finalize any "running" run whose updatedAt is older than
+  // 5 minutes. Covers SDK 1.0.x callers that never send POST /runs/:id/complete.
+  const sweeperInterval = setInterval(() => {
+    sweepStaleRuns({ db }).catch((e) =>
+      telemetry.logger.warn({ err: e }, "sweeper_failed"),
+    );
+  }, 30_000);
+
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
@@ -96,6 +105,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
+    clearInterval(sweeperInterval);
     await worker.close();
     await retentionWorker.close();
     await retentionQueue.close();
