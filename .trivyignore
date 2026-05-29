@@ -83,3 +83,34 @@ CVE-2026-42499
 # workspace — we resolve 4.0.4 via pnpm). Closes when Playwright bumps
 # its own tooling.
 CVE-2026-33671
+
+# ---------------------------------------------------------------------------
+# Go stdlib in `lefthook-linux-x64@1.13.6` (a workspace-root devDependency
+# pre-built Go binary). Lefthook installs git pre-commit hooks at dev time;
+# the binary ends up in `app/node_modules/.pnpm/lefthook-linux-x64@1.13.6/`
+# in the capture-worker image because pnpm installs root workspace devDeps
+# even with `--filter @furan/capture-worker...`. The capture-worker CMD is
+# `node apps/capture-worker/dist/server.js` — it never invokes lefthook,
+# the binary sits dormant on disk.
+#
+# 11 HIGH CVEs flagged by Trivy on the v1.1.1 build (lefthook ships its
+# own Go runtime; bumping lefthook itself doesn't necessarily ship a newer
+# stdlib until they cut a release built against Go 1.25.10+ / 1.26.3+).
+#
+# Re-evaluate on every lefthook bump. Permanent fix would be `pnpm prune
+# --prod` (or a separate prod-only install stage) before copying node_modules
+# into the runtime image — deferred as a Dockerfile cleanup.
+#
+# Owner: @qasecret-maintainer
+# Last reviewed: 2026-05-29 (v1.1.1 build-images run)
+CVE-2025-58185
+CVE-2025-58186
+CVE-2025-58187
+CVE-2025-58188
+CVE-2025-61723
+CVE-2025-61724
+CVE-2025-61725
+CVE-2025-61727
+CVE-2026-39823
+CVE-2026-39825
+CVE-2026-39826
