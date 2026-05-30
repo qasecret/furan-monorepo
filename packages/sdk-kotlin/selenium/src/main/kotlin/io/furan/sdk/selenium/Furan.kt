@@ -11,6 +11,7 @@ import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
+import io.furan.sdk.dto.Region
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 import kotlinx.coroutines.runBlocking
@@ -179,7 +180,12 @@ class Furan(
         // Tier 1.2: resolve any selector-anchored mask regions to numeric
         // coords against the live DOM before sending. Selector-less regions
         // pass through unchanged.
-        val ignore = options.ignoreRegions.map { resolveRegion(driver, it) }
+        //
+        // Tier 2.4: when ignoreCaret = true, augmentIgnoreRegions appends
+        // a selector-anchored ignore for the focused text input so a
+        // blinking caret doesn't flag as a diff.
+        val ignore = augmentIgnoreRegions(options.ignoreRegions, options.ignoreCaret)
+            .map { resolveRegion(driver, it) }
         val layout = options.layoutRegions.map { resolveRegion(driver, it) }
         val content = options.contentRegions.map { resolveRegion(driver, it) }
         val domHtml = options.domHtml ?: runCatching { captureDom(driver) }.getOrNull()
@@ -259,6 +265,25 @@ class Furan(
     companion object {
         private val log = LoggerFactory.getLogger(Furan::class.java)
         private const val MAX_ELEMENT_MAP_BYTES = 1_000_000
+
+        /**
+         * Tier 2.4: selector-anchored ignore region auto-appended when
+         * `CheckpointOptions.ignoreCaret = true`. Covers the three
+         * places a blinking caret typically lives.
+         */
+        internal val CARET_FOCUS_REGION: Region =
+            Region.bySelector("input:focus, textarea:focus, [contenteditable]:focus")
+
+        /**
+         * Tier 2.4: append the focused-input ignore region when
+         * [ignoreCaret] is set. Pure function — exposed for unit tests
+         * so the augmentation logic can be exercised without a live
+         * driver.
+         */
+        internal fun augmentIgnoreRegions(
+            ignoreRegions: List<Region>,
+            ignoreCaret: Boolean,
+        ): List<Region> = if (ignoreCaret) ignoreRegions + CARET_FOCUS_REGION else ignoreRegions
 
         /**
          * Convenience factory: opens a run, runs [block], closes on success,
