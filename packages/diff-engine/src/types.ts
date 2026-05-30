@@ -72,4 +72,19 @@ export interface DiffResult {
   regions: DiffRegion[];
   ranTiers: Array<"l1" | "l2">;
   durationMs: { l1: number; l2: number | null };
+  /**
+   * Tier 1.4 follow-up: when non-null, the L1 displacement pass
+   * detected a uniform shift and aligned the candidate before
+   * running the engine. `diffPercent`, `pixelMismatchCount`, and
+   * `diffImageBytes` reflect the POST-alignment comparison.
+   *
+   * Surfaced on the screenshot row's JSON `results` column for
+   * telemetry. Absent when alignment didn't fire (default,
+   * `ignoreDisplacements = false`, low confidence, or shift
+   * capped).
+   *
+   * Coordinates are in ORIGINAL-image pixels (downsample factor
+   * has already been multiplied back in).
+   */
+  displacementVector?: { dx: number; dy: number; confidence: number };
 }
