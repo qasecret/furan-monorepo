@@ -169,4 +169,56 @@ data class CheckpointOptions(
      * adapter auto-captures via the ELEMENT_BBOX_SCRIPT executor.
      */
     val elementMapJson: String? = null,
+    /**
+     * Eyes-parity Tier 3: when true, the SDK captures the full
+     * scrollable document by scrolling the page in viewport-sized
+     * tiles, capturing each via Selenium `getScreenshotAs`, and
+     * composing them into one PNG before upload (mirrors
+     * `Target.window().fully()`).
+     *
+     * Cross-browser via JS-scroll. Chromium-only CDP fast path is a
+     * future opt-in.
+     *
+     * Composes with [region] (stitch then crop), [lazyLoad] (warm
+     * then stitch), [beforeCaptureScreenshot] (hook then stitch).
+     * [matchTimeoutMs] is IGNORED when `fully = true` — byte
+     * stability polling on a 30+ MB stitched image is too expensive;
+     * use [lazyLoad] + [waitBeforeCaptureMs] to settle the page
+     * before stitching begins. The SDK logs a one-time INFO when
+     * both are set on the same checkpoint.
+     *
+     * Use [hideFixedElements] to suppress sticky headers / footers /
+     * cookie banners that would otherwise duplicate at every tile
+     * boundary.
+     *
+     * Memory: pages above 50 megapixels (~1920x26000) log a WARN;
+     * pages above 200 megapixels (~1920x100000) truncate at the cap
+     * and log an ERROR. Above 50 MP, prefer masking or splitting
+     * the test.
+     *
+     * Defaults to false (single viewport capture).
+     */
+    val fully: Boolean = false,
+    /**
+     * CSS selectors hidden via injected
+     * `display: none !important` stylesheet for the duration of the
+     * fully-page stitch. Restored after capture (try / finally).
+     *
+     * Naive stitching duplicates fixed/sticky elements at every tile
+     * boundary because the browser keeps them visually pinned to the
+     * viewport while scroll position changes. Hiding them during
+     * capture eliminates the banding.
+     *
+     * Recommended starting set:
+     * `listOf("header", "footer", "[role=banner]",
+     *         "[role=contentinfo]", ".fixed-top", ".fixed-bottom")`.
+     *
+     * Defaults to `emptyList()` (no hiding, matches Eyes' opt-in
+     * default). Adding a selector that matches a non-fixed element
+     * will change the screenshot — only add selectors for elements
+     * you intentionally want hidden during capture.
+     *
+     * Ignored when [fully] is false.
+     */
+    val hideFixedElements: List<String> = emptyList(),
 )
