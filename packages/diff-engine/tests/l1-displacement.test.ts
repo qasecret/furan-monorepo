@@ -59,4 +59,17 @@ describe("detectGlobalDisplacement", () => {
     const result = detectGlobalDisplacement(baseline, Buffer.alloc(0));
     expect(result).toBeNull();
   });
+
+  it("detects shift correctly at 512x512 — exercises the downsample path (factor=2)", () => {
+    const baseline = FIXTURE("displacement-baseline-512.png");
+    const shifted = FIXTURE("displacement-shifted-large-down-60.png");
+    const result = detectGlobalDisplacement(baseline, shifted);
+    expect(result).not.toBeNull();
+    // factor=2; shift of 60 in source coords = 30 in downsampled,
+    // multiplied back by 2 = 60 in result. Allow ±2 tolerance for
+    // FFT spectral leakage on the larger image.
+    expect(Math.abs(result!.dy - 60)).toBeLessThanOrEqual(2);
+    expect(Math.abs(result!.dx)).toBeLessThanOrEqual(2);
+    expect(result!.confidence).toBeGreaterThan(0.05);
+  });
 });
