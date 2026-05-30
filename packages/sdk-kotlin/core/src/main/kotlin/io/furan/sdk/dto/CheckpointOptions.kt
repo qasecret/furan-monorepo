@@ -17,6 +17,18 @@ data class CheckpointOptions(
     val contentRegions: List<Region> = emptyList(),
     val accessibilityRegions: List<AccessibilityRegion> = emptyList(),
     /**
+     * Capture only a sub-rectangle of the viewport (mirrors Applitools
+     * `eyes.check(name, { region })`). When null the full viewport is
+     * captured. The crop happens client-side before upload; the api +
+     * diff engine see only the cropped bytes, so the baseline established
+     * the first time you snapshot a region is the cropped image.
+     *
+     * Coordinates are in viewport-CSS pixels. Out-of-bounds regions are
+     * clamped to the captured image dimensions; a fully-out-of-bounds
+     * region throws [IllegalArgumentException].
+     */
+    val region: Region? = null,
+    /**
      * Optional DOM HTML override. When null, the selenium adapter
      * auto-captures via `document.documentElement.outerHTML`.
      */

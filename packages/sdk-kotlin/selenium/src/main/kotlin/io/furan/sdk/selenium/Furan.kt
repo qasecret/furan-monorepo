@@ -141,7 +141,8 @@ class Furan(
     ): CheckpointSubmission {
         val vp = viewport ?: config.viewports.first()
         driver.manage().window().size = Dimension(vp.width, vp.height)
-        val pngBytes = captureScreenshot(driver)
+        val rawPng = captureScreenshot(driver)
+        val pngBytes = options.region?.let { cropPng(rawPng, it) } ?: rawPng
         val domHtml = options.domHtml ?: runCatching { captureDom(driver) }.getOrNull()
         val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
         return client.createScreenshot(
