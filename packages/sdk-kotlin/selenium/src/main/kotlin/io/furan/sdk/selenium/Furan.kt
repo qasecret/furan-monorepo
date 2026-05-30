@@ -168,7 +168,25 @@ class Furan(
         // full viewport upload.
         val captureRegion = options.region
         val captureSelector = captureRegion?.selector
+        if (options.fully && options.matchTimeoutMs > 0) {
+            warnMatchTimeoutIgnoredInFullyMode()
+        }
         val pngBytes = when {
+            // Element-direct capture path is element-scoped, not full-page;
+            // a selector-anchored region with fully=true still means
+            // "stitch the full page" — the user wants the whole document.
+            // We honor `fully` over the element-direct shortcut, then crop
+            // the stitched image to the resolved bbox.
+            options.fully && captureRegion != null -> {
+                val stitched = withHideFixed(driver, options.hideFixedElements) {
+                    captureFullyPage(driver, viewportWidth = vp.width, viewportHeight = vp.height)
+                }
+                val resolved = resolveRegion(driver, captureRegion)
+                cropPng(stitched, resolved)
+            }
+            options.fully -> withHideFixed(driver, options.hideFixedElements) {
+                captureFullyPage(driver, viewportWidth = vp.width, viewportHeight = vp.height)
+            }
             captureRegion != null && captureSelector != null ->
                 // Element-direct capture skips the stability poll —
                 // Selenium's element screenshot is a single operation
@@ -272,6 +290,25 @@ class Furan(
             buildId = build.id
         }
         return buildId!!
+    }
+
+    /**
+     * Inject the hide-fixed-elements stylesheet (if any), run [block],
+     * then restore. Wraps the stitch loop in try/finally so a thrown
+     * exception during capture still removes the injected style.
+     */
+    private suspend fun <R> withHideFixed(
+        driver: WebDriver,
+        selectors: List<String>,
+        block: suspend () -> R,
+    ): R {
+        if (selectors.isEmpty()) return block()
+        injectFixedElementHider(driver, selectors)
+        try {
+            return block()
+        } finally {
+            runCatching { removeFixedElementHider(driver) }
+        }
     }
 
     companion object {
