@@ -125,3 +125,84 @@ describe("runDiff", () => {
     expect(result.passed).toBe(true);
   });
 });
+
+describe("runDiff: L1 displacement pre-alignment", () => {
+  const __dirname_disp = dirname(fileURLToPath(import.meta.url));
+  const FIX_DISP = (n: string) =>
+    readFileSync(join(__dirname_disp, "fixtures", n));
+
+  const baseConfig = {
+    diffThreshold: 0.001,
+    l2Enabled: false,
+    engine: "pixelmatch" as const,
+    engineConfig: DEFAULT_ENGINE_CONFIG,
+  };
+
+  function makeMetric() {
+    const counts = new Map<string, number>();
+    return {
+      counts,
+      adapter: {
+        labels: (l: { outcome: string }) => ({
+          inc: () => counts.set(l.outcome, (counts.get(l.outcome) ?? 0) + 1),
+        }),
+      },
+    };
+  }
+
+  it("records `applied` and reduces diffPercent when ignoreDisplacements=true on a shifted candidate", async () => {
+    const baseline = FIX_DISP("displacement-baseline.png");
+    const shifted = FIX_DISP("displacement-shifted-down-40.png");
+
+    const m = makeMetric();
+    const result = await runDiff({
+      baseline: { image: baseline },
+      candidate: { image: shifted },
+      config: baseConfig,
+      ignoreDisplacements: true,
+      l1DisplacementMetric: m.adapter,
+    });
+    expect(m.counts.get("applied")).toBe(1);
+    expect(result.displacementVector).toBeDefined();
+    expect(Math.abs(result.displacementVector!.dy - 40)).toBeLessThanOrEqual(1);
+    // After alignment the candidate matches the baseline (modulo the
+    // 40-row exposed band that we filled with baseline pixels).
+    // diffPercent should be near zero.
+    expect(result.diffPercent).toBeLessThan(1);
+  });
+
+  it("records `skipped` and runs unchanged when ignoreDisplacements=false", async () => {
+    const baseline = FIX_DISP("displacement-baseline.png");
+    const shifted = FIX_DISP("displacement-shifted-down-40.png");
+
+    const m = makeMetric();
+    const result = await runDiff({
+      baseline: { image: baseline },
+      candidate: { image: shifted },
+      config: baseConfig,
+      ignoreDisplacements: false,
+      l1DisplacementMetric: m.adapter,
+    });
+    expect(m.counts.get("skipped")).toBe(1);
+    expect(result.displacementVector).toBeUndefined();
+    // diffPercent should be non-trivial since the candidate is shifted
+    // and alignment is disabled.
+    expect(result.diffPercent).toBeGreaterThan(0);
+  });
+
+  it("records `low_confidence` on uncorrelated content", async () => {
+    const baseline = FIX_DISP("displacement-baseline.png");
+    const noise = FIX_DISP("displacement-noise.png");
+
+    const m = makeMetric();
+    const result = await runDiff({
+      baseline: { image: baseline },
+      candidate: { image: noise },
+      config: baseConfig,
+      ignoreDisplacements: true,
+      l1DisplacementMetric: m.adapter,
+    });
+    expect(m.counts.get("low_confidence")).toBe(1);
+    expect(result.displacementVector).toBeUndefined();
+  });
+});

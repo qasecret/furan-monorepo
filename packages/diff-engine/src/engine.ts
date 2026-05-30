@@ -1,7 +1,19 @@
 import { classifyRegions } from "./classify.js";
+import {
+  detectGlobalDisplacement,
+  DISPLACEMENT_CONFIDENCE_THRESHOLD,
+  shiftImage,
+} from "./l1-displacement.js";
 import { runL1 } from "./l1.js";
 import { runL2 } from "./l2.js";
 import type { DiffResult, ProjectDiffConfig, DiffRegion } from "./types.js";
+
+/** Tier 1.4 follow-up: hard caps on detected shift before alignment
+ *  is applied. Beyond these, the shift is more likely spurious than
+ *  real (a 500px "shift" usually means the page was redesigned, not
+ *  moved). */
+const MAX_DX = 50;
+const MAX_DY = 200;
 
 export interface RunDiffInput {
   baseline: { image: Buffer; dom?: string };
@@ -9,17 +21,62 @@ export interface RunDiffInput {
   config: ProjectDiffConfig;
   /**
    * Tier 1.4 (Eyes-parity `ignoreDisplacements`): when true, the L2
-   * pass drops `relocateGroup` regions for this checkpoint.
-   * Defaults to false.
+   * pass drops `relocateGroup` regions for this checkpoint AND the
+   * L1 pre-alignment pass detects + corrects a global pixel shift
+   * before running the engine. Defaults to false.
    */
   ignoreDisplacements?: boolean;
+  /**
+   * Optional metrics adapter for the L1 displacement outcome. The
+   * diff-worker constructs one that fans out to the
+   * `furan_diff_l1_displacement_total` Prometheus counter; tests
+   * pass a recording stub. Exactly one outcome is recorded per call
+   * to runDiff.
+   */
+  l1DisplacementMetric?: {
+    labels: (l: {
+      outcome: "applied" | "low_confidence" | "shift_capped" | "skipped";
+    }) => { inc: () => void };
+  };
 }
 
 export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   const t0 = performance.now();
+
+  // --- L1 pre-alignment (Tier 1.4 follow-up) ---
+  let candidateImage = input.candidate.image;
+  let displacementVector:
+    | { dx: number; dy: number; confidence: number }
+    | undefined;
+  if (input.ignoreDisplacements) {
+    const det = detectGlobalDisplacement(
+      input.baseline.image,
+      input.candidate.image,
+    );
+    if (det === null) {
+      // Dimension mismatch or decode failure — treat as skipped.
+      input.l1DisplacementMetric?.labels({ outcome: "skipped" }).inc();
+    } else if (det.confidence < DISPLACEMENT_CONFIDENCE_THRESHOLD) {
+      input.l1DisplacementMetric?.labels({ outcome: "low_confidence" }).inc();
+    } else if (Math.abs(det.dx) > MAX_DX || Math.abs(det.dy) > MAX_DY) {
+      input.l1DisplacementMetric?.labels({ outcome: "shift_capped" }).inc();
+    } else {
+      candidateImage = shiftImage(
+        input.candidate.image,
+        input.baseline.image,
+        -det.dx,
+        -det.dy,
+      );
+      displacementVector = det;
+      input.l1DisplacementMetric?.labels({ outcome: "applied" }).inc();
+    }
+  } else {
+    input.l1DisplacementMetric?.labels({ outcome: "skipped" }).inc();
+  }
+
   const l1 = await runL1(
     input.baseline.image,
-    input.candidate.image,
+    candidateImage,
     input.config.ignoreAreas,
     input.config.engine,
     input.config.engineConfig,
@@ -67,5 +124,6 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     regions: allRegions,
     ranTiers: shouldRunL2 ? ["l1", "l2"] : ["l1"],
     durationMs: { l1: t1 - t0, l2: l2Duration },
+    ...(displacementVector ? { displacementVector } : {}),
   };
 }
