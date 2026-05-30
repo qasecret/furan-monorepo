@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.1.0...sdk/v2.2.0) (2026-05-30)
+
+
+### Features
+
+* **sdk-kotlin:** SuiteResult + Furan.aggregateResults (Eyes parity Tier 1.5) ([#209](https://github.com/qasecret/furan-monorepo/issues/209)) ([e83f368](https://github.com/qasecret/furan-monorepo/commit/e83f368667d1e33bb30ab356b3206187f07810e7))
+
 ## [2.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.0.0...sdk/v2.1.0) (2026-05-30)
 
 
