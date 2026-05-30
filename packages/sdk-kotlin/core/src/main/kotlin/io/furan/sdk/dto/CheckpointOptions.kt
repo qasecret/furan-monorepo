@@ -86,8 +86,29 @@ data class CheckpointOptions(
      */
     val ignoreDisplacements: Boolean = false,
     /**
-     * Optional DOM HTML override. When null, the selenium adapter
-     * auto-captures via `document.documentElement.outerHTML`.
+     * Eyes-parity Tier 2.2: when false, the SDK skips DOM capture
+     * entirely (mirrors Applitools `setSendDom(false)`). Default is
+     * true — DOM upload powers L2 (DOM/CSS) root-cause analysis, so
+     * disabling it trades root-cause depth for privacy / network /
+     * storage savings.
+     *
+     * Use cases for `sendDom = false`:
+     *  - Air-gapped or regulated environments where uploading rendered
+     *    HTML would leak content (PII in the rendered DOM, etc).
+     *  - Static-page or image-only tests where DOM upload is pure
+     *    overhead.
+     *  - High-volume CI where the DOM payload (typically 50–500 KB per
+     *    checkpoint) is the bottleneck.
+     *
+     * A `domHtml` override (next field) takes precedence: when set
+     * explicitly, the SDK sends that payload regardless of [sendDom].
+     */
+    val sendDom: Boolean = true,
+    /**
+     * Optional DOM HTML override. When null AND [sendDom] is true,
+     * the selenium adapter auto-captures via
+     * `document.documentElement.outerHTML`. When [sendDom] is false,
+     * this field is ignored unless explicitly non-null.
      */
     val domHtml: String? = null,
     /**

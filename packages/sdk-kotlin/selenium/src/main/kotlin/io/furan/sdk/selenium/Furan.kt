@@ -182,7 +182,13 @@ class Furan(
         val ignore = options.ignoreRegions.map { resolveRegion(driver, it) }
         val layout = options.layoutRegions.map { resolveRegion(driver, it) }
         val content = options.contentRegions.map { resolveRegion(driver, it) }
-        val domHtml = options.domHtml ?: runCatching { captureDom(driver) }.getOrNull()
+        // Tier 2.2: `sendDom = false` skips DOM auto-capture entirely.
+        // See [resolveDomPayload] for precedence rules.
+        val domHtml = resolveDomPayload(
+            override = options.domHtml,
+            sendDom = options.sendDom,
+            capture = { captureDom(driver) },
+        )
         val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
         return client.createScreenshot(
             runId = rid,
