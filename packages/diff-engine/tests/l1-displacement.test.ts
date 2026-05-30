@@ -2,9 +2,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PNG } from "pngjs";
 import { describe, it, expect } from "vitest";
 
-import { detectGlobalDisplacement } from "../src/l1-displacement.js";
+import {
+  detectGlobalDisplacement,
+  shiftImage,
+} from "../src/l1-displacement.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string) => readFileSync(join(__dirname, "fixtures", n));
@@ -71,5 +75,127 @@ describe("detectGlobalDisplacement", () => {
     expect(Math.abs(result!.dy - 60)).toBeLessThanOrEqual(2);
     expect(Math.abs(result!.dx)).toBeLessThanOrEqual(2);
     expect(result!.confidence).toBeGreaterThan(0.05);
+  });
+});
+
+describe("shiftImage", () => {
+  // Build a tiny 4×4 RGBA PNG with each row a distinct color so we can
+  // verify exactly which pixels moved where.
+  function tinyPng(rows: number[][]): Buffer {
+    // rows[y][x] is a 0xRRGGBB integer. Alpha is always 255.
+    const png = new PNG({ width: 4, height: 4 });
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        const rgb = rows[y]![x]!;
+        const i = (y * 4 + x) * 4;
+        png.data[i] = (rgb >> 16) & 0xff;
+        png.data[i + 1] = (rgb >> 8) & 0xff;
+        png.data[i + 2] = rgb & 0xff;
+        png.data[i + 3] = 255;
+      }
+    }
+    return PNG.sync.write(png);
+  }
+
+  function readRows(buf: Buffer): number[][] {
+    const png = PNG.sync.read(buf);
+    const rows: number[][] = [];
+    for (let y = 0; y < png.height; y++) {
+      const row: number[] = [];
+      for (let x = 0; x < png.width; x++) {
+        const i = (y * png.width + x) * 4;
+        row.push(
+          (png.data[i]! << 16) | (png.data[i + 1]! << 8) | png.data[i + 2]!,
+        );
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  it("shifts candidate down by dy, padding top with baseline's top rows", () => {
+    // Baseline rows: B0 B1 B2 B3 (each row a single color)
+    // Candidate rows: C0 C1 C2 C3
+    // shiftImage(candidate, baseline, dx=0, dy=1) should produce:
+    //   row 0: B0  (padded from baseline)
+    //   row 1: C0
+    //   row 2: C1
+    //   row 3: C2
+    const baseline = tinyPng([
+      [0x110000, 0x110000, 0x110000, 0x110000],
+      [0x220000, 0x220000, 0x220000, 0x220000],
+      [0x330000, 0x330000, 0x330000, 0x330000],
+      [0x440000, 0x440000, 0x440000, 0x440000],
+    ]);
+    const candidate = tinyPng([
+      [0x000011, 0x000011, 0x000011, 0x000011],
+      [0x000022, 0x000022, 0x000022, 0x000022],
+      [0x000033, 0x000033, 0x000033, 0x000033],
+      [0x000044, 0x000044, 0x000044, 0x000044],
+    ]);
+    const shifted = shiftImage(candidate, baseline, 0, 1);
+    const rows = readRows(shifted);
+    expect(rows[0]).toEqual([0x110000, 0x110000, 0x110000, 0x110000]); // baseline B0
+    expect(rows[1]).toEqual([0x000011, 0x000011, 0x000011, 0x000011]); // C0
+    expect(rows[2]).toEqual([0x000022, 0x000022, 0x000022, 0x000022]); // C1
+    expect(rows[3]).toEqual([0x000033, 0x000033, 0x000033, 0x000033]); // C2
+  });
+
+  it("shifts candidate up by |dy|, padding bottom with baseline's bottom rows", () => {
+    const baseline = tinyPng([
+      [0x110000, 0x110000, 0x110000, 0x110000],
+      [0x220000, 0x220000, 0x220000, 0x220000],
+      [0x330000, 0x330000, 0x330000, 0x330000],
+      [0x440000, 0x440000, 0x440000, 0x440000],
+    ]);
+    const candidate = tinyPng([
+      [0x000011, 0x000011, 0x000011, 0x000011],
+      [0x000022, 0x000022, 0x000022, 0x000022],
+      [0x000033, 0x000033, 0x000033, 0x000033],
+      [0x000044, 0x000044, 0x000044, 0x000044],
+    ]);
+    const shifted = shiftImage(candidate, baseline, 0, -1);
+    const rows = readRows(shifted);
+    expect(rows[0]).toEqual([0x000022, 0x000022, 0x000022, 0x000022]); // C1
+    expect(rows[1]).toEqual([0x000033, 0x000033, 0x000033, 0x000033]); // C2
+    expect(rows[2]).toEqual([0x000044, 0x000044, 0x000044, 0x000044]); // C3
+    expect(rows[3]).toEqual([0x440000, 0x440000, 0x440000, 0x440000]); // baseline B3
+  });
+
+  it("shifts candidate right by dx, padding left with baseline's left columns", () => {
+    const baseline = tinyPng([
+      [0x110000, 0x220000, 0x330000, 0x440000],
+      [0x110000, 0x220000, 0x330000, 0x440000],
+      [0x110000, 0x220000, 0x330000, 0x440000],
+      [0x110000, 0x220000, 0x330000, 0x440000],
+    ]);
+    const candidate = tinyPng([
+      [0x000011, 0x000022, 0x000033, 0x000044],
+      [0x000011, 0x000022, 0x000033, 0x000044],
+      [0x000011, 0x000022, 0x000033, 0x000044],
+      [0x000011, 0x000022, 0x000033, 0x000044],
+    ]);
+    const shifted = shiftImage(candidate, baseline, 1, 0);
+    const rows = readRows(shifted);
+    // Column 0 should be baseline's column 0; columns 1-3 are candidate's
+    // columns 0-2.
+    expect(rows[0]).toEqual([0x110000, 0x000011, 0x000022, 0x000033]);
+  });
+
+  it("is a no-op when dx=0 and dy=0", () => {
+    const baseline = tinyPng([
+      [0x111111, 0x111111, 0x111111, 0x111111],
+      [0x222222, 0x222222, 0x222222, 0x222222],
+      [0x333333, 0x333333, 0x333333, 0x333333],
+      [0x444444, 0x444444, 0x444444, 0x444444],
+    ]);
+    const candidate = tinyPng([
+      [0xaaaaaa, 0xaaaaaa, 0xaaaaaa, 0xaaaaaa],
+      [0xbbbbbb, 0xbbbbbb, 0xbbbbbb, 0xbbbbbb],
+      [0xcccccc, 0xcccccc, 0xcccccc, 0xcccccc],
+      [0xdddddd, 0xdddddd, 0xdddddd, 0xdddddd],
+    ]);
+    const shifted = shiftImage(candidate, baseline, 0, 0);
+    expect(readRows(shifted)).toEqual(readRows(candidate));
   });
 });

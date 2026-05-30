@@ -268,3 +268,64 @@ function findPeak(surface: Float32Array): {
     confidence,
   };
 }
+
+/**
+ * Translate `candidate` by (dx, dy) pixels. The exposed band at the
+ * opposite edge is filled with pixels from `baseline` at the SAME
+ * output position, so the L1 diff doesn't see the exposed area as
+ * a giant blank rectangle.
+ *
+ * Coordinate convention: positive dy shifts content DOWN (exposed
+ * band at the top); positive dx shifts content RIGHT (exposed band
+ * at left).
+ *
+ * Engine pipeline usage: detectGlobalDisplacement returns the shift
+ * FROM baseline TO candidate. To bring the candidate back to baseline
+ * coordinates, the engine calls `shiftImage(candidate, baseline,
+ * -dx, -dy)`.
+ *
+ * Returns the original candidate buffer on dimension mismatch
+ * (defensive — phase correlation already guards against this).
+ */
+export function shiftImage(
+  candidate: Buffer,
+  baseline: Buffer,
+  dx: number,
+  dy: number,
+): Buffer {
+  if (dx === 0 && dy === 0) return candidate;
+  const cPng = PNG.sync.read(candidate);
+  const bPng = PNG.sync.read(baseline);
+  if (cPng.width !== bPng.width || cPng.height !== bPng.height) {
+    return candidate;
+  }
+  const w = cPng.width;
+  const h = cPng.height;
+  const out = new PNG({ width: w, height: h });
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const srcX = x - dx;
+      const srcY = y - dy;
+      const oi = (y * w + x) * 4;
+      let src: Buffer;
+      let si: number;
+      if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
+        src = cPng.data;
+        si = (srcY * w + srcX) * 4;
+      } else {
+        // Exposed band: read from baseline at the OUTPUT position
+        // (not the source position) so the band is filled with what
+        // the baseline shows in that area. This makes the L1 diff
+        // see baseline pixels vs baseline pixels in the band — zero
+        // contribution.
+        src = bPng.data;
+        si = (y * w + x) * 4;
+      }
+      out.data[oi] = src[si]!;
+      out.data[oi + 1] = src[si + 1]!;
+      out.data[oi + 2] = src[si + 2]!;
+      out.data[oi + 3] = src[si + 3]!;
+    }
+  }
+  return PNG.sync.write(out);
+}
