@@ -3,6 +3,7 @@ package io.furan.sdk.selenium
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
 import kotlinx.coroutines.delay
 import org.openqa.selenium.JavascriptExecutor
@@ -193,9 +194,14 @@ internal fun enforceMemoryCap(docWidth: Int, docHeight: Int): Int {
  * Process-wide flag: have we already logged the "matchTimeoutMs ignored
  * in fully mode" notice? We only want to log it once per process — the
  * user has already seen the message and noisier logs don't help.
+ *
+ * Uses [java.util.concurrent.atomic.AtomicBoolean.compareAndSet] so the
+ * once-per-process contract holds even when JUnit 5 parallel execution
+ * or concurrent user code calls into [warnMatchTimeoutIgnoredInFullyMode]
+ * from multiple threads — a non-atomic check-then-set under `@Volatile`
+ * would let two threads both pass the guard and emit the log twice.
  */
-@Volatile
-private var matchTimeoutFullyWarned: Boolean = false
+private val matchTimeoutFullyWarned: AtomicBoolean = AtomicBoolean(false)
 
 /**
  * Emit a one-time INFO log when both [io.furan.sdk.dto.CheckpointOptions.fully]
@@ -204,8 +210,7 @@ private var matchTimeoutFullyWarned: Boolean = false
  * false otherwise (subsequent calls in the same process).
  */
 internal fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
-    if (matchTimeoutFullyWarned) return false
-    matchTimeoutFullyWarned = true
+    if (!matchTimeoutFullyWarned.compareAndSet(false, true)) return false
     log.info(
         "matchTimeoutMs is ignored when CheckpointOptions.fully = true; " +
             "use lazyLoad + waitBeforeCaptureMs to settle the page before stitching",
@@ -215,5 +220,5 @@ internal fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
 
 /** Reset the gate for unit tests. Must NOT be called from production code. */
 internal fun resetMatchTimeoutFullyWarnedForTest() {
-    matchTimeoutFullyWarned = false
+    matchTimeoutFullyWarned.set(false)
 }

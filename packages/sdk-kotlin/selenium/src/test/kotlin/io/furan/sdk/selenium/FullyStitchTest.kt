@@ -1,6 +1,7 @@
 package io.furan.sdk.selenium
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -175,7 +176,7 @@ class FullyStitchTest {
         // Reset the flag for test isolation.
         resetMatchTimeoutFullyWarnedForTest()
         assertTrue(warnMatchTimeoutIgnoredInFullyMode())
-        org.junit.jupiter.api.Assertions.assertFalse(warnMatchTimeoutIgnoredInFullyMode())
+        assertFalse(warnMatchTimeoutIgnoredInFullyMode())
     }
 
     /**
