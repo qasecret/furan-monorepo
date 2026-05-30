@@ -29,6 +29,35 @@ data class CheckpointOptions(
      */
     val region: Region? = null,
     /**
+     * Inline JavaScript to execute on the page immediately before the
+     * screenshot is captured (Eyes-parity Tier 1.3, mirrors
+     * `eyes.check(name, { hooks: { beforeCaptureScreenshot } })`).
+     *
+     * Common use cases: hiding a modal that animates in over the page,
+     * pausing a video, freezing CSS animations, scrolling to top, or
+     * setting input focus to a deterministic element. The hook runs
+     * BEFORE [waitBeforeCaptureMs] so a JS-triggered animation has time
+     * to settle.
+     *
+     * Silently dropped if the driver does not implement
+     * `JavascriptExecutor` (would only happen with a non-browser stub).
+     * A thrown JS error aborts the snapshot — the test sees the original
+     * exception, not a degraded baseline.
+     */
+    val beforeCaptureScreenshot: String? = null,
+    /**
+     * Milliseconds to pause after [beforeCaptureScreenshot] (if any) and
+     * before the screenshot is captured (Eyes-parity, mirrors
+     * `eyes.check(name, { waitBeforeCapture })`). Defaults to 0.
+     *
+     * Use this when you've triggered a state change (e.g. clicked a
+     * button that fires a CSS transition) and want the transition to
+     * settle before capture. Prefer explicit waits in the test code when
+     * possible; this knob exists for the cases where you can't wait on
+     * a specific selector / condition.
+     */
+    val waitBeforeCaptureMs: Long = 0,
+    /**
      * Optional DOM HTML override. When null, the selenium adapter
      * auto-captures via `document.documentElement.outerHTML`.
      */
