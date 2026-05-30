@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.0.0...sdk/v2.1.0) (2026-05-30)
+
+
+### Features
+
+* **sdk-kotlin:** CSS-selector-anchored regions (Eyes parity Tier 1.2) ([#205](https://github.com/qasecret/furan-monorepo/issues/205)) ([a517453](https://github.com/qasecret/furan-monorepo/commit/a517453f280f64ecc7678dc050c0f3990d548600))
+* **sdk-kotlin:** per-checkpoint region crop (Eyes parity Tier 1.1) ([#203](https://github.com/qasecret/furan-monorepo/issues/203)) ([4e69cb7](https://github.com/qasecret/furan-monorepo/commit/4e69cb7592ae6465d607406cc128f49829c1e18d))
+* **sdk-kotlin:** pre-capture JS hook + wait (Eyes parity Tier 1.3) ([#206](https://github.com/qasecret/furan-monorepo/issues/206)) ([136db35](https://github.com/qasecret/furan-monorepo/commit/136db35448ea4c064b0ddbb6c57ced1c6fbb1041))
+
 ## [2.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v1.0.1...sdk/v2.0.0) (2026-05-29)
 
 
