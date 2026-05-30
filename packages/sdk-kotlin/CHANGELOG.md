@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.1.0...sdk/v3.2.0) (2026-05-30)
+
+
+### Features
+
+* **sdk-kotlin:** full-page stitching (Eyes parity Tier 3) ([#218](https://github.com/qasecret/furan-monorepo/issues/218)) ([3e4ba9b](https://github.com/qasecret/furan-monorepo/commit/3e4ba9b9c71e1e7bc07eab55cb4ba1e81ed29cca))
+
 ## [3.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.0.0...sdk/v3.1.0) (2026-05-30)
 
 
