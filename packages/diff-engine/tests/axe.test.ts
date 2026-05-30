@@ -10,8 +10,13 @@ import { mapImpact, runAxe, tagsFor } from "../src/axe.js";
  * vitest environment to jsdom (or even the default node env with
  * a populated globalThis) creates cross-realm `instanceof` failures
  * in axe-core's `_isContextSpec` check. The diff-worker integration
- * test (which boots a real worker against a Postgres+Redis fixture)
- * covers axe.run end-to-end in cases that require full infrastructure.
+ * test (boots a real worker against a Postgres+Redis fixture) covers
+ * axe.run end-to-end including the post-axe handler wire-up. The
+ * lightweight `axeTarget attachment` block below also calls `runAxe`
+ * directly to pin the new field's contract — this works because
+ * `axe.ts` now manages its own `globalThis.window`/`document` setup
+ * with try/finally restore, so jsdom no longer leaks between
+ * checkpoints.
  *
  * These tests pin the rule-selection + severity-mapping logic that
  * decides which violations surface and how severe they look — that's

@@ -64,24 +64,30 @@ export async function runAxe(
       // alt on a 200-image gallery), which would drown the Root Cause
       // view. 50 is enough to be representative without crowding.
       const nodes = v.nodes.slice(0, 50);
-      return nodes.map((node) => ({
-        id: createHash("sha256")
-          .update(v.id + (node.target.join(",") || ""))
-          .digest("hex")
-          .slice(0, 16),
-        severity: mapImpact(v.impact),
-        category: "accessibility" as const,
-        bbox: { x: 0, y: 0, width: 0, height: 0 },
-        source: "axe" as const,
-        description: `${v.id}: ${v.help}`.slice(0, 200),
-        // node.target is axe-core's CSS selector array (string[]). The
-        // resolver in apps/diff-worker uses target[0] to look up bbox
-        // against the element-map sidecar. Spread only when present so
-        // L1/L2 regions never get an unexpected `axeTarget` field.
-        ...(Array.isArray(node.target) && node.target.length > 0
-          ? { axeTarget: node.target as string[] }
-          : {}),
-      }));
+      return nodes.map((node) => {
+        // axe-core types `node.target` as `CrossTreeSelector[]` which is
+        // `Array<string | string[][]>`. Shadow-DOM nodes get the nested
+        // `string[][]` form; normal single-frame DOM gets flat strings.
+        // Furan's single-frame DOM capture doesn't traverse shadow-DOM
+        // yet, so we drop the nested entries and forward the flat ones.
+        // The resolver (apps/diff-worker/src/axe-bbox-resolver.ts)
+        // consumes a clean `string[]`.
+        const flatTarget = Array.isArray(node.target)
+          ? node.target.filter((s): s is string => typeof s === "string")
+          : [];
+        return {
+          id: createHash("sha256")
+            .update(v.id + (node.target.join(",") || ""))
+            .digest("hex")
+            .slice(0, 16),
+          severity: mapImpact(v.impact),
+          category: "accessibility" as const,
+          bbox: { x: 0, y: 0, width: 0, height: 0 },
+          source: "axe" as const,
+          description: `${v.id}: ${v.help}`.slice(0, 200),
+          ...(flatTarget.length > 0 ? { axeTarget: flatTarget } : {}),
+        };
+      });
     });
   } finally {
     // Restore the globals so other code in the worker process (or
