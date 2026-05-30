@@ -141,6 +141,17 @@ class Furan(
     ): CheckpointSubmission {
         val vp = viewport ?: config.viewports.first()
         driver.manage().window().size = Dimension(vp.width, vp.height)
+        // Tier 1.3: pre-capture hooks. JS first (deterministic DOM
+        // mutation) → wait (let the change settle) → screenshot. A
+        // thrown JS error propagates so the test sees the failure rather
+        // than a degraded baseline. A non-JS driver silently skips the
+        // hook (would only happen with a non-browser stub).
+        options.beforeCaptureScreenshot?.let { js ->
+            (driver as? JavascriptExecutor)?.executeScript(js)
+        }
+        if (options.waitBeforeCaptureMs > 0) {
+            kotlinx.coroutines.delay(options.waitBeforeCaptureMs)
+        }
         // ADR-038 / Tier 1.2: region with selector → element-direct capture
         // (bypasses viewport + crop entirely; faster and exact). region with
         // only numeric coords → viewport capture + cropPng. region null →
