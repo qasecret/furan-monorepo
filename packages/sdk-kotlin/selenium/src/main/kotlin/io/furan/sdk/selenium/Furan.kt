@@ -141,8 +141,27 @@ class Furan(
     ): CheckpointSubmission {
         val vp = viewport ?: config.viewports.first()
         driver.manage().window().size = Dimension(vp.width, vp.height)
-        val rawPng = captureScreenshot(driver)
-        val pngBytes = options.region?.let { cropPng(rawPng, it) } ?: rawPng
+        // ADR-038 / Tier 1.2: region with selector → element-direct capture
+        // (bypasses viewport + crop entirely; faster and exact). region with
+        // only numeric coords → viewport capture + cropPng. region null →
+        // full viewport upload.
+        val captureRegion = options.region
+        val captureSelector = captureRegion?.selector
+        val pngBytes = when {
+            captureRegion != null && captureSelector != null ->
+                captureElementScreenshot(driver, captureSelector)
+            captureRegion != null -> {
+                val resolved = resolveRegion(driver, captureRegion)
+                cropPng(captureScreenshot(driver), resolved)
+            }
+            else -> captureScreenshot(driver)
+        }
+        // Tier 1.2: resolve any selector-anchored mask regions to numeric
+        // coords against the live DOM before sending. Selector-less regions
+        // pass through unchanged.
+        val ignore = options.ignoreRegions.map { resolveRegion(driver, it) }
+        val layout = options.layoutRegions.map { resolveRegion(driver, it) }
+        val content = options.contentRegions.map { resolveRegion(driver, it) }
         val domHtml = options.domHtml ?: runCatching { captureDom(driver) }.getOrNull()
         val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
         return client.createScreenshot(
@@ -154,10 +173,10 @@ class Furan(
             device = null,
             matchLevel = options.matchLevel,
             regions = Regions(
-                ignore = options.ignoreRegions,
-                layout = options.layoutRegions,
+                ignore = ignore,
+                layout = layout,
                 floating = options.floatingRegions,
-                content = options.contentRegions,
+                content = content,
                 accessibility = options.accessibilityRegions,
             ),
             pngBytes = pngBytes,
