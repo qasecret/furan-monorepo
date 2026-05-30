@@ -1,5 +1,10 @@
 package io.furan.sdk.selenium
 
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
+
 /**
  * Tier 3 — full-page stitching.
  *
@@ -42,4 +47,42 @@ internal fun tileYs(docHeight: Int, viewportHeight: Int): List<Int> {
     // Clamp the last tile so its bottom edge sits at docHeight.
     ys.add(docHeight - viewportHeight)
     return ys
+}
+
+/**
+ * Compose a list of `(y, pngBytes)` tiles into a single PNG of dimensions
+ * [width] x [height]. Each tile is decoded via [ImageIO.read] and painted
+ * at the (0, y) position via `Graphics2D.drawImage`. Tiles are drawn in
+ * list order; later tiles overpaint earlier ones in any overlap region.
+ *
+ * Peak heap during compose: one composed image (width * height * 4 bytes)
+ * + one decoded tile (each tile is decoded and released for GC inside
+ * the loop).
+ *
+ * The composed image uses [BufferedImage.TYPE_INT_ARGB]; this matches
+ * what the JVM's PNG encoder writes for any RGBA-capable input. The
+ * resulting PNG round-trips losslessly.
+ */
+internal fun composeTilesIntoPng(
+    tiles: List<Pair<Int, ByteArray>>,
+    width: Int,
+    height: Int,
+): ByteArray {
+    require(width > 0 && height > 0) {
+        "composed image must have positive dimensions, got ${width}x$height"
+    }
+    val composed = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val g = composed.createGraphics()
+    try {
+        for ((y, tileBytes) in tiles) {
+            val tile = ImageIO.read(ByteArrayInputStream(tileBytes))
+                ?: error("could not decode tile PNG at y=$y (bytes=${tileBytes.size})")
+            g.drawImage(tile, 0, y, null)
+        }
+    } finally {
+        g.dispose()
+    }
+    val out = ByteArrayOutputStream()
+    ImageIO.write(composed, "png", out)
+    return out.toByteArray()
 }
