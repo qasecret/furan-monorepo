@@ -46,6 +46,12 @@ export const screenshots = pgTable(
     ignoreDisplacements: boolean("ignore_displacements")
       .notNull()
       .default(false),
+    // Tier 2.5 (Eyes parity): when set, the diff-worker runs axe-core
+    // against the captured DOM snapshot and surfaces WCAG violations
+    // as diff_regions with source='axe', category='accessibility'.
+    // NULL = no accessibility check requested.
+    accessibilityLevel: text("accessibility_level"),
+    accessibilityVersion: text("accessibility_version"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

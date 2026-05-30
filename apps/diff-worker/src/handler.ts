@@ -11,6 +11,7 @@ import {
   type DB,
 } from "@furan/db";
 import {
+  runAxe,
   runDiff,
   runL2,
   classifyRegions,
@@ -722,6 +723,34 @@ async function handleDiffJobInner(
           engineConfig: routedEngineConfig,
         },
       });
+    }
+
+    // Tier 2.5 (Eyes-parity): when the checkpoint opted into
+    // accessibility validation (cs.accessibilityLevel set), run
+    // axe-core against the captured DOM HTML and append the
+    // violations to the result regions before classification +
+    // persistence. WCAG-version defaults to 2.1 when only the level
+    // is set (so callers can opt in with just a level).
+    if (cs.accessibilityLevel && candidateDom !== undefined) {
+      try {
+        const axeRegions = await runAxe(candidateDom, {
+          level: cs.accessibilityLevel as "AA" | "AAA",
+          version:
+            (cs.accessibilityVersion as "WCAG_2_0" | "WCAG_2_1" | null) ??
+            "WCAG_2_1",
+        });
+        result.regions = [...result.regions, ...classifyRegions(axeRegions)];
+      } catch (err) {
+        logger.warn(
+          { err, screenshotId: cs.id, level: cs.accessibilityLevel },
+          "axe_core_run_failed",
+        );
+      }
+    } else if (cs.accessibilityLevel && candidateDom === undefined) {
+      logger.warn(
+        { screenshotId: cs.id, level: cs.accessibilityLevel },
+        "accessibility_check_requested_but_no_dom_payload",
+      );
     }
 
     // --- Region modes v2 engine pipeline (after L1+L2, before persist) ---

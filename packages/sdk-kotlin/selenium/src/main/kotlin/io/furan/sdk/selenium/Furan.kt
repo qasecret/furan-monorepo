@@ -219,6 +219,8 @@ class Furan(
             domHtml = domHtml,
             elementMapJson = elementMapJson,
             ignoreDisplacements = options.ignoreDisplacements,
+            accessibilityLevel = options.accessibilitySettings?.level?.wire,
+            accessibilityVersion = options.accessibilitySettings?.guidelinesVersion?.wire,
         )
     }
 

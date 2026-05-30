@@ -4,7 +4,8 @@ export type RegionCategory =
   | "color"
   | "layout"
   | "image"
-  | "structural";
+  | "structural"
+  | "accessibility";
 
 export interface DiffRegion {
   id: string;
@@ -12,7 +13,7 @@ export interface DiffRegion {
   category: RegionCategory;
   bbox: { x: number; y: number; width: number; height: number };
   description: string;
-  source: "l1" | "l2";
+  source: "l1" | "l2" | "axe";
   /**
    * For L2 regions: the diff-dom op's `route` (path through the DOM
    * tree as child indices). The diff worker uses this with the
