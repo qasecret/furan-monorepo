@@ -70,10 +70,17 @@ export async function runAxe(
           .digest("hex")
           .slice(0, 16),
         severity: mapImpact(v.impact),
-        category: "accessibility",
+        category: "accessibility" as const,
         bbox: { x: 0, y: 0, width: 0, height: 0 },
-        source: "axe",
+        source: "axe" as const,
         description: `${v.id}: ${v.help}`.slice(0, 200),
+        // node.target is axe-core's CSS selector array (string[]). The
+        // resolver in apps/diff-worker uses target[0] to look up bbox
+        // against the element-map sidecar. Spread only when present so
+        // L1/L2 regions never get an unexpected `axeTarget` field.
+        ...(Array.isArray(node.target) && node.target.length > 0
+          ? { axeTarget: node.target as string[] }
+          : {}),
       }));
     });
   } finally {

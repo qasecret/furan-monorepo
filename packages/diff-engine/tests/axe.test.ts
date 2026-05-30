@@ -1,17 +1,17 @@
 import { describe, it, expect } from "vitest";
 
-import { mapImpact, tagsFor } from "../src/axe.js";
+import { mapImpact, runAxe, tagsFor } from "../src/axe.js";
 
 /**
  * Unit tests for the Tier 2.5 pure helpers. The end-to-end
  * `runAxe(html, options)` integration requires a Node process
  * with no pre-existing `window`/`document` globals — axe-core's
- * jsdom path captures globals at module-load time, and a vitest
- * `@vitest-environment jsdom` (or even the default node env with
+ * jsdom path captures globals at module-load time, and setting the
+ * vitest environment to jsdom (or even the default node env with
  * a populated globalThis) creates cross-realm `instanceof` failures
  * in axe-core's `_isContextSpec` check. The diff-worker integration
  * test (which boots a real worker against a Postgres+Redis fixture)
- * is the right place to assert axe.run end-to-end.
+ * covers axe.run end-to-end in cases that require full infrastructure.
  *
  * These tests pin the rule-selection + severity-mapping logic that
  * decides which violations surface and how severe they look — that's
@@ -81,5 +81,24 @@ describe("mapImpact — Tier 2.5 severity mapping", () => {
   it("null impact falls back to minor (axe-core sometimes omits impact)", () => {
     expect(mapImpact(null)).toBe("minor");
     expect(mapImpact(undefined)).toBe("minor");
+  });
+});
+
+describe("runAxe: axeTarget attachment", () => {
+  it("attaches axe-core's target array to emitted regions", async () => {
+    // A document with a deliberate accessibility violation: an <img>
+    // without alt text. axe-core's "image-alt" rule fires on this and
+    // reports the violation node via a stable target selector.
+    const dom = `<!doctype html><html lang="en"><head><title>t</title></head>
+<body><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB
+AQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAC0lEQVR4AWMYBQAAAQAB7zXmDgAAAABJRU5ErkJggg=="></body></html>`;
+    const regions = await runAxe(dom, { level: "AA", version: "WCAG_2_1" });
+    expect(regions.length).toBeGreaterThan(0);
+    for (const r of regions) {
+      expect(r.source).toBe("axe");
+      expect(r.axeTarget).toBeDefined();
+      expect(Array.isArray(r.axeTarget)).toBe(true);
+      expect((r.axeTarget as string[]).length).toBeGreaterThan(0);
+    }
   });
 });
