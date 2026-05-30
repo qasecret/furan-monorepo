@@ -127,6 +127,13 @@
       "when": 1779970000000,
       "tag": "0017_batch_test_checkpoint_model",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1780100000000,
+      "tag": "0018_screenshots_ignore_displacements",
+      "breakpoints": true
     }
   ]
 }

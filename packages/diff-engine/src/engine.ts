@@ -7,6 +7,12 @@ export interface RunDiffInput {
   baseline: { image: Buffer; dom?: string };
   candidate: { image: Buffer; dom?: string };
   config: ProjectDiffConfig;
+  /**
+   * Tier 1.4 (Eyes-parity `ignoreDisplacements`): when true, the L2
+   * pass drops `relocateGroup` regions for this checkpoint.
+   * Defaults to false.
+   */
+  ignoreDisplacements?: boolean;
 }
 
 export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
@@ -30,7 +36,9 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   let l2Duration: number | null = null;
   if (shouldRunL2) {
     const t2 = performance.now();
-    l2Regions = await runL2(input.baseline.dom!, input.candidate.dom!);
+    l2Regions = await runL2(input.baseline.dom!, input.candidate.dom!, {
+      ignoreDisplacements: input.ignoreDisplacements ?? false,
+    });
     l2Duration = performance.now() - t2;
   }
 

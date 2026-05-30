@@ -58,6 +58,21 @@ data class CheckpointOptions(
      */
     val waitBeforeCaptureMs: Long = 0,
     /**
+     * When true, the diff engine drops L2 `relocateGroup` regions for
+     * this checkpoint (Eyes-parity Tier 1.4, mirrors
+     * `eyes.check(name, { ignoreDisplacements: true })`).
+     *
+     * Use this when test content predictably shifts position between
+     * runs (e.g. a new banner inserted above the page body). Without
+     * the flag, the DOM diff flags every shifted element as "moved";
+     * with the flag, only true content changes survive.
+     *
+     * Pixel-level (L1) displacement detection is a separate engine
+     * pass; the SDK flag persists on the screenshot row so a later L1
+     * pass can read the same intent.
+     */
+    val ignoreDisplacements: Boolean = false,
+    /**
      * Optional DOM HTML override. When null, the selenium adapter
      * auto-captures via `document.documentElement.outerHTML`.
      */

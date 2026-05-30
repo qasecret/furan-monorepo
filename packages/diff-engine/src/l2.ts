@@ -98,14 +98,30 @@ function opToRegion(op: DdOp): DiffRegion | null {
 
 const dd = new DiffDOM();
 
+export interface RunL2Options {
+  /**
+   * Tier 1.4 (Eyes-parity `ignoreDisplacements`): when true, drop
+   * regions originating from diff-dom `relocateGroup` ops — same
+   * content, new position. Defaults to false (today's behavior).
+   *
+   * Pixel-level (L1) displacement detection is a separate engine pass;
+   * this flag only governs the DOM signal.
+   */
+  ignoreDisplacements?: boolean;
+}
+
 export async function runL2(
   baselineDom: string,
   candidateDom: string,
+  options: RunL2Options = {},
 ): Promise<DiffRegion[]> {
   const blObj = stringToObj(baselineDom);
   const cdObj = stringToObj(candidateDom);
   const ops = dd.diff(blObj, cdObj) as unknown as DdOp[];
-  const regions = ops
+  const filtered = options.ignoreDisplacements
+    ? ops.filter((op) => op.action !== "relocateGroup")
+    : ops;
+  const regions = filtered
     .map(opToRegion)
     .filter((r): r is DiffRegion => r !== null);
   if (regions.length > 200) {

@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   jsonb,
   pgTable,
@@ -39,6 +40,12 @@ export const screenshots = pgTable(
     floatingRegions: jsonb("floating_regions"),
     contentRegions: jsonb("content_regions"),
     accessibilityRegions: jsonb("accessibility_regions"),
+    // Tier 1.4 (Eyes parity): when true, the diff engine drops L2
+    // relocateGroup regions for this checkpoint. Pixel-level (L1)
+    // displacement detection is a separate engine pass.
+    ignoreDisplacements: boolean("ignore_displacements")
+      .notNull()
+      .default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

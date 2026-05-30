@@ -85,6 +85,10 @@ export const screenshotFields = z.object({
       content: [],
       accessibility: [],
     }),
+  // Tier 1.4 (Eyes parity): when true, the diff engine drops L2
+  // relocateGroup regions for this checkpoint. Pixel-level
+  // displacement detection is a separate engine pass.
+  ignoreDisplacements: z.boolean().default(false),
 });
 
 export const screenshotResponse = z.object({
@@ -217,6 +221,8 @@ export const uploadScreenshotJsonBody = z.object({
   domHtml: z.string().optional(),
   /** Stringified JSON object — same shape as the multipart field. */
   elementMapJson: z.string().optional(),
+  /** Tier 1.4: drop L2 relocateGroup regions for this checkpoint. */
+  ignoreDisplacements: z.boolean().optional(),
 });
 
 /**
@@ -267,6 +273,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         content: unknown[];
         accessibility: unknown[];
       };
+      ignoreDisplacements?: boolean;
     },
     logger: FastifyRequest["log"],
   ) {
@@ -287,6 +294,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         content: [],
         accessibility: [],
       },
+      ignoreDisplacements = false,
     } = inputs;
 
     logger.info(
@@ -376,6 +384,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       accessibilityRegions: regions.accessibility.length
         ? regions.accessibility
         : undefined,
+      ignoreDisplacements,
     };
     const [screenshot] = await app.db
       .insert(screenshots)
@@ -650,6 +659,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       let os: string | null = null;
       let device: string | null = null;
       let matchLevel = "Strict";
+      let ignoreDisplacements = false;
 
       try {
         const parts = req.parts();
@@ -678,6 +688,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
             else if (part.fieldname === "os") os = value || null;
             else if (part.fieldname === "device") device = value || null;
             else if (part.fieldname === "matchLevel") matchLevel = value;
+            else if (part.fieldname === "ignoreDisplacements")
+              ignoreDisplacements = value === "true" || value === "1";
             else if (part.fieldname === "domHtml" && !domHtml) domHtml = value;
             else if (part.fieldname === "elementMapJson" && !elementMapRaw)
               elementMapRaw = value;
@@ -704,6 +716,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           os,
           device,
           matchLevel,
+          ignoreDisplacements,
         },
         req.log,
       );
@@ -795,7 +808,15 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
 
       const result = await persistScreenshot(
         run,
-        { pngBytes, domHtml, elementMapRaw, snapName, viewport, browser },
+        {
+          pngBytes,
+          domHtml,
+          elementMapRaw,
+          snapName,
+          viewport,
+          browser,
+          ignoreDisplacements: body.ignoreDisplacements ?? false,
+        },
         req.log,
       );
       return reply.code(200).send(result);
