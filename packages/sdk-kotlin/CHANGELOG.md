@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.0.0...sdk/v3.1.0) (2026-05-30)
+
+
+### Features
+
+* **sdk-kotlin:** ignoreCaret selector-mask (Eyes parity Tier 2.4) ([#214](https://github.com/qasecret/furan-monorepo/issues/214)) ([dad8795](https://github.com/qasecret/furan-monorepo/commit/dad8795f5ac440645005740f6b9599a0ca00ebde))
+* **sdk-kotlin:** matchTimeoutMs stability poll (Eyes parity Tier 2.3) ([#213](https://github.com/qasecret/furan-monorepo/issues/213)) ([ee18649](https://github.com/qasecret/furan-monorepo/commit/ee186492a0c1166972187b3bd3172f88d9ae9876))
+* **sdk-kotlin:** sendDom opt-out (Eyes parity Tier 2.2) ([#212](https://github.com/qasecret/furan-monorepo/issues/212)) ([80adc4b](https://github.com/qasecret/furan-monorepo/commit/80adc4b40156a1399972235ec7c475b989219b06))
+* **sdk,db,api,diff-engine,diff-worker:** accessibility validation (Tier 2.5) ([#215](https://github.com/qasecret/furan-monorepo/issues/215)) ([efad14b](https://github.com/qasecret/furan-monorepo/commit/efad14b76776a149b7d52c418aa073d058f5e48d))
+
 ## [3.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.2.0...sdk/v3.0.0) (2026-05-30)
 
 ### ⚠ BREAKING CHANGES
