@@ -13,31 +13,15 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.FixedElementHid
 internal const val FIXED_HIDE_STYLE_ID: String = "__furan_fixed_hide"
 
 /**
- * CSS-escape characters that are meaningful at the CSS rule level ({, }, :)
- * within a raw selector string. This prevents a malicious selector value from
- * injecting extra CSS declarations when the assembled rule is embedded in the
- * script source.
- *
- * Valid pseudo-class colons (e.g. `:hover`) are also escaped — callers that
- * need pseudo-class selectors should pass them after verifying they are safe.
- * The escape is the standard CSS identifier escape (backslash + character).
- */
-private fun cssEscapeSelector(selector: String): String =
-    selector
-        .replace("{", "\\{")
-        .replace("}", "\\}")
-        .replace(":", "\\:")
-
-/**
  * Tier 3 (full-page stitching support): inject a `<style>` element that
  * hides every selector in [selectors] for the duration of the stitch.
  * Restore via [removeFixedElementHider] in a finally block.
  *
- * Each selector is CSS-escaped before being assembled into the rule to
- * prevent a quote-bearing or brace-bearing selector from injecting
- * additional CSS declarations. The final CSS string is then embedded in
- * the script source; since the selectors no longer contain raw `{`, `}`,
- * or `:` characters they cannot break out of the rule boundary.
+ * Selectors arrive from user-controlled config (CheckpointOptions), so
+ * the assembled CSS rule is passed as `arguments[0]` to the script body
+ * rather than interpolated into the script source. That keeps a
+ * quote-bearing, brace-bearing, or otherwise hostile selector from
+ * breaking out of the JS string literal and executing arbitrary JS.
  *
  * No-op when [selectors] is empty or when the driver is not a
  * [JavascriptExecutor]. The latter would only happen with a non-browser
@@ -49,17 +33,21 @@ internal fun injectFixedElementHider(driver: WebDriver, selectors: List<String>)
         log.debug("driver is not a JavascriptExecutor; skipping fixed-element hide")
         return
     }
-    val escaped = selectors.joinToString(",") { cssEscapeSelector(it) }
-    val css = "$escaped{display:none !important}"
+    val joined = selectors.joinToString(",")
+    val css = "$joined{display:none !important}"
+    // Pass `css` as arguments[0] so user-supplied selectors cannot break
+    // out of a script-source string literal — this is the primary
+    // defense against selector-driven JS injection.
     js.executeScript(
         """
-        (function(){
+        (function(css){
             var s = document.createElement('style');
             s.id = '$FIXED_HIDE_STYLE_ID';
-            s.textContent = '$css';
+            s.textContent = css;
             document.head.appendChild(s);
-        })();
+        })(arguments[0]);
         """.trimIndent(),
+        css,
     )
 }
 
