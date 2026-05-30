@@ -58,6 +58,27 @@ data class CheckpointOptions(
      */
     val waitBeforeCaptureMs: Long = 0,
     /**
+     * Eyes-parity Tier 2.3 stability budget: when > 0, the SDK
+     * captures repeatedly with a short interval between samples and
+     * exits as soon as two consecutive captures have identical bytes
+     * (page is stable) OR the cumulative wait exceeds this value.
+     *
+     * Mirrors Applitools `setMatchTimeout` / `matchTimeout` semantics
+     * from the user's perspective ("wait up to N ms for the page to
+     * stabilize before snapshotting"), implemented client-side because
+     * Furan's diff pipeline is asynchronous — the captured bytes are
+     * the candidate, so the SDK has to do the stabilization, not the
+     * server.
+     *
+     * Use this when CSS transitions, async data fetches, or web fonts
+     * haven't settled at `snapshot()` time. Prefer explicit waits on a
+     * specific selector when possible — this knob covers the case
+     * where there's no single element to anchor on.
+     *
+     * Defaults to 0 (single-shot capture, no polling).
+     */
+    val matchTimeoutMs: Long = 0,
+    /**
      * Eyes-parity Tier 2.1: lazy-load handling. When non-null, the
      * Selenium adapter scrolls the page in fixed-step increments before
      * capture (with a pause between steps) so lazy-loaded content has
@@ -106,8 +127,29 @@ data class CheckpointOptions(
      */
     val ignoreCaret: Boolean = false,
     /**
-     * Optional DOM HTML override. When null, the selenium adapter
-     * auto-captures via `document.documentElement.outerHTML`.
+     * Eyes-parity Tier 2.2: when false, the SDK skips DOM capture
+     * entirely (mirrors Applitools `setSendDom(false)`). Default is
+     * true — DOM upload powers L2 (DOM/CSS) root-cause analysis, so
+     * disabling it trades root-cause depth for privacy / network /
+     * storage savings.
+     *
+     * Use cases for `sendDom = false`:
+     *  - Air-gapped or regulated environments where uploading rendered
+     *    HTML would leak content (PII in the rendered DOM, etc).
+     *  - Static-page or image-only tests where DOM upload is pure
+     *    overhead.
+     *  - High-volume CI where the DOM payload (typically 50–500 KB per
+     *    checkpoint) is the bottleneck.
+     *
+     * A `domHtml` override (next field) takes precedence: when set
+     * explicitly, the SDK sends that payload regardless of [sendDom].
+     */
+    val sendDom: Boolean = true,
+    /**
+     * Optional DOM HTML override. When null AND [sendDom] is true,
+     * the selenium adapter auto-captures via
+     * `document.documentElement.outerHTML`. When [sendDom] is false,
+     * this field is ignored unless explicitly non-null.
      */
     val domHtml: String? = null,
     /**
