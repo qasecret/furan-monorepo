@@ -12,6 +12,7 @@ import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.RunResult
+import io.furan.sdk.dto.SuiteResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -279,6 +280,20 @@ class Furan(
                 throw e
             }
         }
+
+        /**
+         * Tier 1.5 (Eyes-parity `runner.getAllTestResults`): wrap a
+         * collection of completed [RunResult]s in a [SuiteResult] for
+         * uniform CI reporting (derived counts, pass/fail summary, etc).
+         *
+         * For tests using [FuranExtension], prefer
+         * `FuranExtension.getSuiteResult(extensionContext)` which auto-
+         * collects every [close] result from the suite. This factory is
+         * for the manual case (tests not on the extension path) and for
+         * Java callers that want a single static entry point.
+         */
+        @JvmStatic
+        fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
 
         /**
          * Best-effort: drops the map silently on any failure (non-JS driver,

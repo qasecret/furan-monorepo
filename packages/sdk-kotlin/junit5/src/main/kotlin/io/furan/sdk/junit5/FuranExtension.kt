@@ -3,6 +3,8 @@ package io.furan.sdk.junit5
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranConfigException
+import io.furan.sdk.dto.RunResult
+import io.furan.sdk.dto.SuiteResult
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.AfterEachCallback
 import org.junit.jupiter.api.extension.BeforeEachCallback
@@ -131,7 +133,12 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         if (context.executionException.isPresent) {
             runCatching { invokeMethod(furan, "abort", emptyArray(), emptyArray()) }
         } else {
-            invokeMethod(furan, "close", emptyArray(), emptyArray())
+            val result = invokeMethod(furan, "close", emptyArray(), emptyArray())
+            // Tier 1.5: stash each successful close()'s RunResult on the
+            // class-level store so getSuiteResult() can aggregate across
+            // the suite. `Furan.close()` returns RunResult? (null when no
+            // run was open), so we no-op on null.
+            (result as? RunResult)?.let { captureRunResult(context, it) }
         }
     }
 
@@ -148,6 +155,72 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
             ExtensionContext.Namespace.create("io.furan.sdk.junit5.FuranExtension")
         const val CONFIG_KEY = "config"
         const val CLIENT_KEY = "client"
+
+        /**
+         * Tier 1.5: store key for the per-class accumulator of
+         * [RunResult]s captured by [afterEach]. Lives on the root /
+         * class-level store so it survives across @Test methods.
+         */
+        const val RESULTS_KEY = "suite-results"
+
+        /**
+         * Tier 1.5 — aggregate every [RunResult] captured by the
+         * extension over the lifetime of this test class into a single
+         * [SuiteResult] (mirrors Applitools' `runner.getAllTestResults`).
+         *
+         * Returns an empty SuiteResult when no runs have been recorded
+         * yet — e.g. when the test class hasn't started, or every @Test
+         * went through the `FuranClient` injection path (which manages
+         * its own lifecycle without the extension's open/close hooks).
+         *
+         * Thread-safe: the accumulator is synchronized on its own
+         * monitor, and the returned list is a snapshot copy.
+         */
+        @JvmStatic
+        fun getSuiteResult(context: ExtensionContext): SuiteResult {
+            val store = context.root.getStore(NAMESPACE)
+            @Suppress("UNCHECKED_CAST")
+            val results = store.get(RESULTS_KEY) as? MutableList<RunResult>
+            return snapshotResults(results)
+        }
+
+        /**
+         * Tier 1.5: append a completed RunResult to the class-level
+         * accumulator. Visible to [afterEach] (same file). Synchronizes
+         * on the list so parallel @Test execution (JUnit5
+         * `junit.jupiter.execution.parallel.enabled`) doesn't drop
+         * entries.
+         */
+        @Suppress("UNCHECKED_CAST")
+        internal fun captureRunResult(context: ExtensionContext, result: RunResult) {
+            val store = context.root.getStore(NAMESPACE)
+            val results = store.getOrComputeIfAbsent(
+                RESULTS_KEY,
+                { mutableListOf<RunResult>() },
+                MutableList::class.java,
+            ) as MutableList<RunResult>
+            appendResult(results, result)
+        }
+
+        /**
+         * Pure helper for [captureRunResult] — exposed so tests can
+         * exercise the accumulator semantics (thread-safety, append,
+         * snapshot) without standing up a full JUnit5 [ExtensionContext].
+         */
+        internal fun appendResult(list: MutableList<RunResult>, result: RunResult) {
+            synchronized(list) { list.add(result) }
+        }
+
+        /**
+         * Pure helper for [getSuiteResult] — exposed so tests can
+         * exercise the snapshot semantics without an [ExtensionContext].
+         * Null input returns an empty suite (matches the Store-empty
+         * code path in the public API).
+         */
+        internal fun snapshotResults(list: MutableList<RunResult>?): SuiteResult {
+            if (list == null) return SuiteResult(emptyList())
+            synchronized(list) { return SuiteResult(list.toList()) }
+        }
 
         /**
          * Store key under which a `io.furan.sdk.selenium.Furan` instance
@@ -180,18 +253,17 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         const val FURAN_KEY = "furan"
 
         /**
-         * Invoke a method on [target] by reflection. Used to call
-         * `open`/`close`/`abort` on `io.furan.sdk.selenium.Furan` without
-         * taking a compile-time dependency on the selenium module — the
-         * junit5 module is browser-agnostic and only requires `:core`.
+         * Invoke a method on [target] by reflection and return its result
+         * (or `null` if void). Used to call `open`/`close`/`abort` on
+         * `io.furan.sdk.selenium.Furan` without taking a compile-time
+         * dependency on the selenium module — the junit5 module is
+         * browser-agnostic and only requires `:core`.
          */
         private fun invokeMethod(
             target: Any,
             name: String,
             paramTypes: Array<Class<*>>,
             args: Array<Any?>,
-        ) {
-            target.javaClass.getMethod(name, *paramTypes).invoke(target, *args)
-        }
+        ): Any? = target.javaClass.getMethod(name, *paramTypes).invoke(target, *args)
     }
 }
