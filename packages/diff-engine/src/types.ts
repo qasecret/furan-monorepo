@@ -24,6 +24,17 @@ export interface DiffRegion {
    * Absent for L1 regions and for the L2 overflow sentinel.
    */
   route?: number[];
+  /**
+   * For axe regions: the axe-core `target` selector array (verbatim).
+   * The diff worker uses this with the candidate DOM + element-map
+   * sidecar to resolve a real bbox via `axe-bbox-resolver.ts`.
+   *
+   * Absent for L1 and L2 regions.
+   *
+   * v1.0 uses only `axeTarget[0]` (multi-frame iframe traversal is
+   * deferred — Furan captures a single frame today).
+   */
+  axeTarget?: string[];
 }
 
 export type ImageComparison = "pixelmatch" | "looks_same" | "odiff";

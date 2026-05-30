@@ -27,6 +27,7 @@ import type { Redis } from "ioredis";
 import sharp from "sharp";
 import { z } from "zod";
 
+import { resolveAxeBboxes } from "./axe-bbox-resolver.js";
 import type { DiffMetrics } from "./diff-metrics.js";
 import {
   evaluateDynamicTextRegions,
@@ -778,6 +779,19 @@ async function handleDiffJobInner(
       l2Resolution: {
         labels: (l) => ({
           inc: () => deps.metrics?.l2Resolution.labels(l).inc(),
+        }),
+      },
+    });
+    // Tier 2.5 close-out: resolve axe violation bboxes via the same
+    // candidate DOM + element-map sidecar that L2 just used. Mutates
+    // any source='axe' regions already appended to result.regions in
+    // the Tier 2.5 block above. Misses leave bbox:{0,0,0,0}; the
+    // dashboard already handles those by showing the violation in
+    // the side panel only.
+    resolveAxeBboxes(result.regions, candidateDom, elementMap, {
+      axeResolution: {
+        labels: (l) => ({
+          inc: () => deps.metrics?.axeResolution.labels(l).inc(),
         }),
       },
     });
