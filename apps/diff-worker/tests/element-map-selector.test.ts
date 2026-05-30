@@ -69,6 +69,15 @@ describe("elementSegment", () => {
     Object.defineProperty(el, "tagName", { value: undefined });
     expect(elementSegment(el)).toBeNull();
   });
+
+  it("escapes CSS-meaningful characters in ids to match Kotlin SDK's CSS.escape", () => {
+    // The SDK's ElementBboxScript.kt calls CSS.escape(el.id) before
+    // writing the element-map key. Ids containing : . (space) etc
+    // must be escaped to round-trip.
+    const dom = new JSDOM(`<div id="foo:bar"></div>`);
+    const el = dom.window.document.querySelector("[id]")!;
+    expect(elementSegment(el)).toBe("#foo\\:bar");
+  });
 });
 
 describe("buildSdkSelectorFromAncestors", () => {
