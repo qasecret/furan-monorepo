@@ -23,6 +23,7 @@
     "@furan/telemetry": "workspace:*",
     "diff-dom": "^5.1.0",
     "ioredis": "^5.4.1",
+    "jsdom": "^25.0.1",
     "prom-client": "^15.1.3",
     "sharp": "^0.33",
     "tesseract.js": "^5.0.0",
@@ -31,9 +32,9 @@
   "devDependencies": {
     "@furan/eslint-config": "workspace:*",
     "@furan/tsconfig": "workspace:*",
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",
-    "jsdom": "^25.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
