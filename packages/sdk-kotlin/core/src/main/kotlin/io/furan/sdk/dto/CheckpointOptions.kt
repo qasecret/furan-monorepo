@@ -107,6 +107,26 @@ data class CheckpointOptions(
      */
     val ignoreDisplacements: Boolean = false,
     /**
+     * Eyes-parity Tier 2.4: when true, the SDK auto-appends a
+     * selector-anchored ignore region targeting the focused text
+     * input — `input:focus, textarea:focus, [contenteditable]:focus` —
+     * so a blinking caret doesn't flag as a diff.
+     *
+     * Mirrors Applitools `setIgnoreCaret` from the user's
+     * perspective. Furan's implementation is selector-based and
+     * masks the entire focused input (not just the caret pixels).
+     * For inputs where the rest of the content also varies (e.g.
+     * a username field with a username already typed), prefer an
+     * explicit `ignoreRegions = listOf(Region.bySelector(".my-input"))`
+     * targeting only the input you want masked.
+     *
+     * True sub-pixel caret detection (the Eyes engine-side
+     * approach) is a future engine pass; for now this knob covers
+     * the common case where a focused input is the source of
+     * caret-noise diffs.
+     */
+    val ignoreCaret: Boolean = false,
+    /**
      * Eyes-parity Tier 2.5: when set, the diff-worker runs axe-core
      * against the captured DOM snapshot and surfaces WCAG violations
      * as `diff_regions` with `source = 'axe'`,
