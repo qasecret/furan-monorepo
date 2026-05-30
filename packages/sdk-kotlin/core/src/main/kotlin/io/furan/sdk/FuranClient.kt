@@ -183,6 +183,8 @@ class FuranClient(
         domHtml: String?,
         elementMapJson: String?,
         ignoreDisplacements: Boolean = false,
+        accessibilityLevel: String? = null,
+        accessibilityVersion: String? = null,
     ): CheckpointSubmission = try {
         val regionsJson = buildJsonObject {
             put("ignore", json.parseToJsonElement(json.encodeToString(regions.ignore)))
@@ -201,6 +203,8 @@ class FuranClient(
                 append("matchLevel", matchLevel.name)
                 append("regions", regionsJson)
                 if (ignoreDisplacements) append("ignoreDisplacements", "true")
+                accessibilityLevel?.let { append("accessibilityLevel", it) }
+                accessibilityVersion?.let { append("accessibilityVersion", it) }
                 append(
                     "pngBytes",
                     pngBytes,

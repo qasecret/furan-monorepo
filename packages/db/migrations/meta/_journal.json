@@ -134,6 +134,13 @@
       "when": 1780100000000,
       "tag": "0018_screenshots_ignore_displacements",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1780200000000,
+      "tag": "0019_screenshots_accessibility_settings",
+      "breakpoints": true
     }
   ]
 }

@@ -86,6 +86,18 @@ data class CheckpointOptions(
      */
     val ignoreDisplacements: Boolean = false,
     /**
+     * Eyes-parity Tier 2.5: when set, the diff-worker runs axe-core
+     * against the captured DOM snapshot and surfaces WCAG violations
+     * as `diff_regions` with `source = 'axe'`,
+     * `category = 'accessibility'`. See [AccessibilitySettings] for
+     * level + version controls.
+     *
+     * Requires DOM capture (default; see `sendDom` once Tier 2.2
+     * lands). A checkpoint that opts in here without a DOM payload
+     * logs a WARN server-side and skips the accessibility pass.
+     */
+    val accessibilitySettings: AccessibilitySettings? = null,
+    /**
      * Optional DOM HTML override. When null, the selenium adapter
      * auto-captures via `document.documentElement.outerHTML`.
      */

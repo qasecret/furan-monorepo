@@ -89,6 +89,12 @@ export const screenshotFields = z.object({
   // relocateGroup regions for this checkpoint. Pixel-level
   // displacement detection is a separate engine pass.
   ignoreDisplacements: z.boolean().default(false),
+  // Tier 2.5 (Eyes parity): per-checkpoint accessibility settings.
+  // When set, the diff-worker runs axe-core against the captured
+  // DOM and surfaces WCAG violations as diff_regions with
+  // source='axe', category='accessibility'.
+  accessibilityLevel: z.enum(["AA", "AAA"]).optional(),
+  accessibilityVersion: z.enum(["WCAG_2_0", "WCAG_2_1"]).optional(),
 });
 
 export const screenshotResponse = z.object({
@@ -274,6 +280,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         accessibility: unknown[];
       };
       ignoreDisplacements?: boolean;
+      accessibilityLevel?: string | null;
+      accessibilityVersion?: string | null;
     },
     logger: FastifyRequest["log"],
   ) {
@@ -295,6 +303,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         accessibility: [],
       },
       ignoreDisplacements = false,
+      accessibilityLevel = null,
+      accessibilityVersion = null,
     } = inputs;
 
     logger.info(
@@ -385,6 +395,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         ? regions.accessibility
         : undefined,
       ignoreDisplacements,
+      accessibilityLevel: accessibilityLevel ?? undefined,
+      accessibilityVersion: accessibilityVersion ?? undefined,
     };
     const [screenshot] = await app.db
       .insert(screenshots)
@@ -660,6 +672,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       let device: string | null = null;
       let matchLevel = "Strict";
       let ignoreDisplacements = false;
+      let accessibilityLevel: string | null = null;
+      let accessibilityVersion: string | null = null;
 
       try {
         const parts = req.parts();
@@ -690,6 +704,10 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
             else if (part.fieldname === "matchLevel") matchLevel = value;
             else if (part.fieldname === "ignoreDisplacements")
               ignoreDisplacements = value === "true" || value === "1";
+            else if (part.fieldname === "accessibilityLevel")
+              accessibilityLevel = value;
+            else if (part.fieldname === "accessibilityVersion")
+              accessibilityVersion = value;
             else if (part.fieldname === "domHtml" && !domHtml) domHtml = value;
             else if (part.fieldname === "elementMapJson" && !elementMapRaw)
               elementMapRaw = value;
@@ -717,6 +735,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           device,
           matchLevel,
           ignoreDisplacements,
+          accessibilityLevel,
+          accessibilityVersion,
         },
         req.log,
       );
