@@ -169,12 +169,16 @@ class Furan(
         val captureSelector = captureRegion?.selector
         val pngBytes = when {
             captureRegion != null && captureSelector != null ->
+                // Element-direct capture skips the stability poll —
+                // Selenium's element screenshot is a single operation
+                // and the per-sample cost isn't justified. Use
+                // `waitBeforeCaptureMs` to stabilize before this path.
                 captureElementScreenshot(driver, captureSelector)
             captureRegion != null -> {
                 val resolved = resolveRegion(driver, captureRegion)
-                cropPng(captureScreenshot(driver), resolved)
+                cropPng(captureStableScreenshot(driver, options.matchTimeoutMs), resolved)
             }
-            else -> captureScreenshot(driver)
+            else -> captureStableScreenshot(driver, options.matchTimeoutMs)
         }
         // Tier 1.2: resolve any selector-anchored mask regions to numeric
         // coords against the live DOM before sending. Selector-less regions
