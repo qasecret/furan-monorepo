@@ -134,8 +134,10 @@ internal suspend fun captureFullyPage(
     val js = driver as? JavascriptExecutor
         ?: error("WebDriver does not implement JavascriptExecutor; cannot drive scroll")
 
-    val docWidth = ((js.executeScript("return document.documentElement.clientWidth;") as? Number)?.toInt() ?: viewportWidth)
-        .coerceAtLeast(viewportWidth)
+    val docWidth = (
+        (js.executeScript("return document.documentElement.clientWidth;") as? Number)?.toInt()
+            ?: viewportWidth
+        ).coerceAtLeast(viewportWidth)
     val rawDocHeight = (
         js.executeScript(
             "return Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);",
@@ -156,6 +158,9 @@ internal suspend fun captureFullyPage(
         // Restore scroll to 0 even if a tile capture threw — the caller's
         // post-stitch DOM / element-bbox capture relies on scrollY=0.
         runCatching { js.executeScript("window.scrollTo(0, arguments[0]);", 0) }
+    }
+    check(tiles.isNotEmpty()) {
+        "no tiles captured for fully-page stitch (effDocHeight=$effDocHeight, viewportHeight=$viewportHeight)"
     }
     return composeTilesIntoPng(tiles = tiles, width = docWidth, height = effDocHeight)
 }

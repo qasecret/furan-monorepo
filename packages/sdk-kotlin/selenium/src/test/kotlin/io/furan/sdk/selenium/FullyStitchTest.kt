@@ -142,6 +142,28 @@ class FullyStitchTest {
         assertEquals(100_000, img.height)
     }
 
+    // --- enforceMemoryCap (direct unit tests) ---------------------------
+
+    @Test
+    fun `enforceMemoryCap returns docHeight unchanged below warn threshold`() {
+        // 1920 x 20_000 = 38.4 MP, below the 50 MP warn threshold.
+        assertEquals(20_000, enforceMemoryCap(docWidth = 1920, docHeight = 20_000))
+    }
+
+    @Test
+    fun `enforceMemoryCap returns docHeight unchanged in warn band`() {
+        // 1920 x 30_000 = 57.6 MP, above warn (50 MP) but below hard cap (200 MP).
+        // Returns the original height; the warn is a side-effect log only.
+        assertEquals(30_000, enforceMemoryCap(docWidth = 1920, docHeight = 30_000))
+    }
+
+    @Test
+    fun `enforceMemoryCap truncates docHeight above hard cap`() {
+        // 2000 x 150_000 = 300 MP, above the 200 MP hard cap.
+        // Truncates to 200_000_000 / 2000 = 100_000.
+        assertEquals(100_000, enforceMemoryCap(docWidth = 2000, docHeight = 150_000))
+    }
+
     /**
      * Stub driver for the orchestrator tests. Reports a synthetic
      * `documentElement.scrollHeight` + `clientWidth`, returns a solid-blue
