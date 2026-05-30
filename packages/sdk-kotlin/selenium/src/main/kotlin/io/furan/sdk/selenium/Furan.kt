@@ -150,6 +150,14 @@ class Furan(
         options.beforeCaptureScreenshot?.let { js ->
             (driver as? JavascriptExecutor)?.executeScript(js)
         }
+        // Tier 2.1: lazy-load scroll loop. Runs AFTER the JS hook (so
+        // user-injected DOM mutations land first) and BEFORE the final
+        // wait (so any animation that the last scroll triggered gets
+        // the settle budget). Restores scroll position to top before
+        // returning so the screenshot frames the page header.
+        options.lazyLoad?.let { lazyLoad ->
+            runLazyLoadScroll(driver, lazyLoad)
+        }
         if (options.waitBeforeCaptureMs > 0) {
             kotlinx.coroutines.delay(options.waitBeforeCaptureMs)
         }

@@ -58,6 +58,19 @@ data class CheckpointOptions(
      */
     val waitBeforeCaptureMs: Long = 0,
     /**
+     * Eyes-parity Tier 2.1: lazy-load handling. When non-null, the
+     * Selenium adapter scrolls the page in fixed-step increments before
+     * capture (with a pause between steps) so lazy-loaded content has
+     * time to render. The SDK restores the scroll position to the top
+     * before snapshotting. See [LazyLoadOptions] for defaults and
+     * tuning guidance.
+     *
+     * The scroll loop runs AFTER [beforeCaptureScreenshot] and BEFORE
+     * [waitBeforeCaptureMs] — so JS-triggered DOM mutations happen
+     * first, then lazy content settles, then the final pause.
+     */
+    val lazyLoad: LazyLoadOptions? = null,
+    /**
      * When true, the diff engine drops L2 `relocateGroup` regions for
      * this checkpoint (Eyes-parity Tier 1.4, mirrors
      * `eyes.check(name, { ignoreDisplacements: true })`).
