@@ -710,6 +710,11 @@ async function handleDiffJobInner(
           ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
         },
         ignoreDisplacements: cs.ignoreDisplacements,
+        l1DisplacementMetric: {
+          labels: (l) => ({
+            inc: () => deps.metrics?.l1Displacement.labels(l).inc(),
+          }),
+        },
         config: {
           // Per-run override (set via the in-viewer sensitivity slider) wins
           // over the project default. Null/undefined means "inherit," so the
