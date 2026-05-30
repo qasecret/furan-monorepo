@@ -24,6 +24,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // 200 MP cap test allocates a 2000x100_000 composed image (~800 MB);
+    // raise heap so the JVM worker can handle it.
+    maxHeapSize = "1g"
     testLogging {
         events("passed", "failed", "skipped")
     }

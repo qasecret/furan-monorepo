@@ -4,6 +4,27 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
+import kotlinx.coroutines.delay
+import org.openqa.selenium.JavascriptExecutor
+import org.openqa.selenium.OutputType
+import org.openqa.selenium.TakesScreenshot
+import org.openqa.selenium.WebDriver
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.FullyStitch")
+
+/** Soft warn threshold (spec §4.5): 50 megapixels (~1920x26000). */
+internal const val FULLY_WARN_MEGAPIXELS: Long = 50_000_000
+
+/** Hard cap (spec §4.5): 200 megapixels (~1920x100000). Above this the page is truncated. */
+internal const val FULLY_HARD_CAP_MEGAPIXELS: Long = 200_000_000
+
+/**
+ * Per-tile settle delay before capture (matches the empirical 50ms wait
+ * Eyes uses between scroll and screenshot — gives the browser time to
+ * paint after scroll without burning measurable budget).
+ */
+internal const val FULLY_TILE_SETTLE_MS: Long = 50
 
 /**
  * Tier 3 — full-page stitching.
@@ -85,4 +106,80 @@ internal fun composeTilesIntoPng(
     val out = ByteArrayOutputStream()
     ImageIO.write(composed, "png", out)
     return out.toByteArray()
+}
+
+/**
+ * Top-level orchestrator (spec §4.2). Drives the scroll-and-capture loop
+ * and returns the composed PNG.
+ *
+ *  1. Read document width / height from JS.
+ *  2. Apply memory cap (truncate effective docHeight if needed).
+ *  3. Compute tile y offsets via [tileYs].
+ *  4. For each y: `window.scrollTo(0, y)`, settle, capture viewport via
+ *     `getScreenshotAs(BYTES)`, collect (y, bytes).
+ *  5. Restore scroll to 0.
+ *  6. Compose tiles via [composeTilesIntoPng].
+ *  7. Return PNG bytes.
+ *
+ * Throws if the driver does not implement [TakesScreenshot] — a non-
+ * screenshot driver cannot be used for fully-page capture.
+ */
+internal suspend fun captureFullyPage(
+    driver: WebDriver,
+    viewportWidth: Int,
+    viewportHeight: Int,
+): ByteArray {
+    val taker = driver as? TakesScreenshot
+        ?: error("WebDriver does not implement TakesScreenshot; cannot capture fully")
+    val js = driver as? JavascriptExecutor
+        ?: error("WebDriver does not implement JavascriptExecutor; cannot drive scroll")
+
+    val docWidth = ((js.executeScript("return document.documentElement.clientWidth;") as? Number)?.toInt() ?: viewportWidth)
+        .coerceAtLeast(viewportWidth)
+    val rawDocHeight = (
+        js.executeScript(
+            "return Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);",
+        ) as? Number
+        )?.toInt() ?: viewportHeight
+
+    val effDocHeight = enforceMemoryCap(docWidth, rawDocHeight)
+
+    val ys = tileYs(docHeight = effDocHeight, viewportHeight = viewportHeight)
+    val tiles = mutableListOf<Pair<Int, ByteArray>>()
+    try {
+        for (y in ys) {
+            js.executeScript("window.scrollTo(0, arguments[0]);", y)
+            delay(FULLY_TILE_SETTLE_MS)
+            tiles.add(y to taker.getScreenshotAs(OutputType.BYTES))
+        }
+    } finally {
+        // Restore scroll to 0 even if a tile capture threw — the caller's
+        // post-stitch DOM / element-bbox capture relies on scrollY=0.
+        runCatching { js.executeScript("window.scrollTo(0, arguments[0]);", 0) }
+    }
+    return composeTilesIntoPng(tiles = tiles, width = docWidth, height = effDocHeight)
+}
+
+/**
+ * Apply the spec §4.5 memory budget: warn above [FULLY_WARN_MEGAPIXELS],
+ * truncate above [FULLY_HARD_CAP_MEGAPIXELS]. Returns the effective
+ * document height (== [docHeight] if below the cap).
+ */
+internal fun enforceMemoryCap(docWidth: Int, docHeight: Int): Int {
+    val pixels = docWidth.toLong() * docHeight.toLong()
+    if (pixels > FULLY_HARD_CAP_MEGAPIXELS) {
+        val cappedHeight = (FULLY_HARD_CAP_MEGAPIXELS / docWidth.toLong()).toInt()
+        log.error(
+            "fully-page document is {} px ({}x{}), exceeds hard cap {} px; truncating to {}x{}",
+            pixels, docWidth, docHeight, FULLY_HARD_CAP_MEGAPIXELS, docWidth, cappedHeight,
+        )
+        return cappedHeight
+    }
+    if (pixels > FULLY_WARN_MEGAPIXELS) {
+        log.warn(
+            "fully-page document is {} px ({}x{}), above {} warn threshold; consider masking or splitting the test",
+            pixels, docWidth, docHeight, FULLY_WARN_MEGAPIXELS,
+        )
+    }
+    return docHeight
 }
