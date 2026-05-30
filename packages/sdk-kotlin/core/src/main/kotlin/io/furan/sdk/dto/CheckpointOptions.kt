@@ -75,6 +75,11 @@ data class CheckpointOptions(
      * specific selector when possible — this knob covers the case
      * where there's no single element to anchor on.
      *
+     * Ignored when [fully] is true — byte-stability polling on a stitched
+     * full-page image is prohibitively expensive. Use [lazyLoad] +
+     * [waitBeforeCaptureMs] to settle the page before fully-page stitching
+     * begins.
+     *
      * Defaults to 0 (single-shot capture, no polling).
      */
     val matchTimeoutMs: Long = 0,

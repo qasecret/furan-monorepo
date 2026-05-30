@@ -188,3 +188,32 @@ internal fun enforceMemoryCap(docWidth: Int, docHeight: Int): Int {
     }
     return docHeight
 }
+
+/**
+ * Process-wide flag: have we already logged the "matchTimeoutMs ignored
+ * in fully mode" notice? We only want to log it once per process — the
+ * user has already seen the message and noisier logs don't help.
+ */
+@Volatile
+private var matchTimeoutFullyWarned: Boolean = false
+
+/**
+ * Emit a one-time INFO log when both [io.furan.sdk.dto.CheckpointOptions.fully]
+ * and [io.furan.sdk.dto.CheckpointOptions.matchTimeoutMs] are set on the same
+ * checkpoint (spec §4.6.3). Returns true if the log was emitted (first call),
+ * false otherwise (subsequent calls in the same process).
+ */
+internal fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
+    if (matchTimeoutFullyWarned) return false
+    matchTimeoutFullyWarned = true
+    log.info(
+        "matchTimeoutMs is ignored when CheckpointOptions.fully = true; " +
+            "use lazyLoad + waitBeforeCaptureMs to settle the page before stitching",
+    )
+    return true
+}
+
+/** Reset the gate for unit tests. Must NOT be called from production code. */
+internal fun resetMatchTimeoutFullyWarnedForTest() {
+    matchTimeoutFullyWarned = false
+}

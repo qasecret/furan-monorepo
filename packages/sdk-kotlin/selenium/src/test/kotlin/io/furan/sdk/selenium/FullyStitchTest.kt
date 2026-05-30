@@ -1,6 +1,7 @@
 package io.furan.sdk.selenium
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class FullyStitchTest {
@@ -162,6 +163,19 @@ class FullyStitchTest {
         // 2000 x 150_000 = 300 MP, above the 200 MP hard cap.
         // Truncates to 200_000_000 / 2000 = 100_000.
         assertEquals(100_000, enforceMemoryCap(docWidth = 2000, docHeight = 150_000))
+    }
+
+    // --- warnMatchTimeoutIgnoredInFullyMode (Task 6) --------------------
+
+    @Test
+    fun `warnMatchTimeoutIgnoredInFullyMode logs once per process`() {
+        // Two calls in the same process — only one log should be emitted.
+        // We verify via the boolean return value the gate uses; the actual
+        // log output is a side effect we don't capture here.
+        // Reset the flag for test isolation.
+        resetMatchTimeoutFullyWarnedForTest()
+        assertTrue(warnMatchTimeoutIgnoredInFullyMode())
+        org.junit.jupiter.api.Assertions.assertFalse(warnMatchTimeoutIgnoredInFullyMode())
     }
 
     /**
