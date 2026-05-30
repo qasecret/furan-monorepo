@@ -125,7 +125,7 @@ export function RegionItem({ region }: { region: DiffRegion }) {
       )}
       data-region-id={region.id}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Badge
           variant={style.variant}
           className={style.className}
@@ -133,6 +133,15 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         >
           {SEVERITY_LABEL[sev]}
         </Badge>
+        {region.source === "l2" ? (
+          <Badge
+            variant="outline"
+            className="bg-violet-100 text-violet-900 border-violet-300 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/20"
+            data-source-badge="l2"
+          >
+            Root Cause
+          </Badge>
+        ) : null}
         <span className="text-xs text-zinc-500 capitalize">
           {region.category}
         </span>
