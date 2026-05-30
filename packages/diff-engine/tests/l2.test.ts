@@ -51,3 +51,52 @@ describe("runL2", () => {
     expect(regions).toEqual([]);
   });
 });
+
+describe("runL2 — ignoreDisplacements (Tier 1.4)", () => {
+  // diff-dom emits `relocateGroup` when siblings of different node
+  // types are reordered as a group. Empirically (verified against
+  // diff-dom 5.x), `<h1/><img/><p/>` → `<img/><h1/><p/>` produces
+  // exactly one relocateGroup op.
+  const baseline = `<html><body><h1>title</h1><img src="a.png"/><p>copy</p></body></html>`;
+  const candidate = `<html><body><img src="a.png"/><h1>title</h1><p>copy</p></body></html>`;
+
+  it("by default, regions include relocateGroup-derived 'Element relocated'", async () => {
+    const regions = await runL2(baseline, candidate);
+    const relocations = regions.filter(
+      (r) => r.description === "Element relocated",
+    );
+    expect(relocations.length).toBeGreaterThan(0);
+  });
+
+  it("with ignoreDisplacements=true, 'Element relocated' regions are dropped", async () => {
+    const regions = await runL2(baseline, candidate, {
+      ignoreDisplacements: true,
+    });
+    const relocations = regions.filter(
+      (r) => r.description === "Element relocated",
+    );
+    expect(relocations.length).toBe(0);
+  });
+
+  it("with ignoreDisplacements=true, other op types still surface", async () => {
+    // Mix: one text change (preserved) + one relocation (dropped). Sanity
+    // check that the filter is targeted, not a blanket "drop everything."
+    const a = `<html><body><h1>title</h1><img src="a.png"/><p>copy</p></body></html>`;
+    const b = `<html><body><img src="a.png"/><h1>title2</h1><p>copy</p></body></html>`;
+    const regions = await runL2(a, b, { ignoreDisplacements: true });
+    // Text-change op should survive even when relocations are dropped.
+    const textChanges = regions.filter((r) => r.category === "text");
+    expect(textChanges.length).toBeGreaterThan(0);
+    // Relocations dropped.
+    const relocations = regions.filter(
+      (r) => r.description === "Element relocated",
+    );
+    expect(relocations.length).toBe(0);
+  });
+
+  it("undefined option falls back to existing behavior (no drop)", async () => {
+    const a = await runL2(baseline, candidate);
+    const b = await runL2(baseline, candidate, {});
+    expect(b.length).toBe(a.length);
+  });
+});

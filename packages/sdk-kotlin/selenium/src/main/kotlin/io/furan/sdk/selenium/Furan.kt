@@ -193,6 +193,7 @@ class Furan(
             pngBytes = pngBytes,
             domHtml = domHtml,
             elementMapJson = elementMapJson,
+            ignoreDisplacements = options.ignoreDisplacements,
         )
     }
 

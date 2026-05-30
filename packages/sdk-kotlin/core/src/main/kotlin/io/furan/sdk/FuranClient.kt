@@ -182,6 +182,7 @@ class FuranClient(
         pngBytes: ByteArray,
         domHtml: String?,
         elementMapJson: String?,
+        ignoreDisplacements: Boolean = false,
     ): CheckpointSubmission = try {
         val regionsJson = buildJsonObject {
             put("ignore", json.parseToJsonElement(json.encodeToString(regions.ignore)))
@@ -199,6 +200,7 @@ class FuranClient(
                 device?.let { append("device", it) }
                 append("matchLevel", matchLevel.name)
                 append("regions", regionsJson)
+                if (ignoreDisplacements) append("ignoreDisplacements", "true")
                 append(
                     "pngBytes",
                     pngBytes,

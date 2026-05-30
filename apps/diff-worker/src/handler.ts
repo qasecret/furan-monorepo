@@ -682,7 +682,9 @@ async function handleDiffJobInner(
       const t2 = performance.now();
       const l2Regions =
         baselineDom !== undefined && candidateDom !== undefined
-          ? await runL2(baselineDom, candidateDom)
+          ? await runL2(baselineDom, candidateDom, {
+              ignoreDisplacements: cs.ignoreDisplacements,
+            })
           : [];
       const l2Duration = performance.now() - t2;
       const allL2Regions = classifyRegions(l2Regions);
@@ -705,6 +707,7 @@ async function handleDiffJobInner(
           image: Buffer.from(candidateBytes),
           ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
         },
+        ignoreDisplacements: cs.ignoreDisplacements,
         config: {
           // Per-run override (set via the in-viewer sensitivity slider) wins
           // over the project default. Null/undefined means "inherit," so the
