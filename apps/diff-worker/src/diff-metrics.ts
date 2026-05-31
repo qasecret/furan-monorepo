@@ -60,6 +60,20 @@ export interface DiffMetrics {
    *     always supplies one in current versions)
    */
   axeResolution: Counter<"outcome">;
+  /**
+   * Outcome of the L1 pixel-displacement pre-alignment pass.
+   * The pass runs unconditionally per checkpoint (so the outcomes
+   * sum to total checkpoints), gated internally on
+   * `CheckpointOptions.ignoreDisplacements`.
+   *
+   * Outcomes:
+   *   - `applied` — flag on, detected within caps, alignment used
+   *   - `low_confidence` — flag on, peak/mean below 0.05 threshold
+   *   - `shift_capped` — flag on, |dx| > 50 OR |dy| > 200
+   *   - `skipped` — flag off (the dominant counter; operators can
+   *     compute "% of checkpoints with flag on" from this)
+   */
+  l1Displacement: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -98,6 +112,12 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     axeResolution: new Counter({
       name: "furan_diff_axe_region_resolution_total",
       help: "Outcome of resolving an axe-core violation's CSS target to an element-map bbox",
+      labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    l1Displacement: new Counter({
+      name: "furan_diff_l1_displacement_total",
+      help: "Outcome of the L1 pixel-displacement pre-alignment pass",
       labelNames: ["outcome"],
       registers: [registry],
     }),
