@@ -4,6 +4,7 @@ import {
   DISPLACEMENT_CONFIDENCE_THRESHOLD,
   shiftImage,
 } from "./l1-displacement.js";
+import { extractL1PixelRegions } from "./l1-region-extractor.js";
 import { runL1 } from "./l1.js";
 import { runL2 } from "./l2.js";
 import type { DiffResult, ProjectDiffConfig, DiffRegion } from "./types.js";
@@ -99,7 +100,22 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     l2Duration = performance.now() - t2;
   }
 
-  const allRegions = classifyRegions([...l1.regions, ...l2Regions]);
+  // Engine-agnostic pixel-cluster regions. The L1 backends (odiff,
+  // pixelmatch, looks-same) all return regions: [] today — they only
+  // produce a stipple diff PNG. Reviewers need bounded rectangles to
+  // scan in the diff heatmap + Regions panel, so we cluster the raw
+  // pixel deltas here. Skipped when L1 reports no pixel mismatches:
+  // the cluster pass would always come back empty and the decode +
+  // scan cost (~150ms on a 2560×1266 capture) isn't worth paying.
+  const l1ClusterRegions =
+    l1.pixelMismatchCount > 0 && l1.regions.length === 0
+      ? extractL1PixelRegions(input.baseline.image, candidateImage)
+      : [];
+  const allRegions = classifyRegions([
+    ...l1.regions,
+    ...l1ClusterRegions,
+    ...l2Regions,
+  ]);
 
   return {
     // The pass/fail decision compares L1 diffPercent against the threshold
