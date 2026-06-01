@@ -1108,6 +1108,14 @@ export const runsRouter = t.router({
           message: "checkpoint not in run",
         });
       }
+      const runRows = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
       await ctx.db.transaction(async (tx) => {
         await tx
           .update(testVariations)
@@ -1122,7 +1130,41 @@ export const runsRouter = t.router({
             updatedAt: new Date(),
           })
           .where(eq(testVariations.id, s.testVariationId));
+
+        // Materialise the baseline row so resolveBaseline (queried by
+        // runs.getById) can hand back the approved screenshot. Without
+        // this insert the dashboard's Baseline panel stays empty after
+        // approval. Mirrors the legacy approveRun side effect, scoped
+        // to one variation.
+        await tx.insert(baselines).values({
+          baselineName: s.imageKey ?? run.name ?? "auto",
+          testVariationId: s.testVariationId,
+          testRunId: run.id,
+          userId: ctx.user.id,
+          ...(run.branchName ? { branchName: run.branchName } : {}),
+        });
+
+        // Run-level status flip mirrors legacy approveRun. v1.1 doesn't
+        // yet model "partially approved" runs; "approve any checkpoint
+        // → run passed" matches the keyboard-A path and the legacy
+        // backend's expectations.
+        await tx
+          .update(testRuns)
+          .set({ status: "passed", merge: true })
+          .where(eq(testRuns.id, run.id));
       });
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+      if (run.buildId) {
+        await ctx.broadcaster.publishProjectEvent(run.projectId, {
+          event: "build_updated",
+          data: { id: run.buildId },
+        });
+      }
+
       return { checkpointId: input.checkpointId };
     }),
 
@@ -1149,6 +1191,14 @@ export const runsRouter = t.router({
         .from(screenshots)
         .where(eq(screenshots.runId, input.runId));
       if (rows.length === 0) return { approved: 0 };
+      const runRows = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
       await ctx.db.transaction(async (tx) => {
         for (const s of rows) {
           await tx
@@ -1164,8 +1214,35 @@ export const runsRouter = t.router({
               updatedAt: new Date(),
             })
             .where(eq(testVariations.id, s.testVariationId));
+
+          // One baseline row per checkpoint's variation so the per-
+          // checkpoint baseline resolution in runs.getById finds each
+          // approved candidate.
+          await tx.insert(baselines).values({
+            baselineName: s.imageKey ?? run.name ?? "auto",
+            testVariationId: s.testVariationId,
+            testRunId: run.id,
+            userId: ctx.user.id,
+            ...(run.branchName ? { branchName: run.branchName } : {}),
+          });
         }
+        await tx
+          .update(testRuns)
+          .set({ status: "passed", merge: true })
+          .where(eq(testRuns.id, run.id));
       });
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+      if (run.buildId) {
+        await ctx.broadcaster.publishProjectEvent(run.projectId, {
+          event: "build_updated",
+          data: { id: run.buildId },
+        });
+      }
+
       return { approved: rows.length };
     }),
 
