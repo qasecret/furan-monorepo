@@ -127,9 +127,12 @@ The dump captures schema as of the backup moment. If deployed code has
 migrations newer than the dump, run them now:
 
 ```bash
+# Docker-only install (no on-host node toolchain): use the compose
+# `migrate` one-shot. Idempotent — only previously-unapplied SQL runs.
+docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate
+
+# Dev install with on-host pnpm:
 pnpm --filter @furan/db db:migrate
-# or, if no on-host node toolchain:
-docker compose run --rm api pnpm --filter @furan/db db:migrate
 ```
 
 ### Step 5 — Restart apps + smoke-test

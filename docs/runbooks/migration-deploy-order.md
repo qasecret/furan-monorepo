@@ -56,9 +56,14 @@ rm compose.yml.bak
 # 5. Pull the new images.
 docker compose pull api capture-worker diff-worker integrations dashboard
 
-# 6. Run the migration against the live Postgres. The api image carries the
-# Drizzle migrator; running `migrate` once is enough — all services share one DB.
-docker compose run --rm api pnpm --filter @furan/db exec drizzle-kit migrate
+# 6. Run the migration against the live Postgres. The `migrate` one-shot
+# service (postgres:17-alpine + scripts/migrate.sh) applies every SQL
+# file in packages/db/migrations/ and tracks them in
+# `drizzle.__drizzle_migrations` for idempotency. Running it explicitly
+# here lets you confirm the migration lands cleanly BEFORE you start the
+# new writers in step 8. (On a normal `up -d` the app services already
+# depend_on this service via condition: service_completed_successfully.)
+docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate
 
 # 7. Verify the new enum is in place and rows were remapped.
 docker compose exec postgres psql -U "$POSTGRES_USER" "$POSTGRES_DB" -c \

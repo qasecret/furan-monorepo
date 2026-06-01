@@ -100,13 +100,24 @@ expected to exit after first run.
 
 ## 4. Install dependencies + apply migrations
 
+**Production-shaped install (Docker-only):** skip this entire section —
+the `migrate` one-shot service in `compose.yml` applies every SQL file in
+`packages/db/migrations/` automatically on `docker compose up -d`, and
+the app services wait for it via `depends_on: condition:
+service_completed_successfully`. It is idempotent: subsequent `up` runs
+just verify the `drizzle.__drizzle_migrations` journal and exit.
+
+**Dev path (host-process `pnpm dev`):** run migrations from the host:
+
 ```bash
 pnpm install
 pnpm --filter @furan/db db:migrate
 ```
 
 The `db:migrate` script runs `drizzle-kit migrate` against `DATABASE_URL`
-and applies every SQL file in `packages/db/migrations/`.
+and applies every SQL file in `packages/db/migrations/`. Use this when
+you are iterating on schema changes; the in-image migrator covers the
+release install.
 
 ## 5. Seed your first admin
 
@@ -308,7 +319,18 @@ pnpm --filter @furan/db db:migrate
 ```
 
 The `-v` flag drops the postgres / redis / minio volumes, which is
-destructive — never do this on a real install.
+destructive — never do this on a real install. For a Docker-only install,
+omit the `db:migrate` line — the `migrate` service in `compose.yml`
+re-applies on the next `up -d`.
+
+**`migrate` service exited non-zero**. Check `docker compose logs
+migrate`. The most common cause is a partially-applied prior migration
+left over from a manual `psql` run; remove the matching row from
+`drizzle.__drizzle_migrations` and re-run `docker compose up -d` so the
+service replays it. For first installs on a fresh volume there is nothing
+to clean up — the failure points at the migration SQL itself, which
+should be reported as a bug against the failing file in
+`packages/db/migrations/`.
 
 **Dashboard says "Cannot connect to API"**. Check that
 `NEXT_PUBLIC_API_URL` in `.env` matches where the api is actually
