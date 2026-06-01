@@ -48,12 +48,16 @@ jobs:
         # services: block can't pass server args to the official minio image,
         # so we start it manually here. Bitnami's auto-bucket image had a
         # broken `:latest` tag at PR time.
+        #
+        # Pull from docker.io (the install-path registry) rather than
+        # quay.io — quay has had recurring 504 outages that block CI without
+        # touching any code. MinIO publishes identical images to both.
         run: |
           docker run -d --name minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER=furan \
             -e MINIO_ROOT_PASSWORD=minio_ci_pw_long_enough \
-            quay.io/minio/minio:latest server /data
+            minio/minio:latest server /data
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:9000/minio/health/live > /dev/null 2>&1; then
               echo "minio ready"
@@ -64,7 +68,7 @@ jobs:
           done
           docker run --rm --network host \
             -e MC_HOST_local=http://furan:minio_ci_pw_long_enough@localhost:9000 \
-            quay.io/minio/mc:latest mb local/furan-ci
+            minio/mc:latest mb local/furan-ci
       - name: Apply migrations
         run: pnpm --filter @furan/db exec drizzle-kit migrate
       - name: Install Playwright browsers (capture-worker integration test)

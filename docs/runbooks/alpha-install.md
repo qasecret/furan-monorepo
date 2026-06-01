@@ -34,28 +34,28 @@ Times are wall-clock from "command entered" to "next command ready to
 enter". Use the [install quickstart](../install/quickstart.md) as the
 canonical step list.
 
-| Step                                             | Duration | Notes                                    |
-| ------------------------------------------------ | -------- | ---------------------------------------- |
-| Docker install (if needed)                       |          |                                          |
-| Node 22 + pnpm 9 install (if needed)             |          | `nvm install 22` + `corepack enable`     |
-| Clone monorepo                                   |          |                                          |
-| `pnpm install`                                   |          | cold cache vs warm cache                 |
-| `.env` edit (copy + secrets)                     |          | `openssl rand -hex 32` for `JWT_SECRET`  |
-| `docker compose ... up -d` (data plane)          |          | image pulls (cold) vs cache hit (warm)   |
-| Wait for healthchecks                            |          | should be ~15s                           |
-| `pnpm --filter @furan/db db:migrate`             |          |                                          |
-| Seed first admin (`cli:seed-admin`)              |          |                                          |
-| Start `pnpm --filter @furan/api dev`             |          | time-to-`listening` log line             |
-| Start `pnpm --filter @furan/dashboard dev`       |          | time-to-`ready` log line + first compile |
-| Start capture-worker + diff-worker               |          |                                          |
-| Browser login at `/login`                        |          |                                          |
-| Project bootstrap (curl `POST /projects`)        |          |                                          |
-| Editor user create + project membership add      |          |                                          |
-| PAT mint at `/account/tokens`                    |          |                                          |
-| First capture enqueue (script in quickstart §11) |          |                                          |
-| First diff row visible at `/projects/.../runs`   |          |                                          |
-| **Total (first-time)**                           |          | target <30 min                           |
-| **Total (re-install, warm caches)**              |          | target <10 min                           |
+| Step                                             | Duration | Notes                                                                                              |
+| ------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------- |
+| Docker install (if needed)                       |          |                                                                                                    |
+| Node 22 + pnpm 9 install (if needed)             |          | `nvm install 22` + `corepack enable`                                                               |
+| Clone monorepo                                   |          |                                                                                                    |
+| `pnpm install`                                   |          | cold cache vs warm cache                                                                           |
+| `.env` edit (copy + secrets)                     |          | `openssl rand -hex 32` for `JWT_SECRET`                                                            |
+| `docker compose ... up -d` (data plane)          |          | image pulls (cold) vs cache hit (warm)                                                             |
+| Wait for healthchecks                            |          | should be ~15s                                                                                     |
+| `pnpm --filter @furan/db db:migrate`             |          | dev path only; Docker-only install runs `compose.yml`'s `migrate` service automatically on `up -d` |
+| Seed first admin (`cli:seed-admin`)              |          |                                                                                                    |
+| Start `pnpm --filter @furan/api dev`             |          | time-to-`listening` log line                                                                       |
+| Start `pnpm --filter @furan/dashboard dev`       |          | time-to-`ready` log line + first compile                                                           |
+| Start capture-worker + diff-worker               |          |                                                                                                    |
+| Browser login at `/login`                        |          |                                                                                                    |
+| Project bootstrap (curl `POST /projects`)        |          |                                                                                                    |
+| Editor user create + project membership add      |          |                                                                                                    |
+| PAT mint at `/account/tokens`                    |          |                                                                                                    |
+| First capture enqueue (script in quickstart §11) |          |                                                                                                    |
+| First diff row visible at `/projects/.../runs`   |          |                                                                                                    |
+| **Total (first-time)**                           |          | target <30 min                                                                                     |
+| **Total (re-install, warm caches)**              |          | target <10 min                                                                                     |
 
 ## Friction points
 

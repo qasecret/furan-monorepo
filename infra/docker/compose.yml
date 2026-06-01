@@ -88,6 +88,29 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET}
     restart: "no"
 
+  # ----- One-shot migrator ----------------------------------------------
+  # Applies every SQL file in packages/db/migrations/ to Postgres via psql,
+  # tracking applied migrations in `drizzle.__drizzle_migrations` so a
+  # future host-side `drizzle-kit migrate` is a no-op. The api image is
+  # distroless --prod (no `pnpm`, no `drizzle-kit`) so this is the
+  # supported way to migrate in the install path. Idempotent — re-runs on
+  # every `up` just verify the journal and exit.
+  migrate:
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+    volumes:
+      - ../../packages/db/migrations:/migrations:ro
+      - ./scripts/migrate.sh:/migrate.sh:ro
+    entrypoint: ["sh", "/migrate.sh"]
+    restart: "no"
+
   # ----- App services ---------------------------------------------------
   # All five pull pre-built images from Docker Hub. To use the GHCR mirror
   # instead, swap `docker.io/` for `ghcr.io/` (you'll need a GH PAT with
@@ -107,6 +130,8 @@ services:
         # MinIO IS running (S3 mode), the healthcheck still gates boot
         # so the first S3 op does not race minio-init's bucket create.
         required: false
+      migrate:
+        condition: service_completed_successfully
     ports: ["3000:3000"]
     environment:
       NODE_ENV: production
@@ -151,6 +176,8 @@ services:
       minio:
         condition: service_healthy
         required: false
+      migrate:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -176,6 +203,8 @@ services:
       minio:
         condition: service_healthy
         required: false
+      migrate:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -198,6 +227,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}

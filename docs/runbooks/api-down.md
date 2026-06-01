@@ -144,9 +144,15 @@ problem is at a layer above the api:
   have users re-login.
 
 - **Schema drift** — a deploy bumped the api image past a migration that
-  hasn't been applied. Run migrations from the host:
+  hasn't been applied. The compose `migrate` one-shot normally runs before
+  api on `up -d`; if it's been skipped (e.g. an `up -d api` that ignored
+  service dependencies), run it explicitly:
 
   ```bash
+  # Docker-only install:
+  docker compose --env-file .env -f infra/docker/compose.yml run --rm migrate
+
+  # Dev install with on-host pnpm:
   pnpm --filter @furan/db exec drizzle-kit migrate
   ```
 
