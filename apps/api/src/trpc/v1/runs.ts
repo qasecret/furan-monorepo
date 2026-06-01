@@ -372,27 +372,6 @@ export const runsRouter = t.router({
         .from(diffRegions)
         .where(eq(diffRegions.runId, input.runId));
 
-      // ADR-038: runs no longer have a single testVariationId. Ignore area
-      // context comes from the first checkpoint's variation (if any).
-      // Phase 5 will rework the diff viewer to show per-checkpoint context.
-      let variationIgnoreAreas: IgnoreRegion[] | null = null;
-      const firstShot = shots[0];
-      if (firstShot?.testVariationId) {
-        const variationRows = await ctx.db
-          .select({ ignoreRegions: testVariations.ignoreRegions })
-          .from(testVariations)
-          .where(eq(testVariations.id, firstShot.testVariationId))
-          .limit(1);
-        const variationIgnoreRegionsRaw =
-          variationRows[0]?.ignoreRegions ?? null;
-        if (
-          variationIgnoreRegionsRaw &&
-          Array.isArray(variationIgnoreRegionsRaw)
-        ) {
-          variationIgnoreAreas = variationIgnoreRegionsRaw as IgnoreRegion[];
-        }
-      }
-
       // ADR-038: run-level ignoreAreas removed from test_runs. Return null.
       const runIgnoreAreas: IgnoreRegion[] | null = null;
 
@@ -414,29 +393,62 @@ export const runsRouter = t.router({
         .limit(1);
       const autoApproved = autoApprovedRows.length > 0;
 
-      // Baseline screenshot: look up via the first checkpoint's variation.
-      // Phase 5 will rework this to support per-checkpoint baseline resolution.
-      let baselineScreenshot: (typeof shots)[number] | null = null;
-      let baselineSource: string | null = null;
-      if (firstShot?.testVariationId) {
-        try {
-          const projectRows = await ctx.db
-            .select({ mainBranchName: projects.mainBranchName })
-            .from(projects)
-            .where(eq(projects.id, run.projectId))
-            .limit(1);
-          const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
+      // Default branch is identical across all checkpoints in this run.
+      // Look it up once instead of per checkpoint inside the resolution
+      // loop. ADR-038 deferred per-checkpoint baseline resolution to
+      // Phase 5; we now resolve it here.
+      const projectRows = await ctx.db
+        .select({ mainBranchName: projects.mainBranchName })
+        .from(projects)
+        .where(eq(projects.id, run.projectId))
+        .limit(1);
+      const defaultBranch = projectRows[0]?.mainBranchName ?? "main";
 
+      // Resolve { baselineScreenshot, baselineSource, variationIgnoreAreas }
+      // for one candidate screenshot. Failures in baseline resolution are
+      // informational and degrade to nulls — same semantics as the old
+      // first-checkpoint-only path; one bad variation must not kill the
+      // whole getById response.
+      type CheckpointContext = {
+        baselineScreenshot: (typeof shots)[number] | null;
+        baselineSource: string | null;
+        variationIgnoreAreas: IgnoreRegion[] | null;
+      };
+      const resolveCheckpointContext = async (
+        shot: (typeof shots)[number],
+      ): Promise<CheckpointContext> => {
+        const ctxResult: CheckpointContext = {
+          baselineScreenshot: null,
+          baselineSource: null,
+          variationIgnoreAreas: null,
+        };
+        if (!shot.testVariationId) return ctxResult;
+
+        const variationRows = await ctx.db
+          .select({ ignoreRegions: testVariations.ignoreRegions })
+          .from(testVariations)
+          .where(eq(testVariations.id, shot.testVariationId))
+          .limit(1);
+        const variationIgnoreRegionsRaw =
+          variationRows[0]?.ignoreRegions ?? null;
+        if (
+          variationIgnoreRegionsRaw &&
+          Array.isArray(variationIgnoreRegionsRaw)
+        ) {
+          ctxResult.variationIgnoreAreas =
+            variationIgnoreRegionsRaw as IgnoreRegion[];
+        }
+
+        try {
           const resolution = await resolveBaseline(
             ctx.db,
             run.projectId,
             run.branchName ?? defaultBranch,
-            firstShot.testVariationId,
+            shot.testVariationId,
             { defaultBranch },
           );
-
           if (resolution) {
-            baselineSource = resolution.source;
+            ctxResult.baselineSource = resolution.source;
             const baselineRows = await ctx.db
               .select({ testRunId: baselines.testRunId })
               .from(baselines)
@@ -444,30 +456,62 @@ export const runsRouter = t.router({
               .limit(1);
             const baselineRunId = baselineRows[0]?.testRunId;
             if (baselineRunId) {
+              // Match the baseline screenshot to the candidate by
+              // variation, not by "first row in the baseline run". A
+              // baseline run with multiple checkpoints would otherwise
+              // hand back the wrong image when the candidate isn't
+              // index 0 of the baseline run either.
               const blShots = await ctx.db
                 .select()
                 .from(screenshots)
-                .where(eq(screenshots.runId, baselineRunId));
-              baselineScreenshot = blShots[0] ?? null;
+                .where(
+                  and(
+                    eq(screenshots.runId, baselineRunId),
+                    eq(screenshots.testVariationId, shot.testVariationId),
+                  ),
+                )
+                .limit(1);
+              ctxResult.baselineScreenshot = blShots[0] ?? null;
             }
           }
         } catch (err) {
-          // Baseline resolution is informational; don't fail getById on it.
           ctx.telemetry.logger.warn(
-            { err, runId: run.id },
+            { err, runId: run.id, screenshotId: shot.id },
             "baseline_screenshot_lookup_failed",
           );
         }
-      }
+
+        return ctxResult;
+      };
+
+      const contextList = await Promise.all(
+        shots.map(resolveCheckpointContext),
+      );
+      const checkpointContexts: Record<string, CheckpointContext> = {};
+      shots.forEach((shot, i) => {
+        const c = contextList[i];
+        if (c) checkpointContexts[shot.id] = c;
+      });
+
+      // Back-compat: keep the top-level fields wired to the first
+      // checkpoint so existing tests + any straggler consumer keep
+      // working. The dashboard reads per-checkpoint from
+      // checkpointContexts based on the selected rail row.
+      const firstContext = contextList[0] ?? {
+        baselineScreenshot: null,
+        baselineSource: null,
+        variationIgnoreAreas: null,
+      };
 
       return {
         ...run,
         ignoreAreas: runIgnoreAreas,
         screenshots: shots,
         diffRegions: regions,
-        baselineScreenshot,
-        baselineSource,
-        variationIgnoreAreas,
+        baselineScreenshot: firstContext.baselineScreenshot,
+        baselineSource: firstContext.baselineSource,
+        variationIgnoreAreas: firstContext.variationIgnoreAreas,
+        checkpointContexts,
         autoApproved,
         prevRunId,
         nextRunId,

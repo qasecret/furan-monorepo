@@ -213,6 +213,51 @@ export function DiffViewer({
   const hydrateSavedIgnoreAreas = useViewerStore(
     (s) => s.hydrateSavedIgnoreAreas,
   );
+  // Select the candidate by selectedCheckpointId, falling back to the
+  // first screenshot. Before the fix this was hardcoded to screenshots[0],
+  // so the viewer always rendered the first checkpoint's image no matter
+  // which row was selected in the rail.
+  const candidateScreenshot = useMemo(() => {
+    const shots = data?.screenshots ?? [];
+    if (selectedCheckpointId && selectedCheckpointId !== "_first") {
+      const match = shots.find(
+        (s) => (s as { id?: string }).id === selectedCheckpointId,
+      );
+      if (match) return match;
+    }
+    return shots[0] ?? null;
+  }, [data?.screenshots, selectedCheckpointId]);
+
+  // Per-checkpoint baseline + variation context. Server populates
+  // `checkpointContexts` keyed by screenshot id. Top-level fields on
+  // `data` are kept for back-compat (and as a fallback) but only carry
+  // the FIRST checkpoint's resolution.
+  const currentContext = useMemo(() => {
+    const ctxs =
+      (
+        data as {
+          checkpointContexts?: Record<
+            string,
+            {
+              baselineScreenshot: typeof candidateScreenshot;
+              baselineSource: string | null;
+              variationIgnoreAreas: unknown[] | null;
+            }
+          >;
+        } | null
+      )?.checkpointContexts ?? {};
+    if (candidateScreenshot?.id && ctxs[candidateScreenshot.id]) {
+      return ctxs[candidateScreenshot.id]!;
+    }
+    return {
+      baselineScreenshot: data?.baselineScreenshot ?? null,
+      baselineSource: data?.baselineSource ?? null,
+      variationIgnoreAreas: data?.variationIgnoreAreas ?? null,
+    };
+  }, [data, candidateScreenshot]);
+
+  const baselineScreenshot = currentContext.baselineScreenshot;
+
   useEffect(() => {
     // Server payload may predate the paddingPx column (legacy rows have
     // no paddingPx); hydrateSavedIgnoreAreas applies `?? 0` so we widen
@@ -227,7 +272,8 @@ export function DiffViewer({
       kind?: "ignore" | "dynamic-text";
       pattern?: string;
     }>;
-    const variationRegions = (data?.variationIgnoreAreas ?? []) as Array<{
+    const variationRegions = (currentContext.variationIgnoreAreas ??
+      []) as Array<{
       x: number;
       y: number;
       width: number;
@@ -249,10 +295,11 @@ export function DiffViewer({
         kind: r.kind ?? "ignore",
       })),
     );
-  }, [data?.ignoreAreas, data?.variationIgnoreAreas, hydrateSavedIgnoreAreas]);
-
-  const candidateScreenshot = data?.screenshots?.[0] ?? null;
-  const baselineScreenshot = data?.baselineScreenshot ?? null;
+  }, [
+    data?.ignoreAreas,
+    currentContext.variationIgnoreAreas,
+    hydrateSavedIgnoreAreas,
+  ]);
 
   // F-a/3: lazily fetch the candidate's element-map sidecar when in
   // ignore-edit mode AND the screenshot row has a key. Old runs that
@@ -304,7 +351,7 @@ export function DiffViewer({
   }, [draftIgnoreAreas, elementMap, pendingSnaps, proposePendingSnap]);
   // The L1 diff worker writes the diff overlay PNG to testRuns.diffName (key).
   const diffOverlayKey = data?.diffName ?? null;
-  const baselineSource = data?.baselineSource ?? null;
+  const baselineSource = currentContext.baselineSource;
 
   const uniqueViewports = useMemo(() => {
     const shots = data?.screenshots ?? [];
