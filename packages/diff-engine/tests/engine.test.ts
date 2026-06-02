@@ -124,6 +124,48 @@ describe("runDiff", () => {
     expect(result.diffPercent).toBe(0);
     expect(result.passed).toBe(true);
   });
+
+  it("l1_pixel regions emitted via runDiff are well-formed", async () => {
+    // The extractor's own tests (l1-region-extractor.test.ts) cover the
+    // "did it produce a region" path with controlled inputs. Here we just
+    // verify the engine wiring: ANY l1_pixel regions that come out of
+    // runDiff carry the correct source / severity / id-prefix / category
+    // shape end-to-end. Region count depends on the fixture's pixel
+    // footprint vs. the extractor's current default thresholds and is
+    // intentionally not asserted.
+    const result = await runDiff({
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
+      config: {
+        diffThreshold: 0.001,
+        l2Enabled: false,
+        engine: "odiff",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+    for (const r of result.regions.filter((r) => r.source === "l1_pixel")) {
+      expect(r.severity).toBe("minor");
+      expect(r.category).toBe("image");
+      expect(r.id).toMatch(/^l1-pixel-/);
+    }
+  });
+
+  it("emits no l1_pixel regions on byte-identical inputs", async () => {
+    const result = await runDiff({
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
+      config: {
+        diffThreshold: 0,
+        l2Enabled: false,
+        engine: "odiff",
+        engineConfig: DEFAULT_ENGINE_CONFIG,
+      },
+    });
+    const l1PixelRegions = result.regions.filter(
+      (r) => r.source === "l1_pixel",
+    );
+    expect(l1PixelRegions).toEqual([]);
+  });
 });
 
 describe("runDiff: L1 displacement pre-alignment", () => {

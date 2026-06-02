@@ -372,24 +372,13 @@ export function ViewerCanvas({
       if (cancelled) return;
       baselineSpriteRef.current = baselineSprite;
       candidateSpriteRef.current = candidateSprite;
-      // In diff-heatmap mode, blend the overlay on top of the candidate
-      // via multiply at full alpha — Applitools-style. The engine's
-      // overlay PNG is white where pixels match and red where they
-      // differ. Multiply blending leaves the candidate unchanged in
-      // matching areas (white × candidate = candidate) and burns red
-      // through in mismatched areas (red × candidate = red-tinted
-      // candidate). Prior behavior (overlay at alpha 0.6 over a
-      // full-opacity candidate) double-applied the candidate via the
-      // overlay's own faded-page-content background and washed the red
-      // into a faint tint reviewers couldn't see.
-      if (mode === "diff-heatmap" && overlaySprite) {
-        overlaySprite.alpha = 1.0;
-        // Pixi 8 accepts blend-mode strings on Sprite directly.
-        (overlaySprite as unknown as { blendMode: string }).blendMode =
-          "multiply";
-      } else if (overlaySprite) {
-        overlaySprite.alpha = 0.6;
-      }
+      // The stipple diff PNG is rendered at 60% alpha as subtle context.
+      // The user-facing "what changed" signal is the bounded yellow
+      // rectangles produced by `mountDiffOverlayLayer` below — those
+      // come from the L1 pixel-cluster regions (engine.ts wiring,
+      // `source: "l1_pixel"`) and read as Applitools-style highlights
+      // on the candidate. The stipple sits underneath as fine detail.
+      if (overlaySprite) overlaySprite.alpha = 0.6;
       // Fit using the candidate's natural size (falling back to baseline,
       // then overlay) so the world's coordinate system matches what the
       // user is reviewing. All three sprites mount at (0,0) and share

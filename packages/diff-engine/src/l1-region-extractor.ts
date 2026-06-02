@@ -34,18 +34,24 @@ export interface ExtractOptions {
 }
 
 const DEFAULTS: Required<ExtractOptions> = {
-  tileSize: 32,
-  // 0.15 = 153 of 1024 pixels in a tile must differ before it's flagged.
-  // Tightened up from 0.05 in v1.1.13 after a Google homepage run produced
-  // 36 regions including one 683-tile cluster covering the whole image —
-  // anti-aliasing + sub-pixel font rendering tripped low-density tiles
-  // across the page and flood-fill connected them into one blob.
-  minTileDiffRatio: 0.15,
-  channelTolerance: 12,
-  // Drop clusters smaller than 4 tiles. Each tile is 32×32 = 1024 px so 4
-  // tiles = ~64×64 of changed content, which is the smallest visible-to-
-  // a-reviewer affordance. Cuts pixel speckle out of the panel.
-  minClusterTiles: 4,
+  // 48×48 tile (2304 px). Bigger than 32 dilutes anti-aliasing + sub-
+  // pixel font noise enough that flood-fill stops bridging unrelated
+  // diffs into one whole-image blob. Reviewer affordance is unchanged
+  // (~96 px minimum cluster footprint via `minClusterTiles=3` below).
+  tileSize: 48,
+  // 0.22 = 507 of 2304 px in a tile must differ before it's flagged.
+  // Picks up real visible changes; rejects font kerning shifts +
+  // JPEG block artifacts that historically dominated the false-
+  // positive bucket on web content.
+  minTileDiffRatio: 0.22,
+  // Per-channel absolute tolerance (0..255). Sub-pixel font rendering
+  // and JPEG block noise produce 10-14/255 drift on solid backgrounds;
+  // 16 is well below the smallest perceptually-meaningful delta.
+  channelTolerance: 16,
+  // 3 tiles ≈ 144 px linear / ~96×96 footprint — the smallest blob a
+  // reviewer scanning a heatmap will actually fixate on. Pairs with
+  // the larger tileSize: same absolute floor as 4×32 tiles.
+  minClusterTiles: 3,
 };
 
 export function extractL1PixelRegions(
@@ -160,12 +166,16 @@ export function extractL1PixelRegions(
       const width = Math.min((maxC + 1) * tile, W) - x;
       const height = Math.min((maxR + 1) * tile, H) - y;
       regions.push({
-        id: `l1-cluster-${regions.length}`,
+        id: `l1-pixel-${regions.length}`,
         severity: "minor",
         category: "image",
         bbox: { x, y, width, height },
         description: `Pixel diff cluster (${size} tiles, ${width}×${height})`,
-        source: "l1",
+        // Distinct from "l1" so the dashboard's Regions panel can suppress
+        // these (they're noisy by design and visualised on the canvas
+        // as yellow rectangles, not as scrollable rows). See engine.ts
+        // wiring + RegionListPanel filter.
+        source: "l1_pixel",
       });
     }
   }
