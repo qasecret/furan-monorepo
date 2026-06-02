@@ -95,6 +95,11 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
       .filter((r) => {
         // Always hide synthetic dynamic-text audit rows unless the toggle is on.
         if (r.source === "dynamic_text") return showSuppressed;
+        // L1 pixel clusters render only on the heatmap canvas (Applitools-
+        // style yellow bounded rectangles). They're noisy by design (5-15
+        // per checkpoint) and would drown out L2 / axe rows here.
+        // Reviewers see them visually; they're not actionable as rows.
+        if (r.source === "l1_pixel") return false;
         return true;
       })
       .filter((r) => sourceFilter === "all" || r.source === sourceFilter)

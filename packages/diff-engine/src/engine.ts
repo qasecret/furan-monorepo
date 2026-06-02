@@ -4,6 +4,7 @@ import {
   DISPLACEMENT_CONFIDENCE_THRESHOLD,
   shiftImage,
 } from "./l1-displacement.js";
+import { extractL1PixelRegions } from "./l1-region-extractor.js";
 import { runL1 } from "./l1.js";
 import { runL2 } from "./l2.js";
 import type { DiffResult, ProjectDiffConfig, DiffRegion } from "./types.js";
@@ -99,19 +100,27 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     l2Duration = performance.now() - t2;
   }
 
-  // Pixel-level diffs are surfaced as the heatmap overlay PNG
-  // (`diffImageBytes` + `testRuns.diffName`), NOT as bounded regions
-  // in the Regions panel. PR #229 wired an L1 cluster extractor into
-  // this path which produced 36-66 noisy rows on real-world content
-  // and broke the diff viewer layout when the panel grew tall enough
-  // to stretch its sibling canvas pane via flex. The extractor module
-  // is kept (l1-region-extractor.ts, with tests) for future use behind
-  // a config flag if structural pixel regions become useful.
+  // L1 pixel-cluster extractor: bounded boxes around regions of change
+  // for the heatmap canvas (Applitools-style yellow rectangles). Tagged
+  // `source: "l1_pixel"` so the dashboard's Regions panel suppresses
+  // them — actionable structural diffs (L2 + axe) stay scrollable in
+  // the panel; pixel speckle stays visual on the canvas.
   //
-  // Regions panel ends up showing L2 (DOM-aware) + axe regions only —
-  // genuinely actionable structural diffs reviewers can triage one by
-  // one. Speckles and pixel drift live in the heatmap overlay.
-  const allRegions = classifyRegions([...l1.regions, ...l2Regions]);
+  // Skipped when the L1 backend reports no pixel mismatches at all —
+  // the cluster pass would always come back empty and the decode +
+  // scan cost (~150ms on a 2560×1266 capture) isn't worth paying.
+  // Uses `candidateImage` (post-displacement-aligned) not
+  // `input.candidate.image`, so an applied displacement vector doesn't
+  // reintroduce the global shift as one giant cluster.
+  const l1PixelRegions =
+    l1.pixelMismatchCount > 0
+      ? extractL1PixelRegions(input.baseline.image, candidateImage)
+      : [];
+  const allRegions = classifyRegions([
+    ...l1.regions,
+    ...l1PixelRegions,
+    ...l2Regions,
+  ]);
 
   return {
     // The pass/fail decision compares L1 diffPercent against the threshold
