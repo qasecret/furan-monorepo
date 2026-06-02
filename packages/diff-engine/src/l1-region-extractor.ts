@@ -35,9 +35,17 @@ export interface ExtractOptions {
 
 const DEFAULTS: Required<ExtractOptions> = {
   tileSize: 32,
-  minTileDiffRatio: 0.05,
+  // 0.15 = 153 of 1024 pixels in a tile must differ before it's flagged.
+  // Tightened up from 0.05 in v1.1.13 after a Google homepage run produced
+  // 36 regions including one 683-tile cluster covering the whole image —
+  // anti-aliasing + sub-pixel font rendering tripped low-density tiles
+  // across the page and flood-fill connected them into one blob.
+  minTileDiffRatio: 0.15,
   channelTolerance: 12,
-  minClusterTiles: 1,
+  // Drop clusters smaller than 4 tiles. Each tile is 32×32 = 1024 px so 4
+  // tiles = ~64×64 of changed content, which is the smallest visible-to-
+  // a-reviewer affordance. Cuts pixel speckle out of the panel.
+  minClusterTiles: 4,
 };
 
 export function extractL1PixelRegions(

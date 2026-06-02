@@ -72,7 +72,16 @@ function useAuthedImage(key: string | null | undefined): string | null {
     })();
     return () => {
       active = false;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
+      // Defer revoke so downstream consumers — primarily Pixi's async
+      // mountImageLayer — can finish loading from the blob URL before
+      // it's invalidated. Without the delay, switching checkpoints
+      // while Pixi is still fetching produced "Failed to fetch" /
+      // "WebGL: INVALID_VALUE: texImage2D: bad image data" and left
+      // the canvas blank until a hard reload.
+      if (createdUrl) {
+        const toRevoke = createdUrl;
+        setTimeout(() => URL.revokeObjectURL(toRevoke), 10_000);
+      }
     };
   }, [key]);
   return url;
