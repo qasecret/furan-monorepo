@@ -153,6 +153,7 @@ interface PerViewportResult {
     description: string;
     source: string;
     viewport: string | null;
+    screenshotId: string;
   }>;
   ranTiers: Array<"l1" | "l2">;
   firstBaseline: boolean;
@@ -507,6 +508,7 @@ async function handleDiffJobInner(
   // audit row in `diff_regions` per (viewport, region) pair.
   const dynamicTextAudits: Array<{
     viewport: string | null;
+    screenshotId: string;
     results: DynamicTextResult[];
   }> = [];
   // Per-job cache shared across viewports. Avoids refetching the same
@@ -592,6 +594,7 @@ async function handleDiffJobInner(
     if (dynamicTextResults.length > 0) {
       dynamicTextAudits.push({
         viewport: cs.viewport ?? null,
+        screenshotId: cs.id,
         results: dynamicTextResults,
       });
     }
@@ -919,6 +922,13 @@ async function handleDiffJobInner(
         description: r.description,
         source: r.source,
         viewport: viewportKey,
+        // v1.1.20: tag each region with the candidate screenshot that
+        // produced it so the dashboard can show only the current
+        // checkpoint's regions. Before this, two checkpoints sharing a
+        // viewport in one run (HomePage + searchResult both at
+        // 1280x720) saw each other's regions overlaid in the diff
+        // viewer.
+        screenshotId: cs.id,
       })),
       ranTiers: result.ranTiers,
       firstBaseline: false,
@@ -965,6 +975,7 @@ async function handleDiffJobInner(
         aggregateRegions.map((r) => ({
           runId: data.runId,
           projectId: data.projectId,
+          screenshotId: r.screenshotId,
           severity: r.severity,
           category: r.category,
           bbox: r.bbox,
@@ -979,25 +990,27 @@ async function handleDiffJobInner(
     // unmatched). `source="dynamic_text"` + `ocr_text`/`ocr_matched`
     // distinguish these from real L1/L2 regions; severity is always
     // "none" so they're hidden from the default RegionListPanel view.
-    const auditValues = dynamicTextAudits.flatMap(({ viewport, results }) =>
-      results.map((dt) => {
-        const r = allRegions[dt.regionIndex]!;
-        const preview = (dt.ocrText ?? "").slice(0, 80);
-        return {
-          runId: data.runId,
-          projectId: data.projectId,
-          severity: "none",
-          category: "text",
-          bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
-          description: dt.matched
-            ? `Dynamic text matched: "${preview}"`
-            : `Dynamic text did NOT match: "${preview}"`,
-          source: "dynamic_text",
-          viewport,
-          ocrText: dt.ocrText,
-          ocrMatched: dt.matched,
-        };
-      }),
+    const auditValues = dynamicTextAudits.flatMap(
+      ({ viewport, screenshotId, results }) =>
+        results.map((dt) => {
+          const r = allRegions[dt.regionIndex]!;
+          const preview = (dt.ocrText ?? "").slice(0, 80);
+          return {
+            runId: data.runId,
+            projectId: data.projectId,
+            screenshotId,
+            severity: "none",
+            category: "text",
+            bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
+            description: dt.matched
+              ? `Dynamic text matched: "${preview}"`
+              : `Dynamic text did NOT match: "${preview}"`,
+            source: "dynamic_text",
+            viewport,
+            ocrText: dt.ocrText,
+            ocrMatched: dt.matched,
+          };
+        }),
     );
     if (auditValues.length > 0) {
       await tx.insert(diffRegions).values(auditValues);

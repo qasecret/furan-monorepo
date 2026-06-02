@@ -1297,18 +1297,28 @@ export const runsRouter = t.router({
 
       if (rows.length === 0) return { items: [] };
 
-      // Single round-trip: which viewports in this run have unresolved diff
-      // regions? Group by viewport so we can attribute one of three statuses
-      // (new / unresolved / passed) per checkpoint with a single query.
-      const unresolvedByViewport = await ctx.db
-        .select({ viewport: diffRegions.viewport })
+      // v1.1.20+: per-checkpoint status derived from diff_regions.screenshot_id
+      // (one row per screenshot, not per viewport). Legacy rows from pre-
+      // v1.1.20 runs have screenshot_id = NULL — for those we fall back to
+      // the previous viewport-based heuristic so old runs keep their
+      // (imperfect) rail state instead of all going green.
+      const unresolvedRows = await ctx.db
+        .select({
+          screenshotId: diffRegions.screenshotId,
+          viewport: diffRegions.viewport,
+        })
         .from(diffRegions)
         .where(
           sql`${diffRegions.runId} = ${input.runId} AND ${diffRegions.severity} != 'none'`,
-        )
-        .groupBy(diffRegions.viewport);
-      const unresolvedSet = new Set(
-        unresolvedByViewport
+        );
+      const unresolvedScreenshotSet = new Set(
+        unresolvedRows
+          .map((r) => r.screenshotId)
+          .filter((s): s is string => s !== null),
+      );
+      const legacyUnresolvedViewportSet = new Set(
+        unresolvedRows
+          .filter((r) => r.screenshotId === null)
           .map((r) => r.viewport)
           .filter((v): v is string => v !== null),
       );
@@ -1317,7 +1327,8 @@ export const runsRouter = t.router({
         const status: RunStatus =
           r.baselineName === null
             ? "new"
-            : unresolvedSet.has(r.viewport)
+            : unresolvedScreenshotSet.has(r.id) ||
+                legacyUnresolvedViewportSet.has(r.viewport)
               ? "unresolved"
               : "passed";
         return {

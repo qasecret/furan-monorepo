@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { projects } from "./projects.js";
+import { screenshots } from "./screenshots.js";
 import { testRuns } from "./test_runs.js";
 
 export const diffRegions = pgTable(
@@ -22,6 +23,17 @@ export const diffRegions = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    // v1.1.20+: screenshot (= checkpoint) this region was detected on.
+    // Required for per-checkpoint accuracy in the diff viewer + rail —
+    // before this column, two checkpoints in one run that shared a
+    // viewport (e.g. HomePage + searchResult both at 1280x720) would
+    // see each other's diff regions because the previous unique key
+    // was just (run_id, viewport). Nullable so legacy rows from pre-
+    // v1.1.20 runs survive; the diff viewer treats null as "show on
+    // every checkpoint" (Applitools-style fallback).
+    screenshotId: uuid("screenshot_id").references(() => screenshots.id, {
+      onDelete: "cascade",
+    }),
     severity: text("severity").notNull(),
     category: text("category").notNull(),
     bbox: jsonb("bbox").notNull(),
@@ -40,5 +52,6 @@ export const diffRegions = pgTable(
   (t) => ({
     runIdx: index("diff_regions_run_idx").on(t.runId),
     projectIdx: index("diff_regions_project_idx").on(t.projectId),
+    screenshotIdx: index("diff_regions_screenshot_idx").on(t.screenshotId),
   }),
 );
