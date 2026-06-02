@@ -32,9 +32,13 @@ export async function mountImageLayer(
 ): Promise<Sprite | null> {
   const res = await fetch(imageUrl, { credentials: "include", signal });
   if (!res.ok) {
-    throw new Error(
+    // Same rationale as the decode-failure branch below: return null
+    // so sibling sprites in the same Promise.all (baseline / candidate
+    // / overlay) don't get cancelled by one missing asset.
+    console.warn(
       `mountImageLayer: ${imageUrl} -> ${res.status} ${res.statusText}`,
     );
+    return null;
   }
   const blob = await res.blob();
   if (signal?.aborted) return null;
@@ -50,9 +54,18 @@ export async function mountImageLayer(
   try {
     bitmap = await createImageBitmap(blob);
   } catch (err) {
-    throw new Error(
+    // Return null instead of throwing so a single decode failure
+    // (createImageBitmap is stricter than HTMLImageElement on certain
+    // PNG variants — odiff's RGBA diff overlay occasionally trips it)
+    // doesn't take down sibling sprites via Promise.all rejection.
+    // Without this, an overlay decode failure aborted the entire canvas
+    // mount, including the `mountDiffOverlayLayer` call that draws the
+    // bounded yellow diff rectangles — reviewers ended up seeing zero
+    // overlay rendering.
+    console.warn(
       `mountImageLayer: decode failed for ${imageUrl}: ${(err as Error).message}`,
     );
+    return null;
   }
   if (signal?.aborted) {
     bitmap.close();
