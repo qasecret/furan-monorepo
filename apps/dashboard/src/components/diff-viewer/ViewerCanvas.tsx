@@ -224,6 +224,16 @@ export function ViewerCanvas({
           view,
         );
       }
+      // VRT-style side-by-side: clean baseline on the left as the
+      // "what was here before" reference, candidate on the right with
+      // bounded yellow diff rectangles overlaid (Applitools / Percy
+      // pattern). Reviewer scans the boxes on the candidate while
+      // keeping the baseline visible for "before vs after" comparison.
+      // Baseline intentionally stays unannotated — adding boxes there
+      // muddies the reference image.
+      if (regions.length > 0) {
+        mountDiffOverlayLayer(candidateWorld, regions, selectedRegionId);
+      }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
       // the layer doesn't briefly render on an unfit world.
       baselineWorldRef.current = baselineWorld;
@@ -329,7 +339,7 @@ export function ViewerCanvas({
         console.warn("candidate Application.destroy threw (non-fatal)", err);
       }
     };
-  }, [mode, baselineUrl, candidateUrl]);
+  }, [mode, baselineUrl, candidateUrl, regions, selectedRegionId]);
 
   // Single-stage modes.
   useEffect(() => {
