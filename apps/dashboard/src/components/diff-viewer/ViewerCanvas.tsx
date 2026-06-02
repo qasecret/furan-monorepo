@@ -372,17 +372,21 @@ export function ViewerCanvas({
       if (cancelled) return;
       baselineSpriteRef.current = baselineSprite;
       candidateSpriteRef.current = candidateSprite;
-      // In diff-heatmap mode, hide the baseline + candidate sprites and
-      // show only the diff overlay PNG at full alpha. The overlay PNG
-      // produced by the engine already contains a faded candidate
-      // background with 100%-opaque red highlights on every mismatched
-      // pixel — Applitools / Percy style. Stacking it on top of a
-      // full-opacity candidate at 60% alpha (the prior behavior)
-      // washed the red out into a faint tint that was hard to spot.
+      // In diff-heatmap mode, blend the overlay on top of the candidate
+      // via multiply at full alpha — Applitools-style. The engine's
+      // overlay PNG is white where pixels match and red where they
+      // differ. Multiply blending leaves the candidate unchanged in
+      // matching areas (white × candidate = candidate) and burns red
+      // through in mismatched areas (red × candidate = red-tinted
+      // candidate). Prior behavior (overlay at alpha 0.6 over a
+      // full-opacity candidate) double-applied the candidate via the
+      // overlay's own faded-page-content background and washed the red
+      // into a faint tint reviewers couldn't see.
       if (mode === "diff-heatmap" && overlaySprite) {
         overlaySprite.alpha = 1.0;
-        if (baselineSprite) baselineSprite.visible = false;
-        if (candidateSprite) candidateSprite.visible = false;
+        // Pixi 8 accepts blend-mode strings on Sprite directly.
+        (overlaySprite as unknown as { blendMode: string }).blendMode =
+          "multiply";
       } else if (overlaySprite) {
         overlaySprite.alpha = 0.6;
       }

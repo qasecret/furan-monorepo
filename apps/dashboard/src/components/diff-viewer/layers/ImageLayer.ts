@@ -37,36 +37,33 @@ export async function mountImageLayer(
     );
   }
   const blob = await res.blob();
-  const blobUrl = URL.createObjectURL(blob);
+  if (signal?.aborted) return null;
+  // ImageBitmap is a fully-decoded, GPU-ready surface. Unlike the
+  // HTMLImageElement path we used before (Image + blob URL), it has
+  // no lifetime coupling to a URL: once we hold the bitmap, the
+  // underlying blob can be GC'd at our leisure. Earlier the
+  // HTMLImageElement path lost a race when React effect cleanup
+  // revoked the blob URL while Pixi 8 was still lazily uploading the
+  // texture, surfacing as "WebGL: INVALID_VALUE: texImage2D: bad
+  // image data" and a black canvas in diff-heatmap mode.
+  let bitmap: ImageBitmap;
   try {
-    const img = new Image();
-    img.src = blobUrl;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () =>
-        reject(new Error(`mountImageLayer: decode failed for ${imageUrl}`));
-      // Abort wins over the image decode.
-      signal?.addEventListener(
-        "abort",
-        () => reject(new DOMException("aborted", "AbortError")),
-        { once: true },
-      );
-    });
-    // Re-check after the await chain finishes: if the effect cleanup
-    // ran while we were decoding, the parent container may be destroyed.
-    // Attaching to a destroyed parent either throws or silently orphans
-    // the sprite. Bail before touching it.
-    if (signal?.aborted) return null;
-    if (parent.destroyed) return null;
-    const texture = Texture.from(img);
-    const sprite = new Sprite(texture);
-    // Natural texture size — the world container owns the scale + offset.
-    parent.addChild(sprite);
-    return sprite;
-  } finally {
-    // Texture has copied the pixels at this point; the blob URL is no
-    // longer needed and would otherwise leak until the Application is
-    // GC'd.
-    URL.revokeObjectURL(blobUrl);
+    bitmap = await createImageBitmap(blob);
+  } catch (err) {
+    throw new Error(
+      `mountImageLayer: decode failed for ${imageUrl}: ${(err as Error).message}`,
+    );
   }
+  if (signal?.aborted) {
+    bitmap.close();
+    return null;
+  }
+  if (parent.destroyed) {
+    bitmap.close();
+    return null;
+  }
+  const texture = Texture.from(bitmap);
+  const sprite = new Sprite(texture);
+  parent.addChild(sprite);
+  return sprite;
 }
