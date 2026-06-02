@@ -372,11 +372,24 @@ export function ViewerCanvas({
       if (cancelled) return;
       baselineSpriteRef.current = baselineSprite;
       candidateSpriteRef.current = candidateSprite;
-      if (overlaySprite) overlaySprite.alpha = 0.6;
-      // Fit using the candidate's natural size (falling back to baseline)
-      // so the world's coordinate system matches what the user is
-      // reviewing. Both sprites are at (0,0) and identical aspect for any
-      // properly captured run.
+      // In diff-heatmap mode, hide the baseline + candidate sprites and
+      // show only the diff overlay PNG at full alpha. The overlay PNG
+      // produced by the engine already contains a faded candidate
+      // background with 100%-opaque red highlights on every mismatched
+      // pixel — Applitools / Percy style. Stacking it on top of a
+      // full-opacity candidate at 60% alpha (the prior behavior)
+      // washed the red out into a faint tint that was hard to spot.
+      if (mode === "diff-heatmap" && overlaySprite) {
+        overlaySprite.alpha = 1.0;
+        if (baselineSprite) baselineSprite.visible = false;
+        if (candidateSprite) candidateSprite.visible = false;
+      } else if (overlaySprite) {
+        overlaySprite.alpha = 0.6;
+      }
+      // Fit using the candidate's natural size (falling back to baseline,
+      // then overlay) so the world's coordinate system matches what the
+      // user is reviewing. All three sprites mount at (0,0) and share
+      // dimensions for any properly captured run.
       const fitSource = candidateSprite ?? baselineSprite ?? overlaySprite;
       const initialView = (() => {
         const s = useViewerStore.getState();
