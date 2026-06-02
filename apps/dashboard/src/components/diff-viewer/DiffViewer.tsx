@@ -408,7 +408,25 @@ export function DiffViewer({
       </div>
     );
 
-  const regions = (data.diffRegions ?? []) as DiffRegion[];
+  // v1.1.20+: per-checkpoint region filter. Before the diff_regions
+  // schema gained a screenshot_id column, two checkpoints in one run
+  // that shared a viewport (e.g. HomePage + searchResult both at
+  // 1280x720) saw each other's diff regions overlaid in the diff
+  // viewer — Applitools users immediately noticed yellow boxes on
+  // pages that hadn't actually changed there.
+  //
+  // Rule: a region with screenshotId === selectedCheckpointId belongs
+  // to the current checkpoint. A region with screenshotId === null is
+  // a legacy row from a pre-v1.1.20 run; we show it on every
+  // checkpoint so legacy runs degrade gracefully rather than
+  // disappearing entirely.
+  const regions = useMemo(() => {
+    const all = (data.diffRegions ?? []) as DiffRegion[];
+    if (!selectedCheckpointId || selectedCheckpointId === "_first") return all;
+    return all.filter(
+      (r) => !r.screenshotId || r.screenshotId === selectedCheckpointId,
+    );
+  }, [data.diffRegions, selectedCheckpointId]);
 
   const isEmpty = data?.status === "empty";
 

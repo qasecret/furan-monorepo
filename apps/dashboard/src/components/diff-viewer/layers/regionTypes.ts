@@ -28,4 +28,9 @@ export interface DiffRegion {
    * the OCR text matched the region's regex. */
   ocrMatched?: boolean | null;
   viewport?: string | null;
+  /** v1.1.20+: which screenshot (checkpoint) this region was detected
+   *  on. Null for legacy rows from runs persisted before the column was
+   *  added — the DiffViewer treats null as "show on every checkpoint"
+   *  so legacy runs degrade gracefully rather than disappearing. */
+  screenshotId?: string | null;
 }
