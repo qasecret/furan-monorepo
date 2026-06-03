@@ -574,7 +574,7 @@ export function DiffViewer({
                 : undefined
             }
             status={data?.status}
-            diffRegions={data?.diffRegions}
+            diffRegions={regions}
           />
         </div>
         <RunCommentPanel runId={runId} />
