@@ -13,14 +13,18 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "@google/genai": "^2.8.0",
     "axe-core": "^4.10.2",
     "diff-dom": "^5.1.0",
     "fft.js": "^4.0.4",
     "jsdom": "^25.0.1",
     "looks-same": "^10.0.1",
     "odiff-bin": "^3.1.0",
+    "ollama": "^0.6.3",
     "pixelmatch": "^7.2.0",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@furan/eslint-config": "workspace:*",

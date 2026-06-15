@@ -30,6 +30,8 @@ export async function runL1(
       return runL1Pixelmatch(baseline, candidate, ignoreAreas, engineConfig);
     case "looks_same":
       return runL1LooksSame(baseline, candidate, ignoreAreas, engineConfig);
+    case "vlm":
+      return runL1Pixelmatch(baseline, candidate, ignoreAreas, engineConfig);
     default: {
       const _exhaustive: never = engine;
       throw new Error(
