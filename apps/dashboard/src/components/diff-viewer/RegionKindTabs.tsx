@@ -25,8 +25,11 @@ export function RegionKindTabs({
           <TabsTrigger key={k.value} value={k.value} className="relative">
             {k.label}
             {!k.enforced ? (
-              <span className="ml-1 rounded bg-zinc-200 px-1 text-[10px] uppercase text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                not yet enforced
+              <span
+                className="ml-1 rounded bg-zinc-200 px-1 text-[10px] uppercase text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 cursor-help"
+                title="Regions are saved but won't affect pass/fail status yet"
+              >
+                preview
               </span>
             ) : null}
           </TabsTrigger>

@@ -534,6 +534,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
 
   const update = trpc.projects.update.useMutation({
     onSuccess: async () => {
+      form.reset(form.getValues());
       await utils.projects.getById.invalidate({ projectId });
       toast.success("Settings saved");
     },
@@ -861,7 +862,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                   </FormControl>
                   <FormDescription>
                     Old runs are deleted after this many days. Enforced nightly
-                    by the diff-worker retention job; set to 0 to disable.
+                    by the diff-worker retention job.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -870,12 +871,18 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
           </CardContent>
         </Card>
 
-        <div className="flex justify-end">
+        <div className="sticky bottom-4 flex items-center justify-end gap-3 z-10">
+          {form.formState.isDirty && !update.isPending && (
+            <span className="text-xs text-amber-600 dark:text-amber-400">
+              Unsaved changes
+            </span>
+          )}
           <Button
             type="submit"
             disabled={isGuest || update.isPending}
             title={isGuest ? "Guests can't modify project settings" : undefined}
             data-testid="save-button"
+            variant={form.formState.isDirty ? "default" : "secondary"}
           >
             {update.isPending ? "Saving…" : "Save"}
           </Button>

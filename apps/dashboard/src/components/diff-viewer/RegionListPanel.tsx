@@ -32,11 +32,10 @@ const SEVERITY_FILTERS: Array<Severity | "all"> = [
   "none",
 ];
 
-type SourceFilter = "all" | "l1" | "l2";
+type SourceFilter = "all" | "l2";
 
 const SOURCE_FILTERS: Array<{ value: SourceFilter; label: string }> = [
   { value: "all", label: "All sources" },
-  { value: "l1", label: "Visual (pixel)" },
   { value: "l2", label: "Root Cause (DOM/CSS)" },
 ];
 
@@ -150,7 +149,7 @@ export function RegionListPanel({
 
   return (
     <aside
-      className="border-l border-zinc-200 bg-white flex flex-col w-80 max-w-[40vw] dark:border-zinc-800 dark:bg-zinc-950"
+      className="border-l border-zinc-200 bg-white flex flex-col w-72 max-w-[30vw] dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="region-list-panel"
     >
       <RegionKindTabs
@@ -267,17 +266,21 @@ export function RegionListPanel({
           >
             <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               {regions.length === 0
-                ? "No differences detected"
+                ? "No regions to display"
                 : sourceFilter === "l2"
                   ? "No DOM/CSS-level changes detected"
-                  : "No regions match the active filters"}
+                  : regions.every((r) => r.source === "l1_pixel")
+                    ? "Only pixel-level diffs detected"
+                    : "No regions match the active filters"}
             </div>
             <div className="text-xs text-zinc-500 max-w-[18rem]">
               {regions.length === 0
-                ? "The candidate matches the baseline pixel-for-pixel for the current sensitivity. Adjust the sensitivity slider if you expected to see diffs."
+                ? "No ignore or diff regions are configured for this checkpoint. Use 'Edit regions' above to draw ignore areas, or adjust the sensitivity slider to surface pixel-level diffs."
                 : sourceFilter === "l2"
                   ? "The visual diff comes from pixel-level changes only. Switch back to 'All sources' to see them."
-                  : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
+                  : regions.every((r) => r.source === "l1_pixel")
+                    ? "Pixel-level changes are visible on the canvas overlay. Enable L2 (DOM/CSS) analysis in project settings for root-cause detail."
+                    : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
             </div>
           </div>
         ) : grouped ? (

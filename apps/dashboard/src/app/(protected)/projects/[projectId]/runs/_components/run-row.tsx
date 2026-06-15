@@ -3,6 +3,7 @@
 import type { RunStatus } from "@furan/shared-types";
 import { GitBranch, History as HistoryIcon, Package } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { CheckpointStrip } from "./checkpoint-strip";
@@ -65,28 +66,46 @@ function relative(date: string | Date): string {
  */
 export function RunRow({ projectId, run }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const router = useRouter();
+
+  const diffUrl = `/projects/${projectId}/runs/${run.id}/checkpoints/_first`;
+
+  const INTERACTIVE = "a, button, input, select, textarea, [role='button']";
+
+  const handleRowClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(INTERACTIVE)) return;
+    if (e.metaKey || e.ctrlKey || e.button === 1) {
+      window.open(diffUrl, "_blank", "noopener");
+      return;
+    }
+    router.push(diffUrl);
+  };
 
   return (
     <>
       <tr
-        className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
+        className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30 cursor-pointer"
         data-testid={`queue-row-${run.id}`}
+        onClick={handleRowClick}
+        aria-label={`Open run ${run.name ?? run.branchName ?? run.id}`}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            router.push(diffUrl);
+          }
+        }}
       >
         <td className="px-4 py-2.5">
-          {/*
-            Three sibling links live in the same cell: the branch link
-            (primary — opens the diff viewer), a build chip, and a history
-            chip. Without explicit aria-labels each link's accessible name
-            was just its visible text — "main", "build", "History" — and a
-            screen reader read the cell as the phrase "main build
-            History". The labels below name each link in terms of what it
-            does, leaving the cell's text content intact for visual users.
-          */}
           <div className="flex items-center gap-1.5">
-            {/* ADR-038: chevron to expand the per-checkpoint strip */}
             <button
               type="button"
-              onClick={() => setExpanded((v) => !v)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
               aria-expanded={expanded}
               aria-label={
                 expanded ? "Collapse checkpoints" : "Expand checkpoints"
@@ -106,7 +125,7 @@ export function RunRow({ projectId, run }: Props) {
                 aria-hidden
               />
               <Link
-                href={`/projects/${projectId}/runs/${run.id}/checkpoints/_first`}
+                href={diffUrl}
                 className="hover:underline"
                 aria-label={`Open diff viewer for run on branch ${run.branchName ?? "(unknown)"}`}
               >
