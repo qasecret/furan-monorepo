@@ -1,5 +1,6 @@
 "use client";
 
+import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
@@ -31,11 +32,10 @@ const SEVERITY_FILTERS: Array<Severity | "all"> = [
   "none",
 ];
 
-type SourceFilter = "all" | "l1" | "l2";
+type SourceFilter = "all" | "l2";
 
 const SOURCE_FILTERS: Array<{ value: SourceFilter; label: string }> = [
   { value: "all", label: "All sources" },
-  { value: "l1", label: "Visual (pixel)" },
   { value: "l2", label: "Root Cause (DOM/CSS)" },
 ];
 
@@ -73,7 +73,15 @@ function areaOf(b: BBox | unknown): number {
   return 0;
 }
 
-export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
+interface RegionListPanelProps {
+  regions: DiffRegion[];
+  vlmDescription?: string | null;
+}
+
+export function RegionListPanel({
+  regions,
+  vlmDescription,
+}: RegionListPanelProps) {
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -141,7 +149,7 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
 
   return (
     <aside
-      className="border-l border-zinc-200 bg-white flex flex-col w-80 max-w-[40vw] dark:border-zinc-800 dark:bg-zinc-950"
+      className="border-l border-zinc-200 bg-white flex flex-col w-72 max-w-[30vw] dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="region-list-panel"
     >
       <RegionKindTabs
@@ -236,6 +244,20 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
           </label>
         </div>
       </div>
+      {vlmDescription && (
+        <div
+          className="mx-2 mt-2 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950/40"
+          data-testid="vlm-description-box"
+        >
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
+            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            AI Analysis
+          </div>
+          <p className="text-xs leading-relaxed text-blue-800 dark:text-blue-200">
+            {vlmDescription}
+          </p>
+        </div>
+      )}
       <div className="overflow-auto flex-1 p-2 space-y-1">
         {filtered.length === 0 ? (
           <div
@@ -244,17 +266,21 @@ export function RegionListPanel({ regions }: { regions: DiffRegion[] }) {
           >
             <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               {regions.length === 0
-                ? "No differences detected"
+                ? "No regions to display"
                 : sourceFilter === "l2"
                   ? "No DOM/CSS-level changes detected"
-                  : "No regions match the active filters"}
+                  : regions.every((r) => r.source === "l1_pixel")
+                    ? "Only pixel-level diffs detected"
+                    : "No regions match the active filters"}
             </div>
             <div className="text-xs text-zinc-500 max-w-[18rem]">
               {regions.length === 0
-                ? "The candidate matches the baseline pixel-for-pixel for the current sensitivity. Adjust the sensitivity slider if you expected to see diffs."
+                ? "No ignore or diff regions are configured for this checkpoint. Use 'Edit regions' above to draw ignore areas, or adjust the sensitivity slider to surface pixel-level diffs."
                 : sourceFilter === "l2"
                   ? "The visual diff comes from pixel-level changes only. Switch back to 'All sources' to see them."
-                  : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
+                  : regions.every((r) => r.source === "l1_pixel")
+                    ? "Pixel-level changes are visible on the canvas overlay. Enable L2 (DOM/CSS) analysis in project settings for root-cause detail."
+                    : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
             </div>
           </div>
         ) : grouped ? (

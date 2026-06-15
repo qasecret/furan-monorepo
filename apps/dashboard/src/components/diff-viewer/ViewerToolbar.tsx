@@ -25,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 
@@ -103,6 +105,8 @@ export function ViewerToolbar({
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const discardIgnoreChanges = useViewerStore((s) => s.discardIgnoreChanges);
   const applySaveSuccess = useViewerStore((s) => s.applySaveSuccess);
+  const isTemporaryMode = useViewerStore((s) => s.isTemporaryMode);
+  const setTemporaryMode = useViewerStore((s) => s.setTemporaryMode);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
   const setPaddingForSelected = useViewerStore((s) => s.setPaddingForSelected);
@@ -154,6 +158,12 @@ export function ViewerToolbar({
       void utils.runs.getById.invalidate({ runId });
     },
   });
+  const setTempIgnoreAreas = trpc.runs.setTempIgnoreAreas.useMutation({
+    onSuccess: () => {
+      discardIgnoreChanges();
+      void utils.runs.getById.invalidate({ runId });
+    },
+  });
 
   const [pendingScopeSwitch, setPendingScopeSwitch] = useState<
     "run" | "variation" | null
@@ -201,16 +211,8 @@ export function ViewerToolbar({
       .map((r) => {
         const kindOv = kindOverrides.get(r.id);
         const selectorOv = selectorOverrides.get(r.id);
-        // F-a/3: `null` override = explicit clear (omit `selector` on
-        // the wire). `undefined` = no override → preserve the saved
-        // row's selector.
         const resolvedSelector =
           selectorOv === null ? undefined : (selectorOv ?? r.selector);
-        // `thresholdOverride` is only valid for strict regions — the
-        // server-side zod rejects it on any other kind. Drop it when the
-        // effective kind is non-strict so a "strict → ignore" kind
-        // override doesn't leak the previously-set tolerance and fail
-        // the save with a confusing 400.
         const effectiveKind = kindOv?.kind ?? r.kind;
         const threshold =
           effectiveKind === "strict"
@@ -245,11 +247,19 @@ export function ViewerToolbar({
         ? { thresholdOverride: r.thresholdOverride }
         : {}),
     }));
-    setIgnoreAreas.mutate({
-      runId,
-      scope,
-      ignoreAreas: [...survivors, ...drafts],
-    });
+
+    if (isTemporaryMode) {
+      setTempIgnoreAreas.mutate({
+        runId,
+        tempIgnoreAreas: [...survivors, ...drafts],
+      });
+    } else {
+      setIgnoreAreas.mutate({
+        runId,
+        scope,
+        ignoreAreas: [...survivors, ...drafts],
+      });
+    }
   };
 
   return (
@@ -424,22 +434,43 @@ export function ViewerToolbar({
               Pick element
             </Button>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="temp-toggle"
+              checked={isTemporaryMode}
+              onCheckedChange={setTemporaryMode}
+              data-testid="temp-ignore-toggle"
+            />
+            <Label htmlFor="temp-toggle" className="text-xs cursor-pointer">
+              Temporary (this run only)
+            </Label>
+          </div>
           <Button
             type="button"
             variant="default"
             className="px-2 py-1 text-xs"
             data-testid="ignore-save-button"
-            disabled={!hasPendingChanges || setIgnoreAreas.isPending}
+            disabled={
+              !hasPendingChanges ||
+              setIgnoreAreas.isPending ||
+              setTempIgnoreAreas.isPending
+            }
             onClick={handleSave}
           >
-            {setIgnoreAreas.isPending ? "Saving…" : "Save"}
+            {setIgnoreAreas.isPending || setTempIgnoreAreas.isPending
+              ? "Saving…"
+              : "Save"}
           </Button>
           <Button
             type="button"
             variant="secondary"
             className="px-2 py-1 text-xs"
             data-testid="ignore-discard-button"
-            disabled={!hasPendingChanges || setIgnoreAreas.isPending}
+            disabled={
+              !hasPendingChanges ||
+              setIgnoreAreas.isPending ||
+              setTempIgnoreAreas.isPending
+            }
             onClick={discardIgnoreChanges}
           >
             Discard

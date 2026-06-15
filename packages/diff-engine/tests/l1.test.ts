@@ -32,7 +32,7 @@ describe("runL1 dispatcher", () => {
         FIXTURE("baseline-a.png"),
         FIXTURE("candidate-a-identical.png"),
         undefined,
-        "vlm" as unknown as ImageComparison,
+        "nope" as unknown as ImageComparison,
         DEFAULT_ENGINE_CONFIG,
       ),
     ).rejects.toThrow(/Unknown image comparison engine/);

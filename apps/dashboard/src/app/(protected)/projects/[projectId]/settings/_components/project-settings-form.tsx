@@ -18,6 +18,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -194,7 +195,7 @@ const schema = z.object({
   l2Enabled: z.boolean(),
   dynamicTextEnabled: z.boolean(),
   autoApproveFeature: z.boolean(),
-  imageComparison: z.enum(["pixelmatch", "looks_same", "odiff"]),
+  imageComparison: z.enum(["pixelmatch", "looks_same", "odiff", "vlm"]),
   retentionDays: z.coerce.number().int().min(1).max(3650),
   maxBuildAllowed: z.coerce.number().int().min(1),
   maxBranchLifetime: z.coerce.number().int().min(1),
@@ -223,12 +224,28 @@ type FormValues = z.infer<typeof schema>;
  * textarea below shows the raw value and its own validation message, so
  * the structured editor stays usable while the user fixes the JSON.
  */
+const VLM_DEFAULTS = {
+  provider: "ollama" as const,
+  model: "gemma3:12b",
+  prompt: "",
+  temperature: 0.1,
+  apiKey: "",
+};
+
+type VlmConfig = {
+  provider: "ollama" | "gemini" | "anthropic";
+  model: string;
+  prompt: string;
+  temperature: number;
+  apiKey: string;
+};
+
 function EngineKnobsEditor({
   engine,
   form,
   disabled,
 }: {
-  engine: "pixelmatch" | "looks_same" | "odiff";
+  engine: "pixelmatch" | "looks_same" | "odiff" | "vlm";
   form: UseFormReturn<FormValues>;
   disabled: boolean;
 }) {
@@ -253,8 +270,6 @@ function EngineKnobsEditor({
   // `<select>` has zero `<option>`s and silently falls back to ""). The
   // imageComparison Select below filters that empty string out, but guard
   // here too so a future regression can't crash render.
-  const knobs = ENGINE_KNOBS[engine];
-  if (!knobs) return null;
 
   const writeKey = (key: string, value: unknown): void => {
     const next: Record<string, unknown> = { ...parsed, [key]: value };
@@ -263,6 +278,132 @@ function EngineKnobsEditor({
       shouldValidate: true,
     });
   };
+
+  if (engine === "vlm") {
+    const vlm: VlmConfig = {
+      ...VLM_DEFAULTS,
+      ...(typeof parsed.provider === "string" &&
+      ["ollama", "gemini", "anthropic"].includes(parsed.provider)
+        ? { provider: parsed.provider as VlmConfig["provider"] }
+        : {}),
+      ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+      ...(typeof parsed.prompt === "string" ? { prompt: parsed.prompt } : {}),
+      ...(typeof parsed.temperature === "number"
+        ? { temperature: parsed.temperature }
+        : {}),
+      ...(typeof parsed.apiKey === "string" ? { apiKey: parsed.apiKey } : {}),
+    };
+
+    return (
+      <div
+        className="space-y-3 rounded-md border border-zinc-200 bg-zinc-100/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+        data-testid="engine-knobs-vlm"
+      >
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+          VLM knobs
+        </p>
+
+        <div className="space-y-1">
+          <Label htmlFor="vlm-provider">Provider</Label>
+          <Select
+            value={vlm.provider}
+            onValueChange={(v) => {
+              if (v) writeKey("provider", v);
+            }}
+            disabled={disabled}
+          >
+            <SelectTrigger id="vlm-provider" data-testid="vlm-provider-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ollama">Ollama (local)</SelectItem>
+              <SelectItem value="gemini">Google Gemini</SelectItem>
+              <SelectItem value="anthropic">Anthropic Claude</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            VLM provider. Ollama runs locally; Gemini and Anthropic require an
+            API key.
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="vlm-model">Model name</Label>
+          <Input
+            id="vlm-model"
+            value={vlm.model}
+            onChange={(e) => writeKey("model", e.target.value)}
+            disabled={disabled}
+            data-testid="vlm-model-input"
+          />
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            Model identifier (e.g. gemma3:12b for Ollama, gemini-2.0-flash for
+            Gemini).
+          </p>
+        </div>
+
+        {(vlm.provider === "gemini" || vlm.provider === "anthropic") && (
+          <div className="space-y-1">
+            <Label htmlFor="vlm-api-key">API Key</Label>
+            <Input
+              id="vlm-api-key"
+              type="password"
+              value={vlm.apiKey}
+              onChange={(e) => writeKey("apiKey", e.target.value)}
+              disabled={disabled}
+              placeholder="Enter API key…"
+              data-testid="vlm-api-key-input"
+            />
+            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+              API key for the selected provider. Stored in the project config
+              JSON.
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <Label htmlFor="vlm-temperature">
+            Temperature ({vlm.temperature})
+          </Label>
+          <Slider
+            id="vlm-temperature"
+            value={[vlm.temperature]}
+            onValueChange={([v]: number[]) => writeKey("temperature", v ?? 0.1)}
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={disabled}
+            data-testid="vlm-temperature-slider"
+          />
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            Controls randomness in the VLM response. Lower values produce more
+            deterministic output.
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="vlm-prompt">Custom prompt</Label>
+          <textarea
+            id="vlm-prompt"
+            rows={6}
+            value={vlm.prompt}
+            onChange={(e) => writeKey("prompt", e.target.value)}
+            disabled={disabled}
+            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
+            placeholder="Override the default VLM system prompt…"
+            data-testid="vlm-prompt-textarea"
+          />
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            Optional. Replaces the default system prompt sent to the VLM. Leave
+            blank to use the built-in prompt.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const knobs = ENGINE_KNOBS[engine];
+  if (!knobs) return null;
 
   return (
     <div
@@ -393,6 +534,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
 
   const update = trpc.projects.update.useMutation({
     onSuccess: async () => {
+      form.reset(form.getValues());
       await utils.projects.getById.invalidate({ projectId });
       toast.success("Settings saved");
     },
@@ -602,12 +744,14 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                       <SelectItem value="odiff">Odiff (default)</SelectItem>
                       <SelectItem value="pixelmatch">Pixelmatch</SelectItem>
                       <SelectItem value="looks_same">Looks-Same</SelectItem>
+                      <SelectItem value="vlm">VLM (AI Vision)</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormDescription>
                     Pixel comparison backend. Odiff is the default; Pixelmatch
                     matches the jest-image-snapshot / Percy world; Looks-Same is
-                    perceptual and antialiasing-tolerant.
+                    perceptual and antialiasing-tolerant; VLM uses an AI vision
+                    model for semantic diff analysis.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -718,7 +862,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                   </FormControl>
                   <FormDescription>
                     Old runs are deleted after this many days. Enforced nightly
-                    by the diff-worker retention job; set to 0 to disable.
+                    by the diff-worker retention job.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -727,12 +871,18 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
           </CardContent>
         </Card>
 
-        <div className="flex justify-end">
+        <div className="sticky bottom-4 flex items-center justify-end gap-3 z-10">
+          {form.formState.isDirty && !update.isPending && (
+            <span className="text-xs text-amber-600 dark:text-amber-400">
+              Unsaved changes
+            </span>
+          )}
           <Button
             type="submit"
             disabled={isGuest || update.isPending}
             title={isGuest ? "Guests can't modify project settings" : undefined}
             data-testid="save-button"
+            variant={form.formState.isDirty ? "default" : "secondary"}
           >
             {update.isPending ? "Saving…" : "Save"}
           </Button>

@@ -18,6 +18,24 @@ export type {
   EngineConfig,
 } from "./types.js";
 
+export { runVlm } from "./vlm/index.js";
+export type {
+  VlmProvider,
+  VlmProviderConfig,
+  VlmDiffResult,
+  RunVlmOptions,
+  OllamaVlmConfig,
+  GeminiVlmConfig,
+  AnthropicVlmConfig,
+  VlmResult,
+} from "./vlm/index.js";
+export { DEFAULT_VLM_PROMPT, DEFAULT_VLM_CONFIG } from "./vlm/index.js";
+export {
+  ollamaProvider,
+  geminiProvider,
+  anthropicProvider,
+} from "./vlm/index.js";
+
 export type MatchLevel =
   | "Strict"
   | "Layout"

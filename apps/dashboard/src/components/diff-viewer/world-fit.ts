@@ -9,10 +9,16 @@ import type { Application, Container } from "pixi.js";
 const MIN_FIT_SCALE = 0.05;
 
 /**
+ * Maximum upscale factor — images smaller than the canvas are scaled up
+ * to fill it, but capped here to avoid blurry pixel-art blowups.
+ */
+const MAX_UPSCALE = 2;
+
+/**
  * Compute the uniform scale that fits an image of `imgW × imgH` into a
  * canvas of `screenW × screenH`, preserving aspect ratio (letterbox).
- * Never upscales past 1 — a 200×100 image inside a 1200×800 canvas should
- * render at its native size, not balloon to 8×.
+ * Small images are scaled up to fill the viewport (capped at MAX_UPSCALE)
+ * so users don't have to squint at tiny screenshots.
  */
 export function computeFitScale(
   imgW: number,
@@ -21,7 +27,7 @@ export function computeFitScale(
   screenH: number,
 ): number {
   if (imgW <= 0 || imgH <= 0 || screenW <= 0 || screenH <= 0) return 1;
-  const scale = Math.min(screenW / imgW, screenH / imgH, 1);
+  const scale = Math.min(screenW / imgW, screenH / imgH, MAX_UPSCALE);
   return Math.max(scale, MIN_FIT_SCALE);
 }
 

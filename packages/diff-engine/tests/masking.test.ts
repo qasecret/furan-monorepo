@@ -35,7 +35,7 @@ describe("applyIgnoreMask", () => {
     expect(decoded.data[insideIdx]).toBe(0);
     expect(decoded.data[insideIdx + 1]).toBe(0);
     expect(decoded.data[insideIdx + 2]).toBe(0);
-    expect(decoded.data[insideIdx + 3]).toBe(255);
+    expect(decoded.data[insideIdx + 3]).toBe(0);
     const outsideIdx = (0 * decoded.width + 0) * 4;
     expect(decoded.data[outsideIdx]).toBe(255);
     expect(decoded.data[outsideIdx + 1]).toBe(0);

@@ -1,5 +1,6 @@
 import {
   baselines,
+  desc,
   diffRegions,
   eq,
   projects,
@@ -13,12 +14,20 @@ import {
 import {
   runAxe,
   runDiff,
+  runL1,
   runL2,
+  runVlm,
   classifyRegions,
   DEFAULT_ENGINE_CONFIG,
+  DEFAULT_VLM_CONFIG,
   configForMatchLevel,
+  ollamaProvider,
+  geminiProvider,
+  anthropicProvider,
   type EngineConfig,
   type MatchLevel,
+  type VlmProvider,
+  type VlmProviderConfig,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
@@ -74,6 +83,19 @@ function parseEngineConfig(
       "image_comparison_config_invalid_falling_back_to_defaults",
     );
     return DEFAULT_ENGINE_CONFIG;
+  }
+}
+
+function resolveVlmProvider(config: VlmProviderConfig): VlmProvider {
+  const provider = config.provider ?? "ollama";
+  switch (provider) {
+    case "gemini":
+      return geminiProvider;
+    case "anthropic":
+      return anthropicProvider;
+    case "ollama":
+    default:
+      return ollamaProvider;
   }
 }
 
@@ -157,6 +179,60 @@ interface PerViewportResult {
   }>;
   ranTiers: Array<"l1" | "l2">;
   firstBaseline: boolean;
+  vlmDescription?: string | undefined;
+}
+
+async function tryAutoApproveByPastBaselines(
+  db: DB,
+  storage: Storage,
+  variationId: string,
+  candidateImageKey: string,
+  diffThreshold: number,
+  logger: Logger,
+): Promise<boolean> {
+  const pastBaselines = await db
+    .select({ testRunId: baselines.testRunId })
+    .from(baselines)
+    .where(eq(baselines.testVariationId, variationId))
+    .orderBy(desc(baselines.createdAt))
+    .limit(10);
+
+  if (pastBaselines.length <= 1) return false;
+
+  const candidateBytes = await storage.get(candidateImageKey);
+  if (!candidateBytes) return false;
+
+  for (const bl of pastBaselines.slice(1)) {
+    try {
+      const blScreenshot = await db
+        .select({ imageKey: screenshots.imageKey })
+        .from(screenshots)
+        .where(eq(screenshots.runId, bl.testRunId))
+        .limit(1);
+      if (!blScreenshot[0]?.imageKey) continue;
+
+      const blBytes = await storage.get(blScreenshot[0].imageKey);
+      if (!blBytes) continue;
+
+      const l1 = await runL1(
+        Buffer.from(blBytes),
+        Buffer.from(candidateBytes),
+        undefined,
+        "odiff",
+        DEFAULT_ENGINE_CONFIG,
+      );
+      if (l1.diffPercent <= diffThreshold * 100) {
+        logger.info(
+          { variationId, matchedBaselineRunId: bl.testRunId },
+          "auto-approve: candidate matches past baseline",
+        );
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 /**
@@ -486,6 +562,88 @@ async function handleDiffJobInner(
     return;
   }
 
+  // Past-baseline auto-approve: if the project has auto-approve enabled
+  // and hashes didn't match (we fell through the block above), check if
+  // the candidate matches any of the 10 most recent older baselines.
+  if (project.autoApproveFeature) {
+    const diffThresholdForAutoApprove =
+      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+    const pastAutoApproved = await tryAutoApproveByPastBaselines(
+      deps.db,
+      deps.storage,
+      runTestVariationId,
+      candidateShots[0]!.imageKey,
+      diffThresholdForAutoApprove,
+      logger,
+    );
+    if (pastAutoApproved) {
+      await withProjectScope(deps.db, data.projectId, async (tx) => {
+        await tx
+          .update(testRuns)
+          .set({
+            status: "passed",
+            diffPercent: 0,
+            pixelMisMatchCount: 0,
+            merge: true,
+            baselineSource: baseline.source,
+          })
+          .where(eq(testRuns.id, data.runId));
+        await tx.insert(baselines).values({
+          baselineName: run.baselineName ?? run.name ?? "auto",
+          testVariationId: runTestVariationId,
+          testRunId: run.id,
+          ...(run.branchName ? { branchName: run.branchName } : {}),
+        });
+      });
+
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "diff.completed",
+          runId: data.runId,
+          passed: true,
+          diffPercent: 0,
+          ranTiers: [],
+          viewportCount: candidateShots.length,
+          durationMs: Date.now() - t0,
+          autoApproved: true,
+        }),
+      );
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "passed",
+          diffPercent: 0,
+          branchName: run.branchName,
+          numChanges: 0,
+        }),
+      );
+      await publishProjectRunUpdate(
+        deps,
+        {
+          projectId: data.projectId,
+          runId: data.runId,
+          status: "passed",
+          buildId: run.buildId,
+        },
+        logger,
+      );
+      logger.info(
+        {
+          runId: data.runId,
+          projectId: data.projectId,
+          autoApproved: true,
+          strategy: "past-baseline",
+        },
+        "diff_auto_approved_past_baseline",
+      );
+      return;
+    }
+  }
+
   // Per ADR-031: merge variation + run ignore areas. Both are JSON arrays
   // of {x,y,width,height,viewport?}. The viewport tag is filtered against
   // each candidate screenshot's viewport inside the per-viewport loop
@@ -500,8 +658,8 @@ async function handleDiffJobInner(
   // ignoreRegions is jsonb (already parsed by Drizzle); parseIgnoreAreas
   // handles both string and pre-parsed values.
   const variationRegions = parseIgnoreAreas(variationRow?.ignoreRegions) ?? [];
-  // ADR-038: run-level ignoreAreas column was removed from test_runs.
-  const allRegions = dedupeRegions([...variationRegions]);
+  const tempRegions = parseIgnoreAreas(run.tempIgnoreAreas) ?? [];
+  const allRegions = dedupeRegions([...variationRegions, ...tempRegions]);
   const perViewport: PerViewportResult[] = [];
   // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
   // string and the per-region OCR results, so we can persist a synthetic
@@ -679,7 +837,40 @@ async function handleDiffJobInner(
       run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
 
     let result: Awaited<ReturnType<typeof runDiff>>;
-    if (runL2Only) {
+    let vlmDescription: string | undefined;
+    if (project.imageComparison === "vlm") {
+      const vlmConfigJson = project.imageComparisonConfig;
+      let vlmConfig: VlmProviderConfig;
+      try {
+        vlmConfig = vlmConfigJson
+          ? JSON.parse(vlmConfigJson)
+          : DEFAULT_VLM_CONFIG;
+      } catch {
+        vlmConfig = DEFAULT_VLM_CONFIG;
+      }
+      const t0 = performance.now();
+      const vlmResult = await runVlm(
+        Buffer.from(baselineBytes),
+        Buffer.from(candidateBytes),
+        {
+          provider: resolveVlmProvider(vlmConfig),
+          config: vlmConfig,
+          engineConfig: routedEngineConfig,
+          diffThreshold,
+          ignoreAreas: resolvedIgnoreAreas,
+        },
+      );
+      result = {
+        passed: vlmResult.passed,
+        diffPercent: vlmResult.diffPercent,
+        pixelMismatchCount: vlmResult.pixelMismatchCount,
+        diffImageBytes: vlmResult.diffImageBytes,
+        regions: [],
+        ranTiers: ["l1"],
+        durationMs: { l1: performance.now() - t0, l2: null },
+      };
+      vlmDescription = vlmResult.vlmDescription;
+    } else if (runL2Only) {
       // Layout mode: skip L1 pixel diff entirely, run only DOM-level diff.
       // We construct a DiffResult-compatible object directly from runL2's
       // output. diffPercent and pixelMismatchCount are 0 because no pixel
@@ -932,6 +1123,7 @@ async function handleDiffJobInner(
       })),
       ranTiers: result.ranTiers,
       firstBaseline: false,
+      vlmDescription,
     });
   }
 
@@ -957,6 +1149,8 @@ async function handleDiffJobInner(
   const aggregateDiffName = worst?.diffImageKey ?? null;
   const aggregateRegions = perViewport.flatMap((v) => v.regions);
   const aggregateStatus = aggregateFailed ? "unresolved" : "passed";
+  const aggregateVlmDescription =
+    perViewport.find((v) => v.vlmDescription)?.vlmDescription ?? null;
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
@@ -967,6 +1161,7 @@ async function handleDiffJobInner(
         diffName: aggregateDiffName,
         status: aggregateStatus,
         baselineSource: baseline.source,
+        vlmDescription: aggregateVlmDescription,
       })
       .where(eq(testRuns.id, data.runId));
 

@@ -37,7 +37,7 @@ export interface DiffRegion {
   axeTarget?: string[];
 }
 
-export type ImageComparison = "pixelmatch" | "looks_same" | "odiff";
+export type ImageComparison = "pixelmatch" | "looks_same" | "odiff" | "vlm";
 
 export interface EngineConfig {
   /** Engine-internal sensitivity. Pixelmatch: 0..1 strict→loose.
