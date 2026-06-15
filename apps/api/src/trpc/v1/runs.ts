@@ -624,6 +624,72 @@ export const runsRouter = t.router({
     }),
 
   /**
+   * Session-scoped ignore areas stored directly on the test run. Unlike
+   * `setIgnoreAreas`, these are NOT persisted to the variation — they apply
+   * only for this run and are cleared when the run is deleted. Callers pass
+   * `null` to clear the temp ignore areas.
+   *
+   * Re-enqueues a diff job so the worker re-evaluates with the new masks.
+   */
+  setTempIgnoreAreas: t.procedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        tempIgnoreAreas: z
+          .array(ignoreRegionElementSchema)
+          .max(MAX_IGNORE_REGIONS)
+          .nullable(),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const runRows = await ctx.db
+        .select({
+          id: testRuns.id,
+          projectId: testRuns.projectId,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await ctx.db
+        .update(testRuns)
+        .set({
+          tempIgnoreAreas: input.tempIgnoreAreas
+            ? JSON.stringify(input.tempIgnoreAreas)
+            : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(testRuns.id, input.runId));
+
+      await ctx.diffQueue.add("diff", {
+        runId: run.id,
+        projectId: run.projectId,
+      });
+
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "testRun_updated",
+        data: { id: run.id },
+      });
+
+      return {
+        runId: run.id,
+        tempIgnoreAreas: input.tempIgnoreAreas,
+        requeued: true as const,
+      };
+    }),
+
+  /**
    * Append-mode counterpart to `setIgnoreAreas`. Reads the existing
    * ignore-area list for the given scope, concatenates the incoming
    * regions, and writes back. The combined list is still bounded by

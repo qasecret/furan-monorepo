@@ -658,8 +658,8 @@ async function handleDiffJobInner(
   // ignoreRegions is jsonb (already parsed by Drizzle); parseIgnoreAreas
   // handles both string and pre-parsed values.
   const variationRegions = parseIgnoreAreas(variationRow?.ignoreRegions) ?? [];
-  // ADR-038: run-level ignoreAreas column was removed from test_runs.
-  const allRegions = dedupeRegions([...variationRegions]);
+  const tempRegions = parseIgnoreAreas(run.tempIgnoreAreas) ?? [];
+  const allRegions = dedupeRegions([...variationRegions, ...tempRegions]);
   const perViewport: PerViewportResult[] = [];
   // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
   // string and the per-region OCR results, so we can persist a synthetic
