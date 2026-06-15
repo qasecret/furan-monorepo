@@ -88,7 +88,7 @@ export default async function ProjectsPage() {
             className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
             data-testid={`project-card-${p.id}`}
           >
-            <Card className="h-full hover:border-zinc-300 transition-colors dark:hover:border-zinc-700">
+            <Card className="h-full transition-[border-color,box-shadow,transform] duration-150 hover:border-zinc-300 hover:-translate-y-0.5 hover:shadow-md dark:hover:border-zinc-700 dark:hover:shadow-zinc-900/50">
               <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
                 {p.name}
               </h2>

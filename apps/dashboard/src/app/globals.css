@@ -55,6 +55,21 @@
   /* Fonts — variables are set on <html> by next/font in Task 2 */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Custom easing curves — stronger than CSS defaults, give animations
+   * punch that makes them feel intentional. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* Animation tokens used by Radix-gated data-[state] rules below */
+  --animate-overlay-in: overlay-fade-in 200ms var(--ease-out);
+  --animate-overlay-out: overlay-fade-out 150ms var(--ease-out);
+  --animate-content-in: content-scale-in 200ms var(--ease-out);
+  --animate-content-out: content-scale-out 150ms var(--ease-out);
+  --animate-popover-in: popover-scale-in 150ms var(--ease-out);
+  --animate-popover-out: popover-scale-out 100ms var(--ease-out);
+  --animate-tooltip-in: tooltip-scale-in 125ms var(--ease-out);
+  --animate-tooltip-out: tooltip-scale-out 100ms var(--ease-out);
 }
 
 html,
@@ -140,4 +155,99 @@ html.dark {
   --chart-rejects: #f87171; /* red-400 — saturated red reads fine on dark */
   --chart-rejects-fill: #f87171;
   --chart-bar: #a8ff53; /* brand */
+}
+
+/* ─── Radix component animations ─────────────────────────────────────
+ * Keyframes + data-attribute rules for overlays, dialogs, dropdowns,
+ * tooltips, and selects. Centralised here so every Radix primitive
+ * gets consistent motion without per-component CSS-in-JS.
+ * Exit animations are ~25% faster than enter — the system responding
+ * should always feel snappier than the user deciding. */
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes content-scale-in {
+  from {
+    opacity: 0;
+    scale: 0.95;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@keyframes content-scale-out {
+  from {
+    opacity: 1;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 0.95;
+  }
+}
+@keyframes popover-scale-in {
+  from {
+    opacity: 0;
+    scale: 0.95;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@keyframes popover-scale-out {
+  from {
+    opacity: 1;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 0.95;
+  }
+}
+@keyframes tooltip-scale-in {
+  from {
+    opacity: 0;
+    scale: 0.97;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@keyframes tooltip-scale-out {
+  from {
+    opacity: 1;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+@keyframes content-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
