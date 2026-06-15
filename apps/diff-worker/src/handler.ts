@@ -14,11 +14,18 @@ import {
   runAxe,
   runDiff,
   runL2,
+  runVlm,
   classifyRegions,
   DEFAULT_ENGINE_CONFIG,
+  DEFAULT_VLM_CONFIG,
   configForMatchLevel,
+  ollamaProvider,
+  geminiProvider,
+  anthropicProvider,
   type EngineConfig,
   type MatchLevel,
+  type VlmProvider,
+  type VlmProviderConfig,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import { objectKey, type Storage } from "@furan/storage";
@@ -74,6 +81,19 @@ function parseEngineConfig(
       "image_comparison_config_invalid_falling_back_to_defaults",
     );
     return DEFAULT_ENGINE_CONFIG;
+  }
+}
+
+function resolveVlmProvider(config: VlmProviderConfig): VlmProvider {
+  const provider = config.provider ?? "ollama";
+  switch (provider) {
+    case "gemini":
+      return geminiProvider;
+    case "anthropic":
+      return anthropicProvider;
+    case "ollama":
+    default:
+      return ollamaProvider;
   }
 }
 
@@ -157,6 +177,7 @@ interface PerViewportResult {
   }>;
   ranTiers: Array<"l1" | "l2">;
   firstBaseline: boolean;
+  vlmDescription?: string | undefined;
 }
 
 /**
@@ -679,7 +700,40 @@ async function handleDiffJobInner(
       run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
 
     let result: Awaited<ReturnType<typeof runDiff>>;
-    if (runL2Only) {
+    let vlmDescription: string | undefined;
+    if (project.imageComparison === "vlm") {
+      const vlmConfigJson = project.imageComparisonConfig;
+      let vlmConfig: VlmProviderConfig;
+      try {
+        vlmConfig = vlmConfigJson
+          ? JSON.parse(vlmConfigJson)
+          : DEFAULT_VLM_CONFIG;
+      } catch {
+        vlmConfig = DEFAULT_VLM_CONFIG;
+      }
+      const t0 = performance.now();
+      const vlmResult = await runVlm(
+        Buffer.from(baselineBytes),
+        Buffer.from(candidateBytes),
+        {
+          provider: resolveVlmProvider(vlmConfig),
+          config: vlmConfig,
+          engineConfig: routedEngineConfig,
+          diffThreshold,
+          ignoreAreas: resolvedIgnoreAreas,
+        },
+      );
+      result = {
+        passed: vlmResult.passed,
+        diffPercent: vlmResult.diffPercent,
+        pixelMismatchCount: vlmResult.pixelMismatchCount,
+        diffImageBytes: vlmResult.diffImageBytes,
+        regions: [],
+        ranTiers: ["l1"],
+        durationMs: { l1: performance.now() - t0, l2: null },
+      };
+      vlmDescription = vlmResult.vlmDescription;
+    } else if (runL2Only) {
       // Layout mode: skip L1 pixel diff entirely, run only DOM-level diff.
       // We construct a DiffResult-compatible object directly from runL2's
       // output. diffPercent and pixelMismatchCount are 0 because no pixel
@@ -932,6 +986,7 @@ async function handleDiffJobInner(
       })),
       ranTiers: result.ranTiers,
       firstBaseline: false,
+      vlmDescription,
     });
   }
 
@@ -957,6 +1012,8 @@ async function handleDiffJobInner(
   const aggregateDiffName = worst?.diffImageKey ?? null;
   const aggregateRegions = perViewport.flatMap((v) => v.regions);
   const aggregateStatus = aggregateFailed ? "unresolved" : "passed";
+  const aggregateVlmDescription =
+    perViewport.find((v) => v.vlmDescription)?.vlmDescription ?? null;
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
@@ -967,6 +1024,7 @@ async function handleDiffJobInner(
         diffName: aggregateDiffName,
         status: aggregateStatus,
         baselineSource: baseline.source,
+        vlmDescription: aggregateVlmDescription,
       })
       .where(eq(testRuns.id, data.runId));
 
