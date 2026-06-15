@@ -1,5 +1,6 @@
 import {
   baselines,
+  desc,
   diffRegions,
   eq,
   projects,
@@ -13,6 +14,7 @@ import {
 import {
   runAxe,
   runDiff,
+  runL1,
   runL2,
   runVlm,
   classifyRegions,
@@ -178,6 +180,59 @@ interface PerViewportResult {
   ranTiers: Array<"l1" | "l2">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
+}
+
+async function tryAutoApproveByPastBaselines(
+  db: DB,
+  storage: Storage,
+  variationId: string,
+  candidateImageKey: string,
+  diffThreshold: number,
+  logger: Logger,
+): Promise<boolean> {
+  const pastBaselines = await db
+    .select({ testRunId: baselines.testRunId })
+    .from(baselines)
+    .where(eq(baselines.testVariationId, variationId))
+    .orderBy(desc(baselines.createdAt))
+    .limit(10);
+
+  if (pastBaselines.length <= 1) return false;
+
+  const candidateBytes = await storage.get(candidateImageKey);
+  if (!candidateBytes) return false;
+
+  for (const bl of pastBaselines.slice(1)) {
+    try {
+      const blScreenshot = await db
+        .select({ imageKey: screenshots.imageKey })
+        .from(screenshots)
+        .where(eq(screenshots.runId, bl.testRunId))
+        .limit(1);
+      if (!blScreenshot[0]?.imageKey) continue;
+
+      const blBytes = await storage.get(blScreenshot[0].imageKey);
+      if (!blBytes) continue;
+
+      const l1 = await runL1(
+        Buffer.from(blBytes),
+        Buffer.from(candidateBytes),
+        undefined,
+        "odiff",
+        DEFAULT_ENGINE_CONFIG,
+      );
+      if (l1.diffPercent <= diffThreshold * 100) {
+        logger.info(
+          { variationId, matchedBaselineRunId: bl.testRunId },
+          "auto-approve: candidate matches past baseline",
+        );
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 /**
@@ -505,6 +560,88 @@ async function handleDiffJobInner(
       "diff_auto_approved",
     );
     return;
+  }
+
+  // Past-baseline auto-approve: if the project has auto-approve enabled
+  // and hashes didn't match (we fell through the block above), check if
+  // the candidate matches any of the 10 most recent older baselines.
+  if (project.autoApproveFeature) {
+    const diffThresholdForAutoApprove =
+      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+    const pastAutoApproved = await tryAutoApproveByPastBaselines(
+      deps.db,
+      deps.storage,
+      runTestVariationId,
+      candidateShots[0]!.imageKey,
+      diffThresholdForAutoApprove,
+      logger,
+    );
+    if (pastAutoApproved) {
+      await withProjectScope(deps.db, data.projectId, async (tx) => {
+        await tx
+          .update(testRuns)
+          .set({
+            status: "passed",
+            diffPercent: 0,
+            pixelMisMatchCount: 0,
+            merge: true,
+            baselineSource: baseline.source,
+          })
+          .where(eq(testRuns.id, data.runId));
+        await tx.insert(baselines).values({
+          baselineName: run.baselineName ?? run.name ?? "auto",
+          testVariationId: runTestVariationId,
+          testRunId: run.id,
+          ...(run.branchName ? { branchName: run.branchName } : {}),
+        });
+      });
+
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "diff.completed",
+          runId: data.runId,
+          passed: true,
+          diffPercent: 0,
+          ranTiers: [],
+          viewportCount: candidateShots.length,
+          durationMs: Date.now() - t0,
+          autoApproved: true,
+        }),
+      );
+      await deps.redis.publish(
+        `run:${data.runId}:events`,
+        JSON.stringify({
+          type: "run.completed",
+          runId: data.runId,
+          projectId: data.projectId,
+          status: "passed",
+          diffPercent: 0,
+          branchName: run.branchName,
+          numChanges: 0,
+        }),
+      );
+      await publishProjectRunUpdate(
+        deps,
+        {
+          projectId: data.projectId,
+          runId: data.runId,
+          status: "passed",
+          buildId: run.buildId,
+        },
+        logger,
+      );
+      logger.info(
+        {
+          runId: data.runId,
+          projectId: data.projectId,
+          autoApproved: true,
+          strategy: "past-baseline",
+        },
+        "diff_auto_approved_past_baseline",
+      );
+      return;
+    }
   }
 
   // Per ADR-031: merge variation + run ignore areas. Both are JSON arrays
