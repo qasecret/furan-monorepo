@@ -8,11 +8,11 @@ export interface IgnoreArea {
 }
 
 /**
- * Paints solid-black RGBA (0,0,0,255) rectangles over each area of the
+ * Paints transparent RGBA (0,0,0,0) rectangles over each area of the
  * provided PNG and returns a new PNG buffer. Used by pixelmatch and
- * looks-same backends, which don't natively support ignore regions; the
- * mask must be applied identically to both baseline and candidate so the
- * masked pixels register as equal regardless of engine.
+ * looks-same backends, which don't natively support ignore regions.
+ * Alpha=0 tells pixelmatch to treat these pixels as "don't care",
+ * so they are excluded from comparison rather than matched.
  *
  * Areas extending past image bounds are clamped. An empty `areas` array
  * returns the input buffer unchanged.
@@ -32,7 +32,7 @@ export function applyIgnoreMask(pngBytes: Buffer, areas: IgnoreArea[]): Buffer {
         data[idx] = 0;
         data[idx + 1] = 0;
         data[idx + 2] = 0;
-        data[idx + 3] = 255;
+        data[idx + 3] = 0;
       }
     }
   }
