@@ -46,6 +46,7 @@ export const testRuns = pgTable(
     customTags: text("custom_tags"),
     baselineName: text("baseline_name"),
     comment: text("comment"),
+    vlmDescription: text("vlm_description"),
     branchName: text("branch_name"),
     baselineBranchName: text("baseline_branch_name"),
     tempIgnoreAreas: text("temp_ignore_areas"),
