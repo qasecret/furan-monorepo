@@ -24,7 +24,9 @@ const updateInput = z.object({
   retentionDays: z.number().int().min(1).max(3650).optional(),
   maxBuildAllowed: z.number().int().min(1).optional(),
   maxBranchLifetime: z.number().int().min(1).optional(),
-  imageComparison: z.enum(["pixelmatch", "looks_same", "odiff"]).optional(),
+  imageComparison: z
+    .enum(["pixelmatch", "looks_same", "odiff", "vlm"])
+    .optional(),
   imageComparisonConfig: z.string().optional(),
   dynamicTextEnabled: z.boolean().optional(),
 });

@@ -555,7 +555,10 @@ export function DiffViewer({
                   elementMap={elementMap ?? null}
                 />
               </div>
-              <RegionListPanel regions={regions} />
+              <RegionListPanel
+                regions={regions}
+                vlmDescription={data?.vlmDescription ?? null}
+              />
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
