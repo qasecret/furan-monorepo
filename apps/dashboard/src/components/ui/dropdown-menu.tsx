@@ -17,7 +17,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white p-1 text-zinc-800 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100",
+        "z-50 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white p-1 text-zinc-800 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 data-[state=open]:[animation:var(--animate-popover-in)] data-[state=closed]:[animation:var(--animate-popover-out)] [transform-origin:var(--radix-dropdown-menu-content-transform-origin)]",
         className,
       )}
       {...props}
@@ -33,7 +33,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-zinc-700 outline-none data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-zinc-700 outline-none transition-colors duration-150 data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
       className,
     )}
     {...props}
@@ -57,7 +57,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-zinc-700 outline-none data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-zinc-700 outline-none transition-colors duration-150 data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
       className,
     )}
     checked={checked}

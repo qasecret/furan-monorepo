@@ -73,7 +73,7 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white text-zinc-800 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100",
+        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white text-zinc-800 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 data-[state=open]:[animation:var(--animate-popover-in)] data-[state=closed]:[animation:var(--animate-popover-out)] [transform-origin:var(--radix-select-content-transform-origin)]",
         position === "popper" &&
           "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
         className,
@@ -119,7 +119,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-zinc-700 outline-none focus:bg-zinc-100 focus:text-zinc-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 dark:text-zinc-300 dark:focus:bg-zinc-900 dark:focus:text-white",
+      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-zinc-700 outline-none transition-colors duration-150 focus:bg-zinc-100 focus:text-zinc-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 dark:text-zinc-300 dark:focus:bg-zinc-900 dark:focus:text-white",
       className,
     )}
     {...props}

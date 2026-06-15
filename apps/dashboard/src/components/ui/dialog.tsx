@@ -18,7 +18,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-black/70 backdrop-blur-sm data-[state=open]:[animation:var(--animate-overlay-in)] data-[state=closed]:[animation:var(--animate-overlay-out)]",
       className,
     )}
     {...props}
@@ -35,13 +35,13 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border border-zinc-200 bg-white text-zinc-950 p-6 shadow-lg rounded-xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-white",
+        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border border-zinc-200 bg-white text-zinc-950 p-6 shadow-lg rounded-xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-white data-[state=open]:[animation:var(--animate-content-in)] data-[state=closed]:[animation:var(--animate-content-out)]",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-zinc-600 opacity-70 hover:text-zinc-950 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none dark:text-zinc-400 dark:hover:text-white dark:focus-visible:ring-offset-zinc-950">
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-zinc-600 opacity-70 transition-[color,opacity] duration-150 hover:text-zinc-950 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none dark:text-zinc-400 dark:hover:text-white dark:focus-visible:ring-offset-zinc-950">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

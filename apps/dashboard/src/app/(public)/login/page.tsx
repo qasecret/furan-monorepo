@@ -19,7 +19,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   return (
     <main className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black p-4">
-      <Card className="w-full max-w-sm space-y-4">
+      <Card className="w-full max-w-sm space-y-4 animate-[content-fade-up_400ms_cubic-bezier(0.23,1,0.32,1)_both]">
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 bg-brand rounded-sm rotate-12 flex items-center justify-center">
             <div className="w-1.5 h-1.5 bg-black rounded-full" />
