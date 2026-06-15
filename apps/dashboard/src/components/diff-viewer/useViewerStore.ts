@@ -185,6 +185,8 @@ interface State {
    */
   selectorOverrides: Map<string, string | null>;
   selectedIgnoreId: string | null;
+  isTemporaryMode: boolean;
+  setTemporaryMode: (v: boolean) => void;
 
   setMode: (mode: ViewerMode) => void;
   setOpacity: (opacity: number) => void;
@@ -310,6 +312,8 @@ export const useViewerStore = create<State>((set) => ({
   pendingSnaps: new Map(),
   selectorOverrides: new Map(),
   selectedIgnoreId: null,
+  isTemporaryMode: false,
+  setTemporaryMode: (isTemporaryMode) => set({ isTemporaryMode }),
 
   setMode: (mode) =>
     // Mode change resets zoom — different modes (side-by-side vs overlay)
@@ -537,6 +541,7 @@ export const useViewerStore = create<State>((set) => ({
       pendingSnaps: new Map(),
       selectorOverrides: new Map(),
       selectedIgnoreId: null,
+      isTemporaryMode: false,
     }),
   applySaveSuccess: (scope) =>
     set((s) => {
