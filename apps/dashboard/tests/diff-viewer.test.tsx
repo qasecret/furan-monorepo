@@ -39,6 +39,8 @@ vi.mock("pixi.js", () => ({
 // which calls useRouter at render time.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
+  // ContextualHeader → SetBreadcrumbs reads usePathname to tag the trail.
+  usePathname: () => "/projects/p1/runs/r1/checkpoints/c1",
 }));
 
 // ADR-032: tests override fields on this object (e.g., autoApproved)
@@ -116,6 +118,7 @@ vi.mock("../src/lib/trpc", () => {
         overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: { useMutation: noopMutation },
+        setTempIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
         bulkApproveByVariation: { useMutation: noopMutation },
         approveCheckpoint: { useMutation: noopMutation },

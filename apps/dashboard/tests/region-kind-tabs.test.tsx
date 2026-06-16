@@ -12,7 +12,7 @@ describe("RegionKindTabs", () => {
       .getAllByRole("tab")
       .map((t) => t.textContent?.trim() ?? "");
     expect(
-      tabs.slice(0, 5).map((s) => s.replace(/not yet enforced/i, "").trim()),
+      tabs.slice(0, 5).map((s) => s.replace(/preview/i, "").trim()),
     ).toEqual(["Ignore", "Layout", "Floating", "Content", "A11y"]);
   });
   it("calls onChange with the clicked kind", () => {
@@ -24,6 +24,6 @@ describe("RegionKindTabs", () => {
   });
   it("4 non-enforced tabs show badge", () => {
     render(<RegionKindTabs value="ignore" onChange={() => {}} />);
-    expect(screen.getAllByText(/not yet enforced/i).length).toBe(4);
+    expect(screen.getAllByText(/preview/i).length).toBe(4);
   });
 });

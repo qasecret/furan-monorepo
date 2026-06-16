@@ -41,6 +41,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 const listMock = vi.fn();
+const approveMutate = vi.fn();
+const rejectMutate = vi.fn();
 
 interface RunRow {
   id: string;
@@ -121,6 +123,31 @@ vi.mock("@/lib/trpc", () => ({
           status?: string[];
         }) => listUseQueryImpl(input),
       },
+      statusCounts: {
+        useQuery: () => ({
+          data: { total: 2, counts: { passed: 1, failed: 1 } },
+          isLoading: false,
+          error: null,
+        }),
+      },
+      approve: {
+        useMutation: () => ({
+          mutate: approveMutate,
+          mutateAsync: vi.fn().mockResolvedValue(undefined),
+        }),
+      },
+      reject: {
+        useMutation: () => ({
+          mutate: rejectMutate,
+          mutateAsync: vi.fn().mockResolvedValue(undefined),
+        }),
+      },
+      bulkApproveByBuild: {
+        useMutation: () => ({
+          mutate: vi.fn(),
+          mutateAsync: vi.fn().mockResolvedValue({ approved: 0 }),
+        }),
+      },
     },
   },
 }));
@@ -146,14 +173,16 @@ describe("RunsTable", () => {
     expect(screen.getByTestId("runs-table")).toBeDefined();
     expect(screen.getByTestId("queue-row-r1")).toBeDefined();
     expect(screen.getByTestId("queue-row-r2")).toBeDefined();
-    expect(screen.getByText("main")).toBeDefined();
+    // Both runs share buildId "b1", so they nest under one build group.
+    expect(screen.getByTestId("build-group-b1")).toBeDefined();
+    // "main" now appears in both the group header and a row, so assert >0.
+    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
     expect(screen.getByText("feature/x")).toBeDefined();
-    // RunStatusBadge renders the title-cased label + a status-keyed
-    // testid; assert both to lock in the badge wiring.
-    expect(screen.getByTestId("run-status-badge-passed")).toBeDefined();
-    expect(screen.getByTestId("run-status-badge-failed")).toBeDefined();
-    expect(screen.getByText("Passed")).toBeDefined();
-    expect(screen.getByText("Failed")).toBeDefined();
+    // Status is conveyed by the left stripe + a text label in the meta row
+    // (status-keyed testid), not a pill badge. ("Passed"/"Failed" text also
+    // appears in the filter chips now, so assert via the row-scoped testid.)
+    expect(screen.getByTestId("run-status-label-passed")).toBeDefined();
+    expect(screen.getByTestId("run-status-label-failed")).toBeDefined();
   });
 
   test("branch filter input updates the query input passed to useQuery", async () => {
@@ -195,6 +224,27 @@ describe("RunsTable", () => {
     const chip = screen.getByTestId("run-history-chip-r1");
     expect(chip.getAttribute("href")).toBe(
       `/projects/${PROJECT_ID}/variations/v1`,
+    );
+  });
+
+  test("inline approve/reject only render on reviewable runs when canReview", () => {
+    const { rerender } = render(<RunsTable projectId={PROJECT_ID} />);
+    // No review actions for a read-only (guest) viewer.
+    expect(screen.queryByTestId("approve-run-r2")).toBeNull();
+
+    rerender(<RunsTable projectId={PROJECT_ID} canReview />);
+    // r2 is "failed" → reviewable; r1 is "passed" → not actionable.
+    expect(screen.getByTestId("approve-run-r2")).toBeDefined();
+    expect(screen.getByTestId("reject-run-r2")).toBeDefined();
+    expect(screen.queryByTestId("approve-run-r1")).toBeNull();
+  });
+
+  test("clicking inline approve fires runs.approve with the run id", () => {
+    render(<RunsTable projectId={PROJECT_ID} canReview />);
+    fireEvent.click(screen.getByTestId("approve-run-r2"));
+    expect(approveMutate).toHaveBeenCalledWith(
+      { runId: "r2" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
 });
@@ -240,133 +290,105 @@ describe("RunsTable empty-state branches", () => {
 });
 
 /**
- * FiltersBar multi-select coverage — spec §3.5. Goes through the
- * component directly (rather than through <RunsTable>) so we can assert
- * on the onChange payload shape without coupling to RunsTable's
- * normalisation step.
+ * FiltersBar status-chip coverage — spec §3.5 multi-select, now rendered as
+ * Applitools-style count chips. Driven directly (not through <RunsTable>) so
+ * we can assert on the onChange payload + chip pressed-state. With no
+ * `statusCounts` prop the bar shows every status chip, which is what these
+ * tests rely on.
  */
-describe("FiltersBar multi-select status", () => {
-  // Radix DropdownMenu trigger fires on pointerdown, not `click`, so a
-  // synthetic `fireEvent.click` on the trigger doesn't open the menu in
-  // jsdom. Drive the trigger with the keyboard path instead — pressing
-  // Enter on a focused trigger opens the menu. Same approach as the
-  // ApprovalBar override-menu tests.
-  const openStatusMenu = async () => {
-    const trigger = screen.getByTestId(
-      "status-filter-trigger",
-    ) as HTMLButtonElement;
-    trigger.focus();
-    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
-    // Allow Radix to flush its portal mount.
-    await new Promise((r) => setTimeout(r, 0));
-  };
-
-  test("0 checked → onChange receives status: undefined and summary is 'All statuses'", async () => {
+describe("FiltersBar status chips", () => {
+  test("0 selected → the 'All' chip is active and no onChange fires", async () => {
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    const trigger = screen.getByTestId("status-filter-trigger");
-    expect(trigger.textContent).toContain("All statuses");
-    // Without any change the debounced effect doesn't fire (firstRun guard).
+    expect(
+      screen.getByTestId("status-chip-all").getAttribute("aria-pressed"),
+    ).toBe("true");
+    // Without a change the debounced effect doesn't fire (firstRun guard).
     await new Promise((r) => setTimeout(r, 350));
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  test("1 checked → API receives status: ['unresolved']", async () => {
+  test("1 selected → onChange receives status: ['unresolved']", async () => {
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    await openStatusMenu();
-    const opt = await screen.findByTestId("status-filter-option-unresolved");
-    fireEvent.click(opt);
+    fireEvent.click(screen.getByTestId("status-chip-unresolved"));
 
     await waitFor(
       () => {
-        const last = onChange.mock.calls.at(-1)?.[0] as {
-          status?: string[];
-        };
+        const last = onChange.mock.calls.at(-1)?.[0] as { status?: string[] };
         expect(last?.status).toEqual(["unresolved"]);
       },
       { timeout: 1000 },
     );
-    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
-      "Unresolved",
-    );
+    expect(
+      screen.getByTestId("status-chip-unresolved").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("status-chip-all").getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 
-  test("2 checked → API receives status: ['unresolved', 'failed']", async () => {
+  test("2 selected → onChange receives ['unresolved', 'failed'] in option order", async () => {
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    await openStatusMenu();
-    fireEvent.click(
-      await screen.findByTestId("status-filter-option-unresolved"),
-    );
-    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
+    fireEvent.click(screen.getByTestId("status-chip-unresolved"));
+    fireEvent.click(screen.getByTestId("status-chip-failed"));
 
     await waitFor(
       () => {
-        const last = onChange.mock.calls.at(-1)?.[0] as {
-          status?: string[];
-        };
+        const last = onChange.mock.calls.at(-1)?.[0] as { status?: string[] };
         // STATUS_OPTIONS order is unresolved-first, then failed.
         expect(last?.status).toEqual(["unresolved", "failed"]);
       },
       { timeout: 1000 },
     );
-    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
-      "Unresolved + Failed",
-    );
   });
 
-  test("3+ checked → trigger summarises as 'N statuses'", async () => {
+  test("3 selected → all three chips report pressed", async () => {
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    await openStatusMenu();
-    fireEvent.click(
-      await screen.findByTestId("status-filter-option-unresolved"),
-    );
-    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
-    fireEvent.click(await screen.findByTestId("status-filter-option-aborted"));
+    fireEvent.click(screen.getByTestId("status-chip-unresolved"));
+    fireEvent.click(screen.getByTestId("status-chip-failed"));
+    fireEvent.click(screen.getByTestId("status-chip-aborted"));
 
     await waitFor(
       () => {
-        expect(
-          screen.getByTestId("status-filter-trigger").textContent,
-        ).toContain("3 statuses");
+        const last = onChange.mock.calls.at(-1)?.[0] as { status?: string[] };
+        expect(last?.status).toEqual(["unresolved", "failed", "aborted"]);
       },
       { timeout: 1000 },
     );
+    for (const s of ["unresolved", "failed", "aborted"]) {
+      expect(
+        screen.getByTestId(`status-chip-${s}`).getAttribute("aria-pressed"),
+      ).toBe("true");
+    }
   });
 
-  test("toggling a checked status off restores 'All statuses' when none remain", async () => {
+  test("toggling a status off restores the 'All' chip when none remain", async () => {
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    await openStatusMenu();
-    const opt = await screen.findByTestId("status-filter-option-unresolved");
-    fireEvent.click(opt); // on
-    fireEvent.click(opt); // off
+    const chip = screen.getByTestId("status-chip-unresolved");
+    fireEvent.click(chip); // on
+    fireEvent.click(chip); // off
 
     await waitFor(
       () => {
-        const last = onChange.mock.calls.at(-1)?.[0] as {
-          status?: string[];
-        };
+        const last = onChange.mock.calls.at(-1)?.[0] as { status?: string[] };
         expect(last?.status).toBeUndefined();
       },
       { timeout: 1000 },
     );
-    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
-      "All statuses",
-    );
+    expect(
+      screen.getByTestId("status-chip-all").getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 
   test("URL round-trip: writes repeated ?status= params and hydrates from them", async () => {
-    // Phase 1 — toggle two statuses on, assert the replace() URL has both.
     const onChange = vi.fn();
     render(<FiltersBar onChange={onChange} />);
-    await openStatusMenu();
-    fireEvent.click(
-      await screen.findByTestId("status-filter-option-unresolved"),
-    );
-    fireEvent.click(await screen.findByTestId("status-filter-option-failed"));
+    fireEvent.click(screen.getByTestId("status-chip-unresolved"));
+    fireEvent.click(screen.getByTestId("status-chip-failed"));
 
     await waitFor(
       () => {
@@ -379,9 +401,8 @@ describe("FiltersBar multi-select status", () => {
 
     cleanup();
 
-    // Phase 2 — simulate reload by mounting fresh with the URL we just wrote
-    // as both initial props and useSearchParams() backing store. Trigger
-    // summary should hydrate to "Unresolved + Failed" with no user input.
+    // Reload simulation: mount fresh with the URL we just wrote as initial
+    // props — both chips hydrate to pressed with no user input.
     mockSearchParams = new URLSearchParams("status=unresolved&status=failed");
     const onChange2 = vi.fn();
     render(
@@ -390,8 +411,14 @@ describe("FiltersBar multi-select status", () => {
         onChange={onChange2}
       />,
     );
-    expect(screen.getByTestId("status-filter-trigger").textContent).toContain(
-      "Unresolved + Failed",
-    );
+    expect(
+      screen.getByTestId("status-chip-unresolved").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("status-chip-failed").getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("status-chip-all").getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 });

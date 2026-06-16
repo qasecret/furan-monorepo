@@ -3,9 +3,11 @@ import { notFound, redirect } from "next/navigation";
 
 import { BuildsTable } from "./_components/builds-table";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
-import { apiGet } from "@/lib/api-client";
+import { getProject } from "@/lib/get-project";
+import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Builds" };
 
@@ -21,12 +23,6 @@ const BUILDS_PAGE_TOUR = [
 
 export const dynamic = "force-dynamic";
 
-interface Project {
-  id: string;
-  name: string;
-  mainBranchName: string;
-}
-
 /**
  * /projects/[projectId]/builds — the project's default landing tab.
  *
@@ -41,7 +37,7 @@ export default async function ProjectBuildsPage({
 }) {
   const { projectId } = await params;
 
-  const project = await apiGet<Project>(`/projects/${projectId}`);
+  const project = await getProject(projectId);
   if (project.status === 401) redirect("/login");
   if (project.status === 404) notFound();
   if (project.status === 403 || !project.data) {
@@ -59,18 +55,10 @@ export default async function ProjectBuildsPage({
 
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs
+        items={projectCrumbs(projectId, project.data.name, "Builds")}
+      />
       <PageTour pageId="builds-index" steps={BUILDS_PAGE_TOUR} />
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Builds
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Project:{" "}
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            {project.data.name}
-          </span>
-        </p>
-      </div>
       <div id="builds-table">
         <BuildsTable projectId={projectId} />
       </div>

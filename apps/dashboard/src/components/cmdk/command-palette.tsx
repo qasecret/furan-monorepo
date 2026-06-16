@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { browserEnv } from "@/lib/env";
+import { getRecentProjects, type RecentProject } from "@/lib/recent-projects";
 
 interface Project {
   id: string;
@@ -62,6 +63,7 @@ export function CommandPalette({ userRole }: Props) {
   const setOpen = usePaletteStore((s) => s.setOpen);
   const toggle = usePaletteStore((s) => s.toggle);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [recents, setRecents] = useState<RecentProject[]>([]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -109,6 +111,12 @@ export function CommandPalette({ userRole }: Props) {
     };
   }, [open]);
 
+  // Recents are read from localStorage each time the palette opens so the list
+  // reflects projects visited since the last open.
+  useEffect(() => {
+    if (open) setRecents(getRecentProjects());
+  }, [open]);
+
   const go = (path: string) => {
     setOpen(false);
     router.push(path);
@@ -134,6 +142,22 @@ export function CommandPalette({ userRole }: Props) {
             <Command.Empty className="p-3 text-sm text-muted-foreground">
               No matches.
             </Command.Empty>
+
+            {recents.length > 0 && (
+              <Command.Group heading="Recent" className={CMD_GROUP_CLASS}>
+                {recents.map((p) => (
+                  <Command.Item
+                    key={`recent-${p.id}`}
+                    value={`recent ${p.name}`}
+                    onSelect={() => go(`/projects/${p.id}/runs`)}
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                    data-testid={`cmd-recent-${p.id}`}
+                  >
+                    {p.name}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            )}
 
             {projects.length > 0 && (
               <>

@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 
 import { MembersTable, type MemberRow } from "./_components/members-table";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
 export const metadata: Metadata = { title: "Members" };
@@ -64,14 +66,12 @@ export default async function MembersPage({
 
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs items={[{ label: "Members" }]} />
       <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
-      <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-        Members
-      </h1>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Manage user access. Admins can create users, change roles, and
-        deactivate accounts.
-      </p>
+      <PageHeader
+        title="Members"
+        description="Manage user access. Admins can create users, change roles, and deactivate accounts."
+      />
       <div id="members-table">
         <MembersTable initialUsers={members} currentUserId={me.data.id} />
       </div>

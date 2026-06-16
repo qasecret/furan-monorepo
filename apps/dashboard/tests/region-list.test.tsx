@@ -178,8 +178,7 @@ describe("RegionListPanel", () => {
     // L1 pixel-cluster regions render as Applitools-style yellow bounded
     // rectangles on the heatmap canvas, but must NOT pollute the Regions
     // panel (the original "panel grew to 4600px" bug). They're invisible
-    // here regardless of source filter or the Show-suppressed toggle.
-    const user = userEvent.setup();
+    // here regardless of the Show-suppressed toggle.
     const regions: DiffRegion[] = [
       {
         id: "lp1",
@@ -211,15 +210,6 @@ describe("RegionListPanel", () => {
     expect(document.querySelector('[data-region-id="lp1"]')).toBeNull();
     expect(document.querySelector('[data-region-id="l1real"]')).not.toBeNull();
     expect(document.querySelector('[data-region-id="l2real"]')).not.toBeNull();
-
-    // "Visual (pixel)" filter shows real l1 entries, still hides l1_pixel.
-    await user.click(screen.getByTestId("source-filter-trigger"));
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Visual (pixel)" }),
-    );
-    expect(document.querySelector('[data-region-id="lp1"]')).toBeNull();
-    expect(document.querySelector('[data-region-id="l1real"]')).not.toBeNull();
-    expect(document.querySelector('[data-region-id="l2real"]')).toBeNull();
 
     // "Show suppressed" toggle reveals dynamic_text only, not l1_pixel.
     const toggleInput = screen

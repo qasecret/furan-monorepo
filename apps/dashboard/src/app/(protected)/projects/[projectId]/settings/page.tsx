@@ -3,8 +3,11 @@ import { notFound, redirect } from "next/navigation";
 
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
+import { getProject } from "@/lib/get-project";
+import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -12,11 +15,6 @@ export const dynamic = "force-dynamic";
 interface Me {
   id: string;
   role: "admin" | "editor" | "guest";
-}
-
-interface Project {
-  id: string;
-  name: string;
 }
 
 export default async function ProjectSettingsPage({
@@ -31,7 +29,7 @@ export default async function ProjectSettingsPage({
     redirect("/login");
   }
 
-  const project = await apiGet<Project>(`/projects/${projectId}`);
+  const project = await getProject(projectId);
   if (project.status === 404) {
     notFound();
   }
@@ -50,17 +48,9 @@ export default async function ProjectSettingsPage({
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Project settings
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Project:{" "}
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            {project.data.name}
-          </span>
-        </p>
-      </div>
+      <SetBreadcrumbs
+        items={projectCrumbs(projectId, project.data.name, "Settings")}
+      />
       <ProjectSettingsForm projectId={projectId} userRole={me.data.role} />
     </div>
   );

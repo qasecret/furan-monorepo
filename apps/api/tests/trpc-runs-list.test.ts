@@ -301,6 +301,71 @@ d("tRPC runs.list", () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  test("statusCounts: aggregates per-status totals for the project", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.statusCounts.query({
+      projectId: s.projectId,
+    });
+    // Seed: 24 `new` on main, 1 `passed` + 1 `failed` on feature/x.
+    expect(res.total).toBe(26);
+    expect(res.counts.new).toBe(24);
+    expect(res.counts.passed).toBe(1);
+    expect(res.counts.failed).toBe(1);
+  });
+
+  test("statusCounts: respects the branch filter", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.statusCounts.query({
+      projectId: s.projectId,
+      branch: "feature/x",
+    });
+    expect(res.total).toBe(2);
+    expect(res.counts.passed).toBe(1);
+    expect(res.counts.failed).toBe(1);
+    expect(res.counts.new ?? 0).toBe(0);
+  });
+
+  test("statusCounts: non-member editor receives FORBIDDEN", async () => {
+    const client = makeClient(baseUrl, s.nonMemberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.statusCounts.query({ projectId: s.projectId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("FORBIDDEN");
+  });
+
+  test("bulkApproveByBuild: approves every reviewer-actionable run in the build", async () => {
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.bulkApproveByBuild.mutate({
+      buildId: s.buildId,
+    });
+    // Seed build: 24 `new` (not reviewable) + 1 `passed` + 1 `failed` = 2.
+    expect(res.approved).toBe(2);
+    expect(res.capped).toBe(false);
+    // The two reviewable runs are now passed; the 24 `new` are untouched.
+    const passed = await client.runs.list.query({
+      projectId: s.projectId,
+      buildId: s.buildId,
+      status: ["passed"],
+    });
+    expect(passed.items).toHaveLength(2);
+  });
+
+  test("bulkApproveByBuild: non-member editor receives FORBIDDEN", async () => {
+    const client = makeClient(baseUrl, s.nonMemberJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.runs.bulkApproveByBuild.mutate({ buildId: s.buildId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("FORBIDDEN");
+  });
+
   describe("device/environment filters (parity with legacy DataGrid)", () => {
     // Each test seeds a small set of runs with diverse columns and asserts
     // the single filter narrows correctly. Shares the project + variation

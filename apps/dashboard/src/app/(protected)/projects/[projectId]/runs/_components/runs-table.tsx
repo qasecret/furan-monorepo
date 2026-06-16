@@ -1,8 +1,10 @@
 "use client";
 
 import type { RunStatus } from "@furan/shared-types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
+import { BuildGroup, type BuildGroupData } from "./build-group";
 import { EmptyRunsCta } from "./empty-runs-cta";
 import { FiltersBar, type DeviceFilters } from "./filters-bar";
 import { RunRow } from "./run-row";
@@ -14,17 +16,10 @@ import { trpc } from "@/lib/trpc";
 interface Props {
   projectId: string;
   initialBranch?: string;
-  /**
-   * Per spec §3.5 the status filter is multi-select; an undefined or empty
-   * array both mean "no filter, show all statuses".
-   */
   initialStatus?: RunStatus[];
-  /**
-   * Device/environment filter pre-fill from the URL (legacy parity:
-   * browser / viewport / os / device / customTags). Each field is
-   * optional; omitting one means "no filter on this column".
-   */
   initialDevice?: DeviceFilters;
+  /** Editor/admin can approve/reject inline; guests get a read-only table. */
+  canReview?: boolean;
 }
 
 interface RunItem {
@@ -36,29 +31,32 @@ interface RunItem {
   pixelMisMatchCount: number | null;
   baselineSource: string | null;
   testVariationId: string | null;
+  name: string | null;
+  checkpointCount: number | null;
+  thumbnailUrl: string | null;
   createdAt: string | Date;
+  buildId: string | null;
+  buildName: string | null;
+  buildNumber: number | null;
+  buildCiBuildId: string | null;
+  buildBranchName: string | null;
+  buildCreatedAt: string | Date | null;
 }
 
 /**
  * Runs index table for /projects/[projectId]/runs.
  *
- * Pagination model: manual cursor state rather than `useInfiniteQuery`.
- * The tRPC `runs.list` procedure is shaped correctly for infinite-query
- * (cursor in, nextCursor out), but the manual approach is more explicit
- * about filter-change resets and avoids a tRPC-react-query version
- * spelunk to confirm `useInfiniteQuery` is wired in this monorepo.
- * Either pattern is acceptable for v0.4.
- *
- * `cursor` is the cursor for the CURRENTLY-LOADED page; on "Load more"
- * we copy the current page into `accumulated`, then advance the cursor
- * so the next useQuery call fetches the following page. Filter changes
- * reset both pieces of state.
+ * Runs are grouped under their build (the Applitools batch model) as
+ * collapsible `<BuildGroup>` sections; empty-status runs bucket behind a
+ * global toggle. "Approve all" approves the whole build server-side, so it's
+ * not limited to the currently-loaded page. Pagination is manual cursor state.
  */
 export function RunsTable({
   projectId,
   initialBranch,
   initialStatus,
   initialDevice,
+  canReview,
 }: Props) {
   const [filters, setFilters] = useState<
     {
@@ -77,10 +75,8 @@ export function RunsTable({
   });
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunItem[]>([]);
+  const [showEmpties, setShowEmpties] = useState(false);
 
-  // Subscribe to the project SSE channel so the table refetches when a
-  // run completes or a reviewer mutation lands. The hook ref-counts a
-  // single EventSource across all mounts on the same projectId.
   useProjectEvents(projectId);
 
   const { data, isLoading, error } = trpc.runs.list.useQuery({
@@ -88,9 +84,6 @@ export function RunsTable({
     limit: 25,
     cursor,
     branch: filters.branch,
-    // Send `undefined` (omitted) instead of `[]` for the all-statuses case
-    // so the wire shape matches the spec semantics and the API's
-    // `input.status.length > 0` guard sees consistent inputs.
     status: filters.status,
     browser: filters.browser,
     viewport: filters.viewport,
@@ -99,23 +92,91 @@ export function RunsTable({
     customTags: filters.customTags,
   });
 
-  // Dedupe on id: cursor pagination on a non-strictly-monotonic
-  // `created_at` could legitimately return overlapping rows on the
-  // boundary between pages, and React would warn about duplicate keys.
-  const items: RunItem[] = [];
-  const seen = new Set<string>();
-  for (const r of accumulated) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      items.push(r);
+  const statusCountsQuery = trpc.runs.statusCounts.useQuery({
+    projectId,
+    branch: filters.branch,
+    customTags: filters.customTags,
+  });
+
+  // The project SSE channel (useProjectEvents) invalidates the runs queries on
+  // the testRun_updated / build_updated frames these mutations broadcast, so we
+  // don't refetch manually — that would double every approve's query volume.
+  const approveMut = trpc.runs.approve.useMutation({
+    onError: (e) => toast.error(e.message),
+  });
+  const rejectMut = trpc.runs.reject.useMutation({
+    onError: (e) => toast.error(e.message),
+  });
+  const bulkApproveBuildMut = trpc.runs.bulkApproveByBuild.useMutation({
+    onError: (e) => toast.error(e.message),
+  });
+  const onApprove = (runId: string) =>
+    approveMut.mutate(
+      { runId },
+      { onSuccess: () => toast.success("Approved") },
+    );
+  const onReject = (runId: string) =>
+    rejectMut.mutate({ runId }, { onSuccess: () => toast.success("Rejected") });
+  const onApproveBuild = (buildId: string) =>
+    bulkApproveBuildMut.mutate(
+      { buildId },
+      {
+        onSuccess: (res) =>
+          toast.success(
+            `Approved ${res.approved} run${res.approved === 1 ? "" : "s"}` +
+              (res.capped ? ` (capped at ${res.cap})` : ""),
+          ),
+      },
+    );
+
+  // Dedupe + partition + group only when the data actually changes (not on
+  // every toast / SSE frame / filter keystroke render).
+  const { groups, emptyRuns, emptyForced } = useMemo(() => {
+    const items: RunItem[] = [];
+    const seen = new Set<string>();
+    for (const r of accumulated) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        items.push(r);
+      }
     }
-  }
-  for (const r of (data?.items as unknown as RunItem[] | undefined) ?? []) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      items.push(r);
+    for (const r of (data?.items as unknown as RunItem[] | undefined) ?? []) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        items.push(r);
+      }
     }
-  }
+
+    // Empty-status runs are noise; bucket them globally and group only runs
+    // with results, so all-empty builds don't clutter the list.
+    const forced = filters.status?.includes("empty") ?? false;
+    const empties = items.filter((r) => r.status === "empty");
+    const nonEmpty = items.filter((r) => r.status !== "empty");
+
+    const grouped: BuildGroupData[] = [];
+    const byBuild = new Map<string, BuildGroupData>();
+    for (const r of nonEmpty) {
+      const key = r.buildId ?? "__none__";
+      let g = byBuild.get(key);
+      if (!g) {
+        g = {
+          buildId: r.buildId,
+          buildName: r.buildName,
+          buildNumber: r.buildNumber,
+          buildCiBuildId: r.buildCiBuildId,
+          buildBranchName: r.buildBranchName,
+          buildCreatedAt: r.buildCreatedAt,
+          runs: [],
+        };
+        byBuild.set(key, g);
+        grouped.push(g);
+      }
+      g.runs.push(r);
+    }
+    return { groups: grouped, emptyRuns: empties, emptyForced: forced };
+  }, [data, accumulated, filters.status]);
+
+  const isEmpty = groups.length === 0 && emptyRuns.length === 0;
 
   const onLoadMore = () => {
     if (!data?.nextCursor) return;
@@ -143,7 +204,17 @@ export function RunsTable({
     });
     setAccumulated([]);
     setCursor(undefined);
+    setShowEmpties(false);
   };
+
+  const hasNoFilters =
+    filters.branch === undefined &&
+    (!filters.status || filters.status.length === 0) &&
+    !filters.browser &&
+    !filters.viewport &&
+    !filters.os &&
+    !filters.device &&
+    !filters.customTags;
 
   return (
     <div className="space-y-4">
@@ -152,6 +223,7 @@ export function RunsTable({
           initialBranch={initialBranch}
           initialStatus={initialStatus}
           initialDevice={initialDevice}
+          statusCounts={statusCountsQuery.data}
           onChange={onFiltersChange}
         />
       </div>
@@ -161,30 +233,17 @@ export function RunsTable({
         <div className="text-sm text-red-600 dark:text-red-400">
           Error: {error.message}
         </div>
-      ) : items.length === 0 ? (
-        filters.branch === undefined &&
-        (!filters.status || filters.status.length === 0) ? (
+      ) : isEmpty ? (
+        hasNoFilters ? (
           <EmptyRunsCta projectId={projectId} />
         ) : (
-          <div className="rounded-xl border border-zinc-200 bg-white overflow-x-auto dark:border-zinc-800 dark:bg-zinc-950">
-            <table
-              className="w-full min-w-[640px] text-sm"
-              data-testid="runs-table"
-            >
-              <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
-                <tr>
-                  <th className="px-4 py-2.5 font-medium">Branch / Test</th>
-                  <th className="px-4 py-2.5 font-medium">Status</th>
-                  <th className="px-4 py-2.5 font-medium">Checkpoints</th>
-                  <th className="px-4 py-2.5 font-medium">Diff %</th>
-                  <th className="px-4 py-2.5 font-medium">Mismatched px</th>
-                  <th className="px-4 py-2.5 font-medium">When</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <table className="w-full text-sm" data-testid="runs-table">
+              <RunsTableHead />
+              <tbody>
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={3}
                     className="px-4 py-8 text-center text-zinc-500"
                   >
                     No runs match.
@@ -196,26 +255,45 @@ export function RunsTable({
         )
       ) : (
         <>
-          <div className="rounded-xl border border-zinc-200 bg-white overflow-x-auto dark:border-zinc-800 dark:bg-zinc-950">
-            <table
-              className="w-full min-w-[640px] text-sm"
-              data-testid="runs-table"
-            >
-              <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
-                <tr>
-                  <th className="px-4 py-2.5 font-medium">Branch / Test</th>
-                  <th className="px-4 py-2.5 font-medium">Status</th>
-                  <th className="px-4 py-2.5 font-medium">Checkpoints</th>
-                  <th className="px-4 py-2.5 font-medium">Diff %</th>
-                  <th className="px-4 py-2.5 font-medium">Mismatched px</th>
-                  <th className="px-4 py-2.5 font-medium">When</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {items.map((r) => (
-                  <RunRow key={r.id} projectId={projectId} run={r} />
-                ))}
-              </tbody>
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <table className="w-full text-sm" data-testid="runs-table">
+              <RunsTableHead />
+              {groups.map((g) => (
+                <BuildGroup
+                  key={g.buildId ?? "none"}
+                  projectId={projectId}
+                  group={g}
+                  canReview={canReview}
+                  onApprove={onApprove}
+                  onReject={onReject}
+                  onApproveBuild={onApproveBuild}
+                />
+              ))}
+              {emptyRuns.length > 0 ? (
+                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {emptyForced ? null : (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowEmpties((v) => !v)}
+                          aria-expanded={showEmpties}
+                          data-testid="toggle-empty-runs"
+                          className="text-xs text-zinc-500 transition-colors hover:text-zinc-800 dark:hover:text-zinc-200"
+                        >
+                          {showEmpties ? "Hide" : "Show"} {emptyRuns.length}{" "}
+                          empty run{emptyRuns.length === 1 ? "" : "s"}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {showEmpties || emptyForced
+                    ? emptyRuns.map((r) => (
+                        <RunRow key={r.id} projectId={projectId} run={r} />
+                      ))
+                    : null}
+                </tbody>
+              ) : null}
             </table>
           </div>
           {data?.nextCursor && (
@@ -232,5 +310,18 @@ export function RunsTable({
         </>
       )}
     </div>
+  );
+}
+
+/** Shared 3-column header: Test · Change · When (status is a row stripe). */
+function RunsTableHead() {
+  return (
+    <thead className="border-b border-zinc-200 bg-zinc-100/70 text-left text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400">
+      <tr>
+        <th className="px-4 py-2.5 font-medium">Test</th>
+        <th className="px-4 py-2.5 text-right font-medium">Change</th>
+        <th className="px-4 py-2.5 text-right font-medium">When</th>
+      </tr>
+    </thead>
   );
 }

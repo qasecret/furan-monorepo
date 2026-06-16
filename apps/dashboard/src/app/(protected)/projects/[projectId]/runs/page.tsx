@@ -4,9 +4,12 @@ import { notFound, redirect } from "next/navigation";
 
 import { RunsTable } from "./_components/runs-table";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
-import { apiGet } from "@/lib/api-client";
+import { getProject } from "@/lib/get-project";
+import { canReviewRole, getViewerRole } from "@/lib/get-viewer";
+import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Runs" };
 
@@ -28,12 +31,6 @@ const RUNS_PAGE_TOUR = [
 ];
 
 export const dynamic = "force-dynamic";
-
-interface Project {
-  id: string;
-  name: string;
-  mainBranchName: string;
-}
 
 /**
  * Next.js' `searchParams` may give a single param as `string` or — when
@@ -102,7 +99,7 @@ export default async function ProjectRunsPage({
   }
   const initialStatus = parsed.length > 0 ? parsed : undefined;
 
-  const project = await apiGet<Project>(`/projects/${projectId}`);
+  const project = await getProject(projectId);
   if (project.status === 401) {
     redirect("/login");
   }
@@ -122,20 +119,14 @@ export default async function ProjectRunsPage({
     );
   }
 
+  const canReview = canReviewRole(await getViewerRole());
+
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs
+        items={projectCrumbs(projectId, project.data.name, "Runs")}
+      />
       <PageTour pageId="runs-index" steps={RUNS_PAGE_TOUR} />
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Runs
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Project:{" "}
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            {project.data.name}
-          </span>
-        </p>
-      </div>
       <RunsTable
         projectId={projectId}
         initialBranch={sp.branch}
@@ -147,6 +138,7 @@ export default async function ProjectRunsPage({
           device: sp.device,
           customTags: sp.customTags,
         }}
+        canReview={canReview}
       />
     </div>
   );
