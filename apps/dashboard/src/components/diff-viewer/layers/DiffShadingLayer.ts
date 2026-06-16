@@ -1,4 +1,9 @@
-import { type Container as PixiContainer, Container, Graphics } from "pixi.js";
+import {
+  type Container as PixiContainer,
+  Container,
+  Graphics,
+  type Ticker as PixiTicker,
+} from "pixi.js";
 
 import type { BBox, DiffRegion, Severity } from "./regionTypes";
 
@@ -26,8 +31,8 @@ function dotColor(sev: string): number {
 
 /** Minimal ticker interface — matches Pixi's Application.ticker shape. */
 export interface Ticker {
-  add: (fn: (...a: unknown[]) => void) => void;
-  remove: (fn: (...a: unknown[]) => void) => void;
+  add: (fn: (t: PixiTicker) => void) => void;
+  remove: (fn: (t: PixiTicker) => void) => void;
 }
 
 export interface ShadingLayerOpts {
@@ -142,17 +147,18 @@ export function mountDiffShadingLayer(
   parent.addChild(container);
 
   // Register ticker for animated pulse when conditions are met.
-  let tickerCallback: ((...a: unknown[]) => void) | null = null;
+  let tickerCallback: ((t: PixiTicker) => void) | null = null;
 
   if (highlight && !reducedMotion && ticker && pulseRings.length > 0) {
-    // Accumulate time via the ticker's delta argument (Pixi calls with `ticker`
-    // object; we use a counter instead of Date.now() for testability).
+    // Accumulate time via the Pixi v8 Ticker instance passed to the callback.
+    // In Pixi v8, ticker callbacks receive the Ticker object (not a raw number);
+    // deltaTime is frame-time-scaled (1.0 at 60fps, 2.0 at 30fps, etc.).
     let elapsed = 0;
-    tickerCallback = (delta: unknown) => {
-      // delta is typically ~1 at 60fps from Pixi's ticker (elapsed frames).
-      const d = typeof delta === "number" ? delta : 1;
+    tickerCallback = (t: PixiTicker) => {
+      const d = t.deltaTime;
       elapsed += d;
-      // Oscillate between 0.3 and 1.0 with ~1s period at 60fps.
+      // Oscillate between 0.3 and 1.0; period scales with deltaTime so the
+      // animation speed is consistent regardless of frame rate.
       const alpha = 0.65 + 0.35 * Math.sin(elapsed * 0.07);
       for (const { g, x, y, w, h } of pulseRings) {
         g.clear();
