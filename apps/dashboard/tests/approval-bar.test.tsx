@@ -10,6 +10,7 @@ const rejectMutate = vi.fn();
 const overrideMutate = vi.fn();
 const bulkApproveMutate = vi.fn();
 const invalidate = vi.fn();
+const invalidateListCheckpoints = vi.fn();
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -21,7 +22,10 @@ let approveOnError: ((e: { message: string }) => void) | undefined;
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
-      runs: { getById: { invalidate } },
+      runs: {
+        getById: { invalidate },
+        listCheckpoints: { invalidate: invalidateListCheckpoints },
+      },
     }),
     runs: {
       approve: {
@@ -138,6 +142,7 @@ describe("ApprovalBar", () => {
     overrideMutate.mockReset();
     bulkApproveMutate.mockReset();
     invalidate.mockReset();
+    invalidateListCheckpoints.mockReset();
     approveState = { isPending: false };
     rejectState = { isPending: false };
     overrideState = { isPending: false };
@@ -178,6 +183,18 @@ describe("ApprovalBar", () => {
     fireEvent.click(screen.getByTestId("reject-button"));
     expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  it("invalidates listCheckpoints (checkpoint rail) after approve", () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    fireEvent.click(screen.getByTestId("approve-button"));
+    expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  it("invalidates listCheckpoints (checkpoint rail) after reject", () => {
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    fireEvent.click(screen.getByTestId("reject-button"));
+    expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
   it("wires onError on the approve mutation hook", () => {

@@ -110,6 +110,9 @@ export function ApprovalBar({
     // Invalidate the canonical query for this run so SSE-driven and
     // mutation-driven cache refreshes converge to the same fresh data.
     void utils.runs.getById.invalidate({ runId });
+    // Also refresh the checkpoint rail so per-checkpoint status reflects
+    // the outcome of the approve/reject without requiring a page reload.
+    void utils.runs.listCheckpoints.invalidate({ runId });
   };
 
   const approve = trpc.runs.approve.useMutation({
