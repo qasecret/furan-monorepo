@@ -53,4 +53,13 @@ describe("useDiffStepper", () => {
     act(() => result.current.next());
     expect(useViewerStore.getState().selectedRegionId).toBe("a");
   });
+
+  test("two next() calls in one batch advance two steps (no stale index)", () => {
+    const { result } = renderHook(() => useDiffStepper(regions));
+    act(() => {
+      result.current.next();
+      result.current.next();
+    });
+    expect(useViewerStore.getState().selectedRegionId).toBe("b");
+  });
 });

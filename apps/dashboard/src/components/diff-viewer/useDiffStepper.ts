@@ -23,14 +23,17 @@ export function useDiffStepper(regions: DiffRegion[]): DiffStepper {
 
   const go = (dir: 1 | -1) => {
     if (ordered.length === 0) return;
+    const store = useViewerStore.getState();
+    const currentIdx = ordered.findIndex(
+      (r) => r.id === store.selectedRegionId,
+    );
     const nextIdx =
-      index === -1
+      currentIdx === -1
         ? dir === 1
           ? 0
           : ordered.length - 1
-        : (index + dir + ordered.length) % ordered.length;
+        : (currentIdx + dir + ordered.length) % ordered.length;
     const region = ordered[nextIdx]!;
-    const store = useViewerStore.getState();
     store.setSelected(region.id);
     if (region.bbox && typeof region.bbox === "object" && "x" in region.bbox) {
       const b = region.bbox as {
