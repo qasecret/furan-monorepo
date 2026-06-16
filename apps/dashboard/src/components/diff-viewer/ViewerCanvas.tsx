@@ -4,6 +4,7 @@ import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
+import type { ShadingLayerResult } from "./layers/DiffShadingLayer";
 import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
@@ -15,6 +16,7 @@ import {
 } from "./useCanvasViewControl";
 import type { ElementBbox, ElementMap } from "./useElementMap";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
+import { useReducedMotion } from "./useReducedMotion";
 import {
   useViewerStore,
   type DraftIgnoreArea,
@@ -106,11 +108,16 @@ export function ViewerCanvas({
   // setup as a closure — now refs because the world-container plumbing
   // is shared across multiple effects).
   const regionLayerRef = useRef<Container | null>(null);
+  // Shading layer result ref so the side-by-side effect cleanup can call
+  // destroy() to unregister the pulse ticker callback.
+  const shadingLayerRef = useRef<ShadingLayerResult | null>(null);
 
   const mode = useViewerStore((s) => s.mode);
   const opacity = useViewerStore((s) => s.opacity);
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
+  const highlightActive = useViewerStore((s) => s.highlightActive);
+  const reducedMotion = useReducedMotion();
   // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
   const zoom = useViewerStore((s) => s.zoom);
   const panX = useViewerStore((s) => s.panX);
@@ -236,7 +243,16 @@ export function ViewerCanvas({
       // Baseline intentionally stays unannotated — adding boxes there
       // muddies the reference image.
       if (regions.length > 0) {
-        mountDiffShadingLayer(candidateWorld, regions, selectedRegionId);
+        shadingLayerRef.current = mountDiffShadingLayer(
+          candidateWorld,
+          regions,
+          selectedRegionId,
+          {
+            highlight: highlightActive,
+            reducedMotion,
+            ticker: candidateApp.ticker,
+          },
+        );
       }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
       // the layer doesn't briefly render on an unfit world.
@@ -314,6 +330,9 @@ export function ViewerCanvas({
       candidateRO?.disconnect();
       detachBaselineCtrl?.();
       detachCandidateCtrl?.();
+      // Tear down the shading layer animation before destroying the apps.
+      shadingLayerRef.current?.destroy();
+      shadingLayerRef.current = null;
       candidateAppRef.current = null;
       baselineAppRef.current = null;
       candidateWorldRef.current = null;
@@ -343,7 +362,15 @@ export function ViewerCanvas({
         console.warn("candidate Application.destroy threw (non-fatal)", err);
       }
     };
-  }, [mode, baselineUrl, candidateUrl, regions, selectedRegionId]);
+  }, [
+    mode,
+    baselineUrl,
+    candidateUrl,
+    regions,
+    selectedRegionId,
+    highlightActive,
+    reducedMotion,
+  ]);
 
   // Single-stage modes.
   useEffect(() => {
