@@ -178,6 +178,8 @@ describe("DiffViewer", () => {
       opacity: 0.5,
       selectedRegionId: null,
       viewport: "",
+      highlightActive: false,
+      hideDisplacement: false,
     });
   });
   afterEach(() => {
@@ -275,5 +277,65 @@ describe("DiffViewer", () => {
     // Click next → selects region-1 (index 0) → displayed as "Diff 1 / 2"
     fireEvent.click(r.getByTestId("diff-next"));
     expect(r.getByTestId("diff-counter").textContent).toContain("Diff 1 / 2");
+  });
+
+  test("highlight-toggle button toggles highlightActive in the store", () => {
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().highlightActive).toBe(false);
+
+    // First click: activates highlight
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    expect(useViewerStore.getState().highlightActive).toBe(true);
+
+    // Second click: deactivates highlight
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    expect(useViewerStore.getState().highlightActive).toBe(false);
+  });
+
+  test("hide-displacement-toggle reduces stepper count when layout regions present", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-visual",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "Visual diff region",
+          source: "l2_dom",
+        },
+        {
+          id: "region-layout",
+          severity: "major",
+          category: "layout",
+          bbox: { x: 200, y: 300, width: 80, height: 40 },
+          description: "Layout (displacement) diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+
+    // Both regions visible: counter shows "Diff 0 / 2"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
+
+    // Toggle hide-displacement on
+    fireEvent.click(r.getByTestId("hide-displacement-toggle"));
+    expect(useViewerStore.getState().hideDisplacement).toBe(true);
+
+    // Layout region filtered: counter drops to "Diff 0 / 1"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 1");
+
+    // Toggle hide-displacement off
+    fireEvent.click(r.getByTestId("hide-displacement-toggle"));
+    expect(useViewerStore.getState().hideDisplacement).toBe(false);
+
+    // Layout region restored: counter back to "Diff 0 / 2"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
   });
 });

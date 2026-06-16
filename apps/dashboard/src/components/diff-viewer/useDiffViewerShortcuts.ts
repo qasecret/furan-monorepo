@@ -103,6 +103,11 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         const next = vps[(i + 1) % vps.length] ?? vps[0];
         if (next) setViewport(next);
       },
+      H: () => {
+        if (isTypingInInput()) return;
+        const s = useViewerStore.getState();
+        s.setHighlightActive(!s.highlightActive);
+      },
       n: () => {
         if (isTypingInInput()) return;
         optsRef.current.onNextDiff?.();

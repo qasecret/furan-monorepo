@@ -99,6 +99,10 @@ export function ViewerToolbar({
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const discardIgnoreChanges = useViewerStore((s) => s.discardIgnoreChanges);
   const applySaveSuccess = useViewerStore((s) => s.applySaveSuccess);
+  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
+  const setHideDisplacement = useViewerStore((s) => s.setHideDisplacement);
+  const highlightActive = useViewerStore((s) => s.highlightActive);
+  const setHighlightActive = useViewerStore((s) => s.setHighlightActive);
   const isTemporaryMode = useViewerStore((s) => s.isTemporaryMode);
   const setTemporaryMode = useViewerStore((s) => s.setTemporaryMode);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
@@ -315,6 +319,32 @@ export function ViewerToolbar({
           </Button>
         </div>
       )}
+
+      <div className="flex items-center gap-2">
+        <Switch
+          id="hide-displacement-toggle"
+          checked={hideDisplacement}
+          onCheckedChange={setHideDisplacement}
+          data-testid="hide-displacement-toggle"
+        />
+        <Label
+          htmlFor="hide-displacement-toggle"
+          className="text-xs cursor-pointer"
+        >
+          Hide displacement
+        </Label>
+      </div>
+
+      <Button
+        type="button"
+        variant={highlightActive ? "default" : "secondary"}
+        className="px-2 py-1 text-xs"
+        data-testid="highlight-toggle"
+        aria-pressed={highlightActive}
+        onClick={() => setHighlightActive(!highlightActive)}
+      >
+        Highlight diffs
+      </Button>
 
       {/* When not editing: a single DropdownMenu with the toggle as its
           trigger so users can pick a scope to start editing. */}

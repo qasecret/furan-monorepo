@@ -137,8 +137,10 @@ interface State {
    * canvas applies it via computeFocusView then clears it back to null. */
   focusBbox: { x: number; y: number; width: number; height: number } | null;
   hideDisplacement: boolean;
+  highlightActive: boolean;
   setFocusBbox: (b: State["focusBbox"]) => void;
   setHideDisplacement: (v: boolean) => void;
+  setHighlightActive: (v: boolean) => void;
   /** Atomic zoom+pan set (stepper focus). */
   setView: (v: { zoom: number; panX: number; panY: number }) => void;
 
@@ -302,6 +304,7 @@ export const useViewerStore = create<State>((set) => ({
   panY: 0,
   focusBbox: null,
   hideDisplacement: false,
+  highlightActive: false,
 
   selectedRegionKind: "ignore",
   selectedCheckpointId: null,
@@ -363,6 +366,7 @@ export const useViewerStore = create<State>((set) => ({
   panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
   setFocusBbox: (focusBbox) => set({ focusBbox }),
   setHideDisplacement: (hideDisplacement) => set({ hideDisplacement }),
+  setHighlightActive: (highlightActive) => set({ highlightActive }),
   setView: ({ zoom, panX, panY }) => set({ zoom: clampZoom(zoom), panX, panY }),
 
   setSelectedRegionKind: (selectedRegionKind) => set({ selectedRegionKind }),
