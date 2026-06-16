@@ -3,6 +3,7 @@
 import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
+import { orderDiffRegions } from "./diff-order";
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
 import type { ShadingLayerResult } from "./layers/DiffShadingLayer";
 import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
@@ -242,10 +243,13 @@ export function ViewerCanvas({
       // keeping the baseline visible for "before vs after" comparison.
       // Baseline intentionally stays unannotated — adding boxes there
       // muddies the reference image.
-      if (regions.length > 0) {
+      // l1_pixel and dynamic_text are Difference-mode-only; filter them
+      // out so side-by-side shading only shows stepper-navigable regions.
+      const shadingRegions = orderDiffRegions(regions);
+      if (shadingRegions.length > 0) {
         shadingLayerRef.current = mountDiffShadingLayer(
           candidateWorld,
-          regions,
+          shadingRegions,
           selectedRegionId,
           {
             highlight: highlightActive,
