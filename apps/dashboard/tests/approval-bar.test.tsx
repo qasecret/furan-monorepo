@@ -156,7 +156,7 @@ describe("ApprovalBar", () => {
     expect(screen.getByTestId("run-status-badge-unresolved")).toBeDefined();
     expect(screen.getByTestId("approve-button")).toBeDefined();
     expect(screen.getByTestId("reject-button")).toBeDefined();
-    expect(screen.getByTestId("override-button")).toBeDefined();
+    expect(screen.getByTestId("approval-more-menu")).toBeDefined();
     const comment = screen.getByTestId("comment-button") as HTMLButtonElement;
     expect(comment.disabled).toBe(false);
 
@@ -187,31 +187,29 @@ describe("ApprovalBar", () => {
     expect(approveOnError).toBeTypeOf("function");
   });
 
-  it("disables Approve / Reject / Override when run is in a non-reviewable state (aborted)", () => {
+  it("disables Approve / Reject when run is in a non-reviewable state (aborted), and hides the More menu", () => {
     render(<ApprovalBar runId={RUN_ID} status="aborted" />);
     const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
     const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
-    const override = screen.getByTestId("override-button") as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     expect(reject.disabled).toBe(true);
-    expect(override.disabled).toBe(true);
+    // More menu is not rendered when canReview is false.
+    expect(screen.queryByTestId("approval-more-menu")).toBeNull();
     // Clicking the disabled approve must NOT fire the mutation.
     fireEvent.click(approve);
     expect(approveMutate).not.toHaveBeenCalled();
   });
 
   it.each([["running"], ["aborted"], ["empty"]] as const)(
-    "disables review controls when status='%s'",
+    "disables review controls and hides More menu when status='%s'",
     (status) => {
       render(<ApprovalBar runId={RUN_ID} status={status} />);
       const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
       const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
-      const override = screen.getByTestId(
-        "override-button",
-      ) as HTMLButtonElement;
       expect(approve.disabled).toBe(true);
       expect(reject.disabled).toBe(true);
-      expect(override.disabled).toBe(true);
+      // More menu is not rendered when canReview is false.
+      expect(screen.queryByTestId("approval-more-menu")).toBeNull();
     },
   );
 
@@ -230,17 +228,21 @@ describe("ApprovalBar", () => {
   // rather than `click`, so synthetic `fireEvent.click` on the trigger
   // doesn't open the menu in jsdom. Drive the trigger with the keyboard
   // path instead — pressing Enter on a focused trigger opens the menu.
-  const openOverrideMenu = async () => {
-    const trigger = screen.getByTestId("override-button") as HTMLButtonElement;
+  // Both the override items and the bulk-approve/approve-all items now live
+  // in the unified `approval-more-menu` dropdown.
+  const openMoreMenu = async () => {
+    const trigger = screen.getByTestId(
+      "approval-more-menu",
+    ) as HTMLButtonElement;
     trigger.focus();
     fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
     // Allow Radix to flush its portal mount.
     await new Promise((r) => setTimeout(r, 0));
   };
 
-  it("override dropdown 'Set Passed' calls overrideStatus with status=passed", async () => {
+  it("More menu 'Set Passed' calls overrideStatus with status=passed", async () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
-    await openOverrideMenu();
+    await openMoreMenu();
     const item = await screen.findByTestId("override-set-passed");
     fireEvent.click(item);
     expect(overrideMutate).toHaveBeenCalledWith({
@@ -249,9 +251,9 @@ describe("ApprovalBar", () => {
     });
   });
 
-  it("override dropdown 'Set Failed' calls overrideStatus with status=failed", async () => {
+  it("More menu 'Set Failed' calls overrideStatus with status=failed", async () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
-    await openOverrideMenu();
+    await openMoreMenu();
     const item = await screen.findByTestId("override-set-failed");
     fireEvent.click(item);
     expect(overrideMutate).toHaveBeenCalledWith({
@@ -260,9 +262,9 @@ describe("ApprovalBar", () => {
     });
   });
 
-  it("override dropdown 'Default (recompute)' calls overrideStatus with status=default", async () => {
+  it("More menu 'Default (recompute)' calls overrideStatus with status=default", async () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
-    await openOverrideMenu();
+    await openMoreMenu();
     const item = await screen.findByTestId("override-set-default");
     fireEvent.click(item);
     expect(overrideMutate).toHaveBeenCalledWith({
@@ -271,20 +273,9 @@ describe("ApprovalBar", () => {
     });
   });
 
-  // Same Radix-keyboard workaround as the Override dropdown above —
-  // pointerdown-driven triggers don't open on a synthetic fireEvent.click.
-  const openApproveMenu = async () => {
-    const trigger = screen.getByTestId(
-      "approve-more-menu",
-    ) as HTMLButtonElement;
-    trigger.focus();
-    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
-    await new Promise((r) => setTimeout(r, 0));
-  };
-
-  it("Approve ▾ → 'Approve all runs of this test' opens the confirm; Approve all fires the bulk mutation", async () => {
+  it("More ▾ → 'Approve all runs of this test' opens the confirm; Approve all fires the bulk mutation", async () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
-    await openApproveMenu();
+    await openMoreMenu();
     const item = await screen.findByTestId("approve-bulk-variation");
     fireEvent.click(item);
     // Confirm pane appears (not auto-confirmed).
@@ -295,9 +286,9 @@ describe("ApprovalBar", () => {
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
-  it("Approve ▾ confirm Cancel dismisses without firing the mutation", async () => {
+  it("More ▾ confirm Cancel dismisses without firing the mutation", async () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
-    await openApproveMenu();
+    await openMoreMenu();
     const item = await screen.findByTestId("approve-bulk-variation");
     fireEvent.click(item);
     fireEvent.click(screen.getByTestId("approve-bulk-confirm-no"));
@@ -307,8 +298,8 @@ describe("ApprovalBar", () => {
     expect(screen.queryByTestId("approve-bulk-confirm")).toBeNull();
   });
 
-  it("hides the Approve ▾ menu when status is not reviewer-actionable", () => {
+  it("hides the More menu when status is not reviewer-actionable", () => {
     render(<ApprovalBar runId={RUN_ID} status="aborted" />);
-    expect(screen.queryByTestId("approve-more-menu")).toBeNull();
+    expect(screen.queryByTestId("approval-more-menu")).toBeNull();
   });
 });
