@@ -1,15 +1,12 @@
 "use client";
 
 import type { RunStatus } from "@furan/shared-types";
-import { ChevronRight, Clock, GitBranch, Layers } from "lucide-react";
-import Link from "next/link";
+import { Clock, GitBranch, Layers } from "lucide-react";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { RunStatusBadge } from "@/components/run-status-badge";
-
-interface BreadcrumbCrumb {
-  label: string;
-  href?: string;
-}
+import type { BreadcrumbCrumb } from "@/components/ui/breadcrumbs";
+import { formatRelativeTime } from "@/lib/format";
 
 interface Props {
   breadcrumb: BreadcrumbCrumb[];
@@ -30,14 +27,15 @@ interface Props {
 }
 
 /**
- * Two-row contextual header rendered above page tabs on detail routes
- * (today: run/checkpoint diff viewer). Row 1 = breadcrumb + title +
- * status; Row 2 = metadata chips. Mirrors the reference enterprise-app
- * pattern: high information density, mono font for machine values,
- * lucide icons for visual rhythm.
+ * Two-row contextual header rendered above the diff viewer. Row 1 = run title +
+ * status; Row 2 = metadata chips. High information density, mono font for
+ * machine values, lucide icons for visual rhythm.
  *
- * Callers compose the breadcrumb (parents own routing knowledge) and
- * metadata (server-fetched run data). The component is pure presentation.
+ * The breadcrumb trail it receives is published to the global TopBar trail (via
+ * `<SetBreadcrumbs>`) rather than rendered inline, so the whole app shows one
+ * breadcrumb in one place. Callers compose the breadcrumb (parents own routing
+ * knowledge) and metadata (server-fetched run data); the component is otherwise
+ * pure presentation.
  */
 export function ContextualHeader({
   breadcrumb,
@@ -52,20 +50,18 @@ export function ContextualHeader({
       className="flex flex-col gap-2 border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="contextual-header"
     >
-      {/* Row 1: breadcrumb · title · status — actions */}
+      <SetBreadcrumbs items={breadcrumb} />
+
+      {/* Row 1: title · status — actions */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-4">
-          <BreadcrumbList items={breadcrumb} />
-          <span className="hidden h-4 w-px bg-zinc-300 dark:bg-zinc-700 md:block" />
-          <div className="flex min-w-0 items-center gap-3">
-            <h1
-              className="truncate text-base font-semibold leading-tight text-zinc-900 dark:text-white md:text-lg"
-              data-testid="contextual-header-title"
-            >
-              {title}
-            </h1>
-            {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
-          </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <h1
+            className="truncate text-base font-semibold leading-tight text-zinc-900 dark:text-white md:text-lg"
+            data-testid="contextual-header-title"
+          >
+            {title}
+          </h1>
+          {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
         </div>
         {rightActions ? (
           <div className="flex shrink-0 items-center gap-2">{rightActions}</div>
@@ -78,51 +74,6 @@ export function ContextualHeader({
   );
 }
 
-function BreadcrumbList({ items }: { items: BreadcrumbCrumb[] }) {
-  return (
-    <nav
-      aria-label="Breadcrumb"
-      className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400"
-    >
-      {items.map((crumb, idx) => {
-        const isLast = idx === items.length - 1;
-        return (
-          <span
-            key={`${crumb.label}-${idx}`}
-            className="flex items-center gap-1.5 min-w-0"
-          >
-            {crumb.href && !isLast ? (
-              <Link
-                href={crumb.href}
-                className="truncate transition-colors hover:text-zinc-900 dark:hover:text-white"
-              >
-                {crumb.label}
-              </Link>
-            ) : (
-              <span
-                className={
-                  isLast
-                    ? "truncate font-medium text-zinc-700 dark:text-zinc-200"
-                    : "truncate"
-                }
-                aria-current={isLast ? "page" : undefined}
-              >
-                {crumb.label}
-              </span>
-            )}
-            {!isLast ? (
-              <ChevronRight
-                className="h-3 w-3 shrink-0 text-zinc-400 dark:text-zinc-600"
-                aria-hidden
-              />
-            ) : null}
-          </span>
-        );
-      })}
-    </nav>
-  );
-}
-
 function MetadataStrip({
   branch,
   checkpointCount,
@@ -131,7 +82,7 @@ function MetadataStrip({
 }: NonNullable<Props["metadata"]>) {
   const startedDate = toDate(startedAt);
   const completedDate = toDate(completedAt);
-  const startedLabel = startedDate ? formatRelative(startedDate) : null;
+  const startedLabel = startedDate ? formatRelativeTime(startedDate) : null;
   const durationLabel =
     startedDate && completedDate
       ? formatDuration(completedDate.getTime() - startedDate.getTime())
@@ -188,17 +139,6 @@ function toDate(v: Date | string | null | undefined): Date | null {
   if (v instanceof Date) return v;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function formatRelative(d: Date): string {
-  const diffMs = Date.now() - d.getTime();
-  if (diffMs < 60_000) return "just now";
-  const min = Math.floor(diffMs / 60_000);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  return `${day}d ago`;
 }
 
 function formatDuration(ms: number): string {

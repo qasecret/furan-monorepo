@@ -6,8 +6,14 @@ import {
   Puzzle,
   Users,
 } from "lucide-react";
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import {
+  Fragment,
+  type ComponentType,
+  type ReactNode,
+  type SVGProps,
+} from "react";
 
+import { ActiveProjectNavItem } from "./active-project-nav-item";
 import { InboxBadge } from "./inbox-badge";
 import { LogoutButton } from "./logout-button";
 import { SidebarNavItem } from "./sidebar-nav-item";
@@ -128,13 +134,17 @@ export function Sidebar({
                 // "Functions cannot be passed directly to Client Components".
                 const Icon = item.icon;
                 return (
-                  <SidebarNavItem
-                    key={item.href}
-                    icon={<Icon className="w-4 h-4 shrink-0" />}
-                    label={item.label}
-                    href={item.href}
-                    badge={item.badge}
-                  />
+                  <Fragment key={item.href}>
+                    <SidebarNavItem
+                      icon={<Icon className="w-4 h-4 shrink-0" />}
+                      label={item.label}
+                      href={item.href}
+                      badge={item.badge}
+                    />
+                    {item.href === "/projects" ? (
+                      <ActiveProjectNavItem />
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </div>

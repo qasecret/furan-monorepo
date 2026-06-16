@@ -1,0 +1,52 @@
+"use client";
+
+import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+
+import { ProjectTabs } from "./project-tabs";
+
+import { useActiveProjectStore } from "@/app/(protected)/_components/use-active-project";
+import { PageHeader } from "@/components/ui/page-header";
+import { recordRecentProject } from "@/lib/recent-projects";
+
+/**
+ * Project-scoped header rendered by the project layout: the project name as
+ * the section identity, with the Builds / Runs / Variations / Settings tab
+ * strip beneath it.
+ *
+ * It also owns the project's nav side effects (publish the active project to
+ * the sidebar store; record the visit for the command palette's Recent group),
+ * which run regardless of whether the header itself is shown.
+ *
+ * On the full-screen diff viewer (`/checkpoints/`, `/diffs/`) the header
+ * renders nothing — that surface owns its own `ContextualHeader`, so showing
+ * the project chrome there would double up. The breadcrumb trail still appears
+ * globally in the TopBar.
+ */
+export function ProjectHeader({
+  projectId,
+  name,
+}: {
+  projectId: string;
+  name: string;
+}) {
+  const pathname = usePathname();
+  const setActive = useActiveProjectStore((s) => s.set);
+  const clearActive = useActiveProjectStore((s) => s.clear);
+
+  useEffect(() => {
+    setActive(projectId, name);
+    recordRecentProject({ id: projectId, name });
+    return () => clearActive();
+  }, [projectId, name, setActive, clearActive]);
+
+  const isFocusedView = /\/(checkpoints|diffs)\//.test(pathname);
+  if (isFocusedView) return null;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader title={name} />
+      <ProjectTabs projectId={projectId} />
+    </div>
+  );
+}

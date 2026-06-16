@@ -4,9 +4,12 @@ import { notFound, redirect } from "next/navigation";
 import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
 import { VariationsList } from "./_components/variations-list";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
-import { apiGet } from "@/lib/api-client";
+import { getProject } from "@/lib/get-project";
+import { getViewerRole } from "@/lib/get-viewer";
+import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Variations" };
 
@@ -21,15 +24,6 @@ const VARIATIONS_PAGE_TOUR = [
 ];
 
 export const dynamic = "force-dynamic";
-
-interface Project {
-  id: string;
-  name: string;
-}
-
-interface Me {
-  role: "admin" | "editor" | "guest";
-}
 
 /**
  * /projects/[projectId]/variations — variation-management surface for the
@@ -48,7 +42,7 @@ export default async function ProjectVariationsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const project = await apiGet<Project>(`/projects/${projectId}`);
+  const project = await getProject(projectId);
   if (project.status === 401) {
     redirect("/login");
   }
@@ -68,26 +62,14 @@ export default async function ProjectVariationsPage({
     );
   }
 
-  const me = await apiGet<Me>("/users/me").catch(() => ({
-    status: 0,
-    data: null as Me | null,
-  }));
-  const userRole: Me["role"] = me.data?.role ?? "guest";
+  const userRole = await getViewerRole();
 
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs
+        items={projectCrumbs(projectId, project.data.name, "Variations")}
+      />
       <PageTour pageId="variations-index" steps={VARIATIONS_PAGE_TOUR} />
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Variations
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Project:{" "}
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            {project.data.name}
-          </span>
-        </p>
-      </div>
       <div id="variations-merge-panel">
         <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
       </div>

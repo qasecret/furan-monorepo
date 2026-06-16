@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 
 import { InstallationsTable } from "./_components/installations-table";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
 export const metadata: Metadata = { title: "Installations" };
@@ -41,14 +43,11 @@ export default async function InstallationsAdminPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-        GitHub App installations
-      </h1>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Link each GitHub App installation to a Furan project so its webhook
-        events (PR runs, status checks) route to the right place. Changes save
-        immediately.
-      </p>
+      <SetBreadcrumbs items={[{ label: "Installations" }]} />
+      <PageHeader
+        title="GitHub App installations"
+        description="Link each GitHub App installation to a Furan project so its webhook events (PR runs, status checks) route to the right place. Changes save immediately."
+      />
       <InstallationsTable />
     </div>
   );

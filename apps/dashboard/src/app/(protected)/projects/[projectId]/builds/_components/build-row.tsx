@@ -4,6 +4,7 @@ import type { BuildAggregateStatus } from "@furan/shared-types";
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Badge } from "@/components/ui/badge";
+import { buildDisplayName } from "@/lib/build-display-name";
 
 export interface BuildRowData {
   id: string;
@@ -26,22 +27,6 @@ interface Props {
   expanded: boolean;
   onToggleExpand: () => void;
   onPropertyClick: (key: string, value: string) => void;
-}
-
-/**
- * Display priority for a build's title: explicit `name` (set via SDK) →
- * `#<number>` (the per-project monotonic counter) → first 12 chars of
- * the `ciBuildId` → first 8 chars of the build's UUID (a build always
- * has one; this kills the "(unnamed)" fallback the 2026-05-24 audit
- * surfaced as a polish issue). Original spec §3.8 said "(unnamed)"
- * but a uuid-prefix is more useful + the visual is the same shape as
- * a short git sha so reviewers parse it intuitively.
- */
-function displayName(b: BuildRowData): string {
-  if (b.name) return b.name;
-  if (b.number !== null) return `#${b.number}`;
-  if (b.ciBuildId) return b.ciBuildId.slice(0, 12);
-  return b.id.slice(0, 8);
 }
 
 function relative(date: string | Date): string {
@@ -82,7 +67,7 @@ export function BuildRow({
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex flex-col min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-medium">{displayName(build)}</span>
+            <span className="font-medium">{buildDisplayName(build)}</span>
             <BuildStatusBadge status={build.aggregateStatus} />
             {build.branchName && (
               <span className="text-xs text-zinc-500 dark:text-zinc-500">

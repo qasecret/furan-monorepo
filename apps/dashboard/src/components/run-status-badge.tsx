@@ -75,6 +75,32 @@ export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
   },
 };
 
+/**
+ * Left border-accent for table-row status stripes (runs index). Co-located
+ * with STATUS_CONFIG so status→colour stays defined in exactly one file.
+ * Static literals so Tailwind's JIT keeps every class.
+ */
+export const STATUS_STRIPE: Record<RunStatus, string> = {
+  unresolved: "border-l-amber-500",
+  failed: "border-l-red-500",
+  aborted: "border-l-yellow-500",
+  running: "border-l-blue-500",
+  passed: "border-l-green-500",
+  new: "border-l-zinc-300 dark:border-l-zinc-600",
+  empty: "border-l-zinc-200 dark:border-l-zinc-800",
+};
+
+/** Text-emphasis for a run's change magnitude, keyed to reviewer-actionability. */
+export const STATUS_ACCENT: Record<RunStatus, string> = {
+  unresolved: "text-amber-700 dark:text-amber-400",
+  failed: "text-red-600 dark:text-red-400",
+  aborted: "text-zinc-700 dark:text-zinc-300",
+  running: "text-zinc-700 dark:text-zinc-300",
+  passed: "text-zinc-700 dark:text-zinc-300",
+  new: "text-zinc-700 dark:text-zinc-300",
+  empty: "text-zinc-700 dark:text-zinc-300",
+};
+
 interface Props {
   status: RunStatus;
 }

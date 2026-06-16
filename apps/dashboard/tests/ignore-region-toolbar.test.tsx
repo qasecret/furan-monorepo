@@ -39,6 +39,18 @@ vi.mock("@/lib/trpc", () => ({
           };
         },
       },
+      // ViewerToolbar's temporary-ignore path (isTemporaryMode) calls this;
+      // mirror setIgnoreAreas so the hook resolves and onSuccess can fire.
+      setTempIgnoreAreas: {
+        useMutation: (opts?: { onSuccess?: () => void }) => {
+          return {
+            mutate: () => {
+              opts?.onSuccess?.();
+            },
+            isPending,
+          };
+        },
+      },
       // SensitivityControl (rendered by ViewerToolbar) calls this — a no-op
       // mock keeps the toolbar tests focused on region-editor behavior
       // without coupling them to the slider's wire shape.

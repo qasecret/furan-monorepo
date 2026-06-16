@@ -2,6 +2,7 @@ import {
   and,
   asc,
   baselines,
+  builds,
   desc,
   diffRegions,
   eq,
@@ -164,6 +165,20 @@ const listInput = z.object({
 type ListInput = z.infer<typeof listInput>;
 
 /**
+ * Input for `statusCounts` — the non-status filters that `list` actually
+ * applies (branch, customTags, buildId). Status itself is intentionally
+ * absent: the counts describe how many runs fall in each status given the
+ * other filters, which is exactly what the chip labels need.
+ */
+const statusCountsInput = z.object({
+  projectId: z.string().uuid(),
+  branch: z.string().optional(),
+  buildId: z.string().uuid().optional(),
+  customTags: z.string().optional(),
+});
+type StatusCountsInput = z.infer<typeof statusCountsInput>;
+
+/**
  * The legal source statuses for any reviewer-driven status mutation
  * (`approve`, `reject`, `overrideStatus`) per spec §3.3. Excludes
  * `running` (no diff outcome yet) and the terminal system states
@@ -285,6 +300,29 @@ async function resolveRunProjectId(
   return rows[0]?.projectId ?? null;
 }
 
+/**
+ * The non-status WHERE conditions both `list` and `statusCounts` apply
+ * (projectId + branch/buildId/customTags). Sharing one builder keeps the chip
+ * counts and the listed rows describing the same population, so they can't
+ * drift when a filter dimension is added (e.g. ADR-038 Phase 5 device filters).
+ */
+function runListBaseConditions(input: {
+  projectId: string;
+  branch?: string | undefined;
+  buildId?: string | undefined;
+  customTags?: string | undefined;
+}) {
+  const conditions = [eq(testRuns.projectId, input.projectId)];
+  if (input.branch) conditions.push(eq(testRuns.branchName, input.branch));
+  if (input.buildId) conditions.push(eq(testRuns.buildId, input.buildId));
+  if (input.customTags) {
+    // ILIKE substring against the comma-separated tag bag (SDK passes it
+    // verbatim, e.g. "smoke,login,critical"); reviewers match on a substring.
+    conditions.push(ilike(testRuns.customTags, `%${input.customTags}%`));
+  }
+  return conditions;
+}
+
 export const runsRouter = t.router({
   /**
    * Cursor-paginated run listing for the dashboard index page (T9).
@@ -304,15 +342,12 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ input, ctx }) => {
-      const conditions = [eq(testRuns.projectId, input.projectId)];
+      // ADR-038: browser/viewport/os/device filters moved to screenshots;
+      // Phase 5 adds sub-query filters there. Shared base conditions keep
+      // `list` and `statusCounts` in lockstep.
+      const conditions = runListBaseConditions(input);
       if (input.cursor) {
         conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));
-      }
-      if (input.branch) {
-        conditions.push(eq(testRuns.branchName, input.branch));
-      }
-      if (input.buildId) {
-        conditions.push(eq(testRuns.buildId, input.buildId));
       }
       // Empty array == no filter, identical to undefined — keeps the
       // dashboard's "all checkboxes off" state simple and avoids an
@@ -320,28 +355,75 @@ export const runsRouter = t.router({
       if (input.status && input.status.length > 0) {
         conditions.push(inArray(testRuns.status, input.status));
       }
-      // ADR-038: browser/viewport/os/device filters moved to screenshots/checkpoints.
-      // Phase 5 will add sub-query filters against screenshots for these dimensions.
-      if (input.customTags) {
-        // ILIKE substring against the comma-separated bag. Matches the
-        // legacy semantics where customTags is a free-form string the
-        // SDK passes through verbatim (e.g. "smoke,login,critical") and
-        // reviewers want to find any run tagged with one substring.
-        conditions.push(ilike(testRuns.customTags, `%${input.customTags}%`));
-      }
 
       const rows = await ctx.db
-        .select()
+        .select({
+          run: testRuns,
+          buildName: builds.name,
+          buildNumber: builds.number,
+          buildCiBuildId: builds.ciBuildId,
+          buildBranchName: builds.branchName,
+          buildCreatedAt: builds.createdAt,
+        })
         .from(testRuns)
+        .leftJoin(builds, eq(testRuns.buildId, builds.id))
         .where(and(...conditions))
         .orderBy(desc(testRuns.createdAt))
         .limit(input.limit + 1);
 
       const hasMore = rows.length > input.limit;
-      const items = hasMore ? rows.slice(0, input.limit) : rows;
-      const last = items[items.length - 1];
-      const nextCursor = hasMore && last ? last.createdAt.toISOString() : null;
+      const page = hasMore ? rows.slice(0, input.limit) : rows;
+      // Flatten the join: run columns stay top-level (back-compat with every
+      // existing consumer) with the build display fields alongside so the
+      // dashboard can group runs under their build (ADR-038 batch model).
+      const items = page.map((r) => ({
+        ...r.run,
+        buildName: r.buildName,
+        buildNumber: r.buildNumber,
+        buildCiBuildId: r.buildCiBuildId,
+        buildBranchName: r.buildBranchName,
+        buildCreatedAt: r.buildCreatedAt,
+      }));
+      const last = page[page.length - 1];
+      const nextCursor =
+        hasMore && last ? last.run.createdAt.toISOString() : null;
       return { items, nextCursor };
+    }),
+
+  /**
+   * Per-status run counts for the index page's filter chips. Mirrors the
+   * non-status filters `list` actually applies (branch, customTags, buildId)
+   * so a chip's count matches what selecting it would show. One cheap GROUP
+   * BY — unaffected by the list's cursor pagination.
+   */
+  statusCounts: t.procedure
+    .input(statusCountsInput)
+    .use(authed)
+    .use(
+      projectMember<StatusCountsInput>("read", {
+        from: {
+          resolver: ({ input }: { input: StatusCountsInput; ctx: Context }) =>
+            Promise.resolve(input.projectId),
+        },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const conditions = runListBaseConditions(input);
+      const rows = await ctx.db
+        .select({
+          status: testRuns.status,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(testRuns)
+        .where(and(...conditions))
+        .groupBy(testRuns.status);
+      const counts: Partial<Record<RunStatus, number>> = {};
+      let total = 0;
+      for (const r of rows) {
+        counts[r.status] = r.count;
+        total += r.count;
+      }
+      return { total, counts };
     }),
 
   getById: t.procedure
@@ -995,6 +1077,108 @@ export const runsRouter = t.router({
           data: { id: buildId },
         });
       }
+
+      return {
+        approved: approvedIds.length,
+        runIds: approvedIds,
+        capped,
+        cap: BULK_CAP,
+      };
+    }),
+
+  /**
+   * Bulk-approve every reviewer-actionable run in a build, in one capped
+   * transaction. Unlike a per-row client fan-out, this approves the WHOLE
+   * build (not just the page of runs the dashboard happens to have loaded),
+   * so "Approve all" can't silently leave later-page runs unreviewed, and a
+   * mid-flight failure rolls the whole batch back instead of half-approving.
+   */
+  bulkApproveByBuild: t.procedure
+    .input(z.object({ buildId: z.string().uuid() }))
+    .use(authed)
+    .use(
+      projectMember<{ buildId: string }>("write", {
+        from: {
+          resolver: async ({
+            input,
+            ctx,
+          }: {
+            input: { buildId: string };
+            ctx: Context;
+          }) => {
+            const rows = await ctx.db
+              .select({ projectId: builds.projectId })
+              .from(builds)
+              .where(eq(builds.id, input.buildId))
+              .limit(1);
+            return rows[0]?.projectId ?? null;
+          },
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const BULK_CAP = 200;
+      const targets = await ctx.db
+        .select()
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.buildId, input.buildId),
+            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+          ),
+        )
+        .limit(BULK_CAP + 1);
+      const capped = targets.length > BULK_CAP;
+      const approveTargets = capped ? targets.slice(0, BULK_CAP) : targets;
+      const first = approveTargets[0];
+      if (!first) {
+        return {
+          approved: 0,
+          runIds: [] as string[],
+          capped: false,
+          cap: BULK_CAP,
+        };
+      }
+      const projectId = first.projectId;
+
+      const approvedIds: string[] = [];
+      await ctx.db.transaction(async (tx) => {
+        for (const run of approveTargets) {
+          await tx
+            .update(testRuns)
+            .set({ status: "passed", merge: true })
+            .where(eq(testRuns.id, run.id));
+          const firstShot = await tx
+            .select({
+              testVariationId: screenshots.testVariationId,
+              imageKey: screenshots.imageKey,
+            })
+            .from(screenshots)
+            .where(eq(screenshots.runId, run.id))
+            .limit(1);
+          if (firstShot[0]) {
+            await tx.insert(baselines).values({
+              baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+              testVariationId: firstShot[0].testVariationId,
+              testRunId: run.id,
+              userId: ctx.user.id,
+              ...(run.branchName ? { branchName: run.branchName } : {}),
+            });
+          }
+          approvedIds.push(run.id);
+        }
+      });
+
+      for (const runId of approvedIds) {
+        await ctx.broadcaster.publishProjectEvent(projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      await ctx.broadcaster.publishProjectEvent(projectId, {
+        event: "build_updated",
+        data: { id: input.buildId },
+      });
 
       return {
         approved: approvedIds.length,

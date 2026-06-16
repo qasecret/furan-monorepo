@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 
 import { TokensTable, type TokenRow } from "./_components/tokens-table";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
+import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
 export const metadata: Metadata = { title: "Tokens" };
@@ -24,16 +26,12 @@ export default async function TokensPage() {
 
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs items={[{ label: "Tokens" }]} />
       <PageTour pageId="account-tokens" steps={TOKENS_PAGE_TOUR} />
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Personal access tokens
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Use these tokens to authenticate the Furan SDK or CI uploads. Each
-          token grants the same access as your account.
-        </p>
-      </div>
+      <PageHeader
+        title="Personal access tokens"
+        description="Use these tokens to authenticate the Furan SDK or CI uploads. Each token grants the same access as your account."
+      />
       <div id="tokens-table">
         <TokensTable initialTokens={tokens} />
       </div>

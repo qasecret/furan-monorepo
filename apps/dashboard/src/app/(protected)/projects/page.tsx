@@ -4,8 +4,10 @@ import Link from "next/link";
 import { CreateProjectDialog } from "./_components/create-project-dialog";
 import { EmptyProjectsCta } from "./_components/empty-projects-cta";
 
+import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
 export const metadata: Metadata = { title: "Projects" };
@@ -66,17 +68,18 @@ export default async function ProjectsPage() {
 
   return (
     <div className="space-y-4">
+      <SetBreadcrumbs items={[{ label: "Projects" }]} />
       <PageTour pageId="projects-index" steps={PROJECTS_PAGE_TOUR} />
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-          Projects
-        </h1>
-        {role === "admin" && (
-          <div id="projects-create">
-            <CreateProjectDialog />
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Projects"
+        actions={
+          role === "admin" ? (
+            <div id="projects-create">
+              <CreateProjectDialog />
+            </div>
+          ) : undefined
+        }
+      />
       <div
         id="projects-list"
         className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
