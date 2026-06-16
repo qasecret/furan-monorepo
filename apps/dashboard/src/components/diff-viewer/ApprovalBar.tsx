@@ -52,6 +52,13 @@ interface Props {
    * cleanly.
    */
   diffRegions?: { severity: string }[];
+  /**
+   * Called after a successful checkpoint approve/reject so the parent can
+   * advance the rail to the next unresolved checkpoint (fast triage loop).
+   * Only fires from the single-checkpoint approve and reject actions —
+   * not from approve-all, bulk-approve, or override.
+   */
+  onResolved?: () => void;
 }
 
 // ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
@@ -94,6 +101,7 @@ export function ApprovalBar({
   checkpointId,
   status,
   diffRegions,
+  onResolved,
 }: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +123,7 @@ export function ApprovalBar({
     onSuccess: () => {
       invalidate();
       toast.success("Checkpoint approved");
+      onResolved?.();
     },
     onError: (e) => setError(e.message),
   });
@@ -144,7 +153,10 @@ export function ApprovalBar({
   const [confirmBulk, setConfirmBulk] = useState(false);
   const reject = trpc.runs.reject.useMutation({
     onMutate: () => setError(null),
-    onSuccess: () => invalidate(),
+    onSuccess: () => {
+      invalidate();
+      onResolved?.();
+    },
     onError: (e) => setError(e.message),
   });
   const override = trpc.runs.overrideStatus.useMutation({

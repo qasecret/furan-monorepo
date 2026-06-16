@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
+import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { ContextualHeader } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
@@ -180,6 +181,14 @@ export function DiffViewer({
       diffPercent: null,
     }));
   }, [checkpointsQuery.data]);
+
+  const advanceToNextUnresolved = useCallback(() => {
+    const nextId = nextUnresolvedCheckpointId(
+      checkpointSummaries,
+      selectedCheckpointId,
+    );
+    if (nextId) handleCheckpointSelect(nextId);
+  }, [checkpointSummaries, selectedCheckpointId, handleCheckpointSelect]);
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
@@ -584,6 +593,7 @@ export function DiffViewer({
             }
             status={data?.status}
             diffRegions={regions}
+            onResolved={advanceToNextUnresolved}
           />
         </div>
         <RunCommentPanel runId={runId} />
