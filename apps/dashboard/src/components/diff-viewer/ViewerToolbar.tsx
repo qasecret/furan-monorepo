@@ -537,11 +537,7 @@ export function ViewerToolbar({
       )}
 
       {editing && selectedIgnoreId && (
-        <RegionSettingsPopover
-          runId={runId}
-          projectId={projectId}
-          dynamicTextEnabled={dynamicTextEnabled}
-        />
+        <RegionSettingsPopover dynamicTextEnabled={dynamicTextEnabled} />
       )}
 
       {showSlider && (

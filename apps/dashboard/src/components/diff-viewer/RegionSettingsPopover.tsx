@@ -26,10 +26,6 @@ import {
 } from "@/components/ui/select";
 
 interface Props {
-  /** The current run id — passed through for potential future use. */
-  runId: string;
-  /** Project id — passed through for context. */
-  projectId: string;
   /** Whether the project has dynamic-text mode enabled. Gates the kind selector. */
   dynamicTextEnabled: boolean;
 }
