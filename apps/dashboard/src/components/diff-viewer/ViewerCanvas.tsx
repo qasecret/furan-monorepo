@@ -19,7 +19,7 @@ import {
   type DraftIgnoreArea,
   type IgnoreArea,
 } from "./useViewerStore";
-import { fitWorldToCanvas } from "./world-fit";
+import { computeFocusView, fitWorldToCanvas } from "./world-fit";
 
 interface Props {
   baselineUrl: string | null;
@@ -114,6 +114,9 @@ export function ViewerCanvas({
   const zoom = useViewerStore((s) => s.zoom);
   const panX = useViewerStore((s) => s.panX);
   const panY = useViewerStore((s) => s.panY);
+  const focusBbox = useViewerStore((s) => s.focusBbox);
+  const setView = useViewerStore((s) => s.setView);
+  const setFocusBbox = useViewerStore((s) => s.setFocusBbox);
 
   // Ignore-region store slices.
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
@@ -510,6 +513,23 @@ export function ViewerCanvas({
       view,
     );
   }, [zoom, panX, panY, mode, baselineUrl, candidateUrl, diffOverlayUrl]);
+
+  useEffect(() => {
+    if (!focusBbox) return;
+    const app =
+      mode === "side-by-side" ? candidateAppRef.current : singleAppRef.current;
+    const sprite = candidateSpriteRef.current ?? baselineSpriteRef.current;
+    if (!app || !sprite) return;
+    const view = computeFocusView(
+      focusBbox,
+      sprite.texture.width,
+      sprite.texture.height,
+      app.screen.width,
+      app.screen.height,
+    );
+    setView(view);
+    setFocusBbox(null);
+  }, [focusBbox, mode, setView, setFocusBbox]);
 
   // Remount the IgnoreRegionLayer whenever the store data or edit scope
   // changes. The layer is cheap to construct (one Graphics per region).
