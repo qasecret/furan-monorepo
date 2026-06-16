@@ -297,6 +297,17 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
   });
 
+  it("D does not change mode when typing in an input", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    useViewerStore.setState({ mode: "side-by-side" });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => press("D"));
+    expect(useViewerStore.getState().mode).toBe("side-by-side");
+    input.remove();
+  });
+
   it("$mod+V is a no-op when clipboard is empty", () => {
     useViewerStore.setState({
       ignoreEditMode: "run",

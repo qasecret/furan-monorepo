@@ -81,10 +81,12 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (href) router.push(href);
       },
       D: () => {
+        if (isTypingInInput()) return;
         // Toggle the single-image difference view.
         setMode(mode === "difference" ? "side-by-side" : "difference");
       },
       O: () => {
+        if (isTypingInInput()) return;
         const idx = MODES.indexOf(mode);
         const next = MODES[(idx + 1) % MODES.length];
         if (next) setMode(next);
