@@ -148,7 +148,13 @@ export function ViewerCanvas({
   // ignore-region layer re-renders the preview rect on every hover step.
   const [pickPreview, setPickPreview] = useState<ElementBbox | null>(null);
 
+  // Timing bridge: the heavy mount effect bumps this after the fresh world +
+  // app refs are populated. The shading effect listens to this value so it
+  // fires once the canvas is ready without refs triggering re-runs themselves.
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
+
   // Side-by-side: two pixi Applications, one per pane.
+  // ONLY re-runs when the mode or image URLs change — NOT on overlay changes.
   useEffect(() => {
     if (mode !== "side-by-side") return;
     const baselineApp = new Application();
@@ -236,34 +242,16 @@ export function ViewerCanvas({
           view,
         );
       }
-      // VRT-style side-by-side: clean baseline on the left as the
-      // "what was here before" reference, candidate on the right with
-      // bounded yellow diff rectangles overlaid (Applitools / Percy
-      // pattern). Reviewer scans the boxes on the candidate while
-      // keeping the baseline visible for "before vs after" comparison.
-      // Baseline intentionally stays unannotated — adding boxes there
-      // muddies the reference image.
-      // l1_pixel and dynamic_text are Difference-mode-only; filter them
-      // out so side-by-side shading only shows stepper-navigable regions.
-      const shadingRegions = orderDiffRegions(regions);
-      if (shadingRegions.length > 0) {
-        shadingLayerRef.current = mountDiffShadingLayer(
-          candidateWorld,
-          shadingRegions,
-          selectedRegionId,
-          {
-            highlight: highlightActive,
-            reducedMotion,
-            ticker: candidateApp.ticker,
-          },
-        );
-      }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
       // the layer doesn't briefly render on an unfit world.
       baselineWorldRef.current = baselineWorld;
       candidateWorldRef.current = candidateWorld;
       candidateAppRef.current = candidateApp;
       baselineAppRef.current = baselineApp;
+      // Notify the shading effect that a fresh canvas is ready. Refs don't
+      // trigger React effects, so we bump an epoch counter to signal the
+      // shading effect to (re)mount the overlay on this new world.
+      setCanvasEpoch((e) => e + 1);
       // Zoom/pan listeners on each pane host (not the canvas itself) so
       // events from the ignore-region overlay div — a sibling of the
       // canvas — also bubble to these handlers. Wheel zooms about cursor;
@@ -334,9 +322,8 @@ export function ViewerCanvas({
       candidateRO?.disconnect();
       detachBaselineCtrl?.();
       detachCandidateCtrl?.();
-      // Tear down the shading layer animation before destroying the apps.
-      shadingLayerRef.current?.destroy();
-      shadingLayerRef.current = null;
+      // The shading effect handles its own cleanup via its own return fn.
+      // Null the refs so in-flight shading mounts see an absent world.
       candidateAppRef.current = null;
       baselineAppRef.current = null;
       candidateWorldRef.current = null;
@@ -366,10 +353,40 @@ export function ViewerCanvas({
         console.warn("candidate Application.destroy threw (non-fatal)", err);
       }
     };
+  }, [mode, baselineUrl, candidateUrl]);
+
+  // Side-by-side shading layer: mounts / remounts the pink overlay whenever
+  // overlay-specific props change (regions, selection, highlight, motion).
+  // Reads world + app from refs so it never re-inits the canvas itself.
+  // canvasEpoch bridges timing: the mount effect above bumps it once the
+  // fresh world exists, triggering this effect to run on the new canvas.
+  useEffect(() => {
+    if (mode !== "side-by-side") return;
+    const world = candidateWorldRef.current;
+    const app = candidateAppRef.current;
+    if (!world || !app) return;
+    const shadingRegions = orderDiffRegions(regions);
+    if (shadingRegions.length === 0) return;
+    const layer = mountDiffShadingLayer(
+      world,
+      shadingRegions,
+      selectedRegionId,
+      {
+        highlight: highlightActive,
+        reducedMotion,
+        ticker: app.ticker,
+      },
+    );
+    shadingLayerRef.current = layer;
+    return () => {
+      layer.destroy();
+      if (layer.container.parent)
+        layer.container.parent.removeChild(layer.container);
+      if (shadingLayerRef.current === layer) shadingLayerRef.current = null;
+    };
   }, [
+    canvasEpoch,
     mode,
-    baselineUrl,
-    candidateUrl,
     regions,
     selectedRegionId,
     highlightActive,

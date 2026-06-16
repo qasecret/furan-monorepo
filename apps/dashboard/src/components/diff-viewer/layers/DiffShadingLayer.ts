@@ -170,7 +170,17 @@ export function mountDiffShadingLayer(
 
   const destroy = (): void => {
     if (tickerCallback && ticker) {
-      ticker.remove(tickerCallback);
+      // Wrap in try/catch: on a mode/URL change the mount effect destroys the
+      // Pixi Application around the same time the shading effect's cleanup
+      // runs. Pixi 8's ticker teardown path can throw if the internal state
+      // was already cleaned up (e.g. `_cancelResize is not a function` family).
+      // A leaked ticker callback is far cheaper than an uncaught throw that
+      // escalates to a client-side exception boundary.
+      try {
+        ticker.remove(tickerCallback);
+      } catch (err) {
+        console.warn("DiffShadingLayer: ticker.remove threw (non-fatal)", err);
+      }
       tickerCallback = null;
     }
   };

@@ -1,5 +1,9 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+// Tracks how many times a Pixi Application has been initialized. Module-level
+// so the regression test can read it without any reference to the mock class.
+let pixiInitCount = 0;
 
 // Mock pixi.js — we test toolbar/store behavior, not WebGL.
 vi.mock("pixi.js", () => ({
@@ -7,7 +11,10 @@ vi.mock("pixi.js", () => ({
     canvas = document.createElement("canvas");
     stage = { addChild: () => {} };
     screen = { width: 600, height: 400 };
-    async init() {}
+    ticker = { add: () => {}, remove: () => {} };
+    async init() {
+      pixiInitCount++;
+    }
     destroy() {}
   },
   Assets: { load: async () => ({}) },
@@ -172,6 +179,7 @@ import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 
 describe("DiffViewer", () => {
   beforeEach(() => {
+    pixiInitCount = 0;
     mockGetByIdData = { ...defaultMockData };
     useViewerStore.setState({
       mode: "side-by-side",
@@ -292,6 +300,52 @@ describe("DiffViewer", () => {
     // Second click: deactivates highlight
     fireEvent.click(r.getByTestId("highlight-toggle"));
     expect(useViewerStore.getState().highlightActive).toBe(false);
+  });
+
+  test("toggling highlightActive does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
+    // Render with regions so the shading layer has something to mount.
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-1",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "A diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+
+    // Drain the async Pixi init path (two Application.init() calls for
+    // side-by-side mode). The mock init() is synchronous under the async
+    // wrapper, but React needs a tick to process state updates triggered by
+    // the effect (setCanvasEpoch). A single act flush is sufficient here.
+    await act(async () => {});
+
+    // Record how many Application instances were initialized at this point.
+    // In side-by-side mode: 2 (baseline + candidate).
+    const countAfterMount = pixiInitCount;
+    // Sanity: at least one init happened (if pixi.js mock isn't wired up,
+    // the rest of the assertion is vacuous — this guards that).
+    expect(countAfterMount).toBeGreaterThan(0);
+
+    // Toggle the highlight on.
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    await act(async () => {});
+
+    // Toggle the highlight off.
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    await act(async () => {});
+
+    // The canvas mount effect dep array is now [mode, baselineUrl, candidateUrl].
+    // Neither changed → Application.init() must NOT have been called again.
+    expect(pixiInitCount).toBe(countAfterMount);
   });
 
   test("hide-displacement-toggle reduces stepper count when layout regions present", () => {
