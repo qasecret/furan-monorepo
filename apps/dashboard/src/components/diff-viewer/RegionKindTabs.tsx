@@ -1,25 +1,43 @@
 "use client";
+import type { RegionKindTab } from "./useViewerStore";
+
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const KINDS = [
   { value: "ignore", label: "Ignore", enforced: true },
   { value: "layout", label: "Layout", enforced: false },
-  { value: "floating", label: "Floating", enforced: false },
   { value: "content", label: "Content", enforced: false },
-  { value: "accessibility", label: "A11y", enforced: false },
-] as const;
+] as const satisfies ReadonlyArray<{
+  value: RegionKindTab;
+  label: string;
+  enforced: boolean;
+}>;
 
-export type RegionKind = (typeof KINDS)[number]["value"];
+/**
+ * The set of `RegionKindTab` values that are not yet functional and must
+ * not appear in the rendered tab list. The `RegionKindTab` union type in
+ * `useViewerStore` is kept intact for forward-compat; we only suppress them
+ * at render time.
+ */
+const HIDDEN_KINDS = new Set<RegionKindTab>(["floating", "accessibility"]);
 
 export function RegionKindTabs({
   value,
   onChange,
 }: {
-  value: RegionKind;
-  onChange: (k: RegionKind) => void;
+  value: RegionKindTab;
+  onChange: (k: RegionKindTab) => void;
 }) {
+  // Defensive fallback: if the active tab is a hidden kind (e.g. persisted
+  // in store state from a previous session), treat it as "ignore" so the UI
+  // never highlights a tab that isn't visible.
+  const effectiveValue = HIDDEN_KINDS.has(value) ? "ignore" : value;
+
   return (
-    <Tabs value={value} onValueChange={(v) => onChange(v as RegionKind)}>
+    <Tabs
+      value={effectiveValue}
+      onValueChange={(v) => onChange(v as RegionKindTab)}
+    >
       <TabsList>
         {KINDS.map((k) => (
           <TabsTrigger key={k.value} value={k.value} className="relative">
