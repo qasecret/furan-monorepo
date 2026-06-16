@@ -9,6 +9,7 @@ import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { ContextualHeader } from "./ContextualHeader";
+import { orderDiffRegions } from "./diff-order";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -23,6 +24,7 @@ import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
+import { WhyPanel } from "./WhyPanel";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
@@ -570,10 +572,27 @@ export function DiffViewer({
                   elementMap={elementMap ?? null}
                 />
               </div>
-              <RegionListPanel
-                regions={regions}
-                vlmDescription={data?.vlmDescription ?? null}
-              />
+              {(() => {
+                const top = orderDiffRegions(regions)[0];
+                const summary = top?.description?.trim() || "Region details";
+                const source = top
+                  ? top.source === "l2"
+                    ? "DOM"
+                    : "pixels"
+                  : undefined;
+                return (
+                  <WhyPanel
+                    summary={summary}
+                    severity={top?.severity}
+                    source={source}
+                  >
+                    <RegionListPanel
+                      regions={regions}
+                      vlmDescription={data?.vlmDescription ?? null}
+                    />
+                  </WhyPanel>
+                );
+              })()}
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
