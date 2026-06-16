@@ -15,6 +15,7 @@ import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
+import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
 import { useViewerStore } from "./useViewerStore";
@@ -377,20 +378,6 @@ export function DiffViewer({
   const baselineDims = useImageDimensions(baselineUrl);
   const candidateDims = useImageDimensions(candidateUrl);
 
-  useDiffViewerShortcuts({
-    viewports: uniqueViewports,
-    projectId: data?.projectId ?? "",
-    prevDiffHref: data?.prevRunId
-      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
-      : null,
-    nextDiffHref: data?.nextRunId
-      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
-      : null,
-    onApprove: () => approveKb.mutate({ runId }),
-    onReject: () => rejectKb.mutate({ runId }),
-    onHelpToggle: () => undefined,
-  });
-
   // v1.1.20+: per-checkpoint region filter. Two checkpoints in one run
   // that share a viewport (e.g. HomePage + searchResult both at
   // 1280x720) used to see each other's diff regions overlaid. Rule: a
@@ -406,6 +393,24 @@ export function DiffViewer({
       (r) => !r.screenshotId || r.screenshotId === selectedCheckpointId,
     );
   }, [data?.diffRegions, selectedCheckpointId]);
+
+  const stepper = useDiffStepper(regions);
+
+  useDiffViewerShortcuts({
+    viewports: uniqueViewports,
+    projectId: data?.projectId ?? "",
+    prevDiffHref: data?.prevRunId
+      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
+      : null,
+    nextDiffHref: data?.nextRunId
+      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
+      : null,
+    onApprove: () => approveKb.mutate({ runId }),
+    onReject: () => rejectKb.mutate({ runId }),
+    onHelpToggle: () => undefined,
+    onNextDiff: stepper.next,
+    onPrevDiff: stepper.prev,
+  });
 
   if (isLoading)
     return (
@@ -500,6 +505,7 @@ export function DiffViewer({
                     ?.diffThresholdOverride ?? null
                 }
                 hasElementMap={!!elementMap}
+                stepper={stepper}
               />
             </div>
             <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">

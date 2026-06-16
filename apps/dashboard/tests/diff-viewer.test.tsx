@@ -239,4 +239,38 @@ describe("DiffViewer", () => {
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.queryByTestId("empty-run-card")).toBeNull();
   });
+
+  test("diff stepper renders counter and advances on next click", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-1",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "First diff region",
+          source: "l2_dom",
+        },
+        {
+          id: "region-2",
+          severity: "minor",
+          category: "visual",
+          bbox: { x: 200, y: 300, width: 80, height: 40 },
+          description: "Second diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    // Nothing selected yet → index is -1 → displayed as 0
+    const counter = r.getByTestId("diff-counter");
+    expect(counter.textContent).toContain("Diff 0 / 2");
+    // Click next → selects region-1 (index 0) → displayed as "Diff 1 / 2"
+    fireEvent.click(r.getByTestId("diff-next"));
+    expect(r.getByTestId("diff-counter").textContent).toContain("Diff 1 / 2");
+  });
 });

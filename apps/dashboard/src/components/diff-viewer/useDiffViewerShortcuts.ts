@@ -31,6 +31,8 @@ interface ShortcutOptions {
   prevDiffHref?: string | null;
   nextDiffHref?: string | null;
   onHelpToggle?: () => void;
+  onNextDiff?: () => void;
+  onPrevDiff?: () => void;
 }
 
 function isTypingInInput(): boolean {
@@ -101,6 +103,8 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         const next = vps[(i + 1) % vps.length] ?? vps[0];
         if (next) setViewport(next);
       },
+      n: () => optsRef.current.onNextDiff?.(),
+      p: () => optsRef.current.onPrevDiff?.(),
       A: () => optsRef.current.onApprove?.(),
       R: () => optsRef.current.onReject?.(),
       // `X` is the legacy reject hotkey from the predecessor frontend.

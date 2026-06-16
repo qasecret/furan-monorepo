@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { PatternEditor } from "./PatternEditor";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
 import { SensitivityControl } from "./SensitivityControl";
+import type { DiffStepper } from "./useDiffStepper";
 import {
   selectEffectiveRegion,
   selectSelectedKindAndPattern,
@@ -74,6 +75,11 @@ interface Props {
    * PR-#61 element map.
    */
   hasElementMap?: boolean;
+  /**
+   * Diff stepper for stepping through diff regions. When provided,
+   * renders prev/next controls and a counter in the toolbar.
+   */
+  stepper?: DiffStepper;
 }
 
 export function ViewerToolbar({
@@ -82,6 +88,7 @@ export function ViewerToolbar({
   project,
   runDiffThresholdOverride = null,
   hasElementMap = false,
+  stepper,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
@@ -317,6 +324,41 @@ export function ViewerToolbar({
           +
         </Button>
       </div>
+
+      {stepper && stepper.count > 0 && (
+        <div
+          className="flex items-center gap-1"
+          data-testid="diff-stepper"
+          aria-label="Step through changes"
+        >
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-7 w-7 px-0 text-xs"
+            data-testid="diff-prev"
+            aria-label="Previous change"
+            onClick={stepper.prev}
+          >
+            ‹
+          </Button>
+          <span
+            className="text-xs font-mono min-w-[4.5rem] text-center"
+            data-testid="diff-counter"
+          >
+            Diff {stepper.index + 1} / {stepper.count}
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-7 w-7 px-0 text-xs"
+            data-testid="diff-next"
+            aria-label="Next change"
+            onClick={stepper.next}
+          >
+            ›
+          </Button>
+        </div>
+      )}
 
       {/* When not editing: a single DropdownMenu with the toggle as its
           trigger so users can pick a scope to start editing. */}
