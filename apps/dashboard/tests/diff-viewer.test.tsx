@@ -26,6 +26,9 @@ vi.mock("pixi.js", () => ({
     rect() {
       return this;
     }
+    circle() {
+      return this;
+    }
     fill() {
       return this;
     }

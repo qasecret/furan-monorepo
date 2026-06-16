@@ -4,6 +4,7 @@ import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
+import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -235,7 +236,7 @@ export function ViewerCanvas({
       // Baseline intentionally stays unannotated — adding boxes there
       // muddies the reference image.
       if (regions.length > 0) {
-        mountDiffOverlayLayer(candidateWorld, regions, selectedRegionId);
+        mountDiffShadingLayer(candidateWorld, regions, selectedRegionId);
       }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
       // the layer doesn't briefly render on an unfit world.
