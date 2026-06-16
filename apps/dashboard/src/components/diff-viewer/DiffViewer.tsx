@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
+import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { ContextualHeader } from "./ContextualHeader";
+import { orderDiffRegions } from "./diff-order";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -15,12 +17,14 @@ import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
+import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
 import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
+import { WhyPanel } from "./WhyPanel";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
@@ -179,6 +183,14 @@ export function DiffViewer({
       diffPercent: null,
     }));
   }, [checkpointsQuery.data]);
+
+  const advanceToNextUnresolved = useCallback(() => {
+    const nextId = nextUnresolvedCheckpointId(
+      checkpointSummaries,
+      selectedCheckpointId,
+    );
+    if (nextId) handleCheckpointSelect(nextId);
+  }, [checkpointSummaries, selectedCheckpointId, handleCheckpointSelect]);
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
@@ -377,20 +389,6 @@ export function DiffViewer({
   const baselineDims = useImageDimensions(baselineUrl);
   const candidateDims = useImageDimensions(candidateUrl);
 
-  useDiffViewerShortcuts({
-    viewports: uniqueViewports,
-    projectId: data?.projectId ?? "",
-    prevDiffHref: data?.prevRunId
-      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
-      : null,
-    nextDiffHref: data?.nextRunId
-      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
-      : null,
-    onApprove: () => approveKb.mutate({ runId }),
-    onReject: () => rejectKb.mutate({ runId }),
-    onHelpToggle: () => undefined,
-  });
-
   // v1.1.20+: per-checkpoint region filter. Two checkpoints in one run
   // that share a viewport (e.g. HomePage + searchResult both at
   // 1280x720) used to see each other's diff regions overlaid. Rule: a
@@ -406,6 +404,24 @@ export function DiffViewer({
       (r) => !r.screenshotId || r.screenshotId === selectedCheckpointId,
     );
   }, [data?.diffRegions, selectedCheckpointId]);
+
+  const stepper = useDiffStepper(regions);
+
+  useDiffViewerShortcuts({
+    viewports: uniqueViewports,
+    projectId: data?.projectId ?? "",
+    prevDiffHref: data?.prevRunId
+      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
+      : null,
+    nextDiffHref: data?.nextRunId
+      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
+      : null,
+    onApprove: () => approveKb.mutate({ runId }),
+    onReject: () => rejectKb.mutate({ runId }),
+    onHelpToggle: () => undefined,
+    onNextDiff: stepper.next,
+    onPrevDiff: stepper.prev,
+  });
 
   if (isLoading)
     return (
@@ -500,6 +516,7 @@ export function DiffViewer({
                     ?.diffThresholdOverride ?? null
                 }
                 hasElementMap={!!elementMap}
+                stepper={stepper}
               />
             </div>
             <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
@@ -555,10 +572,27 @@ export function DiffViewer({
                   elementMap={elementMap ?? null}
                 />
               </div>
-              <RegionListPanel
-                regions={regions}
-                vlmDescription={data?.vlmDescription ?? null}
-              />
+              {(() => {
+                const top = orderDiffRegions(regions)[0];
+                const summary = top?.description?.trim() || "Region details";
+                const source = top
+                  ? top.source === "l2"
+                    ? "DOM"
+                    : "pixels"
+                  : undefined;
+                return (
+                  <WhyPanel
+                    summary={summary}
+                    severity={top?.severity}
+                    source={source}
+                  >
+                    <RegionListPanel
+                      regions={regions}
+                      vlmDescription={data?.vlmDescription ?? null}
+                    />
+                  </WhyPanel>
+                );
+              })()}
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
@@ -578,6 +612,7 @@ export function DiffViewer({
             }
             status={data?.status}
             diffRegions={regions}
+            onResolved={advanceToNextUnresolved}
           />
         </div>
         <RunCommentPanel runId={runId} />

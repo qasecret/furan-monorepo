@@ -1,18 +1,14 @@
 "use client";
 
-import { REGION_PATTERN_PRESETS } from "@furan/shared-types";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { PatternEditor } from "./PatternEditor";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
+import { RegionSettingsPopover } from "./RegionSettingsPopover";
 import { SensitivityControl } from "./SensitivityControl";
+import type { DiffStepper } from "./useDiffStepper";
 import {
   selectEffectiveRegion,
-  selectSelectedKindAndPattern,
-  selectSelectedPaddingPx,
-  selectSelectedSelector,
-  selectSelectedThresholdOverride,
   useViewerStore,
   ZOOM_STEP,
   type ViewerMode,
@@ -26,23 +22,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 
 const MODES: { value: ViewerMode; label: string }[] = [
-  { value: "side-by-side", label: "Side-by-side" },
+  { value: "side-by-side", label: "Side by side" },
   { value: "overlay", label: "Overlay" },
-  { value: "onion-skin", label: "Onion-skin" },
-  { value: "diff-heatmap", label: "Diff heatmap" },
+  { value: "difference", label: "Difference" },
 ];
 
 interface Props {
@@ -75,6 +63,11 @@ interface Props {
    * PR-#61 element map.
    */
   hasElementMap?: boolean;
+  /**
+   * Diff stepper for stepping through diff regions. When provided,
+   * renders prev/next controls and a counter in the toolbar.
+   */
+  stepper?: DiffStepper;
 }
 
 export function ViewerToolbar({
@@ -83,6 +76,7 @@ export function ViewerToolbar({
   project,
   runDiffThresholdOverride = null,
   hasElementMap = false,
+  stepper,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerStore((s) => s.mode);
@@ -105,45 +99,17 @@ export function ViewerToolbar({
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const discardIgnoreChanges = useViewerStore((s) => s.discardIgnoreChanges);
   const applySaveSuccess = useViewerStore((s) => s.applySaveSuccess);
+  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
+  const setHideDisplacement = useViewerStore((s) => s.setHideDisplacement);
+  const highlightActive = useViewerStore((s) => s.highlightActive);
+  const setHighlightActive = useViewerStore((s) => s.setHighlightActive);
   const isTemporaryMode = useViewerStore((s) => s.isTemporaryMode);
   const setTemporaryMode = useViewerStore((s) => s.setTemporaryMode);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
-  const setPaddingForSelected = useViewerStore((s) => s.setPaddingForSelected);
-  const selectedPaddingPx = useViewerStore(selectSelectedPaddingPx);
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
-  const setKindForSelected = useViewerStore((s) => s.setKindForSelected);
   const thresholdOverrides = useViewerStore((s) => s.thresholdOverrides);
-  const setThresholdForSelected = useViewerStore(
-    (s) => s.setThresholdForSelected,
-  );
-  const selectedThresholdOverride = useViewerStore(
-    selectSelectedThresholdOverride,
-  );
-  // F-a/3: pending snap + selector indicator wiring.
-  const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const selectorOverrides = useViewerStore((s) => s.selectorOverrides);
-  const applyPendingSnap = useViewerStore((s) => s.applyPendingSnap);
-  const dismissPendingSnap = useViewerStore((s) => s.dismissPendingSnap);
-  const clearSelectorForSelected = useViewerStore(
-    (s) => s.clearSelectorForSelected,
-  );
-  const selectedEffectiveSelector = useViewerStore(selectSelectedSelector);
-  // Split into two primitive selectors so each subscription's equality is
-  // reference-stable. (Returning a fresh object from a zustand selector
-  // re-renders on every store change since the default equality is
-  // `Object.is`.) Caller code that wants both still goes through the named
-  // selector for unit testing.
-  const selectedKind = useViewerStore(
-    (s) => selectSelectedKindAndPattern(s).kind,
-  );
-  const selectedPattern = useViewerStore(
-    (s) => selectSelectedKindAndPattern(s).pattern,
-  );
-  const selectedKindAndPattern = {
-    kind: selectedKind,
-    pattern: selectedPattern,
-  };
   // Region clipboard wiring (Copy/Paste). `useClipboardRegion` subscribes
   // to same-tab + cross-tab clipboard events so the Paste button's
   // disabled state reflects the live clipboard.
@@ -169,9 +135,8 @@ export function ViewerToolbar({
     "run" | "variation" | null
   >(null);
 
-  const showSlider = mode === "overlay" || mode === "onion-skin";
-  const sliderLabel =
-    mode === "onion-skin" ? "Baseline ↔ Candidate" : "Candidate opacity";
+  const showSlider = mode === "overlay";
+  const sliderLabel = "Candidate opacity";
 
   const editing = ignoreEditMode !== "off";
   // F-a/3: selectorOverrides counts as "pending" the same way drafts +
@@ -319,6 +284,67 @@ export function ViewerToolbar({
           +
         </Button>
       </div>
+
+      {stepper && stepper.count > 0 && (
+        <div
+          className="flex items-center gap-1"
+          data-testid="diff-stepper"
+          aria-label="Step through changes"
+        >
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-7 w-7 px-0 text-xs"
+            data-testid="diff-prev"
+            aria-label="Previous change"
+            onClick={stepper.prev}
+          >
+            ‹
+          </Button>
+          <span
+            className="text-xs font-mono min-w-[4.5rem] text-center"
+            data-testid="diff-counter"
+          >
+            Diff {stepper.index + 1} / {stepper.count}
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-7 w-7 px-0 text-xs"
+            data-testid="diff-next"
+            aria-label="Next change"
+            onClick={stepper.next}
+          >
+            ›
+          </Button>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Switch
+          id="hide-displacement-toggle"
+          checked={hideDisplacement}
+          onCheckedChange={setHideDisplacement}
+          data-testid="hide-displacement-toggle"
+        />
+        <Label
+          htmlFor="hide-displacement-toggle"
+          className="text-xs cursor-pointer"
+        >
+          Hide displacement
+        </Label>
+      </div>
+
+      <Button
+        type="button"
+        variant={highlightActive ? "default" : "secondary"}
+        className="px-2 py-1 text-xs"
+        data-testid="highlight-toggle"
+        aria-pressed={highlightActive}
+        onClick={() => setHighlightActive(!highlightActive)}
+      >
+        Highlight diffs
+      </Button>
 
       {/* When not editing: a single DropdownMenu with the toggle as its
           trigger so users can pick a scope to start editing. */}
@@ -541,198 +567,7 @@ export function ViewerToolbar({
       )}
 
       {editing && selectedIgnoreId && (
-        <div className="flex items-center gap-2" data-testid="padding-control">
-          <span className="text-xs text-zinc-600 dark:text-zinc-400">
-            Padding
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={32}
-            step={1}
-            value={selectedPaddingPx}
-            onChange={(e) => setPaddingForSelected(Number(e.target.value))}
-            className="w-32 accent-brand"
-            data-testid="padding-slider"
-            aria-label={`Padding for selected region, ${selectedPaddingPx} pixels`}
-          />
-          <span
-            className="text-xs font-mono w-10 text-right text-zinc-700 dark:text-zinc-300"
-            data-testid="padding-value"
-          >
-            {selectedPaddingPx}px
-          </span>
-        </div>
-      )}
-
-      {editing &&
-        selectedIgnoreId &&
-        selectedKindAndPattern.kind === "strict" && (
-          <div
-            className="flex items-center gap-2"
-            data-testid="strict-tolerance-control"
-          >
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              Tolerance
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={500}
-              step={1}
-              value={Math.round((selectedThresholdOverride ?? 0) * 10000)}
-              onChange={(e) =>
-                setThresholdForSelected(Number(e.target.value) / 10000)
-              }
-              className="w-32 accent-brand"
-              data-testid="strict-tolerance-slider"
-              aria-label={`Strict region tolerance, ${((selectedThresholdOverride ?? 0) * 100).toFixed(2)} percent`}
-            />
-            <span
-              className="text-xs font-mono w-14 text-right text-zinc-700 dark:text-zinc-300"
-              data-testid="strict-tolerance-value"
-            >
-              {((selectedThresholdOverride ?? 0) * 100).toFixed(2)}%
-            </span>
-          </div>
-        )}
-
-      {editing && selectedIgnoreId && selectedEffectiveSelector === undefined
-        ? (() => {
-            const ps = pendingSnaps.get(selectedIgnoreId);
-            if (!ps) return null;
-            return (
-              <div
-                className="flex items-center gap-2 text-xs"
-                data-testid="pending-snap-row"
-              >
-                <span aria-hidden>🔗</span>
-                <span>Anchor to</span>
-                <code
-                  className="truncate max-w-[200px] font-mono"
-                  title={ps.selector}
-                  data-testid="pending-snap-selector"
-                >
-                  {ps.selector}
-                </code>
-                <Button
-                  type="button"
-                  variant="default"
-                  className="px-2 py-1 text-xs"
-                  data-testid="pending-snap-apply"
-                  onClick={() => applyPendingSnap(selectedIgnoreId)}
-                >
-                  Apply
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="px-2 py-1 text-xs"
-                  data-testid="pending-snap-dismiss"
-                  onClick={() => dismissPendingSnap(selectedIgnoreId)}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            );
-          })()
-        : null}
-
-      {editing &&
-        selectedIgnoreId &&
-        selectedEffectiveSelector !== undefined && (
-          <div
-            className="flex items-center gap-2 text-xs"
-            data-testid="selector-row"
-          >
-            <span aria-hidden>🔗</span>
-            <code
-              className="truncate max-w-[200px] font-mono"
-              title={selectedEffectiveSelector}
-              data-testid="selector-value"
-            >
-              {selectedEffectiveSelector}
-            </code>
-            <Button
-              type="button"
-              variant="secondary"
-              className="px-1 py-0 text-xs h-6 w-6"
-              data-testid="selector-clear"
-              aria-label="Clear selector"
-              onClick={clearSelectorForSelected}
-            >
-              ×
-            </Button>
-          </div>
-        )}
-
-      {editing && selectedIgnoreId && dynamicTextEnabled && (
-        <div
-          className="flex items-center gap-2"
-          data-testid="region-kind-control"
-        >
-          <span className="text-xs text-zinc-600 dark:text-zinc-400">Kind</span>
-          <div data-testid="region-kind-select">
-            <Select
-              value={selectedKindAndPattern.kind}
-              onValueChange={(k) => {
-                // Each kind has its own setter call-shape — dynamic-text
-                // needs a pattern; the other 4 are plain mode flips. The
-                // store's `setKindForSelected` clears `pattern` whenever
-                // kind !== "dynamic-text", so we don't have to forward it.
-                if (k === "dynamic-text") {
-                  setKindForSelected(
-                    "dynamic-text",
-                    selectedKindAndPattern.pattern ??
-                      REGION_PATTERN_PRESETS.date,
-                  );
-                } else if (
-                  k === "ignore" ||
-                  k === "strict" ||
-                  k === "layout" ||
-                  k === "content"
-                ) {
-                  setKindForSelected(k);
-                }
-              }}
-            >
-              <SelectTrigger className="w-40 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ignore">Ignore</SelectItem>
-                <SelectItem value="strict">Strict</SelectItem>
-                <SelectItem value="layout">Layout</SelectItem>
-                <SelectItem value="content">Content</SelectItem>
-                <SelectItem value="dynamic-text">Dynamic text</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {selectedKindAndPattern.kind === "dynamic-text" && (
-            <PatternEditor
-              value={selectedKindAndPattern.pattern ?? ""}
-              onChange={(p) => setKindForSelected("dynamic-text", p)}
-            />
-          )}
-          {/* Inline behavior hint per kind so reviewers know what each
-              mode actually does at the engine level today vs. what's
-              deferred. Pulled from
-              furan-design/specs/2026-05-23-region-modes-design.md. */}
-          {selectedKindAndPattern.kind !== "ignore" &&
-            selectedKindAndPattern.kind !== "dynamic-text" && (
-              <span
-                className="text-[10px] text-zinc-500 max-w-[260px] dark:text-zinc-500"
-                data-testid="region-kind-hint"
-              >
-                {selectedKindAndPattern.kind === "strict" &&
-                  "Strict: pixel diff inside the bbox must stay within tolerance, else the run fails. Drag the slider to allow a percentage of mismatch."}
-                {selectedKindAndPattern.kind === "layout" &&
-                  "Layout: pixel diff masked. Structural / positional DOM changes inside the bbox are flagged as major / layout."}
-                {selectedKindAndPattern.kind === "content" &&
-                  "Content: pixel diff masked. Only text changes inside the bbox flag as major / text; attribute and styling changes are suppressed."}
-              </span>
-            )}
-        </div>
+        <RegionSettingsPopover dynamicTextEnabled={dynamicTextEnabled} />
       )}
 
       {showSlider && (

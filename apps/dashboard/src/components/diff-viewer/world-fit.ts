@@ -1,5 +1,7 @@
 import type { Application, Container } from "pixi.js";
 
+import { ZOOM_MAX, ZOOM_MIN } from "./useViewerStore";
+
 /**
  * The minimum scale we'll fit to so that "fit" never makes a screenshot
  * unreadably tiny. If the image is so much bigger than the canvas that
@@ -68,4 +70,34 @@ export function fitWorldToCanvas(
     (app.screen.width - imgW * scale) / 2 + view.panX,
     (app.screen.height - imgH * scale) / 2 + view.panY,
   );
+}
+
+/**
+ * Compute a {zoom, panX, panY} that frames `bbox` centered in the canvas at
+ * a comfortable size (bbox fills ~`targetFill` of the smaller canvas
+ * dimension), clamped to the viewer's zoom range. Pure — the canvas applies
+ * it via the same fit math as everything else.
+ */
+export function computeFocusView(
+  bbox: { x: number; y: number; width: number; height: number },
+  imgW: number,
+  imgH: number,
+  screenW: number,
+  screenH: number,
+  targetFill = 0.6,
+): ViewTransform {
+  const fitScale = computeFitScale(imgW, imgH, screenW, screenH);
+  const w = Math.max(bbox.width, 1);
+  const h = Math.max(bbox.height, 1);
+  const desiredScale = Math.min(
+    (screenW * targetFill) / w,
+    (screenH * targetFill) / h,
+  );
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, desiredScale / fitScale));
+  const scale = fitScale * zoom;
+  const cx = bbox.x + bbox.width / 2;
+  const cy = bbox.y + bbox.height / 2;
+  const panX = scale * (imgW / 2 - cx);
+  const panY = scale * (imgH / 2 - cy);
+  return { zoom, panX, panY };
 }

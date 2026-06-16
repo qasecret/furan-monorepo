@@ -15,12 +15,7 @@ import {
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
-const MODES: ViewerMode[] = [
-  "side-by-side",
-  "overlay",
-  "onion-skin",
-  "diff-heatmap",
-];
+const MODES: ViewerMode[] = ["side-by-side", "overlay", "difference"];
 
 interface ShortcutOptions {
   viewports: string[];
@@ -36,6 +31,8 @@ interface ShortcutOptions {
   prevDiffHref?: string | null;
   nextDiffHref?: string | null;
   onHelpToggle?: () => void;
+  onNextDiff?: () => void;
+  onPrevDiff?: () => void;
 }
 
 function isTypingInInput(): boolean {
@@ -84,10 +81,12 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (href) router.push(href);
       },
       D: () => {
-        // Toggle diff overlay: cycle between current mode and diff-heatmap.
-        setMode(mode === "diff-heatmap" ? "side-by-side" : "diff-heatmap");
+        if (isTypingInInput()) return;
+        // Toggle the single-image difference view.
+        setMode(mode === "difference" ? "side-by-side" : "difference");
       },
       O: () => {
+        if (isTypingInInput()) return;
         const idx = MODES.indexOf(mode);
         const next = MODES[(idx + 1) % MODES.length];
         if (next) setMode(next);
@@ -105,6 +104,19 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         const i = vps.indexOf(viewport);
         const next = vps[(i + 1) % vps.length] ?? vps[0];
         if (next) setViewport(next);
+      },
+      H: () => {
+        if (isTypingInInput()) return;
+        const s = useViewerStore.getState();
+        s.setHighlightActive(!s.highlightActive);
+      },
+      n: () => {
+        if (isTypingInInput()) return;
+        optsRef.current.onNextDiff?.();
+      },
+      p: () => {
+        if (isTypingInInput()) return;
+        optsRef.current.onPrevDiff?.();
       },
       A: () => optsRef.current.onApprove?.(),
       R: () => optsRef.current.onReject?.(),

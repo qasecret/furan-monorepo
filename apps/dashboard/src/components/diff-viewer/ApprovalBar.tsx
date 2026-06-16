@@ -52,6 +52,13 @@ interface Props {
    * cleanly.
    */
   diffRegions?: { severity: string }[];
+  /**
+   * Called after a successful checkpoint approve/reject so the parent can
+   * advance the rail to the next unresolved checkpoint (fast triage loop).
+   * Only fires from the single-checkpoint approve and reject actions —
+   * not from approve-all, bulk-approve, or override.
+   */
+  onResolved?: () => void;
 }
 
 // ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
@@ -94,6 +101,7 @@ export function ApprovalBar({
   checkpointId,
   status,
   diffRegions,
+  onResolved,
 }: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +110,9 @@ export function ApprovalBar({
     // Invalidate the canonical query for this run so SSE-driven and
     // mutation-driven cache refreshes converge to the same fresh data.
     void utils.runs.getById.invalidate({ runId });
+    // Also refresh the checkpoint rail so per-checkpoint status reflects
+    // the outcome of the approve/reject without requiring a page reload.
+    void utils.runs.listCheckpoints.invalidate({ runId });
   };
 
   const approve = trpc.runs.approve.useMutation({
@@ -115,6 +126,7 @@ export function ApprovalBar({
     onSuccess: () => {
       invalidate();
       toast.success("Checkpoint approved");
+      onResolved?.();
     },
     onError: (e) => setError(e.message),
   });
@@ -144,7 +156,10 @@ export function ApprovalBar({
   const [confirmBulk, setConfirmBulk] = useState(false);
   const reject = trpc.runs.reject.useMutation({
     onMutate: () => setError(null),
-    onSuccess: () => invalidate(),
+    onSuccess: () => {
+      invalidate();
+      onResolved?.();
+    },
     onError: (e) => setError(e.message),
   });
   const override = trpc.runs.overrideStatus.useMutation({
@@ -195,91 +210,46 @@ export function ApprovalBar({
 
         <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
 
+        {/* Phase B mounts the "same change in N checkpoints → Accept all" callout here. */}
         <div className="flex flex-wrap items-center gap-2 md:ml-auto">
           {/* ADR-038: when a checkpointId is present, the primary action is
-              "Approve this checkpoint" and the secondary is "Approve all checkpoints".
-              Legacy path (no checkpointId) keeps the old single-run approve. */}
+              "Approve this checkpoint". Legacy path (no checkpointId) keeps
+              the old single-run approve. Secondary actions (approve-all,
+              override, bulk-approve) move into the unified More menu below. */}
           {checkpointId ? (
-            <>
-              <DisabledAwareButton
-                disabled={!canReview || pending}
-                reason={disabledReason}
-                testId="approve-checkpoint-button"
-                variant="default"
-                onClick={() =>
-                  approveCheckpoint.mutate({ runId, checkpointId })
-                }
-                title="Promotes this checkpoint's candidate as the new baseline for its test variation."
-              >
-                {approveCheckpoint.isPending
-                  ? "Approving…"
-                  : "Approve this checkpoint"}
-              </DisabledAwareButton>
-              {canReview ? (
-                <DisabledAwareButton
-                  disabled={!canReview || pending}
-                  reason={disabledReason}
-                  testId="approve-all-checkpoints-button"
-                  variant="secondary"
-                  onClick={() => approveAllCheckpoints.mutate({ runId })}
-                  title="Promotes all checkpoints in this run as new baselines."
-                >
-                  {approveAllCheckpoints.isPending
-                    ? "Approving all…"
-                    : "Approve all checkpoints"}
-                </DisabledAwareButton>
-              ) : null}
-            </>
+            <DisabledAwareButton
+              disabled={!canReview || pending}
+              reason={disabledReason}
+              testId="approve-checkpoint-button"
+              variant="default"
+              onClick={() => approveCheckpoint.mutate({ runId, checkpointId })}
+              title="Promotes this checkpoint's candidate as the new baseline for its test variation."
+            >
+              {approveCheckpoint.isPending
+                ? "Approving…"
+                : "Approve this checkpoint"}
+            </DisabledAwareButton>
           ) : (
-            <>
-              {/* Split-button pattern: primary action is single-run approve;
-                  chevron exposes bulk-approve. Keeps the most common path one
-                  click and pushes the riskier multi-row write behind a
-                  confirmation step. */}
-              <DisabledAwareButton
-                disabled={!canReview || pending}
-                reason={disabledReason}
-                testId="approve-button"
-                variant="default"
-                onClick={() => approve.mutate({ runId })}
-                title={
-                  effectiveStatus === "new"
-                    ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
-                    : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
-                }
-              >
-                {approve.isPending
-                  ? effectiveStatus === "new"
-                    ? "Saving…"
-                    : "Approving…"
-                  : effectiveStatus === "new"
-                    ? "Save as baseline"
-                    : "Approve"}
-              </DisabledAwareButton>
-              {canReview ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="default"
-                      disabled={pending}
-                      data-testid="approve-more-menu"
-                      aria-label="More approve actions"
-                      className="px-2"
-                    >
-                      ▾
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      data-testid="approve-bulk-variation"
-                      onSelect={() => setConfirmBulk(true)}
-                    >
-                      Approve all runs of this test
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-            </>
+            <DisabledAwareButton
+              disabled={!canReview || pending}
+              reason={disabledReason}
+              testId="approve-button"
+              variant="default"
+              onClick={() => approve.mutate({ runId })}
+              title={
+                effectiveStatus === "new"
+                  ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
+                  : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
+              }
+            >
+              {approve.isPending
+                ? effectiveStatus === "new"
+                  ? "Saving…"
+                  : "Approving…"
+                : effectiveStatus === "new"
+                  ? "Save as baseline"
+                  : "Approve"}
+            </DisabledAwareButton>
           )}
           <DisabledAwareButton
             disabled={!canReview || pending}
@@ -291,19 +261,35 @@ export function ApprovalBar({
             {reject.isPending ? "Rejecting…" : "Reject"}
           </DisabledAwareButton>
 
-          {canReview ? (
+          {canReview && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="secondary"
                   disabled={pending}
-                  data-testid="override-button"
-                  aria-label="Override status"
+                  data-testid="approval-more-menu"
+                  aria-label="More actions"
                 >
-                  {override.isPending ? "Overriding…" : "Override ▾"}
+                  More ▾
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {checkpointId && (
+                  <DropdownMenuItem
+                    data-testid="approve-all-checkpoints-button"
+                    onSelect={() => approveAllCheckpoints.mutate({ runId })}
+                  >
+                    Approve all checkpoints
+                  </DropdownMenuItem>
+                )}
+                {!checkpointId && (
+                  <DropdownMenuItem
+                    data-testid="approve-bulk-variation"
+                    onSelect={() => setConfirmBulk(true)}
+                  >
+                    Approve all runs of this test
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   data-testid="override-set-passed"
                   onSelect={() => callOverride("passed")}
@@ -324,16 +310,6 @@ export function ApprovalBar({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          ) : (
-            <DisabledAwareButton
-              disabled
-              reason={disabledReason}
-              testId="override-button"
-              variant="secondary"
-              onClick={() => undefined}
-            >
-              Override ▾
-            </DisabledAwareButton>
           )}
         </div>
 

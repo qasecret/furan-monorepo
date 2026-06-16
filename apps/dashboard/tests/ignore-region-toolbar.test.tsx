@@ -2,6 +2,20 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+// Helper: open the RegionSettingsPopover by keyboard-activating its trigger.
+// Radix DropdownMenu fires on pointerdown (not click), so synthetic
+// fireEvent.click on the trigger doesn't open it in jsdom — use the keyboard
+// path instead (same pattern as approval-bar.test.tsx openMoreMenu).
+async function openRegionSettings(): Promise<void> {
+  const trigger = screen.getByTestId(
+    "region-settings-trigger",
+  ) as HTMLButtonElement;
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+  // Allow Radix to flush its portal mount.
+  await new Promise((r) => setTimeout(r, 0));
+}
+
 const setIgnoreAreasMutate = vi.fn();
 const invalidate = vi.fn();
 let isPending = false;
@@ -327,7 +341,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(screen.queryByTestId("padding-control")).toBeNull();
   });
 
-  test("padding-control visible when editing + region selected", () => {
+  test("padding-control visible when editing + region selected", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -346,11 +360,12 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
-    expect(screen.queryByTestId("padding-control")).toBeDefined();
+    await openRegionSettings();
+    expect(screen.queryByTestId("padding-control")).not.toBeNull();
     expect(screen.getByTestId("padding-value").textContent).toBe("0px");
   });
 
-  test("moving slider updates paddingPx on draft via setPaddingForSelected", () => {
+  test("moving slider updates paddingPx on draft via setPaddingForSelected", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -369,6 +384,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     const slider = screen.getByTestId("padding-slider") as HTMLInputElement;
     fireEvent.change(slider, { target: { value: "12" } });
     const state = useViewerStore.getState();
@@ -445,7 +461,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(screen.queryByTestId("region-kind-control")).toBeNull();
   });
 
-  test("kind controls visible when project flag on, edit mode on, region selected", () => {
+  test("kind controls visible when project flag on, edit mode on, region selected", async () => {
     useViewerStore.setState({
       ignoreEditMode: "run",
       draftIgnoreAreas: [
@@ -465,6 +481,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: true }} />,
     );
+    await openRegionSettings();
     expect(screen.queryByTestId("region-kind-control")).not.toBeNull();
     expect(screen.queryByTestId("region-kind-select")).not.toBeNull();
   });
@@ -720,7 +737,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
   });
 
   // F-a/3: snap affordance + selector indicator + selector save plumbing.
-  test("renders pending-snap row when selected draft has a proposal and no selector", () => {
+  test("renders pending-snap row when selected draft has a proposal and no selector", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -748,6 +765,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     expect(screen.getByTestId("pending-snap-row")).toBeDefined();
     expect(screen.getByTestId("pending-snap-selector").textContent).toBe(
       "#login-button",
@@ -755,7 +773,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(screen.queryByTestId("selector-row")).toBeNull();
   });
 
-  test("Apply on the pending-snap row writes selector onto the draft and hides the row", () => {
+  test("Apply on the pending-snap row writes selector onto the draft and hides the row", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -783,13 +801,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     fireEvent.click(screen.getByTestId("pending-snap-apply"));
     const state = useViewerStore.getState();
     expect(state.draftIgnoreAreas[0]!.selector).toBe("#cta");
     expect(state.pendingSnaps.size).toBe(0);
   });
 
-  test("Dismiss on the pending-snap row removes the entry without touching the draft", () => {
+  test("Dismiss on the pending-snap row removes the entry without touching the draft", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -817,13 +836,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     fireEvent.click(screen.getByTestId("pending-snap-dismiss"));
     const state = useViewerStore.getState();
     expect(state.draftIgnoreAreas[0]!.selector).toBeUndefined();
     expect(state.pendingSnaps.size).toBe(0);
   });
 
-  test("renders selector indicator (and × clear button) when selected region has a selector", () => {
+  test("renders selector indicator (and × clear button) when selected region has a selector", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -843,12 +863,13 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     expect(screen.getByTestId("selector-row")).toBeDefined();
     expect(screen.getByTestId("selector-value").textContent).toBe("#login");
     expect(screen.queryByTestId("pending-snap-row")).toBeNull();
   });
 
-  test("× clear on a selector indicator removes selector from a draft in place", () => {
+  test("× clear on a selector indicator removes selector from a draft in place", async () => {
     const draftId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -868,13 +889,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: draftId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     fireEvent.click(screen.getByTestId("selector-clear"));
     expect(
       useViewerStore.getState().draftIgnoreAreas[0]!.selector,
     ).toBeUndefined();
   });
 
-  test("× clear on a saved-region selector indicator sets a null override", () => {
+  test("× clear on a saved-region selector indicator sets a null override", async () => {
     const savedId = crypto.randomUUID();
     useViewerStore.setState({
       ignoreEditMode: "run",
@@ -894,6 +916,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: savedId,
     });
     render(<ViewerToolbar runId={RUN_ID} />);
+    await openRegionSettings();
     fireEvent.click(screen.getByTestId("selector-clear"));
     expect(useViewerStore.getState().selectorOverrides.get(savedId)).toBeNull();
     // Saved row itself untouched.

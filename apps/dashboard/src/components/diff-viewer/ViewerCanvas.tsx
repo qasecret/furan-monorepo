@@ -3,7 +3,10 @@
 import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
+import { orderDiffRegions } from "./diff-order";
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
+import type { ShadingLayerResult } from "./layers/DiffShadingLayer";
+import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -14,12 +17,13 @@ import {
 } from "./useCanvasViewControl";
 import type { ElementBbox, ElementMap } from "./useElementMap";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
+import { useReducedMotion } from "./useReducedMotion";
 import {
   useViewerStore,
   type DraftIgnoreArea,
   type IgnoreArea,
 } from "./useViewerStore";
-import { fitWorldToCanvas } from "./world-fit";
+import { computeFocusView, fitWorldToCanvas } from "./world-fit";
 
 interface Props {
   baselineUrl: string | null;
@@ -105,15 +109,23 @@ export function ViewerCanvas({
   // setup as a closure — now refs because the world-container plumbing
   // is shared across multiple effects).
   const regionLayerRef = useRef<Container | null>(null);
+  // Shading layer result ref so the side-by-side effect cleanup can call
+  // destroy() to unregister the pulse ticker callback.
+  const shadingLayerRef = useRef<ShadingLayerResult | null>(null);
 
   const mode = useViewerStore((s) => s.mode);
   const opacity = useViewerStore((s) => s.opacity);
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
+  const highlightActive = useViewerStore((s) => s.highlightActive);
+  const reducedMotion = useReducedMotion();
   // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
   const zoom = useViewerStore((s) => s.zoom);
   const panX = useViewerStore((s) => s.panX);
   const panY = useViewerStore((s) => s.panY);
+  const focusBbox = useViewerStore((s) => s.focusBbox);
+  const setView = useViewerStore((s) => s.setView);
+  const setFocusBbox = useViewerStore((s) => s.setFocusBbox);
 
   // Ignore-region store slices.
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
@@ -136,7 +148,13 @@ export function ViewerCanvas({
   // ignore-region layer re-renders the preview rect on every hover step.
   const [pickPreview, setPickPreview] = useState<ElementBbox | null>(null);
 
+  // Timing bridge: the heavy mount effect bumps this after the fresh world +
+  // app refs are populated. The shading effect listens to this value so it
+  // fires once the canvas is ready without refs triggering re-runs themselves.
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
+
   // Side-by-side: two pixi Applications, one per pane.
+  // ONLY re-runs when the mode or image URLs change — NOT on overlay changes.
   useEffect(() => {
     if (mode !== "side-by-side") return;
     const baselineApp = new Application();
@@ -224,22 +242,16 @@ export function ViewerCanvas({
           view,
         );
       }
-      // VRT-style side-by-side: clean baseline on the left as the
-      // "what was here before" reference, candidate on the right with
-      // bounded yellow diff rectangles overlaid (Applitools / Percy
-      // pattern). Reviewer scans the boxes on the candidate while
-      // keeping the baseline visible for "before vs after" comparison.
-      // Baseline intentionally stays unannotated — adding boxes there
-      // muddies the reference image.
-      if (regions.length > 0) {
-        mountDiffOverlayLayer(candidateWorld, regions, selectedRegionId);
-      }
       // IgnoreRegionLayer + drag overlay use these refs — set them last so
       // the layer doesn't briefly render on an unfit world.
       baselineWorldRef.current = baselineWorld;
       candidateWorldRef.current = candidateWorld;
       candidateAppRef.current = candidateApp;
       baselineAppRef.current = baselineApp;
+      // Notify the shading effect that a fresh canvas is ready. Refs don't
+      // trigger React effects, so we bump an epoch counter to signal the
+      // shading effect to (re)mount the overlay on this new world.
+      setCanvasEpoch((e) => e + 1);
       // Zoom/pan listeners on each pane host (not the canvas itself) so
       // events from the ignore-region overlay div — a sibling of the
       // canvas — also bubble to these handlers. Wheel zooms about cursor;
@@ -310,6 +322,8 @@ export function ViewerCanvas({
       candidateRO?.disconnect();
       detachBaselineCtrl?.();
       detachCandidateCtrl?.();
+      // The shading effect handles its own cleanup via its own return fn.
+      // Null the refs so in-flight shading mounts see an absent world.
       candidateAppRef.current = null;
       baselineAppRef.current = null;
       candidateWorldRef.current = null;
@@ -339,7 +353,45 @@ export function ViewerCanvas({
         console.warn("candidate Application.destroy threw (non-fatal)", err);
       }
     };
-  }, [mode, baselineUrl, candidateUrl, regions, selectedRegionId]);
+  }, [mode, baselineUrl, candidateUrl]);
+
+  // Side-by-side shading layer: mounts / remounts the pink overlay whenever
+  // overlay-specific props change (regions, selection, highlight, motion).
+  // Reads world + app from refs so it never re-inits the canvas itself.
+  // canvasEpoch bridges timing: the mount effect above bumps it once the
+  // fresh world exists, triggering this effect to run on the new canvas.
+  useEffect(() => {
+    if (mode !== "side-by-side") return;
+    const world = candidateWorldRef.current;
+    const app = candidateAppRef.current;
+    if (!world || !app) return;
+    const shadingRegions = orderDiffRegions(regions);
+    if (shadingRegions.length === 0) return;
+    const layer = mountDiffShadingLayer(
+      world,
+      shadingRegions,
+      selectedRegionId,
+      {
+        highlight: highlightActive,
+        reducedMotion,
+        ticker: app.ticker,
+      },
+    );
+    shadingLayerRef.current = layer;
+    return () => {
+      layer.destroy();
+      if (layer.container.parent)
+        layer.container.parent.removeChild(layer.container);
+      if (shadingLayerRef.current === layer) shadingLayerRef.current = null;
+    };
+  }, [
+    canvasEpoch,
+    mode,
+    regions,
+    selectedRegionId,
+    highlightActive,
+    reducedMotion,
+  ]);
 
   // Single-stage modes.
   useEffect(() => {
@@ -375,7 +427,7 @@ export function ViewerCanvas({
           candidateUrl
             ? mountImageLayer(world, candidateUrl, ac.signal)
             : Promise.resolve(null),
-          mode === "diff-heatmap" && diffOverlayUrl
+          mode === "difference" && diffOverlayUrl
             ? mountImageLayer(world, diffOverlayUrl, ac.signal)
             : Promise.resolve(null),
         ]);
@@ -408,14 +460,11 @@ export function ViewerCanvas({
         );
       }
 
-      if (mode === "diff-heatmap" && regions.length > 0) {
+      if (mode === "difference" && regions.length > 0) {
         mountDiffOverlayLayer(world, regions, selectedRegionId);
       }
 
-      if (
-        (mode === "overlay" || mode === "onion-skin") &&
-        candidateSpriteRef.current
-      ) {
+      if (mode === "overlay" && candidateSpriteRef.current) {
         candidateSpriteRef.current.alpha = opacityRef.current;
       }
       // IgnoreRegionLayer + drag overlay use these refs — set them last
@@ -483,7 +532,7 @@ export function ViewerCanvas({
 
   // Live opacity update.
   useEffect(() => {
-    if (mode !== "overlay" && mode !== "onion-skin") return;
+    if (mode !== "overlay") return;
     const candidate = candidateSpriteRef.current;
     if (!candidate) return;
     candidate.alpha = opacity;
@@ -513,6 +562,23 @@ export function ViewerCanvas({
       view,
     );
   }, [zoom, panX, panY, mode, baselineUrl, candidateUrl, diffOverlayUrl]);
+
+  useEffect(() => {
+    if (!focusBbox) return;
+    const app =
+      mode === "side-by-side" ? candidateAppRef.current : singleAppRef.current;
+    const sprite = candidateSpriteRef.current ?? baselineSpriteRef.current;
+    if (!app || !sprite) return;
+    const view = computeFocusView(
+      focusBbox,
+      sprite.texture.width,
+      sprite.texture.height,
+      app.screen.width,
+      app.screen.height,
+    );
+    setView(view);
+    setFocusBbox(null);
+  }, [focusBbox, mode, setView, setFocusBbox]);
 
   // Remount the IgnoreRegionLayer whenever the store data or edit scope
   // changes. The layer is cheap to construct (one Graphics per region).
@@ -596,13 +662,13 @@ export function ViewerCanvas({
   const pickModeActive =
     overlayActive && regionInputMode === "pick" && !!elementMap;
 
-  // Click on the diff-heatmap canvas (not the ignore-region overlay) to
-  // select / deselect a diff region. Only active in diff-heatmap mode;
+  // Click on the difference canvas (not the ignore-region overlay) to
+  // select / deselect a diff region. Only active in difference mode;
   // other modes don't show the overlay so clicking there is a no-op for
   // region selection. Gated on primary button (button === 0) to avoid
   // clobbering middle-mouse pan and right-click context menu.
   const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (mode !== "diff-heatmap") return;
+    if (mode !== "difference") return;
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;

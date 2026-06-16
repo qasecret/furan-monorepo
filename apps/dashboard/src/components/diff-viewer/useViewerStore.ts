@@ -2,11 +2,7 @@ import { create } from "zustand";
 
 import type { ElementBbox } from "./useElementMap";
 
-export type ViewerMode =
-  | "side-by-side"
-  | "overlay"
-  | "onion-skin"
-  | "diff-heatmap";
+export type ViewerMode = "side-by-side" | "overlay" | "difference";
 
 /**
  * Region match modes, Applitools-aligned. See
@@ -137,6 +133,16 @@ interface State {
    */
   panX: number;
   panY: number;
+  /** Set by the diff stepper to request the canvas frame a region; the
+   * canvas applies it via computeFocusView then clears it back to null. */
+  focusBbox: { x: number; y: number; width: number; height: number } | null;
+  hideDisplacement: boolean;
+  highlightActive: boolean;
+  setFocusBbox: (b: State["focusBbox"]) => void;
+  setHideDisplacement: (v: boolean) => void;
+  setHighlightActive: (v: boolean) => void;
+  /** Atomic zoom+pan set (stepper focus). */
+  setView: (v: { zoom: number; panX: number; panY: number }) => void;
 
   // ADR-031 ignore-region editor state.
   ignoreEditMode: IgnoreEditMode;
@@ -296,6 +302,9 @@ export const useViewerStore = create<State>((set) => ({
   zoom: 1,
   panX: 0,
   panY: 0,
+  focusBbox: null,
+  hideDisplacement: false,
+  highlightActive: false,
 
   selectedRegionKind: "ignore",
   selectedCheckpointId: null,
@@ -355,6 +364,10 @@ export const useViewerStore = create<State>((set) => ({
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
   resetZoom: () => set({ zoom: 1, panX: 0, panY: 0 }),
   panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
+  setFocusBbox: (focusBbox) => set({ focusBbox }),
+  setHideDisplacement: (hideDisplacement) => set({ hideDisplacement }),
+  setHighlightActive: (highlightActive) => set({ highlightActive }),
+  setView: ({ zoom, panX, panY }) => set({ zoom: clampZoom(zoom), panX, panY }),
 
   setSelectedRegionKind: (selectedRegionKind) => set({ selectedRegionKind }),
   setSelectedCheckpointId: (selectedCheckpointId) =>

@@ -1,5 +1,9 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+// Tracks how many times a Pixi Application has been initialized. Module-level
+// so the regression test can read it without any reference to the mock class.
+let pixiInitCount = 0;
 
 // Mock pixi.js — we test toolbar/store behavior, not WebGL.
 vi.mock("pixi.js", () => ({
@@ -7,7 +11,10 @@ vi.mock("pixi.js", () => ({
     canvas = document.createElement("canvas");
     stage = { addChild: () => {} };
     screen = { width: 600, height: 400 };
-    async init() {}
+    ticker = { add: () => {}, remove: () => {} };
+    async init() {
+      pixiInitCount++;
+    }
     destroy() {}
   },
   Assets: { load: async () => ({}) },
@@ -24,6 +31,9 @@ vi.mock("pixi.js", () => ({
   },
   Graphics: class {
     rect() {
+      return this;
+    }
+    circle() {
       return this;
     }
     fill() {
@@ -169,29 +179,31 @@ import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 
 describe("DiffViewer", () => {
   beforeEach(() => {
+    pixiInitCount = 0;
     mockGetByIdData = { ...defaultMockData };
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
       selectedRegionId: null,
       viewport: "",
+      highlightActive: false,
+      hideDisplacement: false,
     });
   });
   afterEach(() => {
     cleanup();
   });
 
-  test("renders the toolbar with all 4 mode tabs", () => {
+  test("renders the toolbar with all 3 mode tabs", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     // ADR-038: RegionKindTabs adds a second tablist (region kinds); use
     // getAllByRole and check there's at least one tablist rendered.
     expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
-    expect(r.getByRole("tab", { name: /side-by-side/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /side by side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /onion-skin/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /diff heatmap/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /^difference$/i })).toBeDefined();
   });
 
   test("clicking a tab updates useViewerStore.mode", () => {
@@ -201,8 +213,8 @@ describe("DiffViewer", () => {
     fireEvent.mouseDown(r.getByRole("tab", { name: /^overlay$/i }));
     expect(useViewerStore.getState().mode).toBe("overlay");
 
-    fireEvent.mouseDown(r.getByRole("tab", { name: /onion-skin/i }));
-    expect(useViewerStore.getState().mode).toBe("onion-skin");
+    fireEvent.mouseDown(r.getByRole("tab", { name: /^difference$/i }));
+    expect(useViewerStore.getState().mode).toBe("difference");
   });
 
   test("renders the Auto-approved badge when data.autoApproved is true", () => {
@@ -239,5 +251,145 @@ describe("DiffViewer", () => {
     mockGetByIdData = { ...defaultMockData, status: "unresolved" as const };
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.queryByTestId("empty-run-card")).toBeNull();
+  });
+
+  test("diff stepper renders counter and advances on next click", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-1",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "First diff region",
+          source: "l2_dom",
+        },
+        {
+          id: "region-2",
+          severity: "minor",
+          category: "visual",
+          bbox: { x: 200, y: 300, width: 80, height: 40 },
+          description: "Second diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    // Nothing selected yet → index is -1 → displayed as 0
+    const counter = r.getByTestId("diff-counter");
+    expect(counter.textContent).toContain("Diff 0 / 2");
+    // Click next → selects region-1 (index 0) → displayed as "Diff 1 / 2"
+    fireEvent.click(r.getByTestId("diff-next"));
+    expect(r.getByTestId("diff-counter").textContent).toContain("Diff 1 / 2");
+  });
+
+  test("highlight-toggle button toggles highlightActive in the store", () => {
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().highlightActive).toBe(false);
+
+    // First click: activates highlight
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    expect(useViewerStore.getState().highlightActive).toBe(true);
+
+    // Second click: deactivates highlight
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    expect(useViewerStore.getState().highlightActive).toBe(false);
+  });
+
+  test("toggling highlightActive does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
+    // Render with regions so the shading layer has something to mount.
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-1",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "A diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+
+    // Drain the async Pixi init path (two Application.init() calls for
+    // side-by-side mode). The mock init() is synchronous under the async
+    // wrapper, but React needs a tick to process state updates triggered by
+    // the effect (setCanvasEpoch). A single act flush is sufficient here.
+    await act(async () => {});
+
+    // Record how many Application instances were initialized at this point.
+    // In side-by-side mode: 2 (baseline + candidate).
+    const countAfterMount = pixiInitCount;
+    // Sanity: at least one init happened (if pixi.js mock isn't wired up,
+    // the rest of the assertion is vacuous — this guards that).
+    expect(countAfterMount).toBeGreaterThan(0);
+
+    // Toggle the highlight on.
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    await act(async () => {});
+
+    // Toggle the highlight off.
+    fireEvent.click(r.getByTestId("highlight-toggle"));
+    await act(async () => {});
+
+    // The canvas mount effect dep array is now [mode, baselineUrl, candidateUrl].
+    // Neither changed → Application.init() must NOT have been called again.
+    expect(pixiInitCount).toBe(countAfterMount);
+  });
+
+  test("hide-displacement-toggle reduces stepper count when layout regions present", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "unresolved" as const,
+      diffRegions: [
+        {
+          id: "region-visual",
+          severity: "major",
+          category: "visual",
+          bbox: { x: 10, y: 20, width: 100, height: 50 },
+          description: "Visual diff region",
+          source: "l2_dom",
+        },
+        {
+          id: "region-layout",
+          severity: "major",
+          category: "layout",
+          bbox: { x: 200, y: 300, width: 80, height: 40 },
+          description: "Layout (displacement) diff region",
+          source: "l2_dom",
+        },
+      ],
+    };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+
+    // Both regions visible: counter shows "Diff 0 / 2"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
+
+    // Toggle hide-displacement on
+    fireEvent.click(r.getByTestId("hide-displacement-toggle"));
+    expect(useViewerStore.getState().hideDisplacement).toBe(true);
+
+    // Layout region filtered: counter drops to "Diff 0 / 1"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 1");
+
+    // Toggle hide-displacement off
+    fireEvent.click(r.getByTestId("hide-displacement-toggle"));
+    expect(useViewerStore.getState().hideDisplacement).toBe(false);
+
+    // Layout region restored: counter back to "Diff 0 / 2"
+    expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
   });
 });
