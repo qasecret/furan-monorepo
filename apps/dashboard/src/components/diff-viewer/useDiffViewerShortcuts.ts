@@ -15,12 +15,7 @@ import {
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
-const MODES: ViewerMode[] = [
-  "side-by-side",
-  "overlay",
-  "onion-skin",
-  "diff-heatmap",
-];
+const MODES: ViewerMode[] = ["side-by-side", "overlay", "difference"];
 
 interface ShortcutOptions {
   viewports: string[];
@@ -84,8 +79,8 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (href) router.push(href);
       },
       D: () => {
-        // Toggle diff overlay: cycle between current mode and diff-heatmap.
-        setMode(mode === "diff-heatmap" ? "side-by-side" : "diff-heatmap");
+        // Toggle the single-image difference view.
+        setMode(mode === "difference" ? "side-by-side" : "difference");
       },
       O: () => {
         const idx = MODES.indexOf(mode);

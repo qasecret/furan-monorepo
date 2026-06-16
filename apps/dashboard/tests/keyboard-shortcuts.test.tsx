@@ -59,7 +59,7 @@ describe("useDiffViewerShortcuts", () => {
     act(() => press("O"));
     expect(useViewerStore.getState().mode).toBe("overlay");
     act(() => press("O"));
-    expect(useViewerStore.getState().mode).toBe("onion-skin");
+    expect(useViewerStore.getState().mode).toBe("difference");
   });
 
   it("A invokes onApprove", () => {

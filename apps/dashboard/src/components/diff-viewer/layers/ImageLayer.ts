@@ -49,7 +49,7 @@ export async function mountImageLayer(
   // HTMLImageElement path lost a race when React effect cleanup
   // revoked the blob URL while Pixi 8 was still lazily uploading the
   // texture, surfacing as "WebGL: INVALID_VALUE: texImage2D: bad
-  // image data" and a black canvas in diff-heatmap mode.
+  // image data" and a black canvas in difference mode.
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(blob);

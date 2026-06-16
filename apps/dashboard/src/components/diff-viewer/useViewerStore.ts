@@ -2,11 +2,7 @@ import { create } from "zustand";
 
 import type { ElementBbox } from "./useElementMap";
 
-export type ViewerMode =
-  | "side-by-side"
-  | "overlay"
-  | "onion-skin"
-  | "diff-heatmap";
+export type ViewerMode = "side-by-side" | "overlay" | "difference";
 
 /**
  * Region match modes, Applitools-aligned. See

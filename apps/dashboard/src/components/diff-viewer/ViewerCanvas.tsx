@@ -375,7 +375,7 @@ export function ViewerCanvas({
           candidateUrl
             ? mountImageLayer(world, candidateUrl, ac.signal)
             : Promise.resolve(null),
-          mode === "diff-heatmap" && diffOverlayUrl
+          mode === "difference" && diffOverlayUrl
             ? mountImageLayer(world, diffOverlayUrl, ac.signal)
             : Promise.resolve(null),
         ]);
@@ -408,14 +408,11 @@ export function ViewerCanvas({
         );
       }
 
-      if (mode === "diff-heatmap" && regions.length > 0) {
+      if (mode === "difference" && regions.length > 0) {
         mountDiffOverlayLayer(world, regions, selectedRegionId);
       }
 
-      if (
-        (mode === "overlay" || mode === "onion-skin") &&
-        candidateSpriteRef.current
-      ) {
+      if (mode === "overlay" && candidateSpriteRef.current) {
         candidateSpriteRef.current.alpha = opacityRef.current;
       }
       // IgnoreRegionLayer + drag overlay use these refs — set them last
@@ -483,7 +480,7 @@ export function ViewerCanvas({
 
   // Live opacity update.
   useEffect(() => {
-    if (mode !== "overlay" && mode !== "onion-skin") return;
+    if (mode !== "overlay") return;
     const candidate = candidateSpriteRef.current;
     if (!candidate) return;
     candidate.alpha = opacity;
@@ -596,13 +593,13 @@ export function ViewerCanvas({
   const pickModeActive =
     overlayActive && regionInputMode === "pick" && !!elementMap;
 
-  // Click on the diff-heatmap canvas (not the ignore-region overlay) to
-  // select / deselect a diff region. Only active in diff-heatmap mode;
+  // Click on the difference canvas (not the ignore-region overlay) to
+  // select / deselect a diff region. Only active in difference mode;
   // other modes don't show the overlay so clicking there is a no-op for
   // region selection. Gated on primary button (button === 0) to avoid
   // clobbering middle-mouse pan and right-click context menu.
   const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (mode !== "diff-heatmap") return;
+    if (mode !== "difference") return;
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;

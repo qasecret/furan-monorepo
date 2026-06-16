@@ -181,17 +181,16 @@ describe("DiffViewer", () => {
     cleanup();
   });
 
-  test("renders the toolbar with all 4 mode tabs", () => {
+  test("renders the toolbar with all 3 mode tabs", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     // ADR-038: RegionKindTabs adds a second tablist (region kinds); use
     // getAllByRole and check there's at least one tablist rendered.
     expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
-    expect(r.getByRole("tab", { name: /side-by-side/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /side by side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /onion-skin/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /diff heatmap/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /^difference$/i })).toBeDefined();
   });
 
   test("clicking a tab updates useViewerStore.mode", () => {
@@ -201,8 +200,8 @@ describe("DiffViewer", () => {
     fireEvent.mouseDown(r.getByRole("tab", { name: /^overlay$/i }));
     expect(useViewerStore.getState().mode).toBe("overlay");
 
-    fireEvent.mouseDown(r.getByRole("tab", { name: /onion-skin/i }));
-    expect(useViewerStore.getState().mode).toBe("onion-skin");
+    fireEvent.mouseDown(r.getByRole("tab", { name: /^difference$/i }));
+    expect(useViewerStore.getState().mode).toBe("difference");
   });
 
   test("renders the Auto-approved badge when data.autoApproved is true", () => {

@@ -39,10 +39,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 
 const MODES: { value: ViewerMode; label: string }[] = [
-  { value: "side-by-side", label: "Side-by-side" },
+  { value: "side-by-side", label: "Side by side" },
   { value: "overlay", label: "Overlay" },
-  { value: "onion-skin", label: "Onion-skin" },
-  { value: "diff-heatmap", label: "Diff heatmap" },
+  { value: "difference", label: "Difference" },
 ];
 
 interface Props {
@@ -169,9 +168,8 @@ export function ViewerToolbar({
     "run" | "variation" | null
   >(null);
 
-  const showSlider = mode === "overlay" || mode === "onion-skin";
-  const sliderLabel =
-    mode === "onion-skin" ? "Baseline ↔ Candidate" : "Candidate opacity";
+  const showSlider = mode === "overlay";
+  const sliderLabel = "Candidate opacity";
 
   const editing = ignoreEditMode !== "off";
   // F-a/3: selectorOverrides counts as "pending" the same way drafts +
