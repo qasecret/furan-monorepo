@@ -234,6 +234,26 @@ desc("handleDiffJob (integration)", () => {
     expect(regions[0].projectId).toBe(projectId);
     expect(regions[0].source).toBe("l2");
 
+    // ADR-042: verify diff_signature was persisted on the candidate screenshot.
+    // The handler computes computeCheckpointSignature(result.regions, bounds)
+    // and writes it via UPDATE screenshots SET diff_signature = ... inside the
+    // same transaction. L2 regions are meaningful (not in EXCLUDED_SOURCES),
+    // so the signature must be non-null and match the v1:<sha256> format.
+    const candidateShots = await db
+      .select()
+      .from(screenshots)
+      .where(eq(screenshots.runId, candidateRunId));
+    expect(candidateShots.length).toBeGreaterThan(0);
+    // Only diffed (paired-baseline) checkpoints get a signature; a
+    // first-baseline viewport stays null. Guard so adding such a fixture
+    // later doesn't false-fail this assertion.
+    for (const shot of candidateShots) {
+      if (shot.diffSignature !== null) {
+        expect(shot.diffSignature).toMatch(/^v1:[0-9a-f]{64}$/);
+      }
+    }
+    expect(candidateShots.some((s) => s.diffSignature !== null)).toBe(true);
+
     // Verify diff overlay is in storage.
     const overlay = await storage.get(updatedRun!.diffName!);
     expect(overlay.byteLength).toBeGreaterThan(0);

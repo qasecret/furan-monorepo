@@ -29,12 +29,17 @@ export function orderDiffRegions(
   regions: DiffRegion[],
   opts: { hideDisplacement?: boolean } = {},
 ): DiffRegion[] {
-  return regions
-    .filter((r) => r.source !== "l1_pixel" && r.source !== "dynamic_text")
-    .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
-    .slice()
-    .sort(
-      (a, b) =>
-        rank(a.severity) - rank(b.severity) || area(b.bbox) - area(a.bbox),
-    );
+  return (
+    regions
+      // KEEP IN SYNC with EXCLUDED_SOURCES in the diff-engine's
+      // checkpoint-signature.ts: the same "meaningful region" set must drive both
+      // what the reviewer sees here and what the grouping signature hashes there.
+      .filter((r) => r.source !== "l1_pixel" && r.source !== "dynamic_text")
+      .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
+      .slice()
+      .sort(
+        (a, b) =>
+          rank(a.severity) - rank(b.severity) || area(b.bbox) - area(a.bbox),
+      )
+  );
 }
