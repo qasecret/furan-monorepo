@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -8,26 +10,21 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
 export interface GroupApprovalCalloutViewProps {
-  /** OTHER unresolved checkpoints sharing this change (seed excluded). */
   checkpointCount: number;
-  /** Distinct runs among those other checkpoints. */
   runCount: number;
-  /** True when more than the cap matched (display "N+"). */
   capped: boolean;
-  /** Distinct affected runs, for the confirm list. */
   runs: { id: string; testName: string }[];
-  /** Mutation in flight — disables the confirm button. */
   isPending: boolean;
-  /** Controlled dialog open state (the container owns it). */
-  open: boolean;
+  /** null = dialog closed; otherwise the action being confirmed. */
+  action: "accept" | "reject" | null;
+  onAccept: () => void;
+  onReject: () => void;
   onOpenChange: (open: boolean) => void;
-  /** Fired when the user confirms in the dialog. */
-  onAcceptAll: () => void;
+  onConfirm: () => void;
 }
 
 const plural = (n: number) => (n === 1 ? "" : "s");
@@ -38,17 +35,28 @@ export function GroupApprovalCalloutView({
   capped,
   runs,
   isPending,
-  open,
+  action,
+  onAccept,
+  onReject,
   onOpenChange,
-  onAcceptAll,
+  onConfirm,
 }: GroupApprovalCalloutViewProps) {
-  // Nothing to show when this change is unique to the current checkpoint.
+  // Restore focus to the trigger that opened the dialog when it closes
+  // (we drive open via controlled state for two actions, so Radix's
+  // AlertDialogTrigger focus-return doesn't apply — restore manually).
+  // (Fires once on mount with action===null → ref is null → harmless no-op.)
+  const lastTrigger = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (action === null) lastTrigger.current?.focus();
+  }, [action]);
+
   if (checkpointCount === 0) return null;
 
   const countLabel = `${checkpointCount}${capped ? "+" : ""}`;
+  const isReject = action === "reject";
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog open={action !== null} onOpenChange={onOpenChange}>
       <div
         data-testid="group-approval-callout"
         className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300"
@@ -57,25 +65,41 @@ export function GroupApprovalCalloutView({
           Same change in {countLabel} other checkpoint{plural(checkpointCount)}{" "}
           across {runCount} run{plural(runCount)}
         </span>
-        <AlertDialogTrigger asChild>
-          <Button
-            variant="default"
-            className="h-6 px-2 text-xs"
-            data-testid="group-approval-accept-all"
-          >
-            Accept all
-          </Button>
-        </AlertDialogTrigger>
+        <Button
+          variant="default"
+          className="h-6 px-2 text-xs"
+          data-testid="group-approval-accept-all"
+          onClick={(e) => {
+            lastTrigger.current = e.currentTarget;
+            onAccept();
+          }}
+        >
+          Accept all
+        </Button>
+        <Button
+          variant="secondary"
+          className="h-6 px-2 text-xs"
+          data-testid="group-approval-reject-all"
+          onClick={(e) => {
+            lastTrigger.current = e.currentTarget;
+            onReject();
+          }}
+        >
+          Reject all
+        </Button>
       </div>
+
       <AlertDialogContent data-testid="group-approval-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Accept this change everywhere it recurs?
+            {isReject
+              ? "Reject this change everywhere it recurs?"
+              : "Accept this change everywhere it recurs?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            The current checkpoint plus {countLabel} other unresolved checkpoint
-            {plural(checkpointCount)} with the same change will be approved —
-            each promotes its run&apos;s baseline.
+            {isReject
+              ? `The ${runCount}${capped ? "+" : ""} run${plural(runCount)} showing this change will be marked failed. This fails each whole run (not just this checkpoint) — heavier than approving.`
+              : `The current checkpoint plus ${countLabel} other unresolved checkpoint${plural(checkpointCount)} with the same change will be approved — each promotes its run's baseline.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <p className="mt-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -96,12 +120,18 @@ export function GroupApprovalCalloutView({
             Cancel
           </AlertDialogCancel>
           <Button
-            variant="default"
+            variant={isReject ? "destructive" : "default"}
             data-testid="group-approval-confirm"
             disabled={isPending}
-            onClick={onAcceptAll}
+            onClick={onConfirm}
           >
-            {isPending ? "Approving…" : "Accept all"}
+            {isPending
+              ? isReject
+                ? "Rejecting…"
+                : "Approving…"
+              : isReject
+                ? "Reject all"
+                : "Accept all"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
