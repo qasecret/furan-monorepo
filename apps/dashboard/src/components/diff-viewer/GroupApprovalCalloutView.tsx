@@ -8,6 +8,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
@@ -47,7 +48,7 @@ export function GroupApprovalCalloutView({
   const countLabel = `${checkpointCount}${capped ? "+" : ""}`;
 
   return (
-    <>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <div
         data-testid="group-approval-callout"
         className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300"
@@ -56,53 +57,54 @@ export function GroupApprovalCalloutView({
           Same change in {countLabel} other checkpoint{plural(checkpointCount)}{" "}
           across {runCount} run{plural(runCount)}
         </span>
-        <Button
-          variant="default"
-          className="h-6 px-2 text-xs"
-          data-testid="group-approval-accept-all"
-          onClick={() => onOpenChange(true)}
-        >
-          Accept all
-        </Button>
-      </div>
-
-      <AlertDialog open={open} onOpenChange={onOpenChange}>
-        <AlertDialogContent data-testid="group-approval-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Accept this change across {runCount} run{plural(runCount)}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              The current checkpoint plus {countLabel} other unresolved
-              checkpoint{plural(checkpointCount)} with the same change will be
-              approved — each promotes its run&apos;s baseline. Affected runs:
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <ul
-            data-testid="group-approval-run-list"
-            className="max-h-48 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="default"
+            className="h-6 px-2 text-xs"
+            data-testid="group-approval-accept-all"
           >
-            {runs.map((r) => (
-              <li key={r.id} className="truncate py-0.5">
-                {r.testName}
-              </li>
-            ))}
-          </ul>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="group-approval-cancel">
-              Cancel
-            </AlertDialogCancel>
-            <Button
-              variant="default"
-              data-testid="group-approval-confirm"
-              disabled={isPending}
-              onClick={onAcceptAll}
-            >
-              {isPending ? "Approving…" : "Accept all"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+            Accept all
+          </Button>
+        </AlertDialogTrigger>
+      </div>
+      <AlertDialogContent data-testid="group-approval-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Accept this change everywhere it recurs?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            The current checkpoint plus {countLabel} other unresolved checkpoint
+            {plural(checkpointCount)} with the same change will be approved —
+            each promotes its run&apos;s baseline.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <p className="mt-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          Other affected runs ({runCount}):
+        </p>
+        <ul
+          data-testid="group-approval-run-list"
+          className="max-h-48 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+        >
+          {runs.map((r) => (
+            <li key={r.id} className="truncate py-0.5">
+              {r.testName}
+            </li>
+          ))}
+        </ul>
+        <AlertDialogFooter>
+          <AlertDialogCancel data-testid="group-approval-cancel">
+            Cancel
+          </AlertDialogCancel>
+          <Button
+            variant="default"
+            data-testid="group-approval-confirm"
+            disabled={isPending}
+            onClick={onAcceptAll}
+          >
+            {isPending ? "Approving…" : "Accept all"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

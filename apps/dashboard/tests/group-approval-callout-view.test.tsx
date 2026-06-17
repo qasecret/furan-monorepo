@@ -87,4 +87,12 @@ describe("GroupApprovalCalloutView", () => {
       "2+ other unresolved checkpoints",
     );
   });
+
+  it("labels the run list as OTHER affected runs with the count", () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("group-approval-accept-all"));
+    expect(screen.getByTestId("group-approval-dialog").textContent).toContain(
+      "Other affected runs (2)",
+    );
+  });
 });
