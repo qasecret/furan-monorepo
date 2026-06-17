@@ -182,7 +182,9 @@ interface PerViewportResult {
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
   /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
-   * its computed diff signature. Set only on the diffed (success) path. */
+   * its computed diff signature. Set only on the paired-baseline (diffed) path
+   * — pass OR unresolved; the no-baseline/first-baseline path leaves them
+   * undefined. */
   screenshotId?: string;
   diffSignature?: string | null;
 }

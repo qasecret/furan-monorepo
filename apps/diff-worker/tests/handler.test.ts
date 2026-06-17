@@ -244,10 +244,15 @@ desc("handleDiffJob (integration)", () => {
       .from(screenshots)
       .where(eq(screenshots.runId, candidateRunId));
     expect(candidateShots.length).toBeGreaterThan(0);
-    // Every diffed candidate screenshot should have a non-null signature.
+    // Only diffed (paired-baseline) checkpoints get a signature; a
+    // first-baseline viewport stays null. Guard so adding such a fixture
+    // later doesn't false-fail this assertion.
     for (const shot of candidateShots) {
-      expect(shot.diffSignature).toMatch(/^v1:[0-9a-f]{64}$/);
+      if (shot.diffSignature !== null) {
+        expect(shot.diffSignature).toMatch(/^v1:[0-9a-f]{64}$/);
+      }
     }
+    expect(candidateShots.some((s) => s.diffSignature !== null)).toBe(true);
 
     // Verify diff overlay is in storage.
     const overlay = await storage.get(updatedRun!.diffName!);
