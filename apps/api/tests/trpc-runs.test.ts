@@ -23,6 +23,10 @@ import {
 } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
+import {
+  approveCheckpointInTx,
+  GROUP_APPROVE_CAP,
+} from "../src/trpc/v1/checkpoint-grouping.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
@@ -145,6 +149,70 @@ async function getSeedBuildId(h: TestApp, runId: string): Promise<string> {
     .where(eq(testRuns.id, runId))
     .limit(1);
   return rows[0]!.buildId;
+}
+
+async function seedCheckpoint(
+  h: TestApp,
+  opts: {
+    buildId: string;
+    projectId: string;
+    name: string;
+    signature: string | null;
+    unresolved: boolean;
+    branchName?: string;
+    viewport?: string;
+    baselineName?: string | null;
+  },
+) {
+  const viewport = opts.viewport ?? "1280x720";
+  const [variation] = await h.db
+    .insert(testVariations)
+    .values({
+      name: opts.name,
+      projectId: opts.projectId,
+      baselineName:
+        opts.baselineName === undefined
+          ? "existing-baseline"
+          : opts.baselineName,
+    })
+    .returning();
+  const [run] = await h.db
+    .insert(testRuns)
+    .values({
+      buildId: opts.buildId,
+      projectId: opts.projectId,
+      status: "unresolved",
+      branchName: opts.branchName ?? "feature/x",
+      name: opts.name,
+    })
+    .returning();
+  const [shot] = await h.db
+    .insert(screenshots)
+    .values({
+      runId: run.id,
+      projectId: opts.projectId,
+      testVariationId: variation.id,
+      name: opts.name,
+      viewport,
+      browser: "chromium",
+      imageKey: opts.name.padEnd(64, "k").slice(0, 64),
+      matchLevel: "Strict",
+      diffSignature: opts.signature,
+    })
+    .returning();
+  if (opts.unresolved) {
+    await h.db.insert(diffRegions).values({
+      runId: run.id,
+      projectId: opts.projectId,
+      screenshotId: shot.id,
+      severity: "high",
+      category: "layout",
+      source: "l2_dom",
+      description: "diff",
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+    });
+  }
+  return { run, shot, variation };
 }
 
 d("tRPC runs router", () => {
@@ -2232,6 +2300,199 @@ d("tRPC runs router", () => {
     });
   });
 
+  const SIG = `v1:${"a".repeat(64)}`;
+  const SIG2 = `v1:${"b".repeat(64)}`;
+
+  describe("runs.getCheckpointGroup", () => {
+    test("returns other unresolved same-signature checkpoints in the build", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const m1 = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "match1",
+        signature: SIG,
+        unresolved: true,
+      });
+      const m2 = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "match2",
+        signature: SIG,
+        unresolved: true,
+      });
+      await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "passed",
+        signature: SIG,
+        unresolved: false,
+      }); // same sig, PASSED -> excluded
+      await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "other",
+        signature: SIG2,
+        unresolved: true,
+      }); // different sig -> excluded
+      const [otherBuild] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, userId: s.memberId, isRunning: true })
+        .returning();
+      await seedCheckpoint(h, {
+        buildId: otherBuild.id,
+        projectId: s.projectId,
+        name: "xbuild",
+        signature: SIG,
+        unresolved: true,
+      }); // diff build -> excluded
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.getCheckpointGroup.query({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.checkpointCount).toBe(2);
+      expect(res.runCount).toBe(2);
+      expect(new Set(res.checkpoints.map((c) => c.id))).toEqual(
+        new Set([m1.shot.id, m2.shot.id]),
+      );
+      const first = res.checkpoints.find((c) => c.id === m1.shot.id)!;
+      expect(first).toHaveProperty("testName");
+      expect(first).toHaveProperty("viewport");
+      expect(res.capped).toBe(false);
+    });
+
+    test("returns empty group when the seed signature is NULL (VLM / auto-approved)", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "nullsig",
+        signature: null,
+        unresolved: true,
+      });
+      await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "nullsig2",
+        signature: null,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.getCheckpointGroup.query({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res).toEqual({
+        checkpoints: [],
+        checkpointCount: 0,
+        runCount: 0,
+        capped: false,
+      });
+    });
+
+    test("rejects a checkpoint that is not in the given run", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "a",
+        signature: SIG,
+        unresolved: true,
+      });
+      const b = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "b",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const err = await client.runs.getCheckpointGroup
+        .query({ runId: a.run.id, checkpointId: b.shot.id })
+        .catch((e) => e);
+      expect(err?.data?.code).toBe("BAD_REQUEST");
+    });
+
+    test("throws NOT_FOUND for a nonexistent checkpointId", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const err = await client.runs.getCheckpointGroup
+        .query({
+          runId: seedCp.run.id,
+          checkpointId: "00000000-0000-0000-0000-000000000000",
+        })
+        .catch((e) => e);
+      expect(err?.data?.code).toBe("NOT_FOUND");
+    });
+
+    test("excludes a same-signature 'new' checkpoint (no baseline yet)", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const m1 = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "match1",
+        signature: SIG,
+        unresolved: true,
+      });
+      // Same signature but first-run (no baseline) -> status "new" -> must be excluded.
+      await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "fresh",
+        signature: SIG,
+        unresolved: true,
+        baselineName: null,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.getCheckpointGroup.query({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(new Set(res.checkpoints.map((c) => c.id))).toEqual(
+        new Set([m1.shot.id]),
+      );
+      expect(res.checkpointCount).toBe(1);
+    });
+
+    test("rejects a non-member with FORBIDDEN", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      const err = await client.runs.getCheckpointGroup
+        .query({ runId: cp.run.id, checkpointId: cp.shot.id })
+        .catch((e) => e);
+      expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+  });
+
   describe("listCheckpoints", () => {
     test("happy path: returns items ordered by createdAt asc with all required fields", async () => {
       // Seed 3 checkpoints across 2 viewports.
@@ -2310,6 +2571,193 @@ d("tRPC runs router", () => {
       } catch (e) {
         err = e as TRPCClientError<AppRouter>;
       }
+      expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+  });
+
+  describe("runs.approveCheckpointGroup", () => {
+    test("approves the seed + matching unresolved checkpoints across runs, not others", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const m1 = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "m1",
+        signature: SIG,
+        unresolved: true,
+      });
+      const other = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "other",
+        signature: SIG2,
+        unresolved: true,
+      });
+      const [otherBuild] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, userId: s.memberId, isRunning: true })
+        .returning();
+      const xbuild = await seedCheckpoint(h, {
+        buildId: otherBuild.id,
+        projectId: s.projectId,
+        name: "xbuild",
+        signature: SIG,
+        unresolved: true,
+      });
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(2); // seed + m1
+      expect(res.runCount).toBe(2);
+      expect(res.capped).toBe(false);
+
+      for (const runId of [seedCp.run.id, m1.run.id]) {
+        const [r] = await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        expect(r.status).toBe("passed");
+        expect(r.merge).toBe(true);
+      }
+      for (const runId of [other.run.id, xbuild.run.id]) {
+        const [r] = await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        expect(r.status).toBe("unresolved");
+      }
+      const bl = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, m1.run.id));
+      expect(bl.length).toBeGreaterThan(0);
+      expect(bl[0].userId).toBe(s.memberId);
+      const seedBl = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, seedCp.run.id));
+      expect(seedBl.length).toBeGreaterThan(0);
+      expect(seedBl[0].userId).toBe(s.memberId);
+    });
+
+    test("returns approved:0 for a NULL-signature seed (no group)", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "nullsig",
+        signature: null,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(0);
+      const [r] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, seedCp.run.id));
+      expect(r.status).toBe("unresolved");
+    });
+
+    test("enforces the cap and reports capped=true", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      for (let i = 0; i < GROUP_APPROVE_CAP; i++) {
+        await seedCheckpoint(h, {
+          buildId,
+          projectId: s.projectId,
+          name: `m${i}`,
+          signature: SIG,
+          unresolved: true,
+        });
+      }
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(GROUP_APPROVE_CAP);
+      expect(res.capped).toBe(true);
+      expect(res.cap).toBe(GROUP_APPROVE_CAP);
+    }, 60_000);
+
+    test("the batch is atomic — a mid-loop failure rolls everything back", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "a",
+        signature: SIG,
+        unresolved: true,
+      });
+      await expect(
+        h.db.transaction(async (tx) => {
+          await approveCheckpointInTx(
+            tx,
+            {
+              testVariationId: a.variation.id,
+              imageKey: a.shot.imageKey,
+              ignoreRegions: null,
+              layoutRegions: null,
+              floatingRegions: null,
+              contentRegions: null,
+              accessibilityRegions: null,
+              matchLevel: "Strict",
+            },
+            { id: a.run.id, name: a.run.name, branchName: a.run.branchName },
+            s.memberId,
+          );
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      const [v] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, a.variation.id));
+      expect(v.baselineName).toBe("existing-baseline");
+      const [r] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, a.run.id));
+      expect(r.status).toBe("unresolved");
+      const blRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, a.run.id));
+      expect(blRows.length).toBe(0);
+    });
+
+    test("rejects a non-member with FORBIDDEN", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      const err = await client.runs.approveCheckpointGroup
+        .mutate({ runId: cp.run.id, checkpointId: cp.shot.id })
+        .catch((e) => e);
       expect(err?.data?.code).toBe("FORBIDDEN");
     });
   });

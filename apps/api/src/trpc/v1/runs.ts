@@ -30,6 +30,12 @@ import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
 
+import {
+  approveCheckpointInTx,
+  deriveCheckpointStatuses,
+  GROUP_APPROVE_CAP,
+} from "./checkpoint-grouping.js";
+
 const runIdInput = z.object({ runId: z.string().uuid() });
 type RunIdInput = z.infer<typeof runIdInput>;
 
@@ -1367,41 +1373,7 @@ export const runsRouter = t.router({
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
       await ctx.db.transaction(async (tx) => {
-        await tx
-          .update(testVariations)
-          .set({
-            baselineName: s.imageKey,
-            ignoreRegions: s.ignoreRegions,
-            layoutRegions: s.layoutRegions,
-            floatingRegions: s.floatingRegions,
-            contentRegions: s.contentRegions,
-            accessibilityRegions: s.accessibilityRegions,
-            matchLevel: s.matchLevel,
-            updatedAt: new Date(),
-          })
-          .where(eq(testVariations.id, s.testVariationId));
-
-        // Materialise the baseline row so resolveBaseline (queried by
-        // runs.getById) can hand back the approved screenshot. Without
-        // this insert the dashboard's Baseline panel stays empty after
-        // approval. Mirrors the legacy approveRun side effect, scoped
-        // to one variation.
-        await tx.insert(baselines).values({
-          baselineName: s.imageKey ?? run.name ?? "auto",
-          testVariationId: s.testVariationId,
-          testRunId: run.id,
-          userId: ctx.user.id,
-          ...(run.branchName ? { branchName: run.branchName } : {}),
-        });
-
-        // Run-level status flip mirrors legacy approveRun. v1.1 doesn't
-        // yet model "partially approved" runs; "approve any checkpoint
-        // → run passed" matches the keyboard-A path and the legacy
-        // backend's expectations.
-        await tx
-          .update(testRuns)
-          .set({ status: "passed", merge: true })
-          .where(eq(testRuns.id, run.id));
+        await approveCheckpointInTx(tx, s, run, ctx.user.id);
       });
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -1451,35 +1423,8 @@ export const runsRouter = t.router({
 
       await ctx.db.transaction(async (tx) => {
         for (const s of rows) {
-          await tx
-            .update(testVariations)
-            .set({
-              baselineName: s.imageKey,
-              ignoreRegions: s.ignoreRegions,
-              layoutRegions: s.layoutRegions,
-              floatingRegions: s.floatingRegions,
-              contentRegions: s.contentRegions,
-              accessibilityRegions: s.accessibilityRegions,
-              matchLevel: s.matchLevel,
-              updatedAt: new Date(),
-            })
-            .where(eq(testVariations.id, s.testVariationId));
-
-          // One baseline row per checkpoint's variation so the per-
-          // checkpoint baseline resolution in runs.getById finds each
-          // approved candidate.
-          await tx.insert(baselines).values({
-            baselineName: s.imageKey ?? run.name ?? "auto",
-            testVariationId: s.testVariationId,
-            testRunId: run.id,
-            userId: ctx.user.id,
-            ...(run.branchName ? { branchName: run.branchName } : {}),
-          });
+          await approveCheckpointInTx(tx, s, run, ctx.user.id);
         }
-        await tx
-          .update(testRuns)
-          .set({ status: "passed", merge: true })
-          .where(eq(testRuns.id, run.id));
       });
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -1514,17 +1459,8 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      // Per-checkpoint status derived from two signals:
-      //   1. test_variations.baseline_name IS NULL → "new" (first run for
-      //      this variation; the candidate is the would-be baseline).
-      //   2. Otherwise, look at diff_regions for (run_id, viewport): any
-      //      row with severity != 'none' → "unresolved"; else → "passed".
-      //
-      // Known v1.1.0 limitation: diff_regions is keyed on (run_id, viewport),
-      // not (screenshot_id). When two checkpoints share a viewport in the
-      // same run (e.g., HomePage + searchResult both at 1280x720), they
-      // get the same status. Tightening this requires a diff_regions
-      // screenshot_id column (deferred to a separate ADR per the spec).
+      // Per-checkpoint status comes from deriveCheckpointStatuses — the single
+      // source of truth for the new/unresolved/passed predicate (checkpoint-grouping.ts).
       const rows = await ctx.db
         .select({
           id: screenshots.id,
@@ -1547,52 +1483,258 @@ export const runsRouter = t.router({
 
       if (rows.length === 0) return { items: [] };
 
-      // v1.1.20+: per-checkpoint status derived from diff_regions.screenshot_id
-      // (one row per screenshot, not per viewport). Legacy rows from pre-
-      // v1.1.20 runs have screenshot_id = NULL — for those we fall back to
-      // the previous viewport-based heuristic so old runs keep their
-      // (imperfect) rail state instead of all going green.
-      const unresolvedRows = await ctx.db
-        .select({
-          screenshotId: diffRegions.screenshotId,
-          viewport: diffRegions.viewport,
-        })
-        .from(diffRegions)
-        .where(
-          sql`${diffRegions.runId} = ${input.runId} AND ${diffRegions.severity} != 'none'`,
-        );
-      const unresolvedScreenshotSet = new Set(
-        unresolvedRows
-          .map((r) => r.screenshotId)
-          .filter((s): s is string => s !== null),
-      );
-      const legacyUnresolvedViewportSet = new Set(
-        unresolvedRows
-          .filter((r) => r.screenshotId === null)
-          .map((r) => r.viewport)
-          .filter((v): v is string => v !== null),
+      const statuses = await deriveCheckpointStatuses(
+        ctx.db,
+        rows.map((r) => ({
+          id: r.id,
+          runId: input.runId,
+          viewport: r.viewport,
+          baselineName: r.baselineName,
+        })),
       );
 
-      const items = rows.map((r) => {
-        const status: RunStatus =
-          r.baselineName === null
-            ? "new"
-            : unresolvedScreenshotSet.has(r.id) ||
-                legacyUnresolvedViewportSet.has(r.viewport)
-              ? "unresolved"
-              : "passed";
-        return {
-          id: r.id,
-          name: r.name,
-          viewport: r.viewport,
-          browser: r.browser,
-          matchLevel: r.matchLevel,
-          imageKey: r.imageKey,
-          testVariationId: r.testVariationId,
-          createdAt: r.createdAt,
-          status,
-        };
-      });
+      const items = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        viewport: r.viewport,
+        browser: r.browser,
+        matchLevel: r.matchLevel,
+        imageKey: r.imageKey,
+        testVariationId: r.testVariationId,
+        createdAt: r.createdAt,
+        // statuses always has an entry per row; ?? is a defensive fallback.
+        status: statuses.get(r.id) ?? "passed",
+      }));
       return { items };
+    }),
+
+  /**
+   * Build-scoped similarity lookup: given a checkpoint (screenshot) in a run,
+   * return the other unresolved checkpoints in the same CI build that share
+   * the same diff_signature. Used by the "Accept all N like this" button in
+   * the diff-review panel (ADR-042 Phase B Step 2).
+   *
+   * NULL diff_signature means VLM / auto-approved / no meaningful diff —
+   * those carry no structural fingerprint, so no group can be formed.
+   * Returns an empty result in that case rather than throwing.
+   */
+  getCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("read", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const seedRows = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          diffSignature: screenshots.diffSignature,
+          buildId: testRuns.buildId,
+          projectId: testRuns.projectId,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (seed.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
+      if (seed.diffSignature === null) {
+        return {
+          checkpoints: [],
+          checkpointCount: 0,
+          runCount: 0,
+          capped: false,
+        };
+      }
+
+      // Fetch ALL same-signature checkpoints in the build (the diff_signature index keeps this targeted); the unresolved set is filtered in-app and capped for display. No SQL limit — a limited window would never slide as rows get approved, stranding the rest.
+      const candidates = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          name: screenshots.name,
+          viewport: screenshots.viewport,
+          testName: testRuns.name,
+          baselineName: testVariations.baselineName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            // Defense-in-depth: pin to the seed's project (a build should never span projects; this guards against a corrupt build↔project state).
+            eq(testRuns.projectId, seed.projectId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt));
+
+      const others = candidates.filter((c) => c.id !== input.checkpointId);
+      const statuses = await deriveCheckpointStatuses(ctx.db, others);
+      const unresolved = others.filter(
+        (c) => statuses.get(c.id) === "unresolved",
+      );
+      const capped = unresolved.length > GROUP_APPROVE_CAP;
+      const shown = unresolved.slice(0, GROUP_APPROVE_CAP);
+
+      return {
+        checkpoints: shown.map((c) => ({
+          id: c.id,
+          runId: c.runId,
+          testName: c.testName,
+          name: c.name,
+          viewport: c.viewport,
+        })),
+        checkpointCount: shown.length,
+        runCount: new Set(shown.map((c) => c.runId)).size,
+        capped,
+      };
+    }),
+
+  approveCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const seedRows = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          diffSignature: screenshots.diffSignature,
+          buildId: testRuns.buildId,
+          projectId: testRuns.projectId,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (seed.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
+      if (seed.diffSignature === null) {
+        return {
+          approved: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      // Server RE-DERIVES the group from signature + build (never a client list).
+      // Includes the seed when it is still unresolved. Build-scoped hard boundary.
+      // Fetch ALL same-signature matches in the build (no SQL limit — a limited window never slides, so re-running "Accept all" would strand rows beyond it). Filter unresolved in-app, cap the APPROVED set; re-running drains the rest because approved rows drop out of the unresolved filter.
+      const matches = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          viewport: screenshots.viewport,
+          testVariationId: screenshots.testVariationId,
+          imageKey: screenshots.imageKey,
+          ignoreRegions: screenshots.ignoreRegions,
+          layoutRegions: screenshots.layoutRegions,
+          floatingRegions: screenshots.floatingRegions,
+          contentRegions: screenshots.contentRegions,
+          accessibilityRegions: screenshots.accessibilityRegions,
+          matchLevel: screenshots.matchLevel,
+          baselineName: testVariations.baselineName,
+          runName: testRuns.name,
+          branchName: testRuns.branchName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            eq(testRuns.projectId, seed.projectId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt));
+
+      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
+      const unresolved = matches.filter(
+        (m) => statuses.get(m.id) === "unresolved",
+      );
+      const capped = unresolved.length > GROUP_APPROVE_CAP;
+      const targets = capped
+        ? unresolved.slice(0, GROUP_APPROVE_CAP)
+        : unresolved;
+
+      if (targets.length === 0) {
+        return {
+          approved: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      await ctx.db.transaction(async (tx) => {
+        for (const m of targets) {
+          await approveCheckpointInTx(
+            tx,
+            m,
+            { id: m.runId, name: m.runName, branchName: m.branchName },
+            ctx.user.id,
+          );
+        }
+      });
+
+      const affectedRunIds = [...new Set(targets.map((m) => m.runId))];
+      for (const runId of affectedRunIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        event: "build_updated",
+        data: { id: seed.buildId },
+      });
+
+      return {
+        approved: targets.length,
+        runCount: affectedRunIds.length,
+        capped,
+        cap: GROUP_APPROVE_CAP,
+      };
     }),
 });
