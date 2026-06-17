@@ -52,6 +52,10 @@ export const screenshots = pgTable(
     // NULL = no accessibility check requested.
     accessibilityLevel: text("accessibility_level"),
     accessibilityVersion: text("accessibility_version"),
+    // ADR-042: stable per-checkpoint diff signature (v1:<sha256> or NULL when
+    // no meaningful diff). Computed at diff-time by the diff-worker; powers
+    // build-scoped similarity grouping. Legacy rows stay NULL ("ungrouped").
+    diffSignature: text("diff_signature"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -65,6 +69,9 @@ export const screenshots = pgTable(
     runIdx: index("screenshots_run_idx").on(t.runId),
     testVariationIdx: index("screenshots_test_variation_id_idx").on(
       t.testVariationId,
+    ),
+    diffSignatureIdx: index("screenshots_diff_signature_idx").on(
+      t.diffSignature,
     ),
   }),
 );
