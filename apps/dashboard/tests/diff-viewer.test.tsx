@@ -141,6 +141,9 @@ vi.mock("../src/lib/trpc", () => {
           useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
         approveCheckpointGroup: { useMutation: noopMutation },
+        rejectCheckpointGroup: {
+          useMutation: () => ({ mutate: () => undefined, isPending: false }),
+        },
       },
       projects: {
         getById: {

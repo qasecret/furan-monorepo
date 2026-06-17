@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getCheckpointGroupData = vi.fn();
 const approveMutate = vi.fn();
+const rejectMutate = vi.fn();
 const approveOnSuccess: { fn?: (res: unknown) => void } = {};
+const rejectOnSuccess: { fn?: (res: unknown) => void } = {};
 const invalidateGetById = vi.fn();
 const invalidateListCheckpoints = vi.fn();
 const invalidateGetCheckpointGroup = vi.fn();
@@ -39,6 +41,15 @@ vi.mock("@/lib/trpc", () => ({
           approveOnSuccess.fn = opts?.onSuccess;
           return {
             mutate: (input: unknown) => approveMutate(input),
+            isPending: false,
+          };
+        },
+      },
+      rejectCheckpointGroup: {
+        useMutation: (opts?: { onSuccess?: (res: unknown) => void }) => {
+          rejectOnSuccess.fn = opts?.onSuccess;
+          return {
+            mutate: (input: unknown) => rejectMutate(input),
             isPending: false,
           };
         },
@@ -97,7 +108,7 @@ describe("GroupApprovalCallout (container)", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("confirm fires approveCheckpointGroup with {runId, checkpointId}, then invalidates (broad) + toasts", () => {
+  it("Accept all confirm fires approveCheckpointGroup, invalidates broadly + toasts", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
     render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
     fireEvent.click(screen.getByTestId("group-approval-accept-all"));
@@ -120,6 +131,22 @@ describe("GroupApprovalCallout (container)", () => {
     );
   });
 
+  it("Reject all confirm fires rejectCheckpointGroup, invalidates broadly + toasts", () => {
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
+    fireEvent.click(screen.getByTestId("group-approval-reject-all"));
+    fireEvent.click(screen.getByTestId("group-approval-confirm"));
+    expect(rejectMutate).toHaveBeenCalledWith({
+      runId: "run-1",
+      checkpointId: "c0",
+    });
+    rejectOnSuccess.fn?.({ rejected: 2, runCount: 2, capped: false, cap: 200 });
+    expect(invalidateGetById).toHaveBeenCalled();
+    expect(invalidateListCheckpoints).toHaveBeenCalled();
+    expect(invalidateGetCheckpointGroup).toHaveBeenCalled();
+    expect(toastSuccess).toHaveBeenCalledWith("Rejected 2 runs");
+  });
+
   it("appends a capped suffix to the toast", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
     render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
@@ -133,6 +160,22 @@ describe("GroupApprovalCallout (container)", () => {
     });
     expect(toastSuccess).toHaveBeenCalledWith(
       "Approved 200 checkpoints across 12 runs (capped at 200 — run again for more)",
+    );
+  });
+
+  it("appends a capped suffix to the reject toast", () => {
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
+    fireEvent.click(screen.getByTestId("group-approval-reject-all"));
+    fireEvent.click(screen.getByTestId("group-approval-confirm"));
+    rejectOnSuccess.fn?.({
+      rejected: 200,
+      runCount: 200,
+      capped: true,
+      cap: 200,
+    });
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Rejected 200 runs (capped at 200 — run again for more)",
     );
   });
 });
