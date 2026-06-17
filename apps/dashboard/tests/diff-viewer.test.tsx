@@ -105,7 +105,10 @@ vi.mock("../src/lib/trpc", () => {
   return {
     trpc: {
       useUtils: () => ({
-        runs: { getById: { invalidate: () => undefined } },
+        runs: {
+          getById: { invalidate: () => undefined },
+          listCheckpoints: { invalidate: () => undefined },
+        },
       }),
       runs: {
         getById: {
@@ -133,6 +136,11 @@ vi.mock("../src/lib/trpc", () => {
         bulkApproveByVariation: { useMutation: noopMutation },
         approveCheckpoint: { useMutation: noopMutation },
         approveAllCheckpoints: { useMutation: noopMutation },
+        // ADR-042: group-approval callout — data:undefined fires null-guard → renders nothing
+        getCheckpointGroup: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+        },
+        approveCheckpointGroup: { useMutation: noopMutation },
       },
       projects: {
         getById: {
