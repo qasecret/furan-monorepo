@@ -4,6 +4,7 @@ import type { OverrideStatusInput, RunStatus } from "@furan/shared-types";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { useViewerStore } from "./useViewerStore";
 
 import { AggregateSeverityPill } from "@/components/aggregate-severity-pill";
@@ -210,7 +211,12 @@ export function ApprovalBar({
 
         <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
 
-        {/* Phase B mounts the "same change in N checkpoints → Accept all" callout here. */}
+        {/* Phase B: "same change in N checkpoints → Accept all" callout (renders null when no group). */}
+        <GroupApprovalCallout
+          runId={runId}
+          checkpointId={checkpointId}
+          onResolved={onResolved}
+        />
         <div className="flex flex-wrap items-center gap-2 md:ml-auto">
           {/* ADR-038: when a checkpointId is present, the primary action is
               "Approve this checkpoint". Legacy path (no checkpointId) keeps

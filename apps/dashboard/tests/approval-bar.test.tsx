@@ -11,6 +11,7 @@ const overrideMutate = vi.fn();
 const bulkApproveMutate = vi.fn();
 const invalidate = vi.fn();
 const invalidateListCheckpoints = vi.fn();
+const getCheckpointGroupData = vi.fn();
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -127,6 +128,17 @@ vi.mock("@/lib/trpc", () => ({
           isPending: false,
         }),
       },
+      // Phase B: group-approval callout stubs
+      getCheckpointGroup: {
+        useQuery: () => ({
+          data: getCheckpointGroupData(),
+          isLoading: false,
+          error: null,
+        }),
+      },
+      approveCheckpointGroup: {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      },
     },
   },
 }));
@@ -143,6 +155,8 @@ describe("ApprovalBar", () => {
     bulkApproveMutate.mockReset();
     invalidate.mockReset();
     invalidateListCheckpoints.mockReset();
+    getCheckpointGroupData.mockReset();
+    getCheckpointGroupData.mockReturnValue(undefined);
     approveState = { isPending: false };
     rejectState = { isPending: false };
     overrideState = { isPending: false };
@@ -318,5 +332,47 @@ describe("ApprovalBar", () => {
   it("hides the More menu when status is not reviewer-actionable", () => {
     render(<ApprovalBar runId={RUN_ID} status="aborted" />);
     expect(screen.queryByTestId("approval-more-menu")).toBeNull();
+  });
+});
+
+describe("ApprovalBar group-approval callout", () => {
+  const GROUP = {
+    checkpoints: [
+      {
+        id: "c1",
+        runId: "r1",
+        testName: "HomePage",
+        name: "hero",
+        viewport: "1280x720",
+      },
+      {
+        id: "c2",
+        runId: "r2",
+        testName: "SearchResults",
+        name: "list",
+        viewport: "1280x720",
+      },
+    ],
+    checkpointCount: 2,
+    runCount: 2,
+    capped: false,
+  };
+
+  beforeEach(() => {
+    getCheckpointGroupData.mockReset();
+    getCheckpointGroupData.mockReturnValue(undefined);
+  });
+  afterEach(() => cleanup());
+
+  it("renders the callout when a checkpoint is selected and a group exists", () => {
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<ApprovalBar runId="run-1" checkpointId="c0" />);
+    expect(screen.getByTestId("group-approval-callout")).toBeTruthy();
+  });
+
+  it("does not render the callout when no checkpoint is selected", () => {
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<ApprovalBar runId="run-1" />);
+    expect(screen.queryByTestId("group-approval-callout")).toBeNull();
   });
 });
