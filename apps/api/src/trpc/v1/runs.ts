@@ -1813,7 +1813,12 @@ export const runsRouter = t.router({
       );
       const distinctRunIds = [...new Set(unresolved.map((m) => m.runId))];
       // GROUP_APPROVE_CAP doubles as the group-action cap; reject bounds RUNS
-      // (vs approve's checkpoints) since reject is run-level.
+      // (vs approve's checkpoints) since reject is run-level. A capped reject is
+      // idempotent on re-run, NOT progressive: failed runs stay matchable
+      // (`failed` is in REVIEWER_LEGAL_FROM) and their diff_regions persist, so a
+      // second "Reject all" re-targets the same first-cap runs (failed -> failed,
+      // a no-op) instead of draining the next window. >cap distinct runs sharing
+      // one signature in a build is pathological; the cap is a blast-radius bound.
       const capped = distinctRunIds.length > GROUP_APPROVE_CAP;
       const targetRunIds = capped
         ? distinctRunIds.slice(0, GROUP_APPROVE_CAP)
