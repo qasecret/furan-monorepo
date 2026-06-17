@@ -23,6 +23,10 @@ import {
 } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
+import {
+  approveCheckpointInTx,
+  GROUP_APPROVE_CAP,
+} from "../src/trpc/v1/checkpoint-grouping.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
@@ -2552,6 +2556,166 @@ d("tRPC runs router", () => {
         err = e as TRPCClientError<AppRouter>;
       }
       expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+  });
+
+  describe("runs.approveCheckpointGroup", () => {
+    test("approves the seed + matching unresolved checkpoints across runs, not others", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const m1 = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "m1",
+        signature: SIG,
+        unresolved: true,
+      });
+      const other = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "other",
+        signature: SIG2,
+        unresolved: true,
+      });
+      const [otherBuild] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, userId: s.memberId, isRunning: true })
+        .returning();
+      const xbuild = await seedCheckpoint(h, {
+        buildId: otherBuild.id,
+        projectId: s.projectId,
+        name: "xbuild",
+        signature: SIG,
+        unresolved: true,
+      });
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(2); // seed + m1
+      expect(res.runCount).toBe(2);
+      expect(res.capped).toBe(false);
+
+      for (const runId of [seedCp.run.id, m1.run.id]) {
+        const [r] = await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        expect(r.status).toBe("passed");
+        expect(r.merge).toBe(true);
+      }
+      for (const runId of [other.run.id, xbuild.run.id]) {
+        const [r] = await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        expect(r.status).toBe("unresolved");
+      }
+      const bl = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, m1.run.id));
+      expect(bl.length).toBeGreaterThan(0);
+      expect(bl[0].userId).toBe(s.memberId);
+    });
+
+    test("returns approved:0 for a NULL-signature seed (no group)", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "nullsig",
+        signature: null,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(0);
+      const [r] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, seedCp.run.id));
+      expect(r.status).toBe("unresolved");
+    });
+
+    test("enforces the cap and reports capped=true", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const seedCp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      for (let i = 0; i < GROUP_APPROVE_CAP; i++) {
+        await seedCheckpoint(h, {
+          buildId,
+          projectId: s.projectId,
+          name: `m${i}`,
+          signature: SIG,
+          unresolved: true,
+        });
+      }
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: seedCp.run.id,
+        checkpointId: seedCp.shot.id,
+      });
+      expect(res.approved).toBe(GROUP_APPROVE_CAP);
+      expect(res.capped).toBe(true);
+      expect(res.cap).toBe(GROUP_APPROVE_CAP);
+    });
+
+    test("the batch is atomic — a mid-loop failure rolls everything back", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "a",
+        signature: SIG,
+        unresolved: true,
+      });
+      await expect(
+        h.db.transaction(async (tx) => {
+          await approveCheckpointInTx(
+            tx,
+            {
+              testVariationId: a.variation.id,
+              imageKey: a.shot.imageKey,
+              ignoreRegions: null,
+              layoutRegions: null,
+              floatingRegions: null,
+              contentRegions: null,
+              accessibilityRegions: null,
+              matchLevel: "Strict",
+            },
+            { id: a.run.id, name: a.run.name, branchName: a.run.branchName },
+            s.memberId,
+          );
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      const [v] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, a.variation.id));
+      expect(v.baselineName).toBe("existing-baseline");
+      const [r] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, a.run.id));
+      expect(r.status).toBe("unresolved");
     });
   });
 });

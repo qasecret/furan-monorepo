@@ -1610,4 +1610,132 @@ export const runsRouter = t.router({
         capped,
       };
     }),
+
+  approveCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const seedRows = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          diffSignature: screenshots.diffSignature,
+          buildId: testRuns.buildId,
+          projectId: testRuns.projectId,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (seed.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
+      if (seed.diffSignature === null) {
+        return {
+          approved: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      // Server RE-DERIVES the group from signature + build (never a client list).
+      // Includes the seed when it is still unresolved. Build-scoped hard boundary.
+      // Bounded fetch: only ever approve up to the cap, +1 to detect truncation.
+      const matches = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          viewport: screenshots.viewport,
+          testVariationId: screenshots.testVariationId,
+          imageKey: screenshots.imageKey,
+          ignoreRegions: screenshots.ignoreRegions,
+          layoutRegions: screenshots.layoutRegions,
+          floatingRegions: screenshots.floatingRegions,
+          contentRegions: screenshots.contentRegions,
+          accessibilityRegions: screenshots.accessibilityRegions,
+          matchLevel: screenshots.matchLevel,
+          baselineName: testVariations.baselineName,
+          runName: testRuns.name,
+          branchName: testRuns.branchName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt))
+        .limit(GROUP_APPROVE_CAP + 1);
+
+      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
+      const unresolved = matches.filter(
+        (m) => statuses.get(m.id) === "unresolved",
+      );
+      const capped = unresolved.length > GROUP_APPROVE_CAP;
+      const targets = capped
+        ? unresolved.slice(0, GROUP_APPROVE_CAP)
+        : unresolved;
+
+      if (targets.length === 0) {
+        return {
+          approved: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      await ctx.db.transaction(async (tx) => {
+        for (const m of targets) {
+          await approveCheckpointInTx(
+            tx,
+            m,
+            { id: m.runId, name: m.runName, branchName: m.branchName },
+            ctx.user.id,
+          );
+        }
+      });
+
+      const affectedRunIds = [...new Set(targets.map((m) => m.runId))];
+      for (const runId of affectedRunIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        event: "build_updated",
+        data: { id: seed.buildId },
+      });
+
+      return {
+        approved: targets.length,
+        runCount: affectedRunIds.length,
+        capped,
+        cap: GROUP_APPROVE_CAP,
+      };
+    }),
 });
