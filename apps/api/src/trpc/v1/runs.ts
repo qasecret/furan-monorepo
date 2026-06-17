@@ -1583,8 +1583,8 @@ export const runsRouter = t.router({
           ),
         )
         .orderBy(asc(screenshots.createdAt))
-        // Bound the fetch: the seed + up to GROUP_APPROVE_CAP+1 others, enough
-        // to detect truncation without pulling a pathological build into memory.
+        // Bounded fetch (seed + up to GROUP_APPROVE_CAP+1 others) — `capped`
+        // reflects this window's other-than-seed count, not the full match set.
         .limit(GROUP_APPROVE_CAP + 2);
 
       // Exclude the seed in-app (no raw SQL `<>`); then keep only the ones still
@@ -1688,6 +1688,11 @@ export const runsRouter = t.router({
           ),
         )
         .orderBy(asc(screenshots.createdAt))
+        // The limit bounds the fetch over ALL rows (resolved + unresolved) with
+        // this signature in the build; `capped` below reflects the unresolved
+        // slice within this window, not the full DB match count. If a build has
+        // many already-approved siblings, a second "Accept all" (run again)
+        // drains the remainder. Approvals issued are always correct, never wrong.
         .limit(GROUP_APPROVE_CAP + 1);
 
       const statuses = await deriveCheckpointStatuses(ctx.db, matches);
