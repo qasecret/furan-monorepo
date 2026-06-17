@@ -98,4 +98,50 @@ describe("computeCheckpointSignature", () => {
       computeCheckpointSignature([region({ route: [1, 2, 3] })], SIZE),
     ).not.toBe(base);
   });
+
+  it("treats an empty route array like an absent route", () => {
+    // diff-dom seeds route=[] for root-level DOM changes, and l2.ts spreads it
+    // because [] is truthy. An empty route pins no specific element, so it must
+    // produce the same signature as a region with no route (anchor → null),
+    // not a degenerate "route:" anchor.
+    const emptyRoute = region({ route: [] });
+    const noRoute = region({});
+    expect(computeCheckpointSignature([emptyRoute], SIZE)).toBe(
+      computeCheckpointSignature([noRoute], SIZE),
+    );
+  });
+
+  it("an empty route falls through to axeTarget", () => {
+    const emptyRouteWithAxe = region({ route: [], axeTarget: ["#submit"] });
+    const axeOnly = region({ axeTarget: ["#submit"] });
+    expect(computeCheckpointSignature([emptyRouteWithAxe], SIZE)).toBe(
+      computeCheckpointSignature([axeOnly], SIZE),
+    );
+  });
+
+  it("returns null when image dimensions are missing or non-positive", () => {
+    // sharp can yield undefined width/height for a dimensionless candidate,
+    // which the handler passes through as 0. Without valid dimensions every
+    // bbox collapses to bucket 0 and would falsely group unrelated checkpoints,
+    // so decline to fingerprint (→ "ungrouped") instead.
+    const r = region({});
+    expect(
+      computeCheckpointSignature([r], { width: 0, height: 800 }),
+    ).toBeNull();
+    expect(
+      computeCheckpointSignature([r], { width: 1000, height: 0 }),
+    ).toBeNull();
+    expect(
+      computeCheckpointSignature([r], { width: -1, height: 800 }),
+    ).toBeNull();
+    expect(
+      computeCheckpointSignature([r], { width: NaN, height: 800 }),
+    ).toBeNull();
+    expect(
+      computeCheckpointSignature([r], {
+        width: undefined as unknown as number,
+        height: 800,
+      }),
+    ).toBeNull();
+  });
 });
