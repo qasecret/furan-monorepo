@@ -18,6 +18,7 @@ import {
   runL2,
   runVlm,
   classifyRegions,
+  computeCheckpointSignature,
   DEFAULT_ENGINE_CONFIG,
   DEFAULT_VLM_CONFIG,
   configForMatchLevel,
@@ -180,6 +181,10 @@ interface PerViewportResult {
   ranTiers: Array<"l1" | "l2">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
+  /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
+   * its computed diff signature. Set only on the diffed (success) path. */
+  screenshotId?: string;
+  diffSignature?: string | null;
 }
 
 async function tryAutoApproveByPastBaselines(
@@ -1124,6 +1129,8 @@ async function handleDiffJobInner(
       ranTiers: result.ranTiers,
       firstBaseline: false,
       vlmDescription,
+      screenshotId: cs.id,
+      diffSignature: computeCheckpointSignature(result.regions, bounds),
     });
   }
 
@@ -1179,6 +1186,17 @@ async function handleDiffJobInner(
           viewport: r.viewport,
         })),
       );
+    }
+
+    // ADR-042: persist each diffed checkpoint's signature for build-scoped
+    // grouping. Only the success path sets screenshotId; null is written when
+    // the checkpoint had no meaningful regions (→ "ungrouped").
+    for (const v of perViewport) {
+      if (v.screenshotId === undefined) continue;
+      await tx
+        .update(screenshots)
+        .set({ diffSignature: v.diffSignature ?? null })
+        .where(eq(screenshots.id, v.screenshotId));
     }
 
     // Synthetic audit rows for dynamic-text OCR decisions (matched OR
