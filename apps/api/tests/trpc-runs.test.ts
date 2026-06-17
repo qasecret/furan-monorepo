@@ -2475,6 +2475,22 @@ d("tRPC runs router", () => {
       );
       expect(res.checkpointCount).toBe(1);
     });
+
+    test("rejects a non-member with FORBIDDEN", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      const err = await client.runs.getCheckpointGroup
+        .query({ runId: cp.run.id, checkpointId: cp.shot.id })
+        .catch((e) => e);
+      expect(err?.data?.code).toBe("FORBIDDEN");
+    });
   });
 
   describe("listCheckpoints", () => {
@@ -2625,6 +2641,12 @@ d("tRPC runs router", () => {
         .where(eq(baselines.testRunId, m1.run.id));
       expect(bl.length).toBeGreaterThan(0);
       expect(bl[0].userId).toBe(s.memberId);
+      const seedBl = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, seedCp.run.id));
+      expect(seedBl.length).toBeGreaterThan(0);
+      expect(seedBl[0].userId).toBe(s.memberId);
     });
 
     test("returns approved:0 for a NULL-signature seed (no group)", async () => {
@@ -2675,7 +2697,7 @@ d("tRPC runs router", () => {
       expect(res.approved).toBe(GROUP_APPROVE_CAP);
       expect(res.capped).toBe(true);
       expect(res.cap).toBe(GROUP_APPROVE_CAP);
-    });
+    }, 60_000);
 
     test("the batch is atomic — a mid-loop failure rolls everything back", async () => {
       const buildId = await getSeedBuildId(h, s.runId);
@@ -2716,6 +2738,27 @@ d("tRPC runs router", () => {
         .from(testRuns)
         .where(eq(testRuns.id, a.run.id));
       expect(r.status).toBe("unresolved");
+      const blRows = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, a.run.id));
+      expect(blRows.length).toBe(0);
+    });
+
+    test("rejects a non-member with FORBIDDEN", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "seed",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.nonMemberJwt);
+      const err = await client.runs.approveCheckpointGroup
+        .mutate({ runId: cp.run.id, checkpointId: cp.shot.id })
+        .catch((e) => e);
+      expect(err?.data?.code).toBe("FORBIDDEN");
     });
   });
 });

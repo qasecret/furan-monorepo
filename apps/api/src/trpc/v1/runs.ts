@@ -1538,6 +1538,7 @@ export const runsRouter = t.router({
           runId: screenshots.runId,
           diffSignature: screenshots.diffSignature,
           buildId: testRuns.buildId,
+          projectId: testRuns.projectId,
         })
         .from(screenshots)
         .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
@@ -1561,6 +1562,7 @@ export const runsRouter = t.router({
         };
       }
 
+      // Fetch ALL same-signature checkpoints in the build (the diff_signature index keeps this targeted); the unresolved set is filtered in-app and capped for display. No SQL limit — a limited window would never slide as rows get approved, stranding the rest.
       const candidates = await ctx.db
         .select({
           id: screenshots.id,
@@ -1579,22 +1581,19 @@ export const runsRouter = t.router({
         .where(
           and(
             eq(testRuns.buildId, seed.buildId),
+            // Defense-in-depth: pin to the seed's project (a build should never span projects; this guards against a corrupt build↔project state).
+            eq(testRuns.projectId, seed.projectId),
             eq(screenshots.diffSignature, seed.diffSignature),
           ),
         )
-        .orderBy(asc(screenshots.createdAt))
-        // Bounded fetch (seed + up to GROUP_APPROVE_CAP+1 others) — `capped`
-        // reflects this window's other-than-seed count, not the full match set.
-        .limit(GROUP_APPROVE_CAP + 2);
+        .orderBy(asc(screenshots.createdAt));
 
-      // Exclude the seed in-app (no raw SQL `<>`); then keep only the ones still
-      // needing review, reusing the single-source-of-truth predicate.
       const others = candidates.filter((c) => c.id !== input.checkpointId);
       const statuses = await deriveCheckpointStatuses(ctx.db, others);
       const unresolved = others.filter(
         (c) => statuses.get(c.id) === "unresolved",
       );
-      const capped = others.length > GROUP_APPROVE_CAP;
+      const capped = unresolved.length > GROUP_APPROVE_CAP;
       const shown = unresolved.slice(0, GROUP_APPROVE_CAP);
 
       return {
@@ -1657,7 +1656,7 @@ export const runsRouter = t.router({
 
       // Server RE-DERIVES the group from signature + build (never a client list).
       // Includes the seed when it is still unresolved. Build-scoped hard boundary.
-      // Bounded fetch: only ever approve up to the cap, +1 to detect truncation.
+      // Fetch ALL same-signature matches in the build (no SQL limit — a limited window never slides, so re-running "Accept all" would strand rows beyond it). Filter unresolved in-app, cap the APPROVED set; re-running drains the rest because approved rows drop out of the unresolved filter.
       const matches = await ctx.db
         .select({
           id: screenshots.id,
@@ -1684,16 +1683,11 @@ export const runsRouter = t.router({
         .where(
           and(
             eq(testRuns.buildId, seed.buildId),
+            eq(testRuns.projectId, seed.projectId),
             eq(screenshots.diffSignature, seed.diffSignature),
           ),
         )
-        .orderBy(asc(screenshots.createdAt))
-        // The limit bounds the fetch over ALL rows (resolved + unresolved) with
-        // this signature in the build; `capped` below reflects the unresolved
-        // slice within this window, not the full DB match count. If a build has
-        // many already-approved siblings, a second "Accept all" (run again)
-        // drains the remainder. Approvals issued are always correct, never wrong.
-        .limit(GROUP_APPROVE_CAP + 1);
+        .orderBy(asc(screenshots.createdAt));
 
       const statuses = await deriveCheckpointStatuses(ctx.db, matches);
       const unresolved = matches.filter(
