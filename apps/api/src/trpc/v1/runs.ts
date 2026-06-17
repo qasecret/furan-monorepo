@@ -1737,4 +1737,123 @@ export const runsRouter = t.router({
         cap: GROUP_APPROVE_CAP,
       };
     }),
+
+  rejectCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const seedRows = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          diffSignature: screenshots.diffSignature,
+          buildId: testRuns.buildId,
+          projectId: testRuns.projectId,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (seed.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      if (seed.diffSignature === null) {
+        return {
+          rejected: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      // Same build-scoped, project-guarded, signature derivation as
+      // approveCheckpointGroup. Reject is RUN-level (no per-checkpoint reject),
+      // so we fail the DISTINCT runs of the matched still-unresolved checkpoints.
+      const matches = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          viewport: screenshots.viewport,
+          baselineName: testVariations.baselineName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            eq(testRuns.projectId, seed.projectId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt));
+
+      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
+      const unresolved = matches.filter(
+        (m) => statuses.get(m.id) === "unresolved",
+      );
+      const distinctRunIds = [...new Set(unresolved.map((m) => m.runId))];
+      // GROUP_APPROVE_CAP doubles as the group-action cap; reject bounds RUNS
+      // (vs approve's checkpoints) since reject is run-level.
+      const capped = distinctRunIds.length > GROUP_APPROVE_CAP;
+      const targetRunIds = capped
+        ? distinctRunIds.slice(0, GROUP_APPROVE_CAP)
+        : distinctRunIds;
+
+      if (targetRunIds.length === 0) {
+        return {
+          rejected: 0,
+          runCount: 0,
+          capped: false,
+          cap: GROUP_APPROVE_CAP,
+        };
+      }
+
+      // Matched checkpoints are unresolved and their runs are in
+      // REVIEWER_LEGAL_FROM (filtered above), so this is one batched run-level
+      // reject (a single UPDATE is atomic — no transaction needed).
+      await ctx.db
+        .update(testRuns)
+        .set({ status: "failed", merge: false })
+        .where(inArray(testRuns.id, targetRunIds));
+
+      for (const runId of targetRunIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        event: "build_updated",
+        data: { id: seed.buildId },
+      });
+
+      // rejected === runCount here (run-level action); runCount retained for
+      // shape-parity with approveCheckpointGroup's {approved, runCount, ...}.
+      return {
+        rejected: targetRunIds.length,
+        runCount: targetRunIds.length,
+        capped,
+        cap: GROUP_APPROVE_CAP,
+      };
+    }),
 });
