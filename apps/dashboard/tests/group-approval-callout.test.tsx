@@ -6,6 +6,7 @@ const approveMutate = vi.fn();
 const approveOnSuccess: { fn?: (res: unknown) => void } = {};
 const invalidateGetById = vi.fn();
 const invalidateListCheckpoints = vi.fn();
+const invalidateGetCheckpointGroup = vi.fn();
 const toastSuccess = vi.fn();
 
 vi.mock("sonner", () => ({
@@ -19,6 +20,9 @@ vi.mock("@/lib/trpc", () => ({
         getById: { invalidate: (i: unknown) => invalidateGetById(i) },
         listCheckpoints: {
           invalidate: (i: unknown) => invalidateListCheckpoints(i),
+        },
+        getCheckpointGroup: {
+          invalidate: (i: unknown) => invalidateGetCheckpointGroup(i),
         },
       },
     }),
@@ -93,16 +97,9 @@ describe("GroupApprovalCallout (container)", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("confirm fires approveCheckpointGroup with {runId, checkpointId}, then invalidates + toasts + onResolved", () => {
+  it("confirm fires approveCheckpointGroup with {runId, checkpointId}, then invalidates (broad) + toasts", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
-    const onResolved = vi.fn();
-    render(
-      <GroupApprovalCallout
-        runId="run-1"
-        checkpointId="c0"
-        onResolved={onResolved}
-      />,
-    );
+    render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
     fireEvent.click(screen.getByTestId("group-approval-accept-all"));
     fireEvent.click(screen.getByTestId("group-approval-confirm"));
     expect(approveMutate).toHaveBeenCalledWith({
@@ -115,12 +112,12 @@ describe("GroupApprovalCallout (container)", () => {
       capped: false,
       cap: 200,
     });
-    expect(invalidateGetById).toHaveBeenCalledWith({ runId: "run-1" });
-    expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: "run-1" });
+    expect(invalidateGetById).toHaveBeenCalled();
+    expect(invalidateListCheckpoints).toHaveBeenCalled();
+    expect(invalidateGetCheckpointGroup).toHaveBeenCalled();
     expect(toastSuccess).toHaveBeenCalledWith(
       "Approved 3 checkpoints across 2 runs",
     );
-    expect(onResolved).toHaveBeenCalledTimes(1);
   });
 
   it("appends a capped suffix to the toast", () => {

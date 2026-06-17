@@ -212,11 +212,7 @@ export function ApprovalBar({
         <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
 
         {/* Phase B: "same change in N checkpoints → Accept all" callout (renders null when no group). */}
-        <GroupApprovalCallout
-          runId={runId}
-          checkpointId={checkpointId}
-          onResolved={onResolved}
-        />
+        <GroupApprovalCallout runId={runId} checkpointId={checkpointId} />
         <div className="flex flex-wrap items-center gap-2 md:ml-auto">
           {/* ADR-038: when a checkpointId is present, the primary action is
               "Approve this checkpoint". Legacy path (no checkpointId) keeps
