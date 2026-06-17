@@ -33,6 +33,7 @@ import { t } from "../trpc.js";
 import {
   approveCheckpointInTx,
   deriveCheckpointStatuses,
+  GROUP_APPROVE_CAP,
 } from "./checkpoint-grouping.js";
 
 const runIdInput = z.object({ runId: z.string().uuid() });
@@ -1505,5 +1506,108 @@ export const runsRouter = t.router({
         status: statuses.get(r.id) ?? "passed",
       }));
       return { items };
+    }),
+
+  /**
+   * Build-scoped similarity lookup: given a checkpoint (screenshot) in a run,
+   * return the other unresolved checkpoints in the same CI build that share
+   * the same diff_signature. Used by the "Accept all N like this" button in
+   * the diff-review panel (ADR-042 Phase B Step 2).
+   *
+   * NULL diff_signature means VLM / auto-approved / no meaningful diff —
+   * those carry no structural fingerprint, so no group can be formed.
+   * Returns an empty result in that case rather than throwing.
+   */
+  getCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("read", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const seedRows = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          diffSignature: screenshots.diffSignature,
+          buildId: testRuns.buildId,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .where(eq(screenshots.id, input.checkpointId))
+        .limit(1);
+      const seed = seedRows[0];
+      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+      if (seed.runId !== input.runId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "checkpoint not in run",
+        });
+      }
+      // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
+      if (seed.diffSignature === null) {
+        return {
+          checkpoints: [],
+          checkpointCount: 0,
+          runCount: 0,
+          capped: false,
+        };
+      }
+
+      const candidates = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          name: screenshots.name,
+          viewport: screenshots.viewport,
+          testName: testRuns.name,
+          baselineName: testVariations.baselineName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt))
+        // Bound the fetch: the seed + up to GROUP_APPROVE_CAP+1 others, enough
+        // to detect truncation without pulling a pathological build into memory.
+        .limit(GROUP_APPROVE_CAP + 2);
+
+      // Exclude the seed in-app (no raw SQL `<>`); then keep only the ones still
+      // needing review, reusing the single-source-of-truth predicate.
+      const others = candidates.filter((c) => c.id !== input.checkpointId);
+      const statuses = await deriveCheckpointStatuses(ctx.db, others);
+      const unresolved = others.filter(
+        (c) => statuses.get(c.id) === "unresolved",
+      );
+      const capped = others.length > GROUP_APPROVE_CAP;
+      const shown = unresolved.slice(0, GROUP_APPROVE_CAP);
+
+      return {
+        checkpoints: shown.map((c) => ({
+          id: c.id,
+          runId: c.runId,
+          testName: c.testName,
+          name: c.name,
+          viewport: c.viewport,
+        })),
+        checkpointCount: shown.length,
+        runCount: new Set(shown.map((c) => c.runId)).size,
+        capped,
+      };
     }),
 });
