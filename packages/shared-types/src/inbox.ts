@@ -14,6 +14,7 @@ export const inboxListInput = z.object({
   window: inboxWindowFilter.default("7d"),
   cursor: z.string().nullish(),
   limit: z.number().int().min(1).max(100).default(50),
+  group: z.enum(["similarity"]).nullish(),
 });
 export type InboxListInput = z.infer<typeof inboxListInput>;
 
@@ -32,6 +33,10 @@ export const inboxRunRow = z.object({
   status: runStatusSchema,
   createdAt: z.string(),
   thumbnailUrl: z.string().nullable(),
+  // Similarity-mode fields (present only when group:"similarity" is requested).
+  primarySignature: z.string().nullable().optional(),
+  clusterRunCount: z.number().int().optional(),
+  clusterBuildCount: z.number().int().optional(),
 });
 export type InboxRunRow = z.infer<typeof inboxRunRow>;
 

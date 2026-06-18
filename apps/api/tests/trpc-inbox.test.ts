@@ -807,3 +807,285 @@ d("trpc inbox.list", () => {
     expect(new Set(allReturnedIds).size).toBe(7);
   });
 });
+
+d("inbox.list similarity mode", () => {
+  let h: TestApp;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    process.env.S3_ENDPOINT ??= "http://localhost:9000";
+    process.env.S3_BUCKET ??= "furan-dev";
+    process.env.S3_ACCESS_KEY ??= "furan";
+    process.env.S3_SECRET_KEY ??= "devpw_must_be_long"; // gitleaks:allow
+
+    h = await createTestApp();
+    await h.app.listen({ host: "127.0.0.1", port: 0 });
+    const addr = h.app.server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+  });
+
+  afterAll(async () => {
+    await h.close();
+  });
+
+  async function wipe() {
+    await h.db.delete(diffRegions);
+    await h.db.delete(screenshots);
+    await h.db.delete(runReviewerDecisions);
+    await h.db.delete(testRuns);
+    await h.db.delete(testVariations);
+    await h.db.delete(builds);
+    await h.db.delete(projectMembers);
+    await h.db.delete(projects);
+    await h.db.delete(users);
+  }
+
+  function makeClient(jwt: string) {
+    return createTRPCClient<AppRouter>({
+      links: [
+        httpBatchLink({
+          url: `${baseUrl}/trpc`,
+          headers: { authorization: `Bearer ${jwt}` },
+        }),
+      ],
+    });
+  }
+
+  test("annotates clusters and orders biggest-first across builds", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "sim-cluster@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Sim",
+        lastName: "Cluster",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "sim-cluster-project" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    // 3 distinct builds for the shared-signature cluster.
+    const builds3 = await h.db
+      .insert(builds)
+      .values([
+        { projectId: project.id, branchName: "main" },
+        { projectId: project.id, branchName: "main" },
+        { projectId: project.id, branchName: "main" },
+        { projectId: project.id, branchName: "main" }, // for unique + null runs
+      ])
+      .returning();
+    if (builds3.length < 4) throw new Error("builds not seeded");
+    const [b1, b2, b3, b4] = builds3 as [
+      (typeof builds3)[0],
+      (typeof builds3)[0],
+      (typeof builds3)[0],
+      (typeof builds3)[0],
+    ];
+
+    // 3 runs with primary_signature = "v1:shared" across 3 different builds.
+    const sharedRuns = await h.db
+      .insert(testRuns)
+      .values([
+        {
+          projectId: project.id,
+          buildId: b1.id,
+          name: "shared-1",
+          branchName: "main",
+          status: "unresolved",
+          primarySignature: "v1:shared",
+        },
+        {
+          projectId: project.id,
+          buildId: b2.id,
+          name: "shared-2",
+          branchName: "main",
+          status: "unresolved",
+          primarySignature: "v1:shared",
+        },
+        {
+          projectId: project.id,
+          buildId: b3.id,
+          name: "shared-3",
+          branchName: "main",
+          status: "unresolved",
+          primarySignature: "v1:shared",
+        },
+      ])
+      .returning();
+    if (sharedRuns.length !== 3) throw new Error("shared runs not seeded");
+
+    // 1 run with primary_signature = "v1:unique".
+    const [uniqueRun] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: b4.id,
+        name: "unique-1",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:unique",
+      })
+      .returning();
+    if (!uniqueRun) throw new Error("unique run not seeded");
+
+    // 1 run with primary_signature = NULL.
+    const [nullRun] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: b4.id,
+        name: "null-sig",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: null,
+      })
+      .returning();
+    if (!nullRun) throw new Error("null-sig run not seeded");
+
+    const caller = makeClient(jwt);
+    const res = await caller.inbox.list.query({
+      group: "similarity",
+      window: "all",
+      limit: 50,
+    });
+
+    const sharedItems = res.items.filter(
+      (i) => i.primarySignature === "v1:shared",
+    );
+    expect(sharedItems).toHaveLength(3);
+    expect(sharedItems[0]!.clusterRunCount).toBe(3);
+    expect(sharedItems[0]!.clusterBuildCount).toBe(3); // COUNT(DISTINCT build_id)
+
+    // Biggest cluster first.
+    expect(res.items[0]!.primarySignature).toBe("v1:shared");
+
+    // NULL-primary run is a singleton, NOT collapsed with the unique one.
+    const nullRow = res.items.find((i) => i.primarySignature == null);
+    expect(nullRow).toBeDefined();
+    expect(nullRow!.clusterRunCount).toBe(1);
+
+    const uniqueRow = res.items.find((i) => i.primarySignature === "v1:unique");
+    expect(uniqueRow).toBeDefined();
+    expect(uniqueRow!.clusterRunCount).toBe(1);
+  });
+
+  test("paginates the grouped view without overlap or gaps", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "sim-paginate@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Sim",
+        lastName: "Paginate",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "sim-paginate-project" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    // 2 builds.
+    const [buildA, buildB] = (await h.db
+      .insert(builds)
+      .values([
+        { projectId: project.id, branchName: "main" },
+        { projectId: project.id, branchName: "main" },
+      ])
+      .returning()) as [(typeof builds)[0], (typeof builds)[0]];
+
+    // Cluster A: 3 runs with "v1:alpha" across both builds.
+    // Cluster B: 2 runs with "v1:beta" across buildA.
+    // Total: 5 runs. Page size 2 → tests pagination across cluster boundary.
+    await h.db.insert(testRuns).values([
+      {
+        projectId: project.id,
+        buildId: buildA.id,
+        name: "alpha-1",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:alpha",
+      },
+      {
+        projectId: project.id,
+        buildId: buildB.id,
+        name: "alpha-2",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:alpha",
+      },
+      {
+        projectId: project.id,
+        buildId: buildA.id,
+        name: "alpha-3",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:alpha",
+      },
+      {
+        projectId: project.id,
+        buildId: buildA.id,
+        name: "beta-1",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:beta",
+      },
+      {
+        projectId: project.id,
+        buildId: buildB.id,
+        name: "beta-2",
+        branchName: "main",
+        status: "unresolved",
+        primarySignature: "v1:beta",
+      },
+    ]);
+
+    const caller = makeClient(jwt);
+    const page1 = await caller.inbox.list.query({
+      group: "similarity",
+      window: "all",
+      limit: 2,
+    });
+    expect(page1.items).toHaveLength(2);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await caller.inbox.list.query({
+      group: "similarity",
+      window: "all",
+      limit: 2,
+      cursor: page1.nextCursor,
+    });
+    // No overlap.
+    const ids1 = new Set(page1.items.map((i) => i.runId));
+    for (const i of page2.items) {
+      expect(ids1.has(i.runId)).toBe(false);
+    }
+  });
+});

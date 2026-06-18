@@ -95,6 +95,137 @@ export const inboxRouter = t.router({
           ? sql`true`
           : sql`${testRuns.createdAt} >= now() - ${interval}::interval`;
 
+      // 5-sim. Similarity grouping mode (ADR-043): cluster-contiguous ordering
+      //        with cross-build run/build counts via a CTE + mixed-direction keyset.
+      if (input.group === "similarity") {
+        // Mixed-direction keyset cursor over the cluster-contiguous ordering.
+        // Sort key: cluster_run_count DESC, project_id ASC, sig_sort ASC,
+        // created_at DESC, id DESC — where sig_sort = COALESCE(primary_signature, '~')
+        // pushes NULL-primary singletons last WITHOUT a NULLS LAST keyset special-case.
+        let cursorPred = sql`true`;
+        if (input.cursor) {
+          try {
+            const c = JSON.parse(
+              Buffer.from(input.cursor, "base64url").toString("utf8"),
+            ) as {
+              crc: number;
+              pid: string;
+              sig: string;
+              cat: string;
+              id: string;
+            };
+            cursorPred = sql`(
+              s.cluster_run_count < ${c.crc}
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id > ${c.pid}::uuid)
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort > ${c.sig})
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort = ${c.sig} AND s.created_at < ${c.cat}::timestamptz)
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort = ${c.sig} AND s.created_at = ${c.cat}::timestamptz AND s.run_id < ${c.id}::uuid)
+            )`;
+          } catch {
+            // Malformed cursor — start from the top.
+          }
+        }
+
+        const limit = input.limit + 1;
+        const projList = sql.join(
+          filterProjects.map((p) => sql`${p}::uuid`),
+          sql`, `,
+        );
+
+        // Build raw-sql status + window filters for use inside the CTE (where
+        // Drizzle column references like "test_runs"."status" would fail because
+        // the table is aliased as `tr`).
+        const simStatusFilter =
+          input.status === "all-open"
+            ? sql`tr.status IN ('unresolved', 'failed')`
+            : sql`tr.status = ${input.status}`;
+        const simWindowFilter =
+          interval === null
+            ? sql`true`
+            : sql`tr.created_at >= now() - ${interval}::interval`;
+
+        // The cursor predicate + ORDER BY reference `cluster_run_count` and
+        // `sig_sort`, which only exist on the OUTER select — so the in_scope/agg
+        // CTEs + LEFT JOIN form an inner subquery and the keyset/order/limit wrap it.
+        const rows = await ctx.db.execute<{
+          run_id: string;
+          project_id: string;
+          project_name: string;
+          variation_name: string;
+          build_number: number | null;
+          branch: string | null;
+          status: RunStatus;
+          created_at: Date;
+          thumbnail_url: string | null;
+          primary_signature: string | null;
+          cluster_run_count: number;
+          cluster_build_count: number;
+        }>(sql`
+          SELECT * FROM (
+            WITH in_scope AS (
+              SELECT tr.id, tr.project_id, tr.build_id, tr.name, tr.status,
+                     tr.created_at, tr.thumbnail_url, tr.primary_signature,
+                     p.name AS project_name, b.number AS build_number, b.branch_name AS branch
+              FROM test_runs tr
+              JOIN projects p ON p.id = tr.project_id
+              JOIN builds b ON b.id = tr.build_id
+              WHERE tr.project_id IN (${projList}) AND ${simStatusFilter} AND ${simWindowFilter}
+            ),
+            agg AS (
+              SELECT project_id, primary_signature,
+                     COUNT(*)::int AS run_count, COUNT(DISTINCT build_id)::int AS build_count
+              FROM in_scope WHERE primary_signature IS NOT NULL
+              GROUP BY project_id, primary_signature
+            )
+            SELECT s.id AS run_id, s.project_id, s.project_name, s.name AS variation_name,
+                   s.build_number, s.branch, s.status, s.created_at, s.thumbnail_url,
+                   s.primary_signature,
+                   COALESCE(a.run_count, 1) AS cluster_run_count,
+                   COALESCE(a.build_count, 1) AS cluster_build_count,
+                   COALESCE(s.primary_signature, '~') AS sig_sort
+            FROM in_scope s
+            LEFT JOIN agg a ON a.project_id = s.project_id AND a.primary_signature = s.primary_signature
+          ) s
+          WHERE ${cursorPred}
+          ORDER BY s.cluster_run_count DESC, s.project_id ASC, s.sig_sort ASC,
+                   s.created_at DESC, s.run_id DESC
+          LIMIT ${limit}
+        `);
+
+        const pageHasMore = rows.length > input.limit;
+        const page = pageHasMore ? rows.slice(0, input.limit) : rows;
+        const last = pageHasMore ? page[page.length - 1] : null;
+        const nextCursor = last
+          ? Buffer.from(
+              JSON.stringify({
+                crc: Number(last.cluster_run_count),
+                pid: last.project_id,
+                sig: last.primary_signature ?? "~",
+                cat: new Date(last.created_at).toISOString(),
+                id: last.run_id,
+              }),
+            ).toString("base64url")
+          : null;
+
+        return {
+          items: page.map((r) => ({
+            runId: r.run_id,
+            projectId: r.project_id,
+            projectName: r.project_name,
+            variationName: r.variation_name,
+            buildNumber: r.build_number,
+            branch: r.branch,
+            status: r.status,
+            createdAt: new Date(r.created_at).toISOString(),
+            thumbnailUrl: r.thumbnail_url,
+            primarySignature: r.primary_signature,
+            clusterRunCount: Number(r.cluster_run_count),
+            clusterBuildCount: Number(r.cluster_build_count),
+          })),
+          nextCursor,
+        };
+      }
+
       // 5. Cursor: decode the opaque cursor string back to a (createdAt, id)
       //    pair for keyset pagination.
       let cursorFilter = sql`true`;
