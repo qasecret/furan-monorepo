@@ -42,9 +42,9 @@ describe("computeCheckpointSignature", () => {
     );
   });
 
-  it("excludes l1_pixel and dynamic_text regions", () => {
+  it("excludes only dynamic_text regions (l1_pixel is now included)", () => {
     const meaningful = region({ id: "m", source: "l2" });
-    const noise = region({
+    const image = region({
       id: "n",
       source: "l1_pixel",
       bbox: { x: 1, y: 1, width: 3, height: 3 },
@@ -55,15 +55,28 @@ describe("computeCheckpointSignature", () => {
       ...region({ id: "d" }),
       source: "dynamic_text",
     } as unknown as DiffRegion;
-    expect(computeCheckpointSignature([meaningful, noise, audit], SIZE)).toBe(
-      computeCheckpointSignature([meaningful], SIZE),
+    // l1_pixel is now INCLUDED, so the signature with [meaningful + image + audit]
+    // differs from [meaningful] alone (image region adds a distinct key).
+    expect(computeCheckpointSignature([meaningful, image, audit], SIZE)).toBe(
+      computeCheckpointSignature([meaningful, image], SIZE),
     );
+    // audit-only → null (dynamic_text still excluded)
+    expect(computeCheckpointSignature([audit], SIZE)).toBeNull();
   });
 
   it("returns null when there are no meaningful regions", () => {
     expect(computeCheckpointSignature([], SIZE)).toBeNull();
+    // dynamic_text is the only excluded source now; l1_pixel IS included.
     expect(
-      computeCheckpointSignature([region({ source: "l1_pixel" })], SIZE),
+      computeCheckpointSignature(
+        [
+          {
+            ...region({ id: "dt-only" }),
+            source: "dynamic_text",
+          } as unknown as DiffRegion,
+        ],
+        SIZE,
+      ),
     ).toBeNull();
   });
 
@@ -117,6 +130,60 @@ describe("computeCheckpointSignature", () => {
     expect(computeCheckpointSignature([emptyRouteWithAxe], SIZE)).toBe(
       computeCheckpointSignature([axeOnly], SIZE),
     );
+  });
+
+  it("produces a non-null signature for an image-only checkpoint (l1_pixel)", () => {
+    const sig = computeCheckpointSignature(
+      [
+        {
+          id: "l1-pixel-0",
+          severity: "major",
+          category: "image",
+          source: "l1_pixel",
+          bbox: { x: 100, y: 100, width: 240, height: 240 },
+          description: "Pixel diff cluster",
+        },
+      ],
+      { width: 1280, height: 720 },
+    );
+    expect(sig).not.toBeNull();
+    expect(sig).toMatch(/^v1:/);
+  });
+
+  it("groups image-only checkpoints whose changed areas match", () => {
+    const region_: DiffRegion = {
+      id: "l1-pixel-0",
+      severity: "major",
+      category: "image",
+      source: "l1_pixel",
+      bbox: { x: 100, y: 100, width: 240, height: 240 },
+      description: "Pixel diff cluster",
+    };
+    const size = { width: 1280, height: 720 };
+    expect(computeCheckpointSignature([region_], size)).toBe(
+      computeCheckpointSignature(
+        [{ ...region_, id: "l1-pixel-9", description: "other" }],
+        size,
+      ),
+    );
+  });
+
+  it("still excludes dynamic_text audit rows from the signature", () => {
+    expect(
+      computeCheckpointSignature(
+        [
+          {
+            id: "dt-0",
+            severity: "minor",
+            category: "text",
+            source: "dynamic_text",
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            description: "ocr",
+          },
+        ] as unknown as DiffRegion[],
+        { width: 1280, height: 720 },
+      ),
+    ).toBeNull();
   });
 
   it("returns null when image dimensions are missing or non-positive", () => {

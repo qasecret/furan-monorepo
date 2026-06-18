@@ -3,15 +3,16 @@ import { createHash } from "node:crypto";
 import type { DiffRegion } from "./types.js";
 
 /**
- * Region sources excluded from the signature — the noisy L1 pixel clusters and
- * dynamic-text OCR audit rows already hidden from the diff list/stepper.
- * KEEP IN SYNC with the dashboard's `orderDiffRegions` filter
- * (apps/dashboard/src/components/diff-viewer/diff-order.ts) so the signature
- * reflects the MEANINGFUL change the reviewer sees. (Not a shared import: the
+ * Region sources excluded from the signature. Image-first (ADR-047): image
+ * (l1_pixel) regions are the PRIMARY "what changed" signal and now drive the
+ * signature; only synthetic dynamic-text OCR audit rows are excluded (they're
+ * audit-only and hidden from the diff list/stepper). KEEP IN SYNC with the
+ * dashboard's `orderDiffRegions` filter (apps/dashboard/.../diff-order.ts),
+ * which likewise excludes only dynamic_text. (Not a shared import: the
  * dashboard has its own region types and must not depend on this node-only
  * package.)
  */
-export const EXCLUDED_SOURCES = new Set<string>(["l1_pixel", "dynamic_text"]);
+export const EXCLUDED_SOURCES = new Set<string>(["dynamic_text"]);
 
 /** Normalize a pixel coordinate to a 0..100 integer bucket of `dim` (>0). */
 function bucket(value: number, dim: number): number {
