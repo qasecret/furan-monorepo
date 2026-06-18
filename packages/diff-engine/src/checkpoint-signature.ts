@@ -43,9 +43,10 @@ function anchorOf(r: DiffRegion): string | null {
  * valid dimensions every normalized bbox would collapse to 0 and falsely group
  * unrelated checkpoints, so we decline to fingerprint instead.
  *
- * Excludes l1_pixel/dynamic_text and the volatile `description`; bbox is
- * normalized + bucketed to a 1% grid; `route`/`axeTarget` pin element
- * identity. The `v1:` prefix lets a future algorithm ship as `v2:`.
+ * Excludes only dynamic_text and the volatile `description` (image-first,
+ * ADR-047 — l1_pixel regions now drive the signature); bbox is normalized +
+ * bucketed to a 1% grid; `route`/`axeTarget` pin element identity. The `v1:`
+ * prefix lets a future algorithm ship as `v2:`.
  */
 export function computeCheckpointSignature(
   regions: DiffRegion[],
