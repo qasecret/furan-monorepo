@@ -172,20 +172,6 @@ const listInput = z.object({
 type ListInput = z.infer<typeof listInput>;
 
 /**
- * Input for `statusCounts` — the non-status filters that `list` actually
- * applies (branch, customTags, buildId). Status itself is intentionally
- * absent: the counts describe how many runs fall in each status given the
- * other filters, which is exactly what the chip labels need.
- */
-const statusCountsInput = z.object({
-  projectId: z.string().uuid(),
-  branch: z.string().optional(),
-  buildId: z.string().uuid().optional(),
-  customTags: z.string().optional(),
-});
-type StatusCountsInput = z.infer<typeof statusCountsInput>;
-
-/**
  * The legal source statuses for any reviewer-driven status mutation
  * (`approve`, `reject`, `overrideStatus`) per spec §3.3. Excludes
  * `running` (no diff outcome yet) and the terminal system states
@@ -308,10 +294,10 @@ async function resolveRunProjectId(
 }
 
 /**
- * The non-status WHERE conditions both `list` and `statusCounts` apply
- * (projectId + branch/buildId/customTags). Sharing one builder keeps the chip
- * counts and the listed rows describing the same population, so they can't
- * drift when a filter dimension is added (e.g. ADR-038 Phase 5 device filters).
+ * The non-status WHERE conditions `list` applies
+ * (projectId + branch/buildId/customTags). A shared builder keeps filter
+ * logic centralized so it can't drift when a dimension is added
+ * (e.g. ADR-038 Phase 5 device filters).
  */
 function runListBaseConditions(input: {
   projectId: string;
@@ -351,7 +337,7 @@ export const runsRouter = t.router({
     .query(async ({ input, ctx }) => {
       // ADR-038: browser/viewport/os/device filters moved to screenshots;
       // Phase 5 adds sub-query filters there. Shared base conditions keep
-      // `list` and `statusCounts` in lockstep.
+      // `list` consistent with any future filter expansions.
       const conditions = runListBaseConditions(input);
       if (input.cursor) {
         conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));
@@ -395,42 +381,6 @@ export const runsRouter = t.router({
       const nextCursor =
         hasMore && last ? last.run.createdAt.toISOString() : null;
       return { items, nextCursor };
-    }),
-
-  /**
-   * Per-status run counts for the index page's filter chips. Mirrors the
-   * non-status filters `list` actually applies (branch, customTags, buildId)
-   * so a chip's count matches what selecting it would show. One cheap GROUP
-   * BY — unaffected by the list's cursor pagination.
-   */
-  statusCounts: t.procedure
-    .input(statusCountsInput)
-    .use(authed)
-    .use(
-      projectMember<StatusCountsInput>("read", {
-        from: {
-          resolver: ({ input }: { input: StatusCountsInput; ctx: Context }) =>
-            Promise.resolve(input.projectId),
-        },
-      }),
-    )
-    .query(async ({ input, ctx }) => {
-      const conditions = runListBaseConditions(input);
-      const rows = await ctx.db
-        .select({
-          status: testRuns.status,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(testRuns)
-        .where(and(...conditions))
-        .groupBy(testRuns.status);
-      const counts: Partial<Record<RunStatus, number>> = {};
-      let total = 0;
-      for (const r of rows) {
-        counts[r.status] = r.count;
-        total += r.count;
-      }
-      return { total, counts };
     }),
 
   getById: t.procedure
