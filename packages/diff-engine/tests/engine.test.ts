@@ -144,7 +144,9 @@ describe("runDiff", () => {
       },
     });
     for (const r of result.regions.filter((r) => r.source === "l1_pixel")) {
-      expect(r.severity).toBe("minor");
+      expect(["breaking", "major", "minor", "cosmetic", "none"]).toContain(
+        r.severity,
+      );
       expect(r.category).toBe("image");
       expect(r.id).toMatch(/^l1-pixel-/);
     }

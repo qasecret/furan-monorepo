@@ -75,6 +75,14 @@ function severityForSize(tileCount: number): Severity {
   return "cosmetic";
 }
 
+type PixelCluster = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  tileCount: number;
+};
+
 export function extractL1PixelRegions(
   baselineBytes: Buffer,
   candidateBytes: Buffer,
@@ -144,13 +152,7 @@ export function extractL1PixelRegions(
 
   // Flood-fill 4-connected tile components.
   const visited = new Uint8Array(cols * rows);
-  const clusters: Array<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    tileCount: number;
-  }> = [];
+  const clusters: PixelCluster[] = [];
   const stack: number[] = [];
   for (let r = 0; r < rows; r++) {
     for (let cIdx = 0; cIdx < cols; cIdx++) {
@@ -204,6 +206,9 @@ export function extractL1PixelRegions(
     category: "image",
     bbox: { x: cl.x, y: cl.y, width: cl.width, height: cl.height },
     description: `Pixel diff cluster (${cl.tileCount} tiles, ${cl.width}×${cl.height})`,
+    // "l1_pixel" (vs "l1", the synthetic whole-diff source) tags these as
+    // image-derived pixel-cluster regions — the primary "what changed"
+    // signal surfaced in the diff viewer's region list + stepper (ADR-047).
     source: "l1_pixel",
   }));
 }
