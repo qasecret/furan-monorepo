@@ -217,11 +217,12 @@ desc("handleDiffJob (integration)", () => {
     // Per spec §3.2 the diff-worker writes "unresolved" on diff-found.
     // "failed" is reserved for reviewer-rejected runs.
     expect(updatedRun!.status).toBe("unresolved");
-    // Image-first (ADR-047): l1_pixel regions are in EXCLUDED_SOURCES so they
-    // don't contribute to computeCheckpointSignature. The 100x100 test fixture
-    // also doesn't meet the minClusterTiles=3 threshold, so no diff_regions are
-    // produced here. primary_signature is null until T4 drops l1_pixel from
-    // EXCLUDED_SOURCES and makes image regions the primary signal.
+    // Image-first (ADR-047): the 100x100 test fixture produces only 2 dirty
+    // tiles (col=1, rows 0-1), which is below the minClusterTiles=3 threshold.
+    // extractL1PixelRegions returns [] for this fixture, so there are no
+    // l1_pixel regions to sign — primary_signature is null because there are
+    // no diff regions, not because of EXCLUDED_SOURCES (l1_pixel is NOT
+    // excluded; only dynamic_text is, per ADR-047).
     expect(updatedRun!.primarySignature).toBeNull();
     expect(updatedRun!.baselineSource).toBe("default_branch");
     expect(updatedRun!.diffPercent).toBeGreaterThan(0);
@@ -234,16 +235,18 @@ desc("handleDiffJob (integration)", () => {
     // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
     // produces 2 dirty tiles (col=1, rows 0-1) — below the minClusterTiles=3
     // threshold — so extractL1PixelRegions returns [] for these fixtures.
-    // diff_regions stays empty. T4 will add a larger fixture that exercises
-    // the full l1_pixel → region path.
+    // diff_regions stays empty. This fixture is intentionally too small to
+    // produce clusters; the l1_pixel → diff_regions path is covered by the
+    // diff-engine unit tests.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });
     expect(regions.length).toBe(0);
 
-    // ADR-042: diff_signature is null when there are no meaningful regions
-    // (all l1_pixel are in EXCLUDED_SOURCES, and the fixture produces 0
-    // clusters). T4 drops l1_pixel from EXCLUDED_SOURCES.
+    // ADR-042: diff_signature is null when there are no meaningful regions.
+    // The 100x100 fixture produces 0 clusters (below minClusterTiles=3),
+    // so there are no l1_pixel regions to sign — not because of
+    // EXCLUDED_SOURCES (l1_pixel is NOT excluded; only dynamic_text is).
     const candidateShots = await db
       .select()
       .from(screenshots)
@@ -497,8 +500,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     // so extractL1PixelRegions returns [] and no diff_regions rows are
     // inserted. The diff is still detected (diffPercent > 10) via L1 pixel
     // percentage; only the per-region clustering is below threshold for this
-    // small fixture. T4 will introduce a larger fixture that exercises the
-    // l1_pixel → diff_regions path with viewport column populated.
+    // intentionally small fixture. The l1_pixel → diff_regions path (including
+    // viewport column) is covered by the diff-engine unit tests.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });

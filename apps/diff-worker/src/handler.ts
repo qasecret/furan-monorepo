@@ -248,7 +248,7 @@ async function tryAutoApproveByPastBaselines(
  * Phase 2 diff handler (v0.5 multi-viewport): looks up project + candidate
  * run, then for each candidate screenshot (one per viewport) resolves the
  * baseline via the three-tier `resolveBaseline` chain, matches the
- * same-viewport baseline screenshot, and runs the L1+L2 diff. When no
+ * same-viewport baseline screenshot, and runs the image diff. When no
  * matching baseline screenshot exists for a viewport (new viewport added
  * since the baseline was captured) the viewport is treated as a
  * first-baseline (passes with 0% diff for that viewport).
@@ -502,7 +502,7 @@ async function handleDiffJobInner(
 
   // ADR-032: pre-engine auto-approve. If the project has the feature
   // enabled and every candidate viewport's image hash matches its
-  // baseline counterpart, short-circuit the L1+L2 diff entirely. Write
+  // baseline counterpart, short-circuit the image diff entirely. Write
   // the run row, insert a baselines row with userId=NULL (signal: auto),
   // publish the SSE events, and return.
   if (
@@ -787,11 +787,12 @@ async function handleDiffJobInner(
           // metadata.
           //
           // layout + content: behave like `ignore` at L1 in v1 — mask
-          // the pixel diff inside the bbox. The Layout/Content-specific
-          // L2 classification + within-bbox text-diff are deferred
-          // engine work (see same design doc). Storing them as distinct
-          // kinds means the wire shape is already correct when that
-          // engine work lands.
+          // the pixel diff inside the bbox. Region-mode classification
+          // for Layout/Content is handled by `classifyLayoutContent`
+          // (reviewer-drawn regions) and strict breaches via
+          // `strictBreaches`. L2 is removed (ADR-047); storing distinct
+          // kinds means the wire shape correctly reflects the reviewer's
+          // intent without a separate diff pass.
           //
           // dynamic-text: existing behavior — mask only when OCR
           // matched. Unmatched dynamic-text regions fall through to L1.
@@ -1144,9 +1145,9 @@ async function handleDiffJobInner(
       diffSignature: v.diffSignature ?? null,
       // Rank by the SAME regions the signature is built from. Image-first
       // (ADR-047): image (l1_pixel) regions are the primary signal — they feed
-      // both the checkpoint signature and this ranking; only dynamic_text audit
-      // rows are excluded (see EXCLUDED_SOURCES). Task P2-T4 drops l1_pixel from
-      // EXCLUDED_SOURCES so this fold includes image regions.
+      // both the checkpoint signature and this ranking. EXCLUDED_SOURCES excludes
+      // only dynamic_text audit rows (ADR-047), so this fold includes image
+      // (l1_pixel) regions.
       worstSeverity: v.regions
         .filter((r) => !EXCLUDED_SOURCES.has(r.source))
         .reduce<Severity>(
