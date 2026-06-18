@@ -169,6 +169,7 @@ export const inboxRouter = t.router({
         const rows = await ctx.db.execute<{
           run_id: string;
           project_id: string;
+          build_id: string;
           project_name: string;
           variation_name: string;
           build_number: number | null;
@@ -196,7 +197,7 @@ export const inboxRouter = t.router({
               FROM in_scope WHERE primary_signature IS NOT NULL
               GROUP BY project_id, primary_signature
             )
-            SELECT s.id AS run_id, s.project_id, s.project_name, s.name AS variation_name,
+            SELECT s.id AS run_id, s.project_id, s.build_id, s.project_name, s.name AS variation_name,
                    s.build_number, s.branch, s.status,
                    -- Truncate to ms so the keyset matches the cursor's ms-precision
                    -- timestamp (toISOString); else same-ms/different-µs rows are dropped.
@@ -234,6 +235,7 @@ export const inboxRouter = t.router({
           items: page.map((r) => ({
             runId: r.run_id,
             projectId: r.project_id,
+            buildId: r.build_id,
             projectName: r.project_name,
             variationName: r.variation_name,
             buildNumber: r.build_number,
@@ -268,6 +270,7 @@ export const inboxRouter = t.router({
         .select({
           runId: testRuns.id,
           projectId: testRuns.projectId,
+          buildId: builds.id,
           projectName: projects.name,
           // ADR-038: runs no longer have a single variation; use run name instead.
           variationName: testRuns.name,
@@ -292,6 +295,7 @@ export const inboxRouter = t.router({
         .limit(input.limit + 1)) as {
         runId: string;
         projectId: string;
+        buildId: string;
         projectName: string;
         variationName: string;
         buildNumber: number | null;

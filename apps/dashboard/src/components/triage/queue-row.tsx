@@ -48,7 +48,14 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
           <StatusPill status={row.status} />
         </div>
         <div className="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-400">
-          {row.buildNumber !== null ? `Build #${row.buildNumber} · ` : ""}
+          <Link
+            href={`/projects/${row.projectId}/builds/${row.buildId}`}
+            onClick={(e) => e.stopPropagation()}
+            className="hover:underline"
+          >
+            {row.buildNumber !== null ? `Build #${row.buildNumber}` : "Build"}
+          </Link>
+          {" · "}
           {row.branch ?? "—"} · {formatRelativeTime(row.createdAt)}
         </div>
       </div>

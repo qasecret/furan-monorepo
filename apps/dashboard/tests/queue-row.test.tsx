@@ -1,5 +1,5 @@
 import type { InboxRunRow } from "@furan/shared-types";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { QueueRow } from "@/components/triage/queue-row";
@@ -12,6 +12,7 @@ const row: InboxRunRow = {
   projectName: "demo-rabindra",
   variationName: "checkout-mobile",
   buildNumber: 142,
+  buildId: "33333333-3333-3333-3333-333333333333",
   branch: "main",
   status: "unresolved",
   createdAt: new Date(Date.now() - 7200_000).toISOString(),
@@ -60,5 +61,25 @@ describe("QueueRow", () => {
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
     expect((img as HTMLImageElement).src).toBe("https://x/y.webp");
+  });
+
+  test("Build # links to the batch page; clicking it does not fire approve/reject", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(
+      <QueueRow
+        row={row}
+        selected={false}
+        onApprove={onApprove}
+        onReject={onReject}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /Build #142/ });
+    expect(link.getAttribute("href")).toBe(
+      "/projects/22222222-2222-2222-2222-222222222222/builds/33333333-3333-3333-3333-333333333333",
+    );
+    fireEvent.click(link);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
   });
 });
