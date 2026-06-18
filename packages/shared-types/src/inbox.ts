@@ -29,6 +29,7 @@ export const inboxRunRow = z.object({
   projectName: z.string(),
   variationName: z.string(),
   buildNumber: z.number().int().nullable(),
+  buildId: z.string().uuid(),
   branch: z.string().nullable(),
   status: runStatusSchema,
   createdAt: z.string(),

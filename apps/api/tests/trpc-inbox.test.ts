@@ -711,6 +711,63 @@ d("trpc inbox.list", () => {
     expect(decisions[0]?.reason).toBe("updated reason");
   });
 
+  test("inbox.list returns buildId (flat mode)", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-buildid-flat@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Bld",
+        lastName: "Id",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-buildid-flat-project" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [variation] = await h.db
+      .insert(testVariations)
+      .values({ projectId: project.id, name: "home-buildid-flat" })
+      .returning();
+    if (!variation) throw new Error("variation not seeded");
+
+    await h.db.insert(testRuns).values({
+      projectId: project.id,
+      buildId: build.id,
+      name: variation.name,
+      branchName: "main",
+      status: "unresolved",
+    });
+
+    const caller = makeClient(jwt);
+    const res = await caller.inbox.list.query({
+      status: "all-open",
+      window: "7d",
+    });
+
+    expect(res.items[0]?.buildId).toBe(build.id);
+  });
+
   test("paginates via cursor", async () => {
     await wipe();
 
@@ -983,6 +1040,59 @@ d("inbox.list similarity mode", () => {
     const uniqueRow = res.items.find((i) => i.primarySignature === "v1:unique");
     expect(uniqueRow).toBeDefined();
     expect(uniqueRow!.clusterRunCount).toBe(1);
+  });
+
+  test("inbox.list returns buildId (similarity mode)", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-buildid-sim@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Sim",
+        lastName: "BldId",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-buildid-sim-project" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    await h.db.insert(testRuns).values({
+      projectId: project.id,
+      buildId: build.id,
+      name: "sim-buildid-run",
+      branchName: "main",
+      status: "unresolved",
+      primarySignature: "v1:sim-buildid",
+    });
+
+    const caller = makeClient(jwt);
+    const res = await caller.inbox.list.query({
+      status: "all-open",
+      window: "7d",
+      group: "similarity",
+    });
+
+    expect(res.items[0]?.buildId).toBe(build.id);
   });
 
   test("paginates the grouped view without overlap or gaps", async () => {
