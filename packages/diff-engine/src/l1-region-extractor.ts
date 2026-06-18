@@ -1,6 +1,6 @@
 import { PNG } from "pngjs";
 
-import type { DiffRegion } from "./types.js";
+import type { DiffRegion, Severity } from "./types.js";
 
 /**
  * Cluster differing pixels between baseline + candidate into bounded
@@ -31,6 +31,10 @@ export interface ExtractOptions {
   /** Drop merged clusters smaller than this many tiles. Keeps the panel
    *  signal-to-noise high when only a handful of speckles remain. */
   minClusterTiles?: number;
+  /** Cap on the number of regions returned. After flood-fill, clusters are
+   *  ranked by tile-count (a magnitude proxy) and only the top N survive,
+   *  so a busy page yields a clean, scannable handful rather than 60 rows. */
+  maxRegions?: number;
 }
 
 const DEFAULTS: Required<ExtractOptions> = {
@@ -52,7 +56,24 @@ const DEFAULTS: Required<ExtractOptions> = {
   // reviewer scanning a heatmap will actually fixate on. Pairs with
   // the larger tileSize: same absolute floor as 4×32 tiles.
   minClusterTiles: 3,
+  // Top 12 by magnitude. A handful of meaningful changed areas reads as a
+  // clean Applitools-style region list; the long tail is visible on the
+  // canvas overlay anyway.
+  maxRegions: 12,
 };
+
+// Severity by cluster footprint in tiles (a magnitude proxy). At the
+// default 48px tile: ≥25 tiles ≈ 240×240+ (major), ≥8 ≈ 135×135 (minor),
+// else a small speckle (cosmetic). Drives list/stepper ordering so the
+// biggest visual change surfaces first.
+const MAJOR_MIN_TILES = 25;
+const MINOR_MIN_TILES = 8;
+
+function severityForSize(tileCount: number): Severity {
+  if (tileCount >= MAJOR_MIN_TILES) return "major";
+  if (tileCount >= MINOR_MIN_TILES) return "minor";
+  return "cosmetic";
+}
 
 export function extractL1PixelRegions(
   baselineBytes: Buffer,
@@ -123,7 +144,13 @@ export function extractL1PixelRegions(
 
   // Flood-fill 4-connected tile components.
   const visited = new Uint8Array(cols * rows);
-  const regions: DiffRegion[] = [];
+  const clusters: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    tileCount: number;
+  }> = [];
   const stack: number[] = [];
   for (let r = 0; r < rows; r++) {
     for (let cIdx = 0; cIdx < cols; cIdx++) {
@@ -165,20 +192,18 @@ export function extractL1PixelRegions(
       const y = minR * tile;
       const width = Math.min((maxC + 1) * tile, W) - x;
       const height = Math.min((maxR + 1) * tile, H) - y;
-      regions.push({
-        id: `l1-pixel-${regions.length}`,
-        severity: "minor",
-        category: "image",
-        bbox: { x, y, width, height },
-        description: `Pixel diff cluster (${size} tiles, ${width}×${height})`,
-        // Distinct from "l1" so the dashboard's Regions panel can suppress
-        // these (they're noisy by design and visualised on the canvas
-        // as yellow rectangles, not as scrollable rows). See engine.ts
-        // wiring + RegionListPanel filter.
-        source: "l1_pixel",
-      });
+      clusters.push({ x, y, width, height, tileCount: size });
     }
   }
 
-  return regions;
+  // Rank by magnitude (tile-count), keep the top N, assign severity tiers.
+  clusters.sort((a, b) => b.tileCount - a.tileCount);
+  return clusters.slice(0, opts.maxRegions).map((cl, i) => ({
+    id: `l1-pixel-${i}`,
+    severity: severityForSize(cl.tileCount),
+    category: "image",
+    bbox: { x: cl.x, y: cl.y, width: cl.width, height: cl.height },
+    description: `Pixel diff cluster (${cl.tileCount} tiles, ${cl.width}×${cl.height})`,
+    source: "l1_pixel",
+  }));
 }
