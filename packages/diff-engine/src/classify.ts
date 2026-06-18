@@ -1,4 +1,5 @@
 import type { DiffRegion } from "./types.js";
+import type { Severity } from "./types.js";
 
 const SEV_RANK: Record<DiffRegion["severity"], number> = {
   breaking: 4,
@@ -7,6 +8,11 @@ const SEV_RANK: Record<DiffRegion["severity"], number> = {
   cosmetic: 1,
   none: 0,
 };
+
+/** Numeric rank for "most severe" comparisons; higher = worse. `none` = 0. */
+export function severityRank(severity: Severity): number {
+  return SEV_RANK[severity];
+}
 
 export function classifyRegions(regions: DiffRegion[]): DiffRegion[] {
   const upgraded = regions.map((r) => {

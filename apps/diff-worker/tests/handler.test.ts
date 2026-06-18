@@ -217,6 +217,10 @@ desc("handleDiffJob (integration)", () => {
     // Per spec §3.2 the diff-worker writes "unresolved" on diff-found.
     // "failed" is reserved for reviewer-rejected runs.
     expect(updatedRun!.status).toBe("unresolved");
+    // ADR-043: primary_signature must be set for unresolved runs (most-severe
+    // unresolved checkpoint's diff_signature). L2 regions fire here, so it
+    // must match the v1:<sha256> format.
+    expect(updatedRun!.primarySignature).toMatch(/^v1:[0-9a-f]{64}$/);
     expect(updatedRun!.baselineSource).toBe("default_branch");
     expect(updatedRun!.diffPercent).toBeGreaterThan(0);
     expect(updatedRun!.pixelMisMatchCount).toBeGreaterThan(0);
@@ -636,6 +640,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     });
     expect(updated!.status).toBe("new");
     expect(updated!.merge).toBe(true);
+    // ADR-043: first-baseline runs have no diff comparison → primary_signature stays NULL.
+    expect(updated!.primarySignature).toBeNull();
 
     const seededBaselines = await db.query.baselines.findMany({
       where: eq(baselines.testRunId, run.id),
@@ -718,6 +724,8 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     });
     expect(updated!.status).toBe("new");
     expect(updated!.merge).toBe(true);
+    // ADR-043: first-baseline runs have no diff comparison → primary_signature stays NULL.
+    expect(updated!.primarySignature).toBeNull();
 
     // ADR-036: with autoApproveFeature=false, the handler must NOT
     // auto-seed a baseline. The reviewer's `runs.approve` mutation is

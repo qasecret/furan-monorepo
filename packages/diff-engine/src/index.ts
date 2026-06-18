@@ -6,7 +6,7 @@ export { runL1 } from "./l1.js";
 export { runL2 } from "./l2.js";
 export { runAxe } from "./axe.js";
 export type { AccessibilityOptions } from "./axe.js";
-export { classifyRegions } from "./classify.js";
+export { classifyRegions, severityRank } from "./classify.js";
 export { computeCheckpointSignature } from "./checkpoint-signature.js";
 export { DEFAULT_ENGINE_CONFIG } from "./types.js";
 export type {
