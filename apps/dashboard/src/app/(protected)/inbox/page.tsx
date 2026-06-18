@@ -17,7 +17,7 @@ export default async function Page({ searchParams }: PageProps) {
   const sp = await searchParams;
   const status = inboxStatusFilter.safeParse(sp.status).data ?? "all-open";
   const window = inboxWindowFilter.safeParse(sp.window).data ?? "7d";
-  const group = sp.group === "project";
+  const group = sp.group === "similarity";
   return (
     <>
       <SetBreadcrumbs items={[{ label: "Inbox" }]} />

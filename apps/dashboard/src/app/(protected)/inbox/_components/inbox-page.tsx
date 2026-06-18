@@ -4,13 +4,17 @@ import type { InboxStatusFilter, InboxWindowFilter } from "@furan/shared-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { ClusterBlock } from "./cluster-block";
+import { groupIntoClusters, type ClusterGroup } from "./cluster-grouping";
 import { EmptyState } from "./empty-state";
 import { FilterBar } from "./filter-bar";
 import { Pagination } from "./pagination";
+import { RejectClusterDialog } from "./reject-cluster-dialog";
 
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
 import { InboxRealtime } from "@/hooks/InboxRealtime";
+import { plural } from "@/lib/format";
 import { recordTelemetry } from "@/lib/telemetry";
 import { trpc } from "@/lib/trpc";
 
@@ -35,6 +39,7 @@ export function InboxPage({
     status: initialStatus,
     window: initialWindow,
     cursor,
+    group: initialGroup ? "similarity" : undefined,
   });
   const approve = trpc.inbox.approve.useMutation({
     onSuccess: () => {
@@ -46,6 +51,21 @@ export function InboxPage({
   const reject = trpc.inbox.reject.useMutation({
     onSuccess: () => {
       toast.success("Rejected");
+      void list.refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [rejectTarget, setRejectTarget] = useState<ClusterGroup | null>(null);
+  const rejectCluster = trpc.inbox.rejectCluster.useMutation({
+    onSuccess: (res) => {
+      const total = rejectTarget?.runCount ?? res.rejected;
+      toast.success(
+        res.capped
+          ? `Rejected ${res.rejected} of ${total} runs (cap ${res.cap})`
+          : `Rejected ${res.rejected} run${plural(res.rejected)} across ${res.buildCount} build${plural(res.buildCount)}`,
+      );
+      setRejectTarget(null);
       void list.refetch();
     },
     onError: (e) => toast.error(e.message),
@@ -86,6 +106,14 @@ export function InboxPage({
     };
   }, []); // intentionally empty — captures mount time, cleans up on unmount
 
+  // Reset the keyboard selection when the filter/group changes — FilterBar
+  // navigates via router.replace (no remount), so this component persists while
+  // `items` reshapes; a stale selectedIndex would point the highlight + a/r at a
+  // run the user never selected.
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [initialStatus, initialWindow, initialGroup]);
+
   const fireAction = useCallback(
     (
       action: "approve" | "reject",
@@ -112,14 +140,20 @@ export function InboxPage({
 
   return (
     <KeyboardScope
-      bindings={{
-        ArrowDown: () => moveSelection(1),
-        ArrowUp: () => moveSelection(-1),
-        j: () => moveSelection(1),
-        k: () => moveSelection(-1),
-        a: () => current && fireAction("approve", current, true),
-        r: () => current && fireAction("reject", current, true),
-      }}
+      // While the reject-cluster dialog is open, suppress the row shortcuts so a
+      // stray a/r/j/k can't fire a single-run mutation on the row behind the modal.
+      bindings={
+        rejectTarget
+          ? {}
+          : {
+              ArrowDown: () => moveSelection(1),
+              ArrowUp: () => moveSelection(-1),
+              j: () => moveSelection(1),
+              k: () => moveSelection(-1),
+              a: () => current && fireAction("approve", current, true),
+              r: () => current && fireAction("reject", current, true),
+            }
+      }
     >
       <InboxRealtime />
       <div className="flex h-full flex-col">
@@ -148,6 +182,44 @@ export function InboxPage({
           <SkeletonList />
         ) : items.length === 0 ? (
           <EmptyState />
+        ) : initialGroup ? (
+          <ul
+            id="inbox-queue-list"
+            role="list"
+            className="flex-1 overflow-y-auto"
+          >
+            {(() => {
+              const groups = groupIntoClusters(items);
+              let flat = 0;
+              return groups.map((g) => {
+                if (g.kind === "single") {
+                  const idx = flat++;
+                  return (
+                    <QueueRow
+                      key={g.row.runId}
+                      row={g.row}
+                      selected={idx === selectedIndex}
+                      onApprove={() => fireAction("approve", g.row, false)}
+                      onReject={() => fireAction("reject", g.row, false)}
+                    />
+                  );
+                }
+                const base = flat;
+                flat += g.rows.length;
+                return (
+                  <ClusterBlock
+                    key={`${g.projectId}:${g.signature}`}
+                    cluster={g}
+                    baseIndex={base}
+                    selectedIndex={selectedIndex}
+                    onApprove={(row) => fireAction("approve", row, false)}
+                    onReject={(row) => fireAction("reject", row, false)}
+                    onRejectAll={setRejectTarget}
+                  />
+                );
+              });
+            })()}
+          </ul>
         ) : (
           <ul
             id="inbox-queue-list"
@@ -164,6 +236,26 @@ export function InboxPage({
               />
             ))}
           </ul>
+        )}
+        {rejectTarget && (
+          <RejectClusterDialog
+            open
+            runCount={rejectTarget.runCount}
+            buildCount={rejectTarget.buildCount}
+            runNames={rejectTarget.rows.map((r) => r.variationName)}
+            isPending={rejectCluster.isPending}
+            onOpenChange={(o) => {
+              if (!o) setRejectTarget(null);
+            }}
+            onConfirm={() =>
+              rejectCluster.mutate({
+                projectId: rejectTarget.projectId,
+                signature: rejectTarget.signature,
+                status: initialStatus,
+                window: initialWindow,
+              })
+            }
+          />
         )}
         <Pagination
           hasMore={
