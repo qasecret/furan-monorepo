@@ -174,11 +174,25 @@ describe("RegionListPanel", () => {
     ).not.toBeNull();
   });
 
-  it("source='l1_pixel' rows never appear in the panel — canvas-only", async () => {
-    // L1 pixel-cluster regions render as Applitools-style yellow bounded
-    // rectangles on the heatmap canvas, but must NOT pollute the Regions
-    // panel (the original "panel grew to 4600px" bug). They're invisible
-    // here regardless of the Show-suppressed toggle.
+  it("renders l1_pixel (image) regions in the list", () => {
+    const regions = [
+      {
+        id: "l1-pixel-0",
+        severity: "major",
+        category: "image",
+        bbox: { x: 10, y: 10, width: 240, height: 240 },
+        description: "Pixel diff cluster (30 tiles, 240×240)",
+        source: "l1_pixel",
+      },
+    ];
+    render(<RegionListPanel regions={regions} vlmDescription={null} />);
+    expect(screen.getByText(/Regions \(1\)/)).toBeTruthy();
+  });
+
+  it("source='l1_pixel' rows appear in the panel alongside l1 and l2 rows", () => {
+    // Image-first P1 (ADR-047): l1_pixel regions are now surfaced as list
+    // rows so reviewers can see pixel-cluster descriptions. They're no longer
+    // canvas-only. dynamic_text stays hidden by default (separate toggle).
     const regions: DiffRegion[] = [
       {
         id: "lp1",
@@ -206,16 +220,10 @@ describe("RegionListPanel", () => {
       },
     ];
     render(<RegionListPanel regions={regions} />);
-    // Default ("all" sources): l1_pixel hidden; l1 + l2 visible.
-    expect(document.querySelector('[data-region-id="lp1"]')).toBeNull();
+    // All three regions visible: l1_pixel, l1, l2.
+    expect(document.querySelector('[data-region-id="lp1"]')).not.toBeNull();
     expect(document.querySelector('[data-region-id="l1real"]')).not.toBeNull();
     expect(document.querySelector('[data-region-id="l2real"]')).not.toBeNull();
-
-    // "Show suppressed" toggle reveals dynamic_text only, not l1_pixel.
-    const toggleInput = screen
-      .getByTestId("show-suppressed-toggle")
-      .querySelector("input")!;
-    fireEvent.click(toggleInput);
-    expect(document.querySelector('[data-region-id="lp1"]')).toBeNull();
+    expect(screen.getByText(/Regions \(3\)/)).toBeTruthy();
   });
 });
