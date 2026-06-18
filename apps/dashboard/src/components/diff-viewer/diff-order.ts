@@ -20,10 +20,10 @@ function area(bbox: BBox | unknown): number {
 }
 
 /**
- * Stepper/list ordering for diff regions. Drops noisy L1 pixel clusters and
- * dynamic-text audit rows (shown only in `Difference` mode / the audit
- * toggle), and optionally position-only `layout` changes. Worst severity
- * first, then larger area first.
+ * Stepper/list ordering for diff regions. Surfaces l1_pixel image regions
+ * (the primary "what changed" signal) and drops only dynamic-text audit rows
+ * (shown via the audit toggle) and, optionally, position-only `layout`
+ * changes. Worst severity first, then larger area first.
  */
 export function orderDiffRegions(
   regions: DiffRegion[],
@@ -31,10 +31,12 @@ export function orderDiffRegions(
 ): DiffRegion[] {
   return (
     regions
-      // KEEP IN SYNC with EXCLUDED_SOURCES in the diff-engine's
-      // checkpoint-signature.ts: the same "meaningful region" set must drive both
-      // what the reviewer sees here and what the grouping signature hashes there.
-      .filter((r) => r.source !== "l1_pixel" && r.source !== "dynamic_text")
+      // Image-first (ADR-047): l1_pixel image regions ARE the meaningful set —
+      // surface them in the stepper + side-by-side shading. dynamic_text audit
+      // rows stay out (shown only via the audit toggle). P2 re-bases the
+      // engine's checkpoint-signature onto these same image regions to re-sync
+      // grouping.
+      .filter((r) => r.source !== "dynamic_text")
       .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
       .slice()
       .sort(
