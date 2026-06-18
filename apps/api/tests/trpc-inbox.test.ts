@@ -1077,17 +1077,43 @@ d("inbox.list similarity mode", () => {
     expect(page1.items).toHaveLength(2);
     expect(page1.nextCursor).not.toBeNull();
 
-    const page2 = await caller.inbox.list.query({
+    // Walk ALL pages and assert lossless coverage: every seeded run appears
+    // exactly once — no overlap AND no gaps — across the paginated grouped view.
+    const seen: string[] = [...page1.items.map((i) => i.runId)];
+    let cursor = page1.nextCursor;
+    let guard = 0;
+    while (cursor && guard++ < 10) {
+      const next = await caller.inbox.list.query({
+        group: "similarity",
+        window: "all",
+        limit: 2,
+        cursor,
+      });
+      seen.push(...next.items.map((i) => i.runId));
+      cursor = next.nextCursor;
+    }
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(5);
+
+    // A value-invalid cursor (valid JSON, bad uuid/timestamp) restarts from the
+    // top rather than 500ing on the ::uuid/::timestamptz casts (which execute
+    // outside the decode try/catch).
+    const badCursor = Buffer.from(
+      JSON.stringify({
+        crc: 1,
+        pid: "not-a-uuid",
+        sig: "v1:x",
+        cat: "nope",
+        id: "bad",
+      }),
+    ).toString("base64url");
+    const restarted = await caller.inbox.list.query({
       group: "similarity",
       window: "all",
       limit: 2,
-      cursor: page1.nextCursor,
+      cursor: badCursor,
     });
-    // No overlap.
-    const ids1 = new Set(page1.items.map((i) => i.runId));
-    for (const i of page2.items) {
-      expect(ids1.has(i.runId)).toBe(false);
-    }
+    expect(restarted.items.length).toBeGreaterThan(0);
   });
 });
 

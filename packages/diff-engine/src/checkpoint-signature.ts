@@ -11,7 +11,7 @@ import type { DiffRegion } from "./types.js";
  * dashboard has its own region types and must not depend on this node-only
  * package.)
  */
-const EXCLUDED_SOURCES = new Set<string>(["l1_pixel", "dynamic_text"]);
+export const EXCLUDED_SOURCES = new Set<string>(["l1_pixel", "dynamic_text"]);
 
 /** Normalize a pixel coordinate to a 0..100 integer bucket of `dim` (>0). */
 function bucket(value: number, dim: number): number {

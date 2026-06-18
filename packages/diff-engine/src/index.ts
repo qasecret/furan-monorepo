@@ -7,7 +7,10 @@ export { runL2 } from "./l2.js";
 export { runAxe } from "./axe.js";
 export type { AccessibilityOptions } from "./axe.js";
 export { classifyRegions, severityRank } from "./classify.js";
-export { computeCheckpointSignature } from "./checkpoint-signature.js";
+export {
+  computeCheckpointSignature,
+  EXCLUDED_SOURCES,
+} from "./checkpoint-signature.js";
 export { DEFAULT_ENGINE_CONFIG } from "./types.js";
 export type {
   DiffResult,

@@ -116,6 +116,23 @@ export const inboxRouter = t.router({
               cat: string;
               id: string;
             };
+            // Validate decoded fields BEFORE they reach the `::uuid`/`::timestamptz`
+            // casts (which execute at ctx.db.execute, outside this try) — an
+            // invalid value would otherwise 500 instead of restarting pagination.
+            const UUID_RE =
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (
+              !Number.isFinite(c.crc) ||
+              typeof c.pid !== "string" ||
+              !UUID_RE.test(c.pid) ||
+              typeof c.id !== "string" ||
+              !UUID_RE.test(c.id) ||
+              typeof c.sig !== "string" ||
+              typeof c.cat !== "string" ||
+              Number.isNaN(Date.parse(c.cat))
+            ) {
+              throw new Error("invalid cursor");
+            }
             cursorPred = sql`(
               s.cluster_run_count < ${c.crc}
               OR (s.cluster_run_count = ${c.crc} AND s.project_id > ${c.pid}::uuid)
@@ -180,7 +197,11 @@ export const inboxRouter = t.router({
               GROUP BY project_id, primary_signature
             )
             SELECT s.id AS run_id, s.project_id, s.project_name, s.name AS variation_name,
-                   s.build_number, s.branch, s.status, s.created_at, s.thumbnail_url,
+                   s.build_number, s.branch, s.status,
+                   -- Truncate to ms so the keyset matches the cursor's ms-precision
+                   -- timestamp (toISOString); else same-ms/different-µs rows are dropped.
+                   date_trunc('milliseconds', s.created_at) AS created_at,
+                   s.thumbnail_url,
                    s.primary_signature,
                    COALESCE(a.run_count, 1) AS cluster_run_count,
                    COALESCE(a.build_count, 1) AS cluster_build_count,
@@ -419,7 +440,8 @@ export const inboxRouter = t.router({
 
       const cap = GROUP_APPROVE_CAP;
       const capped = matches.length > cap;
-      const targets = capped ? matches.slice(0, cap) : matches;
+      // slice(0, cap) already returns the whole array when length <= cap — no ternary.
+      const targets = matches.slice(0, cap);
 
       if (targets.length === 0) {
         return { rejected: 0, runCount: 0, buildCount: 0, capped: false, cap };
