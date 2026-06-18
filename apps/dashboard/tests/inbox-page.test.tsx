@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -12,6 +18,7 @@ vi.mock("@/lib/telemetry", () => ({
 const listMock = vi.fn();
 const approveMock = vi.fn();
 const rejectMock = vi.fn();
+const rejectClusterMutate = vi.fn();
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     inbox: {
@@ -21,6 +28,9 @@ vi.mock("@/lib/trpc", () => ({
         useMutation: () => ({ mutate: approveMock, isPending: false }),
       },
       reject: { useMutation: () => ({ mutate: rejectMock, isPending: false }) },
+      rejectCluster: {
+        useMutation: () => ({ mutate: rejectClusterMutate, isPending: false }),
+      },
     },
     projects: { list: { useQuery: () => ({ data: [] }) } },
   },
@@ -121,5 +131,110 @@ describe("InboxPage", () => {
     expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({ group: undefined }),
     );
+  });
+
+  test("grouped: renders cluster header + member rows; Reject all → confirm calls rejectCluster.mutate with correct filter", async () => {
+    const refetch = vi.fn();
+    listMock.mockReturnValue({
+      data: {
+        items: [
+          // Two rows forming a cluster (same projectId + primarySignature + clusterRunCount > 1)
+          {
+            runId: "aaaa0001-0000-0000-0000-000000000000",
+            projectId: "proj-0001-0000-0000-0000-000000000000",
+            projectName: "MyProject",
+            variationName: "Checkout step",
+            buildNumber: 2,
+            branch: "main",
+            status: "unresolved",
+            createdAt: new Date().toISOString(),
+            thumbnailUrl: null,
+            primarySignature: "v1:abc",
+            clusterRunCount: 2,
+            clusterBuildCount: 2,
+          },
+          {
+            runId: "aaaa0002-0000-0000-0000-000000000000",
+            projectId: "proj-0001-0000-0000-0000-000000000000",
+            projectName: "MyProject",
+            variationName: "Search step",
+            buildNumber: 3,
+            branch: "main",
+            status: "unresolved",
+            createdAt: new Date().toISOString(),
+            thumbnailUrl: null,
+            primarySignature: "v1:abc",
+            clusterRunCount: 2,
+            clusterBuildCount: 2,
+          },
+          // A singleton
+          {
+            runId: "bbbb0001-0000-0000-0000-000000000000",
+            projectId: "proj-0001-0000-0000-0000-000000000000",
+            projectName: "MyProject",
+            variationName: "Homepage",
+            buildNumber: 4,
+            branch: "main",
+            status: "unresolved",
+            createdAt: new Date().toISOString(),
+            thumbnailUrl: null,
+            primarySignature: null,
+            clusterRunCount: 1,
+            clusterBuildCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      isLoading: false,
+      isError: false,
+      refetch,
+    });
+
+    rejectClusterMutate.mockClear();
+
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={true}
+      />,
+    );
+
+    // The cluster header should be visible
+    await waitFor(() =>
+      expect(screen.getByTestId("cluster-header-v1:abc")).toBeTruthy(),
+    );
+
+    // Both cluster member rows should render
+    expect(
+      screen.getByTestId("queue-row-aaaa0001-0000-0000-0000-000000000000"),
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("queue-row-aaaa0002-0000-0000-0000-000000000000"),
+    ).toBeTruthy();
+
+    // The singleton row should also render
+    expect(
+      screen.getByTestId("queue-row-bbbb0001-0000-0000-0000-000000000000"),
+    ).toBeTruthy();
+
+    // Click "Reject all" on the cluster header
+    fireEvent.click(screen.getByTestId("cluster-reject-all-v1:abc"));
+
+    // The confirm dialog should now be open
+    await waitFor(() =>
+      expect(screen.getByTestId("reject-cluster-dialog")).toBeTruthy(),
+    );
+
+    // Click confirm
+    fireEvent.click(screen.getByTestId("reject-cluster-confirm"));
+
+    // rejectCluster.mutate should be called with the exact filter (WYSIWYG contract)
+    expect(rejectClusterMutate).toHaveBeenCalledWith({
+      projectId: "proj-0001-0000-0000-0000-000000000000",
+      signature: "v1:abc",
+      status: "all-open",
+      window: "7d",
+    });
   });
 });
