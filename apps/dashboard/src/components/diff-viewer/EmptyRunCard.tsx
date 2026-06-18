@@ -51,11 +51,11 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
         </Link>
         {buildId && (
           <Link
-            href={`/projects/${projectId}/runs?buildId=${buildId}`}
+            href={`/projects/${projectId}/builds/${buildId}`}
             className="text-brand-text hover:underline"
             data-testid="empty-run-card-timeline"
           >
-            View run timeline →
+            View build →
           </Link>
         )}
       </div>
