@@ -6,8 +6,7 @@ import {
 } from "./l1-displacement.js";
 import { extractL1PixelRegions } from "./l1-region-extractor.js";
 import { runL1 } from "./l1.js";
-import { runL2 } from "./l2.js";
-import type { DiffResult, ProjectDiffConfig, DiffRegion } from "./types.js";
+import type { DiffResult, ProjectDiffConfig } from "./types.js";
 
 /** Tier 1.4 follow-up: hard caps on detected shift before alignment
  *  is applied. Beyond these, the shift is more likely spurious than
@@ -84,43 +83,18 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
   );
   const t1 = performance.now();
 
-  const shouldRunL2 =
-    input.config.l2Enabled &&
-    l1.diffPercent >= input.config.diffThreshold * 100 &&
-    input.baseline.dom !== undefined &&
-    input.candidate.dom !== undefined;
-
-  let l2Regions: DiffRegion[] = [];
-  let l2Duration: number | null = null;
-  if (shouldRunL2) {
-    const t2 = performance.now();
-    l2Regions = await runL2(input.baseline.dom!, input.candidate.dom!, {
-      ignoreDisplacements: input.ignoreDisplacements ?? false,
-    });
-    l2Duration = performance.now() - t2;
-  }
-
-  // L1 pixel-cluster extractor: bounded boxes around regions of change
-  // for the heatmap canvas (Applitools-style yellow rectangles). Tagged
-  // `source: "l1_pixel"` so the dashboard's Regions panel suppresses
-  // them — actionable structural diffs (L2 + axe) stay scrollable in
-  // the panel; pixel speckle stays visual on the canvas.
-  //
-  // Skipped when the L1 backend reports no pixel mismatches at all —
-  // the cluster pass would always come back empty and the decode +
-  // scan cost (~150ms on a 2560×1266 capture) isn't worth paying.
-  // Uses `candidateImage` (post-displacement-aligned) not
-  // `input.candidate.image`, so an applied displacement vector doesn't
-  // reintroduce the global shift as one giant cluster.
+  // L1 pixel-cluster extractor: bounded boxes around regions of change.
+  // Tagged `source: "l1_pixel"` — the image-derived "what changed" signal
+  // surfaced in the diff viewer's region list + stepper (ADR-047). Skipped
+  // when the L1 backend reports zero pixel mismatches (the cluster pass would
+  // come back empty and the decode+scan cost isn't worth paying). Uses
+  // `candidateImage` (post-displacement-aligned) so an applied displacement
+  // vector doesn't reintroduce the global shift as one giant cluster.
   const l1PixelRegions =
     l1.pixelMismatchCount > 0
       ? extractL1PixelRegions(input.baseline.image, candidateImage)
       : [];
-  const allRegions = classifyRegions([
-    ...l1.regions,
-    ...l1PixelRegions,
-    ...l2Regions,
-  ]);
+  const allRegions = classifyRegions([...l1.regions, ...l1PixelRegions]);
 
   return {
     // The pass/fail decision compares L1 diffPercent against the threshold
@@ -143,8 +117,8 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     pixelMismatchCount: l1.pixelMismatchCount,
     diffImageBytes: l1.diffImageBytes,
     regions: allRegions,
-    ranTiers: shouldRunL2 ? ["l1", "l2"] : ["l1"],
-    durationMs: { l1: t1 - t0, l2: l2Duration },
+    ranTiers: ["l1"],
+    durationMs: { l1: t1 - t0, l2: null },
     ...(displacementVector ? { displacementVector } : {}),
   };
 }
