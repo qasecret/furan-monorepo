@@ -15,7 +15,6 @@ import {
   runAxe,
   runDiff,
   runL1,
-  runL2,
   runVlm,
   classifyRegions,
   computeCheckpointSignature,
@@ -51,7 +50,6 @@ import {
   resolveRegionBbox,
   type ElementMap,
 } from "./element-map-resolver.js";
-import { resolveL2Bboxes } from "./l2-bbox-resolver.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import {
   classifyLayoutContent,
@@ -829,20 +827,21 @@ async function handleDiffJobInner(
         }),
     );
 
-    // ADR-038 §7.2: route through configForMatchLevel before calling the
-    // engine. matchLevel is stored per-screenshot; fall back to "Strict"
-    // for legacy rows that predate Phase 3 (SDK 2.0.0).
+    // Image-first (ADR-047): matchLevel no longer routes tiers — every value
+    // maps to the single image compare. We still read the stored per-screenshot
+    // matchLevel (fallback "Strict" for legacy rows) and pass it through for
+    // back-compat, but configForMatchLevel now returns the base engine config
+    // unchanged.
     const screenshotMatchLevel = (cs.matchLevel as MatchLevel) ?? "Strict";
     const baseEngineConfig = parseEngineConfig(
       project.imageComparisonConfig,
       logger,
       project.id,
     );
-    const {
-      config: routedEngineConfig,
-      runL1: shouldRunL1,
-      runL2Only,
-    } = configForMatchLevel(baseEngineConfig, screenshotMatchLevel);
+    const { config: routedEngineConfig } = configForMatchLevel(
+      baseEngineConfig,
+      screenshotMatchLevel,
+    );
 
     const diffThreshold =
       run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
@@ -881,29 +880,6 @@ async function handleDiffJobInner(
         durationMs: { l1: performance.now() - t0, l2: null },
       };
       vlmDescription = vlmResult.vlmDescription;
-    } else if (runL2Only) {
-      // Layout mode: skip L1 pixel diff entirely, run only DOM-level diff.
-      // We construct a DiffResult-compatible object directly from runL2's
-      // output. diffPercent and pixelMismatchCount are 0 because no pixel
-      // diff was performed; passed is determined purely by L2 region count.
-      const t2 = performance.now();
-      const l2Regions =
-        baselineDom !== undefined && candidateDom !== undefined
-          ? await runL2(baselineDom, candidateDom, {
-              ignoreDisplacements: cs.ignoreDisplacements,
-            })
-          : [];
-      const l2Duration = performance.now() - t2;
-      const allL2Regions = classifyRegions(l2Regions);
-      result = {
-        passed: allL2Regions.length === 0,
-        diffPercent: 0,
-        pixelMismatchCount: 0,
-        diffImageBytes: Buffer.alloc(0),
-        regions: allL2Regions,
-        ranTiers: ["l2"],
-        durationMs: { l1: 0, l2: l2Duration },
-      };
     } else {
       result = await runDiff({
         baseline: {
@@ -929,8 +905,7 @@ async function handleDiffJobInner(
           l2Enabled: project.l2Enabled ?? true,
           ignoreAreas: resolvedIgnoreAreas,
           engine: project.imageComparison,
-          // Use the matchLevel-adjusted engine config (e.g. Content raises
-          // threshold + enables ignoreAntialiasing).
+          // Engine config (matchLevel no longer adjusts it — ADR-047).
           engineConfig: routedEngineConfig,
         },
       });
@@ -964,11 +939,13 @@ async function handleDiffJobInner(
       );
     }
 
-    // --- Region modes v2 engine pipeline (after L1+L2, before persist) ---
+    // --- Region modes v2 engine pipeline (after L1, before persist) ---
     //
-    // Step A: resolve L2 region bboxes via the candidate's element-map
-    // sidecar. Best-effort: misses leave bbox: {0,0,0,0}, which the
-    // classifier treats as never-intersecting.
+    // Fetch the candidate element-map sidecar. Used by resolveAxeBboxes (axe
+    // violation bbox localization) and resolveRegionBbox (reviewer Layout/Content
+    // region resolution). Best-effort: missing map leaves bbox: {0,0,0,0} for axe
+    // regions; the dashboard handles that by showing the violation in the side
+    // panel only.
     const elementMapKey = cs.elementMapKey ?? null;
     let elementMap: ElementMap | null = null;
     if (elementMapKey) {
@@ -985,19 +962,11 @@ async function handleDiffJobInner(
         elementMapCache.set(elementMapKey, elementMap);
       }
     }
-    resolveL2Bboxes(result.regions, candidateDom, elementMap, {
-      l2Resolution: {
-        labels: (l) => ({
-          inc: () => deps.metrics?.l2Resolution.labels(l).inc(),
-        }),
-      },
-    });
-    // Tier 2.5 close-out: resolve axe violation bboxes via the same
-    // candidate DOM + element-map sidecar that L2 just used. Mutates
-    // any source='axe' regions already appended to result.regions in
-    // the Tier 2.5 block above. Misses leave bbox:{0,0,0,0}; the
-    // dashboard already handles those by showing the violation in
-    // the side panel only.
+    // Tier 2.5 close-out: resolve axe violation bboxes via the candidate DOM +
+    // element-map sidecar. Mutates any source='axe' regions already appended to
+    // result.regions in the Tier 2.5 block above. Misses leave bbox:{0,0,0,0};
+    // the dashboard already handles those by showing the violation in the side
+    // panel only.
     resolveAxeBboxes(result.regions, candidateDom, elementMap, {
       axeResolution: {
         labels: (l) => ({
@@ -1006,11 +975,11 @@ async function handleDiffJobInner(
       },
     });
 
-    // Step B: classify L2 regions against reviewer Layout/Content
-    // regions. `allRegions` is the parsed + viewport-filtered list of
-    // saved/variation ignore-areas — same source used to build the L1
-    // mask above. We pass it through resolveRegionBbox so the
-    // classifier sees the same coords the engine masked at.
+    // Step B: classify diff regions against reviewer Layout/Content zones.
+    // `allRegions` is the parsed + viewport-filtered list of saved/variation
+    // ignore-areas — same source used to build the L1 mask above. We pass it
+    // through resolveRegionBbox so the classifier sees the same coords the
+    // engine masked at.
     const reviewerForClassify: ReviewerRegion[] = await Promise.all(
       allRegions
         .filter((r) => r.kind === "layout" || r.kind === "content")
@@ -1094,16 +1063,13 @@ async function handleDiffJobInner(
     }
     // --- End region modes v2 pipeline ---
 
-    // Observe L1 latency labelled by engine. durationMs.l1 is 0 for
-    // Layout (L2-only) runs where the pixel diff was skipped; for all
-    // other matchLevels it reflects the real L1 duration. Convert ms
-    // to seconds to match the histogram's seconds-based bucket
-    // boundaries and the OpenMetrics convention.
-    if (shouldRunL1) {
-      deps.metrics?.l1Duration
-        .labels({ engine: project.imageComparison })
-        .observe(result.durationMs.l1 / 1000);
-    }
+    // Observe L1 latency labelled by engine. Image-first (ADR-047): L1
+    // always runs, so we always record. Convert ms to seconds to match the
+    // histogram's seconds-based bucket boundaries and the OpenMetrics
+    // convention.
+    deps.metrics?.l1Duration
+      .labels({ engine: project.imageComparison })
+      .observe(result.durationMs.l1 / 1000);
 
     let diffImageKey: string | null = null;
     if (result.diffImageBytes.length > 0) {
@@ -1176,9 +1142,11 @@ async function handleDiffJobInner(
   const primarySignature = computePrimarySignature(
     perViewport.map((v) => ({
       diffSignature: v.diffSignature ?? null,
-      // Rank by the SAME regions the signature is built from — EXCLUDED_SOURCES
-      // (l1_pixel/dynamic_text) are noise dropped by computeCheckpointSignature, so
-      // the "most severe" checkpoint and the signature it donates stay consistent.
+      // Rank by the SAME regions the signature is built from. Image-first
+      // (ADR-047): image (l1_pixel) regions are the primary signal — they feed
+      // both the checkpoint signature and this ranking; only dynamic_text audit
+      // rows are excluded (see EXCLUDED_SOURCES). Task P2-T4 drops l1_pixel from
+      // EXCLUDED_SOURCES so this fold includes image regions.
       worstSeverity: v.regions
         .filter((r) => !EXCLUDED_SOURCES.has(r.source))
         .reduce<Severity>(
