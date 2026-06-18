@@ -1,6 +1,8 @@
 "use client";
 
 import type { BuildAggregateStatus } from "@furan/shared-types";
+import { ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +26,7 @@ export interface BuildRowData {
 
 interface Props {
   build: BuildRowData;
-  expanded: boolean;
-  onToggleExpand: () => void;
+  projectId: string;
   onPropertyClick: (key: string, value: string) => void;
 }
 
@@ -39,12 +40,8 @@ function relative(date: string | Date): string {
   return d.toLocaleDateString();
 }
 
-export function BuildRow({
-  build,
-  expanded,
-  onToggleExpand,
-  onPropertyClick,
-}: Props) {
+export function BuildRow({ build, projectId, onPropertyClick }: Props) {
+  const router = useRouter();
   const propEntries = Object.entries(build.properties);
   const visibleProps = propEntries.slice(0, 5);
   const overflow = propEntries.length - visibleProps.length;
@@ -58,10 +55,20 @@ export function BuildRow({
       .filter(Boolean)
       .join(" · ") || `${build.runCount} runs`;
 
+  const open = () => router.push(`/projects/${projectId}/builds/${build.id}`);
+
   return (
     <div
       className="border-b border-zinc-200 last:border-0 px-4 py-3 hover:bg-zinc-100/60 transition-colors cursor-pointer dark:border-zinc-800 dark:hover:bg-zinc-900/30"
-      onClick={onToggleExpand}
+      onClick={open}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
       data-testid={`build-row-${build.id}`}
     >
       <div className="flex items-center gap-3 flex-wrap">
@@ -107,9 +114,10 @@ export function BuildRow({
         <div className="text-xs text-zinc-500 whitespace-nowrap dark:text-zinc-500">
           {relative(build.createdAt)}
         </div>
-        <span aria-hidden className="text-zinc-500 dark:text-zinc-500">
-          {expanded ? "▾" : "▸"}
-        </span>
+        <ChevronRight
+          aria-hidden
+          className="h-4 w-4 text-zinc-500 dark:text-zinc-500"
+        />
       </div>
     </div>
   );

@@ -6,7 +6,7 @@
  *  2. Escape closes the palette.
  *  3. The command list reflects the user's projects; admin-only commands
  *     render only when userRole === "admin".
- *  4. Selecting a project command calls router.push for the runs page.
+ *  4. Selecting a project command calls router.push for the builds page.
  *
  * The palette uses Radix Dialog under the hood; the shared tests/setup.ts
  * shims (ResizeObserver, scrollIntoView, pointer-capture) keep jsdom happy.
@@ -105,7 +105,7 @@ describe("CommandPalette", () => {
     expect(screen.getByTestId("cmd-admin-members")).toBeDefined();
   });
 
-  test("selecting a project command calls router.push to that project's runs", async () => {
+  test("selecting a project command calls router.push to that project's builds", async () => {
     render(<CommandPalette userRole="editor" />);
     act(() => usePaletteStore.setState({ open: true }));
     await screen.findByTestId("command-palette");
@@ -117,7 +117,7 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByTestId("cmd-project-p1"));
     await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith("/projects/p1/runs");
+      expect(pushMock).toHaveBeenCalledWith("/projects/p1/builds");
     });
   });
 });

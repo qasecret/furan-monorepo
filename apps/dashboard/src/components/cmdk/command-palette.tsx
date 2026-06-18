@@ -149,7 +149,7 @@ export function CommandPalette({ userRole }: Props) {
                   <Command.Item
                     key={`recent-${p.id}`}
                     value={`recent ${p.name}`}
-                    onSelect={() => go(`/projects/${p.id}/runs`)}
+                    onSelect={() => go(`/projects/${p.id}/builds`)}
                     className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
                     data-testid={`cmd-recent-${p.id}`}
                   >
@@ -166,7 +166,7 @@ export function CommandPalette({ userRole }: Props) {
                     <Command.Item
                       key={`project-${p.id}`}
                       value={`project ${p.name}`}
-                      onSelect={() => go(`/projects/${p.id}/runs`)}
+                      onSelect={() => go(`/projects/${p.id}/builds`)}
                       className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
                       data-testid={`cmd-project-${p.id}`}
                     >
