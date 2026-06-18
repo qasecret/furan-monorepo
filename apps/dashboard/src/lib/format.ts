@@ -1,3 +1,6 @@
+/** Pluralization suffix: `plural(1)` -> "", otherwise "s". */
+export const plural = (n: number): string => (n === 1 ? "" : "s");
+
 /**
  * Relative-time formatter shared across the dashboard (inbox queue, run rows,
  * build groups, the diff-viewer header). Accepts an ISO string, a `Date`, or

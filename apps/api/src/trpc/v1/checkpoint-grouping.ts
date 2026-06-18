@@ -4,14 +4,52 @@ import {
   diffRegions,
   eq,
   inArray,
+  screenshots,
   sql,
   testRuns,
   testVariations,
   type DB,
 } from "@furan/db";
+import { TRPCError } from "@trpc/server";
 
 /** A Drizzle transaction handle (first arg of `db.transaction(cb)`). */
 type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
+
+/**
+ * Load + validate the seed checkpoint for a build-scoped group action
+ * (getCheckpointGroup / approveCheckpointGroup / rejectCheckpointGroup share
+ * this verbatim — keep it the single source so the three can't drift on what
+ * "this checkpoint's group" is). Throws NOT_FOUND if the checkpoint is missing
+ * and BAD_REQUEST if it doesn't belong to `runId`. Returns the seed including
+ * its `diffSignature` (which may be null — the caller decides the empty-group
+ * shape, since each procedure's zero-result differs).
+ */
+export async function loadGroupSeed(
+  db: DB | Tx,
+  input: { runId: string; checkpointId: string },
+) {
+  const seedRows = await db
+    .select({
+      id: screenshots.id,
+      runId: screenshots.runId,
+      diffSignature: screenshots.diffSignature,
+      buildId: testRuns.buildId,
+      projectId: testRuns.projectId,
+    })
+    .from(screenshots)
+    .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+    .where(eq(screenshots.id, input.checkpointId))
+    .limit(1);
+  const seed = seedRows[0];
+  if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
+  if (seed.runId !== input.runId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "checkpoint not in run",
+    });
+  }
+  return seed;
+}
 
 /** Per-checkpoint review status, mirroring runs.listCheckpoints. */
 export type CheckpointStatus = "new" | "unresolved" | "passed";

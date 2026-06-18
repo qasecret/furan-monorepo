@@ -34,6 +34,7 @@ import {
   approveCheckpointInTx,
   deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
+  loadGroupSeed,
 } from "./checkpoint-grouping.js";
 
 const runIdInput = z.object({ runId: z.string().uuid() });
@@ -1532,26 +1533,7 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const seedRows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          diffSignature: screenshots.diffSignature,
-          buildId: testRuns.buildId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (seed.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
+      const seed = await loadGroupSeed(ctx.db, input);
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
       if (seed.diffSignature === null) {
         return {
@@ -1624,26 +1606,7 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const seedRows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          diffSignature: screenshots.diffSignature,
-          buildId: testRuns.buildId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (seed.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
+      const seed = await loadGroupSeed(ctx.db, input);
       // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
       if (seed.diffSignature === null) {
         return {
@@ -1733,6 +1696,105 @@ export const runsRouter = t.router({
       return {
         approved: targets.length,
         runCount: affectedRunIds.length,
+        capped,
+        cap: GROUP_APPROVE_CAP,
+      };
+    }),
+
+  rejectCheckpointGroup: t.procedure
+    .input(
+      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+    )
+    .use(authed)
+    .use(
+      projectMember<{ runId: string; checkpointId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const seed = await loadGroupSeed(ctx.db, input);
+      // Shared zero-result for both empty-group exits (NULL signature below +
+      // zero unresolved runs after derivation).
+      const empty = {
+        rejected: 0,
+        runCount: 0,
+        capped: false,
+        cap: GROUP_APPROVE_CAP,
+      };
+      // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
+      if (seed.diffSignature === null) return empty;
+
+      // Same build-scoped, project-guarded, signature derivation as
+      // approveCheckpointGroup. Reject is RUN-level (no per-checkpoint reject),
+      // so we fail the DISTINCT runs of the matched still-unresolved checkpoints.
+      const matches = await ctx.db
+        .select({
+          id: screenshots.id,
+          runId: screenshots.runId,
+          viewport: screenshots.viewport,
+          baselineName: testVariations.baselineName,
+        })
+        .from(screenshots)
+        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+        .innerJoin(
+          testVariations,
+          eq(testVariations.id, screenshots.testVariationId),
+        )
+        .where(
+          and(
+            eq(testRuns.buildId, seed.buildId),
+            eq(testRuns.projectId, seed.projectId),
+            eq(screenshots.diffSignature, seed.diffSignature),
+            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt));
+
+      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
+      const unresolved = matches.filter(
+        (m) => statuses.get(m.id) === "unresolved",
+      );
+      const distinctRunIds = [...new Set(unresolved.map((m) => m.runId))];
+      // GROUP_APPROVE_CAP doubles as the group-action cap; reject bounds RUNS
+      // (vs approve's checkpoints) since reject is run-level. A capped reject is
+      // idempotent on re-run, NOT progressive: failed runs stay matchable
+      // (`failed` is in REVIEWER_LEGAL_FROM) and their diff_regions persist, so a
+      // second "Reject all" re-targets the same first-cap runs (failed -> failed,
+      // a no-op) instead of draining the next window. >cap distinct runs sharing
+      // one signature in a build is pathological; the cap is a blast-radius bound.
+      const capped = distinctRunIds.length > GROUP_APPROVE_CAP;
+      // slice(0, CAP) already returns the whole array when length <= CAP — no ternary.
+      const targetRunIds = distinctRunIds.slice(0, GROUP_APPROVE_CAP);
+
+      if (targetRunIds.length === 0) return empty;
+
+      // Matched checkpoints are unresolved and their runs are in
+      // REVIEWER_LEGAL_FROM (filtered above), so this is one batched run-level
+      // reject (a single UPDATE is atomic — no transaction needed).
+      await ctx.db
+        .update(testRuns)
+        .set({ status: "failed", merge: false })
+        .where(inArray(testRuns.id, targetRunIds));
+
+      for (const runId of targetRunIds) {
+        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        event: "build_updated",
+        data: { id: seed.buildId },
+      });
+
+      // rejected === runCount here (run-level action); runCount retained for
+      // shape-parity with approveCheckpointGroup's {approved, runCount, ...}.
+      return {
+        rejected: targetRunIds.length,
+        runCount: targetRunIds.length,
         capped,
         cap: GROUP_APPROVE_CAP,
       };
