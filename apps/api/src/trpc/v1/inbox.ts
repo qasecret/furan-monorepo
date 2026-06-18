@@ -17,6 +17,7 @@ import {
   inboxCountInput,
   inboxListInput,
   inboxListOutput,
+  inboxRejectClusterInput,
   inboxRejectInput,
 } from "@furan/shared-types";
 import { z } from "zod";
@@ -25,6 +26,7 @@ import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
 
+import { GROUP_APPROVE_CAP } from "./checkpoint-grouping.js";
 import { approveRun } from "./runs.js";
 
 /** Map the window filter to a Postgres interval literal, or null for "all". */
@@ -94,6 +96,158 @@ export const inboxRouter = t.router({
         interval === null
           ? sql`true`
           : sql`${testRuns.createdAt} >= now() - ${interval}::interval`;
+
+      // 5-sim. Similarity grouping mode (ADR-043): cluster-contiguous ordering
+      //        with cross-build run/build counts via a CTE + mixed-direction keyset.
+      if (input.group === "similarity") {
+        // Mixed-direction keyset cursor over the cluster-contiguous ordering.
+        // Sort key: cluster_run_count DESC, project_id ASC, sig_sort ASC,
+        // created_at DESC, id DESC — where sig_sort = COALESCE(primary_signature, '~')
+        // pushes NULL-primary singletons last WITHOUT a NULLS LAST keyset special-case.
+        let cursorPred = sql`true`;
+        if (input.cursor) {
+          try {
+            const c = JSON.parse(
+              Buffer.from(input.cursor, "base64url").toString("utf8"),
+            ) as {
+              crc: number;
+              pid: string;
+              sig: string;
+              cat: string;
+              id: string;
+            };
+            // Validate decoded fields BEFORE they reach the `::uuid`/`::timestamptz`
+            // casts (which execute at ctx.db.execute, outside this try) — an
+            // invalid value would otherwise 500 instead of restarting pagination.
+            const UUID_RE =
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (
+              !Number.isFinite(c.crc) ||
+              typeof c.pid !== "string" ||
+              !UUID_RE.test(c.pid) ||
+              typeof c.id !== "string" ||
+              !UUID_RE.test(c.id) ||
+              typeof c.sig !== "string" ||
+              typeof c.cat !== "string" ||
+              Number.isNaN(Date.parse(c.cat))
+            ) {
+              throw new Error("invalid cursor");
+            }
+            cursorPred = sql`(
+              s.cluster_run_count < ${c.crc}
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id > ${c.pid}::uuid)
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort > ${c.sig})
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort = ${c.sig} AND s.created_at < ${c.cat}::timestamptz)
+              OR (s.cluster_run_count = ${c.crc} AND s.project_id = ${c.pid}::uuid AND s.sig_sort = ${c.sig} AND s.created_at = ${c.cat}::timestamptz AND s.run_id < ${c.id}::uuid)
+            )`;
+          } catch {
+            // Malformed cursor — start from the top.
+          }
+        }
+
+        const limit = input.limit + 1;
+        const projList = sql.join(
+          filterProjects.map((p) => sql`${p}::uuid`),
+          sql`, `,
+        );
+
+        // Build raw-sql status + window filters for use inside the CTE (where
+        // Drizzle column references like "test_runs"."status" would fail because
+        // the table is aliased as `tr`).
+        const simStatusFilter =
+          input.status === "all-open"
+            ? sql`tr.status IN ('unresolved', 'failed')`
+            : sql`tr.status = ${input.status}`;
+        const simWindowFilter =
+          interval === null
+            ? sql`true`
+            : sql`tr.created_at >= now() - ${interval}::interval`;
+
+        // The cursor predicate + ORDER BY reference `cluster_run_count` and
+        // `sig_sort`, which only exist on the OUTER select — so the in_scope/agg
+        // CTEs + LEFT JOIN form an inner subquery and the keyset/order/limit wrap it.
+        const rows = await ctx.db.execute<{
+          run_id: string;
+          project_id: string;
+          project_name: string;
+          variation_name: string;
+          build_number: number | null;
+          branch: string | null;
+          status: RunStatus;
+          created_at: Date;
+          thumbnail_url: string | null;
+          primary_signature: string | null;
+          cluster_run_count: number;
+          cluster_build_count: number;
+        }>(sql`
+          SELECT * FROM (
+            WITH in_scope AS (
+              SELECT tr.id, tr.project_id, tr.build_id, tr.name, tr.status,
+                     tr.created_at, tr.thumbnail_url, tr.primary_signature,
+                     p.name AS project_name, b.number AS build_number, b.branch_name AS branch
+              FROM test_runs tr
+              JOIN projects p ON p.id = tr.project_id
+              JOIN builds b ON b.id = tr.build_id
+              WHERE tr.project_id IN (${projList}) AND ${simStatusFilter} AND ${simWindowFilter}
+            ),
+            agg AS (
+              SELECT project_id, primary_signature,
+                     COUNT(*)::int AS run_count, COUNT(DISTINCT build_id)::int AS build_count
+              FROM in_scope WHERE primary_signature IS NOT NULL
+              GROUP BY project_id, primary_signature
+            )
+            SELECT s.id AS run_id, s.project_id, s.project_name, s.name AS variation_name,
+                   s.build_number, s.branch, s.status,
+                   -- Truncate to ms so the keyset matches the cursor's ms-precision
+                   -- timestamp (toISOString); else same-ms/different-µs rows are dropped.
+                   date_trunc('milliseconds', s.created_at) AS created_at,
+                   s.thumbnail_url,
+                   s.primary_signature,
+                   COALESCE(a.run_count, 1) AS cluster_run_count,
+                   COALESCE(a.build_count, 1) AS cluster_build_count,
+                   COALESCE(s.primary_signature, '~') AS sig_sort
+            FROM in_scope s
+            LEFT JOIN agg a ON a.project_id = s.project_id AND a.primary_signature = s.primary_signature
+          ) s
+          WHERE ${cursorPred}
+          ORDER BY s.cluster_run_count DESC, s.project_id ASC, s.sig_sort ASC,
+                   s.created_at DESC, s.run_id DESC
+          LIMIT ${limit}
+        `);
+
+        const pageHasMore = rows.length > input.limit;
+        const page = pageHasMore ? rows.slice(0, input.limit) : rows;
+        const last = pageHasMore ? page[page.length - 1] : null;
+        const nextCursor = last
+          ? Buffer.from(
+              JSON.stringify({
+                crc: Number(last.cluster_run_count),
+                pid: last.project_id,
+                sig: last.primary_signature ?? "~",
+                cat: new Date(last.created_at).toISOString(),
+                id: last.run_id,
+              }),
+            ).toString("base64url")
+          : null;
+
+        return {
+          items: page.map((r) => ({
+            runId: r.run_id,
+            projectId: r.project_id,
+            projectName: r.project_name,
+            variationName: r.variation_name,
+            buildNumber: r.build_number,
+            branch: r.branch,
+            status: r.status,
+            createdAt: new Date(r.created_at).toISOString(),
+            thumbnailUrl: r.thumbnail_url,
+            primarySignature: r.primary_signature,
+            clusterRunCount: Number(r.cluster_run_count),
+            clusterBuildCount: Number(r.cluster_build_count),
+          })),
+          nextCursor,
+        };
+      }
 
       // 5. Cursor: decode the opaque cursor string back to a (createdAt, id)
       //    pair for keyset pagination.
@@ -231,6 +385,96 @@ export const inboxRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       return approveRun(ctx, input.runId);
+    }),
+
+  /**
+   * Cross-build, signature-keyed bulk reject (ADR-043 §4.3).
+   *
+   * Given a (projectId, signature) cluster, re-derives the in-scope unresolved/
+   * failed runs server-side (never trusts a client run list) under the same
+   * status+window filter and bulk-marks them `failed` (no baseline mutation).
+   * Mirrors `runs.rejectCheckpointGroup` but inbox-filter-scoped, cross-build,
+   * and signature-keyed.
+   *
+   * The inbox status filter (unresolved/failed) is already ⊆ reviewer-legal
+   * statuses, so no separate REVIEWER_LEGAL_FROM import is needed — every
+   * matched run is a legal reject target.
+   *
+   * Cross-PROJECT is NOT crossed: `eq(testRuns.projectId, input.projectId)`
+   * guarantees isolation. Cross-BUILD IS reached: no build filter.
+   */
+  rejectCluster: t.procedure
+    .input(inboxRejectClusterInput)
+    .use(authed)
+    .use(
+      projectMember<{ projectId: string }>("write", {
+        from: {
+          resolver: async ({ input }) => input.projectId,
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const statusFilter =
+        input.status === "all-open"
+          ? sql`${testRuns.status} IN ('unresolved', 'failed')`
+          : eq(testRuns.status, input.status);
+      const interval = WINDOW_INTERVAL[input.window];
+      const windowFilter =
+        interval === null
+          ? sql`true`
+          : sql`${testRuns.createdAt} >= now() - ${interval}::interval`;
+
+      // Re-derive the cluster server-side (never a client run list).
+      const matches = await ctx.db
+        .select({ id: testRuns.id, buildId: testRuns.buildId })
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.projectId, input.projectId),
+            eq(testRuns.primarySignature, input.signature),
+            statusFilter,
+            windowFilter,
+          ),
+        )
+        .orderBy(desc(testRuns.createdAt), desc(testRuns.id));
+
+      const cap = GROUP_APPROVE_CAP;
+      const capped = matches.length > cap;
+      // slice(0, cap) already returns the whole array when length <= cap — no ternary.
+      const targets = matches.slice(0, cap);
+
+      if (targets.length === 0) {
+        return { rejected: 0, runCount: 0, buildCount: 0, capped: false, cap };
+      }
+
+      const targetRunIds = targets.map((t) => t.id);
+      const distinctBuildIds = [...new Set(targets.map((t) => t.buildId))];
+
+      await ctx.db
+        .update(testRuns)
+        .set({ status: "failed", merge: false })
+        .where(inArray(testRuns.id, targetRunIds));
+
+      for (const runId of targetRunIds) {
+        await ctx.broadcaster.publishProjectEvent(input.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      for (const buildId of distinctBuildIds) {
+        await ctx.broadcaster.publishProjectEvent(input.projectId, {
+          event: "build_updated",
+          data: { id: buildId },
+        });
+      }
+
+      return {
+        rejected: targetRunIds.length,
+        runCount: targetRunIds.length,
+        buildCount: distinctBuildIds.length,
+        capped,
+        cap,
+      };
     }),
 
   /**

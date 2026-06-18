@@ -19,6 +19,8 @@ import {
   runVlm,
   classifyRegions,
   computeCheckpointSignature,
+  severityRank,
+  EXCLUDED_SOURCES,
   DEFAULT_ENGINE_CONFIG,
   DEFAULT_VLM_CONFIG,
   configForMatchLevel,
@@ -27,6 +29,7 @@ import {
   anthropicProvider,
   type EngineConfig,
   type MatchLevel,
+  type Severity,
   type VlmProvider,
   type VlmProviderConfig,
 } from "@furan/diff-engine";
@@ -49,6 +52,7 @@ import {
   type ElementMap,
 } from "./element-map-resolver.js";
 import { resolveL2Bboxes } from "./l2-bbox-resolver.js";
+import { computePrimarySignature } from "./primary-signature.js";
 import {
   classifyLayoutContent,
   type ReviewerRegion,
@@ -1161,6 +1165,32 @@ async function handleDiffJobInner(
   const aggregateVlmDescription =
     perViewport.find((v) => v.vlmDescription)?.vlmDescription ?? null;
 
+  // ADR-043 §4.2: roll up the most-severe unresolved checkpoint's diff_signature
+  // as the run's primary_signature for inbox grouping. Computed from perViewport
+  // so it includes all checkpoints that completed diffing. sweeper.ts (stale-run
+  // finalizer) has no perViewport data and intentionally leaves primary_signature NULL.
+  // INVARIANT: computed once here, never recomputed — relies on v1.1 having no
+  // partial approval (approving any checkpoint flips the whole run to passed, so a
+  // run stays wholly unresolved while in the inbox). If partial approval ever lands,
+  // primary_signature must be recomputed when a checkpoint's status changes.
+  const primarySignature = computePrimarySignature(
+    perViewport.map((v) => ({
+      diffSignature: v.diffSignature ?? null,
+      // Rank by the SAME regions the signature is built from — EXCLUDED_SOURCES
+      // (l1_pixel/dynamic_text) are noise dropped by computeCheckpointSignature, so
+      // the "most severe" checkpoint and the signature it donates stay consistent.
+      worstSeverity: v.regions
+        .filter((r) => !EXCLUDED_SOURCES.has(r.source))
+        .reduce<Severity>(
+          (worst, r) =>
+            severityRank(r.severity as Severity) > severityRank(worst)
+              ? (r.severity as Severity)
+              : worst,
+          "none",
+        ),
+    })),
+  );
+
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
       .update(testRuns)
@@ -1171,6 +1201,7 @@ async function handleDiffJobInner(
         status: aggregateStatus,
         baselineSource: baseline.source,
         vlmDescription: aggregateVlmDescription,
+        primarySignature,
       })
       .where(eq(testRuns.id, data.runId));
 

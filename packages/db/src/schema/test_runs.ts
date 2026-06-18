@@ -55,6 +55,7 @@ export const testRuns = pgTable(
     thumbnailUrl: text("thumbnail_url"),
     checkpointCount: integer("checkpoint_count").notNull().default(0), // denormalized rollup
     completedAt: timestamp("completed_at", { withTimezone: true }), // set by POST /runs/:id/complete
+    primarySignature: text("primary_signature"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -68,6 +69,10 @@ export const testRuns = pgTable(
     statusCreatedIdx: index("test_runs_status_created_idx").on(
       t.status,
       t.createdAt,
+    ),
+    primarySignatureIdx: index("test_runs_project_primary_sig_idx").on(
+      t.projectId,
+      t.primarySignature,
     ),
   }),
 );
