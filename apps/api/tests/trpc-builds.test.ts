@@ -245,6 +245,125 @@ d("tRPC builds router", () => {
     expect(byKey.shard).toEqual(["1"]);
   });
 
+  describe("builds.getById", () => {
+    test("returns one build with aggregateStatus + counts", async () => {
+      const [b] = await h.db
+        .insert(builds)
+        .values({
+          projectId: s.projectId,
+          ciBuildId: "g1",
+          number: 7,
+          name: "nightly",
+          branchName: "main",
+        })
+        .returning();
+      if (!b) throw new Error("build not seeded");
+      await h.db.insert(testRuns).values([
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          name: "t1",
+          branchName: "main",
+          status: "passed",
+        },
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          name: "t2",
+          branchName: "main",
+          status: "unresolved",
+        },
+        {
+          projectId: s.projectId,
+          buildId: b.id,
+          name: "t3",
+          branchName: "main",
+          status: "failed",
+        },
+      ]);
+      const client = mkClient(h, s.editorJwt);
+      const res = await client.builds.getById.query({ buildId: b.id });
+      expect(res.id).toBe(b.id);
+      expect(res.number).toBe(7);
+      expect(res.name).toBe("nightly");
+      expect(res.aggregateStatus).toBe("unresolved");
+      expect(res.runCount).toBe(3);
+      expect(res.unresolvedCount).toBe(1);
+      expect(res.failedCount).toBe(1);
+      expect(res.passedCount).toBe(1);
+    });
+
+    test("NOT_FOUND for a missing build id", async () => {
+      const client = mkClient(h, s.editorJwt);
+      await expect(
+        client.builds.getById.query({
+          buildId: "00000000-0000-0000-0000-000000000000",
+        }),
+      ).rejects.toThrow(/NOT_FOUND/);
+    });
+
+    test("non-member is rejected (FORBIDDEN) for another project's build", async () => {
+      const [other] = await h.db
+        .insert(users)
+        .values({
+          email: "other-gbi@t.example",
+          hashedPassword: await hashPassword("x"),
+          firstName: "O",
+          lastName: "X",
+          role: "editor",
+          isActive: true,
+        })
+        .returning();
+      if (!other) throw new Error("other user not seeded");
+      const [b] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, ciBuildId: "g2" })
+        .returning();
+      if (!b) throw new Error("build not seeded");
+      const otherJwt = h.app.jwt.sign({ sub: other.id, role: "editor" });
+      const client = mkClient(h, otherJwt);
+      await expect(
+        client.builds.getById.query({ buildId: b.id }),
+      ).rejects.toThrow(/FORBIDDEN/);
+    });
+
+    test("admin bypasses membership", async () => {
+      const [admin] = await h.db
+        .insert(users)
+        .values({
+          email: "admin-gbi@t.example",
+          hashedPassword: await hashPassword("x"),
+          firstName: "A",
+          lastName: "D",
+          role: "admin",
+          isActive: true,
+        })
+        .returning();
+      if (!admin) throw new Error("admin not seeded");
+      const [b] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, ciBuildId: "g3" })
+        .returning();
+      if (!b) throw new Error("build not seeded");
+      const adminJwt = h.app.jwt.sign({ sub: admin.id, role: "admin" });
+      const client = mkClient(h, adminJwt);
+      const res = await client.builds.getById.query({ buildId: b.id });
+      expect(res.id).toBe(b.id);
+    });
+
+    test("returns aggregateStatus 'empty' + zero counts for a build with no runs", async () => {
+      const [b] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, ciBuildId: "g-empty" })
+        .returning();
+      if (!b) throw new Error("build not seeded");
+      const client = mkClient(h, s.editorJwt);
+      const res = await client.builds.getById.query({ buildId: b.id });
+      expect(res.aggregateStatus).toBe("empty");
+      expect(res.runCount).toBe(0);
+    });
+  });
+
   test("non-member is rejected with FORBIDDEN", async () => {
     const [other] = await h.db
       .insert(users)

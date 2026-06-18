@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { BuildRow, type BuildRowData } from "./build-row";
-import { BuildRunsDrawer } from "./build-runs-drawer";
 import { PropertiesFilter } from "./properties-filter";
 
 import { Button } from "@/components/ui/button";
@@ -31,7 +30,6 @@ export function BuildsTable({ projectId }: Props) {
   const [properties, setProperties] = useState<Record<string, string>>({});
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<BuildRowData[]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   const { data, isLoading, error } = trpc.builds.list.useQuery({
     projectId,
@@ -73,7 +71,6 @@ export function BuildsTable({ projectId }: Props) {
     setProperties(next);
     setAccumulated([]);
     setCursor(undefined);
-    setExpanded(null);
   };
 
   return (
@@ -97,21 +94,14 @@ export function BuildsTable({ projectId }: Props) {
           data-testid="builds-table"
         >
           {items.map((b) => (
-            <div key={b.id}>
-              <BuildRow
-                build={b}
-                expanded={expanded === b.id}
-                onToggleExpand={() =>
-                  setExpanded((cur) => (cur === b.id ? null : b.id))
-                }
-                onPropertyClick={(k, v) =>
-                  onPropertiesChange({ ...properties, [k]: v })
-                }
-              />
-              {expanded === b.id && (
-                <BuildRunsDrawer projectId={projectId} buildId={b.id} />
-              )}
-            </div>
+            <BuildRow
+              key={b.id}
+              build={b}
+              projectId={projectId}
+              onPropertyClick={(k, v) =>
+                onPropertiesChange({ ...properties, [k]: v })
+              }
+            />
           ))}
         </div>
       )}

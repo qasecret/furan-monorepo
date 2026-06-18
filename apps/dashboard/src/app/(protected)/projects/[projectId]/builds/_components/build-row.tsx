@@ -1,10 +1,13 @@
 "use client";
 
 import type { BuildAggregateStatus } from "@furan/shared-types";
+import { ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { buildDisplayName } from "@/lib/build-display-name";
+import { formatRelativeTime } from "@/lib/format";
 
 export interface BuildRowData {
   id: string;
@@ -24,27 +27,12 @@ export interface BuildRowData {
 
 interface Props {
   build: BuildRowData;
-  expanded: boolean;
-  onToggleExpand: () => void;
+  projectId: string;
   onPropertyClick: (key: string, value: string) => void;
 }
 
-function relative(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 60) return "just now";
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  if (sec < 86400 * 30) return `${Math.floor(sec / 86400)}d ago`;
-  return d.toLocaleDateString();
-}
-
-export function BuildRow({
-  build,
-  expanded,
-  onToggleExpand,
-  onPropertyClick,
-}: Props) {
+export function BuildRow({ build, projectId, onPropertyClick }: Props) {
+  const router = useRouter();
   const propEntries = Object.entries(build.properties);
   const visibleProps = propEntries.slice(0, 5);
   const overflow = propEntries.length - visibleProps.length;
@@ -58,10 +46,21 @@ export function BuildRow({
       .filter(Boolean)
       .join(" · ") || `${build.runCount} runs`;
 
+  const open = () => router.push(`/projects/${projectId}/builds/${build.id}`);
+
   return (
     <div
       className="border-b border-zinc-200 last:border-0 px-4 py-3 hover:bg-zinc-100/60 transition-colors cursor-pointer dark:border-zinc-800 dark:hover:bg-zinc-900/30"
-      onClick={onToggleExpand}
+      onClick={open}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${buildDisplayName(build)}`}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
       data-testid={`build-row-${build.id}`}
     >
       <div className="flex items-center gap-3 flex-wrap">
@@ -105,11 +104,12 @@ export function BuildRow({
           )}
         </div>
         <div className="text-xs text-zinc-500 whitespace-nowrap dark:text-zinc-500">
-          {relative(build.createdAt)}
+          {formatRelativeTime(build.createdAt)}
         </div>
-        <span aria-hidden className="text-zinc-500 dark:text-zinc-500">
-          {expanded ? "▾" : "▸"}
-        </span>
+        <ChevronRight
+          aria-hidden
+          className="h-4 w-4 text-zinc-500 dark:text-zinc-500"
+        />
       </div>
     </div>
   );
