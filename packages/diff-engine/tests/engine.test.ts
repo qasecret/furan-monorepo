@@ -56,29 +56,7 @@ describe("runDiff", () => {
     expect(result.durationMs.l2).toBeNull();
   });
 
-  it("never emits l2 regions and reports ranTiers ['l1'] even with DOM present", async () => {
-    const result = await runDiff({
-      baseline: {
-        image: PNG_FIXTURE("baseline-a.png"),
-        dom: "<div><p>old</p></div>",
-      },
-      candidate: {
-        image: PNG_FIXTURE("candidate-a-major.png"),
-        dom: "<div><p>new</p></div>",
-      },
-      config: {
-        diffThreshold: 0.001,
-        l2Enabled: true,
-        engine: "odiff",
-        engineConfig: DEFAULT_ENGINE_CONFIG,
-      },
-    });
-    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
-    expect(result.ranTiers).toEqual(["l1"]);
-    expect(result.durationMs.l2).toBeNull();
-  });
-
-  it("l2Enabled=false skips L2 regardless of L1", async () => {
+  it("l2Enabled is a no-op now — image-only regardless of the flag (image-first P2, ADR-047)", async () => {
     const result = await runDiff({
       baseline: {
         image: PNG_FIXTURE("baseline-a.png"),
@@ -95,6 +73,7 @@ describe("runDiff", () => {
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
     });
+    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
     expect(result.ranTiers).toEqual(["l1"]);
   });
 

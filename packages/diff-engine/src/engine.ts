@@ -20,10 +20,11 @@ export interface RunDiffInput {
   candidate: { image: Buffer; dom?: string };
   config: ProjectDiffConfig;
   /**
-   * Tier 1.4 (Eyes-parity `ignoreDisplacements`): when true, the L2
-   * pass drops `relocateGroup` regions for this checkpoint AND the
-   * L1 pre-alignment pass detects + corrects a global pixel shift
-   * before running the engine. Defaults to false.
+   * Eyes-parity `ignoreDisplacements`: when true, the L1 pre-alignment
+   * pass detects + corrects a global pixel shift before running the
+   * engine, so a moved-but-unchanged page doesn't light up as a diff.
+   * Defaults to false. (The former L2 `relocateGroup` half was removed
+   * with the L2 tier in image-first P2, ADR-047.)
    */
   ignoreDisplacements?: boolean;
   /**
