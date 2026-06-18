@@ -19,6 +19,7 @@ const cluster: ClusterGroup = {
       projectName: "P",
       variationName: "Checkout",
       buildNumber: 1,
+      buildId: "dddd0001-0000-0000-0000-000000000001",
       branch: "main",
       status: "unresolved",
       createdAt: "2026-06-18T00:00:00.000Z",
