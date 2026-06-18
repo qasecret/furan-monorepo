@@ -528,4 +528,27 @@ d("tRPC runs.list", () => {
       expect(page.items[0]?.name).toBe("row-3");
     });
   });
+
+  test("runs.list returns thumbnailUrl", async () => {
+    const [b] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, ciBuildId: "thumb-b" })
+      .returning();
+    if (!b) throw new Error("build not seeded");
+    await h.db.insert(testRuns).values({
+      projectId: s.projectId,
+      buildId: b.id,
+      name: "thumbed",
+      branchName: "main",
+      status: "unresolved",
+      thumbnailUrl: "https://example/thumb.webp",
+    });
+    const client = makeClient(baseUrl, s.memberJwt);
+    const res = await client.runs.list.query({
+      projectId: s.projectId,
+      buildId: b.id,
+    });
+    const row = res.items.find((r) => r.name === "thumbed");
+    expect(row?.thumbnailUrl).toBe("https://example/thumb.webp");
+  });
 });
