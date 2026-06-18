@@ -5,14 +5,13 @@ import { toast } from "sonner";
 
 import { GroupApprovalCalloutView } from "./GroupApprovalCalloutView";
 
+import { plural } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
   runId: string;
   checkpointId?: string;
 }
-
-const plural = (n: number) => (n === 1 ? "" : "s");
 
 export function GroupApprovalCallout({ runId, checkpointId }: Props) {
   const [action, setAction] = useState<"accept" | "reject" | null>(null);
@@ -58,7 +57,7 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
       invalidateAll();
       toast.success(
         `Rejected ${res.rejected} run${plural(res.rejected)}` +
-          (res.capped ? ` (capped at ${res.cap} — run again for more)` : ""),
+          (res.capped ? ` (capped at ${res.cap} runs)` : ""),
       );
       setAction(null);
     },
@@ -73,6 +72,13 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
     new Map(group.checkpoints.map((c) => [c.runId, c.testName])).entries(),
   ).map(([id, testName]) => ({ id, testName }));
 
+  // Reject is run-level and fails the seed's OWN run too, but getCheckpointGroup
+  // excludes the seed checkpoint — so add the seed run unless one of the other
+  // matched checkpoints already belongs to it. (The accept dialog instead says
+  // "current checkpoint plus N other" and needs no adjustment.)
+  const rejectRunCount =
+    group.runCount + (runs.some((r) => r.id === runId) ? 0 : 1);
+
   const isPending =
     action === "accept"
       ? approveGroup.isPending
@@ -84,6 +90,7 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
     <GroupApprovalCalloutView
       checkpointCount={group.checkpointCount}
       runCount={group.runCount}
+      rejectRunCount={rejectRunCount}
       capped={group.capped}
       runs={runs}
       isPending={isPending}

@@ -174,8 +174,23 @@ describe("GroupApprovalCallout (container)", () => {
       capped: true,
       cap: 200,
     });
+    // Reject is non-progressive when capped (re-running re-fails the same runs),
+    // so the suffix must NOT say "run again for more" (unlike the accept toast).
     expect(toastSuccess).toHaveBeenCalledWith(
-      "Rejected 200 runs (capped at 200 — run again for more)",
+      "Rejected 200 runs (capped at 200 runs)",
     );
+  });
+
+  it("reject dialog counts the seed's own run (runCount + 1) when it isn't among the others", () => {
+    // GROUP.runCount = 2 (runs r1, r2); the viewed run "run-1" is not among them,
+    // so a reject fails 3 runs — the dialog must say 3, not the seed-excluded 2.
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
+    fireEvent.click(screen.getByTestId("group-approval-reject-all"));
+    const dialog = screen.getByTestId("group-approval-dialog");
+    expect(dialog.textContent).toContain("3 runs");
+    expect(dialog.textContent).toContain("including the one you're viewing");
+    // The "Other affected runs" list still shows the 2 other runs.
+    expect(dialog.textContent).toContain("Other affected runs (2)");
   });
 });

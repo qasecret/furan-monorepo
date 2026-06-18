@@ -20,6 +20,7 @@ function Harness(props: Partial<GroupApprovalCalloutViewProps>) {
     <GroupApprovalCalloutView
       checkpointCount={2}
       runCount={2}
+      rejectRunCount={3}
       capped={false}
       runs={RUNS}
       isPending={false}
@@ -73,17 +74,29 @@ describe("GroupApprovalCalloutView", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("Reject all opens a reject dialog whose copy says runs will be failed", () => {
+  it("Reject all dialog discloses the seed-inclusive run count and names the current run", () => {
     const onConfirm = vi.fn();
+    // runCount=2 (other runs), rejectRunCount=3 (those + the run being viewed).
     render(<Harness onConfirm={onConfirm} />);
     fireEvent.click(screen.getByTestId("group-approval-reject-all"));
     const dialog = screen.getByTestId("group-approval-dialog");
     expect(dialog.textContent).toContain("failed");
+    // Uses rejectRunCount (3), NOT runCount (2), so the destructive count isn't
+    // understated, and it calls out the run currently on screen.
+    expect(dialog.textContent).toContain("3 runs");
+    expect(dialog.textContent).toContain("including the one you're viewing");
     expect(screen.getByTestId("group-approval-confirm").textContent).toContain(
       "Reject all",
     );
     fireEvent.click(screen.getByTestId("group-approval-confirm"));
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("reject dialog shows a + on the run count when capped", () => {
+    render(<Harness action="reject" capped={true} rejectRunCount={200} />);
+    expect(screen.getByTestId("group-approval-dialog").textContent).toContain(
+      "200+ runs",
+    );
   });
 
   it("disables confirm while pending", () => {

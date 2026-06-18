@@ -34,6 +34,7 @@ import {
   approveCheckpointInTx,
   deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
+  loadGroupSeed,
 } from "./checkpoint-grouping.js";
 
 const runIdInput = z.object({ runId: z.string().uuid() });
@@ -1532,26 +1533,7 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const seedRows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          diffSignature: screenshots.diffSignature,
-          buildId: testRuns.buildId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (seed.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
+      const seed = await loadGroupSeed(ctx.db, input);
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
       if (seed.diffSignature === null) {
         return {
@@ -1624,26 +1606,7 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const seedRows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          diffSignature: screenshots.diffSignature,
-          buildId: testRuns.buildId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (seed.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
+      const seed = await loadGroupSeed(ctx.db, input);
       // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
       if (seed.diffSignature === null) {
         return {
@@ -1752,34 +1715,17 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const seedRows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          diffSignature: screenshots.diffSignature,
-          buildId: testRuns.buildId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (seed.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
-      if (seed.diffSignature === null) {
-        return {
-          rejected: 0,
-          runCount: 0,
-          capped: false,
-          cap: GROUP_APPROVE_CAP,
-        };
-      }
+      const seed = await loadGroupSeed(ctx.db, input);
+      // Shared zero-result for both empty-group exits (NULL signature below +
+      // zero unresolved runs after derivation).
+      const empty = {
+        rejected: 0,
+        runCount: 0,
+        capped: false,
+        cap: GROUP_APPROVE_CAP,
+      };
+      // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
+      if (seed.diffSignature === null) return empty;
 
       // Same build-scoped, project-guarded, signature derivation as
       // approveCheckpointGroup. Reject is RUN-level (no per-checkpoint reject),
@@ -1820,18 +1766,10 @@ export const runsRouter = t.router({
       // a no-op) instead of draining the next window. >cap distinct runs sharing
       // one signature in a build is pathological; the cap is a blast-radius bound.
       const capped = distinctRunIds.length > GROUP_APPROVE_CAP;
-      const targetRunIds = capped
-        ? distinctRunIds.slice(0, GROUP_APPROVE_CAP)
-        : distinctRunIds;
+      // slice(0, CAP) already returns the whole array when length <= CAP — no ternary.
+      const targetRunIds = distinctRunIds.slice(0, GROUP_APPROVE_CAP);
 
-      if (targetRunIds.length === 0) {
-        return {
-          rejected: 0,
-          runCount: 0,
-          capped: false,
-          cap: GROUP_APPROVE_CAP,
-        };
-      }
+      if (targetRunIds.length === 0) return empty;
 
       // Matched checkpoints are unresolved and their runs are in
       // REVIEWER_LEGAL_FROM (filtered above), so this is one batched run-level

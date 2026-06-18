@@ -12,10 +12,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { plural } from "@/lib/format";
 
 export interface GroupApprovalCalloutViewProps {
   checkpointCount: number;
+  /** Distinct OTHER runs (seed excluded) — for the chip + "Other affected runs". */
   runCount: number;
+  /** Runs a reject would fail (seed-inclusive) — for the reject confirm copy. */
+  rejectRunCount: number;
   capped: boolean;
   runs: { id: string; testName: string }[];
   isPending: boolean;
@@ -27,11 +31,10 @@ export interface GroupApprovalCalloutViewProps {
   onConfirm: () => void;
 }
 
-const plural = (n: number) => (n === 1 ? "" : "s");
-
 export function GroupApprovalCalloutView({
   checkpointCount,
   runCount,
+  rejectRunCount,
   capped,
   runs,
   isPending,
@@ -54,6 +57,20 @@ export function GroupApprovalCalloutView({
 
   const countLabel = `${checkpointCount}${capped ? "+" : ""}`;
   const isReject = action === "reject";
+  // One lookup keeps title / description / confirm label + variant in lockstep.
+  const dialogCopy = isReject
+    ? {
+        title: "Reject this change everywhere it recurs?",
+        description: `The ${rejectRunCount}${capped ? "+" : ""} run${plural(rejectRunCount)} showing this change — including the one you're viewing — will be marked failed. Each whole run is failed (not just this checkpoint), heavier than approving.`,
+        confirmVariant: "destructive" as const,
+        confirmLabel: isPending ? "Rejecting…" : "Reject all",
+      }
+    : {
+        title: "Accept this change everywhere it recurs?",
+        description: `The current checkpoint plus ${countLabel} other unresolved checkpoint${plural(checkpointCount)} with the same change will be approved — each promotes its run's baseline.`,
+        confirmVariant: "default" as const,
+        confirmLabel: isPending ? "Approving…" : "Accept all",
+      };
 
   return (
     <AlertDialog open={action !== null} onOpenChange={onOpenChange}>
@@ -91,15 +108,9 @@ export function GroupApprovalCalloutView({
 
       <AlertDialogContent data-testid="group-approval-dialog">
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {isReject
-              ? "Reject this change everywhere it recurs?"
-              : "Accept this change everywhere it recurs?"}
-          </AlertDialogTitle>
+          <AlertDialogTitle>{dialogCopy.title}</AlertDialogTitle>
           <AlertDialogDescription>
-            {isReject
-              ? `The ${runCount}${capped ? "+" : ""} run${plural(runCount)} showing this change will be marked failed. This fails each whole run (not just this checkpoint) — heavier than approving.`
-              : `The current checkpoint plus ${countLabel} other unresolved checkpoint${plural(checkpointCount)} with the same change will be approved — each promotes its run's baseline.`}
+            {dialogCopy.description}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <p className="mt-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -120,18 +131,12 @@ export function GroupApprovalCalloutView({
             Cancel
           </AlertDialogCancel>
           <Button
-            variant={isReject ? "destructive" : "default"}
+            variant={dialogCopy.confirmVariant}
             data-testid="group-approval-confirm"
             disabled={isPending}
             onClick={onConfirm}
           >
-            {isPending
-              ? isReject
-                ? "Rejecting…"
-                : "Approving…"
-              : isReject
-                ? "Reject all"
-                : "Accept all"}
+            {dialogCopy.confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
