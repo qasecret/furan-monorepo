@@ -27,6 +27,7 @@ describe("TestCard", () => {
         row={base}
         onApprove={vi.fn()}
         onReject={vi.fn()}
+        canReview={true}
       />,
     );
     expect(screen.getByText("Checkout · payment")).toBeDefined();
@@ -41,6 +42,7 @@ describe("TestCard", () => {
         row={{ ...base, thumbnailUrl: "https://x/y.webp" }}
         onApprove={vi.fn()}
         onReject={vi.fn()}
+        canReview={true}
       />,
     );
     expect((container.querySelector("img") as HTMLImageElement).src).toBe(
@@ -57,6 +59,7 @@ describe("TestCard", () => {
         row={base}
         onApprove={onApprove}
         onReject={onReject}
+        canReview={true}
       />,
     );
     fireEvent.click(screen.getByTestId(`test-card-approve-${base.id}`));
@@ -73,6 +76,7 @@ describe("TestCard", () => {
         row={base}
         onApprove={vi.fn()}
         onReject={vi.fn()}
+        canReview={true}
       />,
     );
     fireEvent.click(screen.getByTestId(`test-card-${base.id}`));
@@ -89,11 +93,31 @@ describe("TestCard", () => {
         row={base}
         onApprove={vi.fn()}
         onReject={vi.fn()}
+        canReview={true}
       />,
     );
     fireEvent.keyDown(screen.getByTestId(`test-card-${base.id}`), {
       key: "Enter",
     });
+    expect(pushMock).toHaveBeenCalledWith(
+      `/projects/p1/runs/${base.id}/checkpoints/_first`,
+    );
+  });
+
+  test("canReview=false hides approve/reject but the card still navigates", () => {
+    pushMock.mockClear();
+    render(
+      <TestCard
+        projectId="p1"
+        row={base}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        canReview={false}
+      />,
+    );
+    expect(screen.queryByTestId(`test-card-approve-${base.id}`)).toBeNull();
+    expect(screen.queryByTestId(`test-card-reject-${base.id}`)).toBeNull();
+    fireEvent.click(screen.getByTestId(`test-card-${base.id}`));
     expect(pushMock).toHaveBeenCalledWith(
       `/projects/p1/runs/${base.id}/checkpoints/_first`,
     );

@@ -21,9 +21,16 @@ interface Props {
   row: TestCardData;
   onApprove: (runId: string) => void;
   onReject: (runId: string) => void;
+  canReview: boolean;
 }
 
-export function TestCard({ projectId, row, onApprove, onReject }: Props) {
+export function TestCard({
+  projectId,
+  row,
+  onApprove,
+  onReject,
+  canReview,
+}: Props) {
   const router = useRouter();
   const open = () =>
     router.push(`/projects/${projectId}/runs/${row.id}/checkpoints/_first`);
@@ -71,30 +78,34 @@ export function TestCard({ projectId, row, onApprove, onReject }: Props) {
             ? `${row.diffPercent.toFixed(1)}% changed`
             : "—"}
         </span>
-        <Button
-          variant="ghost"
-          className="px-2 py-1"
-          data-testid={`test-card-approve-${row.id}`}
-          aria-label={`Approve ${row.name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onApprove(row.id);
-          }}
-        >
-          <Check className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
-        </Button>
-        <Button
-          variant="ghost"
-          className="px-2 py-1"
-          data-testid={`test-card-reject-${row.id}`}
-          aria-label={`Reject ${row.name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onReject(row.id);
-          }}
-        >
-          <X className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
-        </Button>
+        {canReview ? (
+          <>
+            <Button
+              variant="ghost"
+              className="px-2 py-1"
+              data-testid={`test-card-approve-${row.id}`}
+              aria-label={`Approve ${row.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onApprove(row.id);
+              }}
+            >
+              <Check className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2 py-1"
+              data-testid={`test-card-reject-${row.id}`}
+              aria-label={`Reject ${row.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReject(row.id);
+              }}
+            >
+              <X className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
+            </Button>
+          </>
+        ) : null}
       </div>
     </div>
   );

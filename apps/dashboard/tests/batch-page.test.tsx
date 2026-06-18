@@ -99,7 +99,14 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(<BatchPage projectId="p1" buildId="b1" projectName="Acme" />);
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={true}
+      />,
+    );
     await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
     expect(screen.getByText("Search")).toBeDefined();
     expect(screen.getByText(/#42/)).toBeDefined();
@@ -118,7 +125,14 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(<BatchPage projectId="p1" buildId="b1" projectName="Acme" />);
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={true}
+      />,
+    );
     expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({
         buildId: "b1",
@@ -128,12 +142,13 @@ describe("BatchPage", () => {
     );
   });
 
-  test("calls notFound() when the build query errors (bad buildId)", () => {
+  test("calls notFound() when the build query errors with NOT_FOUND", () => {
     notFoundMock.mockClear();
     getByIdMock.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      error: { data: { code: "NOT_FOUND" } },
     });
     listMock.mockReturnValue({
       data: { items: [], nextCursor: null },
@@ -142,9 +157,42 @@ describe("BatchPage", () => {
       refetch: vi.fn(),
     });
     expect(() =>
-      render(<BatchPage projectId="p1" buildId="bad" projectName="Acme" />),
+      render(
+        <BatchPage
+          projectId="p1"
+          buildId="bad"
+          projectName="Acme"
+          canReview={true}
+        />,
+      ),
     ).toThrow(/NEXT_NOT_FOUND/);
     expect(notFoundMock).toHaveBeenCalled();
+  });
+
+  test("does not call notFound() on a non-NOT_FOUND build error; shows an error state", () => {
+    notFoundMock.mockClear();
+    getByIdMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: { data: { code: "FORBIDDEN" }, message: "FORBIDDEN" },
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={true}
+      />,
+    );
+    expect(notFoundMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/Couldn’t load this build/)).toBeDefined();
   });
 
   test("Load more appends the next page instead of replacing it", async () => {
@@ -190,7 +238,14 @@ describe("BatchPage", () => {
             refetch: vi.fn(),
           },
     );
-    render(<BatchPage projectId="p1" buildId="b1" projectName="Acme" />);
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={true}
+      />,
+    );
     await waitFor(() => expect(screen.getByText("Page1Card")).toBeDefined());
     fireEvent.click(screen.getByText("Load more"));
     await waitFor(() => expect(screen.getByText("Page2Card")).toBeDefined());
@@ -210,11 +265,55 @@ describe("BatchPage", () => {
       refetch: vi.fn(),
     });
     bulkApproveMock.mockClear();
-    render(<BatchPage projectId="p1" buildId="b1" projectName="Acme" />);
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={true}
+      />,
+    );
     fireEvent.click(screen.getByTestId("batch-approve-all"));
     expect(bulkApproveMock).toHaveBeenCalledWith(
       { buildId: "b1" },
       expect.anything(),
     );
+  });
+
+  test("canReview=false hides per-card approve/reject and the Approve-all button", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "r1",
+            name: "Checkout",
+            status: "unresolved",
+            diffPercent: 2.4,
+            thumbnailUrl: null,
+          },
+        ],
+        nextCursor: null,
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(
+      <BatchPage
+        projectId="p1"
+        buildId="b1"
+        projectName="Acme"
+        canReview={false}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
+    expect(screen.queryByTestId("batch-approve-all")).toBeNull();
+    expect(screen.queryByTestId("test-card-approve-r1")).toBeNull();
+    expect(screen.queryByTestId("test-card-reject-r1")).toBeNull();
   });
 });

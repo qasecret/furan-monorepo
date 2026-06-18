@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { buildDisplayName } from "@/lib/build-display-name";
+import { formatRelativeTime } from "@/lib/format";
 
 export interface BuildRowData {
   id: string;
@@ -28,16 +29,6 @@ interface Props {
   build: BuildRowData;
   projectId: string;
   onPropertyClick: (key: string, value: string) => void;
-}
-
-function relative(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date;
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 60) return "just now";
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  if (sec < 86400 * 30) return `${Math.floor(sec / 86400)}d ago`;
-  return d.toLocaleDateString();
 }
 
 export function BuildRow({ build, projectId, onPropertyClick }: Props) {
@@ -63,6 +54,7 @@ export function BuildRow({ build, projectId, onPropertyClick }: Props) {
       onClick={open}
       role="button"
       tabIndex={0}
+      aria-label={`Open ${buildDisplayName(build)}`}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -112,7 +104,7 @@ export function BuildRow({ build, projectId, onPropertyClick }: Props) {
           )}
         </div>
         <div className="text-xs text-zinc-500 whitespace-nowrap dark:text-zinc-500">
-          {relative(build.createdAt)}
+          {formatRelativeTime(build.createdAt)}
         </div>
         <ChevronRight
           aria-hidden

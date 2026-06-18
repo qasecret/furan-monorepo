@@ -1,5 +1,8 @@
 import { and, builds, eq, sql } from "@furan/db";
-import { buildAggregateStatusSchema } from "@furan/shared-types";
+import {
+  buildAggregateStatusSchema,
+  type BuildAggregateStatus,
+} from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -176,13 +179,7 @@ export const buildsRouter = t.router({
         abortedCount: Number(r.aborted_count),
         passedCount: Number(r.passed_count),
         emptyCount: Number(r.empty_count),
-        aggregateStatus: r.aggregate_status as
-          | "running"
-          | "unresolved"
-          | "failed"
-          | "aborted"
-          | "passed"
-          | "empty",
+        aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       }));
       const last = items[items.length - 1];
       const nextCursor =
@@ -292,13 +289,7 @@ export const buildsRouter = t.router({
         abortedCount: Number(r.aborted_count),
         passedCount: Number(r.passed_count),
         emptyCount: Number(r.empty_count),
-        aggregateStatus: r.aggregate_status as
-          | "running"
-          | "unresolved"
-          | "failed"
-          | "aborted"
-          | "passed"
-          | "empty",
+        aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       };
     }),
 

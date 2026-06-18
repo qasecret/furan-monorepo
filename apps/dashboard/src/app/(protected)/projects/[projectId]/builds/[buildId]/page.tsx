@@ -5,6 +5,7 @@ import { BatchPage } from "./_components/batch-page";
 
 import { Card } from "@/components/ui/card";
 import { getProject } from "@/lib/get-project";
+import { canReviewRole, getViewerRole } from "@/lib/get-viewer";
 
 export const metadata: Metadata = { title: "Build details" };
 export const dynamic = "force-dynamic";
@@ -39,11 +40,14 @@ export default async function BuildDetailPage({
     );
   }
 
+  const canReview = canReviewRole(await getViewerRole());
+
   return (
     <BatchPage
       projectId={projectId}
       buildId={buildId}
       projectName={project.data.name}
+      canReview={canReview}
     />
   );
 }

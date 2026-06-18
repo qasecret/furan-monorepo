@@ -12,6 +12,7 @@ import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Button } from "@/components/ui/button";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName } from "@/lib/build-display-name";
+import { plural } from "@/lib/format";
 import { buildCrumbs } from "@/lib/project-crumbs";
 import { trpc } from "@/lib/trpc";
 
@@ -26,9 +27,15 @@ interface Props {
   projectId: string;
   buildId: string;
   projectName: string;
+  canReview: boolean;
 }
 
-export function BatchPage({ projectId, buildId, projectName }: Props) {
+export function BatchPage({
+  projectId,
+  buildId,
+  projectName,
+  canReview,
+}: Props) {
   useProjectEvents(projectId);
   const [chip, setChip] = useState<Chip>("needs-review");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -66,14 +73,31 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
           cap: number;
         }) => {
           toast.success(
-            `Approved ${res.approved} run${res.approved === 1 ? "" : "s"}` +
+            `Approved ${res.approved} run${plural(res.approved)}` +
               (res.capped ? ` (capped at ${res.cap})` : ""),
           );
         },
       },
     );
 
-  if (buildQ.isError) notFound();
+  const build = buildQ.data as unknown as BatchHeaderData | undefined;
+
+  // A genuine missing build is a 404. Any other build error with no data
+  // (FORBIDDEN, network, 500, transient background-refetch) gets a real
+  // error state instead of masquerading as a 404 or a headerless shell.
+  if (buildQ.error?.data?.code === "NOT_FOUND") notFound();
+  // `notFound()` above returns `never`, so reaching here means the error (if
+  // any) is not NOT_FOUND — a FORBIDDEN / network / 500 / transient refetch
+  // failure. Show a real error state rather than a headerless shell.
+  if (buildQ.isError && !build) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <p className="text-sm text-red-600 dark:text-red-400">
+          Couldn’t load this build: {buildQ.error?.message ?? "unknown error"}
+        </p>
+      </div>
+    );
+  }
 
   // Dedupe on id across `accumulated` and the current page — cursor
   // pagination on a non-strictly-monotonic createdAt could legitimately
@@ -100,9 +124,10 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
     setCursor(list.data.nextCursor);
   };
 
-  const build = buildQ.data as unknown as BatchHeaderData | undefined;
   const canApproveAll =
-    !!build && (build.unresolvedCount > 0 || build.failedCount > 0);
+    canReview &&
+    !!build &&
+    (build.unresolvedCount > 0 || build.failedCount > 0);
 
   return (
     <div className="flex h-full flex-col">
@@ -165,13 +190,18 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
               row={row}
               onApprove={onApprove}
               onReject={onReject}
+              canReview={canReview}
             />
           ))}
         </div>
       )}
       {list.data?.nextCursor && (
         <div className="flex justify-center p-3">
-          <Button variant="secondary" onClick={onLoadMore}>
+          <Button
+            variant="secondary"
+            onClick={onLoadMore}
+            disabled={list.isFetching}
+          >
             Load more
           </Button>
         </div>
