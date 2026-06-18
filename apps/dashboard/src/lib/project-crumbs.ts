@@ -15,3 +15,20 @@ export function projectCrumbs(
     { label: leaf },
   ];
 }
+
+/**
+ * The shared `Projects › <name> › Builds › <buildLabel>` breadcrumb trail for
+ * the batch-detail page.
+ */
+export function buildCrumbs(
+  projectId: string,
+  projectName: string,
+  buildLabel: string,
+): BreadcrumbCrumb[] {
+  return [
+    { label: "Projects", href: "/projects" },
+    { label: projectName, href: `/projects/${projectId}` },
+    { label: "Builds", href: `/projects/${projectId}/builds` },
+    { label: buildLabel },
+  ];
+}
