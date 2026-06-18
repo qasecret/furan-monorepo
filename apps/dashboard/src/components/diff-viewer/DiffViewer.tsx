@@ -481,7 +481,7 @@ export function DiffViewer({
               label: project?.name ?? "Project",
               href: `/projects/${data.projectId}`,
             },
-            { label: "Runs", href: `/projects/${data.projectId}/runs` },
+            { label: "Builds", href: `/projects/${data.projectId}/builds` },
             { label: data.name ?? `Run ${data.id.slice(0, 8)}` },
           ]}
           title={data.name ?? "Untitled run"}

@@ -15,7 +15,8 @@ interface Props {
  *
  * Active match is permissive: any pathname that equals the tab's href OR
  * starts with `${href}/` keeps the tab highlighted, so deep routes
- * (`/projects/<id>/runs/<runId>/checkpoints/<id>`) keep "Runs" active.
+ * under a tab keep it highlighted (e.g. `/projects/<id>/builds/<buildId>` keeps
+ * the Builds tab active).
  *
  * Visual presentation is delegated to the shared `<PrimaryTabs>` primitive
  * (components/ui/primary-tabs.tsx) so all tab strips in the app share one
@@ -29,7 +30,6 @@ export function ProjectTabs({ projectId }: Props) {
       href: `/projects/${projectId}/builds`,
       isActive: false,
     },
-    { label: "Runs", href: `/projects/${projectId}/runs`, isActive: false },
     {
       label: "Variations",
       href: `/projects/${projectId}/variations`,

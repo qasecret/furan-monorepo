@@ -18,10 +18,9 @@ interface Props {
 }
 
 export function QueueRow({ row, selected, onApprove, onReject }: Props) {
-  // Mirrors the convention used by apps/dashboard/.../runs/_components/run-row.tsx:
-  // the diff viewer is keyed by (runId, diffId); for the row-level "open" link
-  // we pass the runId in both segments — the page redirects to the run's first
-  // diff if the segments don't match an exact diff record.
+  // The viewer is keyed by (runId, diffId); for a row-level open we pass runId
+  // in both segments — the page redirects to the run's first diff when they
+  // don't match an exact diff record.
   const diffHref = `/projects/${row.projectId}/runs/${row.runId}/diffs/${row.runId}`;
   return (
     <li

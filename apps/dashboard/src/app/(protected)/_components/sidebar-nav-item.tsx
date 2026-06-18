@@ -27,7 +27,7 @@ interface Props {
 
 /**
  * Sidebar link with active-state styling. Active matches when the current
- * path starts with `href` so deep routes (e.g. `/projects/<id>/runs`)
+ * path starts with `href` so deep routes (e.g. `/projects/<id>/builds/<buildId>`)
  * still highlight the "Projects" entry.
  */
 export function SidebarNavItem({ icon, label, href, badge }: Props) {
