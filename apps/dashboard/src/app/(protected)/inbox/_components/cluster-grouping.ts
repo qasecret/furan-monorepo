@@ -25,9 +25,10 @@ export type QueueGroup = ClusterGroup | SingleGroup;
 export function groupIntoClusters(items: InboxRunRow[]): QueueGroup[] {
   const groups: QueueGroup[] = [];
   for (const row of items) {
-    const inCluster =
-      row.primarySignature != null && (row.clusterRunCount ?? 1) > 1;
-    if (!inCluster) {
+    // Capture `signature` in a local so TS narrows it to `string` past the
+    // guard (a separate `inCluster` boolean would not narrow `row.primarySignature`).
+    const signature = row.primarySignature;
+    if (signature == null || (row.clusterRunCount ?? 1) <= 1) {
       groups.push({ kind: "single", row });
       continue;
     }
@@ -36,14 +37,14 @@ export function groupIntoClusters(items: InboxRunRow[]): QueueGroup[] {
       prev &&
       prev.kind === "cluster" &&
       prev.projectId === row.projectId &&
-      prev.signature === row.primarySignature
+      prev.signature === signature
     ) {
       prev.rows.push(row);
     } else {
       groups.push({
         kind: "cluster",
         projectId: row.projectId,
-        signature: row.primarySignature,
+        signature,
         runCount: row.clusterRunCount ?? 1,
         buildCount: row.clusterBuildCount ?? 1,
         rows: [row],
