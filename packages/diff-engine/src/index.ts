@@ -48,32 +48,16 @@ export type MatchLevel =
   | "Dynamic";
 
 /**
- * Maps a per-checkpoint matchLevel onto Furan's existing engine knobs
- * (ADR-038 §7.2). v1.1.0 implements Strict, Layout, Content. IgnoreColors
- * and Dynamic fall back to Strict — ADR-039 / ADR-040 will replace these
- * with proper engine paths.
+ * Image-first (ADR-047): every matchLevel maps to the single image compare.
+ * The matchLevel enum is retained on the wire/SDK for back-compat, but the
+ * old L1-vs-L2 tier routing is gone — DOM/L2 is no longer a comparison tier.
+ * (ADR-039 introduced the routing; ADR-047 reverses it.) `runL2Only` is kept
+ * in the return shape (always false) so existing callers' destructuring is
+ * undisturbed; it is removed wholesale in a later cleanup.
  */
 export function configForMatchLevel(
   baseConfig: EngineConfig,
-  matchLevel: MatchLevel,
+  _matchLevel: MatchLevel,
 ): { config: EngineConfig; runL1: boolean; runL2Only: boolean } {
-  switch (matchLevel) {
-    case "Layout":
-      return { config: baseConfig, runL1: false, runL2Only: true };
-    case "Content":
-      return {
-        config: {
-          ...baseConfig,
-          ignoreAntialiasing: true,
-          threshold: Math.max(baseConfig.threshold, 0.2),
-        },
-        runL1: true,
-        runL2Only: false,
-      };
-    case "IgnoreColors":
-    case "Dynamic":
-    case "Strict":
-    default:
-      return { config: baseConfig, runL1: true, runL2Only: false };
-  }
+  return { config: baseConfig, runL1: true, runL2Only: false };
 }
