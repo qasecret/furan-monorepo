@@ -15,7 +15,8 @@ interface Props {
  *
  * Active match is permissive: any pathname that equals the tab's href OR
  * starts with `${href}/` keeps the tab highlighted, so deep routes
- * under a tab keep it highlighted (e.g. viewer drill-in from Builds).
+ * under a tab keep it highlighted (e.g. `/projects/<id>/builds/<buildId>` keeps
+ * the Builds tab active).
  *
  * Visual presentation is delegated to the shared `<PrimaryTabs>` primitive
  * (components/ui/primary-tabs.tsx) so all tab strips in the app share one
