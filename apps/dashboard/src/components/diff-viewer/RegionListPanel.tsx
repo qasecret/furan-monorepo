@@ -103,11 +103,6 @@ export function RegionListPanel({
       .filter((r) => {
         // Always hide synthetic dynamic-text audit rows unless the toggle is on.
         if (r.source === "dynamic_text") return showSuppressed;
-        // L1 pixel clusters render only on the heatmap canvas (Applitools-
-        // style yellow bounded rectangles). They're noisy by design (5-15
-        // per checkpoint) and would drown out L2 / axe rows here.
-        // Reviewers see them visually; they're not actionable as rows.
-        if (r.source === "l1_pixel") return false;
         return true;
       })
       .filter((r) => sourceFilter === "all" || r.source === sourceFilter)
@@ -269,18 +264,14 @@ export function RegionListPanel({
                 ? "No regions to display"
                 : sourceFilter === "l2"
                   ? "No DOM/CSS-level changes detected"
-                  : regions.every((r) => r.source === "l1_pixel")
-                    ? "Only pixel-level diffs detected"
-                    : "No regions match the active filters"}
+                  : "No regions match the active filters"}
             </div>
             <div className="text-xs text-zinc-500 max-w-[18rem]">
               {regions.length === 0
                 ? "No ignore or diff regions are configured for this checkpoint. Use 'Edit regions' above to draw ignore areas, or adjust the sensitivity slider to surface pixel-level diffs."
                 : sourceFilter === "l2"
                   ? "The visual diff comes from pixel-level changes only. Switch back to 'All sources' to see them."
-                  : regions.every((r) => r.source === "l1_pixel")
-                    ? "Pixel-level changes are visible on the canvas overlay. Enable L2 (DOM/CSS) analysis in project settings for root-cause detail."
-                    : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
+                  : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}
             </div>
           </div>
         ) : grouped ? (

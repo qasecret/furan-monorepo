@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import { orderDiffRegions } from "../src/components/diff-viewer/diff-order";
 import type { DiffRegion } from "../src/components/diff-viewer/layers/regionTypes";
@@ -37,13 +37,33 @@ describe("orderDiffRegions", () => {
     expect(out.map((r) => r.id)).toEqual(["breaking", "major", "minor-big"]);
   });
 
-  test("drops l1_pixel and dynamic_text audit rows", () => {
+  test("drops dynamic_text audit rows but keeps l2 regions", () => {
     const out = orderDiffRegions([
       region({ id: "keep", source: "l2" }),
-      region({ id: "pixel", source: "l1_pixel" }),
       region({ id: "audit", source: "dynamic_text" }),
     ]);
     expect(out.map((r) => r.id)).toEqual(["keep"]);
+  });
+
+  it("includes l1_pixel regions, ordered by severity then area", () => {
+    const regions = [
+      region({
+        id: "a",
+        severity: "minor",
+        category: "image",
+        source: "l1_pixel",
+        bbox: { x: 0, y: 0, width: 50, height: 50 },
+      }),
+      region({
+        id: "b",
+        severity: "major",
+        category: "image",
+        source: "l1_pixel",
+        bbox: { x: 0, y: 0, width: 50, height: 50 },
+      }),
+    ];
+    const ordered = orderDiffRegions(regions);
+    expect(ordered.map((r) => r.id)).toEqual(["b", "a"]); // major before minor
   });
 
   test("hideDisplacement drops layout-category regions", () => {
