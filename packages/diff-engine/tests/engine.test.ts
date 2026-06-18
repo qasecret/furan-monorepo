@@ -144,9 +144,10 @@ describe("runDiff", () => {
       },
     });
     for (const r of result.regions.filter((r) => r.source === "l1_pixel")) {
-      expect(["breaking", "major", "minor", "cosmetic", "none"]).toContain(
-        r.severity,
-      );
+      // severityForSize only ever returns these three tiers — assert the
+      // exact reachable set so a regression to "none"/"breaking" is caught
+      // (was the geometry-dependent exact "minor" before image-first P1).
+      expect(["major", "minor", "cosmetic"]).toContain(r.severity);
       expect(r.category).toBe("image");
       expect(r.id).toMatch(/^l1-pixel-/);
     }
