@@ -107,9 +107,8 @@ interface Props {
 
 /**
  * Coloured status pill for a `test_runs.status` value, with a Radix tooltip
- * that explains what the status means. Consumed by run-row, the runs-list
- * filter, and ApprovalBar — keep this the only place that maps a status to
- * a visual representation.
+ * that explains what the status means. Single source of truth for
+ * status → visual representation.
  */
 export function RunStatusBadge({ status }: Props) {
   const config = STATUS_CONFIG[status];

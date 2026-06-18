@@ -6,9 +6,9 @@ export interface BuildIdentity {
 }
 
 /**
- * Build title precedence — the single source of truth for both the Builds tab
- * row and the Runs page's build-grouping header: name → #number →
- * ciBuildId[:12] → uuid[:8] → "No build" (only when there is no build at all).
+ * Build title precedence — the single source of truth for the Builds tab
+ * row: name → #number → ciBuildId[:12] → uuid[:8] → "No build" (only when
+ * there is no build at all).
  */
 export function buildDisplayName(b: BuildIdentity): string {
   if (b.name) return b.name;

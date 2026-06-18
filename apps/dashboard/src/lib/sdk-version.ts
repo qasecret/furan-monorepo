@@ -1,6 +1,6 @@
 /**
  * SDK version advertised in the dashboard's onboarding hints (empty-state
- * Gradle snippets on /projects/<id>/builds and /runs).
+ * Gradle snippets on /projects/<id>/builds).
  *
  * Single source of truth is packages/sdk-kotlin/version.txt — the file
  * release-please writes to. next.config.mjs reads it at build time and
