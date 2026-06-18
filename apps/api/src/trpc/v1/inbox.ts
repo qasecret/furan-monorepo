@@ -17,6 +17,7 @@ import {
   inboxCountInput,
   inboxListInput,
   inboxListOutput,
+  inboxRejectClusterInput,
   inboxRejectInput,
 } from "@furan/shared-types";
 import { z } from "zod";
@@ -25,6 +26,7 @@ import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
 
+import { GROUP_APPROVE_CAP } from "./checkpoint-grouping.js";
 import { approveRun } from "./runs.js";
 
 /** Map the window filter to a Postgres interval literal, or null for "all". */
@@ -362,6 +364,95 @@ export const inboxRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       return approveRun(ctx, input.runId);
+    }),
+
+  /**
+   * Cross-build, signature-keyed bulk reject (ADR-043 §4.3).
+   *
+   * Given a (projectId, signature) cluster, re-derives the in-scope unresolved/
+   * failed runs server-side (never trusts a client run list) under the same
+   * status+window filter and bulk-marks them `failed` (no baseline mutation).
+   * Mirrors `runs.rejectCheckpointGroup` but inbox-filter-scoped, cross-build,
+   * and signature-keyed.
+   *
+   * The inbox status filter (unresolved/failed) is already ⊆ reviewer-legal
+   * statuses, so no separate REVIEWER_LEGAL_FROM import is needed — every
+   * matched run is a legal reject target.
+   *
+   * Cross-PROJECT is NOT crossed: `eq(testRuns.projectId, input.projectId)`
+   * guarantees isolation. Cross-BUILD IS reached: no build filter.
+   */
+  rejectCluster: t.procedure
+    .input(inboxRejectClusterInput)
+    .use(authed)
+    .use(
+      projectMember<{ projectId: string }>("write", {
+        from: {
+          resolver: async ({ input }) => input.projectId,
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const statusFilter =
+        input.status === "all-open"
+          ? sql`${testRuns.status} IN ('unresolved', 'failed')`
+          : eq(testRuns.status, input.status);
+      const interval = WINDOW_INTERVAL[input.window];
+      const windowFilter =
+        interval === null
+          ? sql`true`
+          : sql`${testRuns.createdAt} >= now() - ${interval}::interval`;
+
+      // Re-derive the cluster server-side (never a client run list).
+      const matches = await ctx.db
+        .select({ id: testRuns.id, buildId: testRuns.buildId })
+        .from(testRuns)
+        .where(
+          and(
+            eq(testRuns.projectId, input.projectId),
+            eq(testRuns.primarySignature, input.signature),
+            statusFilter,
+            windowFilter,
+          ),
+        )
+        .orderBy(desc(testRuns.createdAt), desc(testRuns.id));
+
+      const cap = GROUP_APPROVE_CAP;
+      const capped = matches.length > cap;
+      const targets = capped ? matches.slice(0, cap) : matches;
+
+      if (targets.length === 0) {
+        return { rejected: 0, runCount: 0, buildCount: 0, capped: false, cap };
+      }
+
+      const targetRunIds = targets.map((t) => t.id);
+      const distinctBuildIds = [...new Set(targets.map((t) => t.buildId))];
+
+      await ctx.db
+        .update(testRuns)
+        .set({ status: "failed", merge: false })
+        .where(inArray(testRuns.id, targetRunIds));
+
+      for (const runId of targetRunIds) {
+        await ctx.broadcaster.publishProjectEvent(input.projectId, {
+          event: "testRun_updated",
+          data: { id: runId },
+        });
+      }
+      for (const buildId of distinctBuildIds) {
+        await ctx.broadcaster.publishProjectEvent(input.projectId, {
+          event: "build_updated",
+          data: { id: buildId },
+        });
+      }
+
+      return {
+        rejected: targetRunIds.length,
+        runCount: targetRunIds.length,
+        buildCount: distinctBuildIds.length,
+        capped,
+        cap,
+      };
     }),
 
   /**
