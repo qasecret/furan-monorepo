@@ -80,4 +80,22 @@ describe("TestCard", () => {
       `/projects/p1/runs/${base.id}/checkpoints/_first`,
     );
   });
+
+  test("pressing Enter on the card navigates to the diff viewer", () => {
+    pushMock.mockClear();
+    render(
+      <TestCard
+        projectId="p1"
+        row={base}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId(`test-card-${base.id}`), {
+      key: "Enter",
+    });
+    expect(pushMock).toHaveBeenCalledWith(
+      `/projects/p1/runs/${base.id}/checkpoints/_first`,
+    );
+  });
 });

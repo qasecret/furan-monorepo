@@ -147,6 +147,56 @@ describe("BatchPage", () => {
     expect(notFoundMock).toHaveBeenCalled();
   });
 
+  test("Load more appends the next page instead of replacing it", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockImplementation((args: { cursor?: string }) =>
+      args.cursor
+        ? {
+            data: {
+              items: [
+                {
+                  id: "r3",
+                  name: "Page2Card",
+                  status: "unresolved",
+                  diffPercent: 1,
+                  thumbnailUrl: null,
+                },
+              ],
+              nextCursor: null,
+            },
+            isLoading: false,
+            isError: false,
+            refetch: vi.fn(),
+          }
+        : {
+            data: {
+              items: [
+                {
+                  id: "r1",
+                  name: "Page1Card",
+                  status: "unresolved",
+                  diffPercent: 1,
+                  thumbnailUrl: null,
+                },
+              ],
+              nextCursor: "cur1",
+            },
+            isLoading: false,
+            isError: false,
+            refetch: vi.fn(),
+          },
+    );
+    render(<BatchPage projectId="p1" buildId="b1" projectName="Acme" />);
+    await waitFor(() => expect(screen.getByText("Page1Card")).toBeDefined());
+    fireEvent.click(screen.getByText("Load more"));
+    await waitFor(() => expect(screen.getByText("Page2Card")).toBeDefined());
+    expect(screen.getByText("Page1Card")).toBeDefined(); // page 1 still present
+  });
+
   test("Approve all calls bulkApproveByBuild with the buildId", async () => {
     getByIdMock.mockReturnValue({
       data: build,

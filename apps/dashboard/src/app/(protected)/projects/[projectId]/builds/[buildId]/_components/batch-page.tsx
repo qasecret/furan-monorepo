@@ -32,6 +32,7 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
   useProjectEvents(projectId);
   const [chip, setChip] = useState<Chip>("needs-review");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [accumulated, setAccumulated] = useState<TestCardData[]>([]);
 
   const buildQ = trpc.builds.getById.useQuery({ buildId });
   const list = trpc.runs.list.useQuery({
@@ -52,25 +53,9 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
   });
 
   const onApprove = (runId: string) =>
-    approve.mutate(
-      { runId },
-      {
-        onSuccess: () => {
-          toast.success("Approved");
-          void list.refetch();
-        },
-      },
-    );
+    approve.mutate({ runId }, { onSuccess: () => toast.success("Approved") });
   const onReject = (runId: string) =>
-    reject.mutate(
-      { runId },
-      {
-        onSuccess: () => {
-          toast.success("Rejected");
-          void list.refetch();
-        },
-      },
-    );
+    reject.mutate({ runId }, { onSuccess: () => toast.success("Rejected") });
   const onApproveAll = () =>
     bulkApprove.mutate(
       { buildId },
@@ -84,15 +69,37 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
             `Approved ${res.approved} run${res.approved === 1 ? "" : "s"}` +
               (res.capped ? ` (capped at ${res.cap})` : ""),
           );
-          void list.refetch();
-          void buildQ.refetch();
         },
       },
     );
 
   if (buildQ.isError) notFound();
 
-  const items = (list.data?.items ?? []) as unknown as TestCardData[];
+  // Dedupe on id across `accumulated` and the current page — cursor
+  // pagination on a non-strictly-monotonic createdAt could legitimately
+  // return overlapping rows on a page boundary.
+  const currentPage = (list.data?.items ?? []) as unknown as TestCardData[];
+  const items: TestCardData[] = [];
+  const seen = new Set<string>();
+  for (const r of accumulated) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      items.push(r);
+    }
+  }
+  for (const r of currentPage) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      items.push(r);
+    }
+  }
+
+  const onLoadMore = () => {
+    if (!list.data?.nextCursor) return;
+    setAccumulated((prev) => [...prev, ...currentPage]);
+    setCursor(list.data.nextCursor);
+  };
+
   const build = buildQ.data as unknown as BatchHeaderData | undefined;
   const canApproveAll =
     !!build && (build.unresolvedCount > 0 || build.failedCount > 0);
@@ -124,6 +131,7 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
             onClick={() => {
               setChip(c);
               setCursor(undefined);
+              setAccumulated([]);
             }}
           >
             {c === "needs-review"
@@ -136,6 +144,10 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
       </div>
       {list.isLoading ? (
         <CardSkeletonGrid />
+      ) : list.isError ? (
+        <p className="p-8 text-center text-sm text-red-600 dark:text-red-400">
+          Error loading tests: {list.error?.message}
+        </p>
       ) : items.length === 0 ? (
         <p className="p-8 text-center text-sm text-zinc-600 dark:text-zinc-400">
           No tests{" "}
@@ -159,10 +171,7 @@ export function BatchPage({ projectId, buildId, projectName }: Props) {
       )}
       {list.data?.nextCursor && (
         <div className="flex justify-center p-3">
-          <Button
-            variant="secondary"
-            onClick={() => setCursor(list.data?.nextCursor ?? undefined)}
-          >
+          <Button variant="secondary" onClick={onLoadMore}>
             Load more
           </Button>
         </div>

@@ -31,6 +31,15 @@ export function TestCard({ projectId, row, onApprove, onReject }: Props) {
     <div
       data-testid={`test-card-${row.id}`}
       onClick={open}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${row.name}`}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
       className="group flex cursor-pointer flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-2 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900/40"
     >
       {row.thumbnailUrl !== null ? (
