@@ -85,4 +85,41 @@ describe("InboxPage", () => {
     );
     await waitFor(() => expect(screen.getByText(/All clear/i)).toBeDefined());
   });
+
+  test("passes group:'similarity' when initialGroup=true, undefined when false", async () => {
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    // initialGroup=true → group should be "similarity"
+    listMock.mockClear();
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={true}
+      />,
+    );
+    expect(listMock).toHaveBeenCalledWith(
+      expect.objectContaining({ group: "similarity" }),
+    );
+
+    cleanup();
+    listMock.mockClear();
+
+    // initialGroup=false → group should be undefined
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    expect(listMock).toHaveBeenCalledWith(
+      expect.objectContaining({ group: undefined }),
+    );
+  });
 });

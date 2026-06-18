@@ -35,6 +35,7 @@ export function InboxPage({
     status: initialStatus,
     window: initialWindow,
     cursor,
+    group: initialGroup ? "similarity" : undefined,
   });
   const approve = trpc.inbox.approve.useMutation({
     onSuccess: () => {
