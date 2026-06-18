@@ -1,5 +1,7 @@
 "use client";
 
+import type { InboxRunRow } from "@furan/shared-types";
+
 import type { ClusterGroup } from "./cluster-grouping";
 
 import { QueueRow } from "@/components/triage/queue-row";
@@ -11,8 +13,8 @@ interface Props {
   /** Flat index of cluster.rows[0] within the page's items (for keyboard selection). */
   baseIndex: number;
   selectedIndex: number;
-  onApprove: (runId: string) => void;
-  onReject: (runId: string) => void;
+  onApprove: (row: InboxRunRow) => void;
+  onReject: (row: InboxRunRow) => void;
   onRejectAll: (cluster: ClusterGroup) => void;
 }
 
@@ -49,8 +51,8 @@ export function ClusterBlock({
             key={row.runId}
             row={row}
             selected={baseIndex + i === selectedIndex}
-            onApprove={() => onApprove(row.runId)}
-            onReject={() => onReject(row.runId)}
+            onApprove={() => onApprove(row)}
+            onReject={() => onReject(row)}
           />
         ))}
       </ul>

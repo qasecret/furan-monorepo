@@ -237,4 +237,62 @@ describe("InboxPage", () => {
       window: "7d",
     });
   });
+
+  test("suppresses a/r row shortcuts while the reject-cluster dialog is open", async () => {
+    const mk = (runId: string, variationName: string) => ({
+      runId,
+      projectId: "proj-0001-0000-0000-0000-000000000000",
+      projectName: "MyProject",
+      variationName,
+      buildNumber: 2,
+      branch: "main",
+      status: "unresolved" as const,
+      createdAt: new Date().toISOString(),
+      thumbnailUrl: null,
+      primarySignature: "v1:abc",
+      clusterRunCount: 2,
+      clusterBuildCount: 2,
+    });
+    listMock.mockReturnValue({
+      data: {
+        items: [
+          mk("aaaa0001-0000-0000-0000-000000000000", "Checkout step"),
+          mk("aaaa0002-0000-0000-0000-000000000000", "Search step"),
+        ],
+        nextCursor: null,
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    approveMock.mockClear();
+    rejectMock.mockClear();
+
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={true}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("cluster-header-v1:abc")).toBeTruthy(),
+    );
+
+    // Dialog CLOSED: 'a' fires a single-run approve on the selected (first) row.
+    fireEvent.keyDown(document, { key: "a" });
+    expect(approveMock).toHaveBeenCalledTimes(1);
+    approveMock.mockClear();
+
+    // Open the reject-cluster dialog, then press a/r — they must NOT fire a
+    // single-run mutation on the row behind the modal (the keyboard-leak bug).
+    fireEvent.click(screen.getByTestId("cluster-reject-all-v1:abc"));
+    await waitFor(() =>
+      expect(screen.getByTestId("reject-cluster-dialog")).toBeTruthy(),
+    );
+    fireEvent.keyDown(document, { key: "a" });
+    fireEvent.keyDown(document, { key: "r" });
+    expect(approveMock).not.toHaveBeenCalled();
+    expect(rejectMock).not.toHaveBeenCalled();
+  });
 });
