@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "vitest";
 
 import {
   BatchHeader,
@@ -26,30 +26,14 @@ const data: BatchHeaderData = {
 
 describe("BatchHeader", () => {
   test("renders display name, summary counts, and properties", () => {
-    render(
-      <BatchHeader
-        build={data}
-        canApproveAll
-        onApproveAll={vi.fn()}
-        isApproving={false}
-      />,
-    );
+    render(<BatchHeader build={data} />);
     expect(screen.getByText(/#42/)).toBeDefined();
     expect(screen.getByText(/3 unresolved/)).toBeDefined();
     expect(screen.getByText(/region=us-east/)).toBeDefined();
   });
 
-  test("Approve all fires when there is review work", () => {
-    const onApproveAll = vi.fn();
-    render(
-      <BatchHeader
-        build={data}
-        canApproveAll
-        onApproveAll={onApproveAll}
-        isApproving={false}
-      />,
-    );
-    fireEvent.click(screen.getByTestId("batch-approve-all"));
-    expect(onApproveAll).toHaveBeenCalledTimes(1);
+  test("does not render the Approve all button (moved to ContextualToolbar)", () => {
+    render(<BatchHeader build={data} />);
+    expect(screen.queryByTestId("batch-approve-all")).toBeNull();
   });
 });

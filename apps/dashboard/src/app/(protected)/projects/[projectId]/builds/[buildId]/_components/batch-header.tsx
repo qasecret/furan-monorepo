@@ -3,7 +3,6 @@
 import type { BuildAggregateStatus } from "@furan/shared-types";
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
-import { Button } from "@/components/ui/button";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { formatRelativeTime } from "@/lib/format";
 
@@ -25,17 +24,9 @@ export interface BatchHeaderData {
 
 interface Props {
   build: BatchHeaderData;
-  canApproveAll: boolean;
-  onApproveAll: () => void;
-  isApproving: boolean;
 }
 
-export function BatchHeader({
-  build,
-  canApproveAll,
-  onApproveAll,
-  isApproving,
-}: Props) {
+export function BatchHeader({ build }: Props) {
   const summary = [
     `${build.runCount} test${build.runCount === 1 ? "" : "s"}`,
     build.unresolvedCount > 0 && `${build.unresolvedCount} unresolved`,
@@ -59,17 +50,6 @@ export function BatchHeader({
           </span>
         )}
         <BuildStatusBadge status={build.aggregateStatus} />
-        <span className="flex-1" />
-        {canApproveAll && (
-          <Button
-            variant="secondary"
-            data-testid="batch-approve-all"
-            disabled={isApproving}
-            onClick={onApproveAll}
-          >
-            Approve all
-          </Button>
-        )}
       </div>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
         {summary} · {formatRelativeTime(build.createdAt)}

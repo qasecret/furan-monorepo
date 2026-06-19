@@ -1,13 +1,18 @@
-/**
- * TopBar smoke test — clicking the search button must open the cmdk
- * palette via the shared zustand store. Without this gate, the topbar
- * could ship as inert UI that looks right but does nothing.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { TopBar } from "../src/app/(protected)/_components/top-bar";
-import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
+// AccountMenu (now rendered inside TopBar) imports the logout server action,
+// which reaches for next/headers; stub it so the component tree mounts in
+// jsdom. Everything else (palette / breadcrumb / mobile stores) stays real so
+// these remain genuine wiring tests.
+vi.mock("@/app/(protected)/_components/logout-action", () => ({
+  logoutAction: vi.fn(),
+}));
+
+import { TopBar } from "@/app/(protected)/_components/top-bar";
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+
+const props = { email: "me@x.io", initial: "M", role: "admin" } as const;
 
 beforeEach(() => {
   usePaletteStore.setState({ open: false });
@@ -20,7 +25,7 @@ afterEach(() => {
 
 describe("TopBar", () => {
   test("clicking the search button opens the cmdk palette", () => {
-    render(<TopBar />);
+    render(<TopBar {...props} />);
     expect(usePaletteStore.getState().open).toBe(false);
 
     fireEvent.click(screen.getByTestId("top-bar-search"));
@@ -28,9 +33,16 @@ describe("TopBar", () => {
   });
 
   test("notification bell is disabled stub", () => {
-    render(<TopBar />);
+    render(<TopBar {...props} />);
     const bell = screen.getByTestId("top-bar-bell") as HTMLButtonElement;
     expect(bell.disabled).toBe(true);
     expect(bell.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  test("renders the account menu trigger with the user's initial", () => {
+    render(<TopBar {...props} />);
+    expect(
+      screen.getByRole("button", { name: /account menu/i }).textContent,
+    ).toContain("M");
   });
 });

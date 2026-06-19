@@ -1,21 +1,7 @@
-import {
-  BarChart3,
-  FolderKanban,
-  Inbox,
-  Key,
-  Puzzle,
-  Users,
-} from "lucide-react";
-import {
-  Fragment,
-  type ComponentType,
-  type ReactNode,
-  type SVGProps,
-} from "react";
+import { BarChart3, FolderKanban, Inbox, Puzzle, Users } from "lucide-react";
+import { type ComponentType, type ReactNode, type SVGProps } from "react";
 
-import { ActiveProjectNavItem } from "./active-project-nav-item";
 import { InboxBadge } from "./inbox-badge";
-import { LogoutButton } from "./logout-button";
 import { SidebarNavItem } from "./sidebar-nav-item";
 
 import { cn } from "@/lib/cn";
@@ -35,13 +21,10 @@ interface NavSection {
 
 interface Props {
   userRole: "admin" | "editor" | "guest";
-  userEmail: string;
-  userInitial: string;
   /**
    * Outer-`<aside>` className override. AppShell passes `hidden md:flex` so
    * the desktop sidebar only renders at ≥768px; the mobile drawer mounts
-   * the same Sidebar with no override, letting it render full-height
-   * inside the Radix Dialog Content.
+   * the same Sidebar with no override.
    */
   className?: string;
 }
@@ -51,12 +34,7 @@ interface Props {
  * `SidebarNavItem` (it needs usePathname). The Admin section is gated on
  * the server-resolved role so non-admins never see those links in the DOM.
  */
-export function Sidebar({
-  userRole,
-  userEmail,
-  userInitial,
-  className,
-}: Props) {
+export function Sidebar({ userRole, className }: Props) {
   const sections: NavSection[] = [
     {
       label: "Workspace",
@@ -69,10 +47,6 @@ export function Sidebar({
         },
         { icon: FolderKanban, label: "Projects", href: "/projects" },
       ],
-    },
-    {
-      label: "Account",
-      items: [{ icon: Key, label: "Tokens", href: "/account/tokens" }],
     },
   ];
 
@@ -134,44 +108,18 @@ export function Sidebar({
                 // "Functions cannot be passed directly to Client Components".
                 const Icon = item.icon;
                 return (
-                  <Fragment key={item.href}>
-                    <SidebarNavItem
-                      icon={<Icon className="w-4 h-4 shrink-0" />}
-                      label={item.label}
-                      href={item.href}
-                      badge={item.badge}
-                    />
-                    {item.href === "/projects" ? (
-                      <ActiveProjectNavItem />
-                    ) : null}
-                  </Fragment>
+                  <SidebarNavItem
+                    key={item.href}
+                    icon={<Icon className="w-4 h-4 shrink-0" />}
+                    label={item.label}
+                    href={item.href}
+                    badge={item.badge}
+                  />
                 );
               })}
             </div>
           </div>
         ))}
-      </div>
-
-      <div className="border-t border-zinc-200 dark:border-zinc-800 shrink-0">
-        <div
-          className="p-3 flex items-center gap-3"
-          data-testid="sidebar-user-chip"
-        >
-          <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center text-xs font-medium text-zinc-700 border border-zinc-200 shrink-0 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-            {userInitial}
-          </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
-              {userEmail || "Signed in"}
-            </span>
-            <span className="text-[11px] text-zinc-500 truncate capitalize">
-              {userRole}
-            </span>
-          </div>
-        </div>
-        <div className="px-3 pb-3">
-          <LogoutButton />
-        </div>
       </div>
     </aside>
   );

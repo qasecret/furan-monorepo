@@ -1,34 +1,20 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
-import { BuildsTable } from "./_components/builds-table";
-
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
-import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { getProject } from "@/lib/get-project";
 import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Builds" };
-
-const BUILDS_PAGE_TOUR = [
-  {
-    target: "#builds-table",
-    title: "Build list",
-    content:
-      "Every CI run that calls the SDK creates a build here. If you see no builds, point your SDK at this server using a project token.",
-    placement: "top" as const,
-  },
-];
-
 export const dynamic = "force-dynamic";
 
 /**
- * /projects/[projectId]/builds — the project's default landing tab.
- *
- * Server Component probes the project so non-members get a 404 instead of
- * a spinning client-side query. The table itself is a client island that
- * owns cursor pagination + expand-row + property-filter state.
+ * /projects/[projectId]/builds — the Builds tab index. The builds list now
+ * lives in the persistent panel (see builds/layout.tsx); this routed pane
+ * prompts the reviewer to pick one. Keeps the same membership gating the
+ * batch page uses so non-members get a 404/403 rather than a bare panel.
  */
 export default async function ProjectBuildsPage({
   params,
@@ -54,14 +40,14 @@ export default async function ProjectBuildsPage({
   }
 
   return (
-    <div className="space-y-4">
+    <>
       <SetBreadcrumbs
         items={projectCrumbs(projectId, project.data.name, "Builds")}
       />
-      <PageTour pageId="builds-index" steps={BUILDS_PAGE_TOUR} />
-      <div id="builds-table">
-        <BuildsTable projectId={projectId} />
-      </div>
-    </div>
+      <EmptyState
+        title="Select a build to review"
+        description="Pick a build from the list to see its tests."
+      />
+    </>
   );
 }

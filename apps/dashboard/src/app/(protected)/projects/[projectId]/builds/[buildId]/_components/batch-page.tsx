@@ -6,17 +6,18 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { BatchHeader, type BatchHeaderData } from "./batch-header";
+import { ContextualToolbar, type Chip } from "./contextual-toolbar";
 import { TestCard, type TestCardData } from "./test-card";
 
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { plural } from "@/lib/format";
 import { buildCrumbs } from "@/lib/project-crumbs";
 import { trpc } from "@/lib/trpc";
 
-type Chip = "needs-review" | "all" | "passed";
 const CHIP_STATUS: Record<Chip, RunStatus[] | undefined> = {
   "needs-review": ["unresolved", "failed"],
   all: undefined,
@@ -138,35 +139,18 @@ export function BatchPage({
           build ? buildDisplayName(build) : "Build",
         )}
       />
-      {build && (
-        <BatchHeader
-          build={build}
-          canApproveAll={canApproveAll}
-          onApproveAll={onApproveAll}
-          isApproving={bulkApprove.isPending}
-        />
-      )}
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
-        {(["needs-review", "all", "passed"] as Chip[]).map((c) => (
-          <Button
-            key={c}
-            variant={chip === c ? "default" : "secondary"}
-            className="h-7 px-3 text-xs"
-            data-testid={`batch-chip-${c}`}
-            onClick={() => {
-              setChip(c);
-              setCursor(undefined);
-              setAccumulated([]);
-            }}
-          >
-            {c === "needs-review"
-              ? "Needs review"
-              : c === "all"
-                ? "All"
-                : "Passed"}
-          </Button>
-        ))}
-      </div>
+      {build && <BatchHeader build={build} />}
+      <ContextualToolbar
+        chip={chip}
+        onChipChange={(c) => {
+          setChip(c);
+          setCursor(undefined);
+          setAccumulated([]);
+        }}
+        canApproveAll={canApproveAll}
+        onApproveAll={onApproveAll}
+        isApproving={bulkApprove.isPending}
+      />
       {list.isLoading ? (
         <CardSkeletonGrid />
       ) : list.isError ? (
@@ -217,10 +201,7 @@ function CardSkeletonGrid() {
       aria-busy="true"
     >
       {Array.from({ length: 8 }).map((_, i) => (
-        <div
-          key={i}
-          className="h-40 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
-        />
+        <Skeleton key={i} className="h-40 rounded-lg" />
       ))}
     </div>
   );
