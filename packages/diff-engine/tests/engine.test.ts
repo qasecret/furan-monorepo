@@ -11,7 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PNG_FIXTURE = (n: string) => readFileSync(join(__dirname, "fixtures", n));
 
 describe("runDiff", () => {
-  it("image-only — only runs L1, durationMs.l2 is null (ADR-047)", async () => {
+  it("image-only — ranTiers is ['l1'] (ADR-047)", async () => {
     const result = await runDiff({
       baseline: { image: PNG_FIXTURE("baseline-a.png") },
       candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
@@ -22,10 +22,9 @@ describe("runDiff", () => {
       },
     });
     expect(result.ranTiers).toEqual(["l1"]);
-    expect(result.durationMs.l2).toBeNull();
   });
 
-  it("L1 above threshold only runs L1, emits no l2 regions (ADR-047)", async () => {
+  it("L1 above threshold: ranTiers is ['l1'] (ADR-047)", async () => {
     const result = await runDiff({
       baseline: { image: PNG_FIXTURE("baseline-a.png") },
       candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
@@ -36,7 +35,6 @@ describe("runDiff", () => {
       },
     });
     expect(result.ranTiers).toEqual(["l1"]);
-    expect(result.durationMs.l2).toBeNull();
   });
 
   it("passed is true when diffPercent is at or below diffThreshold", async () => {

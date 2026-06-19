@@ -830,7 +830,7 @@ async function handleDiffJobInner(
       logger,
       project.id,
     );
-    const { config: routedEngineConfig } = configForMatchLevel(
+    const routedEngineConfig = configForMatchLevel(
       baseEngineConfig,
       screenshotMatchLevel,
     );
@@ -869,7 +869,7 @@ async function handleDiffJobInner(
         diffImageBytes: vlmResult.diffImageBytes,
         regions: [],
         ranTiers: ["l1"],
-        durationMs: { l1: performance.now() - t0, l2: null },
+        durationMs: { l1: performance.now() - t0 },
       };
       vlmDescription = vlmResult.vlmDescription;
     } else {

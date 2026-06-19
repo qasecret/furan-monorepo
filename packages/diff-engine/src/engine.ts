@@ -119,7 +119,7 @@ export async function runDiff(input: RunDiffInput): Promise<DiffResult> {
     diffImageBytes: l1.diffImageBytes,
     regions: allRegions,
     ranTiers: ["l1"],
-    durationMs: { l1: t1 - t0, l2: null },
+    durationMs: { l1: t1 - t0 },
     ...(displacementVector ? { displacementVector } : {}),
   };
 }

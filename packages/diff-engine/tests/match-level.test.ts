@@ -9,13 +9,7 @@ const base: EngineConfig = {
 };
 
 describe("configForMatchLevel", () => {
-  const STRICT = { config: base, runL1: true, runL2Only: false };
-
-  it("Strict: image-only, base config unchanged", () => {
-    expect(configForMatchLevel(base, "Strict")).toEqual(STRICT);
-  });
-
-  it("image-first (ADR-047): every matchLevel collapses to Strict", () => {
+  it("image-first (ADR-047): every matchLevel returns the base config unchanged", () => {
     for (const level of [
       "Strict",
       "Layout",
@@ -23,19 +17,13 @@ describe("configForMatchLevel", () => {
       "IgnoreColors",
       "Dynamic",
     ] as const) {
-      expect(configForMatchLevel(base, level)).toEqual(STRICT);
+      expect(configForMatchLevel(base, level)).toEqual(base);
     }
   });
 
-  it("Layout no longer skips the pixel compare (was runL2Only)", () => {
-    const r = configForMatchLevel(base, "Layout");
-    expect(r.runL1).toBe(true);
-    expect(r.runL2Only).toBe(false);
-  });
-
-  it("Content no longer raises the threshold (config is the base verbatim)", () => {
-    expect(
-      configForMatchLevel({ ...base, threshold: 0.1 }, "Content").config,
-    ).toEqual({ ...base, threshold: 0.1 });
+  it("does not mutate the input config", () => {
+    const input = { ...base, threshold: 0.5 };
+    configForMatchLevel(input, "Content");
+    expect(input.threshold).toBe(0.5);
   });
 });

@@ -60,7 +60,7 @@ export interface DiffResult {
   diffImageBytes: Buffer;
   regions: DiffRegion[];
   ranTiers: Array<"l1">;
-  durationMs: { l1: number; l2: number | null };
+  durationMs: { l1: number };
   /**
    * Tier 1.4 follow-up: when non-null, the L1 displacement pass
    * detected a uniform shift and aligned the candidate before
