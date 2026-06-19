@@ -102,7 +102,9 @@ describe("CommandPalette", () => {
     render(<CommandPalette userRole="admin" />);
     act(() => usePaletteStore.setState({ open: true }));
     await screen.findByTestId("command-palette");
+    expect(screen.getByTestId("cmd-admin")).toBeDefined();
     expect(screen.getByTestId("cmd-admin-members")).toBeDefined();
+    expect(screen.getByTestId("cmd-admin-installations")).toBeDefined();
   });
 
   test("selecting a project command calls router.push to that project's builds", async () => {

@@ -207,6 +207,15 @@ export function CommandPalette({ userRole }: Props) {
             {userRole === "admin" && (
               <Command.Group heading="Admin" className={CMD_GROUP_CLASS}>
                 <Command.Item
+                  value="admin"
+                  onSelect={() => go("/admin")}
+                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                  data-testid="cmd-admin"
+                >
+                  Admin
+                  <span className="ml-auto text-xs text-zinc-500">/admin</span>
+                </Command.Item>
+                <Command.Item
                   value="admin members"
                   onSelect={() => go("/admin/members")}
                   className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
