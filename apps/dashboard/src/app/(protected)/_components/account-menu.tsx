@@ -46,12 +46,11 @@ export function AccountMenu({ email, initial, role, defaultOpen }: Props) {
           <Link href="/account/tokens">Tokens</Link>
         </DropdownMenuItem>
         <form action={logoutAction}>
-          <button
-            type="submit"
-            className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-zinc-700 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
-          >
-            Sign out
-          </button>
+          <DropdownMenuItem asChild>
+            <button type="submit" className="w-full cursor-default text-left">
+              Sign out
+            </button>
+          </DropdownMenuItem>
         </form>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -60,5 +60,8 @@ describe("BuildsListPanel", () => {
     });
     render(<BuildsListPanel projectId="p1" projects={[]} />);
     expect(screen.getByText(/no builds yet/i)).toBeDefined();
+    expect(
+      screen.getByTestId("empty-builds-cta-token-link").getAttribute("href"),
+    ).toBe("/account/tokens");
   });
 });

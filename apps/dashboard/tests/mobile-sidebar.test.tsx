@@ -4,11 +4,11 @@
  * render its surface when the store flips open. Without this gate the
  * drawer could ship as inert markup.
  *
- * `Sidebar` is mocked because its real import chain reaches
- * `src/lib/auth.ts` (via LogoutButton → logout-action), which carries
- * `server-only` and isn't safe to mount in jsdom. The wiring being
- * tested doesn't depend on Sidebar's contents — only that the drawer
- * surface mounts when `open` flips true.
+ * `logout-action` is stubbed because TopBar renders AccountMenu, which
+ * imports the logout server action. AccountMenu's real import chain
+ * reaches `src/lib/auth.ts`, which carries `server-only` and isn't safe
+ * to mount in jsdom. The wiring being tested doesn't depend on AccountMenu's
+ * contents — only that the drawer surface mounts when `open` flips true.
  */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";

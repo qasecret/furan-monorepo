@@ -40,4 +40,16 @@ describe("Builds layout + index", () => {
     );
     expect(screen.getByText(/select a build/i)).toBeDefined();
   });
+
+  test("non-member sees children only, no panel", async () => {
+    const { getProject } = await import("@/lib/get-project");
+    vi.mocked(getProject).mockResolvedValueOnce({ status: 403, data: null });
+    const ui = await BuildsLayout({
+      children: <div data-testid="content" />,
+      params: Promise.resolve({ projectId: "p1" }),
+    });
+    render(ui);
+    expect(screen.queryByTestId("panel")).toBeNull();
+    expect(screen.getByTestId("content")).toBeDefined();
+  });
 });

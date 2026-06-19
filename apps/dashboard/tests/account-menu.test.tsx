@@ -23,8 +23,8 @@ describe("AccountMenu", () => {
     expect(screen.getByText("me@x.io")).toBeDefined();
     const tokens = screen.getByRole("menuitem", { name: /tokens/i });
     expect(tokens.getAttribute("href")).toBe("/account/tokens");
-    expect(
-      screen.getByRole("button", { name: /sign out/i }).getAttribute("type"),
-    ).toBe("submit");
+    const signOut = screen.getByRole("menuitem", { name: /sign out/i });
+    expect(signOut.tagName).toBe("BUTTON");
+    expect(signOut.getAttribute("type")).toBe("submit");
   });
 });

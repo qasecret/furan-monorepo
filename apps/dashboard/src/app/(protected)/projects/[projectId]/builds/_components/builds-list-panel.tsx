@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
@@ -94,6 +95,15 @@ export function BuildsListPanel({ projectId, projects }: Props) {
                 </code>{" "}
                 · API: {browserEnv.NEXT_PUBLIC_API_URL}
               </>
+            }
+            action={
+              <Link
+                href="/account/tokens"
+                className="text-brand-text hover:underline"
+                data-testid="empty-builds-cta-token-link"
+              >
+                Create a personal access token →
+              </Link>
             }
           />
         ) : (
