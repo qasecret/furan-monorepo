@@ -9,40 +9,26 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { trpc } from "@/lib/trpc";
 
-interface Props {
-  projectId: string;
-  /** Test-only: render the menu open. */
-  defaultOpen?: boolean;
-}
-
-interface ProjectListItem {
+export interface ProjectListItem {
   id: string;
   name: string;
 }
 
-// `projects.list` is a REST-only endpoint; the tRPC client type does not
-// include it. Cast through unknown so tests can mock it via @/lib/trpc while
-// avoiding a compile error. At runtime this is replaced by the real REST
-// query if a `list` procedure is ever added to the router.
-type TrpcWithProjectList = {
-  projects: {
-    list: {
-      useQuery: () => {
-        data: ProjectListItem[] | undefined;
-        isLoading?: boolean;
-      };
-    };
-  };
-};
+interface Props {
+  projectId: string;
+  projects: ProjectListItem[];
+  /** Test-only: render the menu open. */
+  defaultOpen?: boolean;
+}
 
-/** Context-panel header: current project + dropdown to switch projects. */
-export function ProjectSwitcher({ projectId, defaultOpen }: Props) {
-  const { data } = (
-    trpc as unknown as TrpcWithProjectList
-  ).projects.list.useQuery();
-  const projects = (data ?? []) as ProjectListItem[];
+/**
+ * Context-panel header: current project + dropdown to switch projects.
+ * Presentational — the project list is fetched server-side by the builds
+ * layout (there is no tRPC `projects.list`; `/projects` is REST-only) and
+ * passed in, mirroring how the projects index page loads it.
+ */
+export function ProjectSwitcher({ projectId, projects, defaultOpen }: Props) {
   const current = projects.find((p) => p.id === projectId);
   const others = projects.filter((p) => p.id !== projectId);
 
