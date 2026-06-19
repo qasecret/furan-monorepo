@@ -45,7 +45,7 @@ export function ProjectHeader({
 
   return (
     <div className="space-y-4">
-      <PageHeader title={name} />
+      <PageHeader title={name} className="px-6 pt-6" />
       <ProjectTabs projectId={projectId} />
     </div>
   );

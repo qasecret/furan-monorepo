@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ProjectMembersTable } from "./_components/project-members-table";
 
 import { Card } from "@/components/ui/card";
+import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
@@ -37,14 +38,16 @@ export default async function ProjectMembersPage({
     me.data.role !== "admin"
   ) {
     return (
-      <Card>
-        <h1 className="text-xl font-bold text-zinc-950 dark:text-white">
-          403 — admin only
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          You need the admin role to manage project members.
-        </p>
-      </Card>
+      <PageContainer>
+        <Card>
+          <h1 className="text-xl font-bold text-zinc-950 dark:text-white">
+            403 — admin only
+          </h1>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            You need the admin role to manage project members.
+          </p>
+        </Card>
+      </PageContainer>
     );
   }
 
@@ -54,14 +57,16 @@ export default async function ProjectMembersPage({
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-zinc-950 dark:text-white">
-        Members
-      </h1>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Project: <span className="font-medium">{project.data.name}</span>
-      </p>
-      <ProjectMembersTable projectId={projectId} />
-    </div>
+    <PageContainer>
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-zinc-950 dark:text-white">
+          Members
+        </h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          Project: <span className="font-medium">{project.data.name}</span>
+        </p>
+        <ProjectMembersTable projectId={projectId} />
+      </div>
+    </PageContainer>
   );
 }

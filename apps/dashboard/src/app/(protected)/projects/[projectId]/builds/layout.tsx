@@ -56,7 +56,7 @@ export default async function BuildsLayout({
           <BuildsListPanel projectId={projectId} projects={projects} />
         </div>
       </aside>
-      <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }
