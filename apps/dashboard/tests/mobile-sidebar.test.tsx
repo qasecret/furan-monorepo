@@ -17,6 +17,10 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/projects",
 }));
 
+vi.mock("../src/app/(protected)/_components/logout-action", () => ({
+  logoutAction: vi.fn(),
+}));
+
 vi.mock("../src/app/(protected)/_components/sidebar", () => ({
   Sidebar: ({ userRole }: { userRole: string }) => (
     <aside data-testid="app-sidebar">mocked sidebar — {userRole}</aside>
@@ -38,7 +42,7 @@ afterEach(() => {
 
 describe("MobileSidebar wiring", () => {
   test("TopBar hamburger flips the mobile-sidebar store open", () => {
-    render(<TopBar />);
+    render(<TopBar email="alice@example.com" initial="A" role="admin" />);
     expect(useMobileSidebarStore.getState().open).toBe(false);
 
     fireEvent.click(screen.getByTestId("top-bar-menu"));
@@ -46,7 +50,7 @@ describe("MobileSidebar wiring", () => {
   });
 
   test("TopBar hamburger has md:hidden so it's invisible on desktop", () => {
-    render(<TopBar />);
+    render(<TopBar email="alice@example.com" initial="A" role="admin" />);
     const menu = screen.getByTestId("top-bar-menu");
     expect(menu.className).toContain("md:hidden");
   });

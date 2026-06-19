@@ -44,7 +44,7 @@ export function AppShell({
         userInitial={userInitial}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <TopBar />
+        <TopBar email={userEmail} initial={userInitial} role={userRole} />
         <main className="flex-1 overflow-auto bg-white dark:bg-[#050505]">
           <div className="px-6 py-6 max-w-7xl mx-auto">{children}</div>
         </main>

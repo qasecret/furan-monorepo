@@ -3,6 +3,7 @@
 import { Bell, Menu, Search } from "lucide-react";
 import { usePathname } from "next/navigation";
 
+import { AccountMenu } from "./account-menu";
 import { useBreadcrumbsStore } from "./use-breadcrumbs";
 import { useMobileSidebarStore } from "./use-mobile-sidebar";
 
@@ -28,7 +29,13 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
  * The bell renders disabled for v1.0; a real notification feed lands in
  * a later phase (see plan-roadmap §7.1).
  */
-export function TopBar() {
+interface TopBarProps {
+  email: string;
+  initial: string;
+  role: string;
+}
+
+export function TopBar({ email, initial, role }: TopBarProps) {
   const setPaletteOpen = usePaletteStore((s) => s.setOpen);
   const setMobileSidebarOpen = useMobileSidebarStore((s) => s.setOpen);
 
@@ -76,6 +83,7 @@ export function TopBar() {
         >
           <Bell className="w-5 h-5" />
         </button>
+        <AccountMenu email={email} initial={initial} role={role} />
       </div>
     </header>
   );

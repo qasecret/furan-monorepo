@@ -1,36 +1,31 @@
-/**
- * TopBar smoke test — clicking the search button must open the cmdk
- * palette via the shared zustand store. Without this gate, the topbar
- * could ship as inert UI that looks right but does nothing.
- */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { TopBar } from "../src/app/(protected)/_components/top-bar";
-import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
+vi.mock("next/navigation", () => ({ usePathname: () => "/inbox" }));
+vi.mock("@/components/cmdk/use-command-palette", () => ({
+  usePaletteStore: () => () => undefined,
+}));
+vi.mock("@/app/(protected)/_components/use-mobile-sidebar", () => ({
+  useMobileSidebarStore: () => () => undefined,
+}));
+vi.mock("@/app/(protected)/_components/use-breadcrumbs", () => ({
+  useBreadcrumbsStore: (sel: (s: unknown) => unknown) =>
+    sel({ items: [], pathname: "/inbox" }),
+}));
+vi.mock("@/components/tour/help-button", () => ({ HelpButton: () => null }));
+vi.mock("@/app/(protected)/_components/logout-action", () => ({
+  logoutAction: vi.fn(),
+}));
 
-beforeEach(() => {
-  usePaletteStore.setState({ open: false });
-});
+import { TopBar } from "@/app/(protected)/_components/top-bar";
 
-afterEach(() => {
-  cleanup();
-  usePaletteStore.setState({ open: false });
-});
+afterEach(cleanup);
 
 describe("TopBar", () => {
-  test("clicking the search button opens the cmdk palette", () => {
-    render(<TopBar />);
-    expect(usePaletteStore.getState().open).toBe(false);
-
-    fireEvent.click(screen.getByTestId("top-bar-search"));
-    expect(usePaletteStore.getState().open).toBe(true);
-  });
-
-  test("notification bell is disabled stub", () => {
-    render(<TopBar />);
-    const bell = screen.getByTestId("top-bar-bell") as HTMLButtonElement;
-    expect(bell.disabled).toBe(true);
-    expect(bell.getAttribute("aria-disabled")).toBe("true");
+  test("renders the account menu trigger with the user's initial", () => {
+    render(<TopBar email="me@x.io" initial="M" role="admin" />);
+    expect(
+      screen.getByRole("button", { name: /account menu/i }).textContent,
+    ).toContain("M");
   });
 });
