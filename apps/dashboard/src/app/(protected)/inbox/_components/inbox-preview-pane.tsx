@@ -7,6 +7,7 @@ import { StatusPill } from "@/components/triage/status-pill";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/cn";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
 
 interface Props {
   run: InboxRunRow | undefined;
@@ -45,7 +46,7 @@ export function InboxPreviewPane({
     );
   }
 
-  const diffHref = `/projects/${run.projectId}/runs/${run.runId}/diffs/${run.runId}`;
+  const diffHref = diffViewerHref(run.projectId, run.runId);
 
   return (
     <div
@@ -94,12 +95,9 @@ export function InboxPreviewPane({
         <Button variant="secondary" onClick={onReject} disabled={isActing}>
           Reject
         </Button>
-        <Link
-          href={diffHref}
-          className="ml-auto rounded-md border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900"
-        >
-          Open full diff
-        </Link>
+        <Button variant="secondary" asChild className="ml-auto">
+          <Link href={diffHref}>Open full diff</Link>
+        </Button>
       </div>
     </div>
   );

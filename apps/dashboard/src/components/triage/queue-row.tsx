@@ -8,6 +8,7 @@ import { StatusPill } from "./status-pill";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatRelativeTime } from "@/lib/format";
 
 interface Props {
@@ -26,10 +27,7 @@ export function QueueRow({
   onReject,
   onSelect,
 }: Props) {
-  // The viewer is keyed by (runId, diffId); for a row-level open we pass runId
-  // in both segments — the page redirects to the run's first diff when they
-  // don't match an exact diff record.
-  const diffHref = `/projects/${row.projectId}/runs/${row.runId}/diffs/${row.runId}`;
+  const diffHref = diffViewerHref(row.projectId, row.runId);
   return (
     <li
       role="listitem"

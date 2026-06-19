@@ -116,6 +116,14 @@ export function InboxPage({
     setSelectedIndex(0);
   }, [initialStatus, initialWindow, initialGroup]);
 
+  // Keep the selection in range when the list shrinks — an approve/reject
+  // refetch removes the acted-on run, or a shorter page loads. Without this a
+  // stale index past the new end leaves `current` undefined: the preview blanks
+  // and a/r no-op even though runs remain. Clamping lands on the new last row.
+  useEffect(() => {
+    setSelectedIndex((i) => Math.min(i, Math.max(0, items.length - 1)));
+  }, [items.length]);
+
   const fireAction = useCallback(
     (
       action: "approve" | "reject",

@@ -38,6 +38,14 @@ function computePosition(step: TourStep): Position | null {
   // the dismissal flag being set spuriously on some pages (verified
   // 2026-05-24 e2e validation).
 
+  // A target hidden via CSS (e.g. a responsive `hidden md:flex` panel on a
+  // narrow viewport) is in the DOM but not visible — treat it as unresolved so
+  // the retry/skip path handles it instead of anchoring the popover off-screen.
+  // (Use computed `display`, not the bounding rect: jsdom gives every element a
+  // zero-size rect, but never reports display:"none" since it applies no
+  // stylesheets — so this stays a no-op under test.)
+  if (window.getComputedStyle(el).display === "none") return null;
+
   const rect = el.getBoundingClientRect();
   const requested = step.placement ?? "bottom";
   const viewportH = typeof window === "undefined" ? 0 : window.innerHeight;
@@ -154,6 +162,11 @@ export function TourOverlay() {
       } else if (attempts < 20) {
         attempts++;
         setTimeout(tryUpdate, 100);
+      } else {
+        // Target never resolved (missing, or zero-size like a `hidden md:flex`
+        // panel on a narrow viewport). Auto-skip so the tour advances to the
+        // next step instead of stalling on an invisible one.
+        next();
       }
     };
     tryUpdate();
@@ -168,7 +181,7 @@ export function TourOverlay() {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [step]);
+  }, [step, next]);
 
   // ESC to skip. Captures all key types in the document so popover-
   // mounted buttons do not need to forward.
