@@ -28,7 +28,6 @@ const baseProject = {
   name: "Test project",
   mainBranchName: "main",
   diffThreshold: 0.001,
-  l2Enabled: true,
   autoApproveFeature: false,
   // Differs from useForm's default "odiff" so form.reset triggers the
   // value transition that previously crashed via Radix Select firing
@@ -139,7 +138,6 @@ describe("ProjectSettingsForm", () => {
         maxBuildAllowed: 100,
         maxBranchLifetime: 30,
         diffThreshold: 0.001,
-        l2Enabled: true,
         autoApproveFeature: false,
         imageComparisonConfig: "{}",
       }),

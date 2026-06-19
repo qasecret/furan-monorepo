@@ -33,7 +33,6 @@ export const projectResponse = z.object({
   imageComparisonConfig: z.unknown().nullable(),
   retentionDays: z.number().int().nonnegative().nullable(),
   diffThreshold: z.number().nullable(),
-  l2Enabled: z.boolean(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });

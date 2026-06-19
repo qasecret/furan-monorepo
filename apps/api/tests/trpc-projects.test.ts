@@ -4,7 +4,6 @@ import {
   baselines,
   builds,
   diffRegions,
-  eq,
   projectMembers,
   projects,
   screenshots,
@@ -148,8 +147,7 @@ d("tRPC projects router", () => {
     });
     expect(project.id).toBe(s.projectId);
     expect(project.name).toBe("alpha");
-    // sanity-check a couple of defaulted columns exist on the returned row
-    expect(typeof project.l2Enabled).toBe("boolean");
+    // sanity-check a defaulted column exists on the returned row
     expect(typeof project.diffThreshold).toBe("number");
   });
 
@@ -177,22 +175,6 @@ d("tRPC projects router", () => {
     }
     expect(err).toBeDefined();
     expect(err?.data?.code).toBe("NOT_FOUND");
-  });
-
-  test("update: project-member editor flips l2Enabled and the change persists", async () => {
-    const client = makeClient(baseUrl, s.editorMemberJwt);
-    const updated = await client.projects.update.mutate({
-      projectId: s.projectId,
-      l2Enabled: false,
-    });
-    expect(updated.l2Enabled).toBe(false);
-
-    // DB-level confirmation.
-    const rows = await h.db
-      .select({ l2Enabled: projects.l2Enabled })
-      .from(projects)
-      .where(eq(projects.id, s.projectId));
-    expect(rows[0]?.l2Enabled).toBe(false);
   });
 
   test("update: non-member editor receives FORBIDDEN; admin bypass succeeds", async () => {

@@ -76,7 +76,6 @@ desc("handleDiffJob (integration)", () => {
         name: `dw-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
       })
       .returning();
     projectId = p.id;
@@ -305,7 +304,6 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
         name: `dw-mv-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
       })
       .returning();
     projectId = p.id;

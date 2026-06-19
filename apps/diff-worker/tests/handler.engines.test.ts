@@ -108,7 +108,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         name: `dw-engines-seed-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
       })
       .returning();
     candidateProjectIds.push(seedProject.id);
@@ -216,7 +215,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
           name: `dw-engines-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
           imageComparison: engine,
         })
         .returning();
@@ -287,7 +285,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         name: `dw-engines-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
         imageComparison: "pixelmatch",
         // Not valid JSON — parseEngineConfig should warn-log + fall back
         // to DEFAULT_ENGINE_CONFIG.
@@ -388,7 +385,6 @@ descLayout(
           name: `dw-layout-seed-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
         })
         .returning();
       cleanupProjectIds.push(seedProject.id);
@@ -483,7 +479,6 @@ descLayout(
           name: `dw-layout-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
         })
         .returning();
       cleanupProjectIds.push(p.id);

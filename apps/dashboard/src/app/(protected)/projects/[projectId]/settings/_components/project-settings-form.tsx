@@ -192,7 +192,6 @@ const schema = z.object({
   name: z.string().min(1, "Required").max(120),
   mainBranchName: z.string().min(1, "Required").max(120),
   diffThreshold: z.number().min(0).max(1),
-  l2Enabled: z.boolean(),
   dynamicTextEnabled: z.boolean(),
   autoApproveFeature: z.boolean(),
   imageComparison: z.enum(["pixelmatch", "looks_same", "odiff", "vlm"]),
@@ -500,7 +499,6 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
       name: "",
       mainBranchName: "main",
       diffThreshold: 0.001,
-      l2Enabled: true,
       dynamicTextEnabled: false,
       autoApproveFeature: false,
       imageComparison: "odiff",
@@ -520,7 +518,6 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
         name: project.name ?? "",
         mainBranchName: project.mainBranchName ?? "main",
         diffThreshold: project.diffThreshold ?? 0.001,
-        l2Enabled: project.l2Enabled ?? true,
         dynamicTextEnabled: project.dynamicTextEnabled ?? false,
         autoApproveFeature: project.autoApproveFeature ?? false,
         imageComparison: project.imageComparison ?? "odiff",
@@ -642,29 +639,6 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     0.10%.
                   </FormDescription>
                   <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="l2Enabled"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between gap-4">
-                  <div>
-                    <FormLabel>Layout-aware comparison</FormLabel>
-                    <FormDescription>
-                      Analyze DOM structure changes in addition to pixel
-                      differences. Helps catch layout regressions that look
-                      similar pixel-by-pixel. Adds ~50ms per check.
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                      data-testid="l2-enabled-switch"
-                    />
-                  </FormControl>
                 </FormItem>
               )}
             />

@@ -19,7 +19,6 @@ const updateInput = z.object({
   name: z.string().min(1).max(120).optional(),
   mainBranchName: z.string().min(1).max(120).optional(),
   diffThreshold: z.number().min(0).max(1).optional(),
-  l2Enabled: z.boolean().optional(),
   autoApproveFeature: z.boolean().optional(),
   retentionDays: z.number().int().min(1).max(3650).optional(),
   maxBuildAllowed: z.number().int().min(1).optional(),

@@ -587,9 +587,6 @@
                       },
                       "imageComparisonConfig": {
                       },
-                      "l2Enabled": {
-                        "type": "boolean"
-                      },
                       "mainBranchName": {
                         "type": [
                           "string",
@@ -635,7 +632,6 @@
                       "imageComparison",
                       "retentionDays",
                       "diffThreshold",
-                      "l2Enabled",
                       "createdAt",
                       "updatedAt"
                     ],
@@ -730,9 +726,6 @@
                     },
                     "imageComparisonConfig": {
                     },
-                    "l2Enabled": {
-                      "type": "boolean"
-                    },
                     "mainBranchName": {
                       "type": [
                         "string",
@@ -778,7 +771,6 @@
                     "imageComparison",
                     "retentionDays",
                     "diffThreshold",
-                    "l2Enabled",
                     "createdAt",
                     "updatedAt"
                   ],
@@ -890,9 +882,6 @@
                     },
                     "imageComparisonConfig": {
                     },
-                    "l2Enabled": {
-                      "type": "boolean"
-                    },
                     "mainBranchName": {
                       "type": [
                         "string",
@@ -938,7 +927,6 @@
                     "imageComparison",
                     "retentionDays",
                     "diffThreshold",
-                    "l2Enabled",
                     "createdAt",
                     "updatedAt"
                   ],
