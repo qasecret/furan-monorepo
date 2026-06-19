@@ -779,13 +779,11 @@ async function handleDiffJobInner(
           // engine doesn't yet honor it — until then, strict is pure
           // metadata.
           //
-          // layout + content: behave like `ignore` at L1 in v1 — mask
-          // the pixel diff inside the bbox. Region-mode classification
-          // for Layout/Content is handled by `classifyLayoutContent`
-          // (reviewer-drawn regions) and strict breaches via
-          // `strictBreaches`. L2 is removed (ADR-047); storing distinct
-          // kinds means the wire shape correctly reflects the reviewer's
-          // intent without a separate diff pass.
+          // layout + content: behave like `ignore` at L1 — mask the
+          // pixel diff inside the bbox (ADR-047). Storing distinct kinds
+          // means the wire shape correctly reflects the reviewer's intent
+          // without a separate diff pass. Strict breaches are
+          // post-filtered via `strictBreaches` below.
           //
           // dynamic-text: existing behavior — mask only when OCR
           // matched. Unmatched dynamic-text regions fall through to L1.
@@ -969,8 +967,7 @@ async function handleDiffJobInner(
       },
     });
 
-    // Step B: classify diff regions against reviewer Layout/Content zones.
-    // Step C: strict tolerance post-filter. Decode the diff image once
+    // Strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
     // breaching its tolerance becomes a synthetic "breaking" region
     // AND forces `passed: false`.

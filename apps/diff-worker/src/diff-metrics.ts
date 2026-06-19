@@ -35,7 +35,7 @@ export interface DiffMetrics {
   /**
    * Outcome of resolving an axe-core violation's CSS target to a real
    * bbox via the candidate DOM + element-map sidecar. Counts
-   * independently from `l2Resolution`; the consumer is
+   * independently from `regionResolution`; the consumer is
    * `axe-bbox-resolver.ts`, the producer is the handler's
    * post-runAxe pipeline.
    *

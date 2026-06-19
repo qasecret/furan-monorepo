@@ -123,18 +123,17 @@ desc("handleDiffJob (integration)", () => {
       .returning();
     candidateRunId = candidateRun.id;
 
-    // Upload baseline + candidate PNGs + DOMs to storage at their content-addressed keys.
+    // Upload baseline + candidate PNGs and the candidate DOM to storage at
+    // their content-addressed keys. The candidate DOM is used by the axe
+    // bbox-resolver; the handler no longer reads the baseline DOM.
     const baselineBytes = FIXTURE("baseline-a.png");
     const candidateBytes = FIXTURE("candidate-a-major.png");
-    const baselineDomBytes = FIXTURE("dom-baseline.html");
     const candidateDomBytes = FIXTURE("dom-text-change.html");
     const baselineImageKey = objectKey(baselineBytes);
     const candidateImageKey = objectKey(candidateBytes);
-    const baselineDomKey = objectKey(baselineDomBytes);
     const candidateDomKey = objectKey(candidateDomBytes);
     await storage.put(baselineImageKey, baselineBytes, "image/png");
     await storage.put(candidateImageKey, candidateBytes, "image/png");
-    await storage.put(baselineDomKey, baselineDomBytes, "text/html");
     await storage.put(candidateDomKey, candidateDomBytes, "text/html");
 
     // Pre-clean any orphan rows for the fixture image keys left by a prior
@@ -146,7 +145,9 @@ desc("handleDiffJob (integration)", () => {
         inArray(screenshots.imageKey, [baselineImageKey, candidateImageKey]),
       );
 
-    // Insert screenshots rows including DOM keys so L2 fires and emits regions.
+    // Insert screenshot rows. The candidate row carries a domKey so the
+    // axe bbox-resolver can locate violation elements; the baseline row
+    // has no domKey (the handler no longer reads it).
     await db.insert(screenshots).values([
       {
         runId: baselineRun.id,
@@ -154,7 +155,6 @@ desc("handleDiffJob (integration)", () => {
         testVariationId: v.id,
         name: "checkpoint-1",
         imageKey: baselineImageKey,
-        domKey: baselineDomKey,
         viewport: "1280x720",
         browser: "chromium",
       },
