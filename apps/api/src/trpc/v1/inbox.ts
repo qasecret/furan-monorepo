@@ -5,12 +5,10 @@ import {
   desc,
   eq,
   inArray,
-  projectMembers,
   projects,
   runReviewerDecisions,
   sql,
   testRuns,
-  type DB,
   type RunStatus,
 } from "@furan/db";
 import {
@@ -22,6 +20,7 @@ import {
 } from "@furan/shared-types";
 import { z } from "zod";
 
+import { listAccessibleProjectIds } from "../../lib/project-membership.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
@@ -36,25 +35,6 @@ const WINDOW_INTERVAL: Record<"24h" | "7d" | "30d" | "all", string | null> = {
   "30d": "30 days",
   all: null,
 };
-
-/**
- * Return the set of project IDs the caller is allowed to see.
- * Admins see all projects; non-admins see only projects they are a member of.
- */
-async function listMemberProjectIds(
-  db: DB,
-  user: { id: string; role: string },
-): Promise<string[]> {
-  if (user.role === "admin") {
-    const rows = await db.select({ id: projects.id }).from(projects);
-    return rows.map((r) => r.id);
-  }
-  const rows = await db
-    .select({ id: projectMembers.projectId })
-    .from(projectMembers)
-    .where(eq(projectMembers.userId, user.id));
-  return rows.map((r) => r.id);
-}
 
 export const inboxRouter = t.router({
   /**
@@ -72,7 +52,7 @@ export const inboxRouter = t.router({
     .output(inboxListOutput)
     .query(async ({ input, ctx }) => {
       // 1. Resolve which project IDs this user may see.
-      const memberProjectIds = await listMemberProjectIds(ctx.db, ctx.user);
+      const memberProjectIds = await listAccessibleProjectIds(ctx.db, ctx.user);
 
       // 2. Intersect with any caller-supplied project filter.
       const filterProjects =
@@ -338,7 +318,7 @@ export const inboxRouter = t.router({
     .use(authed)
     .output(z.object({ total: z.number().int() }))
     .query(async ({ input, ctx }) => {
-      const memberProjectIds = await listMemberProjectIds(ctx.db, ctx.user);
+      const memberProjectIds = await listAccessibleProjectIds(ctx.db, ctx.user);
       if (memberProjectIds.length === 0) return { total: 0 };
 
       const interval = WINDOW_INTERVAL[input.window];
