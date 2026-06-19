@@ -14,6 +14,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("sonner", () => ({
@@ -60,7 +61,13 @@ vi.mock("@/lib/trpc", () => ({
           onSuccess?: () => void;
           onError?: (e: { message: string }) => void;
         }) => ({
-          mutate: updateMutate,
+          // Mirror tRPC: a successful mutate fires onSuccess. Keep
+          // updateMutate as the spy the "submit calls mutate" test asserts
+          // on, then invoke the form's onSuccess (toast + dirty reset).
+          mutate: (vars: unknown) => {
+            updateMutate(vars);
+            opts?.onSuccess?.();
+          },
           isPending: false,
           ...(opts ?? {}),
         }),
@@ -79,6 +86,8 @@ const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 beforeEach(() => {
   updateMutate.mockReset();
   getByIdInvalidate.mockReset();
+  vi.mocked(toast.success).mockReset();
+  vi.mocked(toast.error).mockReset();
 });
 
 afterEach(() => {
@@ -167,6 +176,52 @@ describe("ProjectSettingsForm", () => {
 
     fireEvent.click(save);
     // Disabled buttons should not invoke the mutation.
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  test("Save shows a success toast on a valid submit", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
+
+    const nameInput = await screen.findByTestId("name-input");
+    fireEvent.input(nameInput, { target: { value: "Renamed project" } });
+
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+    });
+    expect(toast.success).toHaveBeenCalledWith("Settings saved");
+  });
+
+  test("submitting with an invalid value in a collapsed section auto-expands it", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
+
+    // The "Basics" section is open by default; its name field is visible.
+    const nameInput = await screen.findByTestId("name-input");
+    // Make it invalid (name is `.min(1, "Required")`).
+    fireEvent.input(nameInput, { target: { value: "" } });
+
+    // Collapse the Basics section via its header button.
+    const basicsHeader = screen.getByRole("button", { name: /basics/i });
+    expect(basicsHeader.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(basicsHeader);
+    expect(basicsHeader.getAttribute("aria-expanded")).toBe("false");
+    // Collapsed: the name field is no longer rendered.
+    expect(screen.queryByTestId("name-input")).toBeNull();
+
+    // Submit — validation fails, so the invalid section must re-expand.
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByRole("button", { name: /basics/i })
+          .getAttribute("aria-expanded"),
+      ).toBe("true");
+    });
+    // Its content (the name field) is visible again.
+    expect(screen.getByTestId("name-input")).toBeTruthy();
+    // The invalid submit never reached the mutation.
     expect(updateMutate).not.toHaveBeenCalled();
   });
 });
