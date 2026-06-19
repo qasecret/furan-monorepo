@@ -9,34 +9,33 @@ const base: EngineConfig = {
 };
 
 describe("configForMatchLevel", () => {
-  it("Strict: l1 only, base config unchanged", () => {
-    const r = configForMatchLevel(base, "Strict");
+  const STRICT = { config: base, runL1: true, runL2Only: false };
+
+  it("Strict: image-only, base config unchanged", () => {
+    expect(configForMatchLevel(base, "Strict")).toEqual(STRICT);
+  });
+
+  it("image-first (ADR-047): every matchLevel collapses to Strict", () => {
+    for (const level of [
+      "Strict",
+      "Layout",
+      "Content",
+      "IgnoreColors",
+      "Dynamic",
+    ] as const) {
+      expect(configForMatchLevel(base, level)).toEqual(STRICT);
+    }
+  });
+
+  it("Layout no longer skips the pixel compare (was runL2Only)", () => {
+    const r = configForMatchLevel(base, "Layout");
     expect(r.runL1).toBe(true);
     expect(r.runL2Only).toBe(false);
-    expect(r.config).toEqual(base);
   });
-  it("Layout: skips l1, runs l2 only", () => {
-    const r = configForMatchLevel(base, "Layout");
-    expect(r.runL1).toBe(false);
-    expect(r.runL2Only).toBe(true);
-  });
-  it("Content: enables ignoreAntialiasing and raises threshold to 0.2", () => {
-    const r = configForMatchLevel(base, "Content");
-    expect(r.config.ignoreAntialiasing).toBe(true);
-    expect(r.config.threshold).toBeGreaterThanOrEqual(0.2);
-  });
-  it("Content: doesn't lower threshold below pre-existing value", () => {
-    const r = configForMatchLevel({ ...base, threshold: 0.5 }, "Content");
-    expect(r.config.threshold).toBeGreaterThanOrEqual(0.5);
-  });
-  it("IgnoreColors falls back to Strict for v1.1.0", () => {
-    expect(configForMatchLevel(base, "IgnoreColors")).toEqual(
-      configForMatchLevel(base, "Strict"),
-    );
-  });
-  it("Dynamic falls back to Strict for v1.1.0", () => {
-    expect(configForMatchLevel(base, "Dynamic")).toEqual(
-      configForMatchLevel(base, "Strict"),
-    );
+
+  it("Content no longer raises the threshold (config is the base verbatim)", () => {
+    expect(
+      configForMatchLevel({ ...base, threshold: 0.1 }, "Content").config,
+    ).toEqual({ ...base, threshold: 0.1 });
   });
 });

@@ -217,10 +217,13 @@ desc("handleDiffJob (integration)", () => {
     // Per spec §3.2 the diff-worker writes "unresolved" on diff-found.
     // "failed" is reserved for reviewer-rejected runs.
     expect(updatedRun!.status).toBe("unresolved");
-    // ADR-043: primary_signature must be set for unresolved runs (most-severe
-    // unresolved checkpoint's diff_signature). L2 regions fire here, so it
-    // must match the v1:<sha256> format.
-    expect(updatedRun!.primarySignature).toMatch(/^v1:[0-9a-f]{64}$/);
+    // Image-first (ADR-047): the 100x100 test fixture produces only 2 dirty
+    // tiles (col=1, rows 0-1), which is below the minClusterTiles=3 threshold.
+    // extractL1PixelRegions returns [] for this fixture, so there are no
+    // l1_pixel regions to sign — primary_signature is null because there are
+    // no diff regions, not because of EXCLUDED_SOURCES (l1_pixel is NOT
+    // excluded; only dynamic_text is, per ADR-047).
+    expect(updatedRun!.primarySignature).toBeNull();
     expect(updatedRun!.baselineSource).toBe("default_branch");
     expect(updatedRun!.diffPercent).toBeGreaterThan(0);
     expect(updatedRun!.pixelMisMatchCount).toBeGreaterThan(0);
@@ -229,34 +232,29 @@ desc("handleDiffJob (integration)", () => {
     // Sanity: the candidate-a-major fixture is a substantial diff (~50% blue overlay).
     expect(updatedRun!.diffPercent!).toBeGreaterThan(10);
 
-    // Verify diff_regions inserted. With DOMs uploaded the L2 tier fires and
-    // emits at least one region (the <h1> text changed: "Buy now" -> "Get started").
+    // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
+    // produces 2 dirty tiles (col=1, rows 0-1) — below the minClusterTiles=3
+    // threshold — so extractL1PixelRegions returns [] for these fixtures.
+    // diff_regions stays empty. This fixture is intentionally too small to
+    // produce clusters; the l1_pixel → diff_regions path is covered by the
+    // diff-engine unit tests.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });
-    expect(regions.length).toBeGreaterThan(0);
-    expect(regions[0].projectId).toBe(projectId);
-    expect(regions[0].source).toBe("l2");
+    expect(regions.length).toBe(0);
 
-    // ADR-042: verify diff_signature was persisted on the candidate screenshot.
-    // The handler computes computeCheckpointSignature(result.regions, bounds)
-    // and writes it via UPDATE screenshots SET diff_signature = ... inside the
-    // same transaction. L2 regions are meaningful (not in EXCLUDED_SOURCES),
-    // so the signature must be non-null and match the v1:<sha256> format.
+    // ADR-042: diff_signature is null when there are no meaningful regions.
+    // The 100x100 fixture produces 0 clusters (below minClusterTiles=3),
+    // so there are no l1_pixel regions to sign — not because of
+    // EXCLUDED_SOURCES (l1_pixel is NOT excluded; only dynamic_text is).
     const candidateShots = await db
       .select()
       .from(screenshots)
       .where(eq(screenshots.runId, candidateRunId));
     expect(candidateShots.length).toBeGreaterThan(0);
-    // Only diffed (paired-baseline) checkpoints get a signature; a
-    // first-baseline viewport stays null. Guard so adding such a fixture
-    // later doesn't false-fail this assertion.
     for (const shot of candidateShots) {
-      if (shot.diffSignature !== null) {
-        expect(shot.diffSignature).toMatch(/^v1:[0-9a-f]{64}$/);
-      }
+      expect(shot.diffSignature).toBeNull();
     }
-    expect(candidateShots.some((s) => s.diffSignature !== null)).toBe(true);
 
     // Verify diff overlay is in storage.
     const overlay = await storage.get(updatedRun!.diffName!);
@@ -497,18 +495,17 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     expect(updatedRun!.status).toBe("unresolved");
     expect(updatedRun!.diffPercent!).toBeGreaterThan(10);
 
-    // diff_regions rows MUST carry the viewport column populated for
-    // every row inserted by the v0.5 multi-viewport flow.
+    // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
+    // produces only 2 dirty tiles (col=1, rows 0-1), below minClusterTiles=3,
+    // so extractL1PixelRegions returns [] and no diff_regions rows are
+    // inserted. The diff is still detected (diffPercent > 10) via L1 pixel
+    // percentage; only the per-region clustering is below threshold for this
+    // intentionally small fixture. The l1_pixel → diff_regions path (including
+    // viewport column) is covered by the diff-engine unit tests.
     const regions = await db.query.diffRegions.findMany({
       where: eq(diffRegions.runId, candidateRunId),
     });
-    expect(regions.length).toBeGreaterThan(0);
-    for (const r of regions) {
-      expect(r.viewport).not.toBeNull();
-      // All regions should come from the 1280x720 viewport (the failing one)
-      // because the 375x812 viewport pair was identical / passing.
-      expect(r.viewport).toBe("1280x720");
-    }
+    expect(regions.length).toBe(0);
 
     await new Promise((r) => setTimeout(r, 200));
     const completed = events

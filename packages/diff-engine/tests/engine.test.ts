@@ -34,7 +34,7 @@ describe("runDiff", () => {
     expect(result.durationMs.l2).toBeNull();
   });
 
-  it("L1 above threshold runs L2", async () => {
+  it("L1 above threshold with DOM present still only runs L1 (image-first P2, ADR-047)", async () => {
     const result = await runDiff({
       baseline: {
         image: PNG_FIXTURE("baseline-a.png"),
@@ -51,11 +51,12 @@ describe("runDiff", () => {
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
     });
-    expect(result.ranTiers).toContain("l2");
-    expect(result.regions.length).toBeGreaterThan(0);
+    expect(result.ranTiers).toEqual(["l1"]);
+    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
+    expect(result.durationMs.l2).toBeNull();
   });
 
-  it("l2Enabled=false skips L2 regardless of L1", async () => {
+  it("l2Enabled is a no-op now — image-only regardless of the flag (image-first P2, ADR-047)", async () => {
     const result = await runDiff({
       baseline: {
         image: PNG_FIXTURE("baseline-a.png"),
@@ -72,6 +73,7 @@ describe("runDiff", () => {
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
     });
+    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
     expect(result.ranTiers).toEqual(["l1"]);
   });
 
