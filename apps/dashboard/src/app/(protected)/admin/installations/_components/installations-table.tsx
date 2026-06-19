@@ -9,6 +9,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 
 // Sentinel value for "no project linked". Radix Select disallows empty
@@ -56,56 +64,50 @@ export function InstallationsTable() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-950">
-      <table className="w-full text-sm" data-testid="installations-table">
-        <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
-          <tr>
-            <th className="px-4 py-2.5 font-medium">Account</th>
-            <th className="px-4 py-2.5 font-medium">Installation ID</th>
-            <th className="px-4 py-2.5 font-medium">Repos</th>
-            <th className="px-4 py-2.5 font-medium">Project</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {installations.map((inst) => (
-            <tr
-              key={inst.id}
-              className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
-              data-testid={`install-row-${inst.id}`}
-            >
-              <td className="px-4 py-2.5">{inst.accountLogin}</td>
-              <td className="px-4 py-2.5">{inst.installationId}</td>
-              <td className="px-4 py-2.5">{inst.repositoryIds.length}</td>
-              <td className="px-4 py-2.5">
-                <Select
-                  value={inst.projectId ?? UNASSIGNED}
-                  onValueChange={(v) =>
-                    update.mutate({
-                      id: inst.id,
-                      projectId: v === UNASSIGNED ? null : v,
-                    })
-                  }
+    <Table data-testid="installations-table">
+      <TableHeader>
+        <tr>
+          <TableHead>Account</TableHead>
+          <TableHead>Installation ID</TableHead>
+          <TableHead>Repos</TableHead>
+          <TableHead>Project</TableHead>
+        </tr>
+      </TableHeader>
+      <TableBody>
+        {installations.map((inst) => (
+          <TableRow key={inst.id} data-testid={`install-row-${inst.id}`}>
+            <TableCell>{inst.accountLogin}</TableCell>
+            <TableCell>{inst.installationId}</TableCell>
+            <TableCell>{inst.repositoryIds.length}</TableCell>
+            <TableCell>
+              <Select
+                value={inst.projectId ?? UNASSIGNED}
+                onValueChange={(v) =>
+                  update.mutate({
+                    id: inst.id,
+                    projectId: v === UNASSIGNED ? null : v,
+                  })
+                }
+              >
+                <SelectTrigger
+                  data-testid={`install-project-select-${inst.id}`}
+                  className="w-[260px]"
                 >
-                  <SelectTrigger
-                    data-testid={`install-project-select-${inst.id}`}
-                    className="w-[260px]"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={UNASSIGNED}>(unassigned)</SelectItem>
-                    {projects.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={UNASSIGNED}>(unassigned)</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
