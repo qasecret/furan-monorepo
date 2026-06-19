@@ -33,13 +33,13 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => currentSearchParams,
 }));
 
-import { ChangeRoleCell } from "../src/app/(protected)/admin/members/_components/change-role-cell";
-import { CreateUserDialog } from "../src/app/(protected)/admin/members/_components/create-user-dialog";
-import { DeactivateButton } from "../src/app/(protected)/admin/members/_components/deactivate-button";
+import { ChangeRoleCell } from "../src/app/(protected)/admin/(area)/members/_components/change-role-cell";
+import { CreateUserDialog } from "../src/app/(protected)/admin/(area)/members/_components/create-user-dialog";
+import { DeactivateButton } from "../src/app/(protected)/admin/(area)/members/_components/deactivate-button";
 import {
   MembersTable,
   type MemberRow,
-} from "../src/app/(protected)/admin/members/_components/members-table";
+} from "../src/app/(protected)/admin/(area)/members/_components/members-table";
 
 type FetchCall = { url: string; init?: RequestInit };
 

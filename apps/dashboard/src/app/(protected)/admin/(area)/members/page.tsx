@@ -4,8 +4,6 @@ import { MembersTable, type MemberRow } from "./_components/members-table";
 
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
-import { Card } from "@/components/ui/card";
-import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
 export const metadata: Metadata = { title: "Members" };
@@ -36,24 +34,9 @@ export default async function MembersPage({
 }: {
   searchParams?: Promise<SearchParams>;
 }) {
+  // Admin access is enforced by the (area)/layout.tsx gate; here we only
+  // need the current user's id to flag their own row ("(you)") in the table.
   const me = await apiGet<Me>("/users/me");
-  if (
-    me.status === 401 ||
-    me.status === 403 ||
-    !me.data ||
-    me.data.role !== "admin"
-  ) {
-    return (
-      <Card>
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
-          403 — admin only
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          You need the admin role to manage members.
-        </p>
-      </Card>
-    );
-  }
 
   const params: SearchParams =
     (await (searchParams ?? Promise.resolve({} as SearchParams))) ?? {};
@@ -68,12 +51,15 @@ export default async function MembersPage({
     <div className="space-y-4">
       <SetBreadcrumbs items={[{ label: "Members" }]} />
       <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
-      <PageHeader
-        title="Members"
-        description="Manage user access. Admins can create users, change roles, and deactivate accounts."
-      />
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+        Manage user access. Admins can create users, change roles, and
+        deactivate accounts.
+      </p>
       <div id="members-table">
-        <MembersTable initialUsers={members} currentUserId={me.data.id} />
+        <MembersTable
+          initialUsers={members}
+          currentUserId={me.data?.id ?? ""}
+        />
       </div>
     </div>
   );
