@@ -8,6 +8,7 @@ import { ClusterBlock } from "./cluster-block";
 import { groupIntoClusters, type ClusterGroup } from "./cluster-grouping";
 import { EmptyState } from "./empty-state";
 import { FilterBar } from "./filter-bar";
+import { InboxPreviewPane } from "./inbox-preview-pane";
 import { Pagination } from "./pagination";
 import { RejectClusterDialog } from "./reject-cluster-dialog";
 
@@ -178,65 +179,92 @@ export function InboxPage({
           window={initialWindow}
           groupBy={initialGroup}
         />
-        {list.isLoading ? (
-          <SkeletonList />
-        ) : items.length === 0 ? (
-          <EmptyState />
-        ) : initialGroup ? (
-          <ul
-            id="inbox-queue-list"
-            role="list"
-            className="flex-1 overflow-y-auto"
-          >
-            {(() => {
-              const groups = groupIntoClusters(items);
-              let flat = 0;
-              return groups.map((g) => {
-                if (g.kind === "single") {
-                  const idx = flat++;
-                  return (
-                    <QueueRow
-                      key={g.row.runId}
-                      row={g.row}
-                      selected={idx === selectedIndex}
-                      onApprove={() => fireAction("approve", g.row, false)}
-                      onReject={() => fireAction("reject", g.row, false)}
-                    />
-                  );
-                }
-                const base = flat;
-                flat += g.rows.length;
-                return (
-                  <ClusterBlock
-                    key={`${g.projectId}:${g.signature}`}
-                    cluster={g}
-                    baseIndex={base}
-                    selectedIndex={selectedIndex}
-                    onApprove={(row) => fireAction("approve", row, false)}
-                    onReject={(row) => fireAction("reject", row, false)}
-                    onRejectAll={setRejectTarget}
+        <div className="flex min-h-0 flex-1">
+          {/* Left — the queue (full-width on narrow; fixed column on md+). */}
+          <div className="flex min-h-0 w-full flex-col md:w-[380px] md:border-r md:border-zinc-200 lg:w-[420px] dark:md:border-zinc-900">
+            {list.isLoading ? (
+              <SkeletonList />
+            ) : items.length === 0 ? (
+              <EmptyState />
+            ) : initialGroup ? (
+              <ul
+                id="inbox-queue-list"
+                role="list"
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                {(() => {
+                  const groups = groupIntoClusters(items);
+                  let flat = 0;
+                  return groups.map((g) => {
+                    if (g.kind === "single") {
+                      const idx = flat++;
+                      return (
+                        <QueueRow
+                          key={g.row.runId}
+                          row={g.row}
+                          selected={idx === selectedIndex}
+                          onApprove={() => fireAction("approve", g.row, false)}
+                          onReject={() => fireAction("reject", g.row, false)}
+                          onSelect={() => setSelectedIndex(idx)}
+                        />
+                      );
+                    }
+                    const base = flat;
+                    flat += g.rows.length;
+                    return (
+                      <ClusterBlock
+                        key={`${g.projectId}:${g.signature}`}
+                        cluster={g}
+                        baseIndex={base}
+                        selectedIndex={selectedIndex}
+                        onApprove={(row) => fireAction("approve", row, false)}
+                        onReject={(row) => fireAction("reject", row, false)}
+                        onRejectAll={setRejectTarget}
+                        onSelect={setSelectedIndex}
+                      />
+                    );
+                  });
+                })()}
+              </ul>
+            ) : (
+              <ul
+                id="inbox-queue-list"
+                role="list"
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                {items.map((row, idx) => (
+                  <QueueRow
+                    key={row.runId}
+                    row={row}
+                    selected={idx === selectedIndex}
+                    onApprove={() => fireAction("approve", row, false)}
+                    onReject={() => fireAction("reject", row, false)}
+                    onSelect={() => setSelectedIndex(idx)}
                   />
-                );
-              });
-            })()}
-          </ul>
-        ) : (
-          <ul
-            id="inbox-queue-list"
-            role="list"
-            className="flex-1 overflow-y-auto"
+                ))}
+              </ul>
+            )}
+            <Pagination
+              hasMore={
+                list.data?.nextCursor !== null &&
+                list.data?.nextCursor !== undefined
+              }
+              onNext={() => setCursor(list.data?.nextCursor ?? null)}
+            />
+          </div>
+          {/* Right — preview (md+ only; the queue's own open-diff link covers narrow). */}
+          <div
+            id="inbox-preview-pane"
+            className="hidden min-h-0 flex-1 md:flex"
           >
-            {items.map((row, idx) => (
-              <QueueRow
-                key={row.runId}
-                row={row}
-                selected={idx === selectedIndex}
-                onApprove={() => fireAction("approve", row, false)}
-                onReject={() => fireAction("reject", row, false)}
-              />
-            ))}
-          </ul>
-        )}
+            <InboxPreviewPane
+              run={current}
+              onApprove={() => current && fireAction("approve", current, false)}
+              onReject={() => current && fireAction("reject", current, false)}
+              isActing={approve.isPending || reject.isPending}
+            />
+          </div>
+        </div>
         {rejectTarget && (
           <RejectClusterDialog
             open
@@ -257,13 +285,6 @@ export function InboxPage({
             }
           />
         )}
-        <Pagination
-          hasMore={
-            list.data?.nextCursor !== null &&
-            list.data?.nextCursor !== undefined
-          }
-          onNext={() => setCursor(list.data?.nextCursor ?? null)}
-        />
       </div>
     </KeyboardScope>
   );
