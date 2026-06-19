@@ -11,6 +11,7 @@ import { TestCard, type TestCardData } from "./test-card";
 
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Button } from "@/components/ui/button";
+import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName } from "@/lib/build-display-name";
@@ -131,7 +132,7 @@ export function BatchPage({
     (build.unresolvedCount > 0 || build.failedCount > 0);
 
   return (
-    <div className="flex h-full flex-col">
+    <PageContainer fullBleed>
       <SetBreadcrumbs
         items={buildCrumbs(
           projectId,
@@ -190,7 +191,7 @@ export function BatchPage({
           </Button>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

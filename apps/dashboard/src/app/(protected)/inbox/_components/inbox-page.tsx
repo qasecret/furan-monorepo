@@ -14,6 +14,7 @@ import { RejectClusterDialog } from "./reject-cluster-dialog";
 
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
+import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InboxRealtime } from "@/hooks/InboxRealtime";
 import { plural } from "@/lib/format";
@@ -166,7 +167,7 @@ export function InboxPage({
       }
     >
       <InboxRealtime />
-      <div className="flex h-full flex-col">
+      <PageContainer fullBleed>
         <header
           id="inbox-header"
           className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-900"
@@ -294,7 +295,7 @@ export function InboxPage({
             }
           />
         )}
-      </div>
+      </PageContainer>
     </KeyboardScope>
   );
 }
