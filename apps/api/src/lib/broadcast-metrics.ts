@@ -4,6 +4,7 @@ interface RegisteredMetrics {
   published: Counter<"event">;
   flushed: Counter<"event">;
   connections: Gauge;
+  inboxConnections: Gauge;
 }
 
 const metricsByRegistry = new WeakMap<Registry, RegisteredMetrics>();
@@ -29,8 +30,18 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
     help: "Currently-open project SSE connections",
     registers: [registry],
   });
+  const inboxConnections = new Gauge({
+    name: "furan_inbox_sse_connections_active",
+    help: "Currently-open multiplexed inbox SSE connections",
+    registers: [registry],
+  });
 
-  const out: RegisteredMetrics = { published, flushed, connections };
+  const out: RegisteredMetrics = {
+    published,
+    flushed,
+    connections,
+    inboxConnections,
+  };
   metricsByRegistry.set(registry, out);
   return out;
 }
@@ -50,4 +61,10 @@ export function incConnections(registry: Registry): void {
 }
 export function decConnections(registry: Registry): void {
   getOrRegister(registry).connections.dec();
+}
+export function incInboxConnections(registry: Registry): void {
+  getOrRegister(registry).inboxConnections.inc();
+}
+export function decInboxConnections(registry: Registry): void {
+  getOrRegister(registry).inboxConnections.dec();
 }

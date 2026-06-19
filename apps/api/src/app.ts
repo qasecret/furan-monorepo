@@ -23,6 +23,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBuildsRoutes } from "./routes/builds.js";
 import { registerDashboardTelemetryRoutes } from "./routes/dashboard-telemetry.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerInboxEventsRoute } from "./routes/inbox-events.js";
 import { registerMembersRoutes } from "./routes/members.js";
 import { registerProjectEventsRoute } from "./routes/project-events.js";
 import { registerProjectsRoutes } from "./routes/projects.js";
@@ -133,6 +134,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerBuildsRoutes(app);
   await registerRunEventsRoute(app);
   await registerProjectEventsRoute(app);
+  await registerInboxEventsRoute(app);
   await registerSdkRoutes(app);
   await registerRunLifecycleRoutes(app);
   await registerStorageProxyRoute(app);
