@@ -15,9 +15,17 @@ interface Props {
   selected: boolean;
   onApprove: () => void;
   onReject: () => void;
+  /** Click-to-select for the list-detail preview. Optional — the row works without it. */
+  onSelect?: () => void;
 }
 
-export function QueueRow({ row, selected, onApprove, onReject }: Props) {
+export function QueueRow({
+  row,
+  selected,
+  onApprove,
+  onReject,
+  onSelect,
+}: Props) {
   // The viewer is keyed by (runId, diffId); for a row-level open we pass runId
   // in both segments — the page redirects to the run's first diff when they
   // don't match an exact diff record.
@@ -27,8 +35,10 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
       role="listitem"
       data-testid={`queue-row-${row.runId}`}
       aria-label={`Run ${row.variationName} in ${row.projectName}, ${row.status}`}
+      onClick={onSelect}
       className={cn(
         "group flex items-center gap-3 border-b border-zinc-100 px-4 py-3 hover:bg-zinc-100/60 focus-visible:outline-none dark:border-zinc-900 dark:hover:bg-zinc-900/40",
+        onSelect && "cursor-pointer",
         selected &&
           "bg-zinc-200/70 ring-2 ring-brand/60 dark:bg-zinc-900/60 dark:ring-brand/40",
       )}
@@ -80,7 +90,10 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
         <Button
           variant="ghost"
           className="px-2 py-1"
-          onClick={onApprove}
+          onClick={(e) => {
+            e.stopPropagation();
+            onApprove();
+          }}
           title="Approve (a)"
           aria-label={`Approve ${row.variationName}`}
         >
@@ -89,7 +102,10 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
         <Button
           variant="ghost"
           className="px-2 py-1"
-          onClick={onReject}
+          onClick={(e) => {
+            e.stopPropagation();
+            onReject();
+          }}
           title="Reject (r)"
           aria-label={`Reject ${row.variationName}`}
         >
@@ -97,6 +113,7 @@ export function QueueRow({ row, selected, onApprove, onReject }: Props) {
         </Button>
         <Link
           href={diffHref}
+          onClick={(e) => e.stopPropagation()}
           className="rounded p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800"
           title="Open diff viewer (Enter)"
           aria-label={`Open diff viewer for ${row.variationName}`}
