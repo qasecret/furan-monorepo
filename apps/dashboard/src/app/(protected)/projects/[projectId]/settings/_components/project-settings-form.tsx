@@ -635,8 +635,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     />
                   </FormControl>
                   <FormDescription>
-                    Pixel-diff above this triggers DOM-level analysis. Default
-                    0.10%.
+                    A run is flagged as changed when its pixel-diff exceeds this
+                    threshold. Default 0.10%.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
