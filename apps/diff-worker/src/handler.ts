@@ -51,10 +51,6 @@ import {
   type ElementMap,
 } from "./element-map-resolver.js";
 import { computePrimarySignature } from "./primary-signature.js";
-import {
-  classifyLayoutContent,
-  type ReviewerRegion,
-} from "./region-mode-classifier.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 const engineConfigSchema = z.object({
@@ -718,9 +714,6 @@ async function handleDiffJobInner(
 
     const baselineBytes = await deps.storage.get(baselineShot.imageKey);
     const candidateBytes = await deps.storage.get(cs.imageKey);
-    const baselineDom = baselineShot.domKey
-      ? new TextDecoder().decode(await deps.storage.get(baselineShot.domKey))
-      : undefined;
     const candidateDom = cs.domKey
       ? new TextDecoder().decode(await deps.storage.get(cs.domKey))
       : undefined;
@@ -885,11 +878,9 @@ async function handleDiffJobInner(
       result = await runDiff({
         baseline: {
           image: Buffer.from(baselineBytes),
-          ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
         },
         candidate: {
           image: Buffer.from(candidateBytes),
-          ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
         },
         ignoreDisplacements: cs.ignoreDisplacements,
         l1DisplacementMetric: {
@@ -903,7 +894,9 @@ async function handleDiffJobInner(
           // existing project setting still drives every run that hasn't been
           // tuned by hand.
           diffThreshold,
-          l2Enabled: project.l2Enabled ?? true,
+          // L2 is permanently disabled (image-first, ADR-047). The field
+          // remains on ProjectDiffConfig (engine-type cleanup is a later task).
+          l2Enabled: false,
           ignoreAreas: resolvedIgnoreAreas,
           engine: project.imageComparison,
           // Engine config (matchLevel no longer adjusts it — ADR-047).
@@ -977,34 +970,6 @@ async function handleDiffJobInner(
     });
 
     // Step B: classify diff regions against reviewer Layout/Content zones.
-    // `allRegions` is the parsed + viewport-filtered list of saved/variation
-    // ignore-areas — same source used to build the L1 mask above. We pass it
-    // through resolveRegionBbox so the classifier sees the same coords the
-    // engine masked at.
-    const reviewerForClassify: ReviewerRegion[] = await Promise.all(
-      allRegions
-        .filter((r) => r.kind === "layout" || r.kind === "content")
-        .filter(
-          (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
-        )
-        .map(async (r) => ({
-          kind: r.kind,
-          bbox: await resolveRegionBbox(
-            r,
-            elementMapKey,
-            bounds,
-            elementMapCache,
-            {
-              storage: deps.storage,
-              logger,
-              onOutcome: (outcome) =>
-                deps.metrics?.regionResolution.labels({ outcome }).inc(),
-            },
-          ),
-        })),
-    );
-    result.regions = classifyLayoutContent(result.regions, reviewerForClassify);
-
     // Step C: strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
     // breaching its tolerance becomes a synthetic "breaking" region

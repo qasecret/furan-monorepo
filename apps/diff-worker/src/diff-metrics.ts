@@ -33,18 +33,6 @@ export interface DiffMetrics {
   dynamicTextMatch: Counter<"outcome">;
   regionResolution: Counter<"outcome">;
   /**
-   * Outcome of resolving a L2 op's diff-dom route through the candidate
-   * DOM + element-map sidecar to a real bbox. Counts independently from
-   * `regionResolution` (which tracks reviewer-region selector
-   * resolution); the consumer is `l2-bbox-resolver.ts`, the producer is
-   * the handler's post-runDiff pipeline.
-   *
-   * Outcomes: `resolved` (bbox lookup hit), `selector_miss` (selector
-   * derived but not in the element-map), `route_invalid` (route walked
-   * off the AST or stepped into a non-element node).
-   */
-  l2Resolution: Counter<"outcome">;
-  /**
    * Outcome of resolving an axe-core violation's CSS target to a real
    * bbox via the candidate DOM + element-map sidecar. Counts
    * independently from `l2Resolution`; the consumer is
@@ -100,12 +88,6 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     regionResolution: new Counter({
       name: "furan_diff_region_resolution_total",
       help: "Outcome of resolving an ignore region's CSS selector against the candidate's element-map sidecar",
-      labelNames: ["outcome"],
-      registers: [registry],
-    }),
-    l2Resolution: new Counter({
-      name: "furan_diff_l2_region_resolution_total",
-      help: "Outcome of resolving a L2 op's diff-dom route to an element-map bbox",
       labelNames: ["outcome"],
       registers: [registry],
     }),
