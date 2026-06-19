@@ -6,10 +6,7 @@ import Link from "next/link";
 import { StatusPill } from "@/components/triage/status-pill";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
-import { plural } from "@/lib/format";
-import { trpc } from "@/lib/trpc";
 
 interface Props {
   run: InboxRunRow | undefined;
@@ -19,10 +16,17 @@ interface Props {
 }
 
 /**
- * Right-hand preview for the inbox list-detail. The header + image come from the
- * selected row (instant, no fetch — thumbnailUrl is the only directly-renderable
- * image; the diff overlay is a storage key behind auth, so it stays in the full
- * viewer). runs.getById supplies only the stat chips.
+ * Right-hand preview for the inbox list-detail. Intentionally lean and
+ * fetch-free: the header + candidate image come straight from the selected row
+ * (thumbnailUrl is already a signed URL). Diff %/region detail and the full
+ * overlay live one click away in the diff viewer.
+ *
+ * The preview deliberately does NOT call runs.getById. The inbox page already
+ * holds one long-lived SSE connection per project (InboxRealtime); on an org
+ * with more than a handful of projects those streams saturate the browser's
+ * per-origin connection limit, so a per-selection getById would queue behind
+ * them indefinitely. Keeping the preview fetch-free makes it instant and
+ * immune to that starvation.
  */
 export function InboxPreviewPane({
   run,
@@ -30,11 +34,6 @@ export function InboxPreviewPane({
   onReject,
   isActing,
 }: Props) {
-  const detail = trpc.runs.getById.useQuery(
-    { runId: run?.runId ?? "" },
-    { enabled: !!run },
-  );
-
   if (!run) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
@@ -86,32 +85,6 @@ export function InboxPreviewPane({
             No preview image
           </div>
         )}
-      </div>
-
-      <div className="mt-4 min-h-[2rem]">
-        {detail.isLoading ? (
-          <div className="flex gap-3">
-            <Skeleton className="h-7 w-28" />
-            <Skeleton className="h-7 w-24" />
-          </div>
-        ) : detail.isError ? (
-          <p className="text-sm text-red-600 dark:text-red-400">
-            Couldn&apos;t load run details.
-          </p>
-        ) : detail.data ? (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {detail.data.diffPercent !== null &&
-              detail.data.diffPercent !== undefined && (
-                <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-                  {detail.data.diffPercent.toFixed(2)}% changed
-                </span>
-              )}
-            <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-              {detail.data.diffRegions.length} region
-              {plural(detail.data.diffRegions.length)}
-            </span>
-          </div>
-        ) : null}
       </div>
 
       <div className="mt-6 flex items-center gap-2">
