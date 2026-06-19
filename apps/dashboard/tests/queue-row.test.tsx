@@ -82,4 +82,40 @@ describe("QueueRow", () => {
     expect(onApprove).not.toHaveBeenCalled();
     expect(onReject).not.toHaveBeenCalled();
   });
+
+  test("clicking the row body fires onSelect", () => {
+    const onSelect = vi.fn();
+    render(
+      <QueueRow
+        row={row}
+        selected={false}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onSelect={onSelect}
+      />,
+    );
+    fireEvent.click(screen.getByTestId(`queue-row-${row.runId}`));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  test("clicking Approve / Reject / Build link does NOT fire onSelect", () => {
+    const onSelect = vi.fn();
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(
+      <QueueRow
+        row={row}
+        selected={false}
+        onApprove={onApprove}
+        onReject={onReject}
+        onSelect={onSelect}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Approve/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Reject/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Build #142/ }));
+    expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

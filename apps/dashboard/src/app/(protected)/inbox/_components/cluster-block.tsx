@@ -16,6 +16,8 @@ interface Props {
   onApprove: (row: InboxRunRow) => void;
   onReject: (row: InboxRunRow) => void;
   onRejectAll: (cluster: ClusterGroup) => void;
+  /** Select a member row by its flat index. Optional — cluster works without it. */
+  onSelect?: (flatIndex: number) => void;
 }
 
 export function ClusterBlock({
@@ -25,6 +27,7 @@ export function ClusterBlock({
   onApprove,
   onReject,
   onRejectAll,
+  onSelect,
 }: Props) {
   return (
     <li className="list-none">
@@ -53,6 +56,7 @@ export function ClusterBlock({
             selected={baseIndex + i === selectedIndex}
             onApprove={() => onApprove(row)}
             onReject={() => onReject(row)}
+            onSelect={onSelect ? () => onSelect(baseIndex + i) : undefined}
           />
         ))}
       </ul>

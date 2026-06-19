@@ -8,11 +8,13 @@ import { ClusterBlock } from "./cluster-block";
 import { groupIntoClusters, type ClusterGroup } from "./cluster-grouping";
 import { EmptyState } from "./empty-state";
 import { FilterBar } from "./filter-bar";
+import { InboxPreviewPane } from "./inbox-preview-pane";
 import { Pagination } from "./pagination";
 import { RejectClusterDialog } from "./reject-cluster-dialog";
 
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
+import { Skeleton } from "@/components/ui/skeleton";
 import { InboxRealtime } from "@/hooks/InboxRealtime";
 import { plural } from "@/lib/format";
 import { recordTelemetry } from "@/lib/telemetry";
@@ -114,6 +116,14 @@ export function InboxPage({
     setSelectedIndex(0);
   }, [initialStatus, initialWindow, initialGroup]);
 
+  // Keep the selection in range when the list shrinks — an approve/reject
+  // refetch removes the acted-on run, or a shorter page loads. Without this a
+  // stale index past the new end leaves `current` undefined: the preview blanks
+  // and a/r no-op even though runs remain. Clamping lands on the new last row.
+  useEffect(() => {
+    setSelectedIndex((i) => Math.min(i, Math.max(0, items.length - 1)));
+  }, [items.length]);
+
   const fireAction = useCallback(
     (
       action: "approve" | "reject",
@@ -178,65 +188,92 @@ export function InboxPage({
           window={initialWindow}
           groupBy={initialGroup}
         />
-        {list.isLoading ? (
-          <SkeletonList />
-        ) : items.length === 0 ? (
-          <EmptyState />
-        ) : initialGroup ? (
-          <ul
-            id="inbox-queue-list"
-            role="list"
-            className="flex-1 overflow-y-auto"
-          >
-            {(() => {
-              const groups = groupIntoClusters(items);
-              let flat = 0;
-              return groups.map((g) => {
-                if (g.kind === "single") {
-                  const idx = flat++;
-                  return (
-                    <QueueRow
-                      key={g.row.runId}
-                      row={g.row}
-                      selected={idx === selectedIndex}
-                      onApprove={() => fireAction("approve", g.row, false)}
-                      onReject={() => fireAction("reject", g.row, false)}
-                    />
-                  );
-                }
-                const base = flat;
-                flat += g.rows.length;
-                return (
-                  <ClusterBlock
-                    key={`${g.projectId}:${g.signature}`}
-                    cluster={g}
-                    baseIndex={base}
-                    selectedIndex={selectedIndex}
-                    onApprove={(row) => fireAction("approve", row, false)}
-                    onReject={(row) => fireAction("reject", row, false)}
-                    onRejectAll={setRejectTarget}
+        <div className="flex min-h-0 flex-1">
+          {/* Left — the queue (full-width on narrow; fixed column on md+). */}
+          <div className="flex min-h-0 w-full flex-col md:w-[380px] md:border-r md:border-zinc-200 lg:w-[420px] dark:md:border-zinc-900">
+            {list.isLoading ? (
+              <SkeletonList />
+            ) : items.length === 0 ? (
+              <EmptyState />
+            ) : initialGroup ? (
+              <ul
+                id="inbox-queue-list"
+                role="list"
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                {(() => {
+                  const groups = groupIntoClusters(items);
+                  let flat = 0;
+                  return groups.map((g) => {
+                    if (g.kind === "single") {
+                      const idx = flat++;
+                      return (
+                        <QueueRow
+                          key={g.row.runId}
+                          row={g.row}
+                          selected={idx === selectedIndex}
+                          onApprove={() => fireAction("approve", g.row, false)}
+                          onReject={() => fireAction("reject", g.row, false)}
+                          onSelect={() => setSelectedIndex(idx)}
+                        />
+                      );
+                    }
+                    const base = flat;
+                    flat += g.rows.length;
+                    return (
+                      <ClusterBlock
+                        key={`${g.projectId}:${g.signature}`}
+                        cluster={g}
+                        baseIndex={base}
+                        selectedIndex={selectedIndex}
+                        onApprove={(row) => fireAction("approve", row, false)}
+                        onReject={(row) => fireAction("reject", row, false)}
+                        onRejectAll={setRejectTarget}
+                        onSelect={setSelectedIndex}
+                      />
+                    );
+                  });
+                })()}
+              </ul>
+            ) : (
+              <ul
+                id="inbox-queue-list"
+                role="list"
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                {items.map((row, idx) => (
+                  <QueueRow
+                    key={row.runId}
+                    row={row}
+                    selected={idx === selectedIndex}
+                    onApprove={() => fireAction("approve", row, false)}
+                    onReject={() => fireAction("reject", row, false)}
+                    onSelect={() => setSelectedIndex(idx)}
                   />
-                );
-              });
-            })()}
-          </ul>
-        ) : (
-          <ul
-            id="inbox-queue-list"
-            role="list"
-            className="flex-1 overflow-y-auto"
+                ))}
+              </ul>
+            )}
+            <Pagination
+              hasMore={
+                list.data?.nextCursor !== null &&
+                list.data?.nextCursor !== undefined
+              }
+              onNext={() => setCursor(list.data?.nextCursor ?? null)}
+            />
+          </div>
+          {/* Right — preview (md+ only; the queue's own open-diff link covers narrow). */}
+          <div
+            id="inbox-preview-pane"
+            className="hidden min-h-0 flex-1 md:flex"
           >
-            {items.map((row, idx) => (
-              <QueueRow
-                key={row.runId}
-                row={row}
-                selected={idx === selectedIndex}
-                onApprove={() => fireAction("approve", row, false)}
-                onReject={() => fireAction("reject", row, false)}
-              />
-            ))}
-          </ul>
-        )}
+            <InboxPreviewPane
+              run={current}
+              onApprove={() => current && fireAction("approve", current, false)}
+              onReject={() => current && fireAction("reject", current, false)}
+              isActing={approve.isPending || reject.isPending}
+            />
+          </div>
+        </div>
         {rejectTarget && (
           <RejectClusterDialog
             open
@@ -257,13 +294,6 @@ export function InboxPage({
             }
           />
         )}
-        <Pagination
-          hasMore={
-            list.data?.nextCursor !== null &&
-            list.data?.nextCursor !== undefined
-          }
-          onNext={() => setCursor(list.data?.nextCursor ?? null)}
-        />
       </div>
     </KeyboardScope>
   );
@@ -271,18 +301,18 @@ export function InboxPage({
 
 function SkeletonList() {
   return (
-    <ul role="list" aria-busy="true" className="flex-1">
+    <ul role="list" aria-busy="true" className="min-h-0 flex-1">
       {Array.from({ length: 6 }).map((_, i) => (
         <li
           key={i}
           className="flex items-center gap-3 border-b border-zinc-100 px-4 py-3 dark:border-zinc-900"
         >
-          <div className="h-4 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <Skeleton className="h-4 w-4" />
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-4 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-3 w-1/4 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-3 w-1/4" />
           </div>
-          <div className="h-10 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+          <Skeleton className="h-10 w-16" />
         </li>
       ))}
     </ul>

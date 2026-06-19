@@ -14,6 +14,11 @@ vi.mock("@/hooks/InboxRealtime", () => ({
 vi.mock("@/lib/telemetry", () => ({
   recordTelemetry: vi.fn(),
 }));
+vi.mock("@/app/(protected)/inbox/_components/inbox-preview-pane", () => ({
+  InboxPreviewPane: ({ run }: { run?: { runId: string } }) => (
+    <div data-testid="inbox-preview-stub" data-run={run?.runId ?? ""} />
+  ),
+}));
 
 const listMock = vi.fn();
 const approveMock = vi.fn();
@@ -299,5 +304,159 @@ describe("InboxPage", () => {
     fireEvent.keyDown(document, { key: "r" });
     expect(approveMock).not.toHaveBeenCalled();
     expect(rejectMock).not.toHaveBeenCalled();
+  });
+
+  const rowA = {
+    runId: "aaaaaaaa-0000-0000-0000-000000000000",
+    projectId: "22222222-2222-2222-2222-222222222222",
+    projectName: "demo",
+    variationName: "alpha",
+    buildNumber: 1,
+    buildId: "33333333-3333-3333-3333-333333333333",
+    branch: "main",
+    status: "unresolved" as const,
+    createdAt: new Date().toISOString(),
+    thumbnailUrl: null,
+  };
+  const rowB = {
+    ...rowA,
+    runId: "bbbbbbbb-0000-0000-0000-000000000000",
+    variationName: "beta",
+  };
+
+  test("preview reflects the selected run (defaults to the first)", async () => {
+    listMock.mockReturnValue({
+      data: { items: [rowA, rowB], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("inbox-preview-stub").getAttribute("data-run"),
+      ).toBe(rowA.runId),
+    );
+  });
+
+  test("clicking a queue row updates the selection and preview", async () => {
+    listMock.mockReturnValue({
+      data: { items: [rowA, rowB], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    fireEvent.click(screen.getByTestId(`queue-row-${rowB.runId}`));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("inbox-preview-stub").getAttribute("data-run"),
+      ).toBe(rowB.runId),
+    );
+  });
+
+  test("shows skeleton placeholders while the queue is loading", () => {
+    listMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { container } = render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    const busy = container.querySelector('[aria-busy="true"]');
+    expect(busy).not.toBeNull();
+    // Assert the skeleton's structure (six placeholder rows), not the
+    // Skeleton primitive's internal animation class.
+    expect(busy?.querySelectorAll("li").length).toBe(6);
+  });
+
+  test("clamps the selection when the list shrinks (no blank preview)", async () => {
+    const rowC = {
+      ...rowA,
+      runId: "cccccccc-0000-0000-0000-000000000000",
+      variationName: "gamma",
+    };
+    listMock.mockReturnValue({
+      data: { items: [rowA, rowB, rowC], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { rerender } = render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    // Move the selection to the last row.
+    fireEvent.keyDown(document, { key: "j" });
+    fireEvent.keyDown(document, { key: "j" });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("inbox-preview-stub").getAttribute("data-run"),
+      ).toBe(rowC.runId),
+    );
+
+    // The list shrinks (the selected run was approved away / a shorter page).
+    listMock.mockReturnValue({
+      data: { items: [rowA, rowB], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    rerender(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    // Index 2 clamps to 1 (rowB): the preview shows the new last row, not blank.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("inbox-preview-stub").getAttribute("data-run"),
+      ).toBe(rowB.runId),
+    );
+  });
+
+  test("pressing j moves the selection and updates the preview", async () => {
+    listMock.mockReturnValue({
+      data: { items: [rowA, rowB], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    fireEvent.keyDown(document, { key: "j" });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("inbox-preview-stub").getAttribute("data-run"),
+      ).toBe(rowB.runId),
+    );
   });
 });

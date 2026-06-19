@@ -35,13 +35,16 @@ export function FilterBar({ status, window, groupBy }: Props) {
   return (
     <div
       data-testid="inbox-filter-bar"
-      className="sticky top-0 z-10 flex items-center gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-900 dark:bg-[#050505]"
+      className="sticky top-0 z-10 flex items-center gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-2 dark:border-zinc-900 dark:bg-[#050505]"
     >
+      <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        Filter
+      </span>
       <Select
         value={status}
         onValueChange={(v) => update("status", v === "all-open" ? null : v)}
       >
-        <SelectTrigger className="w-36">
+        <SelectTrigger className="h-8 w-36">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -54,7 +57,7 @@ export function FilterBar({ status, window, groupBy }: Props) {
         value={window}
         onValueChange={(v) => update("window", v === "7d" ? null : v)}
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="h-8 w-32">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

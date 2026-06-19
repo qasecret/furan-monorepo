@@ -1,3 +1,4 @@
+import { Slot } from "@radix-ui/react-slot";
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 
 import { cn } from "@/lib/cn";
@@ -6,6 +7,8 @@ type Variant = "default" | "secondary" | "destructive" | "ghost";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
+  /** Render as the single child element (Radix Slot) — e.g. style a <Link>. */
+  asChild?: boolean;
 }
 
 const variantClasses: Record<Variant, string> = {
@@ -19,16 +22,19 @@ const variantClasses: Record<Variant, string> = {
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = "default", ...props }, ref) => (
-    <button
-      ref={ref}
-      className={cn(
-        "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950 disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
-        variantClasses[variant],
-        className,
-      )}
-      {...props}
-    />
-  ),
+  ({ className, variant = "default", asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button";
+    return (
+      <Comp
+        ref={ref}
+        className={cn(
+          "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950 disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+          variantClasses[variant],
+          className,
+        )}
+        {...props}
+      />
+    );
+  },
 );
 Button.displayName = "Button";

@@ -16,6 +16,13 @@ export const INBOX_TOUR_STEPS: TourStep[] = [
     placement: "right",
   },
   {
+    target: "#inbox-preview-pane",
+    title: "Preview before you decide",
+    content:
+      "The selected run shows here — its change and a quick way to act — so you can approve or reject without opening the full diff. On a narrow screen, use the row's open-diff button instead.",
+    placement: "left",
+  },
+  {
     target: '[data-testid="inbox-filter-bar"]',
     title: "Filter the queue",
     content:
