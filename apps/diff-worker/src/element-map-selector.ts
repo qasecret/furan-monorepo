@@ -37,8 +37,7 @@ function cssEscapeIdent(s: string): string {
  * Returns null when the node has no usable tag (defensive — callers
  * are expected to pass real Element nodes).
  *
- * Used by the axe bbox resolver. NOT used by the L2 resolver, which
- * walks a diff-dom AST (different node shape).
+ * Used by the axe bbox resolver.
  */
 export function elementSegment(node: Element): string | null {
   const tag = node.tagName?.toLowerCase();

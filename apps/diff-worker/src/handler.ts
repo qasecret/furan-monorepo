@@ -1008,7 +1008,7 @@ async function handleDiffJobInner(
             category: "layout",
             bbox: b.bbox,
             description: `Strict region exceeded tolerance: ${(b.fraction * 100).toFixed(3)}% > ${(b.threshold * 100).toFixed(3)}%`,
-            source: "l1", // synthesised from L1 diff image; not an L2 op
+            source: "l1", // synthesised from the L1 diff image
           });
         }
         if (breaches.length > 0) {
@@ -1162,7 +1162,7 @@ async function handleDiffJobInner(
 
     // Synthetic audit rows for dynamic-text OCR decisions (matched OR
     // unmatched). `source="dynamic_text"` + `ocr_text`/`ocr_matched`
-    // distinguish these from real L1/L2 regions; severity is always
+    // distinguish these from real diff regions; severity is always
     // "none" so they're hidden from the default RegionListPanel view.
     const auditValues = dynamicTextAudits.flatMap(
       ({ viewport, screenshotId, results }) =>
