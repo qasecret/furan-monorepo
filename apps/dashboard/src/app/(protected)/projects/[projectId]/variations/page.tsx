@@ -7,6 +7,7 @@ import { VariationsList } from "./_components/variations-list";
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
+import { PageContainer } from "@/components/ui/page-container";
 import { getProject } from "@/lib/get-project";
 import { getViewerRole } from "@/lib/get-viewer";
 import { projectCrumbs } from "@/lib/project-crumbs";
@@ -51,29 +52,33 @@ export default async function ProjectVariationsPage({
   }
   if (project.status === 403 || !project.data) {
     return (
-      <Card>
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
-          403 — not a project member
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          You need to be added to this project to view its variations.
-        </p>
-      </Card>
+      <PageContainer>
+        <Card>
+          <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+            403 — not a project member
+          </h1>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            You need to be added to this project to view its variations.
+          </p>
+        </Card>
+      </PageContainer>
     );
   }
 
   const userRole = await getViewerRole();
 
   return (
-    <div className="space-y-4">
-      <SetBreadcrumbs
-        items={projectCrumbs(projectId, project.data.name, "Variations")}
-      />
-      <PageTour pageId="variations-index" steps={VARIATIONS_PAGE_TOUR} />
-      <div id="variations-merge-panel">
-        <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
+    <PageContainer>
+      <div className="space-y-4">
+        <SetBreadcrumbs
+          items={projectCrumbs(projectId, project.data.name, "Variations")}
+        />
+        <PageTour pageId="variations-index" steps={VARIATIONS_PAGE_TOUR} />
+        <div id="variations-merge-panel">
+          <MergeBaselinesPanel projectId={projectId} userRole={userRole} />
+        </div>
+        <VariationsList projectId={projectId} />
       </div>
-      <VariationsList projectId={projectId} />
-    </div>
+    </PageContainer>
   );
 }

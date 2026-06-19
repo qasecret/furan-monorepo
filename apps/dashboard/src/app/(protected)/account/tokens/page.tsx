@@ -4,6 +4,7 @@ import { TokensTable, type TokenRow } from "./_components/tokens-table";
 
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
+import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { apiGet } from "@/lib/api-client";
 
@@ -25,16 +26,18 @@ export default async function TokensPage() {
   const tokens = Array.isArray(data) ? data : [];
 
   return (
-    <div className="space-y-4">
-      <SetBreadcrumbs items={[{ label: "Tokens" }]} />
-      <PageTour pageId="account-tokens" steps={TOKENS_PAGE_TOUR} />
-      <PageHeader
-        title="Personal access tokens"
-        description="Use these tokens to authenticate the Furan SDK or CI uploads. Each token grants the same access as your account."
-      />
-      <div id="tokens-table">
-        <TokensTable initialTokens={tokens} />
+    <PageContainer>
+      <div className="space-y-4">
+        <SetBreadcrumbs items={[{ label: "Tokens" }]} />
+        <PageTour pageId="account-tokens" steps={TOKENS_PAGE_TOUR} />
+        <PageHeader
+          title="Personal access tokens"
+          description="Use these tokens to authenticate the Furan SDK or CI uploads. Each token grants the same access as your account."
+        />
+        <div id="tokens-table">
+          <TokensTable initialTokens={tokens} />
+        </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }
