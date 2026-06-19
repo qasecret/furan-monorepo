@@ -1,29 +1,46 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/inbox" }));
-vi.mock("@/components/cmdk/use-command-palette", () => ({
-  usePaletteStore: () => () => undefined,
-}));
-vi.mock("@/app/(protected)/_components/use-mobile-sidebar", () => ({
-  useMobileSidebarStore: () => () => undefined,
-}));
-vi.mock("@/app/(protected)/_components/use-breadcrumbs", () => ({
-  useBreadcrumbsStore: (sel: (s: unknown) => unknown) =>
-    sel({ items: [], pathname: "/inbox" }),
-}));
-vi.mock("@/components/tour/help-button", () => ({ HelpButton: () => null }));
+// AccountMenu (now rendered inside TopBar) imports the logout server action,
+// which reaches for next/headers; stub it so the component tree mounts in
+// jsdom. Everything else (palette / breadcrumb / mobile stores) stays real so
+// these remain genuine wiring tests.
 vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
 
 import { TopBar } from "@/app/(protected)/_components/top-bar";
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
-afterEach(cleanup);
+const props = { email: "me@x.io", initial: "M", role: "admin" } as const;
+
+beforeEach(() => {
+  usePaletteStore.setState({ open: false });
+});
+
+afterEach(() => {
+  cleanup();
+  usePaletteStore.setState({ open: false });
+});
 
 describe("TopBar", () => {
+  test("clicking the search button opens the cmdk palette", () => {
+    render(<TopBar {...props} />);
+    expect(usePaletteStore.getState().open).toBe(false);
+
+    fireEvent.click(screen.getByTestId("top-bar-search"));
+    expect(usePaletteStore.getState().open).toBe(true);
+  });
+
+  test("notification bell is disabled stub", () => {
+    render(<TopBar {...props} />);
+    const bell = screen.getByTestId("top-bar-bell") as HTMLButtonElement;
+    expect(bell.disabled).toBe(true);
+    expect(bell.getAttribute("aria-disabled")).toBe("true");
+  });
+
   test("renders the account menu trigger with the user's initial", () => {
-    render(<TopBar email="me@x.io" initial="M" role="admin" />);
+    render(<TopBar {...props} />);
     expect(
       screen.getByRole("button", { name: /account menu/i }).textContent,
     ).toContain("M");
