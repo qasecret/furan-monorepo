@@ -575,11 +575,7 @@ export function DiffViewer({
               {(() => {
                 const top = orderDiffRegions(regions)[0];
                 const summary = top?.description?.trim() || "Region details";
-                const source = top
-                  ? top.source === "l2"
-                    ? "DOM"
-                    : "pixels"
-                  : undefined;
+                const source = top ? "pixels" : undefined;
                 return (
                   <WhyPanel
                     summary={summary}

@@ -9,71 +9,31 @@ import { DEFAULT_ENGINE_CONFIG } from "../src/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PNG_FIXTURE = (n: string) => readFileSync(join(__dirname, "fixtures", n));
-const HTML = (n: string) =>
-  readFileSync(join(__dirname, "fixtures", n), "utf8");
 
 describe("runDiff", () => {
-  it("L1 below threshold short-circuits L2", async () => {
+  it("image-only — ranTiers is ['l1'] (ADR-047)", async () => {
     const result = await runDiff({
-      baseline: {
-        image: PNG_FIXTURE("baseline-a.png"),
-        dom: HTML("dom-baseline.html"),
-      },
-      candidate: {
-        image: PNG_FIXTURE("candidate-a-identical.png"),
-        dom: HTML("dom-text-change.html"),
-      },
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
       config: {
         diffThreshold: 0.1,
-        l2Enabled: true,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
     });
     expect(result.ranTiers).toEqual(["l1"]);
-    expect(result.durationMs.l2).toBeNull();
   });
 
-  it("L1 above threshold with DOM present still only runs L1 (image-first P2, ADR-047)", async () => {
+  it("L1 above threshold: ranTiers is ['l1'] (ADR-047)", async () => {
     const result = await runDiff({
-      baseline: {
-        image: PNG_FIXTURE("baseline-a.png"),
-        dom: HTML("dom-baseline.html"),
-      },
-      candidate: {
-        image: PNG_FIXTURE("candidate-a-major.png"),
-        dom: HTML("dom-text-change.html"),
-      },
+      baseline: { image: PNG_FIXTURE("baseline-a.png") },
+      candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
       config: {
         diffThreshold: 0.001,
-        l2Enabled: true,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
     });
-    expect(result.ranTiers).toEqual(["l1"]);
-    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
-    expect(result.durationMs.l2).toBeNull();
-  });
-
-  it("l2Enabled is a no-op now — image-only regardless of the flag (image-first P2, ADR-047)", async () => {
-    const result = await runDiff({
-      baseline: {
-        image: PNG_FIXTURE("baseline-a.png"),
-        dom: HTML("dom-baseline.html"),
-      },
-      candidate: {
-        image: PNG_FIXTURE("candidate-a-major.png"),
-        dom: HTML("dom-text-change.html"),
-      },
-      config: {
-        diffThreshold: 0.001,
-        l2Enabled: false,
-        engine: "odiff",
-        engineConfig: DEFAULT_ENGINE_CONFIG,
-      },
-    });
-    expect(result.regions.some((r) => r.source === "l2")).toBe(false);
     expect(result.ranTiers).toEqual(["l1"]);
   });
 
@@ -87,7 +47,6 @@ describe("runDiff", () => {
       candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
       config: {
         diffThreshold: 0.5,
-        l2Enabled: false,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
@@ -103,7 +62,6 @@ describe("runDiff", () => {
       candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
       config: {
         diffThreshold: 0,
-        l2Enabled: false,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
@@ -118,7 +76,6 @@ describe("runDiff", () => {
       candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
       config: {
         diffThreshold: 0,
-        l2Enabled: false,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
@@ -140,7 +97,6 @@ describe("runDiff", () => {
       candidate: { image: PNG_FIXTURE("candidate-a-major.png") },
       config: {
         diffThreshold: 0.001,
-        l2Enabled: false,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
@@ -161,7 +117,6 @@ describe("runDiff", () => {
       candidate: { image: PNG_FIXTURE("candidate-a-identical.png") },
       config: {
         diffThreshold: 0,
-        l2Enabled: false,
         engine: "odiff",
         engineConfig: DEFAULT_ENGINE_CONFIG,
       },
@@ -180,7 +135,6 @@ describe("runDiff: L1 displacement pre-alignment", () => {
 
   const baseConfig = {
     diffThreshold: 0.001,
-    l2Enabled: false,
     engine: "pixelmatch" as const,
     engineConfig: DEFAULT_ENGINE_CONFIG,
   };

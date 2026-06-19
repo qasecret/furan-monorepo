@@ -51,10 +51,6 @@ import {
   type ElementMap,
 } from "./element-map-resolver.js";
 import { computePrimarySignature } from "./primary-signature.js";
-import {
-  classifyLayoutContent,
-  type ReviewerRegion,
-} from "./region-mode-classifier.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 const engineConfigSchema = z.object({
@@ -180,7 +176,7 @@ interface PerViewportResult {
     viewport: string | null;
     screenshotId: string;
   }>;
-  ranTiers: Array<"l1" | "l2">;
+  ranTiers: Array<"l1">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
   /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
@@ -718,9 +714,6 @@ async function handleDiffJobInner(
 
     const baselineBytes = await deps.storage.get(baselineShot.imageKey);
     const candidateBytes = await deps.storage.get(cs.imageKey);
-    const baselineDom = baselineShot.domKey
-      ? new TextDecoder().decode(await deps.storage.get(baselineShot.domKey))
-      : undefined;
     const candidateDom = cs.domKey
       ? new TextDecoder().decode(await deps.storage.get(cs.domKey))
       : undefined;
@@ -786,13 +779,11 @@ async function handleDiffJobInner(
           // engine doesn't yet honor it — until then, strict is pure
           // metadata.
           //
-          // layout + content: behave like `ignore` at L1 in v1 — mask
-          // the pixel diff inside the bbox. Region-mode classification
-          // for Layout/Content is handled by `classifyLayoutContent`
-          // (reviewer-drawn regions) and strict breaches via
-          // `strictBreaches`. L2 is removed (ADR-047); storing distinct
-          // kinds means the wire shape correctly reflects the reviewer's
-          // intent without a separate diff pass.
+          // layout + content: behave like `ignore` at L1 — mask the
+          // pixel diff inside the bbox (ADR-047). Storing distinct kinds
+          // means the wire shape correctly reflects the reviewer's intent
+          // without a separate diff pass. Strict breaches are
+          // post-filtered via `strictBreaches` below.
           //
           // dynamic-text: existing behavior — mask only when OCR
           // matched. Unmatched dynamic-text regions fall through to L1.
@@ -839,7 +830,7 @@ async function handleDiffJobInner(
       logger,
       project.id,
     );
-    const { config: routedEngineConfig } = configForMatchLevel(
+    const routedEngineConfig = configForMatchLevel(
       baseEngineConfig,
       screenshotMatchLevel,
     );
@@ -878,18 +869,16 @@ async function handleDiffJobInner(
         diffImageBytes: vlmResult.diffImageBytes,
         regions: [],
         ranTiers: ["l1"],
-        durationMs: { l1: performance.now() - t0, l2: null },
+        durationMs: { l1: performance.now() - t0 },
       };
       vlmDescription = vlmResult.vlmDescription;
     } else {
       result = await runDiff({
         baseline: {
           image: Buffer.from(baselineBytes),
-          ...(baselineDom !== undefined ? { dom: baselineDom } : {}),
         },
         candidate: {
           image: Buffer.from(candidateBytes),
-          ...(candidateDom !== undefined ? { dom: candidateDom } : {}),
         },
         ignoreDisplacements: cs.ignoreDisplacements,
         l1DisplacementMetric: {
@@ -903,7 +892,6 @@ async function handleDiffJobInner(
           // existing project setting still drives every run that hasn't been
           // tuned by hand.
           diffThreshold,
-          l2Enabled: project.l2Enabled ?? true,
           ignoreAreas: resolvedIgnoreAreas,
           engine: project.imageComparison,
           // Engine config (matchLevel no longer adjusts it — ADR-047).
@@ -976,36 +964,7 @@ async function handleDiffJobInner(
       },
     });
 
-    // Step B: classify diff regions against reviewer Layout/Content zones.
-    // `allRegions` is the parsed + viewport-filtered list of saved/variation
-    // ignore-areas — same source used to build the L1 mask above. We pass it
-    // through resolveRegionBbox so the classifier sees the same coords the
-    // engine masked at.
-    const reviewerForClassify: ReviewerRegion[] = await Promise.all(
-      allRegions
-        .filter((r) => r.kind === "layout" || r.kind === "content")
-        .filter(
-          (r) => !r.viewport || r.viewport === (cs.viewport ?? r.viewport),
-        )
-        .map(async (r) => ({
-          kind: r.kind,
-          bbox: await resolveRegionBbox(
-            r,
-            elementMapKey,
-            bounds,
-            elementMapCache,
-            {
-              storage: deps.storage,
-              logger,
-              onOutcome: (outcome) =>
-                deps.metrics?.regionResolution.labels({ outcome }).inc(),
-            },
-          ),
-        })),
-    );
-    result.regions = classifyLayoutContent(result.regions, reviewerForClassify);
-
-    // Step C: strict tolerance post-filter. Decode the diff image once
+    // Strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
     // breaching its tolerance becomes a synthetic "breaking" region
     // AND forces `passed: false`.
@@ -1049,7 +1008,7 @@ async function handleDiffJobInner(
             category: "layout",
             bbox: b.bbox,
             description: `Strict region exceeded tolerance: ${(b.fraction * 100).toFixed(3)}% > ${(b.threshold * 100).toFixed(3)}%`,
-            source: "l1", // synthesised from L1 diff image; not an L2 op
+            source: "l1", // synthesised from the L1 diff image
           });
         }
         if (breaches.length > 0) {
@@ -1203,7 +1162,7 @@ async function handleDiffJobInner(
 
     // Synthetic audit rows for dynamic-text OCR decisions (matched OR
     // unmatched). `source="dynamic_text"` + `ocr_text`/`ocr_matched`
-    // distinguish these from real L1/L2 regions; severity is always
+    // distinguish these from real diff regions; severity is always
     // "none" so they're hidden from the default RegionListPanel view.
     const auditValues = dynamicTextAudits.flatMap(
       ({ viewport, screenshotId, results }) =>

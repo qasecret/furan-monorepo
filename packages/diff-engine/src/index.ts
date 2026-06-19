@@ -3,7 +3,6 @@ import type { EngineConfig } from "./types.js";
 export { runDiff } from "./engine.js";
 export type { RunDiffInput } from "./engine.js";
 export { runL1 } from "./l1.js";
-export { runL2 } from "./l2.js";
 export { runAxe } from "./axe.js";
 export type { AccessibilityOptions } from "./axe.js";
 export { classifyRegions, severityRank } from "./classify.js";
@@ -48,16 +47,14 @@ export type MatchLevel =
   | "Dynamic";
 
 /**
- * Image-first (ADR-047): every matchLevel maps to the single image compare.
- * The matchLevel enum is retained on the wire/SDK for back-compat, but the
- * old L1-vs-L2 tier routing is gone — DOM/L2 is no longer a comparison tier.
- * (ADR-039 introduced the routing; ADR-047 reverses it.) `runL2Only` is kept
- * in the return shape (always false) so existing callers' destructuring is
- * undisturbed; it is removed wholesale in a later cleanup.
+ * Image-first (ADR-047): every matchLevel maps to the single image compare,
+ * so this returns the base engine config unchanged. The matchLevel enum is
+ * retained on the wire/SDK for back-compat; the old L1-vs-L2 tier routing
+ * (ADR-039) is gone.
  */
 export function configForMatchLevel(
   baseConfig: EngineConfig,
   _matchLevel: MatchLevel,
-): { config: EngineConfig; runL1: boolean; runL2Only: boolean } {
-  return { config: baseConfig, runL1: true, runL2Only: false };
+): EngineConfig {
+  return baseConfig;
 }

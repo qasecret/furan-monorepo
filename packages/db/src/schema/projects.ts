@@ -33,7 +33,6 @@ export const projects = pgTable("projects", {
     ),
   retentionDays: integer("retention_days").notNull().default(90),
   diffThreshold: doublePrecision("diff_threshold").notNull().default(0.001),
-  l2Enabled: boolean("l2_enabled").notNull().default(true),
   dynamicTextEnabled: boolean("dynamic_text_enabled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

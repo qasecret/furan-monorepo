@@ -21,7 +21,6 @@
     "@furan/queue": "workspace:*",
     "@furan/storage": "workspace:^",
     "@furan/telemetry": "workspace:*",
-    "diff-dom": "^5.1.0",
     "ioredis": "^5.4.1",
     "jsdom": "^25.0.1",
     "prom-client": "^15.1.3",

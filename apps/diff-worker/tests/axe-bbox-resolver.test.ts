@@ -138,7 +138,7 @@ describe("resolveAxeBboxes", () => {
     expect(counts.size).toBe(0);
   });
 
-  it("never touches L1 or L2 regions", () => {
+  it("never touches non-axe regions", () => {
     const l1: DiffRegion = {
       id: "l1",
       severity: "major",
@@ -147,21 +147,20 @@ describe("resolveAxeBboxes", () => {
       description: "l1",
       source: "l1",
     };
-    const l2: DiffRegion = {
-      id: "l2",
+    const nonAxe: DiffRegion = {
+      id: "non-axe",
       severity: "minor",
       category: "structural",
       bbox: { x: 1, y: 2, width: 3, height: 4 },
-      description: "l2",
-      source: "l2",
-      route: [0, 0],
+      description: "non-axe",
+      source: "l1",
     };
     const axe = makeAxeRegion(["button.primary"]);
-    const regions = [l1, l2, axe];
+    const regions = [l1, nonAxe, axe];
     const { metrics } = makeMetrics();
     resolveAxeBboxes(regions, HTML, ELEMENT_MAP, metrics);
     expect(l1.bbox).toEqual({ x: 5, y: 5, width: 50, height: 50 });
-    expect(l2.bbox).toEqual({ x: 1, y: 2, width: 3, height: 4 });
+    expect(nonAxe.bbox).toEqual({ x: 1, y: 2, width: 3, height: 4 });
     expect(axe.bbox).toEqual({ x: 100, y: 200, width: 120, height: 40 });
   });
 });

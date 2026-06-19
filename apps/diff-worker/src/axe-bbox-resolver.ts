@@ -39,14 +39,14 @@ interface Metrics {
  *       icons/inputs/buttons routinely fall back to an ancestor.
  *  4. No hit at any level -> outcome `selector_miss`, bbox unchanged.
  *
- * No-ops when `candidateDom` or `elementMap` is absent — matches the
- * L2 resolver's graceful-degradation contract.
+ * No-ops when `candidateDom` or `elementMap` is absent — graceful-
+ * degradation: callers may pass undefined/null for either field.
  *
  * Multi-frame axe targets (length > 1, iframe traversal) are not
  * supported in v1; only `axeTarget[0]` is consulted. Furan's DOM
  * capture is single-frame today.
  *
- * Only regions with `source === 'axe'` are touched. L1/L2 regions
+ * Only regions with `source === 'axe'` are touched. Non-axe regions
  * are left alone.
  */
 export function resolveAxeBboxes(

@@ -77,7 +77,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
   // Same content-addressed keys for every iteration — derived from fixture bytes.
   let baselineImageKey: string;
   let candidateImageKey: string;
-  let baselineDomKey: string;
   let candidateDomKey: string;
 
   beforeAll(async () => {
@@ -108,7 +107,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         name: `dw-engines-seed-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
       })
       .returning();
     candidateProjectIds.push(seedProject.id);
@@ -146,15 +144,12 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
     // Upload fixtures (content-addressed; idempotent put).
     const baselineBytes = FIXTURE("baseline-a.png");
     const candidateBytes = FIXTURE("candidate-a-major.png");
-    const baselineDomBytes = FIXTURE("dom-baseline.html");
     const candidateDomBytes = FIXTURE("dom-text-change.html");
     baselineImageKey = objectKey(baselineBytes);
     candidateImageKey = objectKey(candidateBytes);
-    baselineDomKey = objectKey(baselineDomBytes);
     candidateDomKey = objectKey(candidateDomBytes);
     await storage.put(baselineImageKey, baselineBytes, "image/png");
     await storage.put(candidateImageKey, candidateBytes, "image/png");
-    await storage.put(baselineDomKey, baselineDomBytes, "text/html");
     await storage.put(candidateDomKey, candidateDomBytes, "text/html");
 
     // Pre-clean any orphan rows for the fixture image keys from a prior
@@ -172,7 +167,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       testVariationId: v.id,
       name: "checkpoint-1",
       imageKey: baselineImageKey,
-      domKey: baselineDomKey,
       viewport: "1280x720",
       browser: "chromium",
     });
@@ -216,7 +210,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
           name: `dw-engines-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
           imageComparison: engine,
         })
         .returning();
@@ -287,7 +280,6 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         name: `dw-engines-${uniq}`,
         mainBranchName: "main",
         diffThreshold: 0.001,
-        l2Enabled: true,
         imageComparison: "pixelmatch",
         // Not valid JSON — parseEngineConfig should warn-log + fall back
         // to DEFAULT_ENGINE_CONFIG.
@@ -360,7 +352,6 @@ descLayout(
     let variationId: string;
     let baselineImageKey: string;
     let candidateImageKey: string;
-    let baselineDomKey: string;
     let candidateDomKey: string;
 
     beforeAll(async () => {
@@ -388,7 +379,6 @@ descLayout(
           name: `dw-layout-seed-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
         })
         .returning();
       cleanupProjectIds.push(seedProject.id);
@@ -425,15 +415,12 @@ descLayout(
 
       const baselineBytes = FIXTURE("baseline-a.png");
       const candidateBytes = FIXTURE("candidate-a-major.png");
-      const baselineDomBytes = FIXTURE("dom-baseline.html");
       const candidateDomBytes = FIXTURE("dom-text-change.html");
       baselineImageKey = objectKey(baselineBytes);
       candidateImageKey = objectKey(candidateBytes);
-      baselineDomKey = objectKey(baselineDomBytes);
       candidateDomKey = objectKey(candidateDomBytes);
       await storage.put(baselineImageKey, baselineBytes, "image/png");
       await storage.put(candidateImageKey, candidateBytes, "image/png");
-      await storage.put(baselineDomKey, baselineDomBytes, "text/html");
       await storage.put(candidateDomKey, candidateDomBytes, "text/html");
 
       await db
@@ -448,7 +435,6 @@ descLayout(
         testVariationId: v.id,
         name: "checkpoint-layout",
         imageKey: baselineImageKey,
-        domKey: baselineDomKey,
         viewport: "1280x720",
         browser: "chromium",
       });
@@ -483,7 +469,6 @@ descLayout(
           name: `dw-layout-${uniq}`,
           mainBranchName: "main",
           diffThreshold: 0.001,
-          l2Enabled: true,
         })
         .returning();
       cleanupProjectIds.push(p.id);
