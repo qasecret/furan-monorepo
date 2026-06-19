@@ -40,7 +40,7 @@ export function CollapsibleSection({
         type="button"
         onClick={() => onOpenChange(!open)}
         aria-expanded={open}
-        aria-controls={bodyId}
+        aria-controls={open ? bodyId : undefined}
         className="flex w-full items-center justify-between gap-2 px-6 py-4 text-left"
       >
         <span className="min-w-0">

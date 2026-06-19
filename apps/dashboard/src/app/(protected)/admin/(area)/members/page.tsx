@@ -5,6 +5,7 @@ import { MembersTable, type MemberRow } from "./_components/members-table";
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { apiGet } from "@/lib/api-client";
+import { getViewerRole } from "@/lib/get-viewer";
 
 export const metadata: Metadata = { title: "Members" };
 
@@ -34,9 +35,16 @@ export default async function MembersPage({
 }: {
   searchParams?: Promise<SearchParams>;
 }) {
-  // Admin access is enforced by the (area)/layout.tsx gate; here we only
-  // need the current user's id to flag their own row ("(you)") in the table.
+  // The (area)/layout.tsx renders the 403 Card for non-admins, but Next.js still
+  // executes this page's RSC — so re-check the (request-cached, free) role and
+  // bail BEFORE the admin-only /users fetch, restoring the pre-move ordering.
+  if ((await getViewerRole()) !== "admin") return null;
+
+  // The current user's id flags their own row ("(you)") + gates self-deactivation.
+  // If it can't be resolved, bail rather than render the table with an empty id
+  // (which would silently disable the self-row guard).
   const me = await apiGet<Me>("/users/me");
+  if (!me.data) return null;
 
   const params: SearchParams =
     (await (searchParams ?? Promise.resolve({} as SearchParams))) ?? {};
@@ -58,10 +66,7 @@ export default async function MembersPage({
         deactivate accounts.
       </p>
       <div id="members-table">
-        <MembersTable
-          initialUsers={members}
-          currentUserId={me.data?.id ?? ""}
-        />
+        <MembersTable initialUsers={members} currentUserId={me.data.id} />
       </div>
     </div>
   );
