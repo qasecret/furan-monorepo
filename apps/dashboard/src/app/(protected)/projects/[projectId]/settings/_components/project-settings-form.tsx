@@ -1,13 +1,13 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useMemo } from "react";
-import { useForm, type UseFormReturn } from "react-hook-form";
+import { useEffect, useMemo, useState } from "react";
+import { useForm, type FieldErrors, type UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import {
   Form,
   FormControl,
@@ -210,6 +210,25 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+
+/**
+ * Section model for the collapsible layout. Each field maps to the section
+ * that owns it so a submit-time validation error can force its section open
+ * even if the user collapsed it.
+ */
+type SectionId = "basics" | "diff" | "image" | "limits" | "retention";
+const FIELD_SECTION: Record<string, SectionId> = {
+  name: "basics",
+  mainBranchName: "basics",
+  diffThreshold: "diff",
+  dynamicTextEnabled: "diff",
+  autoApproveFeature: "diff",
+  imageComparison: "image",
+  imageComparisonConfig: "image",
+  maxBuildAllowed: "limits",
+  maxBranchLifetime: "limits",
+  retentionDays: "retention",
+};
 
 /**
  * Structured per-engine config editor. Reads the current
@@ -509,6 +528,33 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
     },
   });
 
+  // Collapsible-section open state. All sections start expanded; a section
+  // can be force-opened when it holds a submit-time validation error.
+  const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(
+    () => ({
+      basics: true,
+      diff: true,
+      image: true,
+      limits: true,
+      retention: true,
+    }),
+  );
+  const setSectionOpen = (id: SectionId, open: boolean): void =>
+    setOpenSections((s) => ({ ...s, [id]: open }));
+
+  // On an invalid submit, expand every section that owns an errored field so
+  // the user can see the message (RHF won't scroll into a collapsed region).
+  const onInvalidExpandSections = (errors: FieldErrors<FormValues>): void => {
+    setOpenSections((s) => {
+      const next = { ...s };
+      for (const field of Object.keys(errors)) {
+        const sec = FIELD_SECTION[field];
+        if (sec) next[sec] = true;
+      }
+      return next;
+    });
+  };
+
   // Populate form when project data lands. `form.reset` here is
   // intentional: it both fills defaults and clears the dirty state so
   // navigating back to the page after a save shows a clean form.
@@ -567,15 +613,16 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
   return (
     <Form {...form}>
       <form
-        onSubmit={form.handleSubmit(onSubmit)}
+        onSubmit={form.handleSubmit(onSubmit, onInvalidExpandSections)}
         className="space-y-6"
         data-testid="project-settings-form"
       >
-        <Card>
-          <CardHeader>
-            <CardTitle>Basics</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CollapsibleSection
+          title="Basics"
+          open={openSections.basics}
+          onOpenChange={(o) => setSectionOpen("basics", o)}
+        >
+          <div className="space-y-4">
             <FormField
               control={form.control}
               name="name"
@@ -606,14 +653,15 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Diff behavior</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CollapsibleSection
+          title="Diff behavior"
+          open={openSections.diff}
+          onOpenChange={(o) => setSectionOpen("diff", o)}
+        >
+          <div className="space-y-4">
             <FormField
               control={form.control}
               name="diffThreshold"
@@ -689,14 +737,15 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Image comparison</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CollapsibleSection
+          title="Image comparison"
+          open={openSections.image}
+          onOpenChange={(o) => setSectionOpen("image", o)}
+        >
+          <div className="space-y-4">
             <FormField
               control={form.control}
               name="imageComparison"
@@ -759,14 +808,15 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Limits</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <CollapsibleSection
+          title="Limits"
+          open={openSections.limits}
+          onOpenChange={(o) => setSectionOpen("limits", o)}
+        >
+          <div className="space-y-4">
             <FormField
               control={form.control}
               name="maxBuildAllowed"
@@ -809,41 +859,40 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                 </FormItem>
               )}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Retention</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <FormField
-              control={form.control}
-              name="retentionDays"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Retention (days)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      value={field.value as unknown as string}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      onBlur={field.onBlur}
-                      name={field.name}
-                      ref={field.ref}
-                      data-testid="retention-input"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Old runs are deleted after this many days. Enforced nightly
-                    by the diff-worker retention job.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </CardContent>
-        </Card>
+        <CollapsibleSection
+          title="Retention"
+          open={openSections.retention}
+          onOpenChange={(o) => setSectionOpen("retention", o)}
+        >
+          <FormField
+            control={form.control}
+            name="retentionDays"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Retention (days)</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    value={field.value as unknown as string}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    ref={field.ref}
+                    data-testid="retention-input"
+                  />
+                </FormControl>
+                <FormDescription>
+                  Old runs are deleted after this many days. Enforced nightly by
+                  the diff-worker retention job.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </CollapsibleSection>
 
         <div className="sticky bottom-4 flex items-center justify-end gap-3 z-10">
           {form.formState.isDirty && !update.isPending && (

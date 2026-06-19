@@ -1,4 +1,4 @@
-import { BarChart3, FolderKanban, Inbox, Puzzle, Users } from "lucide-react";
+import { BarChart3, FolderKanban, Inbox, ShieldCheck } from "lucide-react";
 import { type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { InboxBadge } from "./inbox-badge";
@@ -55,12 +55,7 @@ export function Sidebar({ userRole, className }: Props) {
       label: "Admin",
       items: [
         { icon: BarChart3, label: "Analytics", href: "/analytics" },
-        { icon: Users, label: "Members", href: "/admin/members" },
-        {
-          icon: Puzzle,
-          label: "Installations",
-          href: "/admin/installations",
-        },
+        { icon: ShieldCheck, label: "Admin", href: "/admin" },
       ],
     });
   }

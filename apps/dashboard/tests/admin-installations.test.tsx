@@ -62,7 +62,7 @@ vi.mock("@/lib/trpc", () => ({
   },
 }));
 
-import { InstallationsTable } from "../src/app/(protected)/admin/installations/_components/installations-table";
+import { InstallationsTable } from "../src/app/(protected)/admin/(area)/installations/_components/installations-table";
 
 const INSTALL_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID_A = "22222222-2222-4222-8222-222222222222";
