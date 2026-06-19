@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import type { BuildRowData } from "./build-row";
+import type { BuildRowData } from "./build-types";
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { buildDisplayName } from "@/lib/build-display-name";

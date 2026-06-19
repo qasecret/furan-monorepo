@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { BuildListItem } from "@/app/(protected)/projects/[projectId]/builds/_components/build-list-item";
-import type { BuildRowData } from "@/app/(protected)/projects/[projectId]/builds/_components/build-row";
+import type { BuildRowData } from "@/app/(protected)/projects/[projectId]/builds/_components/build-types";
 
 afterEach(cleanup);
 

@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { BuildListItem } from "./build-list-item";
-import type { BuildRowData } from "./build-row";
+import type { BuildRowData } from "./build-types";
 import { ProjectSwitcher, type ProjectListItem } from "./project-switcher";
 import { PropertiesFilter } from "./properties-filter";
 
