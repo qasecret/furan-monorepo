@@ -20,7 +20,7 @@ export function BuildListItem({ build, projectId, selected }: Props) {
   return (
     <Link
       href={`/projects/${projectId}/builds/${build.id}`}
-      aria-current={selected ? "true" : undefined}
+      aria-current={selected ? "page" : undefined}
       data-testid={`build-list-item-${build.id}`}
       className={cn(
         "block rounded-md border px-3 py-2 transition-colors",

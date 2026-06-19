@@ -27,7 +27,7 @@ describe("BuildListItem", () => {
     render(<BuildListItem build={build} projectId="p1" selected />);
     const link = screen.getByRole("link");
     expect(link.getAttribute("href")).toBe("/projects/p1/builds/b1");
-    expect(link.getAttribute("aria-current")).toBe("true");
+    expect(link.getAttribute("aria-current")).toBe("page");
     expect(screen.getByText("main")).toBeDefined();
   });
 });

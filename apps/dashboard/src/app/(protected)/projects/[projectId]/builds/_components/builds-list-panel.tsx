@@ -1,5 +1,6 @@
 "use client";
 
+import { keepPreviousData } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -31,12 +32,15 @@ export function BuildsListPanel({ projectId, projects }: Props) {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<BuildRowData[]>([]);
 
-  const { data, isLoading, error } = trpc.builds.list.useQuery({
-    projectId,
-    cursor,
-    limit: 25,
-    properties: Object.keys(properties).length > 0 ? properties : undefined,
-  });
+  const { data, isLoading, error } = trpc.builds.list.useQuery(
+    {
+      projectId,
+      cursor,
+      limit: 25,
+      properties: Object.keys(properties).length > 0 ? properties : undefined,
+    },
+    { placeholderData: keepPreviousData },
+  );
 
   const items: BuildRowData[] = [];
   const seen = new Set<string>();

@@ -56,13 +56,7 @@ describe("MobileSidebar wiring", () => {
   });
 
   test("MobileSidebar drawer mounts when store flips open", async () => {
-    render(
-      <MobileSidebar
-        userRole="admin"
-        userEmail="alice@example.com"
-        userInitial="A"
-      />,
-    );
+    render(<MobileSidebar userRole="admin" />);
     expect(screen.queryByTestId("mobile-sidebar")).toBeNull();
 
     useMobileSidebarStore.setState({ open: true });

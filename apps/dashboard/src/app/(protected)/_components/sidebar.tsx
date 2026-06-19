@@ -21,13 +21,10 @@ interface NavSection {
 
 interface Props {
   userRole: "admin" | "editor" | "guest";
-  userEmail: string;
-  userInitial: string;
   /**
    * Outer-`<aside>` className override. AppShell passes `hidden md:flex` so
    * the desktop sidebar only renders at ≥768px; the mobile drawer mounts
-   * the same Sidebar with no override, letting it render full-height
-   * inside the Radix Dialog Content.
+   * the same Sidebar with no override.
    */
   className?: string;
 }

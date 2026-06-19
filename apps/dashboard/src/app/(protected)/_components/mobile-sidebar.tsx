@@ -10,8 +10,6 @@ import { useMobileSidebarStore } from "./use-mobile-sidebar";
 
 interface Props {
   userRole: "admin" | "editor" | "guest";
-  userEmail: string;
-  userInitial: string;
 }
 
 /**
@@ -28,7 +26,7 @@ interface Props {
  * desktop sidebar carries `hidden md:flex` so only one is visible per
  * breakpoint.
  */
-export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
+export function MobileSidebar({ userRole }: Props) {
   const open = useMobileSidebarStore((s) => s.open);
   const setOpen = useMobileSidebarStore((s) => s.setOpen);
   const pathname = usePathname();
@@ -67,11 +65,7 @@ export function MobileSidebar({ userRole, userEmail, userInitial }: Props) {
               styling; inside the drawer those are redundant but harmless.
               Wrapping it keeps the desktop + mobile DOM identical so future
               Sidebar edits don't need to fork. */}
-          <Sidebar
-            userRole={userRole}
-            userEmail={userEmail}
-            userInitial={userInitial}
-          />
+          <Sidebar userRole={userRole} />
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

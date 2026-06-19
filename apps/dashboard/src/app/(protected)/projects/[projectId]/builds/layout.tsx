@@ -27,15 +27,27 @@ export default async function BuildsLayout({
 }) {
   const { projectId } = await params;
 
-  const project = await getProject(projectId);
+  const [project, projectsRes] = await Promise.all([
+    getProject(projectId),
+    apiGet<ProjectApiItem[]>("/projects"),
+  ]);
+
   if (project.status !== 200 || !project.data) {
     // Non-member / not-found: let the routed page render its own 403/redirect
     // without a dead panel beside it.
     return <>{children}</>;
   }
 
-  const res = await apiGet<ProjectApiItem[]>("/projects");
-  const projects = (res.data ?? []).map((p) => ({ id: p.id, name: p.name }));
+  // Always include the current project (with its authoritative name from
+  // getProject) so the switcher labels correctly even if the /projects list
+  // call failed or is paginated.
+  const fetched = projectsRes.data ?? [];
+  const projects = fetched.some((p) => p.id === projectId)
+    ? fetched.map((p) => ({ id: p.id, name: p.name }))
+    : [
+        { id: projectId, name: project.data.name },
+        ...fetched.map((p) => ({ id: p.id, name: p.name })),
+      ];
 
   return (
     <div className="flex flex-col gap-4 md:flex-row">

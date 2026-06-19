@@ -49,7 +49,7 @@ describe("BuildsListPanel", () => {
     });
     render(<BuildsListPanel projectId="p1" projects={[]} />);
     const link = screen.getByTestId("build-list-item-b1");
-    expect(link.getAttribute("aria-current")).toBe("true");
+    expect(link.getAttribute("aria-current")).toBe("page");
   });
 
   test("shows the SDK onboarding empty state when there are no builds", () => {

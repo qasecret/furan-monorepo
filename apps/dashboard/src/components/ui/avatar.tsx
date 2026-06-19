@@ -14,8 +14,8 @@ export function Avatar({ initial, className, ...props }: AvatarProps) {
         "inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-zinc-100 text-xs font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300",
         className,
       )}
-      aria-hidden
       {...props}
+      aria-hidden
     >
       {initial}
     </span>

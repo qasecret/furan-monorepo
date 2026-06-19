@@ -32,17 +32,8 @@ export function AppShell({
 }: Props) {
   return (
     <div className="flex h-screen bg-white text-zinc-950 dark:bg-black dark:text-white overflow-hidden">
-      <Sidebar
-        userRole={userRole}
-        userEmail={userEmail}
-        userInitial={userInitial}
-        className="hidden md:flex"
-      />
-      <MobileSidebar
-        userRole={userRole}
-        userEmail={userEmail}
-        userInitial={userInitial}
-      />
+      <Sidebar userRole={userRole} className="hidden md:flex" />
+      <MobileSidebar userRole={userRole} />
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar email={userEmail} initial={userInitial} role={userRole} />
         <main className="flex-1 overflow-auto bg-white dark:bg-[#050505]">
