@@ -356,7 +356,6 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     // engineering beyond T12's scope).
     const a = FIXTURE("baseline-a.png");
     const aMajor = FIXTURE("candidate-a-major.png");
-    const domA = FIXTURE("dom-baseline.html");
     const domB = FIXTURE("dom-text-change.html");
 
     const key1280Baseline = objectKey(a);
@@ -366,12 +365,10 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     // UNIQUE constraint is satisfied as long as no concurrent test seeds
     // the same fixture (CI runs at --concurrency=1).
     const key375Candidate = objectKey(a);
-    const domBaselineKey = objectKey(domA);
     const domCandidateKey = objectKey(domB);
 
     await storage.put(key1280Baseline, a, "image/png");
     await storage.put(key1280Candidate, aMajor, "image/png");
-    await storage.put(domBaselineKey, domA, "text/html");
     await storage.put(domCandidateKey, domB, "text/html");
 
     // Pre-clean any orphan rows for these image keys from a prior failed
@@ -393,7 +390,6 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       testVariationId: v.id,
       name: "checkpoint-1",
       imageKey: key1280Baseline,
-      domKey: domBaselineKey,
       viewport: "1280x720",
       browser: "chromium",
     });
@@ -412,7 +408,6 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
         testVariationId: v.id,
         name: "checkpoint-1",
         imageKey: key375Candidate,
-        domKey: domBaselineKey,
         viewport: "375x812",
         browser: "chromium",
       });
@@ -430,7 +425,6 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
         testVariationId: v.id,
         name: "checkpoint-1",
         imageKey: suffixedKey,
-        domKey: domBaselineKey,
         viewport: "375x812",
         browser: "chromium",
       });
