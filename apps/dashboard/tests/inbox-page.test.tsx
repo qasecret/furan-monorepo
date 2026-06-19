@@ -367,6 +367,27 @@ describe("InboxPage", () => {
     );
   });
 
+  test("shows skeleton placeholders while the queue is loading", () => {
+    listMock.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { container } = render(
+      <InboxPage
+        initialStatus="all-open"
+        initialWindow="7d"
+        initialGroup={false}
+      />,
+    );
+    const busy = container.querySelector('[aria-busy="true"]');
+    expect(busy).not.toBeNull();
+    expect(
+      busy?.querySelectorAll(".animate-pulse").length ?? 0,
+    ).toBeGreaterThan(0);
+  });
+
   test("pressing j moves the selection and updates the preview", async () => {
     listMock.mockReturnValue({
       data: { items: [rowA, rowB], nextCursor: null },

@@ -14,6 +14,7 @@ import { RejectClusterDialog } from "./reject-cluster-dialog";
 
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
+import { Skeleton } from "@/components/ui/skeleton";
 import { InboxRealtime } from "@/hooks/InboxRealtime";
 import { plural } from "@/lib/format";
 import { recordTelemetry } from "@/lib/telemetry";
@@ -292,18 +293,18 @@ export function InboxPage({
 
 function SkeletonList() {
   return (
-    <ul role="list" aria-busy="true" className="flex-1">
+    <ul role="list" aria-busy="true" className="min-h-0 flex-1">
       {Array.from({ length: 6 }).map((_, i) => (
         <li
           key={i}
           className="flex items-center gap-3 border-b border-zinc-100 px-4 py-3 dark:border-zinc-900"
         >
-          <div className="h-4 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <Skeleton className="h-4 w-4" />
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-4 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-3 w-1/4 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-3 w-1/4" />
           </div>
-          <div className="h-10 w-16 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+          <Skeleton className="h-10 w-16" />
         </li>
       ))}
     </ul>
