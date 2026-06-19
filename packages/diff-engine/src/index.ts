@@ -3,7 +3,6 @@ import type { EngineConfig } from "./types.js";
 export { runDiff } from "./engine.js";
 export type { RunDiffInput } from "./engine.js";
 export { runL1 } from "./l1.js";
-export { runL2 } from "./l2.js";
 export { runAxe } from "./axe.js";
 export type { AccessibilityOptions } from "./axe.js";
 export { classifyRegions, severityRank } from "./classify.js";

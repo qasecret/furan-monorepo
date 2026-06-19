@@ -11,7 +11,7 @@ function region(p: Partial<DiffRegion>): DiffRegion {
     category: "text",
     bbox: { x: 100, y: 80, width: 200, height: 40 },
     description: "whatever",
-    source: "l2",
+    source: "l1",
     ...p,
   };
 }
@@ -43,7 +43,7 @@ describe("computeCheckpointSignature", () => {
   });
 
   it("excludes only dynamic_text regions (l1_pixel is now included)", () => {
-    const meaningful = region({ id: "m", source: "l2" });
+    const meaningful = region({ id: "m", source: "l1" });
     const image = region({
       id: "n",
       source: "l1_pixel",
@@ -105,31 +105,11 @@ describe("computeCheckpointSignature", () => {
       computeCheckpointSignature([region({ severity: "minor" })], SIZE),
     ).not.toBe(base);
     expect(
-      computeCheckpointSignature([region({ source: "l1" })], SIZE),
+      computeCheckpointSignature([region({ source: "axe" })], SIZE),
     ).not.toBe(base);
     expect(
-      computeCheckpointSignature([region({ route: [1, 2, 3] })], SIZE),
+      computeCheckpointSignature([region({ axeTarget: ["#btn"] })], SIZE),
     ).not.toBe(base);
-  });
-
-  it("treats an empty route array like an absent route", () => {
-    // diff-dom seeds route=[] for root-level DOM changes, and l2.ts spreads it
-    // because [] is truthy. An empty route pins no specific element, so it must
-    // produce the same signature as a region with no route (anchor → null),
-    // not a degenerate "route:" anchor.
-    const emptyRoute = region({ route: [] });
-    const noRoute = region({});
-    expect(computeCheckpointSignature([emptyRoute], SIZE)).toBe(
-      computeCheckpointSignature([noRoute], SIZE),
-    );
-  });
-
-  it("an empty route falls through to axeTarget", () => {
-    const emptyRouteWithAxe = region({ route: [], axeTarget: ["#submit"] });
-    const axeOnly = region({ axeTarget: ["#submit"] });
-    expect(computeCheckpointSignature([emptyRouteWithAxe], SIZE)).toBe(
-      computeCheckpointSignature([axeOnly], SIZE),
-    );
   });
 
   it("produces a non-null signature for an image-only checkpoint (l1_pixel)", () => {

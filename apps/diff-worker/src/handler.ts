@@ -176,7 +176,7 @@ interface PerViewportResult {
     viewport: string | null;
     screenshotId: string;
   }>;
-  ranTiers: Array<"l1" | "l2">;
+  ranTiers: Array<"l1">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
   /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
@@ -892,9 +892,6 @@ async function handleDiffJobInner(
           // existing project setting still drives every run that hasn't been
           // tuned by hand.
           diffThreshold,
-          // L2 is permanently disabled (image-first, ADR-047). The field
-          // remains on ProjectDiffConfig (engine-type cleanup is a later task).
-          l2Enabled: false,
           ignoreAreas: resolvedIgnoreAreas,
           engine: project.imageComparison,
           // Engine config (matchLevel no longer adjusts it — ADR-047).

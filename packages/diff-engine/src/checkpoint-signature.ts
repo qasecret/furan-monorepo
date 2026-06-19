@@ -21,14 +21,10 @@ function bucket(value: number, dim: number): number {
 
 /**
  * Stable element anchor pinning the region's identity, or `null` when it pins
- * no DOM element. An empty `route` ([]) — which diff-dom emits for root-level
- * changes — pins nothing, so it falls through to `axeTarget`/`null` rather than
- * producing a degenerate `"route:"`.
+ * no element. For axe regions, pins the first selector in `axeTarget`.
+ * L1/l1_pixel regions carry no element anchor and return `null`.
  */
 function anchorOf(r: DiffRegion): string | null {
-  if (r.route !== undefined && r.route.length > 0) {
-    return `route:${r.route.join(".")}`;
-  }
   if (r.axeTarget !== undefined && r.axeTarget.length > 0) {
     return `axe:${r.axeTarget[0]}`;
   }
@@ -45,8 +41,8 @@ function anchorOf(r: DiffRegion): string | null {
  *
  * Excludes only dynamic_text and the volatile `description` (image-first,
  * ADR-047 — l1_pixel regions now drive the signature); bbox is normalized +
- * bucketed to a 1% grid; `route`/`axeTarget` pin element identity. The `v1:`
- * prefix lets a future algorithm ship as `v2:`.
+ * bucketed to a 1% grid; `axeTarget` pins element identity for axe regions.
+ * The `v1:` prefix lets a future algorithm ship as `v2:`.
  */
 export function computeCheckpointSignature(
   regions: DiffRegion[],

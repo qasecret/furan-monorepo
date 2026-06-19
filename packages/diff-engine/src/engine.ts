@@ -16,8 +16,8 @@ const MAX_DX = 50;
 const MAX_DY = 200;
 
 export interface RunDiffInput {
-  baseline: { image: Buffer; dom?: string };
-  candidate: { image: Buffer; dom?: string };
+  baseline: { image: Buffer };
+  candidate: { image: Buffer };
   config: ProjectDiffConfig;
   /**
    * Eyes-parity `ignoreDisplacements`: when true, the L1 pre-alignment
