@@ -17,7 +17,9 @@ export const dynamic = "force-dynamic";
 export default async function InstallationsAdminPage() {
   return (
     <div className="space-y-4">
-      <SetBreadcrumbs items={[{ label: "Installations" }]} />
+      <SetBreadcrumbs
+        items={[{ label: "Admin", href: "/admin" }, { label: "Installations" }]}
+      />
       <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
         Link each GitHub App installation to a Furan project so its webhook
         events (PR runs, status checks) route to the right place. Changes save

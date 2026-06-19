@@ -21,7 +21,7 @@ export default async function AdminAreaLayout({
           403 — admin only
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          You need the admin role to manage members.
+          You need the admin role to access the admin area.
         </p>
       </Card>
     );
