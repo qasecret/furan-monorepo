@@ -41,9 +41,6 @@ export function AccountMenu({ email, initial, role }: Props) {
         </div>
         <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
         <DropdownMenuItem asChild>
-          <Link href="/account/preferences">Preferences</Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
           <Link href="/account/tokens">Tokens</Link>
         </DropdownMenuItem>
         <form action={logoutAction}>
