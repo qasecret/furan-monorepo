@@ -1,6 +1,7 @@
 "use client";
 
 import { Bell, Search } from "lucide-react";
+import Link from "next/link";
 
 import { AccountMenu } from "./account-menu";
 import { ProjectSelector } from "./project-selector";
@@ -35,6 +36,19 @@ export function TopBar({ email, initial, role }: TopBarProps) {
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
+        <Link
+          href="/inbox"
+          aria-label="Furan home"
+          data-testid="top-bar-logo"
+          className="flex shrink-0 items-center gap-2"
+        >
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-brand">
+            <div className="h-2.5 w-2.5 rounded-sm bg-black" />
+          </div>
+          <span className="hidden text-lg font-semibold tracking-tight text-zinc-950 lg:inline dark:text-white">
+            Furan
+          </span>
+        </Link>
         <ProjectSelector userRole={role} />
         <ViewSelector userRole={role} />
         <button
