@@ -25,7 +25,8 @@ export function resolveLanding(
 ): string | null {
   if (me.defaultProjectId && projects.some((p) => p.id === me.defaultProjectId))
     return `/projects/${me.defaultProjectId}/builds`;
-  if (projects.length === 1) return `/projects/${projects[0].id}/builds`;
+  const sole = projects[0];
+  if (projects.length === 1 && sole) return `/projects/${sole.id}/builds`;
   if (me.role === "admin") return "/admin/projects";
   return null;
 }
