@@ -1,17 +1,4 @@
-import type { BuildAggregateStatus } from "@furan/shared-types";
+import type { RouterOutputs } from "@/lib/trpc";
 
-export interface BuildRowData {
-  id: string;
-  ciBuildId: string | null;
-  number: number | null;
-  branchName: string | null;
-  name: string | null;
-  properties: Record<string, string>;
-  runCount: number;
-  unresolvedCount: number;
-  failedCount: number;
-  passedCount: number;
-  abortedCount: number;
-  aggregateStatus: BuildAggregateStatus;
-  createdAt: string | Date;
-}
+/** A build row as returned by `trpc.builds.list` (inferred — no hand drift). */
+export type BuildRowData = RouterOutputs["builds"]["list"]["items"][number];

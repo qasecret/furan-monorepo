@@ -1,20 +1,14 @@
 "use client";
 
-import type { RunStatus } from "@furan/shared-types";
 import { Check, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { StatusPill } from "@/components/triage/status-pill";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import type { RouterOutputs } from "@/lib/trpc";
 
-export interface TestCardData {
-  id: string;
-  name: string;
-  status: RunStatus;
-  diffPercent: number | null;
-  thumbnailUrl: string | null;
-}
+export type TestCardData = RouterOutputs["runs"]["list"]["items"][number];
 
 interface Props {
   projectId: string;

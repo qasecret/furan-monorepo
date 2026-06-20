@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { BatchHeader, type BatchHeaderData } from "./batch-header";
+import { BatchHeader } from "./batch-header";
 import { ContextualToolbar, type Chip } from "./contextual-toolbar";
 import { TestCard, type TestCardData } from "./test-card";
 
@@ -82,7 +82,7 @@ export function BatchPage({
       },
     );
 
-  const build = buildQ.data as unknown as BatchHeaderData | undefined;
+  const build = buildQ.data;
 
   // A genuine missing build is a 404. Any other build error with no data
   // (FORBIDDEN, network, 500, transient background-refetch) gets a real
@@ -104,7 +104,7 @@ export function BatchPage({
   // Dedupe on id across `accumulated` and the current page — cursor
   // pagination on a non-strictly-monotonic createdAt could legitimately
   // return overlapping rows on a page boundary.
-  const currentPage = (list.data?.items ?? []) as unknown as TestCardData[];
+  const currentPage = list.data?.items ?? [];
   const items: TestCardData[] = [];
   const seen = new Set<string>();
   for (const r of accumulated) {

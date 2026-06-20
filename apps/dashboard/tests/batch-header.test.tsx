@@ -14,14 +14,22 @@ const data: BatchHeaderData = {
   number: 42,
   name: null,
   branchName: "main",
+  status: null,
   properties: { region: "us-east" },
+  projectId: "p1",
+  userId: null,
+  isRunning: false,
+  environment: "default",
   runCount: 12,
+  runningCount: 0,
   unresolvedCount: 3,
   failedCount: 1,
   passedCount: 8,
   abortedCount: 0,
+  emptyCount: 0,
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
 };
 
 describe("BatchHeader", () => {
