@@ -12,6 +12,7 @@ import { InboxPreviewPane } from "./inbox-preview-pane";
 import { Pagination } from "./pagination";
 import { RejectClusterDialog } from "./reject-cluster-dialog";
 
+import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
 import { PageContainer } from "@/components/ui/page-container";
@@ -32,18 +33,24 @@ export function InboxPage({
   initialWindow,
   initialGroup,
 }: Props) {
+  const { currentProjectId } = useCurrentProject();
+
   const [cursor, setCursor] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const actionsCountRef = useRef(0);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
 
-  const list = trpc.inbox.list.useQuery({
-    status: initialStatus,
-    window: initialWindow,
-    cursor,
-    group: initialGroup ? "similarity" : undefined,
-  });
+  const list = trpc.inbox.list.useQuery(
+    {
+      status: initialStatus,
+      window: initialWindow,
+      cursor,
+      group: initialGroup ? "similarity" : undefined,
+      projectIds: currentProjectId ? [currentProjectId] : undefined,
+    },
+    { enabled: !!currentProjectId },
+  );
   const approve = trpc.inbox.approve.useMutation({
     onSuccess: () => {
       toast.success("Approved");
@@ -149,6 +156,17 @@ export function InboxPage({
     [approve, reject],
   );
 
+  if (!currentProjectId) {
+    return (
+      <div
+        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-zinc-500"
+        data-testid="inbox-no-project"
+      >
+        No project selected. Create or choose a project to see its open runs.
+      </div>
+    );
+  }
+
   return (
     <KeyboardScope
       // While the reject-cluster dialog is open, suppress the row shortcuts so a
@@ -174,7 +192,7 @@ export function InboxPage({
         >
           <h1 className="text-xl font-semibold">Inbox</h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            All open runs across your projects · Press{" "}
+            Open runs · Press{" "}
             <kbd
               id="inbox-shortcut-hint"
               className="rounded border border-zinc-200 bg-zinc-50 px-1 text-xs dark:border-zinc-800 dark:bg-zinc-900"

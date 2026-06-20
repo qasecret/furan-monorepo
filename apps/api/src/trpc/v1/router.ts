@@ -1,5 +1,6 @@
 import { t } from "../trpc.js";
 
+import { accountRouter } from "./account.js";
 import { analyticsRouter } from "./analytics.js";
 import { baselinesRouter } from "./baselines.js";
 import { buildsRouter } from "./builds.js";
@@ -11,6 +12,7 @@ import { runsRouter } from "./runs.js";
 import { variationsRouter } from "./variations.js";
 
 export const appRouter = t.router({
+  account: accountRouter,
   analytics: analyticsRouter,
   baselines: baselinesRouter,
   builds: buildsRouter,

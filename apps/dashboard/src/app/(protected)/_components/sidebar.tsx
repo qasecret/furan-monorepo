@@ -1,4 +1,4 @@
-import { BarChart3, FolderKanban, Inbox, ShieldCheck } from "lucide-react";
+import { BarChart3, Inbox, ShieldCheck } from "lucide-react";
 import { type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { InboxBadge } from "./inbox-badge";
@@ -45,7 +45,6 @@ export function Sidebar({ userRole, className }: Props) {
           href: "/inbox",
           badge: <InboxBadge />,
         },
-        { icon: FolderKanban, label: "Projects", href: "/projects" },
       ],
     },
   ];

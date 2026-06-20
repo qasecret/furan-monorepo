@@ -21,6 +21,14 @@ vi.mock("../src/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
 
+// ProjectSelector calls useCurrentProject() which throws outside a provider.
+// Stub the whole module so these wiring tests don't need a real provider tree.
+vi.mock("../src/app/(protected)/_components/project-selector", () => ({
+  ProjectSelector: () => (
+    <div data-testid="project-selector-stub" aria-hidden="true" />
+  ),
+}));
+
 vi.mock("../src/app/(protected)/_components/sidebar", () => ({
   Sidebar: ({ userRole }: { userRole: string }) => (
     <aside data-testid="app-sidebar">mocked sidebar — {userRole}</aside>

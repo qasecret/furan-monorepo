@@ -7,7 +7,6 @@ import { useState } from "react";
 
 import { BuildListItem } from "./build-list-item";
 import type { BuildRowData } from "./build-types";
-import { ProjectSwitcher, type ProjectListItem } from "./project-switcher";
 import { PropertiesFilter } from "./properties-filter";
 
 import { Button } from "@/components/ui/button";
@@ -19,11 +18,10 @@ import { trpc } from "@/lib/trpc";
 
 interface Props {
   projectId: string;
-  projects: ProjectListItem[];
 }
 
-/** Persistent context panel: project switcher + filter + builds list. */
-export function BuildsListPanel({ projectId, projects }: Props) {
+/** Persistent context panel: filter + builds list. */
+export function BuildsListPanel({ projectId }: Props) {
   useProjectEvents(projectId);
   const pathname = usePathname();
   const selectedId = pathname?.split("/builds/")[1]?.split("/")[0];
@@ -71,7 +69,6 @@ export function BuildsListPanel({ projectId, projects }: Props) {
 
   return (
     <div className="flex h-full flex-col gap-3 p-3">
-      <ProjectSwitcher projectId={projectId} projects={projects} />
       <PropertiesFilter
         projectId={projectId}
         value={properties}

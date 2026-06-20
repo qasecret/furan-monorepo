@@ -2289,6 +2289,13 @@
                     "createdAt": {
                       "type": "string"
                     },
+                    "defaultProjectId": {
+                      "format": "uuid",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "email": {
                       "format": "email",
                       "type": "string"
@@ -2322,6 +2329,7 @@
                     "lastName",
                     "role",
                     "isActive",
+                    "defaultProjectId",
                     "createdAt"
                   ],
                   "type": "object"

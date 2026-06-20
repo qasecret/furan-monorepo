@@ -9,6 +9,7 @@ export const meResponse = z.object({
   lastName: z.string(),
   role: z.enum(["admin", "editor", "guest"]),
   isActive: z.boolean(),
+  defaultProjectId: z.string().uuid().nullable(),
   createdAt: z.date(),
 });
 
@@ -25,6 +26,7 @@ export async function registerUsersRoutes(app: FastifyInstance): Promise<void> {
         lastName: users.lastName,
         role: users.role,
         isActive: users.isActive,
+        defaultProjectId: users.defaultProjectId,
         createdAt: users.createdAt,
       })
       .from(users)

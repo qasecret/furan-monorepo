@@ -51,8 +51,18 @@ type FormValues = z.infer<typeof schema>;
  * is the next surface — that's where the user mints a PAT and configures the
  * SDK.
  */
-export function CreateProjectDialog() {
-  const [open, setOpen] = useState(false);
+export function CreateProjectDialog({
+  open: openProp,
+  onOpenChange,
+  hideTrigger = false,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+} = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = openProp ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const router = useRouter();
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -102,9 +112,11 @@ export function CreateProjectDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button data-testid="create-project-button">Create project</Button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button data-testid="create-project-button">Create project</Button>
+        </DialogTrigger>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create project</DialogTitle>

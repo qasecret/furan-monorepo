@@ -14,6 +14,17 @@ vi.mock("@/hooks/InboxRealtime", () => ({
 vi.mock("@/lib/telemetry", () => ({
   recordTelemetry: vi.fn(),
 }));
+vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
+  useCurrentProject: () => ({
+    currentProjectId: "22222222-2222-2222-2222-222222222222",
+    currentProject: {
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "demo",
+    },
+    projects: [{ id: "22222222-2222-2222-2222-222222222222", name: "demo" }],
+    setCurrentProject: vi.fn(),
+  }),
+}));
 vi.mock("@/app/(protected)/inbox/_components/inbox-preview-pane", () => ({
   InboxPreviewPane: ({ run }: { run?: { runId: string } }) => (
     <div data-testid="inbox-preview-stub" data-run={run?.runId ?? ""} />
@@ -121,6 +132,7 @@ describe("InboxPage", () => {
     );
     expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({ group: "similarity" }),
+      expect.anything(),
     );
 
     cleanup();
@@ -136,6 +148,7 @@ describe("InboxPage", () => {
     );
     expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({ group: undefined }),
+      expect.anything(),
     );
   });
 
