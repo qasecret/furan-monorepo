@@ -1,15 +1,21 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { toast } from "sonner";
-
-import { trpc } from "@/lib/trpc";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 export interface ProjectListItem {
   id: string;
   name: string;
 }
+
+/** Per-tab key holding the transiently-switched project (ADR-050). */
+export const CURRENT_PROJECT_SESSION_KEY = "furan:current-project";
 
 interface CurrentProjectContextValue {
   currentProjectId: string | null;
@@ -32,10 +38,12 @@ function resolveInitial(
 
 /**
  * Single source of truth for "which project am I in." Seeded by server-fetched
- * `/projects` + the viewer's `defaultProjectId`. Switching persists the choice
- * as the user's default (ADR-049 model B) and, when on a project-scoped route,
- * follows to the same tab under the new project; otherwise it stays put and the
- * page re-scopes via `currentProjectId`.
+ * `/projects` + the viewer's saved `defaultProjectId`. Switching is TRANSIENT
+ * (ADR-050): it updates the view and persists in `sessionStorage` (per-tab), but
+ * does NOT change the saved default — that's set on `/account/preferences`.
+ * Resolution: session-stored (if accessible) → saved default → first → none.
+ * On a project-scoped route, switching follows to the same tab under the new
+ * project; otherwise it stays put and the page re-scopes via `currentProjectId`.
  */
 export function CurrentProjectProvider({
   initialProjects,
@@ -52,21 +60,22 @@ export function CurrentProjectProvider({
   );
   const pathname = usePathname();
   const router = useRouter();
-  const setDefault = trpc.account.setDefaultProject.useMutation();
+
+  useEffect(() => {
+    const stored = window.sessionStorage.getItem(CURRENT_PROJECT_SESSION_KEY);
+    if (stored && projects.some((p) => p.id === stored)) {
+      setCurrentProjectId(stored);
+    }
+  }, [projects]);
 
   const setCurrentProject = (id: string): void => {
     if (id === currentProjectId) return;
-    const prev = currentProjectId;
     setCurrentProjectId(id);
-    setDefault.mutate(
-      { projectId: id },
-      {
-        onError: () => {
-          setCurrentProjectId(prev);
-          toast.error("Couldn't switch project");
-        },
-      },
-    );
+    try {
+      window.sessionStorage.setItem(CURRENT_PROJECT_SESSION_KEY, id);
+    } catch {
+      // ignore storage failures — the switch still applies in-memory
+    }
     if (
       pathname &&
       pathname.startsWith("/projects/") &&
