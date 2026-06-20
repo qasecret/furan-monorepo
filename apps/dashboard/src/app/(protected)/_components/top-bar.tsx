@@ -49,7 +49,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
             Furan
           </span>
         </Link>
-        <ProjectSelector userRole={role} />
+        <ProjectSelector />
         <ViewSelector userRole={role} />
         <button
           type="button"

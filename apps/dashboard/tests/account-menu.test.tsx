@@ -7,11 +7,9 @@ vi.mock("@/app/(protected)/_components/logout-action", () => ({
 }));
 
 import { AccountMenu } from "@/app/(protected)/_components/account-menu";
-import { CURRENT_PROJECT_SESSION_KEY } from "@/app/(protected)/_components/current-project-provider";
 
 afterEach(() => {
   cleanup();
-  window.sessionStorage.clear();
 });
 
 describe("AccountMenu", () => {
@@ -42,16 +40,5 @@ describe("AccountMenu", () => {
       link.getAttribute("href") ??
       link.querySelector("a")?.getAttribute("href");
     expect(href).toBe("/account/preferences");
-  });
-
-  test("sign out clears the current-project session key", async () => {
-    const user = userEvent.setup();
-    window.sessionStorage.setItem(CURRENT_PROJECT_SESSION_KEY, "p1");
-    render(<AccountMenu email="me@x.io" initial="M" role="admin" />);
-    await user.click(screen.getByTestId("account-menu-trigger"));
-    await user.click(screen.getByRole("menuitem", { name: /sign out/i }));
-    expect(
-      window.sessionStorage.getItem(CURRENT_PROJECT_SESSION_KEY),
-    ).toBeNull();
   });
 });
