@@ -1,26 +1,11 @@
 "use client";
 
-import type { BuildAggregateStatus } from "@furan/shared-types";
-
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { formatRelativeTime } from "@/lib/format";
+import type { RouterOutputs } from "@/lib/trpc";
 
-export interface BatchHeaderData {
-  id: string;
-  ciBuildId: string | null;
-  number: number | null;
-  name: string | null;
-  branchName: string | null;
-  properties: Record<string, string>;
-  runCount: number;
-  unresolvedCount: number;
-  failedCount: number;
-  passedCount: number;
-  abortedCount: number;
-  aggregateStatus: BuildAggregateStatus;
-  createdAt: string | Date;
-}
+export type BatchHeaderData = RouterOutputs["builds"]["getById"];
 
 interface Props {
   build: BatchHeaderData;

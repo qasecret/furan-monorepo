@@ -12,14 +12,22 @@ const build: BuildRowData = {
   number: 42,
   branchName: "main",
   name: null,
+  status: null,
   properties: {},
+  projectId: "p1",
+  userId: null,
+  isRunning: false,
+  environment: "default",
   runCount: 3,
+  runningCount: 0,
   unresolvedCount: 1,
   failedCount: 0,
   passedCount: 2,
   abortedCount: 0,
+  emptyCount: 0,
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
 };
 
 describe("BuildListItem", () => {
