@@ -3,12 +3,10 @@ import { notFound, redirect } from "next/navigation";
 
 import { ProjectSettingsForm } from "./_components/project-settings-form";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Card } from "@/components/ui/card";
 import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 import { getProject } from "@/lib/get-project";
-import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -52,9 +50,6 @@ export default async function ProjectSettingsPage({
   return (
     <PageContainer maxWidth="3xl">
       <div className="space-y-4">
-        <SetBreadcrumbs
-          items={projectCrumbs(projectId, project.data.name, "Settings")}
-        />
         <ProjectSettingsForm projectId={projectId} userRole={me.data.role} />
       </div>
     </PageContainer>

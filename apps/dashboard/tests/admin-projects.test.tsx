@@ -7,9 +7,6 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("@/lib/get-viewer", () => ({
   getViewerRole: vi.fn(async () => "admin"),
 }));
-vi.mock("@/app/(protected)/_components/set-breadcrumbs", () => ({
-  SetBreadcrumbs: () => null,
-}));
 // Stub the dialog + empty-state so the test doesn't pull in react-hook-form /
 // next/navigation; we only care about the grid + card links here.
 vi.mock("@/app/(protected)/projects/_components/create-project-dialog", () => ({

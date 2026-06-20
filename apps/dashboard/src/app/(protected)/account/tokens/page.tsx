@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 import { TokensTable, type TokenRow } from "./_components/tokens-table";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
@@ -28,7 +27,6 @@ export default async function TokensPage() {
   return (
     <PageContainer>
       <div className="space-y-4">
-        <SetBreadcrumbs items={[{ label: "Tokens" }]} />
         <PageTour pageId="account-tokens" steps={TOKENS_PAGE_TOUR} />
         <PageHeader
           title="Personal access tokens"

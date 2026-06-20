@@ -43,11 +43,6 @@ export default async function BuildDetailPage({
   const canReview = canReviewRole(await getViewerRole());
 
   return (
-    <BatchPage
-      projectId={projectId}
-      buildId={buildId}
-      projectName={project.data.name}
-      canReview={canReview}
-    />
+    <BatchPage projectId={projectId} buildId={buildId} canReview={canReview} />
   );
 }

@@ -475,15 +475,6 @@ export function DiffViewer({
       </div>
       <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
         <ContextualHeader
-          breadcrumb={[
-            { label: "Projects", href: "/projects" },
-            {
-              label: project?.name ?? "Project",
-              href: `/projects/${data.projectId}`,
-            },
-            { label: "Builds", href: `/projects/${data.projectId}/builds` },
-            { label: data.name ?? `Run ${data.id.slice(0, 8)}` },
-          ]}
           title={data.name ?? "Untitled run"}
           status={data.status}
           metadata={{

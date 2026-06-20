@@ -9,14 +9,11 @@ import { BatchHeader } from "./batch-header";
 import { ContextualToolbar, type Chip } from "./contextual-toolbar";
 import { TestCard, type TestCardData } from "./test-card";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
-import { buildDisplayName } from "@/lib/build-display-name";
 import { plural } from "@/lib/format";
-import { buildCrumbs } from "@/lib/project-crumbs";
 import { trpc } from "@/lib/trpc";
 
 const CHIP_STATUS: Record<Chip, RunStatus[] | undefined> = {
@@ -28,16 +25,10 @@ const CHIP_STATUS: Record<Chip, RunStatus[] | undefined> = {
 interface Props {
   projectId: string;
   buildId: string;
-  projectName: string;
   canReview: boolean;
 }
 
-export function BatchPage({
-  projectId,
-  buildId,
-  projectName,
-  canReview,
-}: Props) {
+export function BatchPage({ projectId, buildId, canReview }: Props) {
   useProjectEvents(projectId);
   const [chip, setChip] = useState<Chip>("needs-review");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -133,13 +124,6 @@ export function BatchPage({
 
   return (
     <PageContainer fullBleed>
-      <SetBreadcrumbs
-        items={buildCrumbs(
-          projectId,
-          projectName,
-          build ? buildDisplayName(build) : "Build",
-        )}
-      />
       {build && <BatchHeader build={build} />}
       <ContextualToolbar
         chip={chip}

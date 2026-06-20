@@ -3,13 +3,10 @@
 import type { RunStatus } from "@furan/shared-types";
 import { Clock, GitBranch, Layers } from "lucide-react";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { RunStatusBadge } from "@/components/run-status-badge";
-import type { BreadcrumbCrumb } from "@/components/ui/breadcrumbs";
 import { formatRelativeTime } from "@/lib/format";
 
 interface Props {
-  breadcrumb: BreadcrumbCrumb[];
   title: string;
   /** Optional pre-built status node. When omitted, falls back to a RunStatusBadge built from `status`. */
   statusNode?: React.ReactNode;
@@ -31,14 +28,10 @@ interface Props {
  * status; Row 2 = metadata chips. High information density, mono font for
  * machine values, lucide icons for visual rhythm.
  *
- * The breadcrumb trail it receives is published to the global TopBar trail (via
- * `<SetBreadcrumbs>`) rather than rendered inline, so the whole app shows one
- * breadcrumb in one place. Callers compose the breadcrumb (parents own routing
- * knowledge) and metadata (server-fetched run data); the component is otherwise
- * pure presentation.
+ * Callers compose the metadata (server-fetched run data); the component is
+ * otherwise pure presentation.
  */
 export function ContextualHeader({
-  breadcrumb,
   title,
   statusNode,
   status,
@@ -50,8 +43,6 @@ export function ContextualHeader({
       className="flex flex-col gap-2 border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="contextual-header"
     >
-      <SetBreadcrumbs items={breadcrumb} />
-
       {/* Row 1: title · status — actions */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">

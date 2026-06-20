@@ -4,13 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { MergeBaselinesPanel } from "./_components/merge-baselines-panel";
 import { VariationsList } from "./_components/variations-list";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 import { Card } from "@/components/ui/card";
 import { PageContainer } from "@/components/ui/page-container";
 import { getProject } from "@/lib/get-project";
 import { getViewerRole } from "@/lib/get-viewer";
-import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Variations" };
 
@@ -70,9 +68,6 @@ export default async function ProjectVariationsPage({
   return (
     <PageContainer>
       <div className="space-y-4">
-        <SetBreadcrumbs
-          items={projectCrumbs(projectId, project.data.name, "Variations")}
-        />
         <PageTour pageId="variations-index" steps={VARIATIONS_PAGE_TOUR} />
         <div id="variations-merge-panel">
           <MergeBaselinesPanel projectId={projectId} userRole={userRole} />

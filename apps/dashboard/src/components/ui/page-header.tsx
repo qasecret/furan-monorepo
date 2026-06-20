@@ -4,12 +4,8 @@ import { cn } from "@/lib/cn";
 
 /**
  * Consistent section header: a prominent title with optional description and
- * right-aligned actions.
- *
- * The title is the page identity — the breadcrumb trail lives globally in the
- * TopBar (see `use-breadcrumbs` / `SetBreadcrumbs`), so this primitive
- * deliberately carries no breadcrumb. Use it on every top-level and section
- * landing page so headers stay uniform.
+ * right-aligned actions. The title is the page identity. Use it on every
+ * top-level and section landing page so headers stay uniform.
  */
 export function PageHeader({
   title,

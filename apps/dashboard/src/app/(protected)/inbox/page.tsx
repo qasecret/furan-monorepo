@@ -4,7 +4,6 @@ import type { Metadata } from "next";
 import { InboxPage } from "./_components/inbox-page";
 import { INBOX_TOUR_STEPS } from "./tour-steps";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
 
 export const metadata: Metadata = { title: "Inbox" };
@@ -20,7 +19,6 @@ export default async function Page({ searchParams }: PageProps) {
   const group = sp.group === "similarity";
   return (
     <>
-      <SetBreadcrumbs items={[{ label: "Inbox" }]} />
       <PageTour pageId="inbox" steps={INBOX_TOUR_STEPS} />
       <InboxPage
         initialStatus={status}
