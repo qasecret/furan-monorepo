@@ -42,13 +42,23 @@ const TAB_ICON: Record<
   settings: Settings,
 };
 
-function activeView(pathname: string): string | null {
+function activeView(pathname: string): string {
   if (pathname.startsWith("/inbox")) return "Inbox";
   if (pathname.startsWith("/analytics")) return "Analytics";
   if (pathname.startsWith("/admin")) return "Admin";
-  const m = pathname.match(/^\/projects\/[^/]+\/(builds|variations|settings)/);
-  if (m) return TAB_LABEL[m[1] as ProjectTab];
-  return null;
+  if (pathname.startsWith("/account/preferences")) return "Preferences";
+  if (pathname.startsWith("/account/tokens")) return "Tokens";
+  if (pathname.startsWith("/account")) return "Account";
+  if (pathname === "/projects") return "Projects";
+  const tab = pathname.match(
+    /^\/projects\/[^/]+\/(builds|variations|settings)/,
+  );
+  if (tab) return TAB_LABEL[tab[1] as ProjectTab];
+  // The diff viewer + run/checkpoint routes are the review surface.
+  if (/^\/projects\/[^/]+\/(runs|diffs|checkpoints)/.test(pathname)) {
+    return "Review";
+  }
+  return "Menu";
 }
 
 export function ViewSelector({ userRole }: { userRole: string }) {
@@ -72,7 +82,7 @@ export function ViewSelector({ userRole }: { userRole: string }) {
           data-testid="view-selector-trigger"
           className="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm font-medium text-zinc-900 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-900"
         >
-          <span className="max-w-[10rem] truncate">{active ?? "Menu"}</span>
+          <span className="max-w-[10rem] truncate">{active}</span>
           <ChevronDown
             aria-hidden="true"
             className="h-3.5 w-3.5 shrink-0 text-zinc-500"

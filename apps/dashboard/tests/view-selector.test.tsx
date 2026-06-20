@@ -51,3 +51,19 @@ test("Analytics/Admin are admin-only", async () => {
   expect(screen.queryByTestId("view-admin")).toBeNull();
   expect(screen.getByTestId("view-inbox")).toBeDefined();
 });
+
+// The trigger is a "you are here" indicator: off-grid routes must name the
+// page, not fall back to the generic "Menu".
+test.each([
+  ["/projects", "Projects"],
+  ["/account/preferences", "Preferences"],
+  ["/account/tokens", "Tokens"],
+  ["/projects/p1/runs/r1/diffs/d1", "Review"],
+  ["/projects/p1/builds/b1", "Builds"],
+])("trigger names %s as %s (never 'Menu')", (path, label) => {
+  pathname = path;
+  render(<ViewSelector userRole="admin" />);
+  const text = screen.getByTestId("view-selector-trigger").textContent ?? "";
+  expect(text).toContain(label);
+  expect(text).not.toContain("Menu");
+});
