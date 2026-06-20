@@ -1,36 +1,41 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/inbox",
   useRouter: () => ({ push: vi.fn() }),
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
-vi.mock("@/lib/trpc", () => ({
-  trpc: {
-    account: {
-      setDefaultProject: { useMutation: () => ({ mutate: vi.fn() }) },
-    },
-  },
-}));
 
 import {
+  CURRENT_PROJECT_SESSION_KEY,
   CurrentProjectProvider,
   useCurrentProject,
 } from "@/app/(protected)/_components/current-project-provider";
 
 function Probe() {
-  const { currentProjectId } = useCurrentProject();
-  return <div data-testid="current">{currentProjectId ?? "none"}</div>;
+  const { currentProjectId, setCurrentProject } = useCurrentProject();
+  return (
+    <div>
+      <span data-testid="current">{currentProjectId ?? "none"}</span>
+      <button data-testid="switch-b" onClick={() => setCurrentProject("b")}>
+        switch
+      </button>
+    </div>
+  );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.sessionStorage.clear();
+});
 
-describe("CurrentProjectProvider resolution", () => {
-  const projects = [
-    { id: "a", name: "alpha" },
-    { id: "b", name: "beta" },
-  ];
+const projects = [
+  { id: "a", name: "alpha" },
+  { id: "b", name: "beta" },
+];
+
+describe("CurrentProjectProvider", () => {
   test("uses the default project when accessible", () => {
     render(
       <CurrentProjectProvider
@@ -42,6 +47,7 @@ describe("CurrentProjectProvider resolution", () => {
     );
     expect(screen.getByTestId("current").textContent).toBe("b");
   });
+
   test("falls back to first project when default is stale", () => {
     render(
       <CurrentProjectProvider
@@ -53,6 +59,7 @@ describe("CurrentProjectProvider resolution", () => {
     );
     expect(screen.getByTestId("current").textContent).toBe("a");
   });
+
   test("is null when there are no projects", () => {
     render(
       <CurrentProjectProvider
@@ -63,5 +70,52 @@ describe("CurrentProjectProvider resolution", () => {
       </CurrentProjectProvider>,
     );
     expect(screen.getByTestId("current").textContent).toBe("none");
+  });
+
+  test("an accessible session-stored project wins over the default", async () => {
+    window.sessionStorage.setItem(CURRENT_PROJECT_SESSION_KEY, "a");
+    render(
+      <CurrentProjectProvider
+        initialProjects={projects}
+        initialDefaultProjectId="b"
+      >
+        <Probe />
+      </CurrentProjectProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("current").textContent).toBe("a"),
+    );
+  });
+
+  test("a stale session value is ignored (falls to default)", async () => {
+    window.sessionStorage.setItem(CURRENT_PROJECT_SESSION_KEY, "zzz");
+    render(
+      <CurrentProjectProvider
+        initialProjects={projects}
+        initialDefaultProjectId="b"
+      >
+        <Probe />
+      </CurrentProjectProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("current").textContent).toBe("b"),
+    );
+  });
+
+  test("switching is transient: writes sessionStorage (no persistence call)", async () => {
+    const user = userEvent.setup();
+    render(
+      <CurrentProjectProvider
+        initialProjects={projects}
+        initialDefaultProjectId="a"
+      >
+        <Probe />
+      </CurrentProjectProvider>,
+    );
+    await user.click(screen.getByTestId("switch-b"));
+    expect(screen.getByTestId("current").textContent).toBe("b");
+    expect(window.sessionStorage.getItem(CURRENT_PROJECT_SESSION_KEY)).toBe(
+      "b",
+    );
   });
 });

@@ -134,7 +134,10 @@ function fallbackCrumbs(pathname: string | null): BreadcrumbCrumb[] {
   const first = segs[0];
   if (!first) return [];
   const second = segs[1];
-  if (first === "account") return [{ label: "Tokens" }];
+  if (first === "account") {
+    if (second === "preferences") return [{ label: "Preferences" }];
+    return [{ label: "Tokens" }];
+  }
   if (first === "admin") {
     const crumbs: BreadcrumbCrumb[] = [{ label: "Admin", href: "/admin" }];
     if (second === "installations") crumbs.push({ label: "Installations" });
