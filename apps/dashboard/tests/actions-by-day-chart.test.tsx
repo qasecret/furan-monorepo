@@ -10,8 +10,8 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   }
-  // @ts-expect-error -- jsdom missing ResizeObserver
-  global.ResizeObserver = MockResizeObserver;
+  global.ResizeObserver =
+    MockResizeObserver as unknown as typeof ResizeObserver;
 });
 
 afterEach(cleanup);
