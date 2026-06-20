@@ -27,6 +27,11 @@ interface Me {
   role: "admin" | "editor" | "guest";
 }
 
+interface Project {
+  id: string;
+  name: string;
+}
+
 interface SearchParams {
   q?: string;
 }
@@ -53,8 +58,12 @@ export default async function MembersPage({
   const path = q
     ? `/users?limit=25&q=${encodeURIComponent(q)}`
     : `/users?limit=25`;
-  const list = await apiGet<MemberRow[]>(path);
+  const [list, projectList] = await Promise.all([
+    apiGet<MemberRow[]>(path),
+    apiGet<Project[]>("/projects"),
+  ]);
   const members = list.data ?? [];
+  const allProjects = projectList.data ?? [];
 
   return (
     <PageContainer>
@@ -68,7 +77,11 @@ export default async function MembersPage({
           deactivate accounts.
         </p>
         <div id="members-table">
-          <MembersTable initialUsers={members} currentUserId={me.data.id} />
+          <MembersTable
+            initialUsers={members}
+            currentUserId={me.data.id}
+            allProjects={allProjects}
+          />
         </div>
       </div>
     </PageContainer>

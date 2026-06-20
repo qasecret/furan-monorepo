@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 
+import { AssignProjectsDialog } from "./assign-projects-dialog";
 import { ChangeRoleCell } from "./change-role-cell";
 import { CreateUserDialog } from "./create-user-dialog";
 import { DeactivateButton } from "./deactivate-button";
@@ -26,11 +27,14 @@ export interface MemberRow {
   lastName?: string | null;
   role: "admin" | "editor" | "guest";
   isActive: boolean;
+  defaultProjectId?: string | null;
 }
 
 interface MembersTableProps {
   initialUsers: MemberRow[];
   currentUserId: string;
+  /** All projects in the install — drives the per-user assign-projects dialog. */
+  allProjects: { id: string; name: string }[];
   /**
    * Optional onSearch callback — used by tests to assert the search URL is
    * computed correctly without mounting next/navigation router internals.
@@ -42,6 +46,7 @@ interface MembersTableProps {
 export function MembersTable({
   initialUsers,
   currentUserId,
+  allProjects,
   onSearch,
 }: MembersTableProps) {
   const router = useRouter();
@@ -50,6 +55,7 @@ export function MembersTable({
   const [search, setSearch] = useState(initialQ);
   const [, startTransition] = useTransition();
   const firstRender = useRef(true);
+  const projectNameById = new Map(allProjects.map((p) => [p.id, p.name]));
 
   useEffect(() => {
     if (firstRender.current) {
@@ -118,6 +124,12 @@ export function MembersTable({
                       {[u.firstName, u.lastName].filter(Boolean).join(" ")}
                     </div>
                   )}
+                  {u.defaultProjectId &&
+                    projectNameById.has(u.defaultProjectId) && (
+                      <div className="text-xs text-zinc-500 dark:text-zinc-500">
+                        default: {projectNameById.get(u.defaultProjectId)}
+                      </div>
+                    )}
                 </TableCell>
                 <TableCell>
                   <ChangeRoleCell
@@ -134,12 +146,20 @@ export function MembersTable({
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  <DeactivateButton
-                    userId={u.id}
-                    isActive={u.isActive}
-                    isSelf={u.id === currentUserId}
-                    onChanged={() => router.refresh()}
-                  />
+                  <div className="flex items-center justify-end gap-1">
+                    <AssignProjectsDialog
+                      userId={u.id}
+                      userEmail={u.email}
+                      defaultProjectId={u.defaultProjectId ?? null}
+                      allProjects={allProjects}
+                    />
+                    <DeactivateButton
+                      userId={u.id}
+                      isActive={u.isActive}
+                      isSelf={u.id === currentUserId}
+                      onChanged={() => router.refresh()}
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             ))
