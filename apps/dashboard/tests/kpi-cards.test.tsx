@@ -5,32 +5,45 @@ import { KpiCards } from "@/app/(protected)/analytics/_components/kpi-cards";
 
 afterEach(cleanup);
 
+// Counts kept < 1000 so toLocaleString() has no locale-dependent separators.
+const summary = {
+  totalActions: 284,
+  approves: 190,
+  rejects: 94,
+  sessions: 92,
+  approveRate: 0.67,
+  keyboardRate: 0.75,
+  medianMsPerAction: 4500,
+  medianTimeToFirstActionMs: 8000,
+};
+
 describe("KpiCards", () => {
-  test("renders numeric KPIs from a populated summary", () => {
-    render(
-      <KpiCards
-        isLoading={false}
-        summary={{
-          totalActions: 12,
-          approves: 8,
-          rejects: 4,
-          viaKeyboard: 9,
-          sessions: 5,
-          medianMsPerAction: 4500,
-          medianTimeToFirstActionMs: 8000,
-          approveRate: 0.667,
-          rejectRate: 0.333,
-          keyboardRate: 0.75,
-        }}
-      />,
-    );
-    expect(screen.getByText("12")).toBeDefined(); // totalActions
-    expect(screen.getByText("67%")).toBeDefined(); // approveRate
-    expect(screen.getByText("75%")).toBeDefined(); // keyboardRate
-    expect(screen.getByText("8.0s")).toBeDefined(); // medianTimeToFirstActionMs → 8.0s
+  test("renders six metric tiles with the surfaced values", () => {
+    render(<KpiCards summary={summary} isLoading={false} />);
+    expect(screen.getByText("Actions")).toBeDefined();
+    expect(screen.getByText("284")).toBeDefined();
+    expect(screen.getByText("Approve rate")).toBeDefined();
+    expect(screen.getByText("67%")).toBeDefined();
+    expect(screen.getByText("190 approve · 94 reject")).toBeDefined();
+    expect(screen.getByText("Keyboard")).toBeDefined();
+    expect(screen.getByText("75%")).toBeDefined();
+    expect(screen.getByText("Sessions")).toBeDefined();
+    expect(screen.getByText("92")).toBeDefined();
+    expect(screen.getByText("Median time / action")).toBeDefined();
+    expect(screen.getByText("4.5s")).toBeDefined();
+    expect(screen.getByText("Time to first action")).toBeDefined();
+    expect(screen.getByText("8.0s")).toBeDefined();
   });
 
-  test("Time to first action renders em-dash when undefined (no qualifying sessions)", () => {
+  test("shows a skeleton per tile while loading", () => {
+    render(<KpiCards summary={undefined} isLoading={true} />);
+    expect(screen.getAllByTestId("kpi-skeleton")).toHaveLength(6);
+  });
+
+  // Regression: the analytics SQL percentiles return null for a window with
+  // no qualifying rows, so medianMsPerAction / medianTimeToFirstActionMs can
+  // arrive null or undefined. fmtMs must render "—", never "NaNm" / "NaNs".
+  test("renders an em-dash (never NaN) for undefined time fields", () => {
     render(
       <KpiCards
         isLoading={false}
@@ -38,30 +51,19 @@ describe("KpiCards", () => {
           totalActions: 0,
           approves: 0,
           rejects: 0,
-          viaKeyboard: 0,
           sessions: 0,
-          medianMsPerAction: 0,
-          // Simulates `analytics.summary` returning a window with no
-          // session pairs to join — the SQL `percentile_cont` returns
-          // null which the API forwards through as null/undefined.
-          medianTimeToFirstActionMs: undefined as unknown as number,
           approveRate: 0,
-          rejectRate: 0,
           keyboardRate: 0,
+          medianMsPerAction: 0,
+          medianTimeToFirstActionMs: undefined as unknown as number,
         }}
       />,
     );
-    // The "Time to first action" card's value should be the em-dash,
-    // not "NaNm". Counting em-dashes: 3 of the 4 cards may show "—"
-    // for various reasons (0%, 0 actions, undefined ms). We assert
-    // there's no "NaN" anywhere.
-    const html = document.body.innerHTML;
-    expect(html).not.toContain("NaN");
-    // And explicitly the dashboard formats undefined ms as "—".
+    expect(document.body.innerHTML).not.toContain("NaN");
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  test("Time to first action renders em-dash when null", () => {
+  test("renders an em-dash when time-to-first-action is null", () => {
     render(
       <KpiCards
         isLoading={false}
@@ -69,17 +71,15 @@ describe("KpiCards", () => {
           totalActions: 5,
           approves: 5,
           rejects: 0,
-          viaKeyboard: 0,
           sessions: 0,
+          approveRate: 1,
+          keyboardRate: 0,
           medianMsPerAction: 0,
           medianTimeToFirstActionMs: null as unknown as number,
-          approveRate: 1,
-          rejectRate: 0,
-          keyboardRate: 0,
         }}
       />,
     );
-    const html = document.body.innerHTML;
-    expect(html).not.toContain("NaN");
+    expect(document.body.innerHTML).not.toContain("NaN");
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 });
