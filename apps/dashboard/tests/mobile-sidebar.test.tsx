@@ -1,33 +1,14 @@
 /**
- * Smoke test for the mobile-sidebar wiring: the TopBar hamburger button
- * must flip the shared zustand store, and the MobileSidebar drawer must
+ * Smoke test for the mobile-sidebar wiring: the MobileSidebar drawer must
  * render its surface when the store flips open. Without this gate the
  * drawer could ship as inert markup.
  *
- * `logout-action` is stubbed because TopBar renders AccountMenu, which
- * imports the logout server action. AccountMenu's real import chain
- * reaches `src/lib/auth.ts`, which carries `server-only` and isn't safe
- * to mount in jsdom. The wiring being tested doesn't depend on AccountMenu's
- * contents — only that the drawer surface mounts when `open` flips true.
+ * Note: the TopBar hamburger button was removed in U7 Task 2 (the sidebar is
+ * being removed in later U7 tasks). The store can still be flipped directly
+ * for tests that care about MobileSidebar rendering.
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/projects",
-}));
-
-vi.mock("../src/app/(protected)/_components/logout-action", () => ({
-  logoutAction: vi.fn(),
-}));
-
-// ProjectSelector calls useCurrentProject() which throws outside a provider.
-// Stub the whole module so these wiring tests don't need a real provider tree.
-vi.mock("../src/app/(protected)/_components/project-selector", () => ({
-  ProjectSelector: () => (
-    <div data-testid="project-selector-stub" aria-hidden="true" />
-  ),
-}));
 
 vi.mock("../src/app/(protected)/_components/sidebar", () => ({
   Sidebar: ({ userRole }: { userRole: string }) => (
@@ -36,7 +17,6 @@ vi.mock("../src/app/(protected)/_components/sidebar", () => ({
 }));
 
 import { MobileSidebar } from "../src/app/(protected)/_components/mobile-sidebar";
-import { TopBar } from "../src/app/(protected)/_components/top-bar";
 import { useMobileSidebarStore } from "../src/app/(protected)/_components/use-mobile-sidebar";
 
 beforeEach(() => {
@@ -49,20 +29,6 @@ afterEach(() => {
 });
 
 describe("MobileSidebar wiring", () => {
-  test("TopBar hamburger flips the mobile-sidebar store open", () => {
-    render(<TopBar email="alice@example.com" initial="A" role="admin" />);
-    expect(useMobileSidebarStore.getState().open).toBe(false);
-
-    fireEvent.click(screen.getByTestId("top-bar-menu"));
-    expect(useMobileSidebarStore.getState().open).toBe(true);
-  });
-
-  test("TopBar hamburger has md:hidden so it's invisible on desktop", () => {
-    render(<TopBar email="alice@example.com" initial="A" role="admin" />);
-    const menu = screen.getByTestId("top-bar-menu");
-    expect(menu.className).toContain("md:hidden");
-  });
-
   test("MobileSidebar drawer mounts when store flips open", async () => {
     render(<MobileSidebar userRole="admin" />);
     expect(screen.queryByTestId("mobile-sidebar")).toBeNull();

@@ -17,6 +17,13 @@ vi.mock("@/app/(protected)/_components/project-selector", () => ({
   ),
 }));
 
+// ViewSelector also calls useCurrentProject() and usePathname(); stub it.
+vi.mock("@/app/(protected)/_components/view-selector", () => ({
+  ViewSelector: () => (
+    <div data-testid="view-selector-stub" aria-hidden="true" />
+  ),
+}));
+
 import { TopBar } from "@/app/(protected)/_components/top-bar";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
