@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import { AppShell } from "./_components/app-shell";
+import { CurrentProjectProvider } from "./_components/current-project-provider";
 
 import { Providers } from "@/app/providers";
 import { CommandPalette } from "@/components/cmdk/command-palette";
@@ -15,6 +16,12 @@ interface Me {
   firstName: string;
   lastName: string;
   role: "admin" | "editor" | "guest";
+  defaultProjectId: string | null;
+}
+
+interface ProjectApiItem {
+  id: string;
+  name: string;
 }
 
 /**
@@ -33,28 +40,43 @@ export default async function ProtectedLayout({
   children: ReactNode;
 }) {
   await requireJwt();
-  const me = await apiGet<Me>("/users/me").catch(() => ({
-    status: 0,
-    data: null as Me | null,
-  }));
+  const [me, projectsRes] = await Promise.all([
+    apiGet<Me>("/users/me").catch(() => ({
+      status: 0,
+      data: null as Me | null,
+    })),
+    apiGet<ProjectApiItem[]>("/projects").catch(() => ({
+      status: 0,
+      data: [] as ProjectApiItem[],
+    })),
+  ]);
   const userRole: Me["role"] = me.data?.role ?? "guest";
   const userEmail = me.data?.email ?? "";
   const userInitial = (me.data?.email ?? me.data?.role ?? "U")
     .charAt(0)
     .toUpperCase();
+  const projects = (projectsRes.data ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+  }));
 
   return (
     <Providers>
-      <AppShell
-        userRole={userRole}
-        userEmail={userEmail}
-        userInitial={userInitial}
+      <CurrentProjectProvider
+        initialProjects={projects}
+        initialDefaultProjectId={me.data?.defaultProjectId ?? null}
       >
-        {children}
-      </AppShell>
-      <CommandPalette userRole={userRole} />
-      <GlobalShortcuts />
-      <Toaster richColors theme="dark" position="bottom-right" />
+        <AppShell
+          userRole={userRole}
+          userEmail={userEmail}
+          userInitial={userInitial}
+        >
+          {children}
+        </AppShell>
+        <CommandPalette userRole={userRole} />
+        <GlobalShortcuts />
+        <Toaster richColors theme="dark" position="bottom-right" />
+      </CurrentProjectProvider>
     </Providers>
   );
 }
