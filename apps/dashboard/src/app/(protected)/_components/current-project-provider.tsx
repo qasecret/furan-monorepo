@@ -62,9 +62,13 @@ export function CurrentProjectProvider({
   const router = useRouter();
 
   useEffect(() => {
-    const stored = window.sessionStorage.getItem(CURRENT_PROJECT_SESSION_KEY);
-    if (stored && projects.some((p) => p.id === stored)) {
-      setCurrentProjectId(stored);
+    try {
+      const stored = window.sessionStorage.getItem(CURRENT_PROJECT_SESSION_KEY);
+      if (stored && projects.some((p) => p.id === stored)) {
+        setCurrentProjectId(stored);
+      }
+    } catch {
+      // sessionStorage unavailable (sandboxed iframe / blocked storage) — ignore
     }
   }, [projects]);
 
