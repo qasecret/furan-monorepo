@@ -176,6 +176,13 @@
       "when": 1781834727801,
       "tag": "0024_slim_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1781940467770,
+      "tag": "0025_blue_stature",
+      "breakpoints": true
     }
   ]
 }
