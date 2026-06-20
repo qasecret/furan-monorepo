@@ -38,6 +38,7 @@ export const userResponse = z.object({
   lastName: z.string(),
   role: z.enum(["admin", "editor", "guest"]),
   isActive: z.boolean(),
+  defaultProjectId: z.string().uuid().nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -51,6 +52,7 @@ const safeUserCols = {
   lastName: users.lastName,
   role: users.role,
   isActive: users.isActive,
+  defaultProjectId: users.defaultProjectId,
   createdAt: users.createdAt,
   updatedAt: users.updatedAt,
 };
