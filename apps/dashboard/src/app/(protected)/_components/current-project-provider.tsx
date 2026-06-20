@@ -22,7 +22,11 @@ function resolveInitial(
   defaultId: string | null,
 ): string | null {
   if (defaultId && projects.some((p) => p.id === defaultId)) return defaultId;
-  return projects[0]?.id ?? null;
+  // No usable default: only auto-pick when there's exactly one visible project
+  // (mirrors resolveLanding — 2+ projects without a default is not pickable,
+  // there's no switcher). Otherwise the shell shows the no-project context.
+  if (projects.length === 1) return projects[0]?.id ?? null;
+  return null;
 }
 
 /**

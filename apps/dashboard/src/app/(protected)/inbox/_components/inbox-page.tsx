@@ -162,7 +162,7 @@ export function InboxPage({
         className="flex flex-1 items-center justify-center p-10 text-center text-sm text-zinc-500"
         data-testid="inbox-no-project"
       >
-        No project selected. Create or choose a project to see its open runs.
+        No project assigned. Ask an admin to add you to a project.
       </div>
     );
   }

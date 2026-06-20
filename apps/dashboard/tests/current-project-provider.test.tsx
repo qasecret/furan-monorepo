@@ -44,7 +44,7 @@ describe("CurrentProjectProvider", () => {
     expect(captured?.currentProject?.id).toBe("b");
   });
 
-  test("falls back to the first project when the default is absent", () => {
+  test("is null when the default is absent and there are 2+ projects (no arbitrary pick — mirrors the landing resolver)", () => {
     render(
       <CurrentProjectProvider
         initialProjects={projects}
@@ -53,11 +53,11 @@ describe("CurrentProjectProvider", () => {
         <Probe />
       </CurrentProjectProvider>,
     );
-    expect(screen.getByTestId("current").textContent).toBe("a");
-    expect(captured?.currentProject?.id).toBe("a");
+    expect(screen.getByTestId("current").textContent).toBe("none");
+    expect(captured?.currentProjectId).toBeNull();
   });
 
-  test("falls back to the first project when there is no default", () => {
+  test("is null when there is no default and 2+ projects", () => {
     render(
       <CurrentProjectProvider
         initialProjects={projects}
@@ -66,7 +66,19 @@ describe("CurrentProjectProvider", () => {
         <Probe />
       </CurrentProjectProvider>,
     );
-    expect(screen.getByTestId("current").textContent).toBe("a");
+    expect(screen.getByTestId("current").textContent).toBe("none");
+  });
+
+  test("falls back to the sole project when there's exactly one and no default", () => {
+    render(
+      <CurrentProjectProvider
+        initialProjects={[{ id: "solo", name: "Solo" }]}
+        initialDefaultProjectId={null}
+      >
+        <Probe />
+      </CurrentProjectProvider>,
+    );
+    expect(screen.getByTestId("current").textContent).toBe("solo");
   });
 
   test("is null with no current project when there are no projects", () => {
