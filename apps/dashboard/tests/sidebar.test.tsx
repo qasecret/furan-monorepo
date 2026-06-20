@@ -16,7 +16,7 @@ describe("Sidebar (rail)", () => {
   test("shows destinations, not the active project or an account section", () => {
     render(<Sidebar userRole="admin" />);
     expect(screen.getByText("Inbox")).toBeDefined();
-    expect(screen.getByText("Projects")).toBeDefined();
+    expect(screen.queryByText("Projects")).toBeNull();
     expect(screen.queryByText("Account")).toBeNull();
     expect(screen.queryByText("Tokens")).toBeNull();
     expect(screen.queryByTestId("sidebar-active-project")).toBeNull();
