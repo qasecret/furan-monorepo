@@ -18,8 +18,6 @@ export interface ProjectListItem {
 interface Props {
   projectId: string;
   projects: ProjectListItem[];
-  /** Test-only: render the menu open. */
-  defaultOpen?: boolean;
 }
 
 /**
@@ -28,12 +26,12 @@ interface Props {
  * layout (there is no tRPC `projects.list`; `/projects` is REST-only) and
  * passed in, mirroring how the projects index page loads it.
  */
-export function ProjectSwitcher({ projectId, projects, defaultOpen }: Props) {
+export function ProjectSwitcher({ projectId, projects }: Props) {
   const current = projects.find((p) => p.id === projectId);
   const others = projects.filter((p) => p.id !== projectId);
 
   return (
-    <DropdownMenu defaultOpen={defaultOpen}>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
