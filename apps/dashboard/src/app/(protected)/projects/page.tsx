@@ -1,119 +1,54 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { CreateProjectDialog } from "./_components/create-project-dialog";
-import { EmptyProjectsCta } from "./_components/empty-projects-cta";
-
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
-import { PageTour } from "@/components/tour/page-tour";
-import { Card } from "@/components/ui/card";
-import { PageContainer } from "@/components/ui/page-container";
-import { PageHeader } from "@/components/ui/page-header";
+import { NoProject } from "@/app/(protected)/_components/no-project";
+import { resolveLanding } from "@/app/(protected)/_lib/resolve-landing";
 import { apiGet } from "@/lib/api-client";
-
-export const metadata: Metadata = { title: "Projects" };
-
-const PROJECTS_PAGE_TOUR = [
-  {
-    target: "#projects-list",
-    title: "Projects",
-    content:
-      "Each project owns its own builds, test variations, and baselines. Click any card to drill in.",
-    placement: "bottom" as const,
-  },
-  {
-    target: "#projects-create",
-    title: "Create a project",
-    content:
-      "Admins can spin up a new project here. Each project gets its own PAT for SDK auth.",
-    placement: "left" as const,
-  },
-];
 
 export const dynamic = "force-dynamic";
 
+interface Me {
+  role: "admin" | "editor" | "guest";
+  defaultProjectId: string | null;
+}
+
 interface Project {
   id: string;
-  name: string;
-  mainBranchName: string;
 }
 
-interface Me {
-  id: string;
-  role: "admin" | "editor" | "guest";
-}
-
+/**
+ * `/projects` is no longer a grid (U8). Single-project tenancy moved the
+ * all-projects management surface to the Admin → Projects hub
+ * (`/admin/projects`), so this legacy route just forwards:
+ *
+ *   - admins → the Admin → Projects hub (where they create + assign projects);
+ *   - everyone else → their resolved landing (their default project's Builds),
+ *     or the terminal no-project state when they have nothing to land on.
+ *
+ * The grid markup lives at `/admin/projects` — it is intentionally NOT
+ * re-rendered here.
+ */
 export default async function ProjectsPage() {
-  const [projectsRes, meRes] = await Promise.all([
-    apiGet<Project[]>("/projects"),
-    apiGet<Me>("/users/me"),
-  ]);
-  if (projectsRes.status === 401 || projectsRes.status === 403) {
-    return (
-      <PageContainer>
-        <Card>
-          <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
-            Not authorized
-          </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Your session may have expired. Try signing in again.
-          </p>
-        </Card>
-      </PageContainer>
-    );
-  }
-  const projects = projectsRes.data ?? [];
-  const role: Me["role"] = meRes.data?.role ?? "guest";
+  const meRes = await apiGet<Me>("/users/me").catch(() => ({
+    status: 0,
+    data: null as Me | null,
+  }));
 
-  if (projects.length === 0) {
-    return (
-      <PageContainer>
-        <EmptyProjectsCta role={role} />
-      </PageContainer>
-    );
-  }
+  // Admins manage all projects from the dedicated hub.
+  if (meRes.data?.role === "admin") redirect("/admin/projects");
 
-  return (
-    <PageContainer>
-      <div className="space-y-4">
-        <SetBreadcrumbs items={[{ label: "Projects" }]} />
-        <PageTour pageId="projects-index" steps={PROJECTS_PAGE_TOUR} />
-        <PageHeader
-          title="Projects"
-          actions={
-            role === "admin" ? (
-              <div id="projects-create">
-                <CreateProjectDialog />
-              </div>
-            ) : undefined
-          }
-        />
-        <div
-          id="projects-list"
-          className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
-        >
-          {projects.map((p) => (
-            <Link
-              key={p.id}
-              href={`/projects/${p.id}`}
-              className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
-              data-testid={`project-card-${p.id}`}
-            >
-              <Card className="h-full transition-[border-color,box-shadow,transform] duration-150 hover:border-zinc-300 hover:-translate-y-0.5 hover:shadow-md dark:hover:border-zinc-700 dark:hover:shadow-zinc-900/50">
-                <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
-                  {p.name}
-                </h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Main branch:{" "}
-                  <code className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                    {p.mainBranchName}
-                  </code>
-                </p>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </div>
-    </PageContainer>
+  const projectsRes = await apiGet<Project[]>("/projects").catch(() => ({
+    status: 0,
+    data: [] as Project[],
+  }));
+
+  const destination = resolveLanding(
+    {
+      role: meRes.data?.role ?? "guest",
+      defaultProjectId: meRes.data?.defaultProjectId ?? null,
+    },
+    projectsRes.data ?? [],
   );
+  if (destination) redirect(destination);
+
+  return <NoProject />;
 }

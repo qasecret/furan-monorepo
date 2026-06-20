@@ -64,5 +64,7 @@ export async function loginAction(
     path: "/",
   });
 
-  redirect("/projects");
+  // Land on the authenticated resolver, which forwards to the user's default
+  // project's Builds (or the Admin → Projects hub / no-project state). U8.
+  redirect("/home");
 }
