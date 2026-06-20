@@ -192,7 +192,7 @@ export function InboxPage({
         >
           <h1 className="text-xl font-semibold">Inbox</h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            All open runs across your projects · Press{" "}
+            Open runs · Press{" "}
             <kbd
               id="inbox-shortcut-hint"
               className="rounded border border-zinc-200 bg-zinc-50 px-1 text-xs dark:border-zinc-800 dark:bg-zinc-900"

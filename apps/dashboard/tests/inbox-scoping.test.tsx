@@ -18,7 +18,6 @@ vi.mock("@/lib/trpc", () => ({
         useMutation: () => ({ mutate: vi.fn(), isPending: false }),
       },
     },
-    projects: { list: { useQuery: () => ({ data: [] }) } },
   },
 }));
 
