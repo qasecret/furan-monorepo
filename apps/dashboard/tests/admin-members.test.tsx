@@ -17,6 +17,25 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// MembersTable now renders <AssignProjectsDialog> per row, which calls the
+// typed tRPC client at mount. These rows mount with allProjects=[] so the
+// dialog body is empty, but the hooks still need stubs to not crash.
+vi.mock("@/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => ({
+      members: { listUserProjects: { invalidate: vi.fn() } },
+    }),
+    members: {
+      listUserProjects: {
+        useQuery: () => ({ data: [], isLoading: false, isError: false }),
+      },
+      setUserProjects: {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      },
+    },
+  },
+}));
+
 const routerPush = vi.fn();
 const routerRefresh = vi.fn();
 let currentSearchParams = new URLSearchParams();
@@ -86,7 +105,13 @@ describe("MembersTable", () => {
   test("renders all 25 rows when 25 users are provided", () => {
     setupFetch();
     const users = makeUsers(25);
-    render(<MembersTable initialUsers={users} currentUserId="someone-else" />);
+    render(
+      <MembersTable
+        initialUsers={users}
+        currentUserId="someone-else"
+        allProjects={[]}
+      />,
+    );
     for (const u of users) {
       expect(screen.getByTestId(`user-row-${u.id}`)).toBeDefined();
     }
@@ -96,7 +121,13 @@ describe("MembersTable", () => {
     vi.useFakeTimers();
     setupFetch();
     const users = makeUsers(1);
-    render(<MembersTable initialUsers={users} currentUserId="someone-else" />);
+    render(
+      <MembersTable
+        initialUsers={users}
+        currentUserId="someone-else"
+        allProjects={[]}
+      />,
+    );
 
     const input = screen.getByTestId(
       "members-search-input",
@@ -118,7 +149,13 @@ describe("MembersTable", () => {
   test("deactivate button is disabled on the current-user row", () => {
     setupFetch();
     const users = makeUsers(2);
-    render(<MembersTable initialUsers={users} currentUserId={users[0].id} />);
+    render(
+      <MembersTable
+        initialUsers={users}
+        currentUserId={users[0].id}
+        allProjects={[]}
+      />,
+    );
 
     const selfBtn = screen.getByTestId(
       `deactivate-${users[0].id}`,

@@ -46,7 +46,6 @@ function activeView(pathname: string): string {
   if (pathname.startsWith("/inbox")) return "Inbox";
   if (pathname.startsWith("/analytics")) return "Analytics";
   if (pathname.startsWith("/admin")) return "Admin";
-  if (pathname.startsWith("/account/preferences")) return "Preferences";
   if (pathname.startsWith("/account/tokens")) return "Tokens";
   if (pathname.startsWith("/account")) return "Account";
   if (pathname === "/projects") return "Projects";

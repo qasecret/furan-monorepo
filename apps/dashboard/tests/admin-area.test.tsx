@@ -11,15 +11,27 @@ import { AdminTabs } from "@/app/(protected)/admin/(area)/_components/admin-tabs
 afterEach(cleanup);
 
 describe("AdminTabs", () => {
-  test("renders Members + Installations tabs with hrefs", () => {
+  test("renders Members + Projects + Installations tabs with hrefs", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     expect(
       screen.getByRole("link", { name: /Members/ }).getAttribute("href"),
     ).toBe("/admin/members");
     expect(
+      screen.getByRole("link", { name: /Projects/ }).getAttribute("href"),
+    ).toBe("/admin/projects");
+    expect(
       screen.getByRole("link", { name: /Installations/ }).getAttribute("href"),
     ).toBe("/admin/installations");
+  });
+
+  test("orders Projects between Members and Installations", () => {
+    mockPath = "/admin/members";
+    render(<AdminTabs />);
+    const labels = screen
+      .getAllByRole("link")
+      .map((a) => a.textContent?.trim());
+    expect(labels).toEqual(["Members", "Projects", "Installations"]);
   });
 
   test("marks the active tab from the pathname", () => {

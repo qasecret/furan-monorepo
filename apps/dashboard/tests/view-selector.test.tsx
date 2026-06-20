@@ -56,7 +56,6 @@ test("Analytics/Admin are admin-only", async () => {
 // page, not fall back to the generic "Menu".
 test.each([
   ["/projects", "Projects"],
-  ["/account/preferences", "Preferences"],
   ["/account/tokens", "Tokens"],
   ["/projects/p1/runs/r1/diffs/d1", "Review"],
   ["/projects/p1/builds/b1", "Builds"],

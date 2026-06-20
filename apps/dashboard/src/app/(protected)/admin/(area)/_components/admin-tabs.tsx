@@ -10,6 +10,7 @@ export function AdminTabs() {
     <RouteTabs
       tabs={[
         { label: "Members", href: "/admin/members" },
+        { label: "Projects", href: "/admin/projects" },
         { label: "Installations", href: "/admin/installations" },
       ]}
     />
