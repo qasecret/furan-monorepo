@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -63,5 +63,31 @@ describe("BuildsListPanel", () => {
     expect(
       screen.getByTestId("empty-builds-cta-token-link").getAttribute("href"),
     ).toBe("/account/tokens");
+  });
+
+  test("load-more appends the next page and dedupes overlapping ids", () => {
+    const mk = (id: string) => ({ ...item, id });
+    // Page 1: b1, b2 with a next cursor.
+    listMock.mockReturnValue({
+      data: { items: [mk("b1"), mk("b2")], nextCursor: "cur2" },
+      isLoading: false,
+      error: null,
+    });
+    render(<BuildsListPanel projectId="p1" projects={[]} />);
+    expect(screen.getByTestId("build-list-item-b1")).toBeDefined();
+    expect(screen.getByTestId("build-list-item-b2")).toBeDefined();
+
+    // Page 2 (after Load more): b2 (duplicate) + b3, no further cursor.
+    listMock.mockReturnValue({
+      data: { items: [mk("b2"), mk("b3")], nextCursor: null },
+      isLoading: false,
+      error: null,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    // All three present; the duplicate b2 appears exactly once.
+    expect(screen.getByTestId("build-list-item-b1")).toBeDefined();
+    expect(screen.getByTestId("build-list-item-b3")).toBeDefined();
+    expect(screen.getAllByTestId("build-list-item-b2")).toHaveLength(1);
   });
 });
