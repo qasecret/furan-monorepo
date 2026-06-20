@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { AdminTabs } from "./_components/admin-tabs";
 
-import { Card } from "@/components/ui/card";
+import { Forbidden } from "@/components/ui/forbidden";
 import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { getViewerRole } from "@/lib/get-viewer";
@@ -18,14 +18,10 @@ export default async function AdminAreaLayout({
   if (role !== "admin") {
     return (
       <PageContainer>
-        <Card>
-          <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
-            403 — admin only
-          </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            You need the admin role to access the admin area.
-          </p>
-        </Card>
+        <Forbidden
+          title="403 — admin only"
+          description="You need the admin role to access the admin area."
+        />
       </PageContainer>
     );
   }
