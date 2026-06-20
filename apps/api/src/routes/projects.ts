@@ -1,4 +1,4 @@
-import { eq, inArray, projectMembers, projects } from "@furan/db";
+import { asc, eq, inArray, projectMembers, projects } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -48,7 +48,7 @@ export async function registerProjectsRoutes(
     }
     if (req.auth.role === "guest") return [];
     if (req.auth.role === "admin") {
-      return app.db.select().from(projects);
+      return app.db.select().from(projects).orderBy(asc(projects.name));
     }
     // editor — only member-of projects
     const memberRows = await app.db
@@ -64,7 +64,8 @@ export async function registerProjectsRoutes(
           projects.id,
           memberRows.map((r) => r.projectId),
         ),
-      );
+      )
+      .orderBy(asc(projects.name));
   });
 
   app.post(
