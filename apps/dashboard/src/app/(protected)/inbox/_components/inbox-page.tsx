@@ -12,6 +12,7 @@ import { InboxPreviewPane } from "./inbox-preview-pane";
 import { Pagination } from "./pagination";
 import { RejectClusterDialog } from "./reject-cluster-dialog";
 
+import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
 import { KeyboardScope } from "@/components/triage/keyboard-scope";
 import { QueueRow } from "@/components/triage/queue-row";
 import { PageContainer } from "@/components/ui/page-container";
@@ -32,18 +33,24 @@ export function InboxPage({
   initialWindow,
   initialGroup,
 }: Props) {
+  const { currentProjectId } = useCurrentProject();
+
   const [cursor, setCursor] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const actionsCountRef = useRef(0);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
 
-  const list = trpc.inbox.list.useQuery({
-    status: initialStatus,
-    window: initialWindow,
-    cursor,
-    group: initialGroup ? "similarity" : undefined,
-  });
+  const list = trpc.inbox.list.useQuery(
+    {
+      status: initialStatus,
+      window: initialWindow,
+      cursor,
+      group: initialGroup ? "similarity" : undefined,
+      projectIds: currentProjectId ? [currentProjectId] : undefined,
+    },
+    { enabled: !!currentProjectId },
+  );
   const approve = trpc.inbox.approve.useMutation({
     onSuccess: () => {
       toast.success("Approved");
@@ -148,6 +155,17 @@ export function InboxPage({
     },
     [approve, reject],
   );
+
+  if (!currentProjectId) {
+    return (
+      <div
+        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-zinc-500"
+        data-testid="inbox-no-project"
+      >
+        No project selected. Create or choose a project to see its open runs.
+      </div>
+    );
+  }
 
   return (
     <KeyboardScope
