@@ -19,6 +19,7 @@ export const inboxListInput = z.object({
 export type InboxListInput = z.infer<typeof inboxListInput>;
 
 export const inboxCountInput = z.object({
+  projectIds: z.array(z.string().uuid()).nullish(),
   window: inboxWindowFilter.default("7d"),
 });
 export type InboxCountInput = z.infer<typeof inboxCountInput>;

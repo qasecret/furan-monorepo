@@ -339,7 +339,11 @@ export const inboxRouter = t.router({
     .output(z.object({ total: z.number().int() }))
     .query(async ({ input, ctx }) => {
       const memberProjectIds = await listMemberProjectIds(ctx.db, ctx.user);
-      if (memberProjectIds.length === 0) return { total: 0 };
+      const filterProjects =
+        input.projectIds && input.projectIds.length > 0
+          ? input.projectIds.filter((id) => memberProjectIds.includes(id))
+          : memberProjectIds;
+      if (filterProjects.length === 0) return { total: 0 };
 
       const interval = WINDOW_INTERVAL[input.window];
       const windowFilter =
@@ -352,7 +356,7 @@ export const inboxRouter = t.router({
         .from(testRuns)
         .where(
           and(
-            inArray(testRuns.projectId, memberProjectIds),
+            inArray(testRuns.projectId, filterProjects),
             sql`${testRuns.status} IN ('unresolved', 'failed')`,
             windowFilter,
           ),

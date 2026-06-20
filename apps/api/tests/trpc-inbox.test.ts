@@ -768,6 +768,64 @@ d("trpc inbox.list", () => {
     expect(res.items[0]?.buildId).toBe(build.id);
   });
 
+  test("inbox.count with projectIds scopes to that project only", async () => {
+    await wipe();
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "count-admin@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "C",
+        lastName: "Nt",
+        role: "admin",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user");
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "admin" });
+    const [p1] = await h.db
+      .insert(projects)
+      .values({ name: "count-p1" })
+      .returning();
+    const [p2] = await h.db
+      .insert(projects)
+      .values({ name: "count-p2" })
+      .returning();
+    if (!p1 || !p2) throw new Error("projects");
+    const [b1] = await h.db
+      .insert(builds)
+      .values({ projectId: p1.id, branchName: "main" })
+      .returning();
+    const [b2] = await h.db
+      .insert(builds)
+      .values({ projectId: p2.id, branchName: "main" })
+      .returning();
+    if (!b1 || !b2) throw new Error("builds");
+    await h.db.insert(testRuns).values([
+      {
+        projectId: p1.id,
+        buildId: b1.id,
+        name: "a",
+        branchName: "main",
+        status: "unresolved",
+      },
+      {
+        projectId: p2.id,
+        buildId: b2.id,
+        name: "b",
+        branchName: "main",
+        status: "unresolved",
+      },
+    ]);
+
+    const all = await makeClient(jwt).inbox.count.query({});
+    expect(all.total).toBe(2);
+    const scoped = await makeClient(jwt).inbox.count.query({
+      projectIds: [p1.id],
+    });
+    expect(scoped.total).toBe(1);
+  });
+
   test("paginates via cursor", async () => {
     await wipe();
 
