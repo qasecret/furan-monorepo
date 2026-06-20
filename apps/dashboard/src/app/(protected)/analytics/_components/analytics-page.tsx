@@ -38,8 +38,8 @@ export function AnalyticsPage() {
                 onClick={() => setDays(w)}
                 className={
                   w === days
-                    ? "rounded px-2 py-1 text-xs font-medium bg-zinc-300 text-zinc-950 dark:bg-zinc-700 dark:text-white"
-                    : "rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                    ? "rounded px-2.5 py-1 text-xs font-medium bg-white text-zinc-950 shadow-sm dark:bg-zinc-700 dark:text-white"
+                    : "rounded px-2.5 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
                 }
                 data-testid={`analytics-window-${w}d`}
               >
@@ -50,28 +50,30 @@ export function AnalyticsPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+      <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6">
         <KpiCards summary={summary.data} isLoading={summary.isLoading} />
 
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Actions per day
-          </h2>
-          <ActionsByDayChart
-            items={byDay.data?.items ?? []}
-            isLoading={byDay.isLoading}
-          />
-        </section>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.5fr_1fr]">
+          <section>
+            <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Actions per day
+            </h2>
+            <ActionsByDayChart
+              items={byDay.data?.items ?? []}
+              isLoading={byDay.isLoading}
+            />
+          </section>
 
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Top reviewers
-          </h2>
-          <TopReviewers
-            items={top.data?.items ?? []}
-            isLoading={top.isLoading}
-          />
-        </section>
+          <section>
+            <h2 className="mb-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Top reviewers
+            </h2>
+            <TopReviewers
+              items={top.data?.items ?? []}
+              isLoading={top.isLoading}
+            />
+          </section>
+        </div>
       </div>
     </PageContainer>
   );

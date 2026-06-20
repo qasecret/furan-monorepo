@@ -63,4 +63,15 @@ describe("AnalyticsPage", () => {
     expect(screen.getByText("Top reviewers")).toBeDefined();
     expect(screen.getByTestId("analytics-window-7d")).toBeDefined();
   });
+
+  test("surfaces the richer metrics + reviewer leaderboard", async () => {
+    render(<AnalyticsPage />);
+    await waitFor(() => expect(screen.getByText("Analytics")).toBeDefined());
+    expect(screen.getByText("Sessions")).toBeDefined();
+    expect(screen.getByText("5")).toBeDefined(); // sessions
+    expect(screen.getByText("Median time / action")).toBeDefined();
+    expect(screen.getByText("4.5s")).toBeDefined(); // medianMsPerAction 4500
+    expect(screen.getByText("8 approve · 4 reject")).toBeDefined();
+    expect(screen.getByText("alice@x.test")).toBeDefined(); // leaderboard row
+  });
 });
