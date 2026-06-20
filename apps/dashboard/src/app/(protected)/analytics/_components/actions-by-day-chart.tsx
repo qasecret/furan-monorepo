@@ -10,6 +10,9 @@ import {
   YAxis,
 } from "recharts";
 
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+
 interface Item {
   day: string;
   approves: number;
@@ -24,14 +27,18 @@ interface Props {
 export function ActionsByDayChart({ items, isLoading }: Props) {
   if (isLoading) {
     return (
-      <div className="h-64 rounded-lg border border-zinc-200 bg-zinc-50 animate-pulse dark:border-zinc-800 dark:bg-zinc-900/30" />
+      <Skeleton
+        data-testid="chart-skeleton"
+        className="h-64 w-full rounded-xl"
+      />
     );
   }
   if (items.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-500">
-        No actions in this window.
-      </div>
+      <EmptyState
+        title="No actions in this window."
+        className="h-64 justify-center"
+      />
     );
   }
   return (
