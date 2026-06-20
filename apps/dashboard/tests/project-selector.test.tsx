@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 const setCurrentProject = vi.fn();
+let pathname = "/inbox";
 let mockCtx = {
   currentProjectId: "a",
   currentProject: { id: "a", name: "alpha" },
@@ -12,6 +13,10 @@ let mockCtx = {
   ],
   setCurrentProject,
 };
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname,
+  useRouter: () => ({ push: vi.fn() }),
+}));
 vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
   useCurrentProject: () => mockCtx,
 }));
@@ -24,6 +29,7 @@ import { ProjectSelector } from "@/app/(protected)/_components/project-selector"
 afterEach(() => {
   cleanup();
   setCurrentProject.mockClear();
+  pathname = "/inbox";
 });
 
 describe("ProjectSelector", () => {
@@ -58,5 +64,27 @@ describe("ProjectSelector", () => {
     render(<ProjectSelector userRole="admin" />);
     await user.click(screen.getByTestId("project-selector-trigger"));
     expect(screen.getByTestId("project-create")).toBeDefined();
+  });
+
+  // On workspace-global views (Analytics/Admin) the selected project does not
+  // scope the page; the chip is de-emphasised and explains itself so the name
+  // doesn't read as a filter.
+  test.each(["/analytics", "/admin", "/admin/members"])(
+    "de-emphasises + explains scope on %s",
+    (p) => {
+      pathname = p;
+      render(<ProjectSelector userRole="admin" />);
+      const trigger = screen.getByTestId("project-selector-trigger");
+      expect(trigger.className).toContain("opacity-60");
+      expect(trigger.getAttribute("title")).toContain("all projects");
+    },
+  );
+
+  test("full emphasis (no title) on project-scoped pages", () => {
+    pathname = "/projects/a/builds";
+    render(<ProjectSelector userRole="admin" />);
+    const trigger = screen.getByTestId("project-selector-trigger");
+    expect(trigger.className).not.toContain("opacity-60");
+    expect(trigger.getAttribute("title")).toBeNull();
   });
 });

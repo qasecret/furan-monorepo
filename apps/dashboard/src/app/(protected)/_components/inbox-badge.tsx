@@ -5,8 +5,8 @@ import { useCurrentProject } from "./current-project-provider";
 import { trpc } from "@/lib/trpc";
 
 /**
- * Sidebar badge showing the count of open (unresolved + failed) inbox items
- * for the currently selected project.
+ * Open-count badge (unresolved + failed inbox items for the currently selected
+ * project), rendered on the view selector's Inbox item.
  *
  * Polls every 60 s as a safety-net fallback; SSE-driven invalidation will be
  * wired in Task 19 and will supersede the need for polling in most sessions.

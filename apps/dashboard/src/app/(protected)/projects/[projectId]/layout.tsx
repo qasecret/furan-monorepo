@@ -1,18 +1,15 @@
 import type { ReactNode } from "react";
 
-import { ProjectHeader } from "./_components/project-header";
+import { RecordRecentProject } from "./_components/record-recent-project";
 
 import { getProject } from "@/lib/get-project";
 
 /**
- * Project-scoped layout. Owns the project's section header — the project name
- * as identity plus the Builds / Runs / Variations / Settings tab strip (see
- * `<ProjectHeader>`). The header hides itself on the full-screen diff viewer.
- *
- * The name is fetched here once via `getProject` (React-`cache()`d, so it
- * shares the request with each tab page's own gating fetch). On a failed
- * lookup — 403/404 — the header is skipped and the child page renders its own
- * error card.
+ * Project-scoped layout. Fetches the project name once via `getProject`
+ * (React-`cache()`d, so it shares the request with each tab page's own gating
+ * fetch) and mounts the headless `RecordRecentProject` side-effect so the
+ * command palette's Recent group stays current. On a failed lookup — 403/404 —
+ * the side-effect is skipped and the child page renders its own error card.
  */
 export default async function ProjectLayout({
   children,
@@ -26,7 +23,7 @@ export default async function ProjectLayout({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {data?.name ? (
-        <ProjectHeader projectId={projectId} name={data.name} />
+        <RecordRecentProject projectId={projectId} name={data.name} />
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </div>

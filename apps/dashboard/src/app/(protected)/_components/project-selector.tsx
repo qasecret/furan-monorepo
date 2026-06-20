@@ -8,6 +8,7 @@ import {
   Plus,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { useCurrentProject } from "./current-project-provider";
@@ -25,18 +26,33 @@ import {
  * Header project context (ADR-049). 0 projects → muted label (+ admin create);
  * 1 → static chip; 2+ → a switch dropdown. Switching persists the default via
  * the provider; "All projects…" routes to the kept /projects grid.
+ *
+ * On workspace-global views (Analytics/Admin) the selection does NOT scope the
+ * page, so the chip is de-emphasised and carries a tooltip — otherwise the
+ * project name reads as a filter on data that actually spans every project.
  */
 export function ProjectSelector({ userRole }: { userRole: string }) {
   const { currentProject, projects, setCurrentProject } = useCurrentProject();
   const [createOpen, setCreateOpen] = useState(false);
   const isAdmin = userRole === "admin";
 
-  const chip =
-    "flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm font-medium text-zinc-900 dark:border-zinc-800 dark:text-zinc-100";
+  const pathname = usePathname() ?? "";
+  const scopedOut = /^\/(analytics|admin)(\/|$)/.test(pathname);
+  const scopeTitle = scopedOut
+    ? "Analytics and Admin span all projects — this only sets your context for project pages"
+    : undefined;
+
+  const chip = `flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm font-medium text-zinc-900 dark:border-zinc-800 dark:text-zinc-100${
+    scopedOut ? " opacity-60" : ""
+  }`;
 
   if (projects.length === 0) {
     return (
-      <div className={chip} data-testid="project-selector-empty">
+      <div
+        className={chip}
+        title={scopeTitle}
+        data-testid="project-selector-empty"
+      >
         <FolderKanban className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
         <span className="text-zinc-500">No project</span>
         {isAdmin && (
@@ -62,7 +78,11 @@ export function ProjectSelector({ userRole }: { userRole: string }) {
 
   if (projects.length === 1) {
     return (
-      <div className={chip} data-testid="project-selector-single">
+      <div
+        className={chip}
+        title={scopeTitle}
+        data-testid="project-selector-single"
+      >
         <FolderKanban className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
         <span className="max-w-[12rem] truncate">{currentProject?.name}</span>
       </div>
@@ -77,6 +97,7 @@ export function ProjectSelector({ userRole }: { userRole: string }) {
             type="button"
             aria-label="Switch project"
             data-testid="project-selector-trigger"
+            title={scopeTitle}
             className={`${chip} hover:bg-zinc-100 dark:hover:bg-zinc-900`}
           >
             <FolderKanban

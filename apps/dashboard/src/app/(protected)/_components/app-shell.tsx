@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 
-import { MobileSidebar } from "./mobile-sidebar";
-import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 
 interface Props {
@@ -12,17 +10,9 @@ interface Props {
 }
 
 /**
- * Full-viewport app shell: fixed sidebar on the left, topbar + scrolling
- * main region on the right. Server-renderable; interactive bits (sidebar
- * active state, topbar search + hamburger, mobile drawer) are client
- * leaves.
- *
- * Responsive: desktop (≥md) shows the inline Sidebar; mobile (<md) hides
- * it and surfaces the hamburger button in TopBar, which opens a Radix
- * Dialog drawer (MobileSidebar) with the same Sidebar inside.
- *
- * Main scroll region uses #050505 (one shade darker than zinc-950 cards)
- * so cards visually elevate against the canvas.
+ * Full-viewport app shell: a top bar (with the project + view selectors that
+ * replaced the rail) over a full-width scrolling main region. The left sidebar
+ * was removed in U7 (ADR-051) — navigation lives in the header now.
  */
 export function AppShell({
   userRole,
@@ -31,15 +21,11 @@ export function AppShell({
   children,
 }: Props) {
   return (
-    <div className="flex h-screen bg-white text-zinc-950 dark:bg-black dark:text-white overflow-hidden">
-      <Sidebar userRole={userRole} className="hidden md:flex" />
-      <MobileSidebar userRole={userRole} />
-      <div className="flex-1 flex flex-col min-w-0">
-        <TopBar email={userEmail} initial={userInitial} role={userRole} />
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#050505]">
-          {children}
-        </main>
-      </div>
+    <div className="flex h-screen flex-col bg-white text-zinc-950 dark:bg-black dark:text-white overflow-hidden">
+      <TopBar email={userEmail} initial={userInitial} role={userRole} />
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#050505]">
+        {children}
+      </main>
     </div>
   );
 }

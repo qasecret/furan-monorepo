@@ -1,31 +1,22 @@
 "use client";
 
-import { Bell, Menu, Search } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { Bell, Search } from "lucide-react";
+import Link from "next/link";
 
 import { AccountMenu } from "./account-menu";
 import { ProjectSelector } from "./project-selector";
-import { useBreadcrumbsStore } from "./use-breadcrumbs";
-import { useMobileSidebarStore } from "./use-mobile-sidebar";
+import { ViewSelector } from "./view-selector";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { HelpButton } from "@/components/tour/help-button";
-import { Breadcrumbs, type BreadcrumbCrumb } from "@/components/ui/breadcrumbs";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
  * App-shell top bar. The "search input" is a button that opens the cmdk
  * palette — there is no inline search; the palette is the search.
  *
- * The breadcrumb trail (the global "you are here" indicator) renders to the
- * right of the search box on ≥md viewports, fed by `useBreadcrumbsStore`
- * which each route publishes through `<SetBreadcrumbs>`. A pathname-derived
- * fallback keeps it from ever rendering blank before a route's effect runs.
- *
- * On <md viewports a hamburger button precedes the search; it opens the
- * MobileSidebar drawer via `useMobileSidebarStore`. The hamburger is
- * `md:hidden` so it never shows on desktop where the inline sidebar is
- * always visible.
+ * The left cluster contains: ProjectSelector → ViewSelector → palette search.
+ * The right cluster contains: HelpButton → ThemeToggle → bell → AccountMenu.
  *
  * The bell renders disabled for v1.0; a real notification feed lands in
  * a later phase (see plan-roadmap §7.1).
@@ -38,7 +29,6 @@ interface TopBarProps {
 
 export function TopBar({ email, initial, role }: TopBarProps) {
   const setPaletteOpen = usePaletteStore((s) => s.setOpen);
-  const setMobileSidebarOpen = useMobileSidebarStore((s) => s.setOpen);
 
   return (
     <header
@@ -46,16 +36,21 @@ export function TopBar({ email, initial, role }: TopBarProps) {
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <button
-          type="button"
-          onClick={() => setMobileSidebarOpen(true)}
-          className="md:hidden p-2 -ml-2 rounded-md text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/60 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50 transition-colors shrink-0"
-          data-testid="top-bar-menu"
-          aria-label="Open navigation"
+        <Link
+          href="/inbox"
+          aria-label="Furan home"
+          data-testid="top-bar-logo"
+          className="flex shrink-0 items-center gap-2"
         >
-          <Menu className="w-5 h-5" />
-        </button>
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-brand">
+            <div className="h-2.5 w-2.5 rounded-sm bg-black" />
+          </div>
+          <span className="hidden text-lg font-semibold tracking-tight text-zinc-950 lg:inline dark:text-white">
+            Furan
+          </span>
+        </Link>
         <ProjectSelector userRole={role} />
+        <ViewSelector userRole={role} />
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
@@ -69,7 +64,6 @@ export function TopBar({ email, initial, role }: TopBarProps) {
             ⌘K
           </span>
         </button>
-        <TopBarBreadcrumbs />
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <HelpButton />
@@ -89,64 +83,4 @@ export function TopBar({ email, initial, role }: TopBarProps) {
       </div>
     </header>
   );
-}
-
-/**
- * Reads the published trail (or a pathname fallback) and renders it beside the
- * search box. Hidden on <md to keep the compact mobile bar uncluttered — the
- * page's own `<PageHeader>` carries identity there.
- */
-function TopBarBreadcrumbs() {
-  const items = useBreadcrumbsStore((s) => s.items);
-  const setForPath = useBreadcrumbsStore((s) => s.pathname);
-  const pathname = usePathname();
-  // Only trust the published trail while it belongs to the current route;
-  // otherwise (a page that published no trail, or an early-return error
-  // branch) fall back to a pathname-derived crumb rather than showing the
-  // previously-visited page's stale trail.
-  const crumbs =
-    items.length > 0 && setForPath === pathname
-      ? items
-      : fallbackCrumbs(pathname);
-  if (crumbs.length === 0) return null;
-  return (
-    <div className="hidden min-w-0 flex-1 items-center md:flex">
-      <Breadcrumbs items={crumbs} />
-    </div>
-  );
-}
-
-const TOP_LEVEL_LABELS: Record<string, string> = {
-  inbox: "Inbox",
-  projects: "Projects",
-  analytics: "Analytics",
-};
-
-/**
- * Minimal first-segment → label map used only until the active route publishes
- * its real trail (project/run names can't be derived from the URL's ids).
- * `usePathname()` can return `null` (e.g. outside a router during tests), so
- * guard it.
- */
-function fallbackCrumbs(pathname: string | null): BreadcrumbCrumb[] {
-  if (!pathname) return [];
-  const segs = pathname.split("/").filter(Boolean);
-  const first = segs[0];
-  if (!first) return [];
-  const second = segs[1];
-  if (first === "account") {
-    if (second === "preferences") return [{ label: "Preferences" }];
-    return [{ label: "Tokens" }];
-  }
-  if (first === "admin") {
-    const crumbs: BreadcrumbCrumb[] = [{ label: "Admin", href: "/admin" }];
-    if (second === "installations") crumbs.push({ label: "Installations" });
-    else if (second === "members") crumbs.push({ label: "Members" });
-    else if (second === "projects") crumbs.push({ label: "Project members" });
-    return crumbs;
-  }
-  if (first === "projects") return [{ label: "Projects", href: "/projects" }];
-  const label =
-    TOP_LEVEL_LABELS[first] ?? first.charAt(0).toUpperCase() + first.slice(1);
-  return [{ label }];
 }
