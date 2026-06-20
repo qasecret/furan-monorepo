@@ -4,6 +4,7 @@ import { Bell, Menu, Search } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import { AccountMenu } from "./account-menu";
+import { ProjectSelector } from "./project-selector";
 import { useBreadcrumbsStore } from "./use-breadcrumbs";
 import { useMobileSidebarStore } from "./use-mobile-sidebar";
 
@@ -54,6 +55,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
         >
           <Menu className="w-5 h-5" />
         </button>
+        <ProjectSelector userRole={role} />
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}

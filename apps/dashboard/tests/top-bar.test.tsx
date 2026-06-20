@@ -9,6 +9,14 @@ vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
 
+// ProjectSelector calls useCurrentProject() which throws outside a provider.
+// Stub the whole module so TopBar tests don't need a real provider tree.
+vi.mock("@/app/(protected)/_components/project-selector", () => ({
+  ProjectSelector: () => (
+    <div data-testid="project-selector-stub" aria-hidden="true" />
+  ),
+}));
+
 import { TopBar } from "@/app/(protected)/_components/top-bar";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 
