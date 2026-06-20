@@ -50,8 +50,7 @@ export function BuildsListPanel({ projectId, projects }: Props) {
       items.push(b);
     }
   }
-  for (const b of (data?.items as unknown as BuildRowData[] | undefined) ??
-    []) {
+  for (const b of data?.items ?? []) {
     if (!seen.has(b.id)) {
       seen.add(b.id);
       items.push(b);
@@ -60,10 +59,7 @@ export function BuildsListPanel({ projectId, projects }: Props) {
 
   const onLoadMore = () => {
     if (!data?.nextCursor) return;
-    setAccumulated((prev) => [
-      ...prev,
-      ...((data.items as unknown as BuildRowData[]) ?? []),
-    ]);
+    setAccumulated((prev) => [...prev, ...data.items]);
     setCursor(data.nextCursor);
   };
 

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ProjectMembersTable } from "./_components/project-members-table";
 
-import { Card } from "@/components/ui/card";
+import { Forbidden } from "@/components/ui/forbidden";
 import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 
@@ -39,14 +39,10 @@ export default async function ProjectMembersPage({
   ) {
     return (
       <PageContainer>
-        <Card>
-          <h1 className="text-xl font-bold text-zinc-950 dark:text-white">
-            403 — admin only
-          </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            You need the admin role to manage project members.
-          </p>
-        </Card>
+        <Forbidden
+          title="403 — admin only"
+          description="You need the admin role to manage project members."
+        />
       </PageContainer>
     );
   }

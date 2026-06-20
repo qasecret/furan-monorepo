@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("@/app/(protected)/_components/logout-action", () => ({
@@ -16,10 +17,10 @@ describe("AccountMenu", () => {
     expect(trigger.textContent).toContain("M");
   });
 
-  test("open menu shows email, Tokens link, and a Sign out submit", () => {
-    render(
-      <AccountMenu email="me@x.io" initial="M" role="admin" defaultOpen />,
-    );
+  test("open menu shows email, Tokens link, and a Sign out submit", async () => {
+    const user = userEvent.setup();
+    render(<AccountMenu email="me@x.io" initial="M" role="admin" />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
     expect(screen.getByText("me@x.io")).toBeDefined();
     const tokens = screen.getByRole("menuitem", { name: /tokens/i });
     expect(tokens.getAttribute("href")).toBe("/account/tokens");

@@ -5,6 +5,14 @@ import Link from "next/link";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export interface HistoryItem {
   id: string;
@@ -44,91 +52,85 @@ export function HistoryTable({
 }: Props) {
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden dark:border-zinc-800 dark:bg-zinc-950">
-        <table className="w-full text-sm" data-testid="history-table">
-          <thead className="bg-zinc-100/70 border-b border-zinc-200 text-zinc-600 text-left dark:bg-zinc-900/50 dark:border-zinc-800 dark:text-zinc-400">
+      <Table data-testid="history-table">
+        <TableHeader>
+          <tr>
+            <TableHead>When</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Branch</TableHead>
+            <TableHead>Diff %</TableHead>
+            <TableHead>Mismatched px</TableHead>
+            <TableHead>Promotion</TableHead>
+            <TableHead>Build</TableHead>
+            <TableHead>Actions</TableHead>
+          </tr>
+        </TableHeader>
+        <TableBody>
+          {items.length === 0 ? (
             <tr>
-              <th className="px-4 py-2.5 font-medium">When</th>
-              <th className="px-4 py-2.5 font-medium">Status</th>
-              <th className="px-4 py-2.5 font-medium">Branch</th>
-              <th className="px-4 py-2.5 font-medium">Diff %</th>
-              <th className="px-4 py-2.5 font-medium">Mismatched px</th>
-              <th className="px-4 py-2.5 font-medium">Promotion</th>
-              <th className="px-4 py-2.5 font-medium">Build</th>
-              <th className="px-4 py-2.5 font-medium">Actions</th>
+              <td
+                colSpan={8}
+                className="px-4 py-8 text-center text-zinc-500 dark:text-zinc-500"
+              >
+                Loading runs…
+              </td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {items.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="px-4 py-8 text-center text-zinc-500 dark:text-zinc-500"
-                >
-                  Loading runs…
-                </td>
-              </tr>
-            ) : (
-              items.map((r) => (
-                <tr
-                  key={r.id}
-                  className="hover:bg-zinc-100/60 transition-colors dark:hover:bg-zinc-900/30"
-                  data-testid={`history-row-${r.id}`}
-                >
-                  <td className="px-4 py-2.5 text-zinc-500 dark:text-zinc-500">
-                    {relative(r.createdAt)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <RunStatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-2.5">{r.branchName ?? "—"}</td>
-                  <td className="px-4 py-2.5">
-                    {r.diffPercent !== null
-                      ? `${r.diffPercent.toFixed(2)}%`
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {r.pixelMisMatchCount !== null
-                      ? r.pixelMisMatchCount.toLocaleString()
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {r.merge && r.baselineSource !== null ? (
-                      <span
-                        className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
-                        title={`Baseline from ${r.baselineSource}`}
-                        data-testid={`history-row-promotion-${r.id}`}
-                      >
-                        ⭐ promoted
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {r.buildId && r.buildNumber !== null ? (
-                      <Link
-                        href={`/projects/${projectId}/builds?expand=${r.buildId}`}
-                        className="text-brand-text hover:underline"
-                        data-testid={`history-row-build-${r.id}`}
-                      >
-                        #{r.buildNumber}
-                      </Link>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <Link
-                      href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
-                      className="text-brand-text hover:underline"
-                      data-testid={`history-row-view-diff-${r.id}`}
+          ) : (
+            items.map((r) => (
+              <TableRow key={r.id} data-testid={`history-row-${r.id}`}>
+                <TableCell className="text-zinc-500 dark:text-zinc-500">
+                  {relative(r.createdAt)}
+                </TableCell>
+                <TableCell>
+                  <RunStatusBadge status={r.status} />
+                </TableCell>
+                <TableCell>{r.branchName ?? "—"}</TableCell>
+                <TableCell>
+                  {r.diffPercent !== null
+                    ? `${r.diffPercent.toFixed(2)}%`
+                    : "—"}
+                </TableCell>
+                <TableCell>
+                  {r.pixelMisMatchCount !== null
+                    ? r.pixelMisMatchCount.toLocaleString()
+                    : "—"}
+                </TableCell>
+                <TableCell>
+                  {r.merge && r.baselineSource !== null ? (
+                    <span
+                      className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
+                      title={`Baseline from ${r.baselineSource}`}
+                      data-testid={`history-row-promotion-${r.id}`}
                     >
-                      View diff →
+                      ⭐ promoted
+                    </span>
+                  ) : null}
+                </TableCell>
+                <TableCell>
+                  {r.buildId && r.buildNumber !== null ? (
+                    <Link
+                      href={`/projects/${projectId}/builds?expand=${r.buildId}`}
+                      className="text-brand-text hover:underline"
+                      data-testid={`history-row-build-${r.id}`}
+                    >
+                      #{r.buildNumber}
                     </Link>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                  ) : null}
+                </TableCell>
+                <TableCell>
+                  <Link
+                    href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
+                    className="text-brand-text hover:underline"
+                    data-testid={`history-row-view-diff-${r.id}`}
+                  >
+                    View diff →
+                  </Link>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
       {nextCursor && (
         <div className="flex justify-center">
           <Button
