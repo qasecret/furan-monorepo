@@ -10,9 +10,6 @@ vi.mock("@/lib/get-project", () => ({
     data: { id: "p1", name: "Acme" },
   })),
 }));
-vi.mock("@/app/(protected)/_components/set-breadcrumbs", () => ({
-  SetBreadcrumbs: () => null,
-}));
 vi.mock(
   "@/app/(protected)/projects/[projectId]/builds/_components/builds-list-panel",
   () => ({ BuildsListPanel: () => <div data-testid="panel" /> }),

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { CreateProjectDialog } from "@/app/(protected)/projects/_components/create-project-dialog";
 import { EmptyProjectsCta } from "@/app/(protected)/projects/_components/empty-projects-cta";
 import { Card } from "@/components/ui/card";
@@ -53,9 +52,6 @@ export default async function AdminProjectsPage() {
   return (
     <PageContainer>
       <div className="space-y-4">
-        <SetBreadcrumbs
-          items={[{ label: "Admin", href: "/admin" }, { label: "Projects" }]}
-        />
         {projects.length === 0 ? (
           // The (area) layout guarantees the viewer is an admin here, so the
           // admin "create your first project" variant always renders.

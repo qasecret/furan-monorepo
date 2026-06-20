@@ -11,10 +11,6 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => undefined,
 }));
-vi.mock("@/app/(protected)/_components/set-breadcrumbs", async (orig) => ({
-  ...(await orig()),
-  SetBreadcrumbs: () => null,
-}));
 
 const getByIdMock = vi.fn();
 const listMock = vi.fn();
@@ -99,14 +95,7 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={true}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
     expect(screen.getByText("Search")).toBeDefined();
     expect(screen.getByText(/#42/)).toBeDefined();
@@ -125,14 +114,7 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={true}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     expect(listMock).toHaveBeenCalledWith(
       expect.objectContaining({
         buildId: "b1",
@@ -157,14 +139,7 @@ describe("BatchPage", () => {
       refetch: vi.fn(),
     });
     expect(() =>
-      render(
-        <BatchPage
-          projectId="p1"
-          buildId="bad"
-          projectName="Acme"
-          canReview={true}
-        />,
-      ),
+      render(<BatchPage projectId="p1" buildId="bad" canReview={true} />),
     ).toThrow(/NEXT_NOT_FOUND/);
     expect(notFoundMock).toHaveBeenCalled();
   });
@@ -183,14 +158,7 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={true}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     expect(notFoundMock).not.toHaveBeenCalled();
     expect(screen.getByText(/Couldn’t load this build/)).toBeDefined();
   });
@@ -238,14 +206,7 @@ describe("BatchPage", () => {
             refetch: vi.fn(),
           },
     );
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={true}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     await waitFor(() => expect(screen.getByText("Page1Card")).toBeDefined());
     fireEvent.click(screen.getByText("Load more"));
     await waitFor(() => expect(screen.getByText("Page2Card")).toBeDefined());
@@ -265,14 +226,7 @@ describe("BatchPage", () => {
       refetch: vi.fn(),
     });
     bulkApproveMock.mockClear();
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={true}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     fireEvent.click(screen.getByTestId("batch-approve-all"));
     expect(bulkApproveMock).toHaveBeenCalledWith(
       { buildId: "b1" },
@@ -303,14 +257,7 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    render(
-      <BatchPage
-        projectId="p1"
-        buildId="b1"
-        projectName="Acme"
-        canReview={false}
-      />,
-    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={false} />);
     await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
     expect(screen.queryByTestId("batch-approve-all")).toBeNull();
     expect(screen.queryByTestId("test-card-approve-r1")).toBeNull();

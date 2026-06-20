@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // AccountMenu (now rendered inside TopBar) imports the logout server action,
 // which reaches for next/headers; stub it so the component tree mounts in
-// jsdom. Everything else (palette / breadcrumb / mobile stores) stays real so
-// these remain genuine wiring tests.
+// jsdom. Everything else (palette / mobile stores) stays real so these remain
+// genuine wiring tests.
 vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));

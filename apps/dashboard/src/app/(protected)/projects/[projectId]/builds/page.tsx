@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
-import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getProject } from "@/lib/get-project";
-import { projectCrumbs } from "@/lib/project-crumbs";
 
 export const metadata: Metadata = { title: "Builds" };
 export const dynamic = "force-dynamic";
@@ -40,14 +38,9 @@ export default async function ProjectBuildsPage({
   }
 
   return (
-    <>
-      <SetBreadcrumbs
-        items={projectCrumbs(projectId, project.data.name, "Builds")}
-      />
-      <EmptyState
-        title="Select a build to review"
-        description="Pick a build from the list to see its tests."
-      />
-    </>
+    <EmptyState
+      title="Select a build to review"
+      description="Pick a build from the list to see its tests."
+    />
   );
 }
