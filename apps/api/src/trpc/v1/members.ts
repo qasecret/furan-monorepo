@@ -123,4 +123,111 @@ export const membersRouter = t.router({
         );
       return { removed: true };
     }),
+
+  /** Admin-only: the project ids a user belongs to (for the assignment panel). */
+  listUserProjects: t.procedure
+    .input(z.object({ userId: z.string().uuid() }))
+    .use(authed)
+    .use(requireAdmin)
+    .query(async ({ input, ctx }) => {
+      const rows = await ctx.db
+        .select({ projectId: projectMembers.projectId })
+        .from(projectMembers)
+        .where(eq(projectMembers.userId, input.userId));
+      return rows.map((r) => r.projectId);
+    }),
+
+  /**
+   * Admin-only: reconcile a user's project memberships to exactly `projectIds`
+   * and set their default landing project. `defaultProjectId` must be one of
+   * `projectIds` (or null). Atomic.
+   */
+  setUserProjects: t.procedure
+    .input(
+      z.object({
+        userId: z.string().uuid(),
+        projectIds: z.array(z.string().uuid()),
+        defaultProjectId: z.string().uuid().nullable(),
+      }),
+    )
+    .use(authed)
+    .use(requireAdmin)
+    .mutation(async ({ input, ctx }) => {
+      if (
+        input.defaultProjectId !== null &&
+        !input.projectIds.includes(input.defaultProjectId)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "default_must_be_one_of_assigned_projects",
+        });
+      }
+      const target = (
+        await ctx.db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, input.userId))
+          .limit(1)
+      )[0];
+      if (!target) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "no_such_user" });
+      }
+
+      try {
+        await ctx.db.transaction(async (tx) => {
+          const existing = await tx
+            .select({ projectId: projectMembers.projectId })
+            .from(projectMembers)
+            .where(eq(projectMembers.userId, input.userId));
+          const have = new Set(existing.map((r) => r.projectId));
+          const want = new Set(input.projectIds);
+          // Dedup via `want` so a repeated id can't insert a duplicate
+          // (user_id, project_id) row and trip the unique constraint.
+          const toAdd = [...want].filter((id) => !have.has(id));
+          const toRemove = [...have].filter((id) => !want.has(id));
+
+          for (const projectId of toRemove) {
+            await tx
+              .delete(projectMembers)
+              .where(
+                and(
+                  eq(projectMembers.userId, input.userId),
+                  eq(projectMembers.projectId, projectId),
+                ),
+              );
+          }
+          if (toAdd.length > 0) {
+            await tx
+              .insert(projectMembers)
+              .values(
+                toAdd.map((projectId) => ({ userId: input.userId, projectId })),
+              );
+          }
+          await tx
+            .update(users)
+            .set({ defaultProjectId: input.defaultProjectId })
+            .where(eq(users.id, input.userId));
+        });
+      } catch (err) {
+        // FK (23503: a projectId that doesn't exist) and unique (23505)
+        // violations surface via `code`; drizzle wraps the PostgresError as
+        // `cause` — mirror the `add` handler and translate to clean 4xx.
+        const outerCode = (err as { code?: string })?.code;
+        const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
+        if (outerCode === "23503" || causeCode === "23503") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "unknown_project_id",
+          });
+        }
+        if (outerCode === "23505" || causeCode === "23505") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "already_a_member",
+          });
+        }
+        throw err;
+      }
+      return { ok: true };
+    }),
 });

@@ -293,3 +293,225 @@ d("tRPC members router", () => {
     expect(err?.data?.code).toBe("FORBIDDEN");
   });
 });
+
+interface AssignSeeded {
+  adminId: string;
+  adminJwt: string;
+  editorId: string;
+  editorJwt: string;
+  targetUserId: string;
+  projectAId: string;
+  projectBId: string;
+  projectCId: string;
+}
+
+/**
+ * Independent seed for the assignment procedures: needs three projects
+ * (A, B, C) and a target user pre-assigned to {A, B} so reconciliation to
+ * {A, C} can be observed.
+ */
+async function seedAssign(h: TestApp): Promise<AssignSeeded> {
+  await h.db.delete(diffRegions);
+  await h.db.delete(screenshots);
+  await h.db.delete(baselines);
+  await h.db.delete(testRuns);
+  await h.db.delete(testVariations);
+  await h.db.delete(builds);
+  await h.db.delete(projectMembers);
+  await h.db.delete(users);
+  await h.db.delete(projects);
+
+  const [admin] = await h.db
+    .insert(users)
+    .values({
+      email: "admin@assign.example",
+      hashedPassword: await hashPassword("x"),
+      firstName: "Ad",
+      lastName: "Min",
+      role: "admin",
+      isActive: true,
+    })
+    .returning();
+  const [editor] = await h.db
+    .insert(users)
+    .values({
+      email: "editor@assign.example",
+      hashedPassword: await hashPassword("x"),
+      firstName: "Ed",
+      lastName: "Itor",
+      role: "editor",
+      isActive: true,
+    })
+    .returning();
+  const [target] = await h.db
+    .insert(users)
+    .values({
+      email: "target@assign.example",
+      hashedPassword: await hashPassword("x"),
+      firstName: "Tar",
+      lastName: "Get",
+      role: "editor",
+      isActive: true,
+    })
+    .returning();
+
+  const [projectA] = await h.db
+    .insert(projects)
+    .values({ name: "proj-a" })
+    .returning();
+  const [projectB] = await h.db
+    .insert(projects)
+    .values({ name: "proj-b" })
+    .returning();
+  const [projectC] = await h.db
+    .insert(projects)
+    .values({ name: "proj-c" })
+    .returning();
+
+  // target starts in {A, B}.
+  await h.db.insert(projectMembers).values([
+    { userId: target.id, projectId: projectA.id },
+    { userId: target.id, projectId: projectB.id },
+  ]);
+
+  return {
+    adminId: admin.id,
+    adminJwt: h.app.jwt.sign({ sub: admin.id, role: "admin" }),
+    editorId: editor.id,
+    editorJwt: h.app.jwt.sign({ sub: editor.id, role: "editor" }),
+    targetUserId: target.id,
+    projectAId: projectA.id,
+    projectBId: projectB.id,
+    projectCId: projectC.id,
+  };
+}
+
+d("tRPC members assignment (admin)", () => {
+  let h: TestApp;
+  let baseUrl: string;
+  let s: AssignSeeded;
+
+  beforeAll(async () => {
+    h = await createTestApp();
+    await h.app.listen({ port: 0, host: "127.0.0.1" });
+    const addr = h.app.server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+  beforeEach(async () => {
+    s = await seedAssign(h);
+  });
+
+  test("listUserProjects: returns the user's project ids", async () => {
+    const client = makeClient(baseUrl, s.adminJwt);
+    const ids = await client.members.listUserProjects.query({
+      userId: s.targetUserId,
+    });
+    expect([...ids].sort()).toEqual([s.projectAId, s.projectBId].sort());
+  });
+
+  test("setUserProjects: reconciles memberships {A,B} -> {A,C} and sets default A", async () => {
+    const client = makeClient(baseUrl, s.adminJwt);
+    const res = await client.members.setUserProjects.mutate({
+      userId: s.targetUserId,
+      projectIds: [s.projectAId, s.projectCId],
+      defaultProjectId: s.projectAId,
+    });
+    expect(res).toEqual({ ok: true });
+
+    // Membership set is now {A, C}.
+    const rows = await h.db
+      .select({ projectId: projectMembers.projectId })
+      .from(projectMembers)
+      .where(eq(projectMembers.userId, s.targetUserId));
+    expect(rows.map((r) => r.projectId).sort()).toEqual(
+      [s.projectAId, s.projectCId].sort(),
+    );
+
+    // default_project_id is now A.
+    const [u] = await h.db
+      .select({ defaultProjectId: users.defaultProjectId })
+      .from(users)
+      .where(eq(users.id, s.targetUserId));
+    expect(u?.defaultProjectId).toBe(s.projectAId);
+  });
+
+  test("setUserProjects: rejects a defaultProjectId not in projectIds (BAD_REQUEST)", async () => {
+    const client = makeClient(baseUrl, s.adminJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.members.setUserProjects.mutate({
+        userId: s.targetUserId,
+        projectIds: [s.projectAId, s.projectCId],
+        defaultProjectId: s.projectBId, // not in {A, C}
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+    expect(err?.message).toMatch(/default_must_be_one_of_assigned_projects/);
+  });
+
+  test("setUserProjects: non-admin (editor) caller receives FORBIDDEN", async () => {
+    const client = makeClient(baseUrl, s.editorJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.members.setUserProjects.mutate({
+        userId: s.targetUserId,
+        projectIds: [s.projectAId],
+        defaultProjectId: s.projectAId,
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("FORBIDDEN");
+  });
+
+  test("setUserProjects: deduplicates repeated projectIds on insert (no 500)", async () => {
+    const client = makeClient(baseUrl, s.adminJwt);
+    const res = await client.members.setUserProjects.mutate({
+      userId: s.targetUserId,
+      projectIds: [s.projectCId, s.projectCId], // duplicate, not yet a member
+      defaultProjectId: s.projectCId,
+    });
+    expect(res).toEqual({ ok: true });
+    const rows = await h.db
+      .select({ projectId: projectMembers.projectId })
+      .from(projectMembers)
+      .where(eq(projectMembers.userId, s.targetUserId));
+    expect(rows.map((r) => r.projectId)).toEqual([s.projectCId]);
+  });
+
+  test("setUserProjects: unknown projectId is a clean BAD_REQUEST (not 500)", async () => {
+    const client = makeClient(baseUrl, s.adminJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.members.setUserProjects.mutate({
+        userId: s.targetUserId,
+        projectIds: ["00000000-0000-0000-0000-000000000000"],
+        defaultProjectId: null,
+      });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("BAD_REQUEST");
+    expect(err?.message).toMatch(/unknown_project_id/);
+  });
+
+  test("listUserProjects: non-admin (editor) caller receives FORBIDDEN", async () => {
+    const client = makeClient(baseUrl, s.editorJwt);
+    let err: TRPCClientError<AppRouter> | undefined;
+    try {
+      await client.members.listUserProjects.query({ userId: s.targetUserId });
+    } catch (e) {
+      err = e as TRPCClientError<AppRouter>;
+    }
+    expect(err).toBeDefined();
+    expect(err?.data?.code).toBe("FORBIDDEN");
+  });
+});
