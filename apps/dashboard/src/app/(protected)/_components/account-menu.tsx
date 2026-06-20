@@ -16,14 +16,12 @@ interface Props {
   email: string;
   initial: string;
   role: string;
-  /** Test-only: render the menu open. Omit in app code. */
-  defaultOpen?: boolean;
 }
 
 /** Top-bar account control: avatar trigger → email/role, Tokens, Sign out. */
-export function AccountMenu({ email, initial, role, defaultOpen }: Props) {
+export function AccountMenu({ email, initial, role }: Props) {
   return (
-    <DropdownMenu defaultOpen={defaultOpen}>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
