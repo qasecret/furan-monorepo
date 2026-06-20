@@ -894,21 +894,28 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
           />
         </CollapsibleSection>
 
-        <div className="sticky bottom-4 flex items-center justify-end gap-3 z-10">
-          {form.formState.isDirty && !update.isPending && (
-            <span className="text-xs text-amber-600 dark:text-amber-400">
-              Unsaved changes
-            </span>
-          )}
-          <Button
-            type="submit"
-            disabled={isGuest || update.isPending}
-            title={isGuest ? "Guests can't modify project settings" : undefined}
-            data-testid="save-button"
-            variant={form.formState.isDirty ? "default" : "secondary"}
-          >
-            {update.isPending ? "Saving…" : "Save"}
-          </Button>
+        {/* Sticky save: wrapped in a backdrop "pill" so the floating control
+            reads as an intentional toolbar rather than a bare button colliding
+            with the form field scrolling behind it. */}
+        <div className="sticky bottom-4 z-10 flex justify-end">
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2 shadow-md backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
+            {form.formState.isDirty && !update.isPending && (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                Unsaved changes
+              </span>
+            )}
+            <Button
+              type="submit"
+              disabled={isGuest || update.isPending}
+              title={
+                isGuest ? "Guests can't modify project settings" : undefined
+              }
+              data-testid="save-button"
+              variant={form.formState.isDirty ? "default" : "secondary"}
+            >
+              {update.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
         </div>
       </form>
     </Form>
