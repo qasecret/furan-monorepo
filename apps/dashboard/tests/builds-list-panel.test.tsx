@@ -8,10 +8,6 @@ vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => undefined,
 }));
 vi.mock(
-  "@/app/(protected)/projects/[projectId]/builds/_components/project-switcher",
-  () => ({ ProjectSwitcher: () => <div data-testid="switcher" /> }),
-);
-vi.mock(
   "@/app/(protected)/projects/[projectId]/builds/_components/properties-filter",
   () => ({ PropertiesFilter: () => <div data-testid="filter" /> }),
 );
@@ -47,7 +43,7 @@ describe("BuildsListPanel", () => {
       isLoading: false,
       error: null,
     });
-    render(<BuildsListPanel projectId="p1" projects={[]} />);
+    render(<BuildsListPanel projectId="p1" />);
     const link = screen.getByTestId("build-list-item-b1");
     expect(link.getAttribute("aria-current")).toBe("page");
   });
@@ -58,7 +54,7 @@ describe("BuildsListPanel", () => {
       isLoading: false,
       error: null,
     });
-    render(<BuildsListPanel projectId="p1" projects={[]} />);
+    render(<BuildsListPanel projectId="p1" />);
     expect(screen.getByText(/no builds yet/i)).toBeDefined();
     expect(
       screen.getByTestId("empty-builds-cta-token-link").getAttribute("href"),
@@ -73,7 +69,7 @@ describe("BuildsListPanel", () => {
       isLoading: false,
       error: null,
     });
-    render(<BuildsListPanel projectId="p1" projects={[]} />);
+    render(<BuildsListPanel projectId="p1" />);
     expect(screen.getByTestId("build-list-item-b1")).toBeDefined();
     expect(screen.getByTestId("build-list-item-b2")).toBeDefined();
 
