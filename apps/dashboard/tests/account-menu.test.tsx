@@ -28,4 +28,15 @@ describe("AccountMenu", () => {
     expect(signOut.tagName).toBe("BUTTON");
     expect(signOut.getAttribute("type")).toBe("submit");
   });
+
+  test("account menu links to the Preferences page", async () => {
+    const user = userEvent.setup();
+    render(<AccountMenu email="a@b.c" initial="A" role="admin" />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
+    const link = screen.getByRole("menuitem", { name: "Preferences" });
+    const href =
+      link.getAttribute("href") ??
+      link.querySelector("a")?.getAttribute("href");
+    expect(href).toBe("/account/preferences");
+  });
 });

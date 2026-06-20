@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { CURRENT_PROJECT_SESSION_KEY } from "./current-project-provider";
 import { logoutAction } from "./logout-action";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -41,11 +42,24 @@ export function AccountMenu({ email, initial, role }: Props) {
         </div>
         <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
         <DropdownMenuItem asChild>
+          <Link href="/account/preferences">Preferences</Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
           <Link href="/account/tokens">Tokens</Link>
         </DropdownMenuItem>
         <form action={logoutAction}>
           <DropdownMenuItem asChild>
-            <button type="submit" className="w-full cursor-default text-left">
+            <button
+              type="submit"
+              className="w-full cursor-default text-left"
+              onClick={() => {
+                try {
+                  sessionStorage.removeItem(CURRENT_PROJECT_SESSION_KEY);
+                } catch {
+                  // ignore — clearing is best-effort
+                }
+              }}
+            >
               Sign out
             </button>
           </DropdownMenuItem>
