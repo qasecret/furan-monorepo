@@ -24,11 +24,11 @@ export default async function ProjectLayout({
   const { projectId } = await params;
   const { data } = await getProject(projectId);
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col">
       {data?.name ? (
         <ProjectHeader projectId={projectId} name={data.name} />
       ) : null}
-      {children}
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }

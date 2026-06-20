@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { use } from "react";
 
 import { PageTour } from "@/components/tour/page-tour";
+import { PageContainer } from "@/components/ui/page-container";
 
 /**
  * Dynamic-import the DiffViewer with ssr:false to keep pixi.js out of
@@ -50,11 +51,13 @@ export default function CheckpointPage({
   return (
     <>
       <PageTour pageId="diff-viewer" steps={DIFF_VIEWER_TOUR} />
-      <DiffViewer
-        projectId={projectId}
-        runId={runId}
-        initialCheckpointId={checkpointId}
-      />
+      <PageContainer fullBleed>
+        <DiffViewer
+          projectId={projectId}
+          runId={runId}
+          initialCheckpointId={checkpointId}
+        />
+      </PageContainer>
     </>
   );
 }

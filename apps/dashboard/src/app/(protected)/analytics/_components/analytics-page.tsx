@@ -6,6 +6,7 @@ import { ActionsByDayChart } from "./actions-by-day-chart";
 import { KpiCards } from "./kpi-cards";
 import { TopReviewers } from "./top-reviewers";
 
+import { PageContainer } from "@/components/ui/page-container";
 import { trpc } from "@/lib/trpc";
 
 const WINDOWS = [7, 14, 30] as const;
@@ -19,7 +20,7 @@ export function AnalyticsPage() {
   const top = trpc.analytics.topReviewers.useQuery({ days, limit: 5 });
 
   return (
-    <div className="flex h-full flex-col">
+    <PageContainer fullBleed>
       <header className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-900">
         <div className="flex items-center justify-between">
           <div>
@@ -72,6 +73,6 @@ export function AnalyticsPage() {
           />
         </section>
       </div>
-    </div>
+    </PageContainer>
   );
 }

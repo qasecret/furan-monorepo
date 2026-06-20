@@ -50,13 +50,13 @@ export default async function BuildsLayout({
       ];
 
   return (
-    <div className="flex flex-col gap-4 md:flex-row">
-      <aside className="w-full shrink-0 md:sticky md:top-6 md:w-72 md:self-start">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 md:flex-row md:p-6">
+      <aside className="shrink-0 overflow-y-auto md:w-72">
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
           <BuildsListPanel projectId={projectId} projects={projects} />
         </div>
       </aside>
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }

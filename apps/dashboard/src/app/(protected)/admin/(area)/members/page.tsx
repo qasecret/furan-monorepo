@@ -4,6 +4,7 @@ import { MembersTable, type MemberRow } from "./_components/members-table";
 
 import { SetBreadcrumbs } from "@/app/(protected)/_components/set-breadcrumbs";
 import { PageTour } from "@/components/tour/page-tour";
+import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 import { getViewerRole } from "@/lib/get-viewer";
 
@@ -56,18 +57,20 @@ export default async function MembersPage({
   const members = list.data ?? [];
 
   return (
-    <div className="space-y-4">
-      <SetBreadcrumbs
-        items={[{ label: "Admin", href: "/admin" }, { label: "Members" }]}
-      />
-      <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
-      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-        Manage user access. Admins can create users, change roles, and
-        deactivate accounts.
-      </p>
-      <div id="members-table">
-        <MembersTable initialUsers={members} currentUserId={me.data.id} />
+    <PageContainer>
+      <div className="space-y-4">
+        <SetBreadcrumbs
+          items={[{ label: "Admin", href: "/admin" }, { label: "Members" }]}
+        />
+        <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
+        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Manage user access. Admins can create users, change roles, and
+          deactivate accounts.
+        </p>
+        <div id="members-table">
+          <MembersTable initialUsers={members} currentUserId={me.data.id} />
+        </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }
