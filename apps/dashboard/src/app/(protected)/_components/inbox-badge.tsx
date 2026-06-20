@@ -1,16 +1,23 @@
 "use client";
 
+import { useCurrentProject } from "./current-project-provider";
+
 import { trpc } from "@/lib/trpc";
 
 /**
- * Sidebar badge showing the total count of open (unresolved + failed) inbox
- * items across all projects the current user is a member of.
+ * Sidebar badge showing the count of open (unresolved + failed) inbox items
+ * for the currently selected project.
  *
  * Polls every 60 s as a safety-net fallback; SSE-driven invalidation will be
  * wired in Task 19 and will supersede the need for polling in most sessions.
+ * When no project is selected the badge is suppressed entirely.
  */
 export function InboxBadge() {
-  const { data } = trpc.inbox.count.useQuery({}, { refetchInterval: 60_000 });
+  const { currentProjectId } = useCurrentProject();
+  const { data } = trpc.inbox.count.useQuery(
+    { projectIds: currentProjectId ? [currentProjectId] : undefined },
+    { refetchInterval: 60_000, enabled: !!currentProjectId },
+  );
   const total = data?.total ?? 0;
   if (total === 0) return null;
   return (
