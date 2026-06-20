@@ -117,9 +117,7 @@ export function ViewSelector({ userRole }: { userRole: string }) {
         >
           <Inbox aria-hidden="true" className="mr-2 h-4 w-4 shrink-0" />
           Inbox
-          <span className="ml-auto">
-            <InboxBadge />
-          </span>
+          <InboxBadge />
         </DropdownMenuItem>
         {isAdmin && (
           <DropdownMenuItem
