@@ -67,19 +67,19 @@ const ignoreRegionElementSchema = z
     paddingPx: z.number().int().min(0).max(32).default(0),
     /**
      * Match mode (Applitools-aligned):
-     * - `ignore`: skip the region entirely (mask in L1, ignored in L2).
+     * - `ignore`: skip the region entirely (masked out of the L1 pixel diff).
      * - `dynamic-text`: mask in L1 only when OCR'd text matches `pattern`.
      * - `strict`: don't mask; region is informational. When
      *   `thresholdOverride` is set, the engine will (TODO) apply that
      *   tighter threshold locally. Until the engine work lands, strict
      *   regions are pure metadata — useful as visual review markers
      *   ("this area MUST match"). See furan-design/specs/2026-05-23-region-modes-design.md.
-     * - `layout`: mask the region in L1 (suppresses pixel diff inside).
-     *   v1 ships the masking + visual marker; L2-side layout-only
-     *   classification is engine work tracked in the same design doc.
-     * - `content`: same v1 behavior as layout — mask in L1, stored as a
-     *   distinct kind so the future L2 text-content compare wires up
-     *   without a wire-shape change.
+     * - `layout`: mask the region in L1 (suppresses pixel diff inside)
+     *   + visual marker. Kept as a distinct kind for review semantics;
+     *   image-first (ADR-047) dropped the planned L2 layout-only compare.
+     * - `content`: same behavior as layout — masked in L1, stored as a
+     *   distinct kind. (The planned L2 text-content compare was dropped
+     *   in ADR-047's image-first re-aim.)
      */
     kind: z
       .enum(["ignore", "dynamic-text", "strict", "layout", "content"])
