@@ -4,6 +4,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -40,5 +41,20 @@ export const testVariations = pgTable(
   },
   (t) => ({
     projectIdx: index("test_variations_project_id_idx").on(t.projectId),
+    // ADR-054: the environment tuple IS the baseline identity. NULLS NOT
+    // DISTINCT so a null os/device/browser/viewport/branch counts as one
+    // distinct value, never a wildcard — matching Applitools' complete
+    // environment key. `resolveOrCreateVariation` upserts on this index.
+    identityUnique: unique("test_variations_identity_unique")
+      .on(
+        t.projectId,
+        t.name,
+        t.browser,
+        t.viewport,
+        t.branchName,
+        t.os,
+        t.device,
+      )
+      .nullsNotDistinct(),
   }),
 );

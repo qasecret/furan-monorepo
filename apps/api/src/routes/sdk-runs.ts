@@ -137,11 +137,12 @@ export const uploadScreenshotResponse = z.object({
 // ---------------------------------------------------------------------------
 
 /**
- * Looks up a test_variations row by (projectId, branchName, name, viewport,
- * browser, os, device) and returns it, or inserts + returns a new row if
- * none exists. The lookup is intentionally NOT wrapped in a single
- * INSERT … ON CONFLICT because the combination column set is large and we
- * don't want to add a composite unique index for now (Phase 6 will).
+ * Resolve (or create) the test_variations row for an environment tuple
+ * (projectId, branchName, name, viewport, browser, os, device). ADR-054: the
+ * tuple is the baseline identity, enforced by the
+ * `test_variations_identity_unique` UNIQUE NULLS NOT DISTINCT constraint, so
+ * this is an atomic INSERT … ON CONFLICT upsert — a null os/device/branch is a
+ * distinct value (never a wildcard) and concurrent ingest can't fork identity.
  */
 export async function resolveOrCreateVariation(
   db: DB,
@@ -156,37 +157,23 @@ export async function resolveOrCreateVariation(
   },
 ): Promise<{ id: string }> {
   const { projectId, branchName, name, viewport, browser, os, device } = params;
-  const conditions = [
-    eq(testVariations.projectId, projectId),
-    eq(testVariations.name, name),
-    eq(testVariations.browser, browser),
-    eq(testVariations.viewport, viewport),
-  ];
-  if (branchName) conditions.push(eq(testVariations.branchName, branchName));
-  if (os) conditions.push(eq(testVariations.os, os));
-  if (device) conditions.push(eq(testVariations.device, device));
-
-  const existing = await db
-    .select({ id: testVariations.id })
-    .from(testVariations)
-    .where(and(...conditions))
-    .limit(1);
-
-  if (existing[0]) return existing[0];
-
-  const [created] = await db
+  const [row] = await db
     .insert(testVariations)
-    .values({
-      projectId,
-      branchName,
-      name,
-      viewport,
-      browser,
-      os: os ?? undefined,
-      device: device ?? undefined,
+    .values({ projectId, branchName, name, viewport, browser, os, device })
+    .onConflictDoUpdate({
+      target: [
+        testVariations.projectId,
+        testVariations.name,
+        testVariations.browser,
+        testVariations.viewport,
+        testVariations.branchName,
+        testVariations.os,
+        testVariations.device,
+      ],
+      set: { updatedAt: new Date() },
     })
     .returning({ id: testVariations.id });
-  return created!;
+  return row!;
 }
 
 export const telemetryBody = z
