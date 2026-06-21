@@ -13,7 +13,12 @@ export interface DiffRegion {
   category: RegionCategory;
   bbox: { x: number; y: number; width: number; height: number };
   description: string;
-  source: "l1" | "l1_pixel" | "axe";
+  // Engine sources: l1 (whole-diff), l1_pixel (cluster), axe (a11y). The
+  // diff-worker also re-tags clusters under the Layout match level (ADR-053):
+  // layout_kept = a kept cluster (a real structural fail that drives grouping),
+  // layout_suppressed = a content/color-only audit row (severity "none",
+  // excluded from the checkpoint signature like dynamic_text).
+  source: "l1" | "l1_pixel" | "axe" | "layout_kept" | "layout_suppressed";
   /**
    * For axe regions: the axe-core `target` selector array (verbatim).
    * The diff worker uses this with the candidate DOM + element-map

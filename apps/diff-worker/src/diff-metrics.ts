@@ -62,6 +62,20 @@ export interface DiffMetrics {
    *     compute "% of checkpoints with flag on" from this)
    */
   l1Displacement: Counter<"outcome">;
+  /**
+   * Per-cluster outcome of the deterministic Layout suppression pass
+   * (ADR-053). One increment per L1 pixel cluster on a `matchLevel="Layout"`
+   * checkpoint. The pass/fail gate stays deterministic; this only observes it.
+   *
+   * Outcomes (the cluster's verdict reason):
+   *   - `stable_element` — suppressed: cluster sits in an unchanged element
+   *   - `moved_or_resized` — kept: the containing element's bbox changed
+   *   - `absent_in_baseline` — kept: element has no baseline counterpart
+   *   - `orphan_no_container` — kept: cluster inside no mapped element
+   *   - `cluster_cap_uncertain` — kept: L1 cluster cap hit, can't prove a pass
+   *   - `degraded_no_map` — kept: an element map was missing → degraded to Strict
+   */
+  layoutResolution: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -100,6 +114,12 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     l1Displacement: new Counter({
       name: "furan_diff_l1_displacement_total",
       help: "Outcome of the L1 pixel-displacement pre-alignment pass",
+      labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    layoutResolution: new Counter({
+      name: "furan_layout_resolution_total",
+      help: "Per-cluster outcome of the deterministic Layout match-level suppression pass",
       labelNames: ["outcome"],
       registers: [registry],
     }),

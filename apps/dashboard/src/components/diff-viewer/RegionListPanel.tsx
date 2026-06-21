@@ -77,8 +77,10 @@ export function RegionListPanel({
   const filtered = useMemo(() => {
     return regions
       .filter((r) => {
-        // Always hide synthetic dynamic-text audit rows unless the toggle is on.
-        if (r.source === "dynamic_text") return showSuppressed;
+        // Hide synthetic audit rows — dynamic-text OCR + Layout-suppressed
+        // content/color changes (ADR-053) — unless the toggle is on.
+        if (r.source === "dynamic_text" || r.source === "layout_suppressed")
+          return showSuppressed;
         return true;
       })
       .filter((r) => severityFilter === "all" || r.severity === severityFilter)

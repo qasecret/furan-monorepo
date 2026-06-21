@@ -50,6 +50,7 @@ import {
   resolveRegionBbox,
   type ElementMap,
 } from "./element-map-resolver.js";
+import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
@@ -951,6 +952,28 @@ async function handleDiffJobInner(
         elementMapCache.set(elementMapKey, elementMap);
       }
     }
+    // ADR-053: for the Layout match level, also fetch the BASELINE element map
+    // so the layout pass can compare each element's geometry across
+    // baseline↔candidate. Gated on Layout to avoid a wasted storage GET on
+    // Strict checkpoints. Shares the per-job elementMapCache (distinct keys).
+    let baselineElementMap: ElementMap | null = null;
+    if (screenshotMatchLevel === "Layout") {
+      const baselineElementMapKey = baselineShot.elementMapKey ?? null;
+      if (baselineElementMapKey) {
+        const cachedBaseline = elementMapCache.get(baselineElementMapKey);
+        if (cachedBaseline !== undefined) {
+          baselineElementMap = cachedBaseline;
+        } else {
+          baselineElementMap = await fetchElementMap(baselineElementMapKey, {
+            storage: deps.storage,
+            logger,
+            onOutcome: (outcome) =>
+              deps.metrics?.regionResolution.labels({ outcome }).inc(),
+          });
+          elementMapCache.set(baselineElementMapKey, baselineElementMap);
+        }
+      }
+    }
     // Tier 2.5 close-out: resolve axe violation bboxes via the candidate DOM +
     // element-map sidecar. Mutates any source='axe' regions already appended to
     // result.regions in the Tier 2.5 block above. Misses leave bbox:{0,0,0,0};
@@ -964,6 +987,7 @@ async function handleDiffJobInner(
       },
     });
 
+    let strictFailed = false;
     // Strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
     // breaching its tolerance becomes a synthetic "breaking" region
@@ -1013,12 +1037,96 @@ async function handleDiffJobInner(
         }
         if (breaches.length > 0) {
           result.passed = false;
+          strictFailed = true;
         }
       } catch (err) {
         logger.warn(
           { err, runId: data.runId },
           "strict_tolerance_decode_failed",
         );
+      }
+    }
+
+    // --- Layout match level (ADR-053): deterministic content/color suppression ---
+    // Detect is deterministic; Explain is probabilistic — no model touches this
+    // gate. For each L1 pixel cluster: a cluster inside a geometrically-unchanged
+    // element is content/color-only → suppress (pass); a cluster over a
+    // moved/resized/added element, or inside no element, is kept (fail).
+    // Fail-closed: a missing element map degrades the checkpoint to Strict.
+    // Only the pixel engines emit l1_pixel clusters; VLM has its own judgment.
+    if (
+      screenshotMatchLevel === "Layout" &&
+      project.imageComparison !== "vlm"
+    ) {
+      const clusters = result.regions.filter((r) => r.source === "l1_pixel");
+      if (clusters.length > 0 && (!elementMap || !baselineElementMap)) {
+        // Degrade to Strict: leave result.passed as the engine computed it.
+        clusters.forEach(() =>
+          deps.metrics?.layoutResolution
+            .labels({ outcome: "degraded_no_map" })
+            .inc(),
+        );
+        for (const c of clusters) {
+          c.description = `[Layout→Strict: no element map] ${c.description}`;
+        }
+        logger.warn(
+          { runId: data.runId, viewport: viewportKey, screenshotId: cs.id },
+          "layout_degraded_no_element_map",
+        );
+      } else if (clusters.length > 0) {
+        const verdicts = classifyLayoutClusters(
+          clusters.map((c) => c.bbox),
+          elementMap,
+          baselineElementMap,
+        );
+        const nonClusters = result.regions.filter(
+          (r) => r.source !== "l1_pixel",
+        );
+        const retagged: typeof result.regions = [];
+        let keptCount = 0;
+        clusters.forEach((c, i) => {
+          const v = verdicts[i]!;
+          deps.metrics?.layoutResolution.labels({ outcome: v.reason }).inc();
+          const where = v.selector ? ` [${v.selector}]` : "";
+          if (v.decision === "suppress") {
+            retagged.push({
+              ...c,
+              source: "layout_suppressed",
+              category: "layout",
+              severity: "none",
+              description: `Layout: stable element — suppressed (content/color only)${where}`,
+            });
+          } else {
+            keptCount++;
+            retagged.push({
+              ...c,
+              source: "layout_kept",
+              category: "layout",
+              description: `Layout: ${v.reason}${where}`,
+            });
+          }
+        });
+        result.regions = [...nonClusters, ...retagged];
+        // Layout passes iff no cluster is kept AND strict didn't fail. The
+        // global diffPercent gate is intentionally replaced — a recolored hero
+        // is a large pixel diff but a stable bbox, so it passes.
+        const layoutPasses = keptCount === 0 && !strictFailed;
+        // Fail-closed at the L1 cluster cap (keep in sync with
+        // l1-region-extractor maxRegions = 12): if it would pass but the cap
+        // was hit with pixels still mismatching, unseen clusters might be
+        // structural, so we cannot prove a pass.
+        if (
+          layoutPasses &&
+          clusters.length >= 12 &&
+          result.pixelMismatchCount > 0
+        ) {
+          deps.metrics?.layoutResolution
+            .labels({ outcome: "cluster_cap_uncertain" })
+            .inc();
+          result.passed = false;
+        } else {
+          result.passed = layoutPasses;
+        }
       }
     }
     // --- End region modes v2 pipeline ---

@@ -36,7 +36,11 @@ export function orderDiffRegions(
       // rows stay out (shown only via the audit toggle). P2 re-bases the
       // engine's checkpoint-signature onto these same image regions to re-sync
       // grouping.
-      .filter((r) => r.source !== "dynamic_text")
+      // ADR-053: layout_suppressed audit rows are hidden here too (shown via
+      // the "Show suppressed" toggle), mirroring the engine's EXCLUDED_SOURCES.
+      .filter(
+        (r) => r.source !== "dynamic_text" && r.source !== "layout_suppressed",
+      )
       .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
       .slice()
       .sort(
