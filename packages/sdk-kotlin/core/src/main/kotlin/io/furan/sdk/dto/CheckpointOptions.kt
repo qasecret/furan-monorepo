@@ -97,18 +97,21 @@ data class CheckpointOptions(
      */
     val lazyLoad: LazyLoadOptions? = null,
     /**
-     * When true, the diff engine drops L2 `relocateGroup` regions for
-     * this checkpoint (Eyes-parity Tier 1.4, mirrors
-     * `eyes.check(name, { ignoreDisplacements: true })`).
+     * When true, the diff engine runs an L1 pixel-displacement
+     * pre-alignment pass for this checkpoint (Eyes-parity Tier 1.4,
+     * mirrors `eyes.check(name, { ignoreDisplacements: true })`).
      *
      * Use this when test content predictably shifts position between
-     * runs (e.g. a new banner inserted above the page body). Without
-     * the flag, the DOM diff flags every shifted element as "moved";
-     * with the flag, only true content changes survive.
+     * runs (e.g. a new banner inserted above the page body). The pass
+     * detects a global pixel shift between the baseline and candidate
+     * images and re-aligns before the pixel compare, so a uniformly
+     * shifted page isn't flagged as one large diff; only true content
+     * changes survive.
      *
-     * Pixel-level (L1) displacement detection is a separate engine
-     * pass; the SDK flag persists on the screenshot row so a later L1
-     * pass can read the same intent.
+     * The flag persists on the screenshot row and is read by that L1
+     * displacement pass. (The former L2 DOM/CSS `relocateGroup` half
+     * was removed in ADR-047's image-first re-aim — the image is now
+     * the source of truth.)
      */
     val ignoreDisplacements: Boolean = false,
     /**
@@ -146,9 +149,11 @@ data class CheckpointOptions(
     /**
      * Eyes-parity Tier 2.2: when false, the SDK skips DOM capture
      * entirely (mirrors Applitools `setSendDom(false)`). Default is
-     * true — DOM upload powers L2 (DOM/CSS) root-cause analysis, so
-     * disabling it trades root-cause depth for privacy / network /
-     * storage savings.
+     * true — DOM upload powers the accessibility (axe) pass
+     * ([accessibilitySettings]): the diff-worker runs axe-core against
+     * the uploaded DOM and localizes each violation via the element
+     * map. Disabling it skips that pass in exchange for privacy /
+     * network / storage savings.
      *
      * Use cases for `sendDom = false`:
      *  - Air-gapped or regulated environments where uploading rendered
@@ -158,8 +163,12 @@ data class CheckpointOptions(
      *  - High-volume CI where the DOM payload (typically 50–500 KB per
      *    checkpoint) is the bottleneck.
      *
-     * A `domHtml` override (next field) takes precedence: when set
-     * explicitly, the SDK sends that payload regardless of [sendDom].
+     * A checkpoint that sets [accessibilitySettings] but sends no DOM
+     * (here or via [domHtml]) logs a WARN server-side and skips the
+     * accessibility pass. A `domHtml` override (next field) takes
+     * precedence: when set explicitly, the SDK sends that payload
+     * regardless of [sendDom]. (The former L2 DOM/CSS root-cause
+     * analysis was removed in ADR-047's image-first re-aim.)
      */
     val sendDom: Boolean = true,
     /**
