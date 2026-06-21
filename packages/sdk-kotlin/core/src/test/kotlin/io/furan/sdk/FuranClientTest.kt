@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class FuranClientTest {
     private fun testConfig(dashboardUrl: String? = null) = FuranConfig(
@@ -139,6 +140,76 @@ class FuranClientTest {
             val r = client.composeResult(run, RunStatus.NEW)
             assertEquals(RunStatus.NEW, r.status)
             assertEquals(false, r.autoApproved)
+        } finally {
+            client.close()
+        }
+    }
+
+    // ADR-036 ergonomics (2026-06-21): a no-baseline first run (status=new,
+    // not auto-approved) must fail loudly + actionably when softAssert is off,
+    // instead of silently returning NEW for the caller's assertEquals to trip on.
+
+    @Test
+    fun `resolveOrThrow throws FuranNoBaselineException on no-baseline NEW (softAssert off)`() {
+        val client = FuranClient(testConfig(), adapter = "test")
+        try {
+            // composeResult keeps NEW when autoApproved != true — the
+            // no-baseline / needs-approval case.
+            val newResult = client.composeResult(
+                runRow(status = RunStatus.NEW, autoApproved = null),
+                RunStatus.NEW,
+            )
+            assertEquals(RunStatus.NEW, newResult.status)
+            val ex = assertThrows<FuranNoBaselineException> {
+                client.resolveOrThrow(newResult)
+            }
+            // Self-documenting: the message names all three escape hatches.
+            assertTrue(ex.message!!.contains("autoApproveFeature"))
+            assertTrue(ex.message!!.contains("FURAN_SOFT_ASSERT"))
+            assertTrue(ex.message!!.lowercase().contains("baseline"))
+            assertEquals(newResult, ex.result)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `resolveOrThrow returns the NEW result untouched when softAssert is on`() {
+        val client = FuranClient(testConfig().copy(softAssert = true), adapter = "test")
+        try {
+            val newResult = client.composeResult(
+                runRow(status = RunStatus.NEW, autoApproved = null),
+                RunStatus.NEW,
+            )
+            assertEquals(RunStatus.NEW, client.resolveOrThrow(newResult).status)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `resolveOrThrow still throws FuranAssertionException on a failure terminal`() {
+        val client = FuranClient(testConfig(), adapter = "test")
+        try {
+            val failed = client.composeResult(
+                runRow(status = RunStatus.FAILED),
+                RunStatus.FAILED,
+            )
+            assertThrows<FuranAssertionException> { client.resolveOrThrow(failed) }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `resolveOrThrow returns a PASSED result without throwing`() {
+        val client = FuranClient(testConfig(), adapter = "test")
+        try {
+            val passed = client.composeResult(
+                runRow(status = RunStatus.PASSED, autoApproved = true),
+                RunStatus.PASSED,
+            )
+            assertEquals(RunStatus.PASSED, client.resolveOrThrow(passed).status)
         } finally {
             client.close()
         }

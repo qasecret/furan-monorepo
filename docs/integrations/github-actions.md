@@ -133,16 +133,25 @@ When the workflow runs against a PR with the App installed and the
 
 Branch-protection rules can require `furan/baselines` to pass before merge.
 
+> **First run of each test needs a baseline.** With the default
+> `autoApproveFeature=false`, a test's first run has nothing to diff against, so
+> the SDK throws `FuranNoBaselineException` and the job fails until you approve
+> that run in the dashboard ("Save as baseline"). To make first runs green in CI
+> without manual approval, either flip the project's `autoApproveFeature=true`
+> (Applitools-style auto-seed) or set `FURAN_SOFT_ASSERT=true` and assert in test
+> code.
+
 ## 6. Troubleshooting
 
-| Symptom                                        | Likely cause                                                                                                                          |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `401 unauthorized` from SDK                    | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                              |
-| `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                           |
-| Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                   |
-| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL                                               |
-| `furan/baselines` check stays `pending`        | Diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                 |
-| SDK build can't resolve `io.github.qasecret:*` | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin` |
+| Symptom                                        | Likely cause                                                                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `401 unauthorized` from SDK                    | `FURAN_API_TOKEN` not exported, expired, or revoked at `/account/tokens`                                                                                                                               |
+| `404 project not found`                        | Wrong `FURAN_PROJECT_ID`, or the token user is not a member of that project                                                                                                                            |
+| `FuranNoBaselineException` on a first run      | Expected — the test has no baseline yet. Approve the run in the dashboard (Save as baseline), or set the project's `autoApproveFeature=true`, or `FURAN_SOFT_ASSERT=true` to tolerate first runs in CI |
+| Chrome fails to start in CI                    | Add `uses: browser-actions/setup-chrome@v1` before `./gradlew test`                                                                                                                                    |
+| Sticky comment not appearing on PR             | Furan GitHub App not installed on the repo, or `installations.project_id` is still NULL                                                                                                                |
+| `furan/baselines` check stays `pending`        | Diff worker not running, or the run's snapshots failed to enqueue — check worker logs                                                                                                                  |
+| SDK build can't resolve `io.github.qasecret:*` | Pre-Maven-Central: publish locally via `./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal` from `packages/sdk-kotlin`                                                                  |
 
 For deeper debugging, hit `GET /projects/<id>/runs/<runId>/events` (SSE) or
 inspect the `test_runs` and `screenshots` tables directly.

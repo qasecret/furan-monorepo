@@ -410,11 +410,7 @@ class FuranClient(
             last = run
             val status = run.status
             if (status != null && isDone(run, status)) {
-                val result = composeResult(run, status)
-                if (result.isFailure() && !config.softAssert) {
-                    throw FuranAssertionException(result)
-                }
-                return result
+                return resolveOrThrow(composeResult(run, status))
             }
             delay(interval)
         }
@@ -442,6 +438,23 @@ class FuranClient(
      */
     private fun isDone(run: RunResponse, status: RunStatus): Boolean =
         status.isTerminal() || status == RunStatus.NEW
+
+    /**
+     * Apply the configured assertion policy to a composed result. With
+     * [FuranConfig.softAssert] off (the default): a failure terminal
+     * (`UNRESOLVED`/`FAILED`/`ABORTED`) throws [FuranAssertionException],
+     * and a no-baseline first run (`status=new`, not auto-approved) throws
+     * [FuranNoBaselineException] — matching the legacy backend's "first run
+     * fails until approved" contract (ADR-036). With softAssert on, the
+     * result is returned untouched for the caller to inspect.
+     */
+    internal fun resolveOrThrow(result: SnapshotResult): SnapshotResult {
+        if (!config.softAssert) {
+            if (result.isFailure()) throw FuranAssertionException(result)
+            if (result.status == RunStatus.NEW) throw FuranNoBaselineException(result)
+        }
+        return result
+    }
 
     internal fun composeResult(run: RunResponse, status: RunStatus): SnapshotResult {
         // First-baseline-auto-approved is wire `status=new` but is

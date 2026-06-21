@@ -59,6 +59,37 @@ class FuranAssertionException(val result: SnapshotResult) :
 }
 
 /**
+ * Raised by `snapshotAndAwait()` / `awaitRunResult()` when a run is the
+ * first for its test variation and no baseline exists yet (wire
+ * `status=new`, not auto-approved) AND [FuranConfig.softAssert] is false.
+ *
+ * This is **not** a visual regression — there is nothing to compare
+ * against yet. The first run of each test must become the baseline
+ * before later runs can diff against it. Resolve it one of three ways:
+ *  - Approve the run in the dashboard ("Save as baseline").
+ *  - Set the project's `autoApproveFeature=true` for Applitools-style
+ *    auto-seed (the first run silently becomes the baseline).
+ *  - Set `FURAN_SOFT_ASSERT=true` ([FuranConfig.softAssert]) to receive
+ *    the `NEW` result instead of throwing, and handle it in test code.
+ *
+ * Distinct from [FuranAssertionException] (a real regression) so test
+ * infra can treat "no baseline yet" differently from "pixels changed".
+ */
+class FuranNoBaselineException(val result: SnapshotResult) :
+    FuranException(buildMessage(result)) {
+
+    private companion object {
+        fun buildMessage(r: SnapshotResult): String {
+            val link = r.diffViewerUrl?.let { " Review/approve at $it." } ?: ""
+            return "Run ${r.runId} has no baseline yet (status=new) — the first run of " +
+                "this test must become the baseline before it can be diffed. Approve it in " +
+                "the dashboard (Save as baseline), or set the project's autoApproveFeature=true " +
+                "for auto-seed, or set FURAN_SOFT_ASSERT=true to handle the NEW result in code.$link"
+        }
+    }
+}
+
+/**
  * Raised by `snapshotAndAwait()` when no terminal status appears within
  * [FuranConfig.pollTimeoutSeconds]. Distinct from
  * [FuranAssertionException] so test infra can retry on timeout (a
