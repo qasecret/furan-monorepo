@@ -21,7 +21,7 @@ If you're an enterprise needing SSO / SCIM / audit log / multi-tenancy, Furan is
 
 ## What you get
 
-- **Pixel + DOM diff pipeline** — `odiff` for fast pixel comparison, `diff-dom` over `jsdom` for layout-aware analysis, with per-region severity scoring.
+- **Image-first diff pipeline** — the rendered screenshot is the source of truth: per-project pixel comparison (`odiff` / `pixelmatch` / `looks-same`) or an optional **VLM mode** (Ollama / Gemini / Anthropic) that runs pixel-first and only invokes a vision model when a pixel diff is detected. Per-region severity scoring, plus an opt-in `axe-core` accessibility pass.
 - **Diff viewer** — `pixi.js`-based renderer with side-by-side / overlay / onion-skin / heatmap modes, per-region keyboard nav, ignore-region drawing, and inline review comments.
 - **Element-anchored ignore regions** — drag-draw a region over a button; the SDK captures its CSS selector at snapshot time so the mask survives layout reflows. Falls back to bounding-box masking when the element can't be resolved.
 - **Dynamic text regions** — regex-anchored ignore regions with OCR (tesseract.js); the region is only masked when the extracted text matches your pattern, so real layout changes underneath dynamic dates / order numbers still surface as diffs.
@@ -236,11 +236,11 @@ furan-monorepo/
 │   ├── api/              Fastify + tRPC + Drizzle backend (REST + /trpc)
 │   ├── dashboard/        Next.js 15 + React 19 + pixi.js diff viewer
 │   ├── capture-worker/   Playwright + sharp; BullMQ consumer
-│   ├── diff-worker/      diff-engine + diff-dom consumer
+│   ├── diff-worker/      diff-engine consumer (BullMQ)
 │   └── integrations/     GitHub App + Slack webhook
 ├── packages/
 │   ├── db/               Drizzle schema + migrations + scope helpers
-│   ├── diff-engine/      Pixel L1 + DOM L2 diff implementations
+│   ├── diff-engine/      Image-first: pixel (odiff/pixelmatch/looks-same) + VLM + axe
 │   ├── sdk-kotlin/       Kotlin SDK (core + Selenium adapter)
 │   ├── storage/          S3 client wrapper (MinIO-compatible)
 │   ├── queue/            BullMQ wrappers
