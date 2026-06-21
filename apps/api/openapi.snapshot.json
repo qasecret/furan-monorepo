@@ -1871,7 +1871,7 @@
                     "type": "string"
                   },
                   "domHtml": {
-                    "description": "Optional captured DOM HTML, used by L2 diff.",
+                    "description": "Optional captured DOM HTML; powers the accessibility (axe) pass.",
                     "format": "binary",
                     "type": "string"
                   },

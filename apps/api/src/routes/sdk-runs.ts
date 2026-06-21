@@ -85,9 +85,10 @@ export const screenshotFields = z.object({
       content: [],
       accessibility: [],
     }),
-  // Tier 1.4 (Eyes parity): when true, the diff engine drops L2
-  // relocateGroup regions for this checkpoint. Pixel-level
-  // displacement detection is a separate engine pass.
+  // Tier 1.4 (Eyes parity): when true, the diff engine runs an L1
+  // pre-alignment pass that detects + corrects a global pixel shift
+  // before comparing, so a moved-but-unchanged page isn't flagged as a
+  // diff. (The former L2 relocateGroup half was removed in ADR-047.)
   ignoreDisplacements: z.boolean().default(false),
   // Tier 2.5 (Eyes parity): per-checkpoint accessibility settings.
   // When set, the diff-worker runs axe-core against the captured
@@ -112,7 +113,9 @@ export const uploadScreenshotForm = z.object({
     .string()
     .openapi({ type: "string", format: "binary" })
     .optional()
-    .describe("Optional captured DOM HTML, used by L2 diff."),
+    .describe(
+      "Optional captured DOM HTML; powers the accessibility (axe) pass.",
+    ),
   name: z
     .string()
     .optional()
@@ -227,7 +230,7 @@ export const uploadScreenshotJsonBody = z.object({
   domHtml: z.string().optional(),
   /** Stringified JSON object — same shape as the multipart field. */
   elementMapJson: z.string().optional(),
-  /** Tier 1.4: drop L2 relocateGroup regions for this checkpoint. */
+  /** Tier 1.4: run the L1 global-shift pre-alignment pass for this checkpoint. */
   ignoreDisplacements: z.boolean().optional(),
 });
 
