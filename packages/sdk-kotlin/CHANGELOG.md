@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.0...sdk/v3.2.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* address code review findings across dashboard and SDK example ([#250](https://github.com/qasecret/furan-monorepo/issues/250)) ([46f6b67](https://github.com/qasecret/furan-monorepo/commit/46f6b67e98b1acb4484ca2a3e2db79cd3bd84ee5))
+
 ## [3.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.1.0...sdk/v3.2.0) (2026-05-30)
 
 
