@@ -86,6 +86,7 @@ class Furan(
             projectId = config.projectId,
             name = testName,
             branchName = config.branchName,
+            parentBranchName = config.parentBranchName,
         )
         runId = created.runId
     }

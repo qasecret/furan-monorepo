@@ -106,22 +106,23 @@ sequenceDiagram
 
 ## Configuration
 
-| Field                 | Env var                       | Default    | Notes                                                                        |
-| --------------------- | ----------------------------- | ---------- | ---------------------------------------------------------------------------- |
-| **`apiUrl`**          | `FURAN_API_URL`               | —          | Required. Your Furan API endpoint.                                           |
-| **`apiToken`**        | `FURAN_API_TOKEN`             | —          | Required. `furan_pat_*` from the dashboard.                                  |
-| **`projectId`**       | `FURAN_PROJECT_ID`            | —          | Required. UUID from the project URL.                                         |
-| `buildId`             | `FURAN_BUILD_ID`              | —          | Groups runs into a build. Typically `$GITHUB_RUN_ID`.                        |
-| `branchName`          | `FURAN_BRANCH`                | `"main"`   | Branch the snapshot was captured from.                                       |
-| `name`                | `FURAN_BUILD_NAME`            | —          | Human-readable build label (e.g. `"nightly main"`).                          |
-| `properties`          | `FURAN_BUILD_PROPERTIES`      | empty      | Comma-separated `key=value` pairs for filtering.                             |
-| `softAssert`          | `FURAN_SOFT_ASSERT`           | `false`    | If `true`, `snapshotAndAwait` returns the failed result instead of throwing. |
-| `pollTimeoutSeconds`  | `FURAN_POLL_TIMEOUT_SECONDS`  | `60`       | How long `snapshotAndAwait` waits for the diff worker.                       |
-| `pollIntervalSeconds` | `FURAN_POLL_INTERVAL_SECONDS` | `1`        | Polling cadence.                                                             |
-| `dashboardUrl`        | `FURAN_DASHBOARD_URL`         | —          | Where `SnapshotResult.diffViewerUrl` points; usually the dashboard host.     |
-| `viewports`           | —                             | `1280×720` | Per-test override available; multi-viewport snapshots loop internally.       |
-| `logLevel`            | `FURAN_LOG_LEVEL`             | `"info"`   | `trace` / `debug` / `info` / `none`.                                         |
-| `caCertPath`          | `FURAN_CA_CERT_PATH`          | —          | PEM file for custom CA (corporate-proxy / self-signed TLS).                  |
+| Field                 | Env var                       | Default    | Notes                                                                                                             |
+| --------------------- | ----------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| **`apiUrl`**          | `FURAN_API_URL`               | —          | Required. Your Furan API endpoint.                                                                                |
+| **`apiToken`**        | `FURAN_API_TOKEN`             | —          | Required. `furan_pat_*` from the dashboard.                                                                       |
+| **`projectId`**       | `FURAN_PROJECT_ID`            | —          | Required. UUID from the project URL.                                                                              |
+| `buildId`             | `FURAN_BUILD_ID`              | —          | Groups runs into a build. Typically `$GITHUB_RUN_ID`.                                                             |
+| `branchName`          | `FURAN_BRANCH`                | `"main"`   | Branch the snapshot was captured from.                                                                            |
+| `parentBranchName`    | `FURAN_PARENT_BRANCH`         | —          | Parent branch; its baseline is inherited when this branch has none. Set to the PR base (`github.base_ref`) in CI. |
+| `name`                | `FURAN_BUILD_NAME`            | —          | Human-readable build label (e.g. `"nightly main"`).                                                               |
+| `properties`          | `FURAN_BUILD_PROPERTIES`      | empty      | Comma-separated `key=value` pairs for filtering.                                                                  |
+| `softAssert`          | `FURAN_SOFT_ASSERT`           | `false`    | If `true`, `snapshotAndAwait` returns the failed result instead of throwing.                                      |
+| `pollTimeoutSeconds`  | `FURAN_POLL_TIMEOUT_SECONDS`  | `60`       | How long `snapshotAndAwait` waits for the diff worker.                                                            |
+| `pollIntervalSeconds` | `FURAN_POLL_INTERVAL_SECONDS` | `1`        | Polling cadence.                                                                                                  |
+| `dashboardUrl`        | `FURAN_DASHBOARD_URL`         | —          | Where `SnapshotResult.diffViewerUrl` points; usually the dashboard host.                                          |
+| `viewports`           | —                             | `1280×720` | Per-test override available; multi-viewport snapshots loop internally.                                            |
+| `logLevel`            | `FURAN_LOG_LEVEL`             | `"info"`   | `trace` / `debug` / `info` / `none`.                                                                              |
+| `caCertPath`          | `FURAN_CA_CERT_PATH`          | —          | PEM file for custom CA (corporate-proxy / self-signed TLS).                                                       |
 
 Four ways to build a `FuranConfig`:
 

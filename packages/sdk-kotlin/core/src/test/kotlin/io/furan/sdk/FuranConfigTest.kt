@@ -1,6 +1,7 @@
 package io.furan.sdk
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -20,6 +21,22 @@ class FuranConfigTest {
         assertEquals(listOf(Viewport(1280, 720)), config.viewports)
         assertTrue(config.telemetryEnabled)
         assertEquals(16, config.batchSize)
+    }
+
+    @Test
+    fun `fromEnv reads FURAN_PARENT_BRANCH into parentBranchName`() {
+        val base = mapOf(
+            "FURAN_API_URL" to "https://furan.example.com",
+            "FURAN_API_TOKEN" to "furan_pat_test_abcdefghijklmnop",
+            "FURAN_PROJECT_ID" to "00000000-0000-0000-0000-000000000000",
+        )
+        // ADR-055: absent → null (backfill-safe; parent_pr tier skipped).
+        assertNull(FuranConfig.fromEnv(base).parentBranchName)
+        // Present → captured (Applitools `setParentBranchName` analog).
+        assertEquals(
+            "develop",
+            FuranConfig.fromEnv(base + ("FURAN_PARENT_BRANCH" to "develop")).parentBranchName,
+        )
     }
 
     @Test

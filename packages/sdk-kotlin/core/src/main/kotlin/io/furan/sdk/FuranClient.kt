@@ -112,7 +112,8 @@ class FuranClient(
 
     /**
      * ADR-038: create a new run with the v1.1.0 request shape.
-     * `POST /runs` body is `{ projectId, buildId, name, branchName }`.
+     * `POST /runs` body is `{ projectId, buildId, name, branchName }`, plus an
+     * optional `parentBranchName` (ADR-055) when a parent branch is configured.
      * Returns a [CreatedRun] with `runId`, `status`, and `name`.
      */
     suspend fun createRun2(
@@ -120,12 +121,15 @@ class FuranClient(
         projectId: String,
         name: String,
         branchName: String,
+        parentBranchName: String? = null,
     ): CreatedRun = try {
         val body = buildJsonObject {
             put("projectId", projectId)
             put("buildId", buildId)
             put("name", name)
             put("branchName", branchName)
+            // ADR-055: omit when null to keep the wire minimal.
+            if (parentBranchName != null) put("parentBranchName", parentBranchName)
         }
         val parsed = transport.post<JsonObject, JsonObject>("runs", body)
         CreatedRun(

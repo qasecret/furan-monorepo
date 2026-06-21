@@ -484,7 +484,9 @@ export const runsRouter = t.router({
             run.projectId,
             run.branchName ?? defaultBranch,
             shot.testVariationId,
-            { defaultBranch },
+            // ADR-055: feed the parent_pr tier so the displayed baselineSource
+            // matches what the diff-worker actually resolves against.
+            { defaultBranch, parentPrBaseBranch: run.parentBranchName ?? null },
           );
           if (resolution) {
             ctxResult.baselineSource = resolution.source;

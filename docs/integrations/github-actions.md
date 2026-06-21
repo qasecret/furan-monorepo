@@ -20,6 +20,7 @@ the GitHub App + a one-time admin-UI link (see step 2 below).
     FURAN_PROJECT_ID: ${{ secrets.FURAN_PROJECT_ID }}
     FURAN_BUILD_ID: ${{ github.sha }}
     FURAN_BRANCH: ${{ github.head_ref || github.ref_name }}
+    FURAN_PARENT_BRANCH: ${{ github.base_ref }}
 ```
 
 Full copy-paste workflow: [`.examples/visual-regression.yml`](./.examples/visual-regression.yml).
@@ -34,9 +35,12 @@ Three repository (or org-level) secrets are required.
 | `FURAN_API_TOKEN`  | Mint at `/account/tokens` in the Furan dashboard (token shown once) |
 | `FURAN_PROJECT_ID` | UUID from the project URL: `/projects/<UUID>`                       |
 
-The `FURAN_BUILD_ID` and `FURAN_BRANCH` env vars in the snippet above are
-**not** secrets — they come from `github.sha` / `github.head_ref` and are
-what Furan groups runs by.
+The `FURAN_BUILD_ID`, `FURAN_BRANCH`, and `FURAN_PARENT_BRANCH` env vars in the
+snippet above are **not** secrets — they come from `github.sha` /
+`github.head_ref` / `github.base_ref` and are what Furan groups runs by and
+resolves baselines against. `github.base_ref` is set only on `pull_request`
+events (empty on a push), so on a branch push no parent is sent and baseline
+resolution falls back to the default branch — exactly as before.
 
 Set secrets via **Settings → Secrets and variables → Actions → New repository
 secret** (or use `gh secret set FURAN_API_TOKEN`).

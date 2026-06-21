@@ -175,6 +175,52 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(rows[0]!.name).toBe("checkout-page-snap");
   });
 
+  test("POST /runs persists parentBranchName (ADR-055 branch fallback)", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "feature/x",
+        name: "parent-branch-snap",
+        parentBranchName: "develop",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { runId: string };
+
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.runId))
+      .limit(1);
+    expect(rows[0]!.parentBranchName).toBe("develop");
+  });
+
+  test("POST /runs without parentBranchName leaves it null (backfill-safe)", async () => {
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { authorization: `Bearer ${s.memberJwt}` },
+      payload: {
+        projectId: s.projectId,
+        buildId: s.buildId,
+        branchName: "feature/x",
+        name: "no-parent-snap",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body) as { runId: string };
+    const rows = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, body.runId))
+      .limit(1);
+    expect(rows[0]!.parentBranchName).toBeNull();
+  });
+
   test("POST /runs with distinct names produces distinct run rows under one build (ADR-038)", async () => {
     // ADR-038: POST /runs creates test runs; variations are resolved at
     // POST /runs/:id/screenshots time. Each POST /runs creates a new run.
@@ -794,6 +840,38 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
     expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
       runId: s.runId,
       projectId: s.projectId,
+    });
+  });
+
+  test("base64 upload forwards parentPrBaseBranch on the diff job when the run has a parent (ADR-055)", async () => {
+    // The enqueue must forward the run's parent branch so the diff-worker's
+    // resolveBaseline can fire the parent_pr tier.
+    await h.db
+      .update(testRuns)
+      .set({ parentBranchName: "develop" })
+      .where(eq(testRuns.id, s.runId));
+    h.diffQueueAdd.mockClear();
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${s.runId}/screenshots/base64`,
+      headers: {
+        Authorization: `Bearer ${s.memberJwt}`,
+        "Content-Type": "application/json",
+      },
+      payload: {
+        pngBase64: TINY_PNG.toString("base64"),
+        name: "parent-enqueue-snap",
+        viewport: "800x600",
+        browser: "chromium",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+      runId: s.runId,
+      projectId: s.projectId,
+      parentPrBaseBranch: "develop",
     });
   });
 

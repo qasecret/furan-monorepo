@@ -309,6 +309,59 @@ d("tRPC runs router", () => {
     expect(data.baselineSource).toBe("this_branch");
   });
 
+  test("getById: baselineSource is parent_pr when the baseline lives only on the parent branch (ADR-055)", async () => {
+    // Current run is on feature/x with parent=develop; the only baseline is
+    // on develop. this_branch (feature/x) + default (main) both miss, so the
+    // parent_pr tier must resolve it — proving runs.ts threads the parent.
+    await h.db
+      .update(testRuns)
+      .set({ parentBranchName: "develop" })
+      .where(eq(testRuns.id, s.runId));
+
+    const [olderRun] = await h.db
+      .insert(testRuns)
+      .values({
+        buildId: await getSeedBuildId(h, s.runId),
+        projectId: s.projectId,
+        status: "passed",
+        branchName: "develop",
+        name: "older",
+      })
+      .returning();
+
+    await h.db.insert(screenshots).values({
+      runId: olderRun.id,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "older",
+      imageKey: "d".repeat(64),
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    await h.db.insert(baselines).values({
+      baselineName: "older",
+      testVariationId: s.variationId,
+      testRunId: olderRun.id,
+      branchName: "develop",
+    });
+
+    // Link the current run to the same variation so getById resolves it.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "current",
+      imageKey: "c".repeat(64),
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    const data = await client.runs.getById.query({ runId: s.runId });
+    expect(data.baselineSource).toBe("parent_pr");
+  });
+
   test("getById: returns variationIgnoreAreas from the run's variation", async () => {
     // ADR-038: variationIgnoreAreas comes from the first checkpoint's
     // variation (test_variations.ignore_regions). Seed a screenshot linking
