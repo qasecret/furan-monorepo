@@ -136,6 +136,18 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         <span className="text-xs text-zinc-500 capitalize">
           {region.category}
         </span>
+        {(region.source === "layout_kept" ||
+          region.source === "layout_suppressed") && (
+          <Badge
+            variant="outline"
+            className="bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20"
+            data-source={region.source}
+          >
+            {region.source === "layout_suppressed"
+              ? "Layout · suppressed"
+              : "Layout · geometry"}
+          </Badge>
+        )}
       </div>
       <p className="text-sm text-zinc-800 line-clamp-2 dark:text-zinc-200">
         {region.description}

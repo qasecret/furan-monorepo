@@ -64,6 +64,22 @@ describe("computeCheckpointSignature", () => {
     expect(computeCheckpointSignature([audit], SIZE)).toBeNull();
   });
 
+  it("excludes layout_suppressed audit rows from the signature", () => {
+    const meaningful = region({ id: "m", source: "l1" });
+    // layout_suppressed is a diff-worker audit source (like dynamic_text), not
+    // an engine source — cast to exercise the defensive filter (ADR-053).
+    const suppressed = {
+      ...region({ id: "ls" }),
+      source: "layout_suppressed",
+    } as unknown as DiffRegion;
+    // Adding a suppressed audit row does not change the signature...
+    expect(computeCheckpointSignature([meaningful, suppressed], SIZE)).toBe(
+      computeCheckpointSignature([meaningful], SIZE),
+    );
+    // ...and a suppressed-only checkpoint is ungrouped (null).
+    expect(computeCheckpointSignature([suppressed], SIZE)).toBeNull();
+  });
+
   it("returns null when there are no meaningful regions", () => {
     expect(computeCheckpointSignature([], SIZE)).toBeNull();
     // dynamic_text is the only excluded source now; l1_pixel IS included.

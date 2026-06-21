@@ -68,4 +68,18 @@ describe("createDiffMetrics", () => {
     expect(text).toMatch(/le="1"/);
     expect(text).toMatch(/le="10"/);
   });
+
+  it("registers furan_layout_resolution_total with an outcome label", async () => {
+    const registry = new Registry();
+    const metrics = createDiffMetrics(registry);
+
+    metrics.layoutResolution.labels({ outcome: "stable_element" }).inc();
+    metrics.layoutResolution.labels({ outcome: "moved_or_resized" }).inc();
+
+    const json = await registry.getMetricsAsJSON();
+    const found = json.find((m) => m.name === "furan_layout_resolution_total");
+    expect(found).toBeDefined();
+    expect(found!.type).toBe("counter");
+    expect(found!.help).toContain("Layout");
+  });
 });

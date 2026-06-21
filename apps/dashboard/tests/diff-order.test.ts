@@ -45,6 +45,14 @@ describe("orderDiffRegions", () => {
     expect(out.map((r) => r.id)).toEqual(["keep"]);
   });
 
+  test("drops layout_suppressed audit rows but keeps layout_kept (ADR-053)", () => {
+    const out = orderDiffRegions([
+      region({ id: "kept", source: "layout_kept" }),
+      region({ id: "suppressed", source: "layout_suppressed" }),
+    ]);
+    expect(out.map((r) => r.id)).toEqual(["kept"]);
+  });
+
   it("includes l1_pixel regions, ordered by severity then area", () => {
     const regions = [
       region({
