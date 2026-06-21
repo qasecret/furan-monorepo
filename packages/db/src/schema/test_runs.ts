@@ -48,6 +48,12 @@ export const testRuns = pgTable(
     comment: text("comment"),
     vlmDescription: text("vlm_description"),
     branchName: text("branch_name"),
+    // ADR-055: the run's parent branch in the branch hierarchy. Feeds the
+    // `parent_pr` tier of `resolveBaseline` (a run with no baseline on its
+    // own branch inherits from the parent). Null = no parent supplied →
+    // parent tier skipped (backfill-safe). Distinct from `baselineBranchName`
+    // (Applitools' explicit baseline override, currently unused).
+    parentBranchName: text("parent_branch_name"),
     baselineBranchName: text("baseline_branch_name"),
     tempIgnoreAreas: text("temp_ignore_areas"),
     environment: environmentEnum("environment").notNull().default("default"),

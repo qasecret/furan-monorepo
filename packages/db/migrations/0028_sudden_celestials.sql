@@ -1,0 +1,1 @@
+ALTER TABLE "test_runs" ADD COLUMN "parent_branch_name" text;

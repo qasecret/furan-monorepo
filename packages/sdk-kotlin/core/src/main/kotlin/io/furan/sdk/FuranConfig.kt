@@ -8,6 +8,14 @@ data class FuranConfig(
     val projectId: String,
     val buildId: String? = null,
     val branchName: String = "main",
+    /**
+     * Parent branch in the branch hierarchy (Applitools `setParentBranchName`
+     * analog). Sent on `POST /runs` so the server's baseline resolution can
+     * fall back to the parent branch's baseline when this branch has none.
+     * From `FURAN_PARENT_BRANCH`. Null = no parent (the parent_pr fallback
+     * tier is skipped).
+     */
+    val parentBranchName: String? = null,
     /** Applitools BATCH_NAME parallel. Populated from FURAN_BUILD_NAME. */
     val name: String? = null,
     /** Applitools `addProperty` parallel. Populated from FURAN_BUILD_PROPERTIES. */
@@ -104,6 +112,7 @@ data class FuranConfig(
                 projectId = projectId,
                 buildId = env["FURAN_BUILD_ID"],
                 branchName = env["FURAN_BRANCH"] ?: "main",
+                parentBranchName = env["FURAN_PARENT_BRANCH"]?.trim()?.takeIf { it.isNotEmpty() },
                 name = env["FURAN_BUILD_NAME"]?.trim()?.takeIf { it.isNotEmpty() },
                 properties = parseProperties(env["FURAN_BUILD_PROPERTIES"]),
                 viewports = env["FURAN_VIEWPORTS"]?.let(::parseViewports) ?: listOf(Viewport(1280, 720)),
@@ -265,6 +274,8 @@ data class FuranConfig(
                 projectId = projectId,
                 buildId = env["FURAN_BUILD_ID"] ?: yamlString("buildId"),
                 branchName = env["FURAN_BRANCH"] ?: yamlString("branchName") ?: "main",
+                parentBranchName = (env["FURAN_PARENT_BRANCH"] ?: yamlString("parentBranchName"))
+                    ?.trim()?.takeIf { it.isNotEmpty() },
                 name = (env["FURAN_BUILD_NAME"] ?: yamlString("name"))?.trim()?.takeIf { it.isNotEmpty() },
                 properties = parseProperties(env["FURAN_BUILD_PROPERTIES"])
                     .ifEmpty {

@@ -144,6 +144,47 @@ class FuranConfigYamlTest {
     }
 
     @Test
+    fun `parentBranchName from YAML, overridden by env FURAN_PARENT_BRANCH (ADR-055)`() {
+        val path = yamlFile("""
+            furan:
+              apiUrl: http://yaml-test:3000
+              apiToken: test-token-value
+              projectId: yaml-project-id
+              parentBranchName: yaml-parent
+        """)
+        try {
+            assertEquals(
+                "yaml-parent",
+                FuranConfig.fromYaml(path, emptyMap()).parentBranchName,
+            )
+            assertEquals(
+                "env-parent",
+                FuranConfig.fromYaml(
+                    path,
+                    mapOf("FURAN_PARENT_BRANCH" to "env-parent"),
+                ).parentBranchName,
+            )
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun `parentBranchName absent in both YAML and env stays null`() {
+        val path = yamlFile("""
+            furan:
+              apiUrl: http://yaml-test:3000
+              apiToken: test-token-value
+              projectId: yaml-project-id
+        """)
+        try {
+            assertNull(FuranConfig.fromYaml(path, emptyMap()).parentBranchName)
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
     fun `env FURAN_BRANCH overrides YAML branchName`() {
         val path = yamlFile("""
             furan:

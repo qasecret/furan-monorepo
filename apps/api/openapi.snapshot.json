@@ -1761,6 +1761,11 @@
                     "minLength": 1,
                     "type": "string"
                   },
+                  "parentBranchName": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "projectId": {
                     "format": "uuid",
                     "type": "string"

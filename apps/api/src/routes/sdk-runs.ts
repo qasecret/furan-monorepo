@@ -31,6 +31,10 @@ export const createRunBody = z.object({
   buildId: z.string().uuid(),
   name: z.string().min(1).max(255),
   branchName: z.string().min(1).max(255),
+  // ADR-055: optional parent branch (Applitools `setParentBranchName`
+  // analog). Feeds the `parent_pr` tier of baseline resolution. Omitted
+  // when the SDK has no parent configured.
+  parentBranchName: z.string().min(1).max(255).optional(),
 });
 
 export const createRunResponse = z.object({
@@ -437,6 +441,12 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       await app.diffQueue.add("diff", {
         runId: run.id,
         projectId: run.projectId,
+        // ADR-055: forward the run's parent branch (when set) so the
+        // diff-worker's resolveBaseline can fire the parent_pr tier. Omitted
+        // when null to keep the wire minimal.
+        ...(run.parentBranchName
+          ? { parentPrBaseBranch: run.parentBranchName }
+          : {}),
       });
     } catch (err) {
       logger.warn(
@@ -512,6 +522,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           buildId: input.buildId,
           name: input.name,
           branchName: input.branchName,
+          parentBranchName: input.parentBranchName ?? null,
           status: "running",
         })
         .returning({
