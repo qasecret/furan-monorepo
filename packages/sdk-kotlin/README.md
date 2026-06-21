@@ -72,7 +72,22 @@ export FURAN_API_TOKEN=furan_pat_<from-dashboard>   # /account/tokens
 export FURAN_PROJECT_ID=<from-dashboard>            # /projects/<id>
 ```
 
-First run creates the baseline. Subsequent runs diff against it.
+### First run of each test needs a baseline
+
+By default (`autoApproveFeature=false`) a project's **first run for a given test
+has no baseline to diff against** — it lands as `new`, and
+`snapshotAndAwait` throws **`FuranNoBaselineException`** until you turn that
+first capture into the baseline. This is deliberate: the baseline is the
+reference every future run is judged against, so a human gets to confirm the
+first capture is correct (and mask volatile regions) before it's enshrined.
+Three ways to handle it:
+
+- **Approve in the dashboard** ("Save as baseline") — review the capture, then
+  subsequent runs diff against it. The normal flow.
+- **`autoApproveFeature=true`** (per-project, in project settings) — the first
+  run auto-becomes the baseline with no manual step (Applitools-style).
+- **`FURAN_SOFT_ASSERT=true`** — `snapshotAndAwait` returns the `new` result
+  instead of throwing, so you can tolerate first runs in CI and assert yourself.
 
 ## Lifecycle
 
