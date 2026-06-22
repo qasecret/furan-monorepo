@@ -7,7 +7,6 @@ class MockResizeObserver {
   unobserve() {}
   disconnect() {}
 }
-// @ts-expect-error -- jsdom missing ResizeObserver
 global.ResizeObserver = MockResizeObserver;
 
 vi.mock("@/lib/trpc", () => ({

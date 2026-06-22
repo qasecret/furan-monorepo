@@ -20,6 +20,7 @@ const base: TestCardData = {
   buildId: "build-1111-1111-1111-111111111111",
   projectId: "proj-1111-1111-1111-111111111111",
   branchName: null,
+  parentBranchName: null,
   environment: "default",
   merge: false,
   imageName: null,
