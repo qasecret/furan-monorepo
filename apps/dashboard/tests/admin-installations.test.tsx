@@ -106,10 +106,10 @@ describe("InstallationsTable", () => {
     const row = screen.getByTestId(`install-row-${INSTALL_ID}`);
     expect(row).toBeDefined();
     const cells = row.querySelectorAll("td");
-    expect(cells[0].textContent).toBe("acme-co");
-    expect(cells[1].textContent).toBe("4242");
+    expect(cells[0]!.textContent).toBe("acme-co");
+    expect(cells[1]!.textContent).toBe("4242");
     // repository_ids.length rendered as the Repos column
-    expect(cells[2].textContent).toBe("4");
+    expect(cells[2]!.textContent).toBe("4");
     // The select trigger is present
     expect(
       screen.getByTestId(`install-project-select-${INSTALL_ID}`),

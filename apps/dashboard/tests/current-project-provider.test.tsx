@@ -106,7 +106,7 @@ describe("CurrentProjectProvider", () => {
     );
     expect(captured).toBeDefined();
     expect(
-      (captured as Record<string, unknown>).setCurrentProject,
+      (captured as unknown as Record<string, unknown>).setCurrentProject,
     ).toBeUndefined();
   });
 });

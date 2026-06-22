@@ -142,7 +142,7 @@ describe("MembersTable", () => {
     });
 
     expect(routerPush).toHaveBeenCalledTimes(1);
-    const pushedUrl = routerPush.mock.calls[0][0] as string;
+    const pushedUrl = routerPush.mock.calls[0]![0] as string;
     expect(pushedUrl).toContain("q=alice");
   });
 
@@ -152,19 +152,19 @@ describe("MembersTable", () => {
     render(
       <MembersTable
         initialUsers={users}
-        currentUserId={users[0].id}
+        currentUserId={users[0]!.id}
         allProjects={[]}
       />,
     );
 
     const selfBtn = screen.getByTestId(
-      `deactivate-${users[0].id}`,
+      `deactivate-${users[0]!.id}`,
     ) as HTMLButtonElement;
     expect(selfBtn.disabled).toBe(true);
     expect(selfBtn.getAttribute("title")).toMatch(/can't deactivate/i);
 
     const otherBtn = screen.getByTestId(
-      `deactivate-${users[1].id}`,
+      `deactivate-${users[1]!.id}`,
     ) as HTMLButtonElement;
     expect(otherBtn.disabled).toBe(false);
   });
