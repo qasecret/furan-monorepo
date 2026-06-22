@@ -134,6 +134,8 @@ const ignoreRegionElementSchema = z
  */
 const MAX_IGNORE_REGIONS = 50;
 
+type IgnoreRegionElement = z.infer<typeof ignoreRegionElementSchema>;
+
 const listInput = z.object({
   projectId: z.string().uuid(),
   cursor: z.string().datetime().optional(),
@@ -214,6 +216,13 @@ export async function approveRun(
     user: { id: string };
   },
   runId: string,
+  /**
+   * ADR-036: when provided, the drawn ignore regions are persisted onto the
+   * run's variation as part of approval — so "Save as baseline" doesn't drop
+   * regions the reviewer drew but hadn't separately saved. `undefined` leaves
+   * the variation's existing regions untouched (the inbox/bulk callers).
+   */
+  ignoreAreas?: IgnoreRegionElement[] | null,
 ): Promise<{ runId: string; approved: true }> {
   const runRows = await ctx.db
     .select()
@@ -254,6 +263,15 @@ export async function approveRun(
     .limit(1);
 
   if (firstShot[0]) {
+    // ADR-036: persist any reviewer-drawn ignore regions onto the variation
+    // in the same flow — no separate diff enqueue, so nothing races the
+    // status=passed set above. Forward mask applied to future runs.
+    if (ignoreAreas !== undefined) {
+      await ctx.db
+        .update(testVariations)
+        .set({ ignoreRegions: ignoreAreas, updatedAt: new Date() })
+        .where(eq(testVariations.id, firstShot[0].testVariationId));
+    }
     await ctx.db.insert(baselines).values({
       baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
       testVariationId: firstShot[0].testVariationId,
@@ -911,7 +929,19 @@ export const runsRouter = t.router({
     }),
 
   approve: t.procedure
-    .input(runIdInput)
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        // ADR-036: optional reviewer-drawn ignore regions to persist onto the
+        // variation as part of approval (the "draw → Save as baseline" flow).
+        // Omitted by the inbox/bulk callers, which leave regions untouched.
+        ignoreAreas: z
+          .array(ignoreRegionElementSchema)
+          .max(MAX_IGNORE_REGIONS)
+          .nullable()
+          .optional(),
+      }),
+    )
     .use(authed)
     .use(
       projectMember<RunIdInput>("write", {
@@ -921,7 +951,7 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return approveRun(ctx, input.runId);
+      return approveRun(ctx, input.runId, input.ignoreAreas);
     }),
 
   /**
@@ -1286,7 +1316,17 @@ export const runsRouter = t.router({
 
   approveCheckpoint: t.procedure
     .input(
-      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
+      z.object({
+        runId: z.string().uuid(),
+        checkpointId: z.string().uuid(),
+        // ADR-036: optional reviewer-drawn ignore regions to persist onto the
+        // checkpoint's variation, replacing the captured ones (draw → approve).
+        ignoreAreas: z
+          .array(ignoreRegionElementSchema)
+          .max(MAX_IGNORE_REGIONS)
+          .nullable()
+          .optional(),
+      }),
     )
     .use(authed)
     .use(
@@ -1326,7 +1366,7 @@ export const runsRouter = t.router({
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
       await ctx.db.transaction(async (tx) => {
-        await approveCheckpointInTx(tx, s, run, ctx.user.id);
+        await approveCheckpointInTx(tx, s, run, ctx.user.id, input.ignoreAreas);
       });
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {

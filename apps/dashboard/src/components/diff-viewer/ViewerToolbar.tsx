@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { buildIgnoreAreasPayload } from "./ignore-area-payload";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
 import { RegionSettingsPopover } from "./RegionSettingsPopover";
 import { SensitivityControl } from "./SensitivityControl";
@@ -169,61 +170,24 @@ export function ViewerToolbar({
 
   const handleSave = () => {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
-    const activeSaved =
-      scope === "variation" ? savedVariationIgnoreAreas : savedRunIgnoreAreas;
-    const survivors = activeSaved
-      .filter((r) => !markedForDeletion.has(r.id))
-      .map((r) => {
-        const kindOv = kindOverrides.get(r.id);
-        const selectorOv = selectorOverrides.get(r.id);
-        const resolvedSelector =
-          selectorOv === null ? undefined : (selectorOv ?? r.selector);
-        const effectiveKind = kindOv?.kind ?? r.kind;
-        const threshold =
-          effectiveKind === "strict"
-            ? thresholdOverrides.has(r.id)
-              ? thresholdOverrides.get(r.id)
-              : r.thresholdOverride
-            : undefined;
-        return {
-          x: r.x,
-          y: r.y,
-          width: r.width,
-          height: r.height,
-          viewport: r.viewport,
-          paddingPx: paddingOverrides.get(r.id) ?? r.paddingPx,
-          kind: effectiveKind,
-          pattern: kindOv ? kindOv.pattern : r.pattern,
-          selector: resolvedSelector,
-          ...(threshold !== undefined ? { thresholdOverride: threshold } : {}),
-        };
-      });
-    const drafts = draftIgnoreAreas.map((r) => ({
-      x: r.x,
-      y: r.y,
-      width: r.width,
-      height: r.height,
-      viewport: r.viewport,
-      paddingPx: r.paddingPx,
-      kind: r.kind,
-      pattern: r.pattern,
-      selector: r.selector,
-      ...(r.kind === "strict" && r.thresholdOverride !== undefined
-        ? { thresholdOverride: r.thresholdOverride }
-        : {}),
-    }));
+    const payload = buildIgnoreAreasPayload(
+      {
+        savedRunIgnoreAreas,
+        savedVariationIgnoreAreas,
+        draftIgnoreAreas,
+        markedForDeletion,
+        paddingOverrides,
+        kindOverrides,
+        thresholdOverrides,
+        selectorOverrides,
+      },
+      scope,
+    );
 
     if (isTemporaryMode) {
-      setTempIgnoreAreas.mutate({
-        runId,
-        tempIgnoreAreas: [...survivors, ...drafts],
-      });
+      setTempIgnoreAreas.mutate({ runId, tempIgnoreAreas: payload });
     } else {
-      setIgnoreAreas.mutate({
-        runId,
-        scope,
-        ignoreAreas: [...survivors, ...drafts],
-      });
+      setIgnoreAreas.mutate({ runId, scope, ignoreAreas: payload });
     }
   };
 
