@@ -75,4 +75,23 @@ class ImageNormalizerTest {
         }
         assertTrue(ex.message!!.contains("image"))
     }
+
+    @Test
+    fun `truncated PNG (valid signature, too short for IHDR) throws IllegalArgumentException`() {
+        // 8-byte PNG signature only — no IHDR chunk
+        val truncated = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            ImageNormalizer.normalize(truncated)
+        }
+        assertTrue(ex.message!!.contains("too short"))
+    }
+
+    @Test
+    fun `base64 data-URL prefix is stripped before decoding`() {
+        val raw = Base64.getEncoder().encodeToString(pngBytes(8, 9))
+        val withPrefix = "data:image/png;base64,$raw"
+        val n = ImageNormalizer.normalizeBase64(withPrefix)
+        assertEquals(8, n.width)
+        assertEquals(9, n.height)
+    }
 }

@@ -64,8 +64,11 @@ class FuranImages(val config: FuranConfig) {
         runId = created.runId
     }
 
-    // ---- fire-and-forget: upload now, do NOT wait for the diff verdict ----
-
+    /**
+     * Upload an image as a checkpoint and return immediately, without waiting
+     * for the diff verdict. Accepts PNG bytes, a [File], a [BufferedImage], or
+     * base64 ([checkImageBase64]). Requires an open run.
+     */
     fun checkImage(name: String, png: ByteArray, options: ImageCheckpointOptions = ImageCheckpointOptions()): CheckpointSubmission {
         val rid = requireRunId()
         return submitImage(rid, name, ImageNormalizer.normalize(png), options)
@@ -86,8 +89,11 @@ class FuranImages(val config: FuranConfig) {
         return submitImage(rid, name, ImageNormalizer.normalizeBase64(base64), options)
     }
 
-    // ---- blocking: upload, then await terminal status; throws on diff per softAssert ----
-
+    /**
+     * Upload an image as a checkpoint and block until the diff worker reaches a
+     * terminal status. With `softAssert = false`, throws on a regression / first
+     * run / timeout (see class KDoc). Requires an open run.
+     */
     fun checkImageAndAwait(
         name: String,
         png: ByteArray,
@@ -133,7 +139,7 @@ class FuranImages(val config: FuranConfig) {
         val rid = runId ?: return@runBlocking null
         runId = null
         val result = client.completeRun(rid)
-        if (config.failOnDiff == FailOnDiff.AfterEach && result.status != RunStatus.PASSED) {
+        if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }
         result
@@ -225,3 +231,6 @@ class FuranImages(val config: FuranConfig) {
         fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
     }
 }
+
+/** True only for a passing run — mirrors the Selenium adapter's private helper. */
+private fun RunStatus.isPassing(): Boolean = this == RunStatus.PASSED
