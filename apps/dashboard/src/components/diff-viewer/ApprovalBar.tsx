@@ -5,6 +5,10 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
+import {
+  buildIgnoreAreasPayload,
+  hasUnsavedIgnoreChanges,
+} from "./ignore-area-payload";
 import { useViewerStore } from "./useViewerStore";
 
 import { AggregateSeverityPill } from "@/components/aggregate-severity-pill";
@@ -169,6 +173,18 @@ export function ApprovalBar({
     onError: (e) => setError(e.message),
   });
 
+  // ADR-036: when the reviewer has drawn/edited ignore regions in the viewer
+  // but not separately saved them, fold them into the approve call so
+  // "Save as baseline" / "Approve" doesn't silently drop them. Read at click
+  // time (not render) so the latest drawn regions are captured. Persisted
+  // onto the variation atomically server-side — no diff re-enqueue.
+  const pendingIgnoreAreas = () => {
+    const s = useViewerStore.getState();
+    return hasUnsavedIgnoreChanges(s)
+      ? { ignoreAreas: buildIgnoreAreasPayload(s, "variation") }
+      : {};
+  };
+
   const effectiveStatus: RunStatus = status ?? "running";
   const canReview = REVIEW_LEGAL.has(effectiveStatus);
   const disabledReason = canReview
@@ -224,7 +240,13 @@ export function ApprovalBar({
               reason={disabledReason}
               testId="approve-checkpoint-button"
               variant="default"
-              onClick={() => approveCheckpoint.mutate({ runId, checkpointId })}
+              onClick={() =>
+                approveCheckpoint.mutate({
+                  runId,
+                  checkpointId,
+                  ...pendingIgnoreAreas(),
+                })
+              }
               title="Promotes this checkpoint's candidate as the new baseline for its test variation."
             >
               {approveCheckpoint.isPending
@@ -237,7 +259,7 @@ export function ApprovalBar({
               reason={disabledReason}
               testId="approve-button"
               variant="default"
-              onClick={() => approve.mutate({ runId })}
+              onClick={() => approve.mutate({ runId, ...pendingIgnoreAreas() })}
               title={
                 effectiveStatus === "new"
                   ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."

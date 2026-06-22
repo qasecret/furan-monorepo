@@ -195,6 +195,45 @@ describe("ApprovalBar", () => {
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
+  it("Save-as-baseline folds the viewer's unsaved drawn ignore regions into the approve call (ADR-036)", async () => {
+    const { useViewerStore } =
+      await import("../src/components/diff-viewer/useViewerStore");
+    useViewerStore.setState({
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 50,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+    });
+    try {
+      render(<ApprovalBar runId={RUN_ID} status="new" />);
+      fireEvent.click(screen.getByTestId("approve-button"));
+      expect(approveMutate).toHaveBeenCalledWith({
+        runId: RUN_ID,
+        ignoreAreas: [
+          expect.objectContaining({
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+            viewport: "1280x720",
+            kind: "ignore",
+          }),
+        ],
+      });
+    } finally {
+      // Don't leak the draft into sibling tests' `{ runId }`-only assertions.
+      useViewerStore.setState({ draftIgnoreAreas: [] });
+    }
+  });
+
   it("Reject click invokes the runs.reject mutation with the runId", () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("reject-button"));

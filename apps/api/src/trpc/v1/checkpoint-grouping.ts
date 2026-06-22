@@ -163,12 +163,22 @@ export async function approveCheckpointInTx(
   s: ApprovableCheckpoint,
   run: ApprovableRun,
   userId: string,
+  /**
+   * ADR-036: when provided, reviewer-drawn ignore regions replace the
+   * checkpoint's captured `ignoreRegions` on the variation — so a region
+   * drawn in the viewer before "Approve" isn't dropped. `undefined` keeps
+   * the screenshot's captured regions (the SDK / bulk / group-approve path).
+   */
+  ignoreAreasOverride?: readonly unknown[] | null,
 ): Promise<void> {
   await tx
     .update(testVariations)
     .set({
       baselineName: s.imageKey,
-      ignoreRegions: s.ignoreRegions,
+      ignoreRegions:
+        ignoreAreasOverride !== undefined
+          ? ignoreAreasOverride
+          : s.ignoreRegions,
       layoutRegions: s.layoutRegions,
       floatingRegions: s.floatingRegions,
       contentRegions: s.contentRegions,

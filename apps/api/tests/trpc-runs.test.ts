@@ -486,6 +486,99 @@ d("tRPC runs router", () => {
     expect(baselineRows[0]?.userId).toBe(s.memberId);
   });
 
+  test("approve: persists ignoreAreas onto the variation when provided (first-baseline draw-and-save)", async () => {
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "approve-ign-img",
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    const region = {
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 50,
+      viewport: "1280x720",
+      kind: "ignore" as const,
+    };
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    await client.runs.approve.mutate({ runId: s.runId, ignoreAreas: [region] });
+
+    // The drawn region lands on the variation (forward mask for future runs).
+    const variationRows = await h.db
+      .select({ ignoreRegions: testVariations.ignoreRegions })
+      .from(testVariations)
+      .where(eq(testVariations.id, s.variationId))
+      .limit(1);
+    const stored = variationRows[0]?.ignoreRegions as Array<{
+      x: number;
+      width: number;
+    }> | null;
+    expect(Array.isArray(stored)).toBe(true);
+    expect(stored).toHaveLength(1);
+    expect(stored?.[0]?.x).toBe(10);
+    expect(stored?.[0]?.width).toBe(100);
+
+    // Baseline still created + status passed (unchanged).
+    const updated = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId))
+      .limit(1);
+    expect(updated[0]?.status).toBe("passed");
+    const baselineRows = await h.db
+      .select()
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.runId));
+    expect(baselineRows.length).toBe(1);
+  });
+
+  test("approve: without ignoreAreas leaves the variation's existing regions untouched", async () => {
+    await h.db
+      .update(testVariations)
+      .set({
+        ignoreRegions: [
+          {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            viewport: "1280x720",
+            kind: "ignore",
+          },
+        ],
+      })
+      .where(eq(testVariations.id, s.variationId));
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "approve-noign-img",
+      viewport: "1280x720",
+      browser: "chromium",
+    });
+
+    const client = makeClient(baseUrl, s.memberJwt);
+    await client.runs.approve.mutate({ runId: s.runId });
+
+    const variationRows = await h.db
+      .select({ ignoreRegions: testVariations.ignoreRegions })
+      .from(testVariations)
+      .where(eq(testVariations.id, s.variationId))
+      .limit(1);
+    const stored = variationRows[0]?.ignoreRegions as Array<{
+      x: number;
+    }> | null;
+    expect(stored).toHaveLength(1);
+    expect(stored?.[0]?.x).toBe(1);
+  });
+
   test("reject: writes status=failed, merge=false (and does NOT insert a baseline)", async () => {
     // First approve to flip status=passed/merge=true, then reject to
     // ensure both flips work; both source statuses are reviewer-legal.
@@ -2268,6 +2361,58 @@ d("tRPC runs router", () => {
       expect(v!.floatingRegions).toBeNull();
       expect(v!.contentRegions).toBeNull();
       expect(v!.accessibilityRegions).toBeNull();
+    });
+
+    test("ignoreAreas override: reviewer-drawn regions replace the checkpoint's captured regions (draw-and-save)", async () => {
+      const captured = { x: 1, y: 2, width: 10, height: 20 };
+      const [variation] = await h.db
+        .insert(testVariations)
+        .values({ name: "checkout-ov", projectId: s.projectId })
+        .returning();
+      const [chk] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: variation!.id,
+          name: "checkout-ov",
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: "c".repeat(64),
+          matchLevel: "Strict",
+          ignoreRegions: [captured],
+        })
+        .returning();
+
+      const drawn = {
+        x: 50,
+        y: 60,
+        width: 100,
+        height: 80,
+        viewport: "1280x720",
+        kind: "ignore" as const,
+      };
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
+        checkpointId: chk!.id,
+        ignoreAreas: [drawn],
+      });
+
+      const [v] = await h.db
+        .select()
+        .from(testVariations)
+        .where(eq(testVariations.id, variation!.id))
+        .limit(1);
+      const stored = v!.ignoreRegions as Array<{
+        x: number;
+        width: number;
+      }> | null;
+      expect(stored).toHaveLength(1);
+      // The drawn region (x=50), NOT the captured one (x=1).
+      expect(stored?.[0]?.x).toBe(50);
+      expect(stored?.[0]?.width).toBe(100);
     });
 
     test("cross-run safety: checkpointId belonging to a different run returns BAD_REQUEST", async () => {
