@@ -72,6 +72,34 @@ export FURAN_API_TOKEN=furan_pat_<from-dashboard>   # /account/tokens
 export FURAN_PROJECT_ID=<from-dashboard>            # /projects/<id>
 ```
 
+## Driverless — raw images (any stack)
+
+No WebDriver required. If your stack can produce a PNG — Playwright, Appium,
+native mobile, `<canvas>`, server-side renders, PDFs — check it directly with
+`furan-core` alone (`io.github.qasecret:furan-core`):
+
+```kotlin
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.images.FuranImages
+import io.furan.sdk.images.ImageCheckpointOptions
+
+val png: ByteArray = page.screenshot() // e.g. Playwright-Java; or File / BufferedImage / base64
+FuranImages.use(FuranConfig.fromEnv(), testName = "checkout page") { furan ->
+    furan.checkImageAndAwait(
+        "checkout",
+        png,
+        ImageCheckpointOptions(browser = "playwright-chromium", os = "macOS 14"),
+    )
+}
+```
+
+`viewport` defaults to the image's pixel size; label `browser` / `os` / `device`
+so different sources keep separate baselines. `checkImage(...)` uploads without
+waiting; `checkImageAndAwait(...)` blocks for the verdict and throws on a
+regression (unless `FURAN_SOFT_ASSERT=true`). Inputs: `ByteArray`, `File`,
+`BufferedImage`, and `checkImageBase64(...)`. Selector-anchored regions are not
+available (no DOM) — use numeric `Region(x, y, width, height)` coordinates.
+
 ### First run of each test needs a baseline
 
 By default (`autoApproveFeature=false`) a project's **first run for a given test
