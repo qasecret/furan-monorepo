@@ -6,17 +6,20 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../../LICENSE)
 [![JDK](https://img.shields.io/badge/JDK-21+-blue)](https://adoptium.net/)
 
-Drop-in for any JUnit 5 + Selenium suite. JDK 21+, Kotlin 2.x. Three artifacts, pick the one matching your use case:
+Drop-in for any JUnit 5 + Selenium or Playwright suite. JDK 21+, Kotlin 2.x. Four artifacts, pick the one matching your use case:
 
-| Artifact                            | When to use                                           | Depends on   |
-| ----------------------------------- | ----------------------------------------------------- | ------------ |
-| `io.github.qasecret:furan-selenium` | Selenium-driven tests (most common)                   | `furan-core` |
-| `io.github.qasecret:furan-junit5`   | JUnit 5 `@FuranTest` annotation + parameter injection | `furan-core` |
-| `io.github.qasecret:furan-core`     | Direct REST/HTTP integration without Selenium         | —            |
+| Artifact                              | When to use                                           | Depends on   |
+| ------------------------------------- | ----------------------------------------------------- | ------------ |
+| `io.github.qasecret:furan-selenium`   | Selenium-driven tests (most common)                   | `furan-core` |
+| `io.github.qasecret:furan-playwright` | Playwright-Java-driven tests                          | `furan-core` |
+| `io.github.qasecret:furan-junit5`     | JUnit 5 `@FuranTest` annotation + parameter injection | `furan-core` |
+| `io.github.qasecret:furan-core`       | Direct REST/HTTP integration without Selenium         | —            |
 
 All capture logic lives in `furan-core` behind a driver-agnostic `SpecDriver` SPI; `furan-selenium` is the first adapter (`SeleniumSpecDriver`) and `Furan`'s public API is unchanged. New frameworks (Playwright-Java, Appium, etc.) can implement `SpecDriver` and reuse the same capture engine — scroll-and-stitch, stability polling, region resolution, DOM capture — without any Selenium dependency.
 
 ## Install
+
+**Selenium:**
 
 ```kotlin
 // build.gradle.kts
@@ -36,6 +39,35 @@ Maven:
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-selenium</artifactId>
     <version>0.12.0</version>
+    <scope>test</scope>
+</dependency>
+```
+
+**Playwright:**
+
+```kotlin
+// build.gradle.kts
+repositories { mavenCentral() }
+
+dependencies {
+    testImplementation("io.github.qasecret:furan-playwright:0.12.0")
+    testImplementation("com.microsoft.playwright:playwright:1.49.0")
+}
+```
+
+Maven:
+
+```xml
+<dependency>
+    <groupId>io.github.qasecret</groupId>
+    <artifactId>furan-playwright</artifactId>
+    <version>0.12.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>com.microsoft.playwright</groupId>
+    <artifactId>playwright</artifactId>
+    <version>1.49.0</version>
     <scope>test</scope>
 </dependency>
 ```
@@ -73,6 +105,46 @@ export FURAN_API_URL=http://localhost:3000          # or your deployment
 export FURAN_API_TOKEN=furan_pat_<from-dashboard>   # /account/tokens
 export FURAN_PROJECT_ID=<from-dashboard>            # /projects/<id>
 ```
+
+## Playwright
+
+`furan-playwright` wraps `FuranCapture` with the same open → snapshot → close
+lifecycle as the Selenium adapter. `browserName` is reported as
+`playwright-<type>` (`playwright-chromium`, `playwright-firefox`,
+`playwright-webkit`), so the three engines each keep separate baselines against
+the same page URL.
+
+```kotlin
+import com.microsoft.playwright.Playwright
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.playwright.FuranPlaywright
+
+Playwright.create().use { pw ->
+    val browser = pw.chromium().launch()
+    val page = browser.newPage()
+    page.navigate("https://app.example.com/checkout")
+
+    FuranPlaywright.use(FuranConfig.fromEnv(), page, "checkout") { furan ->
+        furan.snapshot("cart")
+    }
+
+    browser.close()
+}
+```
+
+`snapshotAndAwait` blocks until the diff worker produces a terminal status
+(same semantics as the Selenium adapter):
+
+```kotlin
+FuranPlaywright.use(FuranConfig.fromEnv(), page, "checkout") { furan ->
+    val result = furan.snapshotAndAwait("cart")
+    // throws FuranAssertionException on UNRESOLVED / FAILED / ABORTED
+    // unless FURAN_SOFT_ASSERT=true
+}
+```
+
+See [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/) for a
+runnable JUnit 5 example.
 
 ## Driverless — raw images (any stack)
 
@@ -337,10 +409,11 @@ See [`furan-design/specs/2026-05-25-sdk-config-discovery-design-v2.md`](../../fu
 
 ## Examples
 
-| Example                                                                            | Description                                                                        |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`examples/sdk-selenium-junit5`](examples/sdk-selenium-junit5/)                    | Standalone Gradle project — copy-paste-runnable JUnit 5 + Selenium + ChromeDriver. |
-| [`docs/integrations/github-actions.md`](../../docs/integrations/github-actions.md) | GitHub Actions workflow with PR comments + branch baselines.                       |
+| Example                                                                            | Description                                                                           |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`examples/sdk-selenium-junit5`](examples/sdk-selenium-junit5/)                    | Standalone Gradle project — copy-paste-runnable JUnit 5 + Selenium + ChromeDriver.   |
+| [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/)                | Standalone Gradle project — copy-paste-runnable JUnit 5 + Playwright-Java. Gated by `FURAN_API_URL`. |
+| [`docs/integrations/github-actions.md`](../../docs/integrations/github-actions.md) | GitHub Actions workflow with PR comments + branch baselines.                         |
 
 ## Versioning
 
