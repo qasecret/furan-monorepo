@@ -1,5 +1,6 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -98,13 +99,41 @@ class FullyStitchTest {
 
     // --- captureFullyPage (Task 5) --------------------------------------
 
+    /**
+     * Build a [FakeSpecDriver] that simulates a document of the given dimensions,
+     * records all scrollTo y-values into [scrolledTo], and returns a solid-blue
+     * PNG of viewport size on [takeScreenshot].
+     */
+    private fun stitchDriver(
+        docWidth: Int, docHeight: Int, viewportWidth: Int, viewportHeight: Int,
+        scrolledTo: MutableList<Int>,
+    ) = FakeSpecDriver(
+        onExecuteScript = { script, args ->
+            when {
+                "scrollHeight" in script -> docHeight
+                "clientWidth" in script -> docWidth
+                "scrollTo" in script -> {
+                    scrolledTo.add(if (args.isNotEmpty()) (args[0] as Number).toInt() else 0); null
+                }
+                else -> null
+            }
+        },
+        onTakeScreenshot = {
+            val img = java.awt.image.BufferedImage(viewportWidth, viewportHeight, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            val g = img.createGraphics(); g.color = java.awt.Color.BLUE; g.fillRect(0, 0, viewportWidth, viewportHeight); g.dispose()
+            val out = java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(img, "png", out); out.toByteArray()
+        },
+    )
+
     @Test
-    fun `captureFullyPage produces a PNG of width x docHeight`() = kotlinx.coroutines.runBlocking {
+    fun `captureFullyPage produces a PNG of width x docHeight`() = runTest {
         // Document is 1000x600; viewport is 1000x300. Expect tileYs(600,300)=[0,300].
         // Composed image = 1000x600.
-        val driver = StitchDriver(
+        val scrolledTo = mutableListOf<Int>()
+        val driver = stitchDriver(
             docWidth = 1000, docHeight = 600,
             viewportWidth = 1000, viewportHeight = 300,
+            scrolledTo = scrolledTo,
         )
         val png = captureFullyPage(driver, viewportWidth = 1000, viewportHeight = 300)
         val img = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(png))
@@ -112,14 +141,16 @@ class FullyStitchTest {
         assertEquals(600, img.height)
         // The driver was told to scroll to y=0 and y=300 (the two tiles),
         // then restored to 0.
-        assertEquals(listOf(0, 300, 0), driver.scrolledTo)
+        assertEquals(listOf(0, 300, 0), scrolledTo)
     }
 
     @Test
-    fun `captureFullyPage on a short page captures a single viewport tile`() = kotlinx.coroutines.runBlocking {
-        val driver = StitchDriver(
+    fun `captureFullyPage on a short page captures a single viewport tile`() = runTest {
+        val scrolledTo = mutableListOf<Int>()
+        val driver = stitchDriver(
             docWidth = 800, docHeight = 400,
             viewportWidth = 800, viewportHeight = 1000,
+            scrolledTo = scrolledTo,
         )
         val png = captureFullyPage(driver, viewportWidth = 800, viewportHeight = 1000)
         val img = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(png))
@@ -128,15 +159,19 @@ class FullyStitchTest {
         // stitched image is empty/transparent).
         assertEquals(400, img.height)
         // Single scrollTo(0) + restore-to-zero (which is the same call).
-        assertEquals(listOf(0, 0), driver.scrolledTo)
+        assertEquals(listOf(0, 0), scrolledTo)
     }
 
     @Test
     fun `captureFullyPage truncates at 200 megapixel cap`() = kotlinx.coroutines.runBlocking {
         // docW=2000, requested docH would push past 200_000_000 / 2000 = 100_000.
-        val driver = StitchDriver(
+        // Uses runBlocking (not runTest) because composing 100 large tiles is CPU-intensive
+        // real work that exceeds runTest's default 60s virtual-time budget.
+        val scrolledTo = mutableListOf<Int>()
+        val driver = stitchDriver(
             docWidth = 2000, docHeight = 150_000,
             viewportWidth = 2000, viewportHeight = 1000,
+            scrolledTo = scrolledTo,
         )
         val png = captureFullyPage(driver, viewportWidth = 2000, viewportHeight = 1000)
         val img = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(png))
@@ -177,62 +212,5 @@ class FullyStitchTest {
         resetMatchTimeoutFullyWarnedForTest()
         assertTrue(warnMatchTimeoutIgnoredInFullyMode())
         assertFalse(warnMatchTimeoutIgnoredInFullyMode())
-    }
-
-    /**
-     * Stub driver for the orchestrator tests. Reports a synthetic
-     * `documentElement.scrollHeight` + `clientWidth`, returns a solid-blue
-     * PNG of viewport size on `getScreenshotAs`. Records all scrollTo
-     * arguments for assertions.
-     */
-    private class StitchDriver(
-        private val docWidth: Int,
-        private val docHeight: Int,
-        private val viewportWidth: Int,
-        private val viewportHeight: Int,
-    ) : org.openqa.selenium.WebDriver,
-        org.openqa.selenium.JavascriptExecutor,
-        org.openqa.selenium.TakesScreenshot {
-
-        val scrolledTo = mutableListOf<Int>()
-
-        override fun executeScript(script: String, vararg args: Any?): Any? = when {
-            script.contains("scrollHeight") -> docHeight
-            script.contains("clientWidth") -> docWidth
-            script.contains("scrollTo") -> {
-                val y = if (args.isNotEmpty()) (args[0] as Number).toInt() else 0
-                scrolledTo.add(y)
-                null
-            }
-            else -> null
-        }
-
-        override fun executeAsyncScript(script: String, vararg args: Any?): Any? = null
-
-        override fun <X : Any?> getScreenshotAs(target: org.openqa.selenium.OutputType<X>): X {
-            val img = java.awt.image.BufferedImage(viewportWidth, viewportHeight, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-            val g = img.createGraphics()
-            g.color = java.awt.Color.BLUE
-            g.fillRect(0, 0, viewportWidth, viewportHeight)
-            g.dispose()
-            val out = java.io.ByteArrayOutputStream()
-            javax.imageio.ImageIO.write(img, "png", out)
-            @Suppress("UNCHECKED_CAST")
-            return out.toByteArray() as X
-        }
-
-        override fun get(url: String) = Unit
-        override fun getCurrentUrl(): String = ""
-        override fun getTitle(): String = ""
-        override fun findElements(by: org.openqa.selenium.By): List<org.openqa.selenium.WebElement> = emptyList()
-        override fun findElement(by: org.openqa.selenium.By): org.openqa.selenium.WebElement = throw NotImplementedError()
-        override fun getPageSource(): String = ""
-        override fun close() = Unit
-        override fun quit() = Unit
-        override fun getWindowHandles(): Set<String> = emptySet()
-        override fun getWindowHandle(): String = ""
-        override fun switchTo(): org.openqa.selenium.WebDriver.TargetLocator = throw NotImplementedError()
-        override fun navigate(): org.openqa.selenium.WebDriver.Navigation = throw NotImplementedError()
-        override fun manage(): org.openqa.selenium.WebDriver.Options = throw NotImplementedError()
     }
 }

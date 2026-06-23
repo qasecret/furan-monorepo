@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 import io.furan.sdk.dto.Region
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -15,30 +15,30 @@ class IgnoreCaretTest {
             Region(x = 10.0, y = 20.0, width = 30.0, height = 40.0),
             Region.bySelector(".sidebar"),
         )
-        val out = Furan.augmentIgnoreRegions(input, ignoreCaret = false)
+        val out = CaptureEngine.augmentIgnoreRegions(input, ignoreCaret = false)
         assertSame(input, out, "expected the original list to be returned unchanged")
     }
 
     @Test
     fun `augmentIgnoreRegions with ignoreCaret=true appends CARET_FOCUS_REGION`() {
         val input = listOf(Region(x = 0.0, y = 0.0, width = 10.0, height = 10.0))
-        val out = Furan.augmentIgnoreRegions(input, ignoreCaret = true)
+        val out = CaptureEngine.augmentIgnoreRegions(input, ignoreCaret = true)
         assertEquals(2, out.size)
         assertEquals(input[0], out[0])
         // The appended entry is the canonical CARET_FOCUS_REGION constant.
-        assertSame(Furan.CARET_FOCUS_REGION, out[1])
+        assertSame(CaptureEngine.CARET_FOCUS_REGION, out[1])
     }
 
     @Test
     fun `augmentIgnoreRegions with empty input + ignoreCaret=true returns single caret region`() {
-        val out = Furan.augmentIgnoreRegions(emptyList(), ignoreCaret = true)
+        val out = CaptureEngine.augmentIgnoreRegions(emptyList(), ignoreCaret = true)
         assertEquals(1, out.size)
-        assertSame(Furan.CARET_FOCUS_REGION, out[0])
+        assertSame(CaptureEngine.CARET_FOCUS_REGION, out[0])
     }
 
     @Test
     fun `CARET_FOCUS_REGION targets the standard focused-text-input selectors`() {
-        val r = Furan.CARET_FOCUS_REGION
+        val r = CaptureEngine.CARET_FOCUS_REGION
         assertNotNull(r.selector)
         assertTrue(r.selector!!.contains("input:focus"))
         assertTrue(r.selector!!.contains("textarea:focus"))
@@ -52,7 +52,7 @@ class IgnoreCaretTest {
         // This is the right fallback for the caret case: if there's no
         // focused input, ignoreCaret should mask nothing rather than
         // silently mask some random fallback rectangle.
-        val r = Furan.CARET_FOCUS_REGION
+        val r = CaptureEngine.CARET_FOCUS_REGION
         assertEquals(0.0, r.x)
         assertEquals(0.0, r.y)
         assertEquals(0.0, r.width)

@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 import io.furan.sdk.dto.Region
 import java.awt.image.BufferedImage
@@ -7,7 +7,7 @@ import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
 import org.slf4j.LoggerFactory
 
-private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.PngCrop")
+private val log = LoggerFactory.getLogger("io.furan.sdk.capture.PngCrop")
 
 /**
  * Crop a PNG to the given [region]. Coordinates are in image pixels.

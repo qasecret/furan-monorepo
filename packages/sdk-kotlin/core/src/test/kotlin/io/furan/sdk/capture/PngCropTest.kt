@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 import io.furan.sdk.dto.Region
 import java.awt.Color

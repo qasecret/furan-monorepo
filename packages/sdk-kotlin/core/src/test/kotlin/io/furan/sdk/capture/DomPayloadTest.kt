@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 /**
  * Tier 2.2 precedence for the per-checkpoint DOM payload:

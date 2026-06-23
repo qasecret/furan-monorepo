@@ -33,6 +33,10 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // FullyStitchTest.captureFullyPage truncates at 200 MP cap allocates a
+    // 2000x100_000 composed image (~800 MB); raise heap so the JVM worker
+    // can handle it (mirrors the same setting in selenium/build.gradle.kts).
+    maxHeapSize = "1g"
     testLogging {
         events("passed", "failed", "skipped")
         showStandardStreams = false
