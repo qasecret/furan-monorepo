@@ -7,6 +7,11 @@ import io.furan.sdk.Regions
  * FuranClient.createScreenshot. Match-level, ignore-displacements, and the
  * accessibility levels are NOT here — they pass through from options
  * untouched by capture.
+ *
+ * This is a transient carrier: it is created, used once, and discarded. Its
+ * [pngBytes] field is a `ByteArray`, so `equals`/`hashCode` are
+ * identity-based (the `data class` generated implementations are NOT
+ * value-based for arrays). Do not compare instances by equality.
  */
 data class CaptureResult(
     val pngBytes: ByteArray,

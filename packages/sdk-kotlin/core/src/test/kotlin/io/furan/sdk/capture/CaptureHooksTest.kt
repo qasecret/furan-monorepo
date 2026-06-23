@@ -5,6 +5,7 @@ import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.spec.DriverInfo
 import io.furan.sdk.spec.Feature
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -24,8 +25,9 @@ import org.junit.jupiter.api.Test
  * we assert specifically on the hook's presence rather than total script
  * count.
  *
- * The two wall-clock timing cases use `runBlocking` (not `runTest`) so real
- * time elapses — `runTest`'s virtual scheduler fast-forwards `delay`.
+ * All tests use `runBlocking` to keep the class uniform; the timing cases
+ * (`waitBeforeCaptureMs`) need real time — `runTest`'s virtual clock would
+ * fast-forward the delay and make those assertions vacuous.
  */
 class CaptureHooksTest {
     private val vp = Viewport(800, 600)
@@ -101,7 +103,11 @@ class CaptureHooksTest {
             CheckpointOptions(beforeCaptureScreenshot = "window.x = 1;", waitBeforeCaptureMs = 30, sendDom = false),
             vp,
         )
-        assertTrue(driver.executedScripts.any { it == "window.x = 1;" })
+        // The hook must be the FIRST script executed (viewport resize is a
+        // setViewportSize call, not a script; lazy-load and element-map run
+        // after).
+        assertEquals("window.x = 1;", driver.executedScripts.first(),
+            "beforeCaptureScreenshot hook must be the first script executed")
         assertTrue(driver.screenshotCount >= 1, "a screenshot should have been taken after the hook")
     }
 

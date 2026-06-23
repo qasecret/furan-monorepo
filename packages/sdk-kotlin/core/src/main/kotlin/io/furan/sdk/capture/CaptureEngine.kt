@@ -25,6 +25,13 @@ import org.slf4j.LoggerFactory
  */
 class CaptureEngine(private val driver: SpecDriver) {
 
+    /**
+     * Run the full capture pipeline for one checkpoint.
+     *
+     * @param name Checkpoint name forwarded by the adapter to
+     *   `FuranClient.createScreenshot`; intentionally absent from
+     *   [CaptureResult] because the result is a pixel/DOM carrier only.
+     */
     suspend fun capture(name: String, options: CheckpointOptions, viewport: Viewport): CaptureResult {
         val info = driver.getDriverInfo()
         val viewportLabel = "${viewport.width}x${viewport.height}"
