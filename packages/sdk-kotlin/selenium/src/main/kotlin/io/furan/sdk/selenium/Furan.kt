@@ -7,8 +7,13 @@ import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranDiffException
 import io.furan.sdk.Regions
 import io.furan.sdk.Viewport
+import io.furan.sdk.capture.captureDom
+import io.furan.sdk.capture.captureElementScreenshot
 import io.furan.sdk.capture.captureStableScreenshot
 import io.furan.sdk.capture.cropPng
+import io.furan.sdk.capture.resolveDomPayload
+import io.furan.sdk.capture.resolveRegion
+import io.furan.sdk.capture.runLazyLoadScroll
 import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
@@ -161,7 +166,7 @@ class Furan(
         // the settle budget). Restores scroll position to top before
         // returning so the screenshot frames the page header.
         options.lazyLoad?.let { lazyLoad ->
-            runLazyLoadScroll(driver, lazyLoad)
+            runLazyLoadScroll(specDriver, lazyLoad)
         }
         if (options.waitBeforeCaptureMs > 0) {
             kotlinx.coroutines.delay(options.waitBeforeCaptureMs)
@@ -185,7 +190,7 @@ class Furan(
                 val stitched = withHideFixed(driver, options.hideFixedElements) {
                     captureFullyPage(driver, viewportWidth = vp.width, viewportHeight = vp.height)
                 }
-                val resolved = resolveRegion(driver, captureRegion)
+                val resolved = resolveRegion(specDriver, captureRegion)
                 cropPng(stitched, resolved)
             }
             options.fully -> withHideFixed(driver, options.hideFixedElements) {
@@ -196,9 +201,9 @@ class Furan(
                 // Selenium's element screenshot is a single operation
                 // and the per-sample cost isn't justified. Use
                 // `waitBeforeCaptureMs` to stabilize before this path.
-                captureElementScreenshot(driver, captureSelector)
+                captureElementScreenshot(specDriver, captureSelector)
             captureRegion != null -> {
-                val resolved = resolveRegion(driver, captureRegion)
+                val resolved = resolveRegion(specDriver, captureRegion)
                 cropPng(captureStableScreenshot(specDriver, options.matchTimeoutMs), resolved)
             }
             else -> captureStableScreenshot(specDriver, options.matchTimeoutMs)
@@ -211,15 +216,15 @@ class Furan(
         // a selector-anchored ignore for the focused text input so a
         // blinking caret doesn't flag as a diff.
         val ignore = augmentIgnoreRegions(options.ignoreRegions, options.ignoreCaret)
-            .map { resolveRegion(driver, it) }
-        val layout = options.layoutRegions.map { resolveRegion(driver, it) }
-        val content = options.contentRegions.map { resolveRegion(driver, it) }
+            .map { resolveRegion(specDriver, it) }
+        val layout = options.layoutRegions.map { resolveRegion(specDriver, it) }
+        val content = options.contentRegions.map { resolveRegion(specDriver, it) }
         // Tier 2.2: `sendDom = false` skips DOM auto-capture entirely.
         // See [resolveDomPayload] for precedence rules.
         val domHtml = resolveDomPayload(
             override = options.domHtml,
             sendDom = options.sendDom,
-            capture = { captureDom(driver) },
+            capture = { captureDom(specDriver) },
         )
         val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
         return client.createScreenshot(

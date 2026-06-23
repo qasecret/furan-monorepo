@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 /**
  * Tier 2.2 precedence for the per-checkpoint DOM payload:
@@ -11,7 +11,7 @@ package io.furan.sdk.selenium
  *      `runCatching { … }.getOrNull()` semantics — DOM capture failing
  *      must never block the screenshot upload)
  */
-internal inline fun resolveDomPayload(
+inline fun resolveDomPayload(
     override: String?,
     sendDom: Boolean,
     capture: () -> String?,
