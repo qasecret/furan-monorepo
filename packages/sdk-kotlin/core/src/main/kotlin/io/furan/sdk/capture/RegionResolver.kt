@@ -15,7 +15,12 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.capture.RegionResolver")
  */
 fun resolveRegion(driver: SpecDriver, region: Region): Region {
     val css = region.selector ?: return region
-    val element = driver.findElement(Selector.Css(css))
+    val element = try {
+        driver.findElement(Selector.Css(css))
+    } catch (e: Exception) {
+        log.warn("selector {} resolution failed ({}); using fallback geometry", css, e.message)
+        return region
+    }
     if (element == null) {
         log.warn(
             "selector {} did not match any element; using fallback geometry ({},{},{}x{})",

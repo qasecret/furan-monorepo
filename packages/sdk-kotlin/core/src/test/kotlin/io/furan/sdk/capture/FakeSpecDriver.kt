@@ -25,6 +25,7 @@ class FakeSpecDriver(
     private val onTakeScreenshot: () -> ByteArray = { ByteArray(0) },
     private val onExecuteScript: (script: String, args: Array<out Any?>) -> Any? = { _, _ -> null },
     private val elements: Map<String, SpecElement> = emptyMap(),
+    private val onFindElement: ((Selector) -> SpecElement?)? = null,
 ) : SpecDriver {
     val executedScripts = mutableListOf<String>()
     val setViewportCalls = mutableListOf<Size>()
@@ -51,6 +52,7 @@ class FakeSpecDriver(
     }
 
     override fun findElement(selector: Selector): SpecElement? {
+        onFindElement?.let { return it(selector) }
         val key = when (selector) {
             is Selector.Css -> selector.value
             is Selector.Xpath -> selector.value

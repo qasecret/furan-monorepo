@@ -52,4 +52,15 @@ class RegionResolverTest {
         val driver = FakeSpecDriver(elements = emptyMap())
         assertThrows(IllegalStateException::class.java) { captureElementScreenshot(driver, ".gone") }
     }
+
+    @Test
+    fun `findElement throwing falls back to declared geometry`() {
+        val driver = FakeSpecDriver(onFindElement = { throw IllegalArgumentException("invalid selector") })
+        val r = Region.bySelector(css = ".bad[", fallbackX = 1.0, fallbackY = 2.0, fallbackWidth = 3.0, fallbackHeight = 4.0)
+        val resolved = resolveRegion(driver, r)
+        assertEquals(1.0, resolved.x)
+        assertEquals(2.0, resolved.y)
+        assertEquals(3.0, resolved.width)
+        assertEquals(4.0, resolved.height)
+    }
 }
