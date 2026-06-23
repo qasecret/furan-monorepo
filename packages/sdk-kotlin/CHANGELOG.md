@@ -1,14 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-- **Driverless raw-image API (`furan-core`):** `io.furan.sdk.images.FuranImages`
-  takes a visual checkpoint from a raw PNG (`ByteArray` / `File` / `BufferedImage`
-  / base64) with no WebDriver, so any stack that can emit an image (Playwright,
-  Appium, native mobile, canvas, PDFs) can test against Furan. Same lifecycle,
-  exceptions, and `softAssert` / `FailOnDiff` semantics as the Selenium adapter.
-
 ## [3.2.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.0...sdk/v3.2.1) (2026-06-21)
 
 

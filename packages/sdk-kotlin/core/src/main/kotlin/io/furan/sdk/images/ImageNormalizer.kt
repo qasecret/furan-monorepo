@@ -26,6 +26,9 @@ object ImageNormalizer {
         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
     )
 
+    /** PNG's mandatory first chunk type ("IHDR"), at byte offset 12. */
+    private val IHDR_CHUNK_TYPE = byteArrayOf(0x49, 0x48, 0x44, 0x52)
+
     fun normalize(png: ByteArray): NormalizedImage {
         require(png.isNotEmpty()) { "image bytes are empty" }
         return if (isPng(png)) {
@@ -44,9 +47,12 @@ object ImageNormalizer {
     fun normalize(image: BufferedImage): NormalizedImage = encode(image)
 
     fun normalizeBase64(base64: String): NormalizedImage {
-        val payload = base64.substringAfter("base64,").trim()
+        // Data URLs ("data:image/png;base64,XXXX") carry exactly one comma —
+        // base64 itself has none — so split on it (tolerates any media-type /
+        // charset / casing of the prefix). A bare base64 string is used as-is.
+        val payload = if (base64.startsWith("data:")) base64.substringAfter(",") else base64
         val bytes = try {
-            Base64.getDecoder().decode(payload)
+            Base64.getDecoder().decode(payload.trim())
         } catch (e: IllegalArgumentException) {
             throw IllegalArgumentException("invalid base64 image string", e)
         }
@@ -59,6 +65,9 @@ object ImageNormalizer {
     /** PNG IHDR: width is a big-endian uint32 at byte offset 16, height at offset 20. */
     private fun readPngDimensions(bytes: ByteArray): Pair<Int, Int> {
         require(bytes.size >= 24) { "image bytes too short to be a valid PNG" }
+        require(IHDR_CHUNK_TYPE.indices.all { bytes[12 + it] == IHDR_CHUNK_TYPE[it] }) {
+            "PNG signature present but the IHDR chunk is missing or malformed"
+        }
         return readBeInt(bytes, 16) to readBeInt(bytes, 20)
     }
 
@@ -74,7 +83,8 @@ object ImageNormalizer {
 
     private fun encode(image: BufferedImage): NormalizedImage {
         val out = ByteArrayOutputStream()
-        ImageIO.write(image, "png", out)
+        val written = ImageIO.write(image, "png", out)
+        require(written) { "no PNG writer is available in this JVM (ImageIO.write returned false)" }
         return NormalizedImage(out.toByteArray(), image.width, image.height)
     }
 }

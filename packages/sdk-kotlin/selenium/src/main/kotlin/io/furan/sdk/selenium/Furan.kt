@@ -407,7 +407,3 @@ class Furan(
         }
     }
 }
-
-/** Extension on RunStatus used internally to decide whether to throw FuranDiffException. */
-private fun io.furan.sdk.dto.RunStatus.isPassing(): Boolean =
-    this == io.furan.sdk.dto.RunStatus.PASSED

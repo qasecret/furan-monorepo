@@ -36,6 +36,7 @@ object ImageCheckpointResolver {
         image: NormalizedImage,
     ): ResolvedImageCheckpoint {
         rejectSelectorRegions(options)
+        requireDomForAccessibility(options)
         return ResolvedImageCheckpoint(
             name = name,
             viewport = options.viewport ?: "${image.width}x${image.height}",
@@ -65,6 +66,14 @@ object ImageCheckpointResolver {
         require(offender == null) {
             "selector-anchored regions are not supported on raw images (no DOM to resolve " +
                 "'${offender?.selector}'); use numeric x/y/width/height coordinates instead"
+        }
+    }
+
+    private fun requireDomForAccessibility(options: ImageCheckpointOptions) {
+        require(options.accessibilitySettings == null || options.domHtml != null) {
+            "accessibilitySettings requires a DOM payload on the driverless image API " +
+                "(there is no driver to capture one) — set ImageCheckpointOptions(domHtml = ...) " +
+                "or remove accessibilitySettings"
         }
     }
 }

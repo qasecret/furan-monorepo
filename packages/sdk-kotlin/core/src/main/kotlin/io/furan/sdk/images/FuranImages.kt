@@ -8,7 +8,6 @@ import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.RunResult
-import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.SuiteResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -44,24 +43,27 @@ class FuranImages(val config: FuranConfig) {
 
     private val client = FuranClient(config, adapter = "images")
     private val ensureBuildMutex = Mutex()
+    private val runMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
     @Volatile private var runId: String? = null
 
     /** Open a new run. Ensures a build exists (lazy), then `POST /runs`. */
     fun open(testName: String): Unit = runBlocking {
-        check(runId == null) {
-            "a run is already open; call close() or abort() before opening a new run"
+        runMutex.withLock {
+            check(runId == null) {
+                "a run is already open; call close() or abort() before opening a new run"
+            }
+            val bid = ensureBuild()
+            val created = client.createRun2(
+                buildId = bid,
+                projectId = config.projectId,
+                name = testName,
+                branchName = config.branchName,
+                parentBranchName = config.parentBranchName,
+            )
+            runId = created.runId
         }
-        val bid = ensureBuild()
-        val created = client.createRun2(
-            buildId = bid,
-            projectId = config.projectId,
-            name = testName,
-            branchName = config.branchName,
-            parentBranchName = config.parentBranchName,
-        )
-        runId = created.runId
     }
 
     /**
@@ -134,22 +136,31 @@ class FuranImages(val config: FuranConfig) {
         return awaitImage(rid, name, ImageNormalizer.normalizeBase64(base64), options, timeout)
     }
 
-    /** Complete the open run; honors [FailOnDiff.AfterEach]. Returns null if no run is open. */
+    /**
+     * Complete the open run; returns null if no run is open. The run is cleared
+     * only after the server call succeeds, so a failed complete leaves it open
+     * for a retry/abort rather than orphaning it server-side.
+     *
+     * Throws [FuranDiffException] when [FuranConfig.failOnDiff] is
+     * [FailOnDiff.AfterEach] or [FailOnDiff.AfterAll] and the run did not pass.
+     * (Deferred suite-level AfterAll is not implemented on the image adapter —
+     * both modes fail at close; use [aggregateResults] for a suite summary.)
+     */
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
-        runId = null
         val result = client.completeRun(rid)
-        if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
+        runId = null
+        if (config.failOnDiff != FailOnDiff.None && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }
         result
     }
 
-    /** Abort the open run. Idempotent. */
+    /** Abort the open run. Idempotent. Clears the run only after the server call succeeds. */
     fun abort(): Unit = runBlocking {
         val rid = runId ?: return@runBlocking
-        runId = null
         client.abortRun(rid)
+        runId = null
     }
 
     /** Release the underlying HTTP client (flush batch + telemetry + close transport). */
@@ -231,6 +242,3 @@ class FuranImages(val config: FuranConfig) {
         fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
     }
 }
-
-/** True only for a passing run — mirrors the Selenium adapter's private helper. */
-private fun RunStatus.isPassing(): Boolean = this == RunStatus.PASSED

@@ -272,7 +272,7 @@ class FuranClient(
         timeout: Duration = config.pollTimeoutSeconds.seconds,
         runId: String,
     ): CheckpointResult {
-        val snapshotResult = awaitRunResult(runId)
+        val snapshotResult = awaitRunResult(runId, timeout)
         // Synthesize a checkpoint-level result from the run outcome.
         return CheckpointResult(
             checkpointId = checkpointId,
@@ -400,9 +400,11 @@ class FuranClient(
      * fire-and-forget [uploadSnapshot] path can later block on a specific
      * run's result without duplicating the polling logic.
      */
-    suspend fun awaitRunResult(runId: String): SnapshotResult {
+    suspend fun awaitRunResult(
+        runId: String,
+        timeout: Duration = config.pollTimeoutSeconds.seconds,
+    ): SnapshotResult {
         val mark = TimeSource.Monotonic.markNow()
-        val timeout = config.pollTimeoutSeconds.seconds
         val interval = config.pollIntervalSeconds.seconds
         var last: RunResponse? = null
         while (mark.elapsedNow() < timeout) {
@@ -417,7 +419,7 @@ class FuranClient(
         throw FuranTimeoutException(
             runId = runId,
             lastStatus = last?.status,
-            timeoutSeconds = config.pollTimeoutSeconds,
+            timeoutSeconds = timeout.inWholeSeconds,
         )
     }
 

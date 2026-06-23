@@ -22,9 +22,10 @@ import io.furan.sdk.dto.Region
  * [browser] defaults to `"image"`; label them to keep, e.g., Appium-iOS and
  * Playwright-chromium baselines distinct.
  *
- * [domHtml] + [accessibilitySettings] are optional: supplying DOM unlocks
- * Furan's axe accessibility pass even on a raw image (without an element map,
- * violations surface without bbox localization).
+ * [accessibilitySettings] requires [domHtml] on the driverless path (there is
+ * no driver to capture a DOM): supplying DOM unlocks Furan's axe accessibility
+ * pass even on a raw image; setting accessibilitySettings without domHtml is
+ * rejected. Without an element map, violations surface without bbox localization.
  */
 data class ImageCheckpointOptions(
     val matchLevel: MatchLevel = MatchLevel.Strict,

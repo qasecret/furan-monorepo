@@ -53,11 +53,14 @@ class ImageNormalizerTest {
     @Test
     fun `File input is read and normalized`() {
         val file = Files.createTempFile("furan", ".png").toFile()
-        file.writeBytes(pngBytes(30, 31))
-        file.deleteOnExit()
-        val n = ImageNormalizer.normalize(file)
-        assertEquals(30, n.width)
-        assertEquals(31, n.height)
+        try {
+            file.writeBytes(pngBytes(30, 31))
+            val n = ImageNormalizer.normalize(file)
+            assertEquals(30, n.width)
+            assertEquals(31, n.height)
+        } finally {
+            file.delete()
+        }
     }
 
     @Test
@@ -93,5 +96,24 @@ class ImageNormalizerTest {
         val n = ImageNormalizer.normalizeBase64(withPrefix)
         assertEquals(8, n.width)
         assertEquals(9, n.height)
+    }
+
+    @Test
+    fun `PNG signature with malformed IHDR chunk is rejected`() {
+        val bytes = ByteArray(33)
+        byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(bytes, 0)
+        "XXXX".toByteArray().copyInto(bytes, 12) // not the "IHDR" chunk type
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            ImageNormalizer.normalize(bytes)
+        }
+        assertTrue(ex.message!!.contains("IHDR"))
+    }
+
+    @Test
+    fun `uppercase data-URL prefix is stripped`() {
+        val raw = Base64.getEncoder().encodeToString(pngBytes(11, 12))
+        val n = ImageNormalizer.normalizeBase64("data:image/png;BASE64,$raw")
+        assertEquals(11, n.width)
+        assertEquals(12, n.height)
     }
 }

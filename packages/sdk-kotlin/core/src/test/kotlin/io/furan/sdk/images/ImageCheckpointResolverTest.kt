@@ -56,11 +56,36 @@ class ImageCheckpointResolverTest {
     fun `accessibility settings map to wire strings`() {
         val r = ImageCheckpointResolver.resolve(
             "home",
-            ImageCheckpointOptions(accessibilitySettings = AccessibilitySettings()),
+            ImageCheckpointOptions(
+                accessibilitySettings = AccessibilitySettings(),
+                domHtml = "<html></html>",
+            ),
             image,
         )
         assertEquals("AA", r.accessibilityLevel)
         assertEquals("WCAG_2_1", r.accessibilityVersion)
+    }
+
+    @Test
+    fun `domHtml passes through to the resolved checkpoint`() {
+        val r = ImageCheckpointResolver.resolve(
+            "home",
+            ImageCheckpointOptions(domHtml = "<html><body>hi</body></html>"),
+            image,
+        )
+        assertEquals("<html><body>hi</body></html>", r.domHtml)
+    }
+
+    @Test
+    fun `accessibilitySettings without domHtml is rejected`() {
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            ImageCheckpointResolver.resolve(
+                "home",
+                ImageCheckpointOptions(accessibilitySettings = AccessibilitySettings()),
+                image,
+            )
+        }
+        assertTrue(ex.message!!.contains("domHtml"))
     }
 
     @Test
