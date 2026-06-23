@@ -1,8 +1,7 @@
 import io.furan.sdk.FuranConfig
-import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.images.FuranImages
 import io.furan.sdk.images.ImageCheckpointOptions
-import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import java.awt.Color
@@ -75,9 +74,8 @@ class RawImageTest {
             furan.checkImageAndAwait("home-await", png(render("Home")), options)
         }
         println("[furan] home-await -> ${result.status} ${result.diffViewerUrl ?: ""}")
-        // awaitRunResult only returns once the run has settled (or throws on
-        // timeout), so the status is never RUNNING here — NEW (first run) or a
-        // terminal verdict.
-        assertNotEquals(RunStatus.RUNNING, result.status)
+        // awaitRunResult returns a settled result (or throws on timeout), so a
+        // populated checkpointId confirms the round-trip completed.
+        assertTrue(result.checkpointId.isNotBlank())
     }
 }

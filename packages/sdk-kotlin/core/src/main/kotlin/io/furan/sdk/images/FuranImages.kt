@@ -142,15 +142,15 @@ class FuranImages(val config: FuranConfig) {
      * for a retry/abort rather than orphaning it server-side.
      *
      * Throws [FuranDiffException] when [FuranConfig.failOnDiff] is
-     * [FailOnDiff.AfterEach] or [FailOnDiff.AfterAll] and the run did not pass.
-     * (Deferred suite-level AfterAll is not implemented on the image adapter —
-     * both modes fail at close; use [aggregateResults] for a suite summary.)
+     * [FailOnDiff.AfterEach] and the run did not pass. ([FailOnDiff.AfterAll] is
+     * not yet implemented — see its docs — and behaves like [FailOnDiff.None]
+     * here; use [aggregateResults] for a suite-level summary.)
      */
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
         val result = client.completeRun(rid)
         runId = null
-        if (config.failOnDiff != FailOnDiff.None && !result.status.isPassing()) {
+        if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }
         result
