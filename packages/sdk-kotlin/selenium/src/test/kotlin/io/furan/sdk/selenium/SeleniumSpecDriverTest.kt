@@ -3,14 +3,17 @@ package io.furan.sdk.selenium
 import io.furan.sdk.spec.Feature
 import io.furan.sdk.spec.Rect
 import io.furan.sdk.spec.Selector
+import io.furan.sdk.spec.Size
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.openqa.selenium.By
+import org.openqa.selenium.Dimension
 import org.openqa.selenium.NoSuchElementException
 import org.openqa.selenium.OutputType
+import org.openqa.selenium.Point
 import org.openqa.selenium.Rectangle
 import org.openqa.selenium.TakesScreenshot
 import org.openqa.selenium.WebDriver
@@ -31,7 +34,7 @@ class SeleniumSpecDriverTest {
 
     @Test
     fun `findElement maps Css to By_cssSelector and exposes rect + screenshot`() {
-        val el = StubElement(Rectangle(/* x */ 10, /* y */ 20, /* height */ 40, /* width */ 30), byteArrayOf(7))
+        val el = StubElement(Rectangle(Point(10, 20), Dimension(30, 40)), byteArrayOf(7))
         val driver = SeleniumSpecDriver(SpecStubDriver(mapOf("By.cssSelector: .t" to el)))
         val found = driver.findElement(Selector.Css(".t"))!!
         assertEquals(Rect(10, 20, 30, 40), found.boundingRect())
@@ -59,17 +62,44 @@ class SeleniumSpecDriverTest {
         assertEquals("ok", driver.executeScript("return 'ok';"))
     }
 
+    @Test
+    fun `setViewportSize delegates to manage window`() {
+        val stub = SpecStubDriver(emptyMap())
+        val driver = SeleniumSpecDriver(stub)
+        driver.setViewportSize(Size(1280, 720))
+        assertEquals(Dimension(1280, 720), stub.window.lastSize)
+    }
+
+    @Test
+    fun `getViewportSize reads manage window size`() {
+        val stub = SpecStubDriver(emptyMap(), windowSize = Dimension(1024, 768))
+        val driver = SeleniumSpecDriver(stub)
+        assertEquals(Size(1024, 768), driver.getViewportSize())
+    }
+
+    @Test
+    fun `navigate delegates get to the driver`() {
+        val stub = SpecStubDriver(emptyMap())
+        val driver = SeleniumSpecDriver(stub)
+        driver.navigate("https://example.test")
+        assertEquals("https://example.test", stub.navigatedTo)
+    }
+
     private class SpecStubDriver(
         private val elements: Map<String, WebElement>,
         private val screenshot: ByteArray = ByteArray(0),
+        windowSize: Dimension = Dimension(1024, 768),
     ) : WebDriver, org.openqa.selenium.JavascriptExecutor, TakesScreenshot {
+        val window = StubWindow(windowSize)
+
         override fun findElement(by: By): WebElement =
             elements[by.toString()] ?: throw NoSuchElementException("no element for $by")
         override fun executeScript(script: String, vararg args: Any?): Any? = "ok"
         override fun executeAsyncScript(script: String, vararg args: Any?): Any? = null
         @Suppress("UNCHECKED_CAST")
         override fun <X : Any> getScreenshotAs(target: OutputType<X>): X = screenshot as X
-        override fun get(url: String) = Unit
+        var navigatedTo: String? = null
+        override fun get(url: String) { navigatedTo = url }
         override fun getCurrentUrl(): String = ""
         override fun getTitle(): String = ""
         override fun findElements(by: By): List<WebElement> = emptyList()
@@ -80,7 +110,30 @@ class SeleniumSpecDriverTest {
         override fun getWindowHandle(): String = ""
         override fun switchTo(): WebDriver.TargetLocator = throw NotImplementedError()
         override fun navigate(): WebDriver.Navigation = throw NotImplementedError()
-        override fun manage(): WebDriver.Options = throw NotImplementedError()
+        override fun manage(): WebDriver.Options = StubOptions(window)
+    }
+
+    private class StubWindow(private var currentSize: Dimension) : WebDriver.Window {
+        var lastSize: Dimension? = null
+        override fun getSize(): Dimension = currentSize
+        override fun setSize(targetSize: Dimension) { lastSize = targetSize; currentSize = targetSize }
+        override fun getPosition(): Point = throw NotImplementedError()
+        override fun setPosition(targetPosition: Point) = throw NotImplementedError()
+        override fun maximize() = throw NotImplementedError()
+        override fun minimize() = throw NotImplementedError()
+        override fun fullscreen() = throw NotImplementedError()
+    }
+
+    private class StubOptions(private val window: StubWindow) : WebDriver.Options {
+        override fun window(): WebDriver.Window = window
+        override fun addCookie(cookie: org.openqa.selenium.Cookie?) = throw NotImplementedError()
+        override fun deleteCookieNamed(name: String?) = throw NotImplementedError()
+        override fun deleteCookie(cookie: org.openqa.selenium.Cookie?) = throw NotImplementedError()
+        override fun deleteAllCookies() = throw NotImplementedError()
+        override fun getCookies(): Set<org.openqa.selenium.Cookie> = throw NotImplementedError()
+        override fun getCookieNamed(name: String?): org.openqa.selenium.Cookie = throw NotImplementedError()
+        override fun timeouts(): WebDriver.Timeouts = throw NotImplementedError()
+        override fun logs(): org.openqa.selenium.logging.Logs = throw NotImplementedError()
     }
 
     private class StubElement(private val rect: Rectangle, private val png: ByteArray) : WebElement {
