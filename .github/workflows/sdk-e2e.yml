@@ -39,7 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build + publish SDK to mavenLocal
         working-directory: packages/sdk-kotlin
-        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal --no-daemon
+        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal --no-daemon
       - name: Compile example project against mavenLocal SDK
         working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
         # `testClasses` compiles the test sources without executing them.
@@ -211,7 +211,7 @@ jobs:
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
       - name: Publish SDK locally
         working-directory: packages/sdk-kotlin
-        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal --no-daemon
+        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal --no-daemon
       - name: Run example test against live API
         working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
         # FURAN_* env-var names confirmed in

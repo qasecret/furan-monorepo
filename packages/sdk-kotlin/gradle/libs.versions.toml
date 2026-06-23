@@ -6,6 +6,7 @@ kotlinx-serialization = "1.7.3"
 junit = "5.11.3"
 slf4j = "2.0.16"
 selenium = "4.27.0"
+playwright = "1.49.0"
 snakeyaml = "2.3"
 vanniktech-publish = "0.30.0"
 
@@ -24,6 +25,7 @@ snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
 selenium-java = { module = "org.seleniumhq.selenium:selenium-java", version.ref = "selenium" }
+playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
