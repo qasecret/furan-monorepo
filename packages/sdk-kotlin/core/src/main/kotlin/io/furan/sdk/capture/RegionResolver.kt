@@ -45,7 +45,9 @@ internal fun resolveRegion(driver: SpecDriver, region: Region): Region {
 /**
  * Capture only the bytes inside the element matched by [css] via the SPI's
  * element-direct screenshot. Throws when the selector misses — the caller
- * asked for that specific element, so there is no fallback.
+ * asked for that specific element, so there is no fallback. The miss throws
+ * an engine-generic [IllegalStateException] (not a driver-specific type such
+ * as Selenium's `NoSuchElementException`) so the engine stays driver-agnostic.
  */
 internal fun captureElementScreenshot(driver: SpecDriver, css: String): ByteArray {
     val element = driver.findElement(Selector.Css(css))

@@ -33,6 +33,17 @@ class SeleniumSpecDriverTest {
     }
 
     @Test
+    fun `getDriverInfo omits JAVASCRIPT and DOM_SNAPSHOT for a non-JavascriptExecutor driver`() {
+        // A WebDriver that is not a JavascriptExecutor must not advertise JS
+        // capabilities — the engine then degrades to a plain screenshot rather
+        // than throwing on the first JS call.
+        val info = SeleniumSpecDriver(NonJsStubDriver()).getDriverInfo()
+        assertEquals(false, Feature.JAVASCRIPT in info.features)
+        assertEquals(false, Feature.DOM_SNAPSHOT in info.features)
+        assertTrue(info.features.containsAll(setOf(Feature.RESIZE_VIEWPORT, Feature.ELEMENT_SCREENSHOT)))
+    }
+
+    @Test
     fun `findElement maps Css to By_cssSelector and exposes rect + screenshot`() {
         val el = StubElement(Rectangle(Point(10, 20), Dimension(30, 40)), byteArrayOf(7))
         val driver = SeleniumSpecDriver(SpecStubDriver(mapOf("By.cssSelector: .t" to el)))
@@ -134,6 +145,25 @@ class SeleniumSpecDriverTest {
         override fun getCookieNamed(name: String?): org.openqa.selenium.Cookie = throw NotImplementedError()
         override fun timeouts(): WebDriver.Timeouts = throw NotImplementedError()
         override fun logs(): org.openqa.selenium.logging.Logs = throw NotImplementedError()
+    }
+
+    /** A WebDriver that can screenshot but is NOT a JavascriptExecutor. */
+    private class NonJsStubDriver : WebDriver, TakesScreenshot {
+        @Suppress("UNCHECKED_CAST")
+        override fun <X : Any> getScreenshotAs(target: OutputType<X>): X = ByteArray(0) as X
+        override fun get(url: String) = Unit
+        override fun getCurrentUrl(): String = ""
+        override fun getTitle(): String = ""
+        override fun findElement(by: By): WebElement = throw NoSuchElementException("none")
+        override fun findElements(by: By): List<WebElement> = emptyList()
+        override fun getPageSource(): String = ""
+        override fun close() = Unit
+        override fun quit() = Unit
+        override fun getWindowHandles(): Set<String> = emptySet()
+        override fun getWindowHandle(): String = ""
+        override fun switchTo(): WebDriver.TargetLocator = throw NotImplementedError()
+        override fun navigate(): WebDriver.Navigation = throw NotImplementedError()
+        override fun manage(): WebDriver.Options = throw NotImplementedError()
     }
 
     private class StubElement(private val rect: Rectangle, private val png: ByteArray) : WebElement {

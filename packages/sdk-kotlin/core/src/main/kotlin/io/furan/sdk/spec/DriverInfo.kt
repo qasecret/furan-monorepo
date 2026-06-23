@@ -31,6 +31,13 @@ enum class Feature {
     /** Driver can capture a single element's pixels directly. */
     ELEMENT_SCREENSHOT,
 
-    /** Driver can resolve native (non-DOM) element rects (Appium native). */
+    /**
+     * Driver can resolve native (non-DOM) element rects (Appium native).
+     *
+     * Reserved for Phase 3 — not yet consulted by CaptureEngine. Region
+     * selectors are CSS-only today, so native drivers pass regions through
+     * with their declared numeric geometry; native selector resolution will
+     * gate on this flag once the region model carries native selectors.
+     */
     NATIVE_ELEMENTS,
 }

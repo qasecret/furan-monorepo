@@ -35,12 +35,20 @@ class SeleniumSpecDriver(private val driver: WebDriver) : SpecDriver {
         deviceName = null,
         browserName = "selenium",
         browserVersion = null,
-        features = setOf(
-            Feature.JAVASCRIPT,
-            Feature.DOM_SNAPSHOT,
-            Feature.RESIZE_VIEWPORT,
-            Feature.ELEMENT_SCREENSHOT,
-        ),
+        // Reflect what the wrapped driver can actually do rather than assuming.
+        // A WebDriver that is not a JavascriptExecutor degrades to a plain
+        // screenshot (the engine's no-JS path) instead of throwing on the
+        // first JS call. Every mainstream browser driver is both.
+        features = buildSet {
+            if (driver is JavascriptExecutor) {
+                add(Feature.JAVASCRIPT)
+                add(Feature.DOM_SNAPSHOT)
+            }
+            if (driver is TakesScreenshot) {
+                add(Feature.ELEMENT_SCREENSHOT)
+            }
+            add(Feature.RESIZE_VIEWPORT)
+        },
     )
 
     override fun takeScreenshot(): ByteArray {

@@ -41,6 +41,8 @@ class CaptureEngine(private val driver: SpecDriver) {
         }
 
         val jsCapable = !info.isNative && Feature.JAVASCRIPT in info.features
+        val canSnapshotDom = Feature.DOM_SNAPSHOT in info.features
+        val canElementShot = Feature.ELEMENT_SCREENSHOT in info.features
 
         val pngBytes: ByteArray
         val domHtml: String?
@@ -69,25 +71,42 @@ class CaptureEngine(private val driver: SpecDriver) {
                 options.fully -> withHideFixed(options.hideFixedElements) {
                     captureFullyPage(driver, viewportWidth = viewport.width, viewportHeight = viewport.height)
                 }
-                captureRegion != null && captureSelector != null ->
+                captureRegion != null && captureSelector != null && canElementShot ->
                     captureElementScreenshot(driver, captureSelector)
                 captureRegion != null ->
                     cropPng(captureStableScreenshot(driver, options.matchTimeoutMs), resolveRegion(driver, captureRegion))
                 else -> captureStableScreenshot(driver, options.matchTimeoutMs)
             }
 
+            // DOM html + element-map are gated on DOM_SNAPSHOT. An explicit
+            // caller-supplied DOM/element-map override is always honored.
             domHtml = resolveDomPayload(
                 override = options.domHtml,
-                sendDom = options.sendDom,
+                sendDom = options.sendDom && canSnapshotDom,
                 capture = { captureDom(driver) },
             )
-            elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
+            elementMapJson = options.elementMapJson
+                ?: if (canSnapshotDom) captureElementBboxes(driver) else null
         }
 
-        val ignore = augmentIgnoreRegions(options.ignoreRegions, options.ignoreCaret)
-            .map { resolveRegion(driver, it) }
-        val layout = options.layoutRegions.map { resolveRegion(driver, it) }
-        val content = options.contentRegions.map { resolveRegion(driver, it) }
+        // Selector-anchored regions resolve against the DOM, which only a web
+        // (JS/DOM) context can do; native drivers pass regions through with
+        // their declared numeric geometry. The caret-ignore augmentation is a
+        // CSS :focus selector, so it is likewise web-only. (Phase 3: native
+        // selector resolution will gate on Feature.NATIVE_ELEMENTS.)
+        val ignore: List<Region>
+        val layout: List<Region>
+        val content: List<Region>
+        if (jsCapable) {
+            ignore = augmentIgnoreRegions(options.ignoreRegions, options.ignoreCaret)
+                .map { resolveRegion(driver, it) }
+            layout = options.layoutRegions.map { resolveRegion(driver, it) }
+            content = options.contentRegions.map { resolveRegion(driver, it) }
+        } else {
+            ignore = options.ignoreRegions
+            layout = options.layoutRegions
+            content = options.contentRegions
+        }
 
         return CaptureResult(
             pngBytes = pngBytes,
