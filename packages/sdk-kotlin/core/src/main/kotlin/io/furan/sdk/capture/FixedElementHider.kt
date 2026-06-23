@@ -19,7 +19,7 @@ internal const val FIXED_HIDE_STYLE_ID: String = "__furan_fixed_hide"
  * quote-bearing, brace-bearing, or otherwise hostile selector from
  * breaking out of the JS string literal and executing arbitrary JS.
  */
-fun injectFixedElementHider(driver: SpecDriver, selectors: List<String>) {
+internal fun injectFixedElementHider(driver: SpecDriver, selectors: List<String>) {
     if (selectors.isEmpty()) return
     val joined = selectors.joinToString(",")
     val css = "$joined{display:none !important}"
@@ -41,7 +41,7 @@ fun injectFixedElementHider(driver: SpecDriver, selectors: List<String>) {
  * Safe to call even when no hider was injected (the JS no-ops if the
  * element is missing).
  */
-fun removeFixedElementHider(driver: SpecDriver) {
+internal fun removeFixedElementHider(driver: SpecDriver) {
     driver.executeScript(
         """
         (function(){

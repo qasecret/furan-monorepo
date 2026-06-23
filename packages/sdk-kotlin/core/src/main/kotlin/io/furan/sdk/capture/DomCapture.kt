@@ -6,5 +6,5 @@ import io.furan.sdk.spec.SpecDriver
  * Captures the rendered DOM (`document.documentElement.outerHTML`) — the
  * post-JS-render state the diff engine compares.
  */
-fun captureDom(driver: SpecDriver): String =
+internal fun captureDom(driver: SpecDriver): String =
     (driver.executeScript("return document.documentElement.outerHTML") as? String).orEmpty()

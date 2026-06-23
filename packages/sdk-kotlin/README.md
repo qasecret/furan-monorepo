@@ -14,6 +14,8 @@ Drop-in for any JUnit 5 + Selenium suite. JDK 21+, Kotlin 2.x. Three artifacts, 
 | `io.github.qasecret:furan-junit5`   | JUnit 5 `@FuranTest` annotation + parameter injection | `furan-core` |
 | `io.github.qasecret:furan-core`     | Direct REST/HTTP integration without Selenium         | —            |
 
+All capture logic lives in `furan-core` behind a driver-agnostic `SpecDriver` SPI; `furan-selenium` is the first adapter (`SeleniumSpecDriver`) and `Furan`'s public API is unchanged. New frameworks (Playwright-Java, Appium, etc.) can implement `SpecDriver` and reuse the same capture engine — scroll-and-stitch, stability polling, region resolution, DOM capture — without any Selenium dependency.
+
 ## Install
 
 ```kotlin

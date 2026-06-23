@@ -18,7 +18,7 @@ import kotlinx.coroutines.delay
  * A thrown JS error during scroll propagates so the test sees the failure
  * rather than a baseline that didn't actually exercise lazy loading.
  */
-suspend fun runLazyLoadScroll(driver: SpecDriver, options: LazyLoadOptions) {
+internal suspend fun runLazyLoadScroll(driver: SpecDriver, options: LazyLoadOptions) {
     var scrolled = 0
     while (scrolled < options.maxAmountToScroll) {
         val scrollHeight = (driver.executeScript("return document.documentElement.scrollHeight;") as? Number)?.toInt() ?: 0

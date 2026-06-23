@@ -13,7 +13,7 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.capture.RegionResolver")
  * matches nothing (null element) or fails to read its rect (stale) falls
  * back to the region's declared geometry — Eyes-tolerant behavior.
  */
-fun resolveRegion(driver: SpecDriver, region: Region): Region {
+internal fun resolveRegion(driver: SpecDriver, region: Region): Region {
     val css = region.selector ?: return region
     val element = try {
         driver.findElement(Selector.Css(css))
@@ -47,7 +47,7 @@ fun resolveRegion(driver: SpecDriver, region: Region): Region {
  * element-direct screenshot. Throws when the selector misses — the caller
  * asked for that specific element, so there is no fallback.
  */
-fun captureElementScreenshot(driver: SpecDriver, css: String): ByteArray {
+internal fun captureElementScreenshot(driver: SpecDriver, css: String): ByteArray {
     val element = driver.findElement(Selector.Css(css))
         ?: error("no element matched selector $css for element-direct capture")
     return element.elementScreenshot()

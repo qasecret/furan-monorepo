@@ -119,7 +119,7 @@ internal fun composeTilesIntoPng(
  *  6. Compose tiles via [composeTilesIntoPng].
  *  7. Return PNG bytes.
  */
-suspend fun captureFullyPage(
+internal suspend fun captureFullyPage(
     driver: SpecDriver,
     viewportWidth: Int,
     viewportHeight: Int,
@@ -196,7 +196,7 @@ private val matchTimeoutFullyWarned: AtomicBoolean = AtomicBoolean(false)
  * checkpoint (spec §4.6.3). Returns true if the log was emitted (first call),
  * false otherwise (subsequent calls in the same process).
  */
-fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
+internal fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
     if (!matchTimeoutFullyWarned.compareAndSet(false, true)) return false
     log.info(
         "matchTimeoutMs is ignored when CheckpointOptions.fully = true; " +

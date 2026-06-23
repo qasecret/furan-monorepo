@@ -29,7 +29,7 @@ private const val SAMPLE_INTERVAL_MS = 100L
  * Logged at DEBUG: each sample's index + bytes length. WARN if the
  * budget exhausts without reaching stability.
  */
-suspend fun captureStableScreenshot(
+internal suspend fun captureStableScreenshot(
     driver: SpecDriver,
     timeoutMs: Long,
 ): ByteArray {

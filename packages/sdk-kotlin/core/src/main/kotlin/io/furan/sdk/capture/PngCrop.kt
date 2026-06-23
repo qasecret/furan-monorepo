@@ -20,7 +20,7 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.capture.PngCrop")
  * image (no overlap) or if either dimension clamps to ≤ 0 — both signal a
  * configuration mistake the caller wants to know about.
  */
-fun cropPng(pngBytes: ByteArray, region: Region): ByteArray {
+internal fun cropPng(pngBytes: ByteArray, region: Region): ByteArray {
     val image: BufferedImage = ImageIO.read(ByteArrayInputStream(pngBytes))
         ?: error("could not decode PNG bytes (length=${pngBytes.size})")
     val cropped = image.crop(region)

@@ -11,7 +11,7 @@ package io.furan.sdk.capture
  *      `runCatching { … }.getOrNull()` semantics — DOM capture failing
  *      must never block the screenshot upload)
  */
-inline fun resolveDomPayload(
+internal inline fun resolveDomPayload(
     override: String?,
     sendDom: Boolean,
     capture: () -> String?,
