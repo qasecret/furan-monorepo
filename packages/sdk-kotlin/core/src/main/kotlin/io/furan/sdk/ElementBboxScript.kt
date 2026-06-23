@@ -21,7 +21,7 @@ package io.furan.sdk
  * older consumers reject unknown shapes via a 1-line check.
  */
 const val ELEMENT_BBOX_SCRIPT: String = """
-(function() {
+return (function() {
   var MIN_SIZE = 8;
   var MAX_ELEMENTS = 5000;
 
