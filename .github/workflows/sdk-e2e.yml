@@ -47,6 +47,12 @@ jobs:
         # `test` invocation skips silently — `testClasses` proves the SDK
         # API surface still satisfies the example.
         run: ../../gradlew -p . testClasses --no-daemon
+      - name: Compile Playwright example project against mavenLocal SDK
+        working-directory: packages/sdk-kotlin/examples/sdk-playwright-junit5
+        # Same gate as the Selenium example — PlaywrightExampleTest is gated on
+        # FURAN_API_URL, so `testClasses` proves the furan-playwright API surface
+        # still satisfies the example without a live API or a browser download.
+        run: ../../gradlew -p . testClasses --no-daemon
 
   full-e2e:
     runs-on: ubuntu-latest

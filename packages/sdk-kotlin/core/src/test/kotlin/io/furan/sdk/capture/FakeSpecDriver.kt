@@ -21,7 +21,6 @@ class FakeSpecDriver(
             Feature.RESIZE_VIEWPORT, Feature.ELEMENT_SCREENSHOT,
         ),
     ),
-    private var viewport: Size = Size(1024, 768),
     private val onTakeScreenshot: () -> ByteArray = { ByteArray(0) },
     private val onExecuteScript: (script: String, args: Array<out Any?>) -> Any? = { _, _ -> null },
     private val elements: Map<String, SpecElement> = emptyMap(),
@@ -44,11 +43,8 @@ class FakeSpecDriver(
         return onExecuteScript(script, args)
     }
 
-    override fun getViewportSize(): Size = viewport
-
     override fun setViewportSize(size: Size) {
         setViewportCalls.add(size)
-        viewport = size
     }
 
     override fun findElement(selector: Selector): SpecElement? {

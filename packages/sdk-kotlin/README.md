@@ -26,9 +26,9 @@ All capture logic lives in `furan-core` behind a driver-agnostic `SpecDriver` SP
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-selenium:0.12.0")
+    testImplementation("io.github.qasecret:furan-selenium:3.2.1")
     // Optional — for @FuranTest annotation:
-    testImplementation("io.github.qasecret:furan-junit5:0.12.0")
+    testImplementation("io.github.qasecret:furan-junit5:3.2.1")
 }
 ```
 
@@ -38,7 +38,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-selenium</artifactId>
-    <version>0.12.0</version>
+    <version>3.2.1</version>
     <scope>test</scope>
 </dependency>
 ```
@@ -50,7 +50,7 @@ Maven:
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-playwright:0.12.0")
+    testImplementation("io.github.qasecret:furan-playwright:3.2.1")
     testImplementation("com.microsoft.playwright:playwright:1.49.0")
 }
 ```
@@ -61,7 +61,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-playwright</artifactId>
-    <version>0.12.0</version>
+    <version>3.2.1</version>
     <scope>test</scope>
 </dependency>
 <dependency>

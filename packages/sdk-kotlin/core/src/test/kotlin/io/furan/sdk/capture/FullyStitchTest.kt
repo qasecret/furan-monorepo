@@ -179,6 +179,38 @@ class FullyStitchTest {
         assertEquals(100_000, img.height)
     }
 
+    @Test
+    fun `captureFullyPage scales the canvas to device pixels on a HiDPI page`() = runTest {
+        // CSS doc 500x1000, CSS viewport 500x500 → tiles scroll to css y [0,500].
+        // devicePixelRatio = 2, so each viewport screenshot is 1000x1000 device
+        // px and the composed canvas must be 1000x2000 (docW*dpr x docH*dpr).
+        val scrolledTo = mutableListOf<Int>()
+        val driver = FakeSpecDriver(
+            onExecuteScript = { script, args ->
+                when {
+                    "devicePixelRatio" in script -> 2
+                    "scrollHeight" in script -> 1000
+                    "clientWidth" in script -> 500
+                    "scrollTo" in script -> {
+                        scrolledTo.add(if (args.isNotEmpty()) (args[0] as Number).toInt() else 0); null
+                    }
+                    else -> null
+                }
+            },
+            onTakeScreenshot = {
+                val img = java.awt.image.BufferedImage(1000, 1000, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                val g = img.createGraphics(); g.color = java.awt.Color.BLUE; g.fillRect(0, 0, 1000, 1000); g.dispose()
+                val out = java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(img, "png", out); out.toByteArray()
+            },
+        )
+        val png = captureFullyPage(driver, viewportWidth = 500, viewportHeight = 500)
+        val img = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(png))
+        assertEquals(1000, img.width)   // docWidth(500) * dpr(2)
+        assertEquals(2000, img.height)  // docHeight(1000) * dpr(2)
+        // Scroll offsets remain in CSS pixels (0, 500) plus the restore-to-0.
+        assertEquals(listOf(0, 500, 0), scrolledTo)
+    }
+
     // --- enforceMemoryCap (direct unit tests) ---------------------------
 
     @Test

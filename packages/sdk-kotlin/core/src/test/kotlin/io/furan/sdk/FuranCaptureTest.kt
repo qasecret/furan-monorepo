@@ -40,7 +40,6 @@ class FuranCaptureTest {
         override fun getDriverInfo() = DriverInfo()
         override fun takeScreenshot() = ByteArray(0)
         override fun executeScript(script: String, vararg args: Any?): Any? = null
-        override fun getViewportSize() = Size(0, 0)
         override fun setViewportSize(size: Size) {}
         override fun findElement(selector: Selector): SpecElement? = null
     }

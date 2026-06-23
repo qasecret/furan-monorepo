@@ -5,9 +5,9 @@ import org.junit.jupiter.api.Test
 
 class ScriptBridgeTest {
     @Test
-    fun `wrapScript wraps the body in an arrow fn whose param is named arguments`() {
+    fun `wrapScript runs the body in an inner fn so a top-level return yields a value`() {
         assertEquals(
-            "(arguments) => { return document.title; }",
+            "(a) => { return (function() { return document.title; }).apply(null, a); }",
             wrapScript("return document.title;"),
         )
     }
@@ -15,7 +15,7 @@ class ScriptBridgeTest {
     @Test
     fun `wrapScript preserves arguments-indexed access`() {
         assertEquals(
-            "(arguments) => { window.scrollTo(0, arguments[0]); }",
+            "(a) => { return (function() { window.scrollTo(0, arguments[0]); }).apply(null, a); }",
             wrapScript("window.scrollTo(0, arguments[0]);"),
         )
     }

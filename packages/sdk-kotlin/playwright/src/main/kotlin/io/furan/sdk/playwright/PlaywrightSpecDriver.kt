@@ -13,14 +13,16 @@ import kotlin.math.roundToInt
 
 /**
  * The Playwright-Java implementation of [SpecDriver]. All capture logic lives
- * in the core CaptureEngine; this only adapts the seven primitives.
+ * in the core CaptureEngine; this only adapts the primitives.
  *
  * API notes (Playwright-Java 1.49.0): `viewportSize()`, `boundingBox()`, and
  * `BrowserContext.browser()` can each return null at runtime — no explicit
  * viewport, a detached/invisible element, and a browserless context
- * respectively — so those calls are null-guarded. Screenshot overloads return
- * bare `byte[]` (Kotlin `ByteArray`); no Options wrapper is needed for the
- * default (viewport / element) behaviour.
+ * respectively. A null `viewportSize()` means the context renders at the OS
+ * window size, so RESIZE_VIEWPORT is withheld (the engine then skips the resize
+ * that `page.setViewportSize()` would otherwise force on / fail against it).
+ * Screenshot overloads return bare `byte[]` (Kotlin `ByteArray`); no Options
+ * wrapper is needed for the default (viewport / element) behaviour.
  */
 class PlaywrightSpecDriver(private val page: Page) : SpecDriver {
 
@@ -30,12 +32,16 @@ class PlaywrightSpecDriver(private val page: Page) : SpecDriver {
         browserName = playwrightBrowserLabel(
             page.context().browser()?.browserType()?.name()
         ),
-        features = setOf(
-            Feature.JAVASCRIPT,
-            Feature.DOM_SNAPSHOT,
-            Feature.RESIZE_VIEWPORT,
-            Feature.ELEMENT_SCREENSHOT,
-        ),
+        features = buildSet {
+            add(Feature.JAVASCRIPT)
+            add(Feature.DOM_SNAPSHOT)
+            add(Feature.ELEMENT_SCREENSHOT)
+            // Advertise viewport resize only when the page actually has a
+            // settable viewport. A viewport=null context renders at the OS
+            // window size and page.setViewportSize() would override (or throw
+            // on) it — so the engine must skip the resize and capture natural.
+            if (page.viewportSize() != null) add(Feature.RESIZE_VIEWPORT)
+        },
     )
 
     override fun takeScreenshot(): ByteArray = page.screenshot()
@@ -43,22 +49,12 @@ class PlaywrightSpecDriver(private val page: Page) : SpecDriver {
     override fun executeScript(script: String, vararg args: Any?): Any? =
         page.evaluate(wrapScript(script), args.toList())
 
-    override fun getViewportSize(): Size {
-        // viewportSize() can be null when the page has no explicit viewport.
-        val v = page.viewportSize() ?: return Size(0, 0)
-        return Size(v.width, v.height)
-    }
-
     override fun setViewportSize(size: Size) = page.setViewportSize(size.width, size.height)
 
     override fun findElement(selector: Selector): SpecElement? {
         // querySelector(String) is a default method in Page; returns nullable ElementHandle.
         val handle: ElementHandle? = page.querySelector(playwrightSelector(selector))
         return handle?.let { PlaywrightSpecElement(it) }
-    }
-
-    override fun navigate(url: String) {
-        page.navigate(url)
     }
 }
 
