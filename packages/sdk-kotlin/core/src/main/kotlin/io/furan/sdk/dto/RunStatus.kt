@@ -53,6 +53,9 @@ enum class RunStatus(val wire: String) {
      */
     fun isFailure(): Boolean = this == UNRESOLVED || this == FAILED || this == ABORTED
 
+    /** The one terminal status the SDK treats as success. */
+    fun isPassing(): Boolean = this == PASSED
+
     companion object {
         /**
          * Maps a wire string to a [RunStatus]. Unknown values fall back to

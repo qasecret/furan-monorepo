@@ -254,8 +254,8 @@ class Furan(
      */
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
-        runId = null
         val result = client.completeRun(rid)
+        runId = null
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }
@@ -268,8 +268,8 @@ class Furan(
      */
     fun abort(): Unit = runBlocking {
         val rid = runId ?: return@runBlocking
-        runId = null
         client.abortRun(rid)
+        runId = null
     }
 
     /**
@@ -407,7 +407,3 @@ class Furan(
         }
     }
 }
-
-/** Extension on RunStatus used internally to decide whether to throw FuranDiffException. */
-private fun io.furan.sdk.dto.RunStatus.isPassing(): Boolean =
-    this == io.furan.sdk.dto.RunStatus.PASSED
