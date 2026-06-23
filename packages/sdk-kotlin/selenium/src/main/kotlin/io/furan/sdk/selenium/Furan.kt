@@ -9,11 +9,15 @@ import io.furan.sdk.Regions
 import io.furan.sdk.Viewport
 import io.furan.sdk.capture.captureDom
 import io.furan.sdk.capture.captureElementScreenshot
+import io.furan.sdk.capture.captureFullyPage
 import io.furan.sdk.capture.captureStableScreenshot
 import io.furan.sdk.capture.cropPng
+import io.furan.sdk.capture.injectFixedElementHider
+import io.furan.sdk.capture.removeFixedElementHider
 import io.furan.sdk.capture.resolveDomPayload
 import io.furan.sdk.capture.resolveRegion
 import io.furan.sdk.capture.runLazyLoadScroll
+import io.furan.sdk.capture.warnMatchTimeoutIgnoredInFullyMode
 import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
@@ -187,14 +191,14 @@ class Furan(
             // We honor `fully` over the element-direct shortcut, then crop
             // the stitched image to the resolved bbox.
             options.fully && captureRegion != null -> {
-                val stitched = withHideFixed(driver, options.hideFixedElements) {
-                    captureFullyPage(driver, viewportWidth = vp.width, viewportHeight = vp.height)
+                val stitched = withHideFixed(options.hideFixedElements) {
+                    captureFullyPage(specDriver, viewportWidth = vp.width, viewportHeight = vp.height)
                 }
                 val resolved = resolveRegion(specDriver, captureRegion)
                 cropPng(stitched, resolved)
             }
-            options.fully -> withHideFixed(driver, options.hideFixedElements) {
-                captureFullyPage(driver, viewportWidth = vp.width, viewportHeight = vp.height)
+            options.fully -> withHideFixed(options.hideFixedElements) {
+                captureFullyPage(specDriver, viewportWidth = vp.width, viewportHeight = vp.height)
             }
             captureRegion != null && captureSelector != null ->
                 // Element-direct capture skips the stability poll —
@@ -307,16 +311,15 @@ class Furan(
      * exception during capture still removes the injected style.
      */
     private suspend fun <R> withHideFixed(
-        driver: WebDriver,
         selectors: List<String>,
         block: suspend () -> R,
     ): R {
         if (selectors.isEmpty()) return block()
-        injectFixedElementHider(driver, selectors)
+        injectFixedElementHider(specDriver, selectors)
         try {
             return block()
         } finally {
-            runCatching { removeFixedElementHider(driver) }
+            runCatching { removeFixedElementHider(specDriver) }
         }
     }
 

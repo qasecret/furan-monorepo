@@ -1,18 +1,15 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
+import io.furan.sdk.spec.SpecDriver
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
 import kotlinx.coroutines.delay
-import org.openqa.selenium.JavascriptExecutor
-import org.openqa.selenium.OutputType
-import org.openqa.selenium.TakesScreenshot
-import org.openqa.selenium.WebDriver
 import org.slf4j.LoggerFactory
 
-private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.FullyStitch")
+private val log = LoggerFactory.getLogger("io.furan.sdk.capture.FullyStitch")
 
 /** Soft warn threshold (spec §4.5): 50 megapixels (~1920x26000). */
 internal const val FULLY_WARN_MEGAPIXELS: Long = 50_000_000
@@ -117,30 +114,22 @@ internal fun composeTilesIntoPng(
  *  2. Apply memory cap (truncate effective docHeight if needed).
  *  3. Compute tile y offsets via [tileYs].
  *  4. For each y: `window.scrollTo(0, y)`, settle, capture viewport via
- *     `getScreenshotAs(BYTES)`, collect (y, bytes).
+ *     [SpecDriver.takeScreenshot], collect (y, bytes).
  *  5. Restore scroll to 0.
  *  6. Compose tiles via [composeTilesIntoPng].
  *  7. Return PNG bytes.
- *
- * Throws if the driver does not implement [TakesScreenshot] — a non-
- * screenshot driver cannot be used for fully-page capture.
  */
-internal suspend fun captureFullyPage(
-    driver: WebDriver,
+suspend fun captureFullyPage(
+    driver: SpecDriver,
     viewportWidth: Int,
     viewportHeight: Int,
 ): ByteArray {
-    val taker = driver as? TakesScreenshot
-        ?: error("WebDriver does not implement TakesScreenshot; cannot capture fully")
-    val js = driver as? JavascriptExecutor
-        ?: error("WebDriver does not implement JavascriptExecutor; cannot drive scroll")
-
     val docWidth = (
-        (js.executeScript("return document.documentElement.clientWidth;") as? Number)?.toInt()
+        (driver.executeScript("return document.documentElement.clientWidth;") as? Number)?.toInt()
             ?: viewportWidth
         ).coerceAtLeast(viewportWidth)
     val rawDocHeight = (
-        js.executeScript(
+        driver.executeScript(
             "return Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);",
         ) as? Number
         )?.toInt() ?: viewportHeight
@@ -151,14 +140,12 @@ internal suspend fun captureFullyPage(
     val tiles = mutableListOf<Pair<Int, ByteArray>>()
     try {
         for (y in ys) {
-            js.executeScript("window.scrollTo(0, arguments[0]);", y)
+            driver.executeScript("window.scrollTo(0, arguments[0]);", y)
             delay(FULLY_TILE_SETTLE_MS)
-            tiles.add(y to taker.getScreenshotAs(OutputType.BYTES))
+            tiles.add(y to driver.takeScreenshot())
         }
     } finally {
-        // Restore scroll to 0 even if a tile capture threw — the caller's
-        // post-stitch DOM / element-bbox capture relies on scrollY=0.
-        runCatching { js.executeScript("window.scrollTo(0, arguments[0]);", 0) }
+        runCatching { driver.executeScript("window.scrollTo(0, arguments[0]);", 0) }
     }
     check(tiles.isNotEmpty()) {
         "no tiles captured for fully-page stitch (effDocHeight=$effDocHeight, viewportHeight=$viewportHeight)"
@@ -209,7 +196,7 @@ private val matchTimeoutFullyWarned: AtomicBoolean = AtomicBoolean(false)
  * checkpoint (spec §4.6.3). Returns true if the log was emitted (first call),
  * false otherwise (subsequent calls in the same process).
  */
-internal fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
+fun warnMatchTimeoutIgnoredInFullyMode(): Boolean {
     if (!matchTimeoutFullyWarned.compareAndSet(false, true)) return false
     log.info(
         "matchTimeoutMs is ignored when CheckpointOptions.fully = true; " +
