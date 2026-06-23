@@ -1,11 +1,13 @@
 package io.furan.sdk
 
 /**
- * JavaScript executed inside the user's browser via Selenium's
- * driver.executeScript(...). Walks the live DOM, generates a CSS path for
- * each element, records bbox + visibility-filtered map. Returns a JSON
- * STRING (not an object): Selenium/WebDriver serialization is more reliable
- * across drivers when the result is a primitive string.
+ * JavaScript executed inside the user's browser via the capture driver's
+ * SpecDriver.executeScript(...) (Selenium, Playwright, …). Walks the live DOM,
+ * generates a CSS path for each element, records bbox + visibility-filtered
+ * map. Leads with `return` so it survives both Selenium's executeScript
+ * convention and Playwright's function-wrapping evaluate. Returns a JSON
+ * STRING (not an object): primitive-string results serialize most reliably
+ * across drivers.
  *
  * Filter: width >= 8 && height >= 8 && visibility !== "hidden" &&
  * display !== "none". Drops spacers and hidden modals. Map size on typical
