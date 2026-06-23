@@ -1,4 +1,4 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
 import io.furan.sdk.dto.Region
 import java.awt.image.BufferedImage
@@ -7,7 +7,7 @@ import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
 import org.slf4j.LoggerFactory
 
-private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.PngCrop")
+private val log = LoggerFactory.getLogger("io.furan.sdk.capture.PngCrop")
 
 /**
  * Crop a PNG to the given [region]. Coordinates are in image pixels.
@@ -20,7 +20,7 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.PngCrop")
  * image (no overlap) or if either dimension clamps to ≤ 0 — both signal a
  * configuration mistake the caller wants to know about.
  */
-internal fun cropPng(pngBytes: ByteArray, region: Region): ByteArray {
+fun cropPng(pngBytes: ByteArray, region: Region): ByteArray {
     val image: BufferedImage = ImageIO.read(ByteArrayInputStream(pngBytes))
         ?: error("could not decode PNG bytes (length=${pngBytes.size})")
     val cropped = image.crop(region)

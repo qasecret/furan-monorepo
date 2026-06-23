@@ -7,6 +7,8 @@ import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranDiffException
 import io.furan.sdk.Regions
 import io.furan.sdk.Viewport
+import io.furan.sdk.capture.captureStableScreenshot
+import io.furan.sdk.capture.cropPng
 import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
@@ -65,6 +67,7 @@ class Furan(
     private val driver: WebDriver,
 ) {
     private val client = FuranClient(config, adapter = "selenium")
+    private val specDriver = SeleniumSpecDriver(driver)
     private val ensureBuildMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
@@ -196,9 +199,9 @@ class Furan(
                 captureElementScreenshot(driver, captureSelector)
             captureRegion != null -> {
                 val resolved = resolveRegion(driver, captureRegion)
-                cropPng(captureStableScreenshot(driver, options.matchTimeoutMs), resolved)
+                cropPng(captureStableScreenshot(specDriver, options.matchTimeoutMs), resolved)
             }
-            else -> captureStableScreenshot(driver, options.matchTimeoutMs)
+            else -> captureStableScreenshot(specDriver, options.matchTimeoutMs)
         }
         // Tier 1.2: resolve any selector-anchored mask regions to numeric
         // coords against the live DOM before sending. Selector-less regions

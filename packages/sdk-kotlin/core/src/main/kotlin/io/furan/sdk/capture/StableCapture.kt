@@ -1,10 +1,10 @@
-package io.furan.sdk.selenium
+package io.furan.sdk.capture
 
+import io.furan.sdk.spec.SpecDriver
 import kotlinx.coroutines.delay
-import org.openqa.selenium.WebDriver
 import org.slf4j.LoggerFactory
 
-private val log = LoggerFactory.getLogger("io.furan.sdk.selenium.StableCapture")
+private val log = LoggerFactory.getLogger("io.furan.sdk.capture.StableCapture")
 
 /** How often to re-sample while waiting for stability. Small enough to detect
  * sub-second transitions, large enough that the polling cost stays bounded.
@@ -29,8 +29,8 @@ private const val SAMPLE_INTERVAL_MS = 100L
  * Logged at DEBUG: each sample's index + bytes length. WARN if the
  * budget exhausts without reaching stability.
  */
-internal suspend fun captureStableScreenshot(
-    driver: WebDriver,
+suspend fun captureStableScreenshot(
+    driver: SpecDriver,
     timeoutMs: Long,
 ): ByteArray {
     val initial = captureScreenshot(driver)
