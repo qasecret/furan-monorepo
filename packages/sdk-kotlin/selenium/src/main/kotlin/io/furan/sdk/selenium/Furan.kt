@@ -1,37 +1,21 @@
 package io.furan.sdk.selenium
 
-import io.furan.sdk.ELEMENT_BBOX_SCRIPT
 import io.furan.sdk.FailOnDiff
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranDiffException
-import io.furan.sdk.Regions
 import io.furan.sdk.Viewport
-import io.furan.sdk.capture.captureDom
-import io.furan.sdk.capture.captureElementScreenshot
-import io.furan.sdk.capture.captureFullyPage
-import io.furan.sdk.capture.captureStableScreenshot
-import io.furan.sdk.capture.cropPng
-import io.furan.sdk.capture.injectFixedElementHider
-import io.furan.sdk.capture.removeFixedElementHider
-import io.furan.sdk.capture.resolveDomPayload
-import io.furan.sdk.capture.resolveRegion
-import io.furan.sdk.capture.runLazyLoadScroll
-import io.furan.sdk.capture.warnMatchTimeoutIgnoredInFullyMode
+import io.furan.sdk.capture.CaptureEngine
 import io.furan.sdk.dto.CheckpointOptions
 import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
-import io.furan.sdk.dto.Region
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.openqa.selenium.Dimension
-import org.openqa.selenium.JavascriptExecutor
 import org.openqa.selenium.WebDriver
-import org.slf4j.LoggerFactory
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -77,6 +61,7 @@ class Furan(
 ) {
     private val client = FuranClient(config, adapter = "selenium")
     private val specDriver = SeleniumSpecDriver(driver)
+    private val captureEngine = CaptureEngine(specDriver)
     private val ensureBuildMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
@@ -155,100 +140,19 @@ class Furan(
         viewport: Viewport?,
     ): CheckpointSubmission {
         val vp = viewport ?: config.viewports.first()
-        driver.manage().window().size = Dimension(vp.width, vp.height)
-        // Tier 1.3: pre-capture hooks. JS first (deterministic DOM
-        // mutation) → wait (let the change settle) → screenshot. A
-        // thrown JS error propagates so the test sees the failure rather
-        // than a degraded baseline. A non-JS driver silently skips the
-        // hook (would only happen with a non-browser stub).
-        options.beforeCaptureScreenshot?.let { js ->
-            (driver as? JavascriptExecutor)?.executeScript(js)
-        }
-        // Tier 2.1: lazy-load scroll loop. Runs AFTER the JS hook (so
-        // user-injected DOM mutations land first) and BEFORE the final
-        // wait (so any animation that the last scroll triggered gets
-        // the settle budget). Restores scroll position to top before
-        // returning so the screenshot frames the page header.
-        options.lazyLoad?.let { lazyLoad ->
-            runLazyLoadScroll(specDriver, lazyLoad)
-        }
-        if (options.waitBeforeCaptureMs > 0) {
-            kotlinx.coroutines.delay(options.waitBeforeCaptureMs)
-        }
-        // ADR-038 / Tier 1.2: region with selector → element-direct capture
-        // (bypasses viewport + crop entirely; faster and exact). region with
-        // only numeric coords → viewport capture + cropPng. region null →
-        // full viewport upload.
-        val captureRegion = options.region
-        val captureSelector = captureRegion?.selector
-        if (options.fully && options.matchTimeoutMs > 0) {
-            warnMatchTimeoutIgnoredInFullyMode()
-        }
-        val pngBytes = when {
-            // Element-direct capture path is element-scoped, not full-page;
-            // a selector-anchored region with fully=true still means
-            // "stitch the full page" — the user wants the whole document.
-            // We honor `fully` over the element-direct shortcut, then crop
-            // the stitched image to the resolved bbox.
-            options.fully && captureRegion != null -> {
-                val stitched = withHideFixed(options.hideFixedElements) {
-                    captureFullyPage(specDriver, viewportWidth = vp.width, viewportHeight = vp.height)
-                }
-                val resolved = resolveRegion(specDriver, captureRegion)
-                cropPng(stitched, resolved)
-            }
-            options.fully -> withHideFixed(options.hideFixedElements) {
-                captureFullyPage(specDriver, viewportWidth = vp.width, viewportHeight = vp.height)
-            }
-            captureRegion != null && captureSelector != null ->
-                // Element-direct capture skips the stability poll —
-                // Selenium's element screenshot is a single operation
-                // and the per-sample cost isn't justified. Use
-                // `waitBeforeCaptureMs` to stabilize before this path.
-                captureElementScreenshot(specDriver, captureSelector)
-            captureRegion != null -> {
-                val resolved = resolveRegion(specDriver, captureRegion)
-                cropPng(captureStableScreenshot(specDriver, options.matchTimeoutMs), resolved)
-            }
-            else -> captureStableScreenshot(specDriver, options.matchTimeoutMs)
-        }
-        // Tier 1.2: resolve any selector-anchored mask regions to numeric
-        // coords against the live DOM before sending. Selector-less regions
-        // pass through unchanged.
-        //
-        // Tier 2.4: when ignoreCaret = true, augmentIgnoreRegions appends
-        // a selector-anchored ignore for the focused text input so a
-        // blinking caret doesn't flag as a diff.
-        val ignore = augmentIgnoreRegions(options.ignoreRegions, options.ignoreCaret)
-            .map { resolveRegion(specDriver, it) }
-        val layout = options.layoutRegions.map { resolveRegion(specDriver, it) }
-        val content = options.contentRegions.map { resolveRegion(specDriver, it) }
-        // Tier 2.2: `sendDom = false` skips DOM auto-capture entirely.
-        // See [resolveDomPayload] for precedence rules.
-        val domHtml = resolveDomPayload(
-            override = options.domHtml,
-            sendDom = options.sendDom,
-            capture = { captureDom(specDriver) },
-        )
-        val elementMapJson = options.elementMapJson ?: captureElementBboxes(driver)
+        val capture = captureEngine.capture(name, options, vp)
         return client.createScreenshot(
             runId = rid,
             name = name,
-            viewport = "${vp.width}x${vp.height}",
-            browser = "selenium",
-            os = null,
-            device = null,
+            viewport = capture.viewport,
+            browser = capture.browser ?: "selenium",
+            os = capture.os,
+            device = capture.device,
             matchLevel = options.matchLevel,
-            regions = Regions(
-                ignore = ignore,
-                layout = layout,
-                floating = options.floatingRegions,
-                content = content,
-                accessibility = options.accessibilityRegions,
-            ),
-            pngBytes = pngBytes,
-            domHtml = domHtml,
-            elementMapJson = elementMapJson,
+            regions = capture.regions,
+            pngBytes = capture.pngBytes,
+            domHtml = capture.domHtml,
+            elementMapJson = capture.elementMapJson,
             ignoreDisplacements = options.ignoreDisplacements,
             accessibilityLevel = options.accessibilitySettings?.level?.wire,
             accessibilityVersion = options.accessibilitySettings?.guidelinesVersion?.wire,
@@ -305,47 +209,7 @@ class Furan(
         return buildId!!
     }
 
-    /**
-     * Inject the hide-fixed-elements stylesheet (if any), run [block],
-     * then restore. Wraps the stitch loop in try/finally so a thrown
-     * exception during capture still removes the injected style.
-     */
-    private suspend fun <R> withHideFixed(
-        selectors: List<String>,
-        block: suspend () -> R,
-    ): R {
-        if (selectors.isEmpty()) return block()
-        injectFixedElementHider(specDriver, selectors)
-        try {
-            return block()
-        } finally {
-            runCatching { removeFixedElementHider(specDriver) }
-        }
-    }
-
     companion object {
-        private val log = LoggerFactory.getLogger(Furan::class.java)
-        private const val MAX_ELEMENT_MAP_BYTES = 1_000_000
-
-        /**
-         * Tier 2.4: selector-anchored ignore region auto-appended when
-         * `CheckpointOptions.ignoreCaret = true`. Covers the three
-         * places a blinking caret typically lives.
-         */
-        internal val CARET_FOCUS_REGION: Region =
-            Region.bySelector("input:focus, textarea:focus, [contenteditable]:focus")
-
-        /**
-         * Tier 2.4: append the focused-input ignore region when
-         * [ignoreCaret] is set. Pure function — exposed for unit tests
-         * so the augmentation logic can be exercised without a live
-         * driver.
-         */
-        internal fun augmentIgnoreRegions(
-            ignoreRegions: List<Region>,
-            ignoreCaret: Boolean,
-        ): List<Region> = if (ignoreCaret) ignoreRegions + CARET_FOCUS_REGION else ignoreRegions
-
         /**
          * Convenience factory: opens a run, runs [block], closes on success,
          * aborts on exception. Returns the block's result.
@@ -388,33 +252,5 @@ class Furan(
          */
         @JvmStatic
         fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
-
-        /**
-         * Best-effort: drops the map silently on any failure (non-JS driver,
-         * thrown JS, oversized payload). Never blocks the screenshot upload.
-         */
-        internal fun captureElementBboxes(driver: WebDriver): String? = try {
-            val js = driver as? JavascriptExecutor
-            if (js == null) {
-                null
-            } else {
-                val raw = js.executeScript(ELEMENT_BBOX_SCRIPT) as? String
-                when {
-                    raw == null -> null
-                    raw.length > MAX_ELEMENT_MAP_BYTES -> {
-                        log.warn(
-                            "Element map {} bytes exceeds {}; dropping",
-                            raw.length,
-                            MAX_ELEMENT_MAP_BYTES,
-                        )
-                        null
-                    }
-                    else -> raw
-                }
-            }
-        } catch (e: Exception) {
-            log.warn("Element bbox capture failed; continuing without it", e)
-            null
-        }
     }
 }
