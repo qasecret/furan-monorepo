@@ -81,21 +81,6 @@ class SeleniumSpecDriverTest {
         assertEquals(Dimension(1280, 720), stub.window.lastSize)
     }
 
-    @Test
-    fun `getViewportSize reads manage window size`() {
-        val stub = SpecStubDriver(emptyMap(), windowSize = Dimension(1024, 768))
-        val driver = SeleniumSpecDriver(stub)
-        assertEquals(Size(1024, 768), driver.getViewportSize())
-    }
-
-    @Test
-    fun `navigate delegates get to the driver`() {
-        val stub = SpecStubDriver(emptyMap())
-        val driver = SeleniumSpecDriver(stub)
-        driver.navigate("https://example.test")
-        assertEquals("https://example.test", stub.navigatedTo)
-    }
-
     private class SpecStubDriver(
         private val elements: Map<String, WebElement>,
         private val screenshot: ByteArray = ByteArray(0),

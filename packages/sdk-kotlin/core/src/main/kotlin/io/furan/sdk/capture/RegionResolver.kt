@@ -30,12 +30,26 @@ internal fun resolveRegion(driver: SpecDriver, region: Region): Region {
     }
     return try {
         val rect = element.boundingRect()
-        region.copy(
-            x = rect.x.toDouble(),
-            y = rect.y.toDouble(),
-            width = rect.width.toDouble(),
-            height = rect.height.toDouble(),
-        )
+        if (rect.width <= 0 || rect.height <= 0) {
+            // A matched-but-unrendered element (display:none, detached, or
+            // otherwise zero-area) reports a degenerate rect. Treat it like a
+            // miss and keep the caller's declared geometry rather than
+            // collapsing the region to 0x0 — preserves the Eyes-tolerant
+            // fallback and avoids a zero-area crop downstream (PngCrop rejects
+            // width/height <= 0).
+            log.warn(
+                "selector {} matched an unrendered element (rect {}x{}); using fallback geometry ({},{},{}x{})",
+                css, rect.width, rect.height, region.x, region.y, region.width, region.height,
+            )
+            region
+        } else {
+            region.copy(
+                x = rect.x.toDouble(),
+                y = rect.y.toDouble(),
+                width = rect.width.toDouble(),
+                height = rect.height.toDouble(),
+            )
+        }
     } catch (e: Exception) {
         log.warn("selector {} resolution failed ({}); using fallback geometry", css, e.message)
         region

@@ -15,22 +15,24 @@ interface SpecDriver {
     fun takeScreenshot(): ByteArray
 
     /**
-     * Evaluate [script], returning a JSON-compatible value
-     * (String/Long/Double/Boolean/List/Map/null). Only called when
-     * [DriverInfo.features] contains [Feature.JAVASCRIPT].
+     * Evaluate [script] and return a JSON-compatible value (String / number /
+     * Boolean / List / Map / null). Only called when [DriverInfo.features]
+     * contains [Feature.JAVASCRIPT].
+     *
+     * Engine scripts use the JS-executor (Selenium) dialect: the body may use a
+     * top-level `return` to yield a value and `arguments[0..n]` to read the
+     * positional [args]. An adapter whose native eval does not match that shape
+     * (e.g. Playwright's function-wrapping `page.evaluate`) MUST translate it —
+     * see furan-playwright's `wrapScript`. Numbers may arrive as Long (Selenium)
+     * or Integer/Double (Playwright); read them as [Number].
      */
     fun executeScript(script: String, vararg args: Any?): Any?
-
-    fun getViewportSize(): Size
 
     /** Only called when [DriverInfo.features] contains [Feature.RESIZE_VIEWPORT]. */
     fun setViewportSize(size: Size)
 
     /** Locate one element, or null when the selector matches nothing. */
     fun findElement(selector: Selector): SpecElement?
-
-    /** Navigate the driver. Default no-op for drivers that can't (raw/native). */
-    fun navigate(url: String) {}
 }
 
 /** A located element: its current rect, and its pixels (element-direct capture). */

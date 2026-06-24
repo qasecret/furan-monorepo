@@ -63,4 +63,20 @@ class RegionResolverTest {
         assertEquals(3.0, resolved.width)
         assertEquals(4.0, resolved.height)
     }
+
+    @Test
+    fun `selector matching an unrendered (zero-area) element falls back to declared geometry`() {
+        // A display:none / detached element is found but reports a 0x0 rect
+        // (e.g. Playwright's boundingBox()-null sentinel Rect(0,0,0,0)).
+        // resolveRegion must keep the caller's declared geometry rather than
+        // collapsing the region to 0x0 (which would drop the ignore region and
+        // crash a fully+selector crop in PngCrop).
+        val driver = FakeSpecDriver(elements = mapOf(".hidden" to FakeSpecElement(Rect(0, 0, 0, 0))))
+        val r = Region.bySelector(css = ".hidden", fallbackX = 11.0, fallbackY = 22.0, fallbackWidth = 33.0, fallbackHeight = 44.0)
+        val resolved = resolveRegion(driver, r)
+        assertEquals(11.0, resolved.x)
+        assertEquals(22.0, resolved.y)
+        assertEquals(33.0, resolved.width)
+        assertEquals(44.0, resolved.height)
+    }
 }

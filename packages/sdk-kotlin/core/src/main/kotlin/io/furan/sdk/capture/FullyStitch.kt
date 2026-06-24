@@ -6,6 +6,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
 
@@ -136,13 +137,23 @@ internal suspend fun captureFullyPage(
 
     val effDocHeight = enforceMemoryCap(docWidth, rawDocHeight)
 
+    // The document is measured in CSS pixels, but takeScreenshot() returns
+    // device pixels (devicePixelRatio CSS px per device px — 2 on a retina /
+    // HiDPI or emulated context). Compose the canvas and place tiles in device
+    // pixels so the stitched image matches the tile resolution; without this a
+    // dpr>1 page yields tiles larger than the canvas (overflow / corrupt stitch).
+    val dpr = (driver.executeScript("return window.devicePixelRatio;") as? Number)
+        ?.toDouble()?.takeIf { it > 0 } ?: 1.0
+
+    // Scroll offsets stay in CSS pixels (window.scrollTo is CSS-pixel based);
+    // only the canvas size and tile placement scale to device pixels.
     val ys = tileYs(docHeight = effDocHeight, viewportHeight = viewportHeight)
     val tiles = mutableListOf<Pair<Int, ByteArray>>()
     try {
         for (y in ys) {
             driver.executeScript("window.scrollTo(0, arguments[0]);", y)
             delay(FULLY_TILE_SETTLE_MS)
-            tiles.add(y to driver.takeScreenshot())
+            tiles.add((y * dpr).roundToInt() to driver.takeScreenshot())
         }
     } finally {
         runCatching { driver.executeScript("window.scrollTo(0, arguments[0]);", 0) }
@@ -150,7 +161,11 @@ internal suspend fun captureFullyPage(
     check(tiles.isNotEmpty()) {
         "no tiles captured for fully-page stitch (effDocHeight=$effDocHeight, viewportHeight=$viewportHeight)"
     }
-    return composeTilesIntoPng(tiles = tiles, width = docWidth, height = effDocHeight)
+    return composeTilesIntoPng(
+        tiles = tiles,
+        width = (docWidth * dpr).roundToInt(),
+        height = (effDocHeight * dpr).roundToInt(),
+    )
 }
 
 /**

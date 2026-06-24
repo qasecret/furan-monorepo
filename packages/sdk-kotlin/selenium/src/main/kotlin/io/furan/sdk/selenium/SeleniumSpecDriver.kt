@@ -63,11 +63,6 @@ class SeleniumSpecDriver(private val driver: WebDriver) : SpecDriver {
         return executor.executeScript(script, *args)
     }
 
-    override fun getViewportSize(): Size {
-        val d = driver.manage().window().size
-        return Size(d.width, d.height)
-    }
-
     override fun setViewportSize(size: Size) {
         driver.manage().window().size = Dimension(size.width, size.height)
     }
@@ -84,10 +79,6 @@ class SeleniumSpecDriver(private val driver: WebDriver) : SpecDriver {
         } catch (e: NoSuchElementException) {
             null
         }
-    }
-
-    override fun navigate(url: String) {
-        driver.get(url)
     }
 }
 
