@@ -27,9 +27,9 @@ All capture logic lives in `furan-core` behind a driver-agnostic `SpecDriver` SP
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-selenium:3.2.1")
+    testImplementation("io.github.qasecret:furan-selenium:3.3.0")
     // Optional — for @FuranTest annotation:
-    testImplementation("io.github.qasecret:furan-junit5:3.2.1")
+    testImplementation("io.github.qasecret:furan-junit5:3.3.0")
 }
 ```
 
@@ -39,7 +39,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-selenium</artifactId>
-    <version>3.2.1</version>
+    <version>3.3.0</version>
     <scope>test</scope>
 </dependency>
 ```
@@ -51,7 +51,7 @@ Maven:
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-playwright:3.2.1")
+    testImplementation("io.github.qasecret:furan-playwright:3.3.0")
     testImplementation("com.microsoft.playwright:playwright:1.49.0")
 }
 ```
@@ -62,7 +62,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-playwright</artifactId>
-    <version>3.2.1</version>
+    <version>3.3.0</version>
     <scope>test</scope>
 </dependency>
 <dependency>
@@ -80,7 +80,7 @@ Maven:
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-appium:3.2.1")
+    testImplementation("io.github.qasecret:furan-appium:3.3.0")
     testImplementation("io.appium:java-client:9.5.0")
 }
 ```
