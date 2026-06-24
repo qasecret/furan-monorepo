@@ -9,8 +9,8 @@ import java.net.URI
 
 /**
  * Smoke example for the Furan Appium adapter — a native full-screen snapshot
- * via the `snapshotAndAwait` path that blocks until the diff worker produces a
- * terminal status.
+ * (fire-and-forget; the diff resolves asynchronously, so it passes on a first
+ * run before a baseline exists).
  *
  * Skipped unless `FURAN_API_URL` is set (the SDK needs a running apps/api + a
  * PAT), AND it requires a reachable Appium server + device/emulator running the
@@ -45,7 +45,11 @@ class AppiumExampleTest {
         val driver = AppiumDriver(URI(serverUrl).toURL(), caps)
         try {
             val result = FuranAppium.use(FuranConfig.fromEnv(), driver, "appium smoke") { furan ->
-                furan.snapshotAndAwait("home")
+                // Fire-and-forget: returns the created checkpoint submission
+                // immediately (the diff resolves asynchronously), so it works
+                // even on a first run before a baseline exists. Use
+                // snapshotAndAwait(...) to block on the terminal status instead.
+                furan.snapshot("home")
             }
             assertTrue(result.checkpointId.isNotBlank())
         } finally {

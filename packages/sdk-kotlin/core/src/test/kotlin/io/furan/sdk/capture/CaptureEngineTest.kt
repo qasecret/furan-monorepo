@@ -68,6 +68,18 @@ class CaptureEngineTest {
     }
 
     @Test
+    fun `native path labels the viewport with the screenshot's real dimensions`() = runTest {
+        // Mobile drivers aren't resized: the engine reports the device's actual
+        // screen size (decoded from the screenshot), not the config viewport.
+        val driver = FakeSpecDriver(
+            driverInfo = DriverInfo(isNative = true, browserName = "appium-android"),
+            onTakeScreenshot = { solidPng(360, 640) },
+        )
+        val result = CaptureEngine(driver).capture("n", CheckpointOptions(), vp)
+        assertEquals("360x640", result.viewport)  // not vp's 800x600
+    }
+
+    @Test
     fun `viewport is not resized when the driver lacks RESIZE_VIEWPORT`() = runTest {
         val driver = FakeSpecDriver(
             driverInfo = DriverInfo(browserName = "fixed", features = setOf(Feature.JAVASCRIPT, Feature.DOM_SNAPSHOT)),

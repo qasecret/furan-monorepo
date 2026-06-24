@@ -12,6 +12,13 @@ val sdkVersion: String = file("../../version.txt").readText().trim()
 dependencies {
     testImplementation("io.github.qasecret:furan-appium:$sdkVersion")
     testImplementation("io.appium:java-client:9.5.0")
+    // Pin Selenium to the version java-client 9.5.0 was built against. The
+    // transitive range otherwise resolves to a newer Selenium that removed
+    // org.openqa.selenium.html5.LocationContext — a supertype AndroidDriver /
+    // IOSDriver reference — so a manual run with those subclasses stays sound.
+    testImplementation("org.seleniumhq.selenium:selenium-java") {
+        version { strictly("4.34.0") }
+    }
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

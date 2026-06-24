@@ -57,6 +57,32 @@ class AppiumSpecDriverTest {
     }
 
     @Test
+    fun `getDriverInfo reads the appium-prefixed deviceName when the unprefixed cap is absent`() {
+        val caps = mock<Capabilities>()
+        whenever(caps.getCapability("platformName")).thenReturn("Android")
+        whenever(caps.getCapability("deviceName")).thenReturn(null)
+        whenever(caps.getCapability("appium:deviceName")).thenReturn("Pixel_7")
+        val driver = mock<AppiumDriver>()
+        whenever(driver.capabilities).thenReturn(caps)
+        assertEquals("Pixel_7", AppiumSpecDriver(driver).getDriverInfo().deviceName)
+    }
+
+    @Test
+    fun `getDriverInfo treats a blank deviceName as absent and falls back to udid`() {
+        val info = AppiumSpecDriver(driverWithCaps(platform = "Android", device = "", udid = "emulator-5554")).getDriverInfo()
+        assertEquals("emulator-5554", info.deviceName)
+    }
+
+    @Test
+    fun `getDriverInfo lowercases a Platform-enum platformName`() {
+        val caps = mock<Capabilities>()
+        whenever(caps.getCapability("platformName")).thenReturn(org.openqa.selenium.Platform.ANDROID)
+        val driver = mock<AppiumDriver>()
+        whenever(driver.capabilities).thenReturn(caps)
+        assertEquals("appium-android", AppiumSpecDriver(driver).getDriverInfo().browserName)
+    }
+
+    @Test
     fun `takeScreenshot delegates to getScreenshotAs BYTES`() {
         val driver = mock<AppiumDriver>()
         whenever(driver.getScreenshotAs(OutputType.BYTES)).thenReturn(byteArrayOf(1, 2, 3))

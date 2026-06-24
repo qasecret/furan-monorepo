@@ -24,21 +24,33 @@ import org.openqa.selenium.WebElement
  * element → bbox region resolution (`Feature.NATIVE_ELEMENTS`) are deliberate
  * follow-ups; see the Phase 3 spec.
  */
-class AppiumSpecDriver(private val driver: AppiumDriver) : SpecDriver {
+class AppiumSpecDriver(
+    // Bound to AppiumDriver — the framework's main driver type and the base of
+    // AndroidDriver / IOSDriver — rather than a narrower Selenium interface: it
+    // is the type users already hold, and it keeps "this is an Appium session"
+    // explicit (a bare WebDriver would also accept a desktop browser).
+    private val driver: AppiumDriver,
+) : SpecDriver {
 
     override fun getDriverInfo(): DriverInfo {
         val caps = driver.capabilities
-        val platform = caps.getCapability("platformName")?.toString()
-        val device = (caps.getCapability("deviceName") ?: caps.getCapability("udid"))?.toString()
+        // Appium capabilities are usually vendor-prefixed (`appium:deviceName`);
+        // some are echoed back unprefixed. Read both, and treat blank as absent.
+        fun cap(name: String): String? =
+            (caps.getCapability(name) ?: caps.getCapability("appium:$name"))
+                ?.toString()?.takeIf { it.isNotBlank() }
+
+        val platform = cap("platformName")
         return DriverInfo(
             isNative = true,
             isMobile = true,
             // Env tuple (ADR-054): the platform rides in the browser label
             // (mirrors playwright-<type>) so Android and iOS keep separate
             // baselines; device is populated; os is left null like the web
-            // adapters (no OS-version baseline fragmentation in the MVP).
+            // adapters. A genuinely absent platformName collapses to
+            // "appium-unknown" — a misconfigured-session edge, not the norm.
             browserName = "appium-" + (platform?.lowercase() ?: "unknown"),
-            deviceName = device,
+            deviceName = cap("deviceName") ?: cap("udid"),
             features = emptySet(),
         )
     }
@@ -48,7 +60,7 @@ class AppiumSpecDriver(private val driver: AppiumDriver) : SpecDriver {
     override fun executeScript(script: String, vararg args: Any?): Any? =
         throw UnsupportedOperationException(
             "Appium native context has no engine JavaScript; the CaptureEngine does not call " +
-                "executeScript when DriverInfo.isNative. Webview JS is a follow-up.",
+                "executeScript when DriverInfo.isNative (locked by CaptureEngineTest). Webview JS is a follow-up.",
         )
 
     override fun setViewportSize(size: Size): Unit =
@@ -57,6 +69,10 @@ class AppiumSpecDriver(private val driver: AppiumDriver) : SpecDriver {
                 "never calls setViewportSize on the native Appium adapter",
         )
 
+    // SPI-complete and unit-tested, but NOT exercised by the native capture path
+    // today: the engine resolves selector regions only on the JS/web path
+    // (verified in CaptureEngineTest). Reserved for the Feature.NATIVE_ELEMENTS
+    // follow-up that will resolve native selectors to bboxes.
     override fun findElement(selector: Selector): SpecElement? =
         try {
             AppiumSpecElement(driver.findElement(appiumBy(selector)))
@@ -75,9 +91,15 @@ internal fun appiumBy(selector: Selector): By = when (selector) {
 
 private class AppiumSpecElement(private val element: WebElement) : SpecElement {
     override fun boundingRect(): Rect {
+        // element.rect is in the driver's logical units. When native selector
+        // resolution lands (Feature.NATIVE_ELEMENTS), a HiDPI / Retina device
+        // returns screenshots in device pixels, so the resolver must scale this
+        // rect by the screen/screenshot ratio before cropping.
         val r = element.rect
         return Rect(r.x, r.y, r.width, r.height)
     }
 
-    override fun elementScreenshot(): ByteArray = element.getScreenshotAs(OutputType.BYTES)
+    override fun elementScreenshot(): ByteArray =
+        element.getScreenshotAs(OutputType.BYTES)
+            ?: error("element.getScreenshotAs returned null")
 }

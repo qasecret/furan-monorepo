@@ -462,11 +462,12 @@ See [`furan-design/specs/2026-05-25-sdk-config-discovery-design-v2.md`](../../fu
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | [`examples/sdk-selenium-junit5`](examples/sdk-selenium-junit5/)                    | Standalone Gradle project — copy-paste-runnable JUnit 5 + Selenium + ChromeDriver.   |
 | [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/)                | Standalone Gradle project — copy-paste-runnable JUnit 5 + Playwright-Java. Gated by `FURAN_API_URL`. |
+| [`examples/sdk-appium-junit5`](examples/sdk-appium-junit5/)                        | Standalone Gradle project — JUnit 5 + Appium (native mobile). Gated by `FURAN_API_URL`; needs an Appium server + device. |
 | [`docs/integrations/github-actions.md`](../../docs/integrations/github-actions.md) | GitHub Actions workflow with PR comments + branch baselines.                         |
 
 ## Versioning
 
-The SDK is published from `main` via [release-please](https://github.com/googleapis/release-please) on Conventional Commits. The current `version.txt` is the single source of truth — `core`, `selenium`, and `junit5` always share the same version.
+The SDK is published from `main` via [release-please](https://github.com/googleapis/release-please) on Conventional Commits. The current `version.txt` is the single source of truth — all artifacts (`core`, `selenium`, `playwright`, `appium`, `junit5`) always share the same version.
 
 | Range | Status  | Compatibility                                                                                   |
 | ----- | ------- | ----------------------------------------------------------------------------------------------- |
