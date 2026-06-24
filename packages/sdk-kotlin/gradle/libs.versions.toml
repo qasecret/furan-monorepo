@@ -7,6 +7,7 @@ junit = "5.11.3"
 slf4j = "2.0.16"
 selenium = "4.27.0"
 playwright = "1.49.0"
+appium-java-client = "9.5.0"
 mockito-kotlin = "5.4.0"
 snakeyaml = "2.3"
 vanniktech-publish = "0.30.0"
@@ -27,6 +28,7 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "jun
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
 selenium-java = { module = "org.seleniumhq.selenium:selenium-java", version.ref = "selenium" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
+appium-java-client = { module = "io.appium:java-client", version.ref = "appium-java-client" }
 mockito-kotlin = { module = "org.mockito.kotlin:mockito-kotlin", version.ref = "mockito-kotlin" }
 
 [plugins]

@@ -8,4 +8,4 @@ dependencyResolutionManagement {
     // Version catalog auto-imported from gradle/libs.versions.toml
 }
 
-include("core", "selenium", "junit5", "playwright")
+include("core", "selenium", "junit5", "playwright", "appium")

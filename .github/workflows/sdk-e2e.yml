@@ -39,7 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build + publish SDK to mavenLocal
         working-directory: packages/sdk-kotlin
-        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal --no-daemon
+        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal :appium:publishToMavenLocal --no-daemon
       - name: Compile example project against mavenLocal SDK
         working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
         # `testClasses` compiles the test sources without executing them.
@@ -52,6 +52,12 @@ jobs:
         # Same gate as the Selenium example — PlaywrightExampleTest is gated on
         # FURAN_API_URL, so `testClasses` proves the furan-playwright API surface
         # still satisfies the example without a live API or a browser download.
+        run: ../../gradlew -p . testClasses --no-daemon
+      - name: Compile Appium example project against mavenLocal SDK
+        working-directory: packages/sdk-kotlin/examples/sdk-appium-junit5
+        # AppiumExampleTest is gated on FURAN_API_URL and needs an emulator to
+        # run, so `testClasses` (compile-only) proves the furan-appium API
+        # surface still satisfies the example without a device.
         run: ../../gradlew -p . testClasses --no-daemon
 
   full-e2e:
@@ -217,7 +223,7 @@ jobs:
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
       - name: Publish SDK locally
         working-directory: packages/sdk-kotlin
-        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal --no-daemon
+        run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal :appium:publishToMavenLocal --no-daemon
       - name: Run example test against live API
         working-directory: packages/sdk-kotlin/examples/sdk-selenium-junit5
         # FURAN_* env-var names confirmed in

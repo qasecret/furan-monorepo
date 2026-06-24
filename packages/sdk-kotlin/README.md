@@ -6,12 +6,13 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../../LICENSE)
 [![JDK](https://img.shields.io/badge/JDK-21+-blue)](https://adoptium.net/)
 
-Drop-in for any JUnit 5 + Selenium or Playwright suite. JDK 21+, Kotlin 2.x. Four artifacts, pick the one matching your use case:
+Drop-in for any JUnit 5 + Selenium, Playwright, or Appium suite. JDK 21+, Kotlin 2.x. Five artifacts, pick the one matching your use case:
 
 | Artifact                              | When to use                                           | Depends on   |
 | ------------------------------------- | ----------------------------------------------------- | ------------ |
 | `io.github.qasecret:furan-selenium`   | Selenium-driven tests (most common)                   | `furan-core` |
 | `io.github.qasecret:furan-playwright` | Playwright-Java-driven tests                          | `furan-core` |
+| `io.github.qasecret:furan-appium`     | Appium native mobile (Android / iOS) tests            | `furan-core` |
 | `io.github.qasecret:furan-junit5`     | JUnit 5 `@FuranTest` annotation + parameter injection | `furan-core` |
 | `io.github.qasecret:furan-core`       | Direct REST/HTTP integration without Selenium         | —            |
 
@@ -70,6 +71,18 @@ Maven:
     <version>1.49.0</version>
     <scope>test</scope>
 </dependency>
+```
+
+**Appium (native mobile):**
+
+```kotlin
+// build.gradle.kts
+repositories { mavenCentral() }
+
+dependencies {
+    testImplementation("io.github.qasecret:furan-appium:3.2.1")
+    testImplementation("io.appium:java-client:9.5.0")
+}
 ```
 
 ## Quick start
@@ -144,6 +157,42 @@ FuranPlaywright.use(FuranConfig.fromEnv(), page, "checkout") { furan ->
 ```
 
 See [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/) for a
+runnable JUnit 5 example.
+
+## Appium (native mobile)
+
+`furan-appium` wraps `FuranCapture` for **native** Android / iOS apps. It
+advertises `isNative`, so the engine uses its degraded path: one full-screen
+device screenshot per snapshot — no DOM, no element-map, and region selectors
+are not resolved (numeric ignore / strict regions still pass through).
+`browserName` is reported as `appium-<platform>` (`appium-android` /
+`appium-ios`), so the platforms keep separate baselines.
+
+```kotlin
+import io.appium.java_client.AppiumDriver
+import io.furan.sdk.FuranConfig
+import io.furan.sdk.appium.FuranAppium
+import org.openqa.selenium.remote.DesiredCapabilities
+import java.net.URI
+
+val caps = DesiredCapabilities().apply {
+    setCapability("platformName", "Android")
+    setCapability("appium:automationName", "UiAutomator2")
+    setCapability("appium:appPackage", "com.example.app")
+    setCapability("appium:appActivity", "com.example.app.MainActivity")
+}
+// AppiumDriver is the base type FuranAppium takes; AndroidDriver / IOSDriver work too.
+val driver = AppiumDriver(URI("http://localhost:4723").toURL(), caps)
+
+FuranAppium.use(FuranConfig.fromEnv(), driver, "checkout") { furan ->
+    furan.snapshot("home")     // or snapshotAndAwait("home") to block on the diff
+}
+
+driver.quit()
+```
+
+Webview-context capture and native element → bbox region resolution are planned
+follow-ups. See [`examples/sdk-appium-junit5`](examples/sdk-appium-junit5/) for a
 runnable JUnit 5 example.
 
 ## Driverless — raw images (any stack)
