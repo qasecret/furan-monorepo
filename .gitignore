@@ -52,3 +52,9 @@ furan-design/
 # Personal Claude Code guidance — kept local, not shared.
 CLAUDE.md
 .claude/
+
+# Local tooling scratch + local-only dev overlays (never commit).
+.claire/
+skills-lock.json
+infra/docker/compose.*-local.yml
+infra/docker/compose.pin-*.yml

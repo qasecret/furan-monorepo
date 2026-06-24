@@ -151,7 +151,9 @@ class HttpTransport(private val config: FuranConfig) : Closeable {
     }
 
     companion object {
-        const val SDK_VERSION = "0.5.0"
+        /** Real published SDK version — generated from version.txt at build time
+         *  (see core/build.gradle.kts `generateBuildInfo`). */
+        val SDK_VERSION: String = io.furan.sdk.BuildInfo.SDK_VERSION
 
         /** Ktor `defaultRequest.url(...)` treats a host-only string as a prefix only
          *  when it ends with `/`. Be forgiving for users who set `FURAN_API_URL`

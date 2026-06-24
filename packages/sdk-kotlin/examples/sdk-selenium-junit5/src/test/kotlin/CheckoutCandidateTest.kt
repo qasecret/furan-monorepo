@@ -7,10 +7,9 @@ import org.openqa.selenium.chrome.ChromeOptions
 
 /**
  * Companion to CheckoutTest used by the local QA pass to seed a CANDIDATE
- * run whose screenshot bytes diverge from the baseline. The DOM differs
- * (extra <p>) so the L1 pixel diff is non-zero and the L2 DOM diff has
- * regions to highlight. Skipped unless FURAN_API_URL is set, same as
- * CheckoutTest.
+ * run whose screenshot bytes diverge from the baseline. The page differs
+ * (an extra <p>) so the pixel diff is non-zero. Skipped unless
+ * FURAN_API_URL is set, same as CheckoutTest.
  *
  * Intended to be invoked with a second FURAN_BUILD_ID and a feature-branch
  * FURAN_BRANCH so the variation resolver pairs it against the main-branch

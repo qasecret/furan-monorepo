@@ -77,7 +77,7 @@ install URL after accepting (`/settings/installations/<id>`) or in the
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.github.qasecret:furan-selenium:0.5.0")
+  testImplementation("io.github.qasecret:furan-selenium:3.3.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -104,7 +104,7 @@ class CheckoutTest {
     val driver = ChromeDriver(ChromeOptions().apply {
       addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage")
     })
-    val furan = Furan(driver, FuranConfig.fromEnv())
+    val furan = Furan(FuranConfig.fromEnv(), driver)
     try {
       driver.get("https://staging.example.com/checkout")
       furan.snapshot("checkout-step-1")

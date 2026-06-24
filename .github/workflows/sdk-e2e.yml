@@ -173,7 +173,7 @@ jobs:
         # No /api/v1 prefix — routes mount at the root (see apps/api/src/app.ts).
         #
         # Build creation is done here instead of letting the SDK do it lazily
-        # because the SDK 0.5.0's createBuild request serializes a null
+        # because the SDK's createBuild request serializes a null
         # ciBuildId field when FURAN_BUILD_ID is unset, and zod's `.optional()`
         # treats null differently than undefined (rejects null with 400).
         # Pre-creating the build lets us pin a real ciBuildId (the github.sha)
