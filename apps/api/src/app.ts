@@ -17,6 +17,7 @@ import Fastify, {
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
 import { hashToken, isPatFormat } from "./lib/token.js";
+import { touchTokenLastUsed } from "./lib/touch-token.js";
 import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -208,6 +209,7 @@ async function softAuthenticate(
     const hash = hashToken(raw);
     const rows = await app.db
       .select({
+        tokenId: tokens.id,
         userId: tokens.userId,
         role: users.role,
         isActive: users.isActive,
@@ -219,6 +221,7 @@ async function softAuthenticate(
     const row = rows[0];
     if (row && row.isActive) {
       req.auth = { id: row.userId, role: row.role };
+      await touchTokenLastUsed(app.db, row.tokenId);
     }
     return;
   }
