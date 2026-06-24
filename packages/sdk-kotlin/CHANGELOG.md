@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.3.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.1...sdk/v3.3.0) (2026-06-24)
+
+
+### Features
+
+* **sdk:** add furan-appium adapter for native mobile (Phase 3) ([#295](https://github.com/qasecret/furan-monorepo/issues/295)) ([555a365](https://github.com/qasecret/furan-monorepo/commit/555a3654018c986948b4e1c62fcecaea69f6e759))
+* **sdk:** add furan-playwright adapter on the shared capture SPI (Phase 2) ([#294](https://github.com/qasecret/furan-monorepo/issues/294)) ([ef4c10c](https://github.com/qasecret/furan-monorepo/commit/ef4c10c823f8c86b39f48f95ac744b196a7753fc))
+* **sdk:** driverless raw-image checkpoint API (FuranImages) ([#292](https://github.com/qasecret/furan-monorepo/issues/292)) ([79a9b01](https://github.com/qasecret/furan-monorepo/commit/79a9b019be5b49b532403d3556c470ef1e0aafd0))
+* **sdk:** throw actionable FuranNoBaselineException on a no-baseline first run (ADR-036) ([#288](https://github.com/qasecret/furan-monorepo/issues/288)) ([dff148d](https://github.com/qasecret/furan-monorepo/commit/dff148dc424dbb9971bc3d2f688a3cb77abda914))
+* **sdk:** wire parent-branch baseline inheritance end-to-end (FURAN_PARENT_BRANCH, ADR-055) ([#286](https://github.com/qasecret/furan-monorepo/issues/286)) ([265fe7d](https://github.com/qasecret/furan-monorepo/commit/265fe7dcf3998485e83ff8474be9565bf94887c9))
+
 ## [3.2.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.0...sdk/v3.2.1) (2026-06-21)
 
 
