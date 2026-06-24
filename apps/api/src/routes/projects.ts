@@ -102,9 +102,19 @@ export async function registerProjectsRoutes(
         });
         return reply.code(201).send(row);
       } catch (err) {
-        // UNIQUE violation on projects.name
-        req.log.warn({ err }, "project_create_failed");
-        return reply.code(409).send({ error: "project_name_taken" });
+        // Only a Postgres unique violation (23505) on projects.name is a
+        // real "name taken". postgres-js surfaces the code on the error;
+        // drizzle-orm >=0.40 wraps the original PostgresError as `cause`
+        // (same detection as members.ts). Any other failure — schema drift,
+        // FK, etc. — must surface as a real error, not be masked as a 409.
+        const outerCode = (err as { code?: string })?.code;
+        const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
+        if (outerCode === "23505" || causeCode === "23505") {
+          req.log.warn({ err }, "project_create_conflict");
+          return reply.code(409).send({ error: "project_name_taken" });
+        }
+        req.log.error({ err }, "project_create_failed");
+        throw err;
       }
     },
   );
