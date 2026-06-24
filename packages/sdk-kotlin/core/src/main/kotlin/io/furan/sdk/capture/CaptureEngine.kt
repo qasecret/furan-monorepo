@@ -34,7 +34,7 @@ class CaptureEngine(private val driver: SpecDriver) {
      */
     suspend fun capture(name: String, options: CheckpointOptions, viewport: Viewport): CaptureResult {
         val info = driver.getDriverInfo()
-        val viewportLabel = "${viewport.width}x${viewport.height}"
+        var viewportLabel = "${viewport.width}x${viewport.height}"
 
         if (Feature.RESIZE_VIEWPORT in info.features) {
             driver.setViewportSize(Size(viewport.width, viewport.height))
@@ -50,6 +50,9 @@ class CaptureEngine(private val driver: SpecDriver) {
 
         if (!jsCapable) {
             pngBytes = driver.takeScreenshot()
+            // A native driver can't be resized, so the config viewport is only a
+            // default — the real screen size is the screenshot's own dimensions.
+            pngDimensions(pngBytes)?.let { viewportLabel = "${it.width}x${it.height}" }
             domHtml = null
             elementMapJson = null
         } else {

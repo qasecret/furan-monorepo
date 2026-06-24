@@ -1,0 +1,23 @@
+# Copy to `local.properties` (gitignored) and fill in the values.
+# build.gradle.kts loads every key here into the test task's environment, so
+# `gradle test` works with no env-var prefix.
+
+# --- Furan API credentials (FuranConfig.fromEnv reads these) ---
+FURAN_API_URL=http://localhost:3000
+# Mint a PAT in the dashboard (/tokens) or: POST /account/tokens {"label":"..."}
+FURAN_API_TOKEN=furan_pat_replace_me
+# Your project's UUID (dashboard → project → settings, or GET /projects)
+FURAN_PROJECT_ID=00000000-0000-0000-0000-000000000000
+# Optional CI hints:
+# FURAN_BUILD_ID=
+# FURAN_BRANCH=
+
+# --- Appium server + device (the gated AppiumExampleTest) ---
+APPIUM_SERVER_URL=http://localhost:4723
+APPIUM_PLATFORM=Android
+APPIUM_AUTOMATION=UiAutomator2
+APPIUM_DEVICE=Android Emulator
+# Point at the app under test (one of these, per your setup):
+# APPIUM_APP=/absolute/path/to/app-debug.apk
+# APPIUM_APP_PACKAGE=com.example.app
+# APPIUM_APP_ACTIVITY=com.example.app.MainActivity
