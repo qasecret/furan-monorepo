@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.3.0...sdk/v4.0.0) (2026-06-24)
+
+
+### Bug Fixes
+
+* **sdk:** release 4.0.0 — ship the v2-runtime removal + SDK_VERSION fix ([#298](https://github.com/qasecret/furan-monorepo/issues/298)) ([7793ea5](https://github.com/qasecret/furan-monorepo/commit/7793ea5d7ec6c066d45a1f755a46b6680a59067e))
+
 ## [3.3.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.1...sdk/v3.3.0) (2026-06-24)
 
 
