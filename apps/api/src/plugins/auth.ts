@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
 import { hashToken, isPatFormat } from "../lib/token.js";
+import { touchTokenLastUsed } from "../lib/touch-token.js";
 
 export type UserRole = "admin" | "editor" | "guest";
 
@@ -64,6 +65,7 @@ export default fp(async (app) => {
           return reply.code(401).send({ error: "invalid_token" });
         }
         req.auth = { id: row.userId, role: row.role };
+        await touchTokenLastUsed(app.db, row.tokenId);
         return;
       }
 

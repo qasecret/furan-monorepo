@@ -1,4 +1,4 @@
-import { users } from "@furan/db";
+import { eq, tokens, users } from "@furan/db";
 import {
   afterAll,
   beforeAll,
@@ -91,6 +91,37 @@ describe("PAT lifecycle", () => {
     });
     expect(me.statusCode).toBe(200);
     expect((me.json() as { id: string }).id).toBe(aliceId);
+  });
+
+  test("a PAT-authenticated request records the token's lastUsedAt", async () => {
+    const created = await h.app.inject({
+      method: "POST",
+      url: "/account/tokens",
+      headers: { authorization: `Bearer ${aliceJwt}` },
+      payload: { label: "last-used" },
+    });
+    const { id, token } = created.json() as { id: string; token: string };
+
+    // Freshly minted token has never been used.
+    const before = await h.db
+      .select({ lastUsedAt: tokens.lastUsedAt })
+      .from(tokens)
+      .where(eq(tokens.id, id));
+    expect(before[0]?.lastUsedAt).toBeNull();
+
+    const me = await h.app.inject({
+      method: "GET",
+      url: "/users/me",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+
+    // Using the PAT must stamp last_used_at.
+    const after = await h.db
+      .select({ lastUsedAt: tokens.lastUsedAt })
+      .from(tokens)
+      .where(eq(tokens.id, id));
+    expect(after[0]?.lastUsedAt).toBeInstanceOf(Date);
   });
 
   test("apiKey: <pat> header still works (deprecation shim)", async () => {
