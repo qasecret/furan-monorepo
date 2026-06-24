@@ -8,7 +8,7 @@
       "package-name": "sdk",
       "tag-separator": "/",
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["version.txt"]
+      "extra-files": ["version.txt", "README.md"]
     }
   }
 }

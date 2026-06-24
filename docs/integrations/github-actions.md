@@ -77,7 +77,7 @@ install URL after accepting (`/settings/installations/<id>`) or in the
 repositories { mavenCentral() }
 
 dependencies {
-  testImplementation("io.github.qasecret:furan-selenium:3.3.0")
+  testImplementation("io.github.qasecret:furan-selenium:4.0.0")
   testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
