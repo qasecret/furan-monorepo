@@ -38,6 +38,20 @@ const WINDOW_INTERVAL: Record<"24h" | "7d" | "30d" | "all", string | null> = {
 };
 
 /**
+ * SQL predicate — the run has NOT been rejected by any reviewer. A rejection
+ * is a decision, so a rejected run leaves the inbox "needs review" queue
+ * (parity with how approve resolves a run, which removes it). Without this,
+ * `reject` reads as a no-op: it records the decision but the run lingers
+ * unchanged because it does not touch `test_runs.status`. Rejected runs stay
+ * reachable on the build / run pages; the inbox has no "rejected" filter
+ * today — adding one is the natural follow-up. (F1, 2026-06-24)
+ *
+ * Drizzle context only (references the unaliased `test_runs`); the similarity
+ * CTE uses the `tr`-aliased raw form inline.
+ */
+const NOT_REJECTED = sql`NOT EXISTS (SELECT 1 FROM ${runReviewerDecisions} WHERE ${runReviewerDecisions.runId} = ${testRuns.id} AND ${runReviewerDecisions.decision} = 'rejected')`;
+
+/**
  * Return the set of project IDs the caller is allowed to see.
  * Admins see all projects; non-admins see only projects they are a member of.
  */
@@ -190,6 +204,7 @@ export const inboxRouter = t.router({
               JOIN projects p ON p.id = tr.project_id
               JOIN builds b ON b.id = tr.build_id
               WHERE tr.project_id IN (${projList}) AND ${simStatusFilter} AND ${simWindowFilter}
+                AND NOT EXISTS (SELECT 1 FROM run_reviewer_decisions rd WHERE rd.run_id = tr.id AND rd.decision = 'rejected')
             ),
             agg AS (
               SELECT project_id, primary_signature,
@@ -289,6 +304,7 @@ export const inboxRouter = t.router({
             statusFilter,
             windowFilter,
             cursorFilter,
+            NOT_REJECTED,
           ),
         )
         .orderBy(desc(testRuns.createdAt), desc(testRuns.id))
@@ -359,6 +375,7 @@ export const inboxRouter = t.router({
             inArray(testRuns.projectId, filterProjects),
             sql`${testRuns.status} IN ('unresolved', 'failed')`,
             windowFilter,
+            NOT_REJECTED,
           ),
         );
 

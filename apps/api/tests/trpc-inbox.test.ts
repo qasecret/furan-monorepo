@@ -133,6 +133,67 @@ d("trpc inbox.list", () => {
     expect(result.nextCursor).toBeNull();
   });
 
+  test("a rejected run leaves the open inbox queue and count (F1)", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-reject@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Re",
+        lastName: "Ject",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-reject-project" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: project.id,
+        buildId: build.id,
+        name: "home-page",
+        branchName: "main",
+        status: "unresolved",
+      })
+      .returning();
+    if (!run) throw new Error("run not seeded");
+
+    const caller = makeClient(jwt);
+
+    // Before: the unresolved run is in the open queue + counted.
+    const before = await caller.inbox.list.query({});
+    expect(before.items.map((i) => i.runId)).toContain(run.id);
+    expect((await caller.inbox.count.query({})).total).toBe(1);
+
+    // Reject it — this is a reviewer decision.
+    await caller.inbox.reject.mutate({ runId: run.id });
+
+    // After: the run must disappear from the open queue (visible feedback),
+    // and the badge count must drop it too (list/count stay consistent).
+    const after = await caller.inbox.list.query({});
+    expect(after.items.map((i) => i.runId)).not.toContain(run.id);
+    expect((await caller.inbox.count.query({})).total).toBe(0);
+  });
+
   test("does not return runs from projects the user is not a member of", async () => {
     await wipe();
 
