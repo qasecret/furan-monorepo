@@ -1,19 +1,24 @@
-# Furan — install quickstart (v0.4 alpha)
+# Furan — install quickstart (v1.1)
 
-> Target: a maintainer or alpha installer should reach "first diff visible in the
-> dashboard" in under 30 minutes from a freshly provisioned host.
-> Re-installs (cached pnpm + docker layers) should land under 10 minutes.
+> **Deploying for real?** Use the Docker-Compose production path in
+> **[`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md)** —
+> `docker compose -f infra/docker/compose.yml up -d` boots the **full** stack
+> (data plane + all five app services) from pre-built images, auto-runs
+> migrations, and auto-seeds the first admin. **This page** is the
+> **development** path: a Dockerised data plane plus the Node 22 app services
+> run from source via `pnpm dev`, for iterating on the code.
 
 ## What is Furan?
 
 Furan is an Apache-2.0, self-hostable visual regression testing platform aimed at
-small teams. You point your CI at a Furan server, it captures screenshots of your
-app under test, compares them against an approved baseline, and surfaces a
-pixel-accurate diff in the dashboard for human review and approval.
+small teams. Your CI (via the Kotlin SDK or the REST API) captures screenshots
+of your app under test and uploads them to a Furan server, which compares them
+against an approved baseline and surfaces a pixel-accurate diff in the dashboard
+for human review and approval.
 
-This guide installs the v0.4 alpha stack: a Dockerised data plane (Postgres +
-Redis + MinIO) plus the Node 22 app services run from source via `pnpm dev`.
-Image-based per-app deployment lands in Phase 4 — see "Next steps" below.
+This guide runs the app services from source via `pnpm dev` against a Dockerised
+data plane (Postgres + Redis + MinIO). For the image-based production install,
+see the runbook linked above.
 
 ## Prerequisites
 
@@ -24,7 +29,8 @@ Image-based per-app deployment lands in Phase 4 — see "Next steps" below.
 | pnpm    | 9.15+               | Workspace package manager                      |
 | openssl | any recent          | Generating `JWT_SECRET`                        |
 
-Hardware budget: **~4 GB RAM**, **~10 GB disk** for a single-tenant alpha host.
+Hardware budget: **~4 GB RAM**, **~10 GB disk** for a single-tenant host
+(add ~6 GB disk for the production app images — the capture-worker alone is ~4 GB).
 
 Supported platforms: **Linux x86_64**, **macOS arm64**, **macOS x86_64**.
 
@@ -55,7 +61,7 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64'))"
 
 Paste each value into the matching key in `.env`. The shipping defaults
 (`POSTGRES_USER=furan`, `POSTGRES_DB=furan_dev`, `MINIO_BUCKET=furan-dev`)
-are safe for an alpha host; you only have to set the three passwords plus
+are safe for a single-tenant host; you only have to set the three passwords plus
 `JWT_SECRET`.
 
 If the api or dashboard will run on a different host than the data plane,
@@ -86,17 +92,16 @@ All four services (`postgres`, `redis`, `minio`, `minio-init`) should report
 healthy / exited-0. `minio-init` is a one-shot bucket creator and is
 expected to exit after first run.
 
-> **v1.0**: `compose.yml` now boots the **full** stack (data plane + the
-> five app services) from pre-built images published to Docker Hub:
-> `docker.io/qasecret/furan-{api,dashboard,capture-worker,diff-worker,integrations}:v1.0`.
-> A `:latest` tag is also published. GHCR mirrors at
-> `ghcr.io/qasecret/furan-*:v1.0` are available for installers who prefer
-> GHCR; images are cosign-signed (keyless) and have SBOM artifacts.
->
-> The host-process `pnpm dev` flow below is the **development** path. For a
-> production-shaped install just run `docker compose -f infra/docker/compose.yml up -d`
-> (no `-f compose.dev.yml`); skip the rest of this quickstart's `pnpm`
-> sections.
+> **Production-shaped install:** `compose.yml` boots the **full** stack (data
+> plane + the five app services) from pre-built images published to Docker Hub
+> (`docker.io/qasecret/furan-*:v1.1.x`, GHCR mirror at `ghcr.io/qasecret/furan-*`;
+> cosign-signed, SBOM-attached). Run `docker compose -f infra/docker/compose.yml
+up -d` (no `-f compose.dev.yml`) and skip the rest of this quickstart's `pnpm`
+> sections. **Caveat:** deploy from a checkout at the matching release tag — the
+> `migrate` service applies your local migrations, which must agree with the
+> pinned image. See the [production-deploy runbook §0](../runbooks/production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep)
+> for the lockstep rule. The host-process `pnpm dev` flow below is the
+> **development** path.
 
 ## 4. Install dependencies + apply migrations
 
@@ -166,11 +171,13 @@ Open <http://localhost:3001/login> and sign in with the email + password
 you seeded in step 5. You should land on `/projects`, which will be empty
 on first install.
 
-## 8. Bootstrap your first project (one-time curl)
+## 8. Bootstrap your first project
 
-There is **no project-create UI in v0.4** — admins create projects via the
-REST API. Mint a session token by logging in via the API, then call
-`POST /projects`:
+Admins create and manage projects in the dashboard under **Admin → Projects**,
+and assign members + each user's default project under **Admin → Members**
+(ADR-052 single-project tenancy — there is no end-user project switcher). The
+equivalent REST call is below; mint a session token by logging in via the API,
+then call `POST /projects` (admin-only):
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:3000/auth/login \
@@ -187,9 +194,8 @@ curl -X POST http://localhost:3000/projects \
 You'll get back the created project row with its `id` (UUID). Hold onto
 that id — you'll use it as `<projectId>` below.
 
-> A project-create UI ships in v0.5. See
-> [`docs/feedback/alpha-1-pending.md`](../feedback/alpha-1-pending.md) for
-> the v1.0 GA gap list.
+> The dashboard (Admin → Projects) is the recommended path; the REST call
+> above is handy for scripting a first project on a fresh install.
 
 ## 9. Add an editor user + grant project access
 
@@ -214,15 +220,46 @@ Switch to your editor (or stay as admin), then:
 Use this PAT as a `Bearer` token from any non-interactive client (CI, the
 SDK, curl scripts).
 
-## 11. First capture + first diff (v0.4 path)
+## 11. First capture + first diff
 
-> **v0.4 limitation**: there is no public REST or SDK endpoint that
-> accepts an "upload this screenshot for this build" request from CI yet.
-> First-class CI ingestion (REST + Kotlin/Selenium-Java SDKs + a GitHub
-> App) lands in Phase 4.
+Ingestion is **SDK-upload over REST** (the client captures the PNG and uploads
+the bytes). The Kotlin SDK (`io.github.qasecret:furan-selenium`) is the
+first-class path; CI uploads can also drive the REST endpoints directly. The
+sequence (all `Authorization: Bearer <PAT>` from step 10):
 
-For the v0.4 alpha smoke test, drive the capture queue directly from a
-short Node script inside the monorepo. Create a file
+```bash
+API=http://localhost:3000; PID=<projectId>     # from step 8
+# 1. Build
+BUILD=$(curl -s -X POST $API/projects/$PID/builds -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' -d '{"branchName":"main","name":"ci-1"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+# 2. Run
+RUN=$(curl -s -X POST $API/runs -H "Authorization: Bearer $PAT" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PID\",\"buildId\":\"$BUILD\",\"name\":\"smoke\",\"branchName\":\"main\"}" \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).runId')
+# 3. Upload a screenshot (base64 JSON variant; multipart pngBytes also supported)
+curl -s -X POST $API/runs/$RUN/screenshots/base64 -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' \
+  -d "{\"pngBase64\":\"$(base64 < shot.png | tr -d '\n')\",\"name\":\"homepage\",\"viewport\":\"1280x720\",\"browser\":\"chromium\"}"
+# 4. Complete
+curl -s -X POST $API/runs/$RUN/complete -H "Authorization: Bearer $PAT" \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+The checkpoint identity is the tuple `(branchName, name, viewport, browser)` —
+reuse the same values on later runs so they diff against the same baseline. The
+`diff-worker` resolves the baseline and emits diff regions. On the **first** run
+for a variation there is no baseline, so the run is stored as a baseline
+**candidate** that a reviewer approves in the dashboard (ADR-036 — Furan does
+not auto-seed the first baseline by default; `autoApproveFeature` is off for new
+projects). See the [E2E verification report](../runbooks/e2e-verification-2026-06-24.md)
+for a full walkthrough of this loop.
+
+<details><summary>Dev-only alternative: enqueue a capture job directly</summary>
+
+Bypassing the SDK/REST surface, you can push a job onto the capture queue from a
+Node script in the monorepo (the `capture-worker` then navigates to a URL and
+screenshots it server-side). Useful for worker-pipeline debugging. Create
 `scripts/enqueue-capture.mjs`:
 
 ```javascript
@@ -275,29 +312,35 @@ PROJECT_ID=<projectId> \
 
 The `capture-worker` will pick up the job, navigate to the target URL,
 write the screenshot to MinIO, and insert a `screenshots` row. The
-`diff-worker` will then resolve the baseline (none on first run — it is
-auto-promoted) and emit a diff row.
+`diff-worker` then resolves the baseline (none on a variation's first run —
+approve the candidate in the dashboard to set it) and emits a diff row.
+
+</details>
 
 ## 12. Verify the diff renders
 
-In the dashboard, navigate to **/projects/&lt;projectId&gt;/runs**. You
-should see one row; click it to open the diff viewer at
-**/projects/&lt;projectId&gt;/runs/&lt;runId&gt;/diffs/&lt;diffId&gt;**.
-The first run becomes its own baseline, so the side-by-side view shows the
-same image twice with zero diff regions. Re-run step 11 against a
-**different** URL (or the same URL after a UI change) to see a real diff.
+Open the **Inbox** (the review queue) or the build under
+**/projects/&lt;projectId&gt;/builds**. The first run for a variation has no
+baseline yet — open it and **Approve** the candidate to set the first baseline.
+Upload a **different** image for the same checkpoint (reuse `name` / `viewport`
+/ `browser`), and the diff-worker flags it: it lands in the Inbox as
+**Unresolved**, and the diff viewer shows baseline vs candidate with the changed
+regions highlighted. Approve to promote the candidate, or reject to keep the
+current baseline.
 
 ## Next steps
 
-- **CI integration**: the GitHub Actions recipe + REST upload + GitHub
-  App PR-comment flow ship in **Phase 4 (v0.5)**.
-- **Slack / webhook notifications**: also Phase 4.
-- **SDKs (Kotlin, Selenium-Java)**: Phase 4. Plain curl + the script
-  pattern above is the v0.4 substitute.
-- **Production deployment**: per-app images + a single `docker compose up
--d` install lands in Phase 4. For v0.4 alpha hosts, `systemd` units
-  wrapping `pnpm --filter ... start` are the supported pattern.
-- **VLM-narrated diff explanations**: deferred to v1.1+ per ADR-028.
+- **CI integration**: REST upload (§11) + the GitHub App PR-comment flow are
+  shipped; see [`docs/integrations/github-actions.md`](../integrations/github-actions.md).
+- **Slack / webhook notifications**: shipped via the `integrations` service
+  (set `SLACK_WEBHOOK_URL` / `GITHUB_APP_*` in `.env`).
+- **SDK**: the Kotlin SDK ships across Selenium, Playwright, and Appium
+  (`io.github.qasecret:furan-*`). Plain curl (§11) remains a transport-agnostic
+  substitute.
+- **Production deployment**: per-app images + `docker compose up -d` are
+  shipped — see [`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md).
+- **VLM-narrated diff explanations**: the diff engine's VLM layer is image-first
+  (ADR-047) — it runs only when L1 detects a pixel diff.
 
 ## Troubleshooting
 
