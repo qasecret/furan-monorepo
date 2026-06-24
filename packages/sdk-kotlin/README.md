@@ -415,7 +415,16 @@ The extension caches one `FuranConfig` per test class and shares it across `@Tes
 
 The SDK is published from `main` via [release-please](https://github.com/googleapis/release-please) on Conventional Commits. The current `version.txt` is the single source of truth — all artifacts (`core`, `selenium`, `playwright`, `appium`, `junit5`) always share the same version.
 
-Semantic versioning — breaking changes land only on major bumps (the v2.0.0 explicit-lifecycle and the v3.0.0 `SpecDriver` SPI changes already shipped; the current line is 3.x).
+Semantic versioning — breaking changes land only on major bumps: v2.0.0 (explicit lifecycle), v3.0.0 (the `SpecDriver` SPI), and **v4.0.0** (removes the dormant v2-runtime preview API — see below).
+
+### Migrating to 4.0
+
+4.0 removes the dormant, never-wired **v2 runtime** preview API from `furan-core`:
+the `io.furan.sdk.runtime`, `event`, `endpoint`, `plugin`, `diagnostics`, and
+`http` packages. They never participated in the snapshot/capture path, so the
+adapters (`Furan` / `FuranPlaywright` / `FuranAppium` / `FuranImages`),
+`FuranConfig`, and `FuranClient` are unchanged — upgrading is a no-op for normal
+use. Remove any direct `io.furan.sdk.runtime.*` (etc.) imports if you had them.
 
 ## Support
 
