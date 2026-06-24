@@ -164,9 +164,8 @@ data class FuranConfig(
          * for any field not present in the YAML. Env wins per the SDK's
          * Spring-style precedence (env > yaml).
          *
-         * Useful for v1 callers (those using `FuranConfig.fromEnv()` today)
-         * who want declarative config without switching to the v2
-         * `FuranBootstrapper` chain.
+         * Useful for callers who want declarative file-based config
+         * alongside the usual `FuranConfig.fromEnv()`.
          *
          * Throws [FuranConfigException] if the resulting config is invalid
          * (missing required fields, malformed values).

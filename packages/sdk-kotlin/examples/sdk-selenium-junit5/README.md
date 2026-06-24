@@ -21,15 +21,9 @@ way a downstream user would.
   - `CheckoutJUnit5ExtensionTest.kt` — `@FuranTest` annotation: the
     JUnit5 extension parameter-resolves a `FuranConfig` for each test
     method, removing `FuranConfig.fromEnv()` boilerplate.
-  - `CheckoutIgnoreRegionsTest.kt` — per-test `ignoreAreas` + `diffTolerance`
-    on the `Furan` constructor, plus a per-snapshot CSS-selector `mask`.
-    The two modes compose: rectangles for fixed-position banners,
-    selectors for layout-shifting widgets.
-  - `CheckoutWithRuntimeTest.kt` — opt-in v2 runtime spine. Bootstraps
-    a `FuranRuntime` via `FuranBootstrapper`, subscribes to the event
-    bus, takes a snapshot via the ordinary `Furan` adapter, and dumps
-    `runtime.diagnostics.snapshot()` for operator visibility. See the
-    SDK README's "v2 runtime architecture" section for when this matters.
+  - `CheckoutIgnoreRegionsTest.kt` — per-checkpoint ignore regions via
+    `CheckpointOptions`: fixed rectangles for fixed-position banners and
+    CSS selectors for layout-shifting widgets, which compose in one call.
   - `CheckoutCandidateTest.kt` — paired with `CheckoutTest` to seed a
     CANDIDATE run that diverges from the baseline. Used by the local
     QA pass with a second `FURAN_BUILD_ID` + feature-branch `FURAN_BRANCH`.
@@ -42,8 +36,9 @@ way a downstream user would.
 
 ## Building
 
-Until `io.github.qasecret:furan-selenium` is published to Maven Central (Phase 4 T6),
-install it to your local Maven cache first:
+`io.github.qasecret:furan-selenium` is on Maven Central, so `gradle build` works
+as-is. To build against an unreleased local change, install it to your local
+Maven cache first:
 
 ```bash
 cd ../..                     # packages/sdk-kotlin

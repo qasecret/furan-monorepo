@@ -43,6 +43,32 @@ tasks.test {
     }
 }
 
+// Generate io.furan.sdk.BuildInfo.SDK_VERSION from version.txt at build time, so
+// the User-Agent header + anonymous telemetry report the real published version
+// instead of a hand-maintained literal that silently drifts every release.
+val generateBuildInfo by tasks.registering {
+    val versionFile = rootProject.file("version.txt")
+    val outDir = layout.buildDirectory.dir("generated/sources/buildinfo/kotlin")
+    inputs.file(versionFile)
+    outputs.dir(outDir)
+    doLast {
+        val ver = versionFile.readText().trim()
+        val pkg = outDir.get().dir("io/furan/sdk").asFile
+        pkg.mkdirs()
+        pkg.resolve("BuildInfo.kt").writeText(
+            """
+            |package io.furan.sdk
+            |
+            |/** Generated from version.txt at build time. Do not edit. */
+            |internal object BuildInfo {
+            |    const val SDK_VERSION: String = "$ver"
+            |}
+            |""".trimMargin(),
+        )
+    }
+}
+kotlin.sourceSets["main"].kotlin.srcDir(generateBuildInfo)
+
 mavenPublishing {
     // Targets the Sonatype Central Portal (the post-OSSRH endpoint).
     // Sources/javadoc jars + POM validation are handled by the plugin.

@@ -146,7 +146,7 @@ Add Furan as a test dependency:
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:0.12.0")
+testImplementation("io.github.qasecret:furan-selenium:3.3.0")
 ```
 
 In your test:
@@ -161,7 +161,7 @@ class CheckoutTest {
     @Test
     fun `checkout page renders correctly`() {
         val driver = ChromeDriver()
-        Furan(driver, FuranConfig.fromEnv()).use { furan ->
+        Furan.use(FuranConfig.fromEnv(), driver, "checkout-page") { furan ->
             driver.get("https://app.example.com/checkout")
             furan.snapshot("checkout-page")
         }

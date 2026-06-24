@@ -6,8 +6,8 @@ package io.furan.sdk.config
  * [ConfigMerge], then attaches per-key provenance based on which
  * source last contributed each key.
  *
- * Stateless and safe to invoke multiple times; downstream callers
- * (FuranBootstrapper in a future phase) own the resulting registry.
+ * Stateless and safe to invoke multiple times; the caller owns the
+ * resulting registry.
  */
 class ConfigurationResolver(
     private val sources: List<ConfigSource>,

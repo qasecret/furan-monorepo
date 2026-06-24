@@ -99,7 +99,7 @@ class CheckoutTest {
     @Test
     fun `homepage renders correctly`() {
         val driver = ChromeDriver()
-        Furan(driver, FuranConfig.fromEnv()).use { furan ->
+        Furan.use(FuranConfig.fromEnv(), driver, "checkout-page") { furan ->
             driver.get("https://app.example.com/checkout")
 
             // Blocks until the diff worker produces a terminal status.
@@ -245,7 +245,7 @@ Three ways to handle it:
 ```mermaid
 sequenceDiagram
     participant Test as Test
-    participant Furan as Furan(driver, config)
+    participant Furan as Furan(config, driver)
     participant API as Furan API
     participant Diff as Diff worker
 
@@ -324,7 +324,7 @@ val ci = FuranConfig.fromEnv().copy(
 val config = FuranConfig.fromYaml(Path.of("application.yml"))
 ```
 
-The companion `YamlConfigSource` slots into the v2 `FuranBootstrapper` chain at priority 50 (between sysprop and defaults). Env vars still override every YAML entry, so CI doesn't have to rewrite the file.
+Env vars still override every YAML entry, so CI doesn't have to rewrite the file.
 
 ## API
 
@@ -334,8 +334,10 @@ Captures and uploads in the background. Returns immediately. Use when you have *
 
 ```kotlin
 furan.snapshot("homepage")
-furan.snapshot("login-page", mask = listOf("[data-test=session-id]"))
-furan.snapshot("settings", viewports = listOf(Viewport(1920, 1080)))
+// Ignore a region by CSS selector via CheckpointOptions:
+furan.snapshot("login-page", CheckpointOptions(ignoreRegions = listOf(Region.bySelector("[data-test=session-id]"))))
+// Capture at a specific viewport:
+furan.snapshot("settings", viewport = Viewport(1920, 1080))
 ```
 
 ### `furan.snapshotAndAwait(name)` — synchronous assert
@@ -348,22 +350,22 @@ val result = furan.snapshotAndAwait("checkout-page")
 // result.diffViewerUrl points at the dashboard for review
 ```
 
-### Per-test ignore regions + diff tolerance
+### Per-checkpoint ignore regions
+
+Pass `CheckpointOptions` to any `snapshot(...)`. A region is either a fixed
+rectangle or a CSS selector (resolved against the captured DOM):
 
 ```kotlin
-import io.furan.sdk.dto.IgnoreArea
+import io.furan.sdk.dto.CheckpointOptions
+import io.furan.sdk.dto.Region
 
-val furan = Furan(
-    driver = driver,
-    config = config,
-    diffTolerance = 0.02,                            // 2% pixel-difference threshold
-    ignoreAreas = listOf(
-        IgnoreArea(x = 100, y = 50, width = 200, height = 30),  // mask the timestamp bar
+furan.snapshot("settings", CheckpointOptions(
+    ignoreRegions = listOf(
+        Region(x = 100.0, y = 50.0, width = 200.0, height = 30.0),  // a fixed rectangle
+        Region.bySelector("[data-test=session-id]"),                // or a CSS selector
     ),
-)
+))
 ```
-
-Both apply on the first diff job server-side — no separate round-trip.
 
 ## JUnit 5 integration
 
@@ -383,7 +385,7 @@ class CheckoutTest {
     @Test
     fun `homepage`(config: FuranConfig) {
         val driver = ChromeDriver()
-        Furan(driver, config).use { furan ->
+        Furan.use(config, driver, "homepage") { furan ->
             driver.get("https://app.example.com")
             furan.snapshotAndAwait("homepage")
         }
@@ -400,62 +402,6 @@ class CheckoutTest {
 
 The extension caches one `FuranConfig` per test class and shares it across `@Test` methods.
 
-## Advanced — v2 runtime architecture (opt-in)
-
-For Spring Boot apps, plugin ecosystems, or when you want **pluggable transports / capability registries / event-bus telemetry**, the SDK ships a layered runtime under `io.furan.sdk.runtime.FuranBootstrapper`:
-
-```mermaid
-flowchart TB
-    Bootstrap[FuranBootstrapper] --> Runtime
-
-    subgraph Runtime [FuranRuntime]
-        State[StateMachine<br/>INITIALIZING → READY → DEGRADED → ...]
-        Bus[EventBus<br/>SharedFlow]
-        Config[ConfigRegistry<br/>provenance-aware]
-        Endpoint[EndpointResolver<br/>Static / Failover /<br/>Weighted / Canary /<br/>TenantAffinity]
-        Plugin[PluginRegistry<br/>+ CapabilityRegistry]
-        Diag[RuntimeDiagnostics<br/>snapshot view]
-        HTTP[HttpTransport<br/>SPI]
-    end
-
-    Plugins[Third-party plugins<br/>OTel / Vault / Kafka] -.SPI.-> Plugin
-    Spring[Spring application.yml] -.ConfigSource.-> Config
-    Env[FURAN_*  env vars] -.ConfigSource.-> Config
-```
-
-Bootstrap a runtime with explicit subsystems:
-
-```kotlin
-import io.furan.sdk.runtime.FuranBootstrapper
-import io.furan.sdk.endpoint.EndpointResolutionConfig
-import io.furan.sdk.http.KtorHttpTransport
-
-val runtime = FuranBootstrapper(
-    endpointConfig = EndpointResolutionConfig(
-        primary = "https://api-us.acme.com",
-        fallbacks = listOf("https://api-eu.acme.com"),
-    ),
-    loadPluginsFromClasspath = true,        // discover plugins via ServiceLoader
-    httpTransportFactory = { KtorHttpTransport() },
-).bootstrap()
-
-// Inspect:
-runtime.state                                 // RuntimeState.READY
-runtime.capabilities?.has(Capability.Tracing) // true if an OTel plugin loaded
-runtime.diagnostics?.snapshot()               // operator dump for actuator endpoints
-
-// Plugins / decorators subscribe to the bus:
-runtime.eventBus.subscribe<StateChangedEvent> { event ->
-    log.info("state {} → {}", event.from, event.to)
-}
-
-runtime.use { /* runtime closes on exit */ }
-```
-
-The v2 runtime is **fully opt-in** — the classic `Furan(driver, config)` path doesn't go through it and won't until v1.0. The bootstrapper exists today for early adopters wiring custom plugins (OTel exporters, Vault credential providers, etc).
-
-See [`furan-design/specs/2026-05-25-sdk-config-discovery-design-v2.md`](../../furan-design/specs/2026-05-25-sdk-config-discovery-design-v2.md) for the full architecture spec.
-
 ## Examples
 
 | Example                                                                            | Description                                                                           |
@@ -469,10 +415,7 @@ See [`furan-design/specs/2026-05-25-sdk-config-discovery-design-v2.md`](../../fu
 
 The SDK is published from `main` via [release-please](https://github.com/googleapis/release-please) on Conventional Commits. The current `version.txt` is the single source of truth — all artifacts (`core`, `selenium`, `playwright`, `appium`, `junit5`) always share the same version.
 
-| Range | Status  | Compatibility                                                                                   |
-| ----- | ------- | ----------------------------------------------------------------------------------------------- |
-| `0.x` | Current | API stable; new features additive, breaking changes only at minor bumps with deprecation.       |
-| `1.0` | Planned | `FuranClient` will migrate to consume `FuranRuntime` internally. Both code paths coexist today. |
+Semantic versioning — breaking changes land only on major bumps (the v2.0.0 explicit-lifecycle and the v3.0.0 `SpecDriver` SPI changes already shipped; the current line is 3.x).
 
 ## Support
 

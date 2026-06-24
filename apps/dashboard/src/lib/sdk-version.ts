@@ -10,4 +10,4 @@
  * through a Next build.
  */
 export const FURAN_SDK_VERSION =
-  process.env.NEXT_PUBLIC_FURAN_SDK_VERSION ?? "0.9.0";
+  process.env.NEXT_PUBLIC_FURAN_SDK_VERSION ?? "3.3.0";
