@@ -47,9 +47,12 @@ function decodeCursor(raw: string): CursorPayload | null {
   }
 }
 
-function encodeCursor(createdAt: Date, id: string): string {
+function encodeCursor(createdAt: Date | string, id: string): string {
+  // `created_at` arrives as a string from the raw SQL projection, not a Date —
+  // coerce before formatting so cursor pagination (limit reached → hasMore)
+  // doesn't throw `createdAt.toISOString is not a function`.
   return Buffer.from(
-    JSON.stringify({ createdAt: createdAt.toISOString(), id }),
+    JSON.stringify({ createdAt: new Date(createdAt).toISOString(), id }),
     "utf8",
   ).toString("base64url");
 }

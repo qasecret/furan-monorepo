@@ -16,10 +16,10 @@ import { trpc } from "@/lib/trpc";
  */
 export function LatestBuildRedirect({ projectId }: { projectId: string }) {
   const router = useRouter();
-  const { data, isLoading, error } = trpc.builds.list.useQuery({
-    projectId,
-    limit: 1,
-  });
+  // Use the default page (no forced limit:1) — a limit:1 query trips the build
+  // list's cursor pagination, and we only need the newest build (first item,
+  // ordered created_at DESC) to land on.
+  const { data, isLoading, error } = trpc.builds.list.useQuery({ projectId });
   const latest = data?.items[0];
 
   useEffect(() => {
