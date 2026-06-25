@@ -157,7 +157,7 @@ export function InboxPage({ initialStatus }: Props) {
         >
           <Filter className="h-4 w-4 text-zinc-400" aria-hidden />
           <span className="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Status
+            Status:
           </span>
           {FILTERS.map((f) => {
             const active = f.value === initialStatus;
