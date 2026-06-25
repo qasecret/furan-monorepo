@@ -2,6 +2,7 @@
 
 import type { BuildAggregateStatus } from "@furan/shared-types";
 import { RefreshCw, Search } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -11,16 +12,6 @@ import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeader,
-  TableLink,
-  TableRow,
-} from "@/components/ui/table";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
@@ -122,8 +113,8 @@ export function InboxPage({ initialStatus }: Props) {
   }
 
   return (
-    <PageContainer>
-      <div className="space-y-6">
+    <PageContainer fullBleed>
+      <div className="flex min-h-0 flex-1 flex-col gap-5 px-6 py-6">
         <PageHeader
           title="Batches"
           description="All test result batches across your project."
@@ -188,90 +179,105 @@ export function InboxPage({ initialStatus }: Props) {
           })}
         </div>
 
-        <div id="inbox-batches-table">
-          <Table>
-            <TableHeader>
-              <tr>
-                <TableHead className="w-32">Status</TableHead>
-                <TableHead>Batch</TableHead>
-                <TableHead>Branch</TableHead>
-                <TableHead className="w-24">Tests</TableHead>
-                <TableHead className="w-44">Started</TableHead>
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {list.isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i}>
-                    <TableCell colSpan={5}>
-                      <Skeleton className="h-5 w-full" />
-                    </TableCell>
-                  </tr>
-                ))
-              ) : rows.length === 0 ? (
-                <TableEmpty colSpan={5}>
-                  {search
-                    ? `No batches match "${search}".`
-                    : "No batches yet. Run a test through the SDK to populate this list."}
-                </TableEmpty>
-              ) : (
-                rows.map((b) => {
-                  const href = `/projects/${b.projectId}/builds/${b.id}`;
-                  const meta = buildStatusMeta(b.aggregateStatus);
-                  return (
-                    <TableRow
-                      key={b.id}
-                      onClick={() => router.push(href)}
-                      className="cursor-pointer"
-                      data-testid={`inbox-batch-row-${b.id}`}
+        <div
+          id="inbox-batches-table"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Batch</th>
+                  <th className="px-5 py-3 font-medium">Branch</th>
+                  <th className="px-5 py-3 font-medium">Tests</th>
+                  <th className="px-5 py-3 font-medium">Started</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {list.isLoading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-5 py-3.5" colSpan={5}>
+                        <Skeleton className="h-5 w-full" />
+                      </td>
+                    </tr>
+                  ))
+                ) : rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-5 py-16 text-center text-sm text-zinc-500"
                     >
-                      <TableCell className={cn("border-l-2", meta.border)}>
-                        <span className={cn("font-medium", meta.text)}>
-                          {meta.word}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <TableLink
-                          href={href}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {buildDisplayName(b)}
-                        </TableLink>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                        {b.branchName ?? "—"}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-zinc-600 dark:text-zinc-400">
-                        {b.runCount}
-                        {b.unresolvedCount > 0 && (
-                          <span className="font-medium text-red-500">
-                            {" "}
-                            ({b.unresolvedCount})
+                      {search
+                        ? `No batches match "${search}".`
+                        : "No batches yet. Run a test through the SDK to populate this list."}
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((b) => {
+                    const href = `/projects/${b.projectId}/builds/${b.id}`;
+                    const meta = buildStatusMeta(b.aggregateStatus);
+                    return (
+                      <tr
+                        key={b.id}
+                        onClick={() => router.push(href)}
+                        className="group cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+                        data-testid={`inbox-batch-row-${b.id}`}
+                      >
+                        <td className="px-5 py-3.5 align-middle">
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium",
+                              meta.pill,
+                            )}
+                          >
+                            {meta.word}
                           </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-zinc-500 dark:text-zinc-400">
-                        {formatBatchDateTime(b.createdAt)}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
-
-        {list.data?.nextCursor && !search && (
-          <div className="flex justify-center">
-            <Button
-              variant="secondary"
-              onClick={loadMore}
-              disabled={list.isFetching}
-            >
-              Load more
-            </Button>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle">
+                          <Link
+                            href={href}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-zinc-950 transition-colors group-hover:text-brand-text dark:text-white"
+                          >
+                            {buildDisplayName(b)}
+                          </Link>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                          {b.branchName ?? "—"}
+                        </td>
+                        <td className="px-5 py-3.5 align-middle tabular-nums text-zinc-600 dark:text-zinc-400">
+                          {b.runCount}
+                          {b.unresolvedCount > 0 && (
+                            <span className="font-medium text-red-500">
+                              {" "}
+                              ({b.unresolvedCount})
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5 align-middle whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                          {formatBatchDateTime(b.createdAt)}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+            {list.data?.nextCursor && !search && (
+              <div className="flex justify-center border-t border-zinc-200 p-3 dark:border-zinc-800">
+                <Button
+                  variant="secondary"
+                  onClick={loadMore}
+                  disabled={list.isFetching}
+                >
+                  Load more
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </PageContainer>
   );

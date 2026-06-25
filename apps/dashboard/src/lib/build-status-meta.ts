@@ -6,10 +6,12 @@
  */
 export interface BuildStatusMeta {
   word: string;
-  /** Text-colour classes for the status word. */
+  /** Text-colour classes for the status word (history-panel rows). */
   text: string;
-  /** `border-l-*` colour classes for the row's status accent. */
+  /** `border-l-*` colour classes for the history-panel row accent. */
   border: string;
+  /** Tinted-pill classes for the Batches table (bg + text + border). */
+  pill: string;
 }
 
 export const BUILD_STATUS_META: Record<string, BuildStatusMeta> = {
@@ -17,31 +19,37 @@ export const BUILD_STATUS_META: Record<string, BuildStatusMeta> = {
     word: "Passed",
     text: "text-emerald-600 dark:text-emerald-400",
     border: "border-l-emerald-500",
+    pill: "bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-400",
   },
   unresolved: {
     word: "Unresolved",
     text: "text-amber-600 dark:text-amber-400",
     border: "border-l-amber-500",
+    pill: "bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-400",
   },
   failed: {
     word: "Failed",
     text: "text-red-600 dark:text-red-400",
     border: "border-l-red-500",
+    pill: "bg-red-500/10 text-red-700 border-red-500/20 dark:text-red-400",
   },
   running: {
     word: "Running",
     text: "text-blue-600 dark:text-blue-400",
     border: "border-l-blue-500",
+    pill: "bg-blue-500/10 text-blue-700 border-blue-500/20 dark:text-blue-400",
   },
   aborted: {
     word: "Aborted",
     text: "text-zinc-500 dark:text-zinc-400",
     border: "border-l-zinc-400 dark:border-l-zinc-600",
+    pill: "bg-zinc-500/10 text-zinc-600 border-zinc-500/20 dark:text-zinc-400",
   },
   empty: {
     word: "Empty",
     text: "text-zinc-500 dark:text-zinc-400",
     border: "border-l-zinc-300 dark:border-l-zinc-700",
+    pill: "bg-zinc-500/10 text-zinc-600 border-zinc-500/20 dark:text-zinc-400",
   },
 };
 
