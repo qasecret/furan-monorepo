@@ -312,7 +312,9 @@ export const useViewerStore = create<State>((set) => ({
   panY: 0,
   focusBbox: null,
   hideDisplacement: false,
-  highlightActive: false,
+  // On by default so the Applitools-style pink diff shading is prominent the
+  // moment a diff opens (matches the reference's active "Highlight diffs").
+  highlightActive: true,
 
   selectedRegionKind: "ignore",
   selectedCheckpointId: null,

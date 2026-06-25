@@ -92,6 +92,9 @@ const defaultMockData: MockData = {
   nextRunId: null,
 };
 let mockGetByIdData: MockData = { ...defaultMockData };
+// ADR-038 checkpoint list — configurable per-test so the side step-arrows
+// (which need total > 1) can be exercised. Empty by default.
+let mockCheckpoints: { items: unknown[] } = { items: [] };
 
 // Mock the tRPC client.
 // T9: getById response includes baselineScreenshot + diffName.
@@ -116,10 +119,10 @@ vi.mock("../src/lib/trpc", () => {
             error: null,
           }),
         },
-        // ADR-038: checkpoint list — returns empty items so the rail doesn't render
+        // ADR-038: checkpoint list — configurable via mockCheckpoints.
         listCheckpoints: {
           useQuery: () => ({
-            data: { items: [] },
+            data: mockCheckpoints,
             isLoading: false,
             error: null,
           }),
@@ -200,6 +203,7 @@ describe("DiffViewer", () => {
   beforeEach(() => {
     pixiInitCount = 0;
     mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [] };
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
@@ -269,6 +273,42 @@ describe("DiffViewer", () => {
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     expect(r.getByTestId("diff-viewer-meta-strip")).toBeDefined();
+  });
+
+  test("renders large side step-arrows for a multi-checkpoint run", () => {
+    mockCheckpoints = {
+      items: [
+        { id: "c1", name: "Home", status: "unresolved" },
+        { id: "c2", name: "Search", status: "unresolved" },
+      ],
+    };
+    const r = render(
+      <DiffViewer
+        runId="00000000-0000-0000-0000-000000000000"
+        projectId="p1"
+        initialCheckpointId="c1"
+      />,
+    );
+    const prev = r.getByTestId("diff-viewer-step-prev") as HTMLButtonElement;
+    const next = r.getByTestId("diff-viewer-step-next") as HTMLButtonElement;
+    // At the first checkpoint: prev disabled, next enabled.
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
+  });
+
+  test("hides the side step-arrows for a single-checkpoint run", () => {
+    mockCheckpoints = {
+      items: [{ id: "c1", name: "Home", status: "unresolved" }],
+    };
+    const r = render(
+      <DiffViewer
+        runId="00000000-0000-0000-0000-000000000000"
+        projectId="p1"
+        initialCheckpointId="c1"
+      />,
+    );
+    expect(r.queryByTestId("diff-viewer-step-prev")).toBeNull();
+    expect(r.queryByTestId("diff-viewer-step-next")).toBeNull();
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {

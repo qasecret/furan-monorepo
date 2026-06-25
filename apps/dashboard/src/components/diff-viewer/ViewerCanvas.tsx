@@ -57,6 +57,20 @@ function aspectStyle(
     : undefined;
 }
 
+/** Top-left "≠" badge marking an image that has differences (Applitools-style). */
+function DiffBadge() {
+  return (
+    <span
+      className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded border border-zinc-300 bg-white/90 text-xs font-bold text-zinc-700 shadow-sm dark:border-zinc-600 dark:bg-zinc-800/90 dark:text-zinc-200"
+      data-testid="diff-badge"
+      aria-label="Has differences"
+      title="This image has differences"
+    >
+      ≠
+    </span>
+  );
+}
+
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
 const MIN_DRAW_PX = 5;
 
@@ -860,6 +874,7 @@ export function ViewerCanvas({
               style={aspectStyle(baselineDims)}
               className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
             >
+              {regions.length > 0 && <DiffBadge />}
               {!baselineUrl && (
                 <CanvasEmptyState label="No baseline yet">
                   Approve this run to set its candidate as the first baseline
@@ -886,6 +901,7 @@ export function ViewerCanvas({
               style={aspectStyle(candidateDims)}
               className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
             >
+              {regions.length > 0 && <DiffBadge />}
               {!candidateUrl && (
                 <CanvasEmptyState label="Waiting for capture…">
                   The SDK upload for this run hasn’t arrived yet. This panel

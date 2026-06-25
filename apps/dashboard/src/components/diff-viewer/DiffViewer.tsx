@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -665,16 +666,44 @@ export function DiffViewer({
                 top-bar prev/next stepper (move between checkpoints), matching
                 the reference's two-pane layout. */}
             <div className="relative flex flex-1 overflow-hidden">
-              <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
-                <ViewerCanvas
-                  baselineUrl={baselineUrl}
-                  candidateUrl={candidateUrl}
-                  diffOverlayUrl={diffOverlayUrl}
-                  regions={regions}
-                  elementMap={elementMap ?? null}
-                  baselineDims={baselineDims}
-                  candidateDims={candidateDims}
-                />
+              <div className="relative flex-1 min-w-0">
+                <div id="diff-viewer-canvas" className="h-full overflow-auto">
+                  <ViewerCanvas
+                    baselineUrl={baselineUrl}
+                    candidateUrl={candidateUrl}
+                    diffOverlayUrl={diffOverlayUrl}
+                    regions={regions}
+                    elementMap={elementMap ?? null}
+                    baselineDims={baselineDims}
+                    candidateDims={candidateDims}
+                  />
+                </div>
+                {/* Large side step-arrows (reference Applitools): navigate
+                    between checkpoints; disabled at the ends. */}
+                {headerNav && headerNav.total > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onPrevStep}
+                      disabled={!onPrevStep}
+                      aria-label="Previous step"
+                      data-testid="diff-viewer-step-prev"
+                      className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    >
+                      <ChevronLeft className="h-5 w-5" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onNextStep}
+                      disabled={!onNextStep}
+                      aria-label="Next step"
+                      data-testid="diff-viewer-step-next"
+                      className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    >
+                      <ChevronRight className="h-5 w-5" aria-hidden />
+                    </button>
+                  </>
+                )}
               </div>
               <TestInfoSidebar
                 test={data.name ?? "Untitled run"}
