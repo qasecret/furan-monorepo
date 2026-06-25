@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData } from "@tanstack/react-query";
+import { Filter, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import { PropertiesFilter } from "./properties-filter";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
+import { cn } from "@/lib/cn";
 import { browserEnv } from "@/lib/env";
 import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
@@ -29,16 +31,21 @@ export function BuildsListPanel({ projectId }: Props) {
   const [properties, setProperties] = useState<Record<string, string>>({});
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<BuildRowData[]>([]);
+  const [filterOpen, setFilterOpen] = useState(false);
 
-  const { data, isLoading, error } = trpc.builds.list.useQuery(
-    {
-      projectId,
-      cursor,
-      limit: 25,
-      properties: Object.keys(properties).length > 0 ? properties : undefined,
-    },
-    { placeholderData: keepPreviousData },
-  );
+  const { data, isLoading, error, refetch, isFetching } =
+    trpc.builds.list.useQuery(
+      {
+        projectId,
+        cursor,
+        limit: 25,
+        properties: Object.keys(properties).length > 0 ? properties : undefined,
+      },
+      { placeholderData: keepPreviousData },
+    );
+
+  const hasActiveFilter = Object.keys(properties).length > 0;
+  const showFilter = filterOpen || hasActiveFilter;
 
   const items: BuildRowData[] = [];
   const seen = new Set<string>();
@@ -79,13 +86,47 @@ export function BuildsListPanel({ projectId }: Props) {
           </span>
         )}
       </div>
-      <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
-        <PropertiesFilter
-          projectId={projectId}
-          value={properties}
-          onChange={onPropertiesChange}
-        />
+      <div className="flex items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+        <button
+          type="button"
+          onClick={() => void refetch?.()}
+          aria-label="Refresh batch runs"
+          data-testid="builds-refresh"
+          className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+        >
+          <RefreshCw
+            className={cn("h-4 w-4", isFetching && "animate-spin")}
+            aria-hidden
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilterOpen((v) => !v)}
+          aria-label="Filter batch runs"
+          aria-pressed={showFilter}
+          data-testid="builds-filter-toggle"
+          className={cn(
+            "relative rounded p-1.5 transition-colors",
+            showFilter
+              ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white"
+              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white",
+          )}
+        >
+          <Filter className="h-4 w-4" aria-hidden />
+          {hasActiveFilter ? (
+            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-brand" />
+          ) : null}
+        </button>
       </div>
+      {showFilter ? (
+        <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
+          <PropertiesFilter
+            projectId={projectId}
+            value={properties}
+            onChange={onPropertiesChange}
+          />
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto" data-testid="builds-list">
         {isLoading && !data ? (
           <p className="p-3 text-sm text-zinc-500">Loading…</p>
