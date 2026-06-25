@@ -175,4 +175,59 @@ describe("RegionListPanel", () => {
     render(<RegionListPanel regions={[mockRegions[0]!]} />);
     expect(screen.getByText("text")).toBeTruthy();
   });
+
+  const dupCluster = (id: string, x: number): DiffRegion => ({
+    id,
+    severity: "cosmetic",
+    category: "image",
+    bbox: { x, y: 0, width: 192, height: 96 },
+    description: "Pixel diff cluster (7 tiles, 192×96)",
+    source: "l1_pixel",
+  });
+
+  it("collapses duplicate clusters into one '×N' row", () => {
+    const regions = [
+      dupCluster("a", 0),
+      dupCluster("b", 200),
+      dupCluster("c", 400),
+    ];
+    render(<RegionListPanel regions={regions} />);
+    const rows = screen
+      .getAllByRole("button")
+      .filter((b) => b.hasAttribute("data-region-id"));
+    expect(rows).toHaveLength(1); // 3 identical clusters → 1 row
+    expect(screen.getByTestId("region-count").textContent).toBe("×3");
+    // header still reports the true total region count (matches the stepper)
+    expect(screen.getByText(/Regions \(3\)/)).toBeTruthy();
+  });
+
+  it("does not merge clusters that differ in size", () => {
+    const regions = [
+      dupCluster("a", 0),
+      { ...dupCluster("b", 0), bbox: { x: 0, y: 0, width: 64, height: 64 } },
+    ];
+    render(<RegionListPanel regions={regions} />);
+    const rows = screen
+      .getAllByRole("button")
+      .filter((b) => b.hasAttribute("data-region-id"));
+    expect(rows).toHaveLength(2); // different size → distinct rows
+    expect(screen.queryByTestId("region-count")).toBeNull(); // no ×N
+  });
+
+  it("treats a non-representative member selection as selecting the row", () => {
+    useViewerStore.setState({ selectedRegionId: "c" });
+    render(
+      <RegionListPanel
+        regions={[
+          dupCluster("a", 0),
+          dupCluster("b", 200),
+          dupCluster("c", 400),
+        ]}
+      />,
+    );
+    const row = screen
+      .getAllByRole("button")
+      .find((b) => b.hasAttribute("data-region-id"))!;
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+  });
 });

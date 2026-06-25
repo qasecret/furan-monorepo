@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
+import { groupRegions } from "./region-format";
 import { RegionItem } from "./RegionItem";
 
 import {
@@ -88,6 +89,14 @@ export function RegionListPanel({
         return areaOf(b.bbox) - areaOf(a.bbox);
       });
   }, [regions, severityFilter, categoryFilter, showSuppressed]);
+
+  // Collapse visually-identical rows (same severity / category / source /
+  // cleaned description / size) into a single "×N" entry so a run with many
+  // near-duplicate pixel clusters isn't a wall of repeated cards. Every
+  // region is still highlighted on the canvas and steppable — only the list
+  // is de-duplicated. `filtered` is already severity-then-area sorted, so the
+  // group order matches.
+  const grouped = useMemo(() => groupRegions(filtered), [filtered]);
 
   return (
     <aside
@@ -191,7 +200,13 @@ export function RegionListPanel({
             </div>
           </div>
         ) : (
-          filtered.map((r) => <RegionItem key={r.id} region={r} />)
+          grouped.map((g) => (
+            <RegionItem
+              key={g.representative.id}
+              region={g.representative}
+              memberIds={g.memberIds}
+            />
+          ))
         )}
       </div>
     </aside>

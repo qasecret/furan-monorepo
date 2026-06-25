@@ -1,6 +1,7 @@
 "use client";
 
-import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
+import type { DiffRegion, Severity } from "./layers/regionTypes";
+import { cleanDescription, sizeLabel } from "./region-format";
 import { useViewerStore } from "./useViewerStore";
 
 import { Badge } from "@/components/ui/badge";
@@ -66,37 +67,21 @@ function asSeverity(v: string): Severity {
   }
 }
 
-/**
- * Pixel-diff descriptions carry an engine-internal "(N tiles, W×H)"
- * parenthetical — the tile count is clustering jargon and the size is shown
- * as its own chip, so strip the whole tail. VLM prose and axe messages don't
- * match the pattern and pass through untouched.
- */
-function cleanDescription(desc: string): string {
-  return desc.replace(/\s*\(\d+\s+tiles?(?:,[^)]*)?\)\s*$/i, "").trim();
-}
-
-/** Compact "W×H" from a bbox, or null when it's missing / zero-area. */
-function sizeLabel(b: BBox | unknown): string | null {
-  if (
-    b &&
-    typeof b === "object" &&
-    "width" in b &&
-    "height" in b &&
-    typeof (b as BBox).width === "number" &&
-    typeof (b as BBox).height === "number"
-  ) {
-    const w = Math.round((b as BBox).width);
-    const h = Math.round((b as BBox).height);
-    if (w > 0 && h > 0) return `${w}×${h}`;
-  }
-  return null;
-}
-
-export function RegionItem({ region }: { region: DiffRegion }) {
+export function RegionItem({
+  region,
+  memberIds,
+}: {
+  region: DiffRegion;
+  /** All region ids this row stands in for (≥1); defaults to the region's
+   *  own id. A row with >1 member renders a "×N" count and counts as
+   *  selected when any member is the active selection. */
+  memberIds?: string[];
+}) {
   const selectedId = useViewerStore((s) => s.selectedRegionId);
   const setSelected = useViewerStore((s) => s.setSelected);
-  const isSelected = selectedId === region.id;
+  const ids = memberIds ?? [region.id];
+  const count = ids.length;
+  const isSelected = selectedId != null && ids.includes(selectedId);
   const sev = asSeverity(region.severity);
   const style = SEVERITY_STYLE[sev];
 
@@ -146,7 +131,9 @@ export function RegionItem({ region }: { region: DiffRegion }) {
     <button
       type="button"
       onClick={() => setSelected(region.id)}
-      aria-label={`${SEVERITY_LABEL[sev]} ${region.category}: ${region.description}`}
+      aria-label={`${SEVERITY_LABEL[sev]} ${region.category}: ${region.description}${
+        count > 1 ? ` (${count} similar)` : ""
+      }`}
       aria-pressed={isSelected}
       className={cn(
         "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1",
@@ -164,6 +151,14 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         >
           {SEVERITY_LABEL[sev]}
         </Badge>
+        {count > 1 && (
+          <span
+            className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            data-testid="region-count"
+          >
+            ×{count}
+          </span>
+        )}
         {/* Category is only worth a label when it isn't the obvious "image"
             default — every pixel diff is an image region, so the chip was
             pure repetition. Text / color / a11y categories still surface. */}
