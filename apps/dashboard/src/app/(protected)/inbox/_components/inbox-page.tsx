@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
-import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/ui/page-container";
@@ -24,8 +23,9 @@ import {
 } from "@/components/ui/table";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName } from "@/lib/build-display-name";
+import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
-import { formatRelativeTime } from "@/lib/format";
+import { formatBatchDateTime } from "@/lib/format";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type BuildRow = RouterOutputs["builds"]["list"]["items"][number];
@@ -217,6 +217,7 @@ export function InboxPage({ initialStatus }: Props) {
               ) : (
                 rows.map((b) => {
                   const href = `/projects/${b.projectId}/builds/${b.id}`;
+                  const meta = buildStatusMeta(b.aggregateStatus);
                   return (
                     <TableRow
                       key={b.id}
@@ -224,8 +225,10 @@ export function InboxPage({ initialStatus }: Props) {
                       className="cursor-pointer"
                       data-testid={`inbox-batch-row-${b.id}`}
                     >
-                      <TableCell>
-                        <BuildStatusBadge status={b.aggregateStatus} />
+                      <TableCell className={cn("border-l-2", meta.border)}>
+                        <span className={cn("font-medium", meta.text)}>
+                          {meta.word}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <TableLink
@@ -247,8 +250,8 @@ export function InboxPage({ initialStatus }: Props) {
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-zinc-500 dark:text-zinc-400">
-                        {formatRelativeTime(b.createdAt)}
+                      <TableCell className="whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                        {formatBatchDateTime(b.createdAt)}
                       </TableCell>
                     </TableRow>
                   );

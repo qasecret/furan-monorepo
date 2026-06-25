@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { BuildRowData } from "./build-types";
 
 import { buildDisplayName } from "@/lib/build-display-name";
+import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
 
@@ -14,49 +15,9 @@ interface Props {
   selected: boolean;
 }
 
-/**
- * Per-status presentation for the history row — the left accent border colour
- * and the status word + its colour. Mirrors the reference's batch-history list.
- */
-const STATUS_META: Record<
-  string,
-  { word: string; text: string; border: string }
-> = {
-  passed: {
-    word: "Passed",
-    text: "text-emerald-600 dark:text-emerald-400",
-    border: "border-l-emerald-500",
-  },
-  unresolved: {
-    word: "Unresolved",
-    text: "text-amber-600 dark:text-amber-400",
-    border: "border-l-amber-500",
-  },
-  failed: {
-    word: "Failed",
-    text: "text-red-600 dark:text-red-400",
-    border: "border-l-red-500",
-  },
-  running: {
-    word: "Running",
-    text: "text-blue-600 dark:text-blue-400",
-    border: "border-l-blue-500",
-  },
-  aborted: {
-    word: "Aborted",
-    text: "text-zinc-500 dark:text-zinc-400",
-    border: "border-l-zinc-400 dark:border-l-zinc-600",
-  },
-  empty: {
-    word: "Empty",
-    text: "text-zinc-500 dark:text-zinc-400",
-    border: "border-l-zinc-300 dark:border-l-zinc-700",
-  },
-};
-
 /** Full-bleed build entry in the history panel → opens the batch page. */
 export function BuildListItem({ build, projectId, selected }: Props) {
-  const meta = STATUS_META[build.aggregateStatus] ?? STATUS_META.empty!;
+  const meta = buildStatusMeta(build.aggregateStatus);
   return (
     <Link
       href={`/projects/${projectId}/builds/${build.id}`}

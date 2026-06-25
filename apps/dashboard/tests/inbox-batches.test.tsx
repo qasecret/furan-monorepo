@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -45,7 +45,7 @@ const build = {
 };
 
 describe("InboxPage (batches table)", () => {
-  test("renders a batch row with status badge, branch, and unresolved count", () => {
+  test("renders a batch row with status word, branch, and unresolved count", () => {
     listMock.mockReturnValue({
       data: { items: [build], nextCursor: null },
       isLoading: false,
@@ -54,8 +54,11 @@ describe("InboxPage (batches table)", () => {
     });
     render(<InboxPage initialStatus="all" />);
 
-    expect(screen.getByTestId("inbox-batch-row-b1")).toBeDefined();
-    expect(screen.getByTestId("build-status-unresolved")).toBeDefined();
+    const row = screen.getByTestId("inbox-batch-row-b1");
+    expect(row).toBeDefined();
+    // Status renders as a coloured word in the row (matches the history panel);
+    // scope to the row so it doesn't collide with the "Unresolved" filter pill.
+    expect(within(row).getByText("Unresolved")).toBeDefined();
     expect(screen.getByText("feature/new-nav")).toBeDefined();
     // run count 2 with the "(1)" unresolved marker
     expect(screen.getByText("(1)")).toBeDefined();
