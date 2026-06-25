@@ -153,6 +153,9 @@ export function ViewerCanvas({
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
   const highlightActive = useViewerStore((s) => s.highlightActive);
+  // "Hide displacement" also drops position-only (layout) regions from the
+  // canvas shading — not just the diff-stepper — so toggling it is visible.
+  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
   const reducedMotion = useReducedMotion();
   // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
   const zoom = useViewerStore((s) => s.zoom);
@@ -400,7 +403,7 @@ export function ViewerCanvas({
     const world = candidateWorldRef.current;
     const app = candidateAppRef.current;
     if (!world || !app) return;
-    const shadingRegions = orderDiffRegions(regions);
+    const shadingRegions = orderDiffRegions(regions, { hideDisplacement });
     if (shadingRegions.length === 0) return;
     const layer = mountDiffShadingLayer(
       world,
@@ -425,6 +428,7 @@ export function ViewerCanvas({
     regions,
     selectedRegionId,
     highlightActive,
+    hideDisplacement,
     reducedMotion,
   ]);
 
