@@ -27,12 +27,6 @@ import {
 } from "./useViewerStore";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -159,10 +153,6 @@ export function ViewerToolbar({
     },
   });
 
-  const [pendingScopeSwitch, setPendingScopeSwitch] = useState<
-    "run" | "variation" | null
-  >(null);
-
   const showSlider = mode === "overlay";
   const sliderLabel = "Candidate opacity";
 
@@ -177,23 +167,6 @@ export function ViewerToolbar({
     markedForDeletion.size > 0 ||
     selectorOverrides.size > 0 ||
     thresholdOverrides.size > 0;
-
-  const requestEditMode = (next: "run" | "variation") => {
-    if (editing && ignoreEditMode !== next && hasPendingChanges) {
-      setPendingScopeSwitch(next);
-      return;
-    }
-    setIgnoreEditMode(next);
-  };
-
-  const confirmScopeSwitch = () => {
-    if (!pendingScopeSwitch) return;
-    discardIgnoreChanges();
-    setIgnoreEditMode(pendingScopeSwitch);
-    setPendingScopeSwitch(null);
-  };
-
-  const cancelScopeSwitch = () => setPendingScopeSwitch(null);
 
   const handleSave = () => {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
@@ -372,85 +345,31 @@ export function ViewerToolbar({
         </Label>
       </div>
 
-      {/* When not editing: a single DropdownMenu with the toggle as its
-          trigger so users can pick a scope to start editing. */}
-      {!editing && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="secondary"
-              className="px-2 py-1 text-xs"
-              data-testid="edit-regions-toggle"
-            >
-              Edit regions ▾
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem
-              data-testid="edit-regions-run"
-              onClick={() => requestEditMode("run")}
-            >
-              Edit for this run
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="edit-regions-variation"
-              onClick={() => requestEditMode("variation")}
-            >
-              Edit for all runs of this test
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-
-      {/* When editing: a plain exit button (no dropdown) plus a separate
-          DropdownMenu for switching scope. This avoids the ambiguity of a
-          button that is simultaneously a dropdown trigger and an exit action —
-          with userEvent / Radix pointer-event handling, both would fire and
-          produce unpredictable results. */}
-      {editing && (
-        <>
-          <Button
-            type="button"
-            variant="default"
-            className="px-2 py-1 text-xs"
-            data-testid="edit-regions-toggle"
-            onClick={() => setIgnoreEditMode("off")}
-          >
-            {ignoreEditMode === "run"
-              ? "Editing: this run"
-              : "Editing: all runs"}{" "}
-            ×
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="secondary"
-                className="px-2 py-1 text-xs"
-                data-testid="scope-switch-dropdown-trigger"
-              >
-                Switch scope ▾
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem
-                data-testid="switch-scope-run"
-                onClick={() => requestEditMode("run")}
-                disabled={ignoreEditMode === "run"}
-              >
-                Edit for this run
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                data-testid="switch-scope-variation"
-                onClick={() => requestEditMode("variation")}
-                disabled={ignoreEditMode === "variation"}
-              >
-                Edit for all runs of this test
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
+      {/* Single "Edit regions" button. Both scopes currently persist to the
+          test variation (per-run storage is deferred — ADR-038/Phase 5), so a
+          run-vs-variation dropdown would be a distinction without a difference.
+          The "Temporary (this run only)" toggle below is the genuine one-off
+          path (stored on the run, not the variation). */}
+      {!editing ? (
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs"
+          data-testid="edit-regions-toggle"
+          onClick={() => setIgnoreEditMode("variation")}
+        >
+          Edit regions
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="default"
+          className="px-2 py-1 text-xs"
+          data-testid="edit-regions-toggle"
+          onClick={() => setIgnoreEditMode("off")}
+        >
+          Editing regions ×
+        </Button>
       )}
 
       {editing && (
@@ -562,34 +481,6 @@ export function ViewerToolbar({
             Paste
           </Button>
         </>
-      )}
-
-      {pendingScopeSwitch && (
-        <div
-          role="alertdialog"
-          data-testid="scope-switch-confirm"
-          className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-        >
-          <span>Discard unsaved changes and switch scope?</span>
-          <Button
-            type="button"
-            variant="destructive"
-            className="px-2 py-1 text-xs"
-            data-testid="scope-switch-confirm-yes"
-            onClick={confirmScopeSwitch}
-          >
-            Discard & switch
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className="px-2 py-1 text-xs"
-            data-testid="scope-switch-confirm-no"
-            onClick={cancelScopeSwitch}
-          >
-            Cancel
-          </Button>
-        </div>
       )}
 
       {editing && selectedIgnoreId && (

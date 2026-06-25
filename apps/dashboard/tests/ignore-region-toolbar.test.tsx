@@ -1,5 +1,4 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Helper: open the RegionSettingsPopover by keyboard-activating its trigger.
@@ -259,68 +258,13 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(useViewerStore.getState().markedForDeletion.size).toBe(0);
   });
 
-  test("scope switch with unsaved changes prompts confirm; Cancel preserves state", async () => {
-    const user = userEvent.setup();
-    useViewerStore.setState({
-      ignoreEditMode: "run",
-      draftIgnoreAreas: [
-        {
-          id: "d1",
-          x: 1,
-          y: 1,
-          width: 10,
-          height: 10,
-          viewport: VP,
-          paddingPx: 0,
-          kind: "ignore",
-        },
-      ],
-    });
-
+  test("the single Edit-regions button enters edit mode at the variation (persist) scope", () => {
     render(<ViewerToolbar runId={RUN_ID} />);
-    // Open the scope-switch dropdown (separate from the exit toggle when editing).
-    await user.click(screen.getByTestId("scope-switch-dropdown-trigger"));
-    // Pick the "variation" item to request a scope switch.
-    await user.click(screen.getByTestId("switch-scope-variation"));
-
-    // Confirm bar appears.
-    expect(screen.getByTestId("scope-switch-confirm")).toBeDefined();
-    expect(useViewerStore.getState().ignoreEditMode).toBe("run"); // not switched yet
-
-    // Cancel keeps state.
-    await user.click(screen.getByTestId("scope-switch-confirm-no"));
-    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
-    expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(1);
-    expect(screen.queryByTestId("scope-switch-confirm")).toBeNull();
-  });
-
-  test("scope switch confirm → discard + switch", async () => {
-    const user = userEvent.setup();
-    useViewerStore.setState({
-      ignoreEditMode: "run",
-      draftIgnoreAreas: [
-        {
-          id: "d1",
-          x: 1,
-          y: 1,
-          width: 10,
-          height: 10,
-          viewport: VP,
-          paddingPx: 0,
-          kind: "ignore",
-        },
-      ],
-    });
-
-    render(<ViewerToolbar runId={RUN_ID} />);
-    await user.click(screen.getByTestId("scope-switch-dropdown-trigger"));
-    await user.click(screen.getByTestId("switch-scope-variation"));
-    expect(screen.getByTestId("scope-switch-confirm")).toBeDefined();
-
-    await user.click(screen.getByTestId("scope-switch-confirm-yes"));
+    // Not editing → secondary "Edit regions" button; click enters edit mode.
+    fireEvent.click(screen.getByTestId("edit-regions-toggle"));
     expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
-    expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
-    expect(screen.queryByTestId("scope-switch-confirm")).toBeNull();
+    // No scope dropdown / scope-switch any more.
+    expect(screen.queryByTestId("scope-switch-dropdown-trigger")).toBeNull();
   });
 
   test("padding-control hidden when edit mode is off", () => {
