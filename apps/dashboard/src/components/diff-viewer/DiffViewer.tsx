@@ -518,6 +518,26 @@ export function DiffViewer({
     null;
   const appName = (project as { name?: string } | undefined)?.name ?? null;
 
+  // The metadata strip below the toolbar only carries signal in non-default
+  // cases — the viewport itself already lives in the INFO sidebar. Show each
+  // piece (and the strip) only when it's noteworthy so a normal run stays a
+  // clean two-pane: a viewport switcher only for multi-viewport runs, the size
+  // chip only on a dimension mismatch, and the baseline badge only on a
+  // parent-PR / default-branch fallback (not the expected "this branch").
+  const sizeMismatch =
+    !!baselineDims &&
+    !!candidateDims &&
+    (baselineDims.width !== candidateDims.width ||
+      baselineDims.height !== candidateDims.height);
+  const showViewportSwitcher = uniqueViewports.length > 1;
+  const baselineFallback =
+    baselineSource === "parent_pr" || baselineSource === "default_branch";
+  const showMetaStrip =
+    showViewportSwitcher ||
+    sizeMismatch ||
+    baselineFallback ||
+    Boolean(data.autoApproved);
+
   return (
     <div
       className="flex flex-col h-full"
@@ -615,22 +635,31 @@ export function DiffViewer({
                 stepper={stepper}
               />
             </div>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-              <BaselineSourceBadge source={baselineSource} />
-              {data.autoApproved && (
-                <span
-                  className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-                  data-testid="auto-approved-badge"
-                  title="System-approved: candidate's image bytes matched the baseline exactly."
-                >
-                  Auto-approved
-                </span>
-              )}
-              <ViewportSwitcher viewports={uniqueViewports} />
-              {baselineDims && candidateDims && (
-                <SizeChip baseline={baselineDims} candidate={candidateDims} />
-              )}
-            </div>
+            {showMetaStrip && (
+              <div
+                className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800"
+                data-testid="diff-viewer-meta-strip"
+              >
+                {baselineFallback && (
+                  <BaselineSourceBadge source={baselineSource} />
+                )}
+                {data.autoApproved && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                    data-testid="auto-approved-badge"
+                    title="System-approved: candidate's image bytes matched the baseline exactly."
+                  >
+                    Auto-approved
+                  </span>
+                )}
+                {showViewportSwitcher && (
+                  <ViewportSwitcher viewports={uniqueViewports} />
+                )}
+                {sizeMismatch && baselineDims && candidateDims && (
+                  <SizeChip baseline={baselineDims} candidate={candidateDims} />
+                )}
+              </div>
+            )}
             {/* Canvas + right INFO sidebar. The left checkpoint rail was
                 removed — navigation is the batch-detail grid (enter) plus the
                 top-bar prev/next stepper (move between checkpoints), matching

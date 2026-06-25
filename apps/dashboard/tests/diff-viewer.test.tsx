@@ -252,6 +252,25 @@ describe("DiffViewer", () => {
     expect(r.queryByTestId("auto-approved-badge")).toBeNull();
   });
 
+  test("hides the whole metadata strip for a nominal run (no signal to show)", () => {
+    // Default mock: single/no extra viewport, matching sizes, this-branch
+    // baseline, not auto-approved → the strip carries nothing, so it's gone
+    // (viewport already lives in the INFO sidebar).
+    mockGetByIdData = { ...defaultMockData, autoApproved: false };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.queryByTestId("diff-viewer-meta-strip")).toBeNull();
+  });
+
+  test("shows the metadata strip when there is a signal (e.g. auto-approved)", () => {
+    mockGetByIdData = { ...defaultMockData, autoApproved: true };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.getByTestId("diff-viewer-meta-strip")).toBeDefined();
+  });
+
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
     mockGetByIdData = {
       ...defaultMockData,
