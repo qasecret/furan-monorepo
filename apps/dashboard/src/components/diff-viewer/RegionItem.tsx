@@ -1,6 +1,6 @@
 "use client";
 
-import type { DiffRegion, Severity } from "./layers/regionTypes";
+import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
 import { useViewerStore } from "./useViewerStore";
 
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,33 @@ function asSeverity(v: string): Severity {
   }
 }
 
+/**
+ * Pixel-diff descriptions carry an engine-internal "(N tiles, W×H)"
+ * parenthetical — the tile count is clustering jargon and the size is shown
+ * as its own chip, so strip the whole tail. VLM prose and axe messages don't
+ * match the pattern and pass through untouched.
+ */
+function cleanDescription(desc: string): string {
+  return desc.replace(/\s*\(\d+\s+tiles?(?:,[^)]*)?\)\s*$/i, "").trim();
+}
+
+/** Compact "W×H" from a bbox, or null when it's missing / zero-area. */
+function sizeLabel(b: BBox | unknown): string | null {
+  if (
+    b &&
+    typeof b === "object" &&
+    "width" in b &&
+    "height" in b &&
+    typeof (b as BBox).width === "number" &&
+    typeof (b as BBox).height === "number"
+  ) {
+    const w = Math.round((b as BBox).width);
+    const h = Math.round((b as BBox).height);
+    if (w > 0 && h > 0) return `${w}×${h}`;
+  }
+  return null;
+}
+
 export function RegionItem({ region }: { region: DiffRegion }) {
   const selectedId = useViewerStore((s) => s.selectedRegionId);
   const setSelected = useViewerStore((s) => s.setSelected);
@@ -111,6 +138,10 @@ export function RegionItem({ region }: { region: DiffRegion }) {
     );
   }
 
+  const size = sizeLabel(region.bbox);
+  const showCategory =
+    !!region.category && region.category.toLowerCase() !== "image";
+
   return (
     <button
       type="button"
@@ -133,9 +164,14 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         >
           {SEVERITY_LABEL[sev]}
         </Badge>
-        <span className="text-xs text-zinc-500 capitalize">
-          {region.category}
-        </span>
+        {/* Category is only worth a label when it isn't the obvious "image"
+            default — every pixel diff is an image region, so the chip was
+            pure repetition. Text / color / a11y categories still surface. */}
+        {showCategory && (
+          <span className="text-xs text-zinc-500 capitalize">
+            {region.category}
+          </span>
+        )}
         {(region.source === "layout_kept" ||
           region.source === "layout_suppressed") && (
           <Badge
@@ -148,9 +184,17 @@ export function RegionItem({ region }: { region: DiffRegion }) {
               : "Layout · geometry"}
           </Badge>
         )}
+        {size && (
+          <span
+            className="ml-auto font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500"
+            data-testid="region-size"
+          >
+            {size}
+          </span>
+        )}
       </div>
       <p className="text-sm text-zinc-800 line-clamp-2 dark:text-zinc-200">
-        {region.description}
+        {cleanDescription(region.description)}
       </p>
     </button>
   );
