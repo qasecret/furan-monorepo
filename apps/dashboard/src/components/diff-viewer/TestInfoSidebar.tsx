@@ -69,12 +69,16 @@ const SEV_LABEL: Record<string, string> = {
   cosmetic: "Cosmetic",
   none: "None",
 };
+// Worst-severity colour. Hues mirror RegionItem's SEVERITY_STYLE badges
+// (breaking red → major orange → minor yellow → cosmetic blue → none green)
+// so the card speaks the same colour language as the region rows below; the
+// shades run a touch deeper here since the card has no tinted badge backing.
 const SEV_COLOR: Record<string, string> = {
-  breaking: "text-red-500",
-  major: "text-red-500",
-  minor: "text-amber-500",
-  cosmetic: "text-amber-400",
-  none: "text-emerald-500",
+  breaking: "text-red-600 dark:text-red-400",
+  major: "text-orange-600 dark:text-orange-400",
+  minor: "text-yellow-600 dark:text-yellow-400",
+  cosmetic: "text-blue-600 dark:text-blue-400",
+  none: "text-emerald-600 dark:text-emerald-400",
 };
 
 function worstSeverity(regions: DiffRegion[]): string {
@@ -101,7 +105,7 @@ function StatCard({
       <span className={cn("text-base font-semibold tabular-nums", valueClass)}>
         {value}
       </span>
-      <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+      <span className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
         {label}
       </span>
     </div>
@@ -128,7 +132,9 @@ function StatCards({
         }
         label="Pixel diff"
         valueClass={
-          pixelDiffPercent ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
+          pixelDiffPercent
+            ? "text-red-600 dark:text-red-400"
+            : "text-zinc-400 dark:text-zinc-500"
         }
       />
       <StatCard
