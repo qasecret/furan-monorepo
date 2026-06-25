@@ -1,6 +1,14 @@
 "use client";
 
-import { Layers, SlidersHorizontal, SplitSquareHorizontal } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  SlidersHorizontal,
+  SplitSquareHorizontal,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -243,7 +251,7 @@ export function ViewerToolbar({
           title="Zoom out (−)"
           onClick={() => zoomBy(1 / ZOOM_STEP)}
         >
-          −
+          <ZoomOut className="h-4 w-4" aria-hidden />
         </Button>
         <Button
           type="button"
@@ -265,7 +273,7 @@ export function ViewerToolbar({
           title="Zoom in (+)"
           onClick={() => zoomBy(ZOOM_STEP)}
         >
-          +
+          <ZoomIn className="h-4 w-4" aria-hidden />
         </Button>
       </div>
 
@@ -283,7 +291,7 @@ export function ViewerToolbar({
             aria-label="Previous change"
             onClick={stepper.prev}
           >
-            ‹
+            <ChevronLeft className="h-4 w-4" aria-hidden />
           </Button>
           <span
             className="text-xs font-mono min-w-[4.5rem] text-center"
@@ -299,7 +307,7 @@ export function ViewerToolbar({
             aria-label="Next change"
             onClick={stepper.next}
           >
-            ›
+            <ChevronRight className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       )}
@@ -319,16 +327,17 @@ export function ViewerToolbar({
         </Label>
       </div>
 
-      <Button
-        type="button"
-        variant={highlightActive ? "default" : "secondary"}
-        className="px-2 py-1 text-xs"
-        data-testid="highlight-toggle"
-        aria-pressed={highlightActive}
-        onClick={() => setHighlightActive(!highlightActive)}
-      >
-        Highlight diffs
-      </Button>
+      <div className="flex items-center gap-2">
+        <Switch
+          id="highlight-toggle"
+          checked={highlightActive}
+          onCheckedChange={setHighlightActive}
+          data-testid="highlight-toggle"
+        />
+        <Label htmlFor="highlight-toggle" className="cursor-pointer text-xs">
+          Highlight diffs
+        </Label>
+      </div>
 
       {/* When not editing: a single DropdownMenu with the toggle as its
           trigger so users can pick a scope to start editing. */}
