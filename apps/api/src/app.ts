@@ -69,6 +69,13 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
     bodyLimit: 50 * 1024 * 1024,
+    // tRPC's httpBatchLink encodes the batched procedure list into the URL
+    // PATH (e.g. /trpc/a.b,c.d,e.f). Fastify caps a single route param at
+    // `maxParamLength` (default 100) and 404s "Route ... not found" past it —
+    // so a batch of ~6 procedures (here 101 chars) silently fails the whole
+    // request, which react-query then retries into a loop. 5000 is the tRPC
+    // docs' recommended ceiling and leaves ample headroom.
+    maxParamLength: 5000,
   });
 
   app.decorate("db", deps.db);
