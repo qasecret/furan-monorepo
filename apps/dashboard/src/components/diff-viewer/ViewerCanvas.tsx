@@ -39,6 +39,22 @@ interface Props {
    * to drag-only.
    */
   elementMap?: ElementMap | null;
+  /**
+   * Natural pixel dimensions of each image. Used to size each card to its
+   * image's aspect ratio so a short/landscape screenshot fills its card
+   * instead of sitting in a tall box with big empty bands above and below.
+   */
+  baselineDims?: { width: number; height: number } | null;
+  candidateDims?: { width: number; height: number } | null;
+}
+
+/** Card aspect-ratio style from natural image dims (no-op until measured). */
+function aspectStyle(
+  dims?: { width: number; height: number } | null,
+): React.CSSProperties | undefined {
+  return dims && dims.width > 0 && dims.height > 0
+    ? { aspectRatio: `${dims.width} / ${dims.height}` }
+    : undefined;
 }
 
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
@@ -86,6 +102,8 @@ export function ViewerCanvas({
   diffOverlayUrl,
   regions,
   elementMap,
+  baselineDims,
+  candidateDims,
 }: Props) {
   const baselineRef = useRef<HTMLDivElement>(null);
   const candidateRef = useRef<HTMLDivElement>(null);
@@ -822,69 +840,73 @@ export function ViewerCanvas({
     // shadowed card (no bordered box with an inset header bar). The card IS the
     // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
     return (
-      <div className="grid grid-cols-2 gap-6 p-6 h-full min-h-[500px]">
-        <div className="flex min-h-0 flex-col gap-2">
-          <div
-            className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
-            title="Baseline"
-            aria-label="Baseline"
-          >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
-              aria-hidden
-            />
-            Baseline
-          </div>
-          <div
-            ref={baselineRef}
-            data-testid="baseline-canvas-host"
-            className="relative flex-1 min-h-0 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
-          >
-            {!baselineUrl && (
-              <CanvasEmptyState label="No baseline yet">
-                Approve this run to set its candidate as the first baseline for
-                this variation.
-              </CanvasEmptyState>
-            )}
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-col gap-2">
-          <div
-            className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
-            title="Candidate"
-            aria-label="Candidate"
-          >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
-              aria-hidden
-            />
-            Current
-          </div>
-          <div
-            ref={candidateRef}
-            data-testid="candidate-canvas-host"
-            className="relative flex-1 min-h-0 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
-          >
-            {!candidateUrl && (
-              <CanvasEmptyState label="Waiting for capture…">
-                The SDK upload for this run hasn’t arrived yet. This panel will
-                fill in automatically when the screenshot lands.
-              </CanvasEmptyState>
-            )}
-            {overlayActive && (
-              <div
-                className={`absolute inset-0 ${
-                  pickModeActive ? "cursor-pointer" : "cursor-crosshair"
-                }`}
-                data-testid="ignore-region-overlay"
-                data-input-mode={regionInputMode}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerCancel}
-                onPointerLeave={handlePointerLeave}
+      <div className="flex min-h-full p-6">
+        <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
+          <div className="flex flex-col gap-2">
+            <div
+              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              title="Baseline"
+              aria-label="Baseline"
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
+                aria-hidden
               />
-            )}
+              Baseline
+            </div>
+            <div
+              ref={baselineRef}
+              data-testid="baseline-canvas-host"
+              style={aspectStyle(baselineDims)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+            >
+              {!baselineUrl && (
+                <CanvasEmptyState label="No baseline yet">
+                  Approve this run to set its candidate as the first baseline
+                  for this variation.
+                </CanvasEmptyState>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <div
+              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              title="Candidate"
+              aria-label="Candidate"
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                aria-hidden
+              />
+              Current
+            </div>
+            <div
+              ref={candidateRef}
+              data-testid="candidate-canvas-host"
+              style={aspectStyle(candidateDims)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+            >
+              {!candidateUrl && (
+                <CanvasEmptyState label="Waiting for capture…">
+                  The SDK upload for this run hasn’t arrived yet. This panel
+                  will fill in automatically when the screenshot lands.
+                </CanvasEmptyState>
+              )}
+              {overlayActive && (
+                <div
+                  className={`absolute inset-0 ${
+                    pickModeActive ? "cursor-pointer" : "cursor-crosshair"
+                  }`}
+                  data-testid="ignore-region-overlay"
+                  data-input-mode={regionInputMode}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerCancel}
+                  onPointerLeave={handlePointerLeave}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -892,9 +914,10 @@ export function ViewerCanvas({
   }
 
   return (
-    <div className="p-6 h-full min-h-[500px] relative flex flex-col">
+    <div className="flex min-h-full p-6">
       <div
-        className="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+        style={aspectStyle(candidateDims ?? baselineDims)}
+        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}

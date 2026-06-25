@@ -29,7 +29,8 @@ export interface TestInfoSidebarProps {
   startedAt: string | Date | null;
   duration: string | null;
   runBy: string | null;
-  /** INFO → detected changes */
+  /** INFO → summary stat cards + detected changes */
+  pixelDiffPercent: number | null;
   regions: DiffRegion[];
   vlmDescription: string | null;
   /** HISTORY */
@@ -52,6 +53,100 @@ function cap(value: string | null): string {
 
 function val(value: string | null | undefined): string {
   return value && value.trim() ? value : "—";
+}
+
+const SEV_RANK: Record<string, number> = {
+  breaking: 4,
+  major: 3,
+  minor: 2,
+  cosmetic: 1,
+  none: 0,
+};
+const SEV_LABEL: Record<string, string> = {
+  breaking: "Breaking",
+  major: "Major",
+  minor: "Minor",
+  cosmetic: "Cosmetic",
+  none: "None",
+};
+const SEV_COLOR: Record<string, string> = {
+  breaking: "text-red-500",
+  major: "text-red-500",
+  minor: "text-amber-500",
+  cosmetic: "text-amber-400",
+  none: "text-emerald-500",
+};
+
+function worstSeverity(regions: DiffRegion[]): string {
+  let worst = "none";
+  for (const r of regions) {
+    if ((SEV_RANK[r.severity] ?? 0) > (SEV_RANK[worst] ?? 0))
+      worst = r.severity;
+  }
+  return worst;
+}
+
+/** A single summary stat card (value over a small uppercase label). */
+function StatCard({
+  value,
+  label,
+  valueClass,
+}: {
+  value: ReactNode;
+  label: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+      <span className={cn("text-base font-semibold tabular-nums", valueClass)}>
+        {value}
+      </span>
+      <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Three at-a-glance summary cards atop the INFO tab (modelled on the
+ * Applitools step panel): pixel-diff %, region count, worst severity.
+ */
+function StatCards({
+  pixelDiffPercent,
+  regions,
+}: {
+  pixelDiffPercent: number | null;
+  regions: DiffRegion[];
+}) {
+  const sev = worstSeverity(regions);
+  return (
+    <div className="grid grid-cols-3 gap-2" data-testid="info-stat-cards">
+      <StatCard
+        value={
+          pixelDiffPercent != null ? `${pixelDiffPercent.toFixed(2)}%` : "—"
+        }
+        label="Pixel diff"
+        valueClass={
+          pixelDiffPercent ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
+        }
+      />
+      <StatCard
+        value={regions.length}
+        label="Regions"
+        valueClass={
+          regions.length
+            ? "text-zinc-900 dark:text-white"
+            : "text-zinc-400 dark:text-zinc-500"
+        }
+      />
+      <StatCard
+        value={SEV_LABEL[sev] ?? "None"}
+        label="Severity"
+        valueClass={SEV_COLOR[sev] ?? "text-emerald-500"}
+      />
+    </div>
+  );
 }
 
 /** One label/value pair in a metadata grid. */
@@ -115,6 +210,7 @@ export function TestInfoSidebar({
   startedAt,
   duration,
   runBy,
+  pixelDiffPercent,
   regions,
   vlmDescription,
   testVariationId,
@@ -167,6 +263,8 @@ export function TestInfoSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {tab === "info" && (
           <div className="space-y-6">
+            <StatCards pixelDiffPercent={pixelDiffPercent} regions={regions} />
+
             <Section title="Test Details">
               <dl className="grid grid-cols-[88px_1fr] gap-y-2 text-sm">
                 <Row label="Test">

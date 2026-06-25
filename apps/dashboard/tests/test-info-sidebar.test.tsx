@@ -37,6 +37,7 @@ const baseProps = {
   startedAt: "2024-11-19T11:02:00.000Z",
   duration: "00:00:04",
   runBy: "Mike Larson",
+  pixelDiffPercent: 1.18,
   regions: [],
   vlmDescription: null,
   testVariationId: null,
@@ -45,6 +46,16 @@ const baseProps = {
 };
 
 describe("TestInfoSidebar", () => {
+  test("INFO tab shows the summary stat cards (pixel diff / regions / severity)", () => {
+    render(
+      <TestInfoSidebar {...baseProps} pixelDiffPercent={1.18} regions={[]} />,
+    );
+    expect(screen.getByTestId("info-stat-cards")).toBeDefined();
+    expect(screen.getByText("1.18%")).toBeDefined();
+    expect(screen.getByText("Pixel diff")).toBeDefined();
+    expect(screen.getByText("None")).toBeDefined(); // no regions → severity None
+  });
+
   test("INFO tab shows test details / environment / execution + region list", () => {
     render(<TestInfoSidebar {...baseProps} />);
     expect(screen.getByText("Pricing Page")).toBeDefined();

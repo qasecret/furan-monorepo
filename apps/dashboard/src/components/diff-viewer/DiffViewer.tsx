@@ -672,6 +672,8 @@ export function DiffViewer({
                   diffOverlayUrl={diffOverlayUrl}
                   regions={regions}
                   elementMap={elementMap ?? null}
+                  baselineDims={baselineDims}
+                  candidateDims={candidateDims}
                 />
               </div>
               <TestInfoSidebar
@@ -688,6 +690,9 @@ export function DiffViewer({
                   durationMs != null ? formatDuration(durationMs) : null
                 }
                 runBy={runByName}
+                pixelDiffPercent={
+                  (data as { diffPercent?: number | null }).diffPercent ?? null
+                }
                 regions={regions}
                 vlmDescription={data?.vlmDescription ?? null}
                 testVariationId={
