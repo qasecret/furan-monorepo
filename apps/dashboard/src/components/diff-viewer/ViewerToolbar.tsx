@@ -4,12 +4,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
+  Maximize2,
+  Minimize2,
   SlidersHorizontal,
   SplitSquareHorizontal,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { buildIgnoreAreasPayload } from "./ignore-area-payload";
@@ -40,7 +42,7 @@ import { trpc } from "@/lib/trpc";
 const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
   { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
   { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
-  { value: "difference", label: "Difference", Icon: Layers },
+  { value: "difference", label: "Diff only", Icon: Layers },
 ];
 
 interface Props {
@@ -126,6 +128,22 @@ export function ViewerToolbar({
   const clipboard = useClipboardRegion(projectId);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
+
+  // Fullscreen toggle for the diff-viewer root (reference TestStep toolbar).
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    const el = document.getElementById("diff-viewer-root");
+    if (!document.fullscreenElement) {
+      void el?.requestFullscreen?.();
+    } else {
+      void document.exitFullscreen?.();
+    }
+  };
 
   const utils = trpc.useUtils();
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
@@ -274,6 +292,21 @@ export function ViewerToolbar({
           onClick={() => zoomBy(ZOOM_STEP)}
         >
           <ZoomIn className="h-4 w-4" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs h-7 w-7"
+          data-testid="fullscreen-toggle"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? (
+            <Minimize2 className="h-4 w-4" aria-hidden />
+          ) : (
+            <Maximize2 className="h-4 w-4" aria-hidden />
+          )}
         </Button>
       </div>
 

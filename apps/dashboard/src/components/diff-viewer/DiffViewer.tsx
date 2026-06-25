@@ -9,6 +9,7 @@ import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { ContextualHeader } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
+import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
 import { SizeChip } from "./SizeChip";
@@ -546,7 +547,10 @@ export function DiffViewer({
           </p>
         </div>
       </div>
-      <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
+      <div
+        id="diff-viewer-root"
+        className="hidden bg-white md:flex md:flex-col md:flex-1 md:min-h-0 dark:bg-zinc-950"
+      >
         <ContextualHeader
           title={data.name ?? "Untitled run"}
           status={data.status}
@@ -557,18 +561,33 @@ export function DiffViewer({
               : undefined
           }
           nav={headerNav}
+          rightActions={
+            <ApprovalBar
+              runId={runId}
+              checkpointId={
+                selectedCheckpointId !== "_first"
+                  ? selectedCheckpointId
+                  : undefined
+              }
+              status={data?.status}
+              diffRegions={regions}
+              onResolved={advanceToNextUnresolved}
+              inline
+              showStatus={false}
+            />
+          }
         />
+        {/* Group-approval callout — inline ApprovalBar defers it here so it
+            gets a full-width strip under the single-row header. Self-nulls
+            when the checkpoint isn't part of a same-change group. */}
         <div id="diff-viewer-approval">
-          <ApprovalBar
+          <GroupApprovalCallout
             runId={runId}
             checkpointId={
               selectedCheckpointId !== "_first"
                 ? selectedCheckpointId
                 : undefined
             }
-            status={data?.status}
-            diffRegions={regions}
-            onResolved={advanceToNextUnresolved}
           />
         </div>
         {isEmpty ? (

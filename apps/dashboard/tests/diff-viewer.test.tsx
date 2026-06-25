@@ -222,7 +222,7 @@ describe("DiffViewer", () => {
     expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
     expect(r.getByRole("tab", { name: /side by side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /^difference$/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /^diff only$/i })).toBeDefined();
   });
 
   test("clicking a tab updates useViewerStore.mode", () => {
@@ -232,7 +232,7 @@ describe("DiffViewer", () => {
     fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
     expect(useViewerStore.getState().mode).toBe("overlay");
 
-    fireEvent.click(r.getByRole("tab", { name: /^difference$/i }));
+    fireEvent.click(r.getByRole("tab", { name: /^diff only$/i }));
     expect(useViewerStore.getState().mode).toBe("difference");
   });
 

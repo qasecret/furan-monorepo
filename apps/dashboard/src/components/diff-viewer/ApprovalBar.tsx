@@ -1,7 +1,8 @@
 "use client";
 
 import type { OverrideStatusInput, RunStatus } from "@furan/shared-types";
-import { useState } from "react";
+import { Bug } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -26,6 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/cn";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -64,6 +66,20 @@ interface Props {
    * not from approve-all, bulk-approve, or override.
    */
   onResolved?: () => void;
+  /**
+   * Render as a compact inline action cluster for the ContextualHeader's
+   * right slot (the reference's single-row top bar) instead of the
+   * standalone bordered bar. In inline mode the group-approval callout is
+   * rendered separately by the parent (below the header) so it doesn't
+   * cram the h-14 row.
+   */
+  inline?: boolean;
+  /**
+   * Whether to render the leading Status pill. Off in inline mode because
+   * the ContextualHeader already shows the status. Defaults true so the
+   * standalone bar (and existing tests) are unchanged.
+   */
+  showStatus?: boolean;
 }
 
 // ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
@@ -107,6 +123,8 @@ export function ApprovalBar({
   status,
   diffRegions,
   onResolved,
+  inline = false,
+  showStatus = true,
 }: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -208,82 +226,72 @@ export function ApprovalBar({
     override.mutate({ runId, status: next });
   };
 
+  // "Mark as bug" (reference TestStep top bar): reject the checkpoint AND
+  // seed + open the comments tab so the reviewer logs why. Reuses the
+  // existing reject mutation + the embedded comment editor — no new state.
+  const markAsBug = () => {
+    reject.mutate({ runId });
+    const store = useViewerStore.getState();
+    store.setCommentPrefill("Marked as bug: ");
+    store.setCommentPanelOpen(true);
+  };
+
+  // In inline (header) mode there's no room for an inline error string, so
+  // surface mutation failures as a toast instead. The standalone bar keeps
+  // its inline error text below.
+  useEffect(() => {
+    if (inline && error) toast.error(error);
+  }, [inline, error]);
+
   return (
     <TooltipProvider delayDuration={200}>
       <div
-        className="flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95"
+        className={cn(
+          inline
+            ? "flex items-center gap-2"
+            : "flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95",
+        )}
         data-testid="approval-bar"
       >
-        <div
-          className="flex items-center gap-2"
-          data-testid="approval-bar-status"
-        >
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-            Status
-          </span>
-          <RunStatusBadge status={effectiveStatus} />
-          <AggregateSeverityPill regions={diffRegions ?? []} />
-        </div>
+        {showStatus && (
+          <>
+            <div
+              className="flex items-center gap-2"
+              data-testid="approval-bar-status"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                Status
+              </span>
+              <RunStatusBadge status={effectiveStatus} />
+              <AggregateSeverityPill regions={diffRegions ?? []} />
+            </div>
+            <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
+          </>
+        )}
 
-        <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
+        {/* Phase B: "same change in N checkpoints → Accept all" callout. In
+            inline (header) mode the parent renders it below the header so it
+            doesn't cram the single row; renders null when no group exists. */}
+        {!inline && (
+          <GroupApprovalCallout runId={runId} checkpointId={checkpointId} />
+        )}
 
-        {/* Phase B: "same change in N checkpoints → Accept all" callout (renders null when no group). */}
-        <GroupApprovalCallout runId={runId} checkpointId={checkpointId} />
         <div className="flex flex-wrap items-center gap-2 md:ml-auto">
-          {/* ADR-038: when a checkpointId is present, the primary action is
-              "Approve this checkpoint". Legacy path (no checkpointId) keeps
-              the old single-run approve. Secondary actions (approve-all,
-              override, bulk-approve) move into the unified More menu below. */}
-          {checkpointId ? (
-            <DisabledAwareButton
-              disabled={!canReview || pending}
-              reason={disabledReason}
-              testId="approve-checkpoint-button"
-              variant="default"
-              onClick={() =>
-                approveCheckpoint.mutate({
-                  runId,
-                  checkpointId,
-                  ...pendingIgnoreAreas(),
-                })
-              }
-              title="Promotes this checkpoint's candidate as the new baseline for its test variation."
-            >
-              {approveCheckpoint.isPending
-                ? "Approving…"
-                : "Approve this checkpoint"}
-            </DisabledAwareButton>
-          ) : (
-            <DisabledAwareButton
-              disabled={!canReview || pending}
-              reason={disabledReason}
-              testId="approve-button"
-              variant="default"
-              onClick={() => approve.mutate({ runId, ...pendingIgnoreAreas() })}
-              title={
-                effectiveStatus === "new"
-                  ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
-                  : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
-              }
-            >
-              {approve.isPending
-                ? effectiveStatus === "new"
-                  ? "Saving…"
-                  : "Approving…"
-                : effectiveStatus === "new"
-                  ? "Save as baseline"
-                  : "Approve"}
-            </DisabledAwareButton>
-          )}
-          <DisabledAwareButton
-            disabled={!canReview || pending}
-            reason={disabledReason}
-            testId="reject-button"
-            variant="destructive"
-            onClick={() => reject.mutate({ runId })}
+          {/* Comment + More are secondary; kept left of the primary cluster so
+              Approve stays the rightmost green CTA (reference TestStep layout). */}
+          <Button
+            variant="secondary"
+            onClick={() =>
+              useViewerStore
+                .getState()
+                .setCommentPanelOpen(
+                  !useViewerStore.getState().commentPanelOpen,
+                )
+            }
+            data-testid="comment-button"
           >
-            {reject.isPending ? "Rejecting…" : "Reject"}
-          </DisabledAwareButton>
+            Comment
+          </Button>
 
           {canReview && (
             <DropdownMenu>
@@ -335,21 +343,75 @@ export function ApprovalBar({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+
+          {/* Mark as Bug (reference top bar): rejects this checkpoint and
+              opens a pre-filled note explaining why. */}
+          <DisabledAwareButton
+            disabled={!canReview || pending}
+            reason={disabledReason}
+            testId="mark-as-bug-button"
+            variant="secondary"
+            onClick={markAsBug}
+            title="Reject this checkpoint and open a note explaining the bug."
+          >
+            <Bug className="mr-1.5 h-4 w-4" aria-hidden />
+            Mark as Bug
+          </DisabledAwareButton>
+
+          <DisabledAwareButton
+            disabled={!canReview || pending}
+            reason={disabledReason}
+            testId="reject-button"
+            variant="destructive"
+            onClick={() => reject.mutate({ runId })}
+          >
+            {reject.isPending ? "Rejecting…" : "Reject"}
+          </DisabledAwareButton>
+
+          {/* ADR-038: with a checkpointId the primary action approves this
+              checkpoint; the legacy path keeps the single-run approve. */}
+          {checkpointId ? (
+            <DisabledAwareButton
+              disabled={!canReview || pending}
+              reason={disabledReason}
+              testId="approve-checkpoint-button"
+              variant="default"
+              onClick={() =>
+                approveCheckpoint.mutate({
+                  runId,
+                  checkpointId,
+                  ...pendingIgnoreAreas(),
+                })
+              }
+              title="Promotes this checkpoint's candidate as the new baseline for its test variation."
+            >
+              {approveCheckpoint.isPending ? "Approving…" : "Approve"}
+            </DisabledAwareButton>
+          ) : (
+            <DisabledAwareButton
+              disabled={!canReview || pending}
+              reason={disabledReason}
+              testId="approve-button"
+              variant="default"
+              onClick={() => approve.mutate({ runId, ...pendingIgnoreAreas() })}
+              title={
+                effectiveStatus === "new"
+                  ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
+                  : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
+              }
+            >
+              {approve.isPending
+                ? effectiveStatus === "new"
+                  ? "Saving…"
+                  : "Approving…"
+                : effectiveStatus === "new"
+                  ? "Save as baseline"
+                  : "Approve"}
+            </DisabledAwareButton>
+          )}
         </div>
 
-        <Button
-          variant="secondary"
-          onClick={() =>
-            useViewerStore
-              .getState()
-              .setCommentPanelOpen(!useViewerStore.getState().commentPanelOpen)
-          }
-          data-testid="comment-button"
-        >
-          Comment
-        </Button>
-
-        {error && (
+        {!inline && error && (
           <span
             className="text-sm text-red-400 ml-auto"
             role="alert"

@@ -241,6 +241,17 @@ describe("ApprovalBar", () => {
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
+  it("Mark as Bug rejects the run and opens a pre-filled comment", async () => {
+    const { useViewerStore } =
+      await import("../src/components/diff-viewer/useViewerStore");
+    useViewerStore.setState({ commentPanelOpen: false, commentPrefill: null });
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    fireEvent.click(screen.getByTestId("mark-as-bug-button"));
+    expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
+    expect(useViewerStore.getState().commentPanelOpen).toBe(true);
+    expect(useViewerStore.getState().commentPrefill).toContain("Marked as bug");
+  });
+
   it("invalidates listCheckpoints (checkpoint rail) after approve", () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("approve-button"));

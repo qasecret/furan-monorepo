@@ -35,6 +35,8 @@ interface Props {
 export function RunCommentPanel({ runId, embedded = false }: Props) {
   const open = useViewerStore((s) => s.commentPanelOpen);
   const setOpen = useViewerStore((s) => s.setCommentPanelOpen);
+  const commentPrefill = useViewerStore((s) => s.commentPrefill);
+  const setCommentPrefill = useViewerStore((s) => s.setCommentPrefill);
   const utils = trpc.useUtils();
   const { data } = trpc.runs.getById.useQuery({ runId });
   const serverValue = data?.comment ?? "";
@@ -49,6 +51,15 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
   useEffect(() => {
     setValue(serverValue);
   }, [serverValue]);
+
+  // "Mark as bug" seeds a one-shot prefill; apply it once (only when the box
+  // is empty so we never clobber an existing note) then clear it so it
+  // doesn't re-apply on the next open.
+  useEffect(() => {
+    if (!embedded || commentPrefill == null) return;
+    setValue((v) => (v.trim().length === 0 ? commentPrefill : v));
+    setCommentPrefill(null);
+  }, [embedded, commentPrefill, setCommentPrefill]);
 
   const setComment = trpc.runs.setComment.useMutation({
     onMutate: () => setError(null),

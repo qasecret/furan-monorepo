@@ -122,6 +122,12 @@ interface State {
   viewport: string;
   commentPanelOpen: boolean;
   /**
+   * One-shot seed text for the embedded comment editor. "Mark as bug" sets
+   * this + opens the comments tab; RunCommentPanel consumes it once (then
+   * clears it) so the reviewer lands on a pre-filled note.
+   */
+  commentPrefill: string | null;
+  /**
    * Zoom relative to fit-to-canvas. 1 = fit. Applied uniformly to both
    * panes in side-by-side so reviewers compare like for like.
    */
@@ -199,6 +205,7 @@ interface State {
   setSelected: (id: string | null) => void;
   setViewport: (viewport: string) => void;
   setCommentPanelOpen: (open: boolean) => void;
+  setCommentPrefill: (value: string | null) => void;
   /** Multiplicative zoom (e.g. ZOOM_STEP for +1 step). Clamped to [MIN,MAX]. */
   zoomBy: (factor: number) => void;
   /**
@@ -299,6 +306,7 @@ export const useViewerStore = create<State>((set) => ({
   selectedRegionId: null,
   viewport: "",
   commentPanelOpen: false,
+  commentPrefill: null,
   zoom: 1,
   panX: 0,
   panY: 0,
@@ -333,6 +341,7 @@ export const useViewerStore = create<State>((set) => ({
   setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setViewport: (viewport) => set({ viewport }),
   setCommentPanelOpen: (commentPanelOpen) => set({ commentPanelOpen }),
+  setCommentPrefill: (commentPrefill) => set({ commentPrefill }),
   zoomBy: (factor) => set((s) => ({ zoom: clampZoom(s.zoom * factor) })),
   zoomAt: (factor, anchor, canvasSize) =>
     set((s) => {
