@@ -10,6 +10,14 @@ import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
+import {
+  applyHandleResize,
+  applyMove,
+  hitTestHandle,
+  isInsideBbox,
+  type Bbox,
+  type Handle,
+} from "./region-resize";
 import { findSmallestElementAtPoint } from "./snap-to-element";
 import {
   applyViewToPane,
@@ -19,6 +27,7 @@ import type { ElementBbox, ElementMap } from "./useElementMap";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
 import { useReducedMotion } from "./useReducedMotion";
 import {
+  selectEffectiveGeometryById,
   useViewerStore,
   type DraftIgnoreArea,
   type IgnoreArea,
@@ -76,6 +85,14 @@ function DiffBadge() {
 
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
 const MIN_DRAW_PX = 5;
+/** Grab radius (screen px) for the resize handles; divided by world scale. */
+const HANDLE_HIT_PX = 11;
+
+/** Active resize / move gesture on the selected region (null = none / drawing). */
+type RegionDrag =
+  | { kind: "resize"; handle: Handle; start: Bbox }
+  | { kind: "move"; startPt: { x: number; y: number }; start: Bbox }
+  | null;
 
 /** Fallback dimensions used before the host element has been laid out. */
 const FALLBACK_W = 800;
@@ -181,6 +198,10 @@ export function ViewerCanvas({
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
+  const setGeometryForSelected = useViewerStore(
+    (s) => s.setGeometryForSelected,
+  );
+  const geometryOverrides = useViewerStore((s) => s.geometryOverrides);
   const regionInputMode = useViewerStore((s) => s.regionInputMode);
   // Hovered element under the cursor in pick mode. Kept as state so the
   // ignore-region layer re-renders the preview rect on every hover step.
@@ -650,6 +671,8 @@ export function ViewerCanvas({
       draftIgnoreAreas,
       markedForDeletion,
       selectedIgnoreId,
+      geometryOverrides,
+      scale: world.scale.x,
       viewport,
       onSelect: (id) => setSelectedIgnoreId(id),
       pickPreviewBbox:
@@ -674,6 +697,8 @@ export function ViewerCanvas({
     paddingOverrides,
     kindOverrides,
     selectedIgnoreId,
+    geometryOverrides,
+    zoom,
     viewport,
     setSelectedIgnoreId,
   ]);
@@ -687,6 +712,10 @@ export function ViewerCanvas({
     worldRef: activeWorldRef,
     spriteRef: candidateSpriteRef,
   });
+
+  // Resize / move gesture, kept in a ref so pointermove reads it synchronously
+  // without a re-render per mouse step (geometry is pushed to the store live).
+  const dragModeRef = useRef<RegionDrag>(null);
 
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
     null,
@@ -742,6 +771,32 @@ export function ViewerCanvas({
     if (pickModeActive) return; // pick fires on pointerup, not down
     const pt = toImage(e);
     if (!pt) return;
+    // Grab a resize handle / the body of the selected region before falling
+    // through to drag-to-draw. Read fresh store state for the live geometry.
+    if (selectedIgnoreId) {
+      const sel = selectEffectiveGeometryById(
+        useViewerStore.getState(),
+        selectedIgnoreId,
+      );
+      if (sel) {
+        const scale = activeWorldRef.current?.scale.x ?? 1;
+        const handle = hitTestHandle(
+          pt,
+          sel,
+          HANDLE_HIT_PX / Math.max(scale, 1e-6),
+        );
+        if (handle) {
+          dragModeRef.current = { kind: "resize", handle, start: sel };
+          (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
+          return;
+        }
+        if (isInsideBbox(pt, sel)) {
+          dragModeRef.current = { kind: "move", startPt: pt, start: sel };
+          (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+    }
     setDragStart(pt);
     setDragCurrent(pt);
     (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -749,6 +804,26 @@ export function ViewerCanvas({
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
+    const drag = dragModeRef.current;
+    if (drag) {
+      const pt = toImage(e);
+      if (!pt) return;
+      if (drag.kind === "resize") {
+        setGeometryForSelected(applyHandleResize(drag.handle, drag.start, pt));
+      } else {
+        const tex = candidateSpriteRef.current?.texture;
+        setGeometryForSelected(
+          applyMove(
+            drag.start,
+            pt.x - drag.startPt.x,
+            pt.y - drag.startPt.y,
+            tex?.width ?? Number.POSITIVE_INFINITY,
+            tex?.height ?? Number.POSITIVE_INFINITY,
+          ),
+        );
+      }
+      return;
+    }
     if (pickModeActive) {
       const pt = toImage(e);
       if (!pt) {
@@ -781,6 +856,12 @@ export function ViewerCanvas({
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
     if (e.button !== 0) return;
+    if (dragModeRef.current) {
+      // Geometry was pushed to the store live during the drag; just end it.
+      dragModeRef.current = null;
+      (e.target as HTMLDivElement).releasePointerCapture(e.pointerId);
+      return;
+    }
     if (pickModeActive) {
       const pt = toImage(e);
       if (!pt) return;
@@ -844,6 +925,7 @@ export function ViewerCanvas({
 
   const handlePointerCancel = (_e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
+    dragModeRef.current = null;
     setDragStart(null);
     setDragCurrent(null);
     if (pickPreview) setPickPreview(null);

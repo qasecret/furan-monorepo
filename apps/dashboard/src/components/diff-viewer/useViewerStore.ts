@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import type { Bbox } from "./region-resize";
 import type { ElementBbox } from "./useElementMap";
 
 export type ViewerMode = "side-by-side" | "overlay" | "difference";
@@ -196,6 +197,13 @@ interface State {
    * `applySaveSuccess` and the toolbar's save payload builder.
    */
   selectorOverrides: Map<string, string | null>;
+  /**
+   * Per-saved-region geometry overrides from mouse resize / move. Mirrors
+   * `paddingOverrides`: drafts mutate their own bbox in place; saved regions
+   * push the new {x,y,width,height} here, reconciled by `applySaveSuccess`
+   * and the save-payload builder. Same lifecycle (discard / save reset).
+   */
+  geometryOverrides: Map<string, Bbox>;
   selectedIgnoreId: string | null;
   isTemporaryMode: boolean;
   setTemporaryMode: (v: boolean) => void;
@@ -259,6 +267,13 @@ interface State {
    * thresholdOverrides. Pass `undefined` to clear.
    */
   setThresholdForSelected: (threshold: number | undefined) => void;
+  /**
+   * Mouse resize / move geometry setter for the currently-selected region.
+   * Mutates drafts in place; for saved regions, sets an entry in
+   * `geometryOverrides`. Called live on every pointermove of a handle / body
+   * drag, so the canvas reflects the new bbox immediately.
+   */
+  setGeometryForSelected: (bbox: Bbox) => void;
   /**
    * F-a/3: record a snap suggestion for a freshly-drawn draft. Idempotent
    * on the same draft id — re-proposing keeps the first suggestion so
@@ -330,6 +345,7 @@ export const useViewerStore = create<State>((set) => ({
   thresholdOverrides: new Map(),
   pendingSnaps: new Map(),
   selectorOverrides: new Map(),
+  geometryOverrides: new Map(),
   selectedIgnoreId: null,
   isTemporaryMode: false,
   setTemporaryMode: (isTemporaryMode) => set({ isTemporaryMode }),
@@ -400,7 +416,8 @@ export const useViewerStore = create<State>((set) => ({
         s.paddingOverrides.size > 0 ||
         s.kindOverrides.size > 0 ||
         s.thresholdOverrides.size > 0 ||
-        s.selectorOverrides.size > 0;
+        s.selectorOverrides.size > 0 ||
+        s.geometryOverrides.size > 0;
       const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
         ...r,
         id: crypto.randomUUID(),
@@ -428,6 +445,7 @@ export const useViewerStore = create<State>((set) => ({
         thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
+        geometryOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -509,6 +527,21 @@ export const useViewerStore = create<State>((set) => ({
       overrides.set(s.selectedIgnoreId, threshold);
       return { thresholdOverrides: overrides };
     }),
+  setGeometryForSelected: (bbox) =>
+    set((s) => {
+      if (!s.selectedIgnoreId) return {};
+      const draftIdx = s.draftIgnoreAreas.findIndex(
+        (r) => r.id === s.selectedIgnoreId,
+      );
+      if (draftIdx !== -1) {
+        const next = [...s.draftIgnoreAreas];
+        next[draftIdx] = { ...next[draftIdx]!, ...bbox };
+        return { draftIgnoreAreas: next };
+      }
+      const overrides = new Map(s.geometryOverrides);
+      overrides.set(s.selectedIgnoreId, bbox);
+      return { geometryOverrides: overrides };
+    }),
   proposePendingSnap: (draftId, snap) =>
     set((s) => {
       // Idempotent: an effect that re-fires on dependency change must
@@ -564,6 +597,7 @@ export const useViewerStore = create<State>((set) => ({
       thresholdOverrides: new Map(),
       pendingSnaps: new Map(),
       selectorOverrides: new Map(),
+      geometryOverrides: new Map(),
       selectedIgnoreId: null,
       isTemporaryMode: false,
     }),
@@ -579,8 +613,10 @@ export const useViewerStore = create<State>((set) => ({
           const thresholdOv = s.thresholdOverrides.has(r.id)
             ? s.thresholdOverrides.get(r.id)
             : r.thresholdOverride;
+          const geomOv = s.geometryOverrides.get(r.id);
           return {
             ...r,
+            ...(geomOv ?? {}),
             paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
             kind: kindOv?.kind ?? r.kind,
             pattern: kindOv ? kindOv.pattern : r.pattern,
@@ -604,10 +640,40 @@ export const useViewerStore = create<State>((set) => ({
         thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
+        geometryOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
 }));
+
+/**
+ * Resolve a region's effective bbox (image space) by id — the live geometry
+ * after any in-session mouse resize / move. Drafts carry their own (mutated)
+ * bbox; saved regions read through `geometryOverrides`. Used by the canvas
+ * layer (render) and the overlay (hit-test the selected region's handles).
+ */
+export function selectEffectiveGeometryById(
+  s: Pick<
+    State,
+    | "geometryOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+  id: string,
+): Bbox | null {
+  const draft = s.draftIgnoreAreas.find((r) => r.id === id);
+  if (draft) {
+    return { x: draft.x, y: draft.y, width: draft.width, height: draft.height };
+  }
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === id) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === id);
+  if (!saved) return null;
+  const ov = s.geometryOverrides.get(id);
+  const g = ov ?? saved;
+  return { x: g.x, y: g.y, width: g.width, height: g.height };
+}
 
 /**
  * Padding value to show on the slider for the currently-selected region.

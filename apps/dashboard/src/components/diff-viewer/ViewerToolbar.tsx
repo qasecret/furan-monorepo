@@ -118,6 +118,7 @@ export function ViewerToolbar({
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const thresholdOverrides = useViewerStore((s) => s.thresholdOverrides);
   const selectorOverrides = useViewerStore((s) => s.selectorOverrides);
+  const geometryOverrides = useViewerStore((s) => s.geometryOverrides);
   // Region clipboard wiring (Copy/Paste). `useClipboardRegion` subscribes
   // to same-tab + cross-tab clipboard events so the Paste button's
   // disabled state reflects the live clipboard.
@@ -168,7 +169,8 @@ export function ViewerToolbar({
     draftIgnoreAreas.length > 0 ||
     markedForDeletion.size > 0 ||
     selectorOverrides.size > 0 ||
-    thresholdOverrides.size > 0;
+    thresholdOverrides.size > 0 ||
+    geometryOverrides.size > 0;
 
   const handleSave = () => {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
@@ -182,6 +184,7 @@ export function ViewerToolbar({
         kindOverrides,
         thresholdOverrides,
         selectorOverrides,
+        geometryOverrides,
       },
       scope,
     );
