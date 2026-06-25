@@ -13,6 +13,7 @@ import type { DiffRegion } from "./layers/regionTypes";
 import {
   applyHandleResize,
   applyMove,
+  HANDLE_CURSOR,
   hitTestHandle,
   isInsideBbox,
   type Bbox,
@@ -716,6 +717,9 @@ export function ViewerCanvas({
   // Resize / move gesture, kept in a ref so pointermove reads it synchronously
   // without a re-render per mouse step (geometry is pushed to the store live).
   const dragModeRef = useRef<RegionDrag>(null);
+  // Cursor for the overlay while idle-hovering the selected region (resize
+  // arrow over a handle, "move" over the body). Null → the base crosshair.
+  const [hoverCursor, setHoverCursor] = useState<string | null>(null);
 
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
     null,
@@ -824,6 +828,34 @@ export function ViewerCanvas({
       }
       return;
     }
+
+    // Idle hover feedback: resize arrow over a handle, "move" over the body of
+    // the selected region. Only update state when the cursor actually changes.
+    let nextCursor: string | null = null;
+    if (!pickModeActive && !dragStart && selectedIgnoreId) {
+      const hp = toImage(e);
+      const sel = hp
+        ? selectEffectiveGeometryById(
+            useViewerStore.getState(),
+            selectedIgnoreId,
+          )
+        : null;
+      if (hp && sel) {
+        const scale = activeWorldRef.current?.scale.x ?? 1;
+        const handle = hitTestHandle(
+          hp,
+          sel,
+          HANDLE_HIT_PX / Math.max(scale, 1e-6),
+        );
+        nextCursor = handle
+          ? HANDLE_CURSOR[handle]
+          : isInsideBbox(hp, sel)
+            ? "move"
+            : null;
+      }
+    }
+    if (nextCursor !== hoverCursor) setHoverCursor(nextCursor);
+
     if (pickModeActive) {
       const pt = toImage(e);
       if (!pt) {
@@ -933,6 +965,7 @@ export function ViewerCanvas({
 
   const handlePointerLeave = (_e: React.PointerEvent<HTMLDivElement>) => {
     if (pickPreview) setPickPreview(null);
+    if (hoverCursor) setHoverCursor(null);
   };
 
   // Container layout: the pane wrapper is given an explicit min height so
@@ -1002,6 +1035,7 @@ export function ViewerCanvas({
                   className={`absolute inset-0 ${
                     pickModeActive ? "cursor-pointer" : "cursor-crosshair"
                   }`}
+                  style={{ cursor: hoverCursor ?? undefined }}
                   data-testid="ignore-region-overlay"
                   data-input-mode={regionInputMode}
                   onPointerDown={handlePointerDown}
@@ -1039,6 +1073,7 @@ export function ViewerCanvas({
             className={`absolute inset-0 ${
               pickModeActive ? "cursor-pointer" : "cursor-crosshair"
             }`}
+            style={{ cursor: hoverCursor ?? undefined }}
             data-testid="ignore-region-overlay"
             data-input-mode={regionInputMode}
             onPointerDown={handlePointerDown}
