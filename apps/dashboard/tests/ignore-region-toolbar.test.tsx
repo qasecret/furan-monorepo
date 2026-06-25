@@ -116,6 +116,25 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     expect(screen.queryByTestId("ignore-discard-button")).toBeNull();
   });
 
+  test("hides the Drag/Pick input-mode toggle when the run has no element map", () => {
+    useViewerStore.setState({ ignoreEditMode: "variation" });
+    // hasElementMap defaults to false → "Pick element" is impossible, so the
+    // whole toggle is hidden (Drag is the implicit default).
+    render(<ViewerToolbar runId={RUN_ID} />);
+    expect(screen.queryByTestId("region-input-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("region-input-mode-pick")).toBeNull();
+  });
+
+  test("shows the Drag/Pick toggle with Pick enabled when an element map exists", () => {
+    useViewerStore.setState({ ignoreEditMode: "variation" });
+    render(<ViewerToolbar runId={RUN_ID} hasElementMap />);
+    expect(screen.getByTestId("region-input-mode-toggle")).toBeDefined();
+    const pick = screen.getByTestId(
+      "region-input-mode-pick",
+    ) as HTMLButtonElement;
+    expect(pick.disabled).toBe(false);
+  });
+
   test("selecting a scope from the dropdown sets ignoreEditMode and reveals Save/Discard", () => {
     render(<ViewerToolbar runId={RUN_ID} />);
     // Bypass Radix portal: directly call the store action that the dropdown

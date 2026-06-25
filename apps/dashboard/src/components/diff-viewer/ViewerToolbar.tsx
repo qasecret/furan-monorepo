@@ -378,37 +378,40 @@ export function ViewerToolbar({
 
       {editing && (
         <>
-          <div
-            className="flex items-center gap-1"
-            data-testid="region-input-mode-toggle"
-            aria-label="Region input mode"
-          >
-            <Button
-              type="button"
-              variant={regionInputMode === "drag" ? "default" : "secondary"}
-              className="h-7 px-2 text-xs"
-              data-testid="region-input-mode-drag"
-              onClick={() => setRegionInputMode("drag")}
-              title="Drag a rectangle on the canvas"
+          {/* Region input mode (Drag vs. Pick element) only matters when the
+              run has an element-map sidecar. Without one, "Drag" is the only
+              possibility (the canvas defaults to it), so we hide the toggle
+              entirely rather than show a permanently-disabled "Pick element"
+              button. Real SDK-captured runs carry the element map and get the
+              full toggle. */}
+          {hasElementMap && (
+            <div
+              className="flex items-center gap-1"
+              data-testid="region-input-mode-toggle"
+              aria-label="Region input mode"
             >
-              Drag
-            </Button>
-            <Button
-              type="button"
-              variant={regionInputMode === "pick" ? "default" : "secondary"}
-              className="h-7 px-2 text-xs"
-              data-testid="region-input-mode-pick"
-              disabled={!hasElementMap}
-              onClick={() => setRegionInputMode("pick")}
-              title={
-                hasElementMap
-                  ? "Click an element to capture its bbox as a region"
-                  : "Element picker requires an element-map sidecar (SDK PR #61). Older runs are drag-only."
-              }
-            >
-              Pick element
-            </Button>
-          </div>
+              <Button
+                type="button"
+                variant={regionInputMode === "drag" ? "default" : "secondary"}
+                className="h-7 px-2 text-xs"
+                data-testid="region-input-mode-drag"
+                onClick={() => setRegionInputMode("drag")}
+                title="Drag a rectangle on the canvas"
+              >
+                Drag
+              </Button>
+              <Button
+                type="button"
+                variant={regionInputMode === "pick" ? "default" : "secondary"}
+                className="h-7 px-2 text-xs"
+                data-testid="region-input-mode-pick"
+                onClick={() => setRegionInputMode("pick")}
+                title="Click an element to capture its bbox as a region"
+              >
+                Pick element
+              </Button>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Switch
               id="temp-toggle"
