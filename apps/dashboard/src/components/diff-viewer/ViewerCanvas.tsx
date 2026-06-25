@@ -818,11 +818,14 @@ export function ViewerCanvas({
   // the Pixi canvas has a stable box to fill (and the ResizeObserver fires
   // on real layout changes, not on every parent re-render).
   if (mode === "side-by-side") {
+    // Reference TestStep layout: a floating, uppercase label above each clean
+    // shadowed card (no bordered box with an inset header bar). The card IS the
+    // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
     return (
-      <div className="grid grid-cols-2 gap-2 p-2 h-full min-h-[500px]">
-        <div className="border rounded flex flex-col overflow-hidden">
+      <div className="grid grid-cols-2 gap-6 p-6 h-full min-h-[500px]">
+        <div className="flex min-h-0 flex-col gap-2">
           <div
-            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1.5"
+            className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
             title="Baseline"
             aria-label="Baseline"
           >
@@ -835,7 +838,7 @@ export function ViewerCanvas({
           <div
             ref={baselineRef}
             data-testid="baseline-canvas-host"
-            className="flex-1 min-h-0 relative"
+            className="relative flex-1 min-h-0 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
           >
             {!baselineUrl && (
               <CanvasEmptyState label="No baseline yet">
@@ -845,9 +848,9 @@ export function ViewerCanvas({
             )}
           </div>
         </div>
-        <div className="border rounded flex flex-col overflow-hidden relative">
+        <div className="flex min-h-0 flex-col gap-2">
           <div
-            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1.5"
+            className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
             title="Candidate"
             aria-label="Candidate"
           >
@@ -860,7 +863,7 @@ export function ViewerCanvas({
           <div
             ref={candidateRef}
             data-testid="candidate-canvas-host"
-            className="flex-1 min-h-0 relative"
+            className="relative flex-1 min-h-0 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
           >
             {!candidateUrl && (
               <CanvasEmptyState label="Waiting for capture…">
@@ -889,9 +892,9 @@ export function ViewerCanvas({
   }
 
   return (
-    <div className="p-2 h-full min-h-[500px] relative flex flex-col">
+    <div className="p-6 h-full min-h-[500px] relative flex flex-col">
       <div
-        className="border rounded flex-1 min-h-0 relative"
+        className="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
