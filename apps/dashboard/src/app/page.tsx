@@ -1,12 +1,26 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
+import { LandingPage } from "@/components/landing/landing-page";
+import { readJwt } from "@/lib/auth";
+
 /**
- * Root index: bounce to /home, the authenticated landing resolver (U8). The
- * (protected) layout's requireJwt() cascades to /login on a missing cookie, so
- * a single redirect handles both the authed and unauthed cases. Without this,
- * the bare app URL 404s — Next.js route groups ((public) / (protected)) don't
- * match the bare / themselves, only the children inside.
+ * Public front door at `/`.
+ *
+ * Returning users with a valid session skip the marketing page and land in the
+ * app (the protected layout's requireJwt() still guards everything downstream);
+ * signed-out visitors get the Furan landing. Route groups ((public)/(protected))
+ * don't match the bare `/`, so this top-level page owns the decision.
  */
-export default function RootIndex(): never {
-  redirect("/home");
+export const metadata: Metadata = {
+  // `absolute` opts out of the root layout's "%s · Furan" template so the
+  // marketing page gets a full, self-describing <title>.
+  title: { absolute: "Furan — Self-hosted visual regression testing" },
+  description:
+    "Furan is self-hosted visual regression testing for modern teams: image-first pixel diffs, a VLM smart layer that explains what changed, and built-in accessibility checks — all on infrastructure you control.",
+};
+
+export default async function RootPage() {
+  if (await readJwt()) redirect("/home");
+  return <LandingPage />;
 }

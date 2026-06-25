@@ -251,3 +251,55 @@ html.dark {
     transform: translateY(0);
   }
 }
+
+/* ─── Marketing / public pages (landing + login) ─────────────────────
+ * Helpers scoped to the signed-out surfaces. The app shell locks body
+ * scroll (overflow:hidden above); the landing + login opt back into
+ * scrolling via their own `h-dvh overflow-y-auto` containers, so nothing
+ * here touches the global lock. */
+
+:root {
+  --furan-grid: rgba(9, 9, 11, 0.05);
+  --furan-glow: rgba(168, 255, 83, 0.1);
+}
+html.dark {
+  --furan-grid: rgba(255, 255, 255, 0.045);
+  --furan-glow: rgba(168, 255, 83, 0.08);
+}
+
+/* Subtle dotted grid used behind the hero + login showcase. */
+.bg-dotgrid {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    var(--furan-grid) 1px,
+    transparent 1.6px
+  );
+  background-size: 26px 26px;
+}
+
+/* Scroll-reveal primitive (paired with the <Reveal> client wrapper).
+ * Scoped to `.reveal-on` — a class the root layout sets on <html> before first
+ * paint only when JS is present — so no-JS visitors and non-rendering crawlers
+ * see fully-rendered content instead of a blank page. Hidden + risen until
+ * `.is-visible` is toggled on viewport entry; reduced-motion users get the
+ * final state immediately. (No `will-change`: a one-shot 700ms tween doesn't
+ * justify pinning every section to its own compositor layer for the page's
+ * lifetime.) */
+.reveal-on .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 700ms var(--ease-out),
+    transform 700ms var(--ease-out);
+}
+.reveal-on .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal-on .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
