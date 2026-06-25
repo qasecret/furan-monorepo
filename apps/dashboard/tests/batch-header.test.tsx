@@ -27,25 +27,30 @@ const data: BatchHeaderData = {
   passedCount: 8,
   abortedCount: 0,
   emptyCount: 0,
+  newCount: 0,
+  stepsTotal: 24,
+  runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
 
 describe("BatchHeader", () => {
-  test("renders the 'Test results of batch' title, display name, and properties", () => {
+  test("renders the title with the status word and batch name", () => {
     render(<BatchHeader build={data} />);
     expect(screen.getByText(/Test results of batch/i)).toBeDefined();
     expect(screen.getByText(/#42/)).toBeDefined();
-    expect(screen.getByText(/region=us-east/)).toBeDefined();
+    // The aggregate status renders as a coloured word before the title.
+    expect(screen.getByText("Unresolved")).toBeDefined();
   });
 
-  test("renders the labelled status counts (value + label)", () => {
+  test("renders the Tests / Steps / Duration / Run by meta strip", () => {
     render(<BatchHeader build={data} />);
-    // "Unresolved" also appears in the aggregate status badge, so allow >=1.
-    expect(screen.getAllByText("Unresolved").length).toBeGreaterThan(0);
-    expect(screen.getByText("Failed")).toBeDefined();
-    expect(screen.getByText("Passed")).toBeDefined();
+    expect(screen.getByText("Tests:")).toBeDefined();
+    expect(screen.getByText("Steps:")).toBeDefined();
+    expect(screen.getByText("Duration:")).toBeDefined();
+    expect(screen.getByText("Run by:")).toBeDefined();
+    expect(screen.getByText("Jane Doe")).toBeDefined();
   });
 
   test("renders a Share action", () => {

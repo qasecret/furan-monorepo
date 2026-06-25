@@ -69,8 +69,12 @@ const build = {
   failedCount: 0,
   passedCount: 0,
   abortedCount: 0,
+  newCount: 0,
+  stepsTotal: 4,
+  runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
 };
 
 describe("BatchPage", () => {

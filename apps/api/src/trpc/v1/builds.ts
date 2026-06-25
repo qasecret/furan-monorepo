@@ -233,7 +233,11 @@ export const buildsRouter = t.router({
         failed_count: number;
         aborted_count: number;
         passed_count: number;
+        new_count: number;
         empty_count: number;
+        steps_total: number;
+        run_by_first_name: string | null;
+        run_by_last_name: string | null;
         aggregate_status: string;
       }>(sql`
         WITH run_agg AS (
@@ -245,6 +249,7 @@ export const buildsRouter = t.router({
             count(*) FILTER (WHERE status = 'failed')               AS failed_count,
             count(*) FILTER (WHERE status = 'aborted')              AS aborted_count,
             count(*) FILTER (WHERE status IN ('passed','new'))      AS passed_count,
+            count(*) FILTER (WHERE status = 'new')                  AS new_count,
             count(*) FILTER (WHERE status = 'empty')                AS empty_count
           FROM test_runs
           WHERE build_id = ${input.buildId}
@@ -260,10 +265,20 @@ export const buildsRouter = t.router({
           coalesce(r.failed_count, 0)      AS failed_count,
           coalesce(r.aborted_count, 0)     AS aborted_count,
           coalesce(r.passed_count, 0)      AS passed_count,
+          coalesce(r.new_count, 0)         AS new_count,
           coalesce(r.empty_count, 0)       AS empty_count,
+          coalesce((
+            SELECT count(*) FROM screenshots sc
+            WHERE sc.run_id IN (
+              SELECT id FROM test_runs WHERE build_id = b.id
+            )
+          ), 0)                            AS steps_total,
+          u.first_name                     AS run_by_first_name,
+          u.last_name                      AS run_by_last_name,
           ${aggregateStatusExpr}            AS aggregate_status
         FROM builds b
         LEFT JOIN run_agg r ON r.build_id = b.id
+        LEFT JOIN users u ON u.id = b.user_id
         WHERE b.id = ${input.buildId}
         LIMIT 1
       `);
@@ -291,7 +306,13 @@ export const buildsRouter = t.router({
         failedCount: Number(r.failed_count),
         abortedCount: Number(r.aborted_count),
         passedCount: Number(r.passed_count),
+        newCount: Number(r.new_count),
         emptyCount: Number(r.empty_count),
+        stepsTotal: Number(r.steps_total),
+        runByName:
+          r.run_by_first_name || r.run_by_last_name
+            ? `${r.run_by_first_name ?? ""} ${r.run_by_last_name ?? ""}`.trim()
+            : null,
         aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       };
     }),

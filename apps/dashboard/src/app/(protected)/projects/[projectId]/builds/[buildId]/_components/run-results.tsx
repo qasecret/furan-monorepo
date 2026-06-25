@@ -18,7 +18,7 @@ type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
  * Status · Execution Cloud · Test · Branch · OS · Browser · Viewport.
  */
 export const RESULT_GRID =
-  "grid items-center gap-3 grid-cols-[96px_128px_minmax(150px,2fr)_minmax(104px,1fr)_minmax(84px,0.8fr)_minmax(100px,1fr)_minmax(100px,1fr)]";
+  "grid items-center gap-3 grid-cols-[88px_120px_minmax(110px,1fr)_88px_76px_100px_88px]";
 
 // Worst-wins ordering so a result's env-level status reflects its most severe
 // step (a single failed checkpoint makes the whole environment "failed").
@@ -92,6 +92,8 @@ interface Props {
   branchName: string | null;
   /** Run-level status, used when the run has no checkpoints to group yet. */
   fallbackStatus: RunStatus;
+  /** Step layout: "list" scrolls horizontally, "grid" wraps. */
+  view: "list" | "grid";
 }
 
 /**
@@ -105,6 +107,7 @@ export function RunResults({
   testName,
   branchName,
   fallbackStatus,
+  view,
 }: Props) {
   const q = trpc.runs.listCheckpoints.useQuery({ runId });
   const groups = useMemo(
@@ -132,6 +135,7 @@ export function RunResults({
         viewport="—"
         status={fallbackStatus}
         checkpoints={[]}
+        view={view}
       />
     );
   }
@@ -150,6 +154,7 @@ export function RunResults({
           viewport={g.viewport}
           status={g.status}
           checkpoints={g.checkpoints}
+          view={view}
         />
       ))}
     </>
@@ -166,6 +171,7 @@ interface RowProps {
   viewport: string;
   status: RunStatus;
   checkpoints: Checkpoint[];
+  view: "list" | "grid";
 }
 
 function ResultRow({
@@ -178,6 +184,7 @@ function ResultRow({
   viewport,
   status,
   checkpoints,
+  view,
 }: RowProps) {
   const hasSteps = checkpoints.length > 0;
   const [open, setOpen] = useState(true);
@@ -233,7 +240,12 @@ function ResultRow({
         </span>
       </button>
       {hasSteps && open && (
-        <div className="flex gap-3 overflow-x-auto bg-zinc-50/60 px-4 py-3 dark:bg-zinc-900/30">
+        <div
+          className={cn(
+            "gap-3 bg-zinc-50/60 px-4 py-3 dark:bg-zinc-900/30",
+            view === "grid" ? "flex flex-wrap" : "flex overflow-x-auto",
+          )}
+        >
           {checkpoints.map((c, i) => (
             <StepCard
               key={c.id}

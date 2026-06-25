@@ -59,6 +59,7 @@ function renderRun(items: CP[], fallbackStatus = "passed") {
       testName="Login"
       branchName="main"
       fallbackStatus={fallbackStatus as never}
+      view="list"
     />,
   );
 }

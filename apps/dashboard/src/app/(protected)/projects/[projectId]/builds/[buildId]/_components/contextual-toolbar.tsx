@@ -1,12 +1,25 @@
 "use client";
 
-import { CheckCheck } from "lucide-react";
+import {
+  CheckCheck,
+  LayoutGrid,
+  List,
+  ListFilter,
+  RefreshCw,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import { plural } from "@/lib/format";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/cn";
 
 export type Chip = "needs-review" | "all" | "passed";
+export type ResultView = "list" | "grid";
 
 const CHIP_LABEL: Record<Chip, string> = {
   "needs-review": "Needs review",
@@ -17,73 +30,153 @@ const CHIP_LABEL: Record<Chip, string> = {
 interface Props {
   chip: Chip;
   onChipChange: (c: Chip) => void;
-  resultCount: number;
+  view: ResultView;
+  onViewChange: (v: ResultView) => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
   canApproveAll: boolean;
   onApproveAll: () => void;
   isApproving: boolean;
 }
 
+/** A labelled toolbar segment — uppercase micro-label over its controls. */
 function Segment({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
         {label}
       </span>
-      {children}
+      <div className="flex items-center gap-1">{children}</div>
     </div>
   );
 }
 
+function IconButton({
+  active,
+  label,
+  onClick,
+  testId,
+  children,
+}: {
+  active?: boolean;
+  label: string;
+  onClick: () => void;
+  testId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      data-testid={testId}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors",
+        active
+          ? "border-brand/40 bg-brand/10 text-brand-text"
+          : "border-transparent text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Divider() {
+  return <div className="h-8 w-px self-end bg-zinc-200 dark:bg-zinc-800" />;
+}
+
 /**
  * Segmented action toolbar above the result table — mirrors the reference's
- * "View · Test Results" toolbar. View drives the status filter; Test Results
- * shows the row count and the bulk-approve maintenance action.
+ * uppercase-labelled icon groups: View (list / grid), Test Results (refresh +
+ * filter), and the bulk-approve maintenance action.
  */
 export function ContextualToolbar({
   chip,
   onChipChange,
-  resultCount,
+  view,
+  onViewChange,
+  onRefresh,
+  isRefreshing,
   canApproveAll,
   onApproveAll,
   isApproving,
 }: Props) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+    <div className="flex flex-wrap items-end gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
       <Segment label="View">
-        {(["needs-review", "all", "passed"] as Chip[]).map((c) => (
-          <Button
-            key={c}
-            variant={chip === c ? "default" : "secondary"}
-            className="h-7 px-3 text-xs"
-            data-testid={`batch-chip-${c}`}
-            onClick={() => onChipChange(c)}
-          >
-            {CHIP_LABEL[c]}
-          </Button>
-        ))}
+        <IconButton
+          active={view === "list"}
+          label="List view"
+          testId="batch-view-list"
+          onClick={() => onViewChange("list")}
+        >
+          <List className="h-4 w-4" aria-hidden />
+        </IconButton>
+        <IconButton
+          active={view === "grid"}
+          label="Grid view"
+          testId="batch-view-grid"
+          onClick={() => onViewChange("grid")}
+        >
+          <LayoutGrid className="h-4 w-4" aria-hidden />
+        </IconButton>
       </Segment>
-      <div className="ml-auto flex items-center gap-5">
-        <Segment label="Test Results">
-          <span
-            className="text-xs tabular-nums text-zinc-600 dark:text-zinc-400"
-            data-testid="batch-result-count"
-          >
-            {resultCount} result{plural(resultCount)}
-          </span>
-        </Segment>
-        {canApproveAll && (
-          <Button
-            variant="secondary"
-            className="h-7 gap-1.5 px-3 text-xs"
-            data-testid="batch-approve-all"
-            disabled={isApproving}
-            onClick={onApproveAll}
-          >
-            <CheckCheck className="h-3.5 w-3.5" aria-hidden />
-            Approve all
-          </Button>
-        )}
-      </div>
+
+      <Divider />
+
+      <Segment label="Test Results">
+        <IconButton label="Refresh" testId="batch-refresh" onClick={onRefresh}>
+          <RefreshCw
+            className={cn("h-4 w-4", isRefreshing && "animate-spin")}
+            aria-hidden
+          />
+        </IconButton>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Filter tests"
+              data-testid="batch-filter-trigger"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            >
+              <ListFilter className="h-4 w-4" aria-hidden />
+              {CHIP_LABEL[chip]}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {(["needs-review", "all", "passed"] as Chip[]).map((c) => (
+              <DropdownMenuItem
+                key={c}
+                data-testid={`batch-chip-${c}`}
+                onSelect={() => onChipChange(c)}
+                className={cn(chip === c && "font-semibold text-brand-text")}
+              >
+                {CHIP_LABEL[c]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </Segment>
+
+      {canApproveAll && (
+        <>
+          <Divider />
+          <Segment label="Maintenance">
+            <Button
+              variant="secondary"
+              className="h-7 gap-1.5 px-3 text-xs"
+              data-testid="batch-approve-all"
+              disabled={isApproving}
+              onClick={onApproveAll}
+            >
+              <CheckCheck className="h-3.5 w-3.5" aria-hidden />
+              Approve all
+            </Button>
+          </Segment>
+        </>
+      )}
     </div>
   );
 }

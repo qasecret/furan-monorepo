@@ -6,7 +6,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { BatchHeader } from "./batch-header";
-import { ContextualToolbar, type Chip } from "./contextual-toolbar";
+import {
+  ContextualToolbar,
+  type Chip,
+  type ResultView,
+} from "./contextual-toolbar";
 import { RESULT_GRID, RunResults } from "./run-results";
 
 import { Button } from "@/components/ui/button";
@@ -34,6 +38,7 @@ interface Props {
 export function BatchPage({ projectId, buildId, canReview }: Props) {
   useProjectEvents(projectId);
   const [chip, setChip] = useState<Chip>("needs-review");
+  const [view, setView] = useState<ResultView>("list");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunRow[]>([]);
 
@@ -116,7 +121,13 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           setCursor(undefined);
           setAccumulated([]);
         }}
-        resultCount={items.length}
+        view={view}
+        onViewChange={setView}
+        onRefresh={() => {
+          void list.refetch();
+          void buildQ.refetch();
+        }}
+        isRefreshing={list.isFetching}
         canApproveAll={canApproveAll}
         onApproveAll={onApproveAll}
         isApproving={bulkApprove.isPending}
@@ -147,6 +158,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
                 testName={row.name}
                 branchName={build?.branchName ?? null}
                 fallbackStatus={row.status}
+                view={view}
               />
             ))}
           </div>

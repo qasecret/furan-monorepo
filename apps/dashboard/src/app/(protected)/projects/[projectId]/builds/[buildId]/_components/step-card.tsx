@@ -4,7 +4,6 @@ import type { RunStatus } from "@furan/shared-types";
 import { Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { StatusPill } from "@/components/triage/status-pill";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
 
@@ -96,7 +95,6 @@ export function StepCard({
         <span className="min-w-0 flex-1 truncate text-zinc-800 transition-colors group-hover:text-brand-text dark:text-zinc-200">
           {index + 1}/{total} {checkpoint.name}
         </span>
-        <StatusPill status={checkpoint.status} />
       </div>
     </div>
   );

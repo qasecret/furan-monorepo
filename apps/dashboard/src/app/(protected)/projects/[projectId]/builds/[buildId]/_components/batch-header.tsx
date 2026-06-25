@@ -1,14 +1,11 @@
 "use client";
 
-import { GitBranch, Share2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Share2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { BuildStatusBadge } from "@/components/build-status-badge";
 import { Button } from "@/components/ui/button";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { cn } from "@/lib/cn";
-import { formatRelativeTime } from "@/lib/format";
 import type { RouterOutputs } from "@/lib/trpc";
 
 export type BatchHeaderData = RouterOutputs["builds"]["getById"];
@@ -17,29 +14,84 @@ interface Props {
   build: BatchHeaderData;
 }
 
-/** A labelled stat in the header meta strip. */
-function Stat({ label, value }: { label: string; value: ReactNode }) {
+const STATUS_WORD: Record<string, { label: string; color: string }> = {
+  passed: { label: "Passed", color: "text-emerald-600 dark:text-emerald-400" },
+  unresolved: {
+    label: "Unresolved",
+    color: "text-amber-600 dark:text-amber-400",
+  },
+  failed: { label: "Failed", color: "text-red-600 dark:text-red-400" },
+  running: { label: "Running", color: "text-blue-600 dark:text-blue-400" },
+  aborted: { label: "Aborted", color: "text-zinc-500 dark:text-zinc-400" },
+  empty: { label: "Empty", color: "text-zinc-500 dark:text-zinc-400" },
+};
+
+const ACCENT: Record<string, string> = {
+  passed: "bg-emerald-500",
+  unresolved: "bg-amber-500",
+  failed: "bg-red-500",
+  running: "bg-blue-500",
+  aborted: "bg-zinc-400 dark:bg-zinc-600",
+  empty: "bg-zinc-400 dark:bg-zinc-600",
+};
+
+/** Formats the created→updated span as HH:MM:SS (the reference's Duration). */
+function formatDuration(startIso: string, endIso: string): string {
+  let secs = Math.max(
+    0,
+    Math.round(
+      (new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000,
+    ),
+  );
+  const h = Math.floor(secs / 3600);
+  secs -= h * 3600;
+  const m = Math.floor(secs / 60);
+  secs -= m * 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(secs)}`;
+}
+
+/**
+ * Coerces a possibly-absent count to 0 — resilience against API/dashboard
+ * version skew (the two deploy independently), where an older API image may
+ * omit the newer aggregate fields rather than returning a number.
+ */
+function num(v: number | null | undefined): number {
+  return v == null ? 0 : v;
+}
+
+/** One labelled meta group — "Tests: 1 in total | 0 unresolved | 1 new". */
+function MetaGroup({ label, parts }: { label: string; parts: string[] }) {
   return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-        {value}
+    <span className="whitespace-nowrap text-xs">
+      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+        {label}:
+      </span>{" "}
+      <span className="text-zinc-500 dark:text-zinc-400">
+        {parts.map((p, i) => (
+          <span key={i}>
+            {i > 0 && (
+              <span className="px-1.5 text-zinc-300 dark:text-zinc-600">|</span>
+            )}
+            {p}
+          </span>
+        ))}
       </span>
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">{label}</span>
-    </div>
+    </span>
+  );
+}
+
+function Bullet() {
+  return (
+    <span aria-hidden className="text-zinc-300 dark:text-zinc-600">
+      •
+    </span>
   );
 }
 
 export function BatchHeader({ build }: Props) {
-  // Status-colored accent bar (reference batch-detail header), derived from the
-  // real run counts rather than a separate status mapping.
-  const accent =
-    build.failedCount > 0
-      ? "bg-red-500"
-      : build.unresolvedCount > 0
-        ? "bg-amber-500"
-        : build.passedCount > 0
-          ? "bg-emerald-500"
-          : "bg-zinc-400 dark:bg-zinc-600";
+  const status = STATUS_WORD[build.aggregateStatus] ?? STATUS_WORD.empty!;
+  const accent = ACCENT[build.aggregateStatus] ?? ACCENT.empty!;
 
   const onShare = () => {
     void navigator.clipboard
@@ -48,85 +100,49 @@ export function BatchHeader({ build }: Props) {
       .catch(() => toast.error("Couldn’t copy link"));
   };
 
-  const props = Object.entries(build.properties);
-
   return (
     <header
       id="batch-header"
-      className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800"
+      className="border-b border-zinc-200 px-4 py-3.5 dark:border-zinc-800"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              aria-hidden
-              className={cn("h-6 w-1 shrink-0 rounded-full", accent)}
-            />
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-white">
-              <span className="text-zinc-500 dark:text-zinc-400">
-                Test results of batch:{" "}
+        <div className="flex min-w-0 gap-3">
+          <span
+            aria-hidden
+            className={cn("mt-0.5 h-9 w-1 shrink-0 rounded-full", accent)}
+          />
+          <div className="min-w-0">
+            <h1 className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold tracking-tight">
+              <span className={status.color}>{status.label}</span>
+              <span className="text-zinc-950 dark:text-white">
+                <span className="font-normal text-zinc-500 dark:text-zinc-400">
+                  Test results of batch:{" "}
+                </span>
+                {buildDisplayName(build)}
               </span>
-              {buildDisplayName(build)}
             </h1>
-            <BuildStatusBadge status={build.aggregateStatus} />
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 pl-3">
-            <Stat
-              label={build.runCount === 1 ? "Test" : "Tests"}
-              value={build.runCount}
-            />
-            {build.unresolvedCount > 0 && (
-              <Stat
-                label="Unresolved"
-                value={
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {build.unresolvedCount}
-                  </span>
-                }
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <MetaGroup
+                label="Tests"
+                parts={[
+                  `${build.runCount} in total`,
+                  `${build.unresolvedCount} unresolved`,
+                  `${num(build.newCount)} new`,
+                ]}
               />
-            )}
-            {build.failedCount > 0 && (
-              <Stat
-                label="Failed"
-                value={
-                  <span className="text-red-600 dark:text-red-400">
-                    {build.failedCount}
-                  </span>
-                }
+              <Bullet />
+              <MetaGroup
+                label="Steps"
+                parts={[`${num(build.stepsTotal)} in total`]}
               />
-            )}
-            {build.passedCount > 0 && (
-              <Stat
-                label="Passed"
-                value={
-                  <span className="text-emerald-600 dark:text-emerald-400">
-                    {build.passedCount}
-                  </span>
-                }
+              <Bullet />
+              <MetaGroup
+                label="Duration"
+                parts={[formatDuration(build.createdAt, build.updatedAt)]}
               />
-            )}
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Started
-              </span>
-              <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                {formatRelativeTime(build.createdAt)}
-              </span>
+              <Bullet />
+              <MetaGroup label="Run by" parts={[build.runByName ?? "—"]} />
             </div>
-            {build.branchName && (
-              <span className="inline-flex items-center gap-1 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                <GitBranch className="h-3.5 w-3.5" aria-hidden />
-                {build.branchName}
-              </span>
-            )}
-            {props.map(([k, v]) => (
-              <span
-                key={k}
-                className="text-xs text-zinc-500 dark:text-zinc-400"
-              >
-                {k}={v}
-              </span>
-            ))}
           </div>
         </div>
         <Button

@@ -291,6 +291,9 @@ d("tRPC builds router", () => {
       expect(res.unresolvedCount).toBe(1);
       expect(res.failedCount).toBe(1);
       expect(res.passedCount).toBe(1);
+      expect(res.newCount).toBe(0);
+      expect(res.stepsTotal).toBe(0);
+      expect(res.runByName).toBeNull();
     });
 
     test("NOT_FOUND for a missing build id", async () => {
