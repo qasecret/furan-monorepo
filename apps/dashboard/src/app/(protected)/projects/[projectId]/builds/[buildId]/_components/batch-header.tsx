@@ -2,6 +2,7 @@
 
 import { BuildStatusBadge } from "@/components/build-status-badge";
 import { buildDisplayName } from "@/lib/build-display-name";
+import { cn } from "@/lib/cn";
 import { formatRelativeTime } from "@/lib/format";
 import type { RouterOutputs } from "@/lib/trpc";
 
@@ -22,13 +23,29 @@ export function BatchHeader({ build }: Props) {
     .filter(Boolean)
     .join(" · ");
   const props = Object.entries(build.properties);
+  // Status-colored accent bar (reference batch-detail header), derived from
+  // the real run counts rather than a separate status mapping.
+  const accent =
+    build.failedCount > 0
+      ? "bg-red-500"
+      : build.unresolvedCount > 0
+        ? "bg-amber-500"
+        : build.passedCount > 0
+          ? "bg-emerald-500"
+          : "bg-zinc-400 dark:bg-zinc-600";
   return (
     <header
       id="batch-header"
       className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold">{buildDisplayName(build)}</h1>
+        <span
+          aria-hidden
+          className={cn("h-6 w-1 shrink-0 rounded-full", accent)}
+        />
+        <h1 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-white">
+          {buildDisplayName(build)}
+        </h1>
         {build.branchName && (
           <span className="text-sm text-zinc-600 dark:text-zinc-400">
             {build.branchName}

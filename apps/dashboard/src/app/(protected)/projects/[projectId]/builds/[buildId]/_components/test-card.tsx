@@ -28,6 +28,19 @@ export function TestCard({
   const router = useRouter();
   const open = () =>
     router.push(`/projects/${projectId}/runs/${row.id}/checkpoints/_first`);
+  // Reference-style left accent bar, colored by the run's status.
+  const statusAccent =
+    row.status === "failed"
+      ? "bg-red-500"
+      : row.status === "unresolved"
+        ? "bg-amber-500"
+        : row.status === "passed"
+          ? "bg-emerald-500"
+          : row.status === "running"
+            ? "bg-blue-500"
+            : row.status === "new"
+              ? "bg-sky-500"
+              : "bg-zinc-300 dark:bg-zinc-700";
   return (
     <div
       data-testid={`test-card-${row.id}`}
@@ -41,19 +54,23 @@ export function TestCard({
           open();
         }
       }}
-      className="group flex cursor-pointer flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-2 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900/40"
+      className="group relative flex cursor-pointer flex-col gap-2 overflow-hidden rounded-lg border border-zinc-200 bg-white p-2 transition-colors hover:border-brand/40 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-brand/40 dark:hover:bg-zinc-900/40"
     >
+      <span
+        aria-hidden
+        className={cn("absolute inset-y-0 left-0 w-1", statusAccent)}
+      />
       {row.thumbnailUrl !== null ? (
         <img
           src={row.thumbnailUrl}
           alt=""
           loading="lazy"
-          className="h-24 w-full rounded border border-zinc-200 object-cover dark:border-zinc-800"
+          className="aspect-video w-full rounded border border-zinc-200 object-cover dark:border-zinc-800"
         />
       ) : (
         <div
           className={cn(
-            "h-24 w-full rounded border",
+            "aspect-video w-full rounded border",
             "border-zinc-200 bg-[repeating-linear-gradient(45deg,#e4e4e7,#e4e4e7_4px,#d4d4d8_4px,#d4d4d8_8px)]",
             "dark:border-zinc-800 dark:bg-[repeating-linear-gradient(45deg,#18181b,#18181b_4px,#1f1f23_4px,#1f1f23_8px)]",
           )}
@@ -61,7 +78,7 @@ export function TestCard({
         />
       )}
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-950 dark:text-white">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-950 transition-colors group-hover:text-brand-text dark:text-white">
           {row.name}
         </span>
         <StatusPill status={row.status} />
@@ -76,7 +93,7 @@ export function TestCard({
           <>
             <Button
               variant="ghost"
-              className="px-2 py-1"
+              className="px-2 py-1 text-zinc-700 hover:text-emerald-600 dark:text-zinc-300 dark:hover:text-emerald-400"
               data-testid={`test-card-approve-${row.id}`}
               aria-label={`Approve ${row.name}`}
               onClick={(e) => {
@@ -84,11 +101,11 @@ export function TestCard({
                 onApprove(row.id);
               }}
             >
-              <Check className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
+              <Check className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
-              className="px-2 py-1"
+              className="px-2 py-1 text-zinc-700 hover:text-red-600 dark:text-zinc-300 dark:hover:text-red-400"
               data-testid={`test-card-reject-${row.id}`}
               aria-label={`Reject ${row.name}`}
               onClick={(e) => {
@@ -96,7 +113,7 @@ export function TestCard({
                 onReject(row.id);
               }}
             >
-              <X className="h-4 w-4 text-zinc-700 dark:text-zinc-300" />
+              <X className="h-4 w-4" />
             </Button>
           </>
         ) : null}

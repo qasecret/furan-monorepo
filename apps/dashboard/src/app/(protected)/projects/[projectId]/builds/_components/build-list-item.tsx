@@ -23,21 +23,26 @@ export function BuildListItem({ build, projectId, selected }: Props) {
       aria-current={selected ? "page" : undefined}
       data-testid={`build-list-item-${build.id}`}
       className={cn(
-        "block rounded-md border px-3 py-2 transition-colors",
+        "group block rounded-md border px-3 py-2 transition-colors",
         selected
           ? "border-brand/30 bg-brand/5"
           : "border-transparent hover:bg-zinc-100/60 dark:hover:bg-zinc-900/40",
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm text-zinc-900 dark:text-zinc-100">
+        <span
+          className={cn(
+            "truncate text-sm text-zinc-900 transition-colors dark:text-zinc-100",
+            selected ? "text-brand-text" : "group-hover:text-brand-text",
+          )}
+        >
           {buildDisplayName(build)}
         </span>
         <BuildStatusBadge status={build.aggregateStatus} />
       </div>
       <div className="mt-1 flex items-center justify-between gap-2 text-xs text-zinc-500">
         {build.branchName ? (
-          <span className="truncate">{build.branchName}</span>
+          <span className="truncate font-mono">{build.branchName}</span>
         ) : (
           <span />
         )}
