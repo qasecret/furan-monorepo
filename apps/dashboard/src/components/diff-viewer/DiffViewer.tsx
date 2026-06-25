@@ -597,6 +597,7 @@ export function DiffViewer({
               onResolved={advanceToNextUnresolved}
               inline
               showStatus={false}
+              checkpointCount={checkpointSummaries.length}
             />
           }
         />

@@ -80,6 +80,12 @@ interface Props {
    * standalone bar (and existing tests) are unchanged.
    */
   showStatus?: boolean;
+  /**
+   * Total checkpoints in the run. "Approve all checkpoints" in the More menu
+   * only shows when this is > 1 (on a single-step run it just duplicates the
+   * primary Approve). Defaults 0.
+   */
+  checkpointCount?: number;
 }
 
 // ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
@@ -125,6 +131,7 @@ export function ApprovalBar({
   onResolved,
   inline = false,
   showStatus = true,
+  checkpointCount = 0,
 }: Props) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -277,22 +284,10 @@ export function ApprovalBar({
         )}
 
         <div className="flex flex-wrap items-center gap-2 md:ml-auto">
-          {/* Comment + More are secondary; kept left of the primary cluster so
-              Approve stays the rightmost green CTA (reference TestStep layout). */}
-          <Button
-            variant="secondary"
-            onClick={() =>
-              useViewerStore
-                .getState()
-                .setCommentPanelOpen(
-                  !useViewerStore.getState().commentPanelOpen,
-                )
-            }
-            data-testid="comment-button"
-          >
-            Comment
-          </Button>
-
+          {/* "More" is secondary; kept left of the primary cluster so Approve
+              stays the rightmost green CTA (reference TestStep layout).
+              Commenting lives in the sidebar's COMMENTS tab, so there's no
+              separate Comment button here. */}
           {canReview && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -306,7 +301,7 @@ export function ApprovalBar({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {checkpointId && (
+                {checkpointId && checkpointCount > 1 && (
                   <DropdownMenuItem
                     data-testid="approve-all-checkpoints-button"
                     onSelect={() => approveAllCheckpoints.mutate({ runId })}
@@ -326,19 +321,19 @@ export function ApprovalBar({
                   data-testid="override-set-passed"
                   onSelect={() => callOverride("passed")}
                 >
-                  Set Passed
+                  Force passed
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   data-testid="override-set-failed"
                   onSelect={() => callOverride("failed")}
                 >
-                  Set Failed
+                  Force failed
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   data-testid="override-set-default"
                   onSelect={() => callOverride("default")}
                 >
-                  Default (recompute)
+                  Reset to computed
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
