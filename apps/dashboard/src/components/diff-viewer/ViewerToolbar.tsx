@@ -1,5 +1,6 @@
 "use client";
 
+import { Layers, SlidersHorizontal, SplitSquareHorizontal } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -25,13 +26,13 @@ import {
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/cn";
 import { trpc } from "@/lib/trpc";
 
-const MODES: { value: ViewerMode; label: string }[] = [
-  { value: "side-by-side", label: "Side by side" },
-  { value: "overlay", label: "Overlay" },
-  { value: "difference", label: "Difference" },
+const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
+  { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
+  { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
+  { value: "difference", label: "Difference", Icon: Layers },
 ];
 
 interface Props {
@@ -193,15 +194,34 @@ export function ViewerToolbar({
 
   return (
     <div className="flex items-center gap-4 flex-wrap p-2 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <Tabs value={mode} onValueChange={(v) => setMode(v as ViewerMode)}>
-        <TabsList>
-          {MODES.map((m) => (
-            <TabsTrigger key={m.value} value={m.value} data-mode={m.value}>
+      <div
+        className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100/60 p-1 dark:border-zinc-800 dark:bg-zinc-900/50"
+        role="tablist"
+        aria-label="View mode"
+      >
+        {MODES.map((m) => {
+          const active = mode === m.value;
+          return (
+            <button
+              key={m.value}
+              type="button"
+              role="tab"
+              data-mode={m.value}
+              aria-selected={active}
+              onClick={() => setMode(m.value)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                active
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white",
+              )}
+            >
+              <m.Icon className="h-4 w-4" aria-hidden />
               {m.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+            </button>
+          );
+        })}
+      </div>
 
       <SensitivityControl
         runId={runId}

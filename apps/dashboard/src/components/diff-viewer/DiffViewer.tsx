@@ -442,6 +442,25 @@ export function DiffViewer({
 
   const isEmpty = data?.status === "empty";
 
+  // Step prev/next for the contextual header — walks the checkpoint list.
+  const cpIndex = checkpointSummaries.findIndex(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const prevCp = cpIndex > 0 ? checkpointSummaries[cpIndex - 1] : undefined;
+  const nextCp =
+    cpIndex >= 0 && cpIndex < checkpointSummaries.length - 1
+      ? checkpointSummaries[cpIndex + 1]
+      : undefined;
+  const headerNav =
+    cpIndex >= 0 && checkpointSummaries.length > 1
+      ? {
+          index: cpIndex,
+          total: checkpointSummaries.length,
+          onPrev: prevCp ? () => handleCheckpointSelect(prevCp.id) : undefined,
+          onNext: nextCp ? () => handleCheckpointSelect(nextCp.id) : undefined,
+        }
+      : undefined;
+
   return (
     <div
       className="flex flex-col h-full"
@@ -477,16 +496,27 @@ export function DiffViewer({
         <ContextualHeader
           title={data.name ?? "Untitled run"}
           status={data.status}
-          metadata={{
-            branch: data.branchName,
-            checkpointCount:
-              data.checkpointCount ??
-              checkpointsQuery.data?.items?.length ??
-              null,
-            startedAt: data.createdAt,
-            completedAt: data.completedAt,
-          }}
+          branch={data.branchName}
+          backHref={
+            data.buildId
+              ? `/projects/${data.projectId}/builds/${data.buildId}`
+              : undefined
+          }
+          nav={headerNav}
         />
+        <div id="diff-viewer-approval">
+          <ApprovalBar
+            runId={runId}
+            checkpointId={
+              selectedCheckpointId !== "_first"
+                ? selectedCheckpointId
+                : undefined
+            }
+            status={data?.status}
+            diffRegions={regions}
+            onResolved={advanceToNextUnresolved}
+          />
+        </div>
         {isEmpty ? (
           <EmptyRunCard
             projectId={data.projectId}
@@ -589,19 +619,6 @@ export function DiffViewer({
             </div>
           </>
         )}
-        <div id="diff-viewer-approval">
-          <ApprovalBar
-            runId={runId}
-            checkpointId={
-              selectedCheckpointId !== "_first"
-                ? selectedCheckpointId
-                : undefined
-            }
-            status={data?.status}
-            diffRegions={regions}
-            onResolved={advanceToNextUnresolved}
-          />
-        </div>
         <RunCommentPanel runId={runId} />
       </div>
     </div>

@@ -219,10 +219,10 @@ describe("DiffViewer", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
-    fireEvent.mouseDown(r.getByRole("tab", { name: /^overlay$/i }));
+    fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
     expect(useViewerStore.getState().mode).toBe("overlay");
 
-    fireEvent.mouseDown(r.getByRole("tab", { name: /^difference$/i }));
+    fireEvent.click(r.getByRole("tab", { name: /^difference$/i }));
     expect(useViewerStore.getState().mode).toBe("difference");
   });
 
