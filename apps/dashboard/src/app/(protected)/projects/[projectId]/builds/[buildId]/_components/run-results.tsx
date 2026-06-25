@@ -6,11 +6,56 @@ import { useMemo, useState } from "react";
 
 import { StepCard } from "./step-card";
 
-import { StatusPill } from "@/components/triage/status-pill";
 import { cn } from "@/lib/cn";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
+
+/**
+ * Per-RunStatus presentation for the result-row status cell — a coloured dot +
+ * word, matching the reference's batch-detail test rows. (Distinct from
+ * build-status-meta, which covers build aggregate statuses without "new".)
+ */
+const RUN_STATUS: Record<
+  RunStatus,
+  { word: string; text: string; dot: string }
+> = {
+  passed: {
+    word: "Passed",
+    text: "text-emerald-600 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+  },
+  unresolved: {
+    word: "Unresolved",
+    text: "text-amber-600 dark:text-amber-400",
+    dot: "bg-amber-500",
+  },
+  failed: {
+    word: "Failed",
+    text: "text-red-600 dark:text-red-400",
+    dot: "bg-red-500",
+  },
+  new: {
+    word: "New",
+    text: "text-sky-600 dark:text-sky-400",
+    dot: "bg-sky-500",
+  },
+  running: {
+    word: "Running",
+    text: "text-blue-600 dark:text-blue-400",
+    dot: "bg-blue-500",
+  },
+  aborted: {
+    word: "Aborted",
+    text: "text-zinc-500 dark:text-zinc-400",
+    dot: "bg-zinc-400 dark:bg-zinc-600",
+  },
+  empty: {
+    word: "Empty",
+    text: "text-zinc-500 dark:text-zinc-400",
+    dot: "bg-zinc-300 dark:bg-zinc-700",
+  },
+};
 
 /**
  * Shared 7-column grid template for the result table — the column header
@@ -18,7 +63,7 @@ type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
  * Status · Execution Cloud · Test · Branch · OS · Browser · Viewport.
  */
 export const RESULT_GRID =
-  "grid items-center gap-3 grid-cols-[88px_120px_minmax(110px,1fr)_88px_76px_100px_88px]";
+  "grid items-center gap-3 grid-cols-[132px_116px_minmax(104px,1fr)_84px_72px_100px_84px]";
 
 // Worst-wins ordering so a result's env-level status reflects its most severe
 // step (a single failed checkpoint makes the whole environment "failed").
@@ -94,6 +139,8 @@ interface Props {
   fallbackStatus: RunStatus;
   /** Step layout: "list" scrolls horizontally, "grid" wraps. */
   view: "list" | "grid";
+  /** Gates the per-step quick-approve action. */
+  canReview: boolean;
 }
 
 /**
@@ -108,6 +155,7 @@ export function RunResults({
   branchName,
   fallbackStatus,
   view,
+  canReview,
 }: Props) {
   const q = trpc.runs.listCheckpoints.useQuery({ runId });
   const groups = useMemo(
@@ -136,6 +184,7 @@ export function RunResults({
         status={fallbackStatus}
         checkpoints={[]}
         view={view}
+        canReview={canReview}
       />
     );
   }
@@ -155,6 +204,7 @@ export function RunResults({
           status={g.status}
           checkpoints={g.checkpoints}
           view={view}
+          canReview={canReview}
         />
       ))}
     </>
@@ -172,6 +222,7 @@ interface RowProps {
   status: RunStatus;
   checkpoints: Checkpoint[];
   view: "list" | "grid";
+  canReview: boolean;
 }
 
 function ResultRow({
@@ -185,7 +236,9 @@ function ResultRow({
   status,
   checkpoints,
   view,
+  canReview,
 }: RowProps) {
+  const sm = RUN_STATUS[status];
   const hasSteps = checkpoints.length > 0;
   const [open, setOpen] = useState(true);
   return (
@@ -217,7 +270,13 @@ function ResultRow({
           ) : (
             <span className="w-4 shrink-0" />
           )}
-          <StatusPill status={status} />
+          <span
+            aria-hidden
+            className={cn("h-3.5 w-1 shrink-0 rounded-full", sm.dot)}
+          />
+          <span className={cn("truncate text-xs font-medium", sm.text)}>
+            {sm.word}
+          </span>
         </span>
         <span className="inline-flex items-center gap-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
           <Server className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -240,27 +299,32 @@ function ResultRow({
         </span>
       </button>
       {hasSteps && open && (
-        <div
-          className={cn(
-            "gap-3 bg-zinc-50/60 px-4 py-3 dark:bg-zinc-900/30",
-            view === "grid" ? "flex flex-wrap" : "flex overflow-x-auto",
-          )}
-        >
-          {checkpoints.map((c, i) => (
-            <StepCard
-              key={c.id}
-              projectId={projectId}
-              runId={runId}
-              index={i}
-              total={checkpoints.length}
-              checkpoint={{
-                id: c.id,
-                name: c.name,
-                status: c.status,
-                imageKey: c.imageKey,
-              }}
-            />
-          ))}
+        <div className="px-4 pb-4">
+          <div
+            className={cn(
+              "rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-900/30",
+              view === "grid"
+                ? "flex flex-wrap gap-4"
+                : "flex gap-4 overflow-x-auto",
+            )}
+          >
+            {checkpoints.map((c, i) => (
+              <StepCard
+                key={c.id}
+                projectId={projectId}
+                runId={runId}
+                canReview={canReview}
+                index={i}
+                total={checkpoints.length}
+                checkpoint={{
+                  id: c.id,
+                  name: c.name,
+                  status: c.status,
+                  imageKey: c.imageKey,
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -159,6 +159,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
                 branchName={build?.branchName ?? null}
                 fallbackStatus={row.status}
                 view={view}
+                canReview={canReview}
               />
             ))}
           </div>

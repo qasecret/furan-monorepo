@@ -14,9 +14,20 @@ vi.mock("@/lib/trpc", () => ({
       listCheckpoints: {
         useQuery: (...a: unknown[]) => listCheckpointsMock(...a),
       },
+      approveCheckpoint: {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      },
     },
+    useUtils: () => ({
+      runs: {
+        listCheckpoints: { invalidate: vi.fn() },
+        list: { invalidate: vi.fn() },
+      },
+      builds: { getById: { invalidate: vi.fn() } },
+    }),
   },
 }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
 const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -60,6 +71,7 @@ function renderRun(items: CP[], fallbackStatus = "passed") {
       branchName="main"
       fallbackStatus={fallbackStatus as never}
       view="list"
+      canReview={true}
     />,
   );
 }
@@ -81,7 +93,10 @@ describe("RunResults", () => {
   test("renders a step card per checkpoint and opens the diff viewer on click", () => {
     pushMock.mockClear();
     renderRun([cp({ id: "cX", name: "Home" })]);
-    fireEvent.click(screen.getByTestId("step-card-cX"));
+    const card = screen.getByTestId("step-card-cX");
+    // The image is the primary open affordance (the hover toolbar holds the
+    // approve / maximize actions).
+    fireEvent.click(within(card).getByRole("button", { name: "Open Home" }));
     expect(pushMock).toHaveBeenCalledWith(
       "/projects/p1/runs/r1/checkpoints/cX",
     );
