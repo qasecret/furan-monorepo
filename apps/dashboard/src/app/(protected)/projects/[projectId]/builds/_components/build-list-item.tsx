@@ -25,7 +25,7 @@ export function BuildListItem({ build, projectId, selected }: Props) {
       className={cn(
         "group block rounded-md border px-3 py-2 transition-colors",
         selected
-          ? "border-brand/30 bg-brand/5"
+          ? "border-brand/30 bg-brand/5 shadow-[inset_3px_0_0_0_var(--color-brand)]"
           : "border-transparent hover:bg-zinc-100/60 dark:hover:bg-zinc-900/40",
       )}
     >

@@ -69,6 +69,9 @@ export function BuildsListPanel({ projectId }: Props) {
 
   return (
     <div className="flex h-full flex-col gap-3 p-3">
+      <div className="px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+        Recent batch runs
+      </div>
       <PropertiesFilter
         projectId={projectId}
         value={properties}

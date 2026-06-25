@@ -1,18 +1,20 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
+import { LatestBuildRedirect } from "./_components/latest-build-redirect";
+
 import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
 import { getProject } from "@/lib/get-project";
 
 export const metadata: Metadata = { title: "Builds" };
 export const dynamic = "force-dynamic";
 
 /**
- * /projects/[projectId]/builds — the Builds tab index. The builds list now
- * lives in the persistent panel (see builds/layout.tsx); this routed pane
- * prompts the reviewer to pick one. Keeps the same membership gating the
- * batch page uses so non-members get a 404/403 rather than a bare panel.
+ * /projects/[projectId]/builds — the Builds tab index. Builds and Review are one
+ * experience: this lands the reviewer on the latest build's Review page (the
+ * batch detail) via LatestBuildRedirect, with the builds-history panel beside
+ * it. Only the no-builds-yet case stays here. Membership gated like the batch
+ * page so non-members get a 404/403 rather than a bare panel.
  */
 export default async function ProjectBuildsPage({
   params,
@@ -37,10 +39,5 @@ export default async function ProjectBuildsPage({
     );
   }
 
-  return (
-    <EmptyState
-      title="Select a build to review"
-      description="Pick a build from the list to see its tests."
-    />
-  );
+  return <LatestBuildRedirect projectId={projectId} />;
 }
