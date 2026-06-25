@@ -50,6 +50,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
     cursor,
   });
 
+  const utils = trpc.useUtils();
   const bulkApprove = trpc.runs.bulkApproveByBuild.useMutation({
     onError: (e) => toast.error(e.message),
   });
@@ -63,6 +64,17 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           capped: boolean;
           cap: number;
         }) => {
+          // Refetch the rows + build aggregate so the just-approved runs flip
+          // out of "Unresolved" immediately — the row badge is derived from
+          // runs.listCheckpoints, not the toast. (Mirrors ApprovalBar's
+          // post-approve invalidate; we can't rely on the SSE alone.)
+          void utils.runs.list.invalidate();
+          void utils.runs.listCheckpoints.invalidate();
+          void utils.builds.getById.invalidate({ buildId });
+          // Re-page from the top so approved runs drop out of "Needs review"
+          // instead of lingering in the accumulated set.
+          setAccumulated([]);
+          setCursor(undefined);
           toast.success(
             `Approved ${res.approved} run${plural(res.approved)}` +
               (res.capped ? ` (capped at ${res.cap})` : ""),

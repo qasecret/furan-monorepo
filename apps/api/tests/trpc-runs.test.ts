@@ -2771,6 +2771,37 @@ d("tRPC runs router", () => {
       }
       expect(err?.data?.code).toBe("FORBIDDEN");
     });
+
+    test("approved run derives its checkpoints as passed despite diff regions", async () => {
+      // Regression: approve flips the RUN to passed but keeps diff_regions for
+      // display. The checkpoint status must follow (v1.1 has no partial
+      // approval), else the batch row badge stays "Unresolved" after approval.
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "approved-cp",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+
+      const before = await client.runs.listCheckpoints.query({
+        runId: cp.run.id,
+      });
+      expect(before.items[0]?.status).toBe("unresolved");
+
+      // Approve = run → passed (the diff_regions are intentionally left).
+      await h.db
+        .update(testRuns)
+        .set({ status: "passed" })
+        .where(eq(testRuns.id, cp.run.id));
+
+      const after = await client.runs.listCheckpoints.query({
+        runId: cp.run.id,
+      });
+      expect(after.items[0]?.status).toBe("passed");
+    });
   });
 
   describe("runs.approveCheckpointGroup", () => {

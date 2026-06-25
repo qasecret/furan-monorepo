@@ -19,8 +19,16 @@ const getByIdMock = vi.fn();
 const listMock = vi.fn();
 const listCheckpointsMock = vi.fn();
 const bulkApproveMock = vi.fn();
+const invalidateMock = vi.fn();
 vi.mock("@/lib/trpc", () => ({
   trpc: {
+    useUtils: () => ({
+      runs: {
+        list: { invalidate: invalidateMock },
+        listCheckpoints: { invalidate: invalidateMock },
+      },
+      builds: { getById: { invalidate: invalidateMock } },
+    }),
     builds: { getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) } },
     runs: {
       list: { useQuery: (...a: unknown[]) => listMock(...a) },
@@ -226,7 +234,7 @@ describe("BatchPage", () => {
     expect(screen.getByText("Page1Card")).toBeDefined(); // page 1 still present
   });
 
-  test("Approve all calls bulkApproveByBuild with the buildId", async () => {
+  test("Approve all calls bulkApproveByBuild and invalidates the lists on success", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -239,12 +247,21 @@ describe("BatchPage", () => {
       refetch: vi.fn(),
     });
     bulkApproveMock.mockClear();
+    invalidateMock.mockClear();
+    // Fire the mutation's success path so the post-approve invalidate runs —
+    // this is what flips the just-approved rows out of "Unresolved".
+    bulkApproveMock.mockImplementationOnce(
+      (_input: unknown, opts: { onSuccess?: (r: unknown) => void }) =>
+        opts?.onSuccess?.({ approved: 3, capped: false, cap: 200 }),
+    );
     render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     fireEvent.click(screen.getByTestId("batch-approve-all"));
     expect(bulkApproveMock).toHaveBeenCalledWith(
       { buildId: "b1" },
       expect.anything(),
     );
+    // runs.list + runs.listCheckpoints + builds.getById all invalidated.
+    expect(invalidateMock).toHaveBeenCalledTimes(3);
   });
 
   test("canReview=false hides the Approve-all button but still lists the test rows", async () => {
