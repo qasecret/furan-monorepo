@@ -53,9 +53,9 @@ describe("BatchHeader", () => {
     expect(screen.getByText("Jane Doe")).toBeDefined();
   });
 
-  test("renders a Share action", () => {
+  test("does not render a Share action (removed — the URL is already shareable)", () => {
     render(<BatchHeader build={data} />);
-    expect(screen.getByTestId("batch-share")).toBeDefined();
+    expect(screen.queryByTestId("batch-share")).toBeNull();
   });
 
   test("does not render the Approve all button (moved to ContextualToolbar)", () => {

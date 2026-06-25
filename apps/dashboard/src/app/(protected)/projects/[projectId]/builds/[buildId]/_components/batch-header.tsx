@@ -1,9 +1,5 @@
 "use client";
 
-import { Share2 } from "lucide-react";
-import { toast } from "sonner";
-
-import { Button } from "@/components/ui/button";
 import { buildDisplayName } from "@/lib/build-display-name";
 import { cn } from "@/lib/cn";
 import type { RouterOutputs } from "@/lib/trpc";
@@ -94,13 +90,6 @@ export function BatchHeader({ build }: Props) {
   const status = STATUS_WORD[build.aggregateStatus] ?? STATUS_WORD.empty!;
   const accent = ACCENT[build.aggregateStatus] ?? ACCENT.empty!;
 
-  const onShare = () => {
-    void navigator.clipboard
-      ?.writeText(window.location.href)
-      .then(() => toast.success("Link copied"))
-      .catch(() => toast.error("Couldn’t copy link"));
-  };
-
   return (
     <header
       id="batch-header"
@@ -146,15 +135,6 @@ export function BatchHeader({ build }: Props) {
             </div>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          className="h-8 gap-1.5 px-3 text-xs"
-          data-testid="batch-share"
-          onClick={onShare}
-        >
-          <Share2 className="h-3.5 w-3.5" aria-hidden />
-          Share
-        </Button>
       </div>
     </header>
   );
