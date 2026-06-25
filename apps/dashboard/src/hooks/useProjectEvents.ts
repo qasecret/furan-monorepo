@@ -139,8 +139,8 @@ function invalidateLists(qc: QueryClient): void {
 /**
  * ADR-038: cache invalidation for checkpoint events.
  * `run.checkpoint_added` and `run.checkpoint_diffed` invalidate the
- * checkpoints namespace so the CheckpointRail and CheckpointStrip
- * refetch fresh data.
+ * checkpoints namespace so the diff-viewer's checkpoint list (top-bar
+ * stepper) and the batch-detail step grid refetch fresh data.
  */
 function invalidateCheckpoints(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: [["runs"]] });

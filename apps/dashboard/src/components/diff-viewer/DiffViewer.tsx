@@ -5,8 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
-import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
-import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
+import {
+  nextUnresolvedCheckpointId,
+  type CheckpointSummary,
+} from "./checkpoint-nav";
 import { ContextualHeader } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -629,17 +631,11 @@ export function DiffViewer({
                 <SizeChip baseline={baselineDims} candidate={candidateDims} />
               )}
             </div>
-            {/* ADR-038: checkpoint rail left column + canvas/right-rail */}
+            {/* Canvas + right INFO sidebar. The left checkpoint rail was
+                removed — navigation is the batch-detail grid (enter) plus the
+                top-bar prev/next stepper (move between checkpoints), matching
+                the reference's two-pane layout. */}
             <div className="relative flex flex-1 overflow-hidden">
-              {/* Checkpoint rail: 240px left column listing all checkpoints */}
-              {checkpointSummaries.length > 0 &&
-                selectedCheckpointId !== "_first" && (
-                  <CheckpointRail
-                    items={checkpointSummaries}
-                    selectedId={selectedCheckpointId}
-                    onSelect={handleCheckpointSelect}
-                  />
-                )}
               <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
                 <ViewerCanvas
                   baselineUrl={baselineUrl}
