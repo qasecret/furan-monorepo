@@ -6,7 +6,7 @@ import { INBOX_TOUR_STEPS } from "./tour-steps";
 
 import { PageTour } from "@/components/tour/page-tour";
 
-export const metadata: Metadata = { title: "Inbox" };
+export const metadata: Metadata = { title: "Batches" };
 
 interface PageProps {
   searchParams: Promise<{ status?: string }>;

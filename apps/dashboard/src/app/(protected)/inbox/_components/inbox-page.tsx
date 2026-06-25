@@ -125,7 +125,7 @@ export function InboxPage({ initialStatus }: Props) {
     <PageContainer>
       <div className="space-y-6">
         <PageHeader
-          title="Inbox"
+          title="Batches"
           description="All test result batches across your project."
           actions={
             <>
