@@ -5,8 +5,6 @@ import { useMemo, useState } from "react";
 
 import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
 import { RegionItem } from "./RegionItem";
-import { RegionKindTabs } from "./RegionKindTabs";
-import { useViewerStore } from "./useViewerStore";
 
 import {
   DropdownMenu,
@@ -66,9 +64,6 @@ export function RegionListPanel({
   // them so reviewers can audit which OCR decisions Furan made for a run.
   const [showSuppressed, setShowSuppressed] = useState(false);
 
-  const selectedRegionKind = useViewerStore((s) => s.selectedRegionKind);
-  const setSelectedRegionKind = useViewerStore((s) => s.setSelectedRegionKind);
-
   const categories = useMemo(() => {
     const set = new Set(regions.map((r) => r.category));
     return ["all", ...Array.from(set).sort()];
@@ -99,10 +94,6 @@ export function RegionListPanel({
       className="border-l border-zinc-200 bg-white flex flex-col w-72 max-w-[30vw] dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="region-list-panel"
     >
-      <RegionKindTabs
-        value={selectedRegionKind}
-        onChange={setSelectedRegionKind}
-      />
       <div className="p-2 border-b border-zinc-200 flex items-center justify-between gap-2 flex-wrap dark:border-zinc-800">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
           Regions ({filtered.length})

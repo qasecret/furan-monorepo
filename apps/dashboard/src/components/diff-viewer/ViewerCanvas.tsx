@@ -57,11 +57,14 @@ function aspectStyle(
     : undefined;
 }
 
-/** Top-left "≠" badge marking an image that has differences (Applitools-style). */
+/**
+ * Small inline "≠" badge marking an image that has differences. Lives in the
+ * label row above the card (not over the image) so it never obscures content.
+ */
 function DiffBadge() {
   return (
     <span
-      className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded border border-zinc-300 bg-white/90 text-xs font-bold text-zinc-700 shadow-sm dark:border-zinc-600 dark:bg-zinc-800/90 dark:text-zinc-200"
+      className="inline-flex h-4 w-4 items-center justify-center rounded border border-zinc-300 bg-white text-[10px] font-bold leading-none text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
       data-testid="diff-badge"
       aria-label="Has differences"
       title="This image has differences"
@@ -867,6 +870,7 @@ export function ViewerCanvas({
                 aria-hidden
               />
               Baseline
+              {regions.length > 0 && <DiffBadge />}
             </div>
             <div
               ref={baselineRef}
@@ -874,7 +878,6 @@ export function ViewerCanvas({
               style={aspectStyle(baselineDims)}
               className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
             >
-              {regions.length > 0 && <DiffBadge />}
               {!baselineUrl && (
                 <CanvasEmptyState label="No baseline yet">
                   Approve this run to set its candidate as the first baseline
@@ -894,6 +897,7 @@ export function ViewerCanvas({
                 aria-hidden
               />
               Current
+              {regions.length > 0 && <DiffBadge />}
             </div>
             <div
               ref={candidateRef}
@@ -901,7 +905,6 @@ export function ViewerCanvas({
               style={aspectStyle(candidateDims)}
               className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
             >
-              {regions.length > 0 && <DiffBadge />}
               {!candidateUrl && (
                 <CanvasEmptyState label="Waiting for capture…">
                   The SDK upload for this run hasn’t arrived yet. This panel
