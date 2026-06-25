@@ -1,7 +1,7 @@
 "use client";
 
 import type { BuildAggregateStatus } from "@furan/shared-types";
-import { RefreshCw, Search } from "lucide-react";
+import { Filter, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -155,6 +155,7 @@ export function InboxPage({ initialStatus }: Props) {
           id="inbox-status-filter"
           className="flex flex-wrap items-center gap-2 text-sm"
         >
+          <Filter className="h-4 w-4 text-zinc-400" aria-hidden />
           <span className="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
             Status
           </span>
