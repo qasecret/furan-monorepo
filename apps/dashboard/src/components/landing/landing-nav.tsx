@@ -2,7 +2,7 @@
 
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { BrandMark } from "./brand-mark";
 import { GITHUB_URL } from "./constants";
@@ -19,6 +19,17 @@ const NAV_LINKS = [
 
 export function LandingNav() {
   const [open, setOpen] = useState(false);
+
+  // Close the mobile menu on Escape — a keyboard dismiss affordance for the
+  // open dropdown, which otherwise has no close key.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-zinc-200/70 bg-white/70 backdrop-blur-xl dark:border-zinc-800/70 dark:bg-black/60">
@@ -91,10 +102,14 @@ export function LandingNav() {
             ))}
             <div className="mt-3 flex flex-col gap-2">
               <Button asChild variant="secondary" className="w-full">
-                <Link href="/login">Sign in</Link>
+                <Link href="/login" onClick={() => setOpen(false)}>
+                  Sign in
+                </Link>
               </Button>
               <Button asChild className="w-full">
-                <Link href="/home">Open dashboard</Link>
+                <Link href="/home" onClick={() => setOpen(false)}>
+                  Open dashboard
+                </Link>
               </Button>
             </div>
           </div>

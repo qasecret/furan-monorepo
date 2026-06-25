@@ -2,7 +2,6 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
-import { ThemeProvider } from "next-themes";
 import { useState, type ReactNode } from "react";
 
 import { TourProvider } from "@/components/tour/tour-context";
@@ -23,22 +22,15 @@ export function Providers({ children }: { children: ReactNode }) {
     }),
   );
 
+  // Theme is provided once at the root layout (see components/ui/theme-provider).
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="dark"
-      enableSystem={false}
-      storageKey="furan-theme"
-      disableTransitionOnChange
-    >
-      <trpc.Provider client={client} queryClient={qc}>
-        <QueryClientProvider client={qc}>
-          <TourProvider>
-            {children}
-            <TourOverlay />
-          </TourProvider>
-        </QueryClientProvider>
-      </trpc.Provider>
-    </ThemeProvider>
+    <trpc.Provider client={client} queryClient={qc}>
+      <QueryClientProvider client={qc}>
+        <TourProvider>
+          {children}
+          <TourOverlay />
+        </TourProvider>
+      </QueryClientProvider>
+    </trpc.Provider>
   );
 }

@@ -20,10 +20,7 @@ export function LandingFinalCta() {
           infrastructure while you do it.
         </p>
         <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button
-            asChild
-            className="h-12 px-8 text-base shadow-[0_8px_30px_-10px_rgba(168,255,83,0.7)] transition-shadow hover:shadow-[0_12px_40px_-8px_rgba(168,255,83,0.75)]"
-          >
+          <Button asChild variant="glow" className="h-12 px-8 text-base">
             <Link href="/login">
               Sign in <ArrowRight className="ml-1 h-4 w-4" />
             </Link>

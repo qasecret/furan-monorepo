@@ -278,22 +278,26 @@ html.dark {
 }
 
 /* Scroll-reveal primitive (paired with the <Reveal> client wrapper).
- * Hidden + risen until `.is-visible` is toggled when the element enters
- * the viewport. Reduced-motion users get the final state immediately. */
-.reveal {
+ * Scoped to `.reveal-on` — a class the root layout sets on <html> before first
+ * paint only when JS is present — so no-JS visitors and non-rendering crawlers
+ * see fully-rendered content instead of a blank page. Hidden + risen until
+ * `.is-visible` is toggled on viewport entry; reduced-motion users get the
+ * final state immediately. (No `will-change`: a one-shot 700ms tween doesn't
+ * justify pinning every section to its own compositor layer for the page's
+ * lifetime.) */
+.reveal-on .reveal {
   opacity: 0;
   transform: translateY(14px);
   transition:
     opacity 700ms var(--ease-out),
     transform 700ms var(--ease-out);
-  will-change: opacity, transform;
 }
-.reveal.is-visible {
+.reveal-on .reveal.is-visible {
   opacity: 1;
   transform: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .reveal {
+  .reveal-on .reveal {
     opacity: 1;
     transform: none;
     transition: none;

@@ -21,7 +21,11 @@ export function LandingProductPreview() {
   return (
     <section id="preview" className="px-4 pb-10">
       <Reveal className="mx-auto max-w-6xl">
-        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-brand/5">
+        {/* Decorative product screenshot stand-in — hidden from assistive tech. */}
+        <div
+          aria-hidden="true"
+          className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-brand/5"
+        >
           <div className="flex h-[560px] flex-col md:flex-row">
             {/* run list */}
             <aside className="hidden w-64 flex-col border-r border-zinc-200 dark:border-zinc-800 md:flex">

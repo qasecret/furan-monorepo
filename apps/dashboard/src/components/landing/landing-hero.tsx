@@ -21,8 +21,11 @@ export function LandingHero() {
       {/* dotted grid + radial brand glow */}
       <div className="bg-dotgrid pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_55%,transparent_100%)]" />
       <div className="pointer-events-none absolute left-1/2 top-[-12%] h-[440px] w-[820px] -translate-x-1/2 rounded-full bg-[var(--furan-glow)] blur-[130px]" />
-      {/* faint terminal artifact, desktop only */}
-      <div className="pointer-events-none absolute inset-0 hidden select-none items-center justify-center opacity-[0.04] lg:flex">
+      {/* faint terminal artifact, desktop only — decorative, hidden from AT */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 hidden select-none items-center justify-center opacity-[0.04] lg:flex"
+      >
         <pre className="-rotate-6 font-mono text-xs leading-7 text-zinc-900 dark:text-white">
           {TERMINAL_LINES.join("\n")}
         </pre>
@@ -65,10 +68,7 @@ export function LandingHero() {
 
         <Reveal delay={240}>
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
-            <Button
-              asChild
-              className="h-12 px-7 text-base shadow-[0_8px_30px_-10px_rgba(168,255,83,0.7)] transition-shadow hover:shadow-[0_12px_40px_-8px_rgba(168,255,83,0.75)]"
-            >
+            <Button asChild variant="glow" className="h-12 px-7 text-base">
               <Link href="/login">
                 Sign in to your workspace
                 <ArrowRight className="ml-1 h-4 w-4" />
@@ -82,7 +82,10 @@ export function LandingHero() {
 
         <Reveal delay={320}>
           <p className="mt-7 flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand shadow-[0_0_8px_rgba(168,255,83,0.8)]" />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-brand shadow-[0_0_8px_rgba(168,255,83,0.8)]"
+            />
             Self-hosted · Your data never leaves your infra
           </p>
         </Reveal>

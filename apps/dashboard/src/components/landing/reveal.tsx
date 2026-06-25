@@ -1,17 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
 /**
- * Scroll-reveal wrapper — fades + rises its children in once they enter the
- * viewport, then disconnects. Pairs with the `.reveal` / `.is-visible` rules
- * in globals.css (which also no-op under prefers-reduced-motion).
+ * Fade-and-rise-in wrapper for landing sections.
  *
- * Dependency-free on purpose: the dashboard doesn't ship framer-motion, so a
- * one-shot IntersectionObserver keeps the landing's motion budget at zero new
- * packages. Above-the-fold elements intersect on mount and animate in on load.
+ * Reveals on mount with an optional stagger `delay`, so it can never get stuck
+ * hidden — there's no viewport/observer dependency to misfire. The hidden start
+ * state is scoped to `.reveal-on` (a class the root layout sets before first
+ * paint only when JS is present), so without JS the content renders fully
+ * visible instead of blank — see globals.css `.reveal`. Reduced-motion users
+ * skip the transition entirely (also handled in globals.css).
  */
 export function Reveal({
   children,
@@ -23,34 +24,18 @@ export function Reveal({
   /** Stagger, in ms, applied as transition-delay. */
   delay?: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setVisible(true);
-            observer.disconnect();
-          }
-        }
-      },
-      { threshold: 0.12, rootMargin: "0px 0px -8% 0px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
+    // Flip to visible after mount. React runs effects after the browser has
+    // painted the hidden start state, so the transition still animates — and
+    // unlike requestAnimationFrame this can't be throttled in a backgrounded
+    // / non-visible tab, which would otherwise leave content stuck hidden.
+    setVisible(true);
   }, []);
 
   return (
     <div
-      ref={ref}
       className={cn("reveal", visible && "is-visible", className)}
       style={delay ? { transitionDelay: `${delay}ms` } : undefined}
     >

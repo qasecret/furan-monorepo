@@ -4,13 +4,38 @@ import { BrandMark } from "./brand-mark";
 import { GITHUB_URL } from "./constants";
 import { GithubIcon } from "./github-icon";
 
+/**
+ * Footer link targets. In-page items (`#…`) scroll within the landing; external
+ * items point at real repo destinations and open in a new tab.
+ */
 const COLUMNS = [
-  { title: "Product", links: ["Features", "Product tour", "SDK", "Changelog"] },
+  {
+    title: "Product",
+    links: [
+      { label: "Features", href: "#features" },
+      { label: "Product tour", href: "#preview" },
+      { label: "SDK", href: "#sdk" },
+      { label: "Changelog", href: `${GITHUB_URL}/releases` },
+    ],
+  },
   {
     title: "Resources",
-    links: ["Documentation", "API reference", "Runbooks", "Roadmap"],
+    links: [
+      { label: "Documentation", href: GITHUB_URL },
+      { label: "API reference", href: GITHUB_URL },
+      { label: "Runbooks", href: `${GITHUB_URL}/tree/main/docs/runbooks` },
+      { label: "Roadmap", href: GITHUB_URL },
+    ],
   },
-  { title: "Project", links: ["GitHub", "Releases", "License", "Security"] },
+  {
+    title: "Project",
+    links: [
+      { label: "GitHub", href: GITHUB_URL },
+      { label: "Releases", href: `${GITHUB_URL}/releases` },
+      { label: "License", href: `${GITHUB_URL}/blob/main/LICENSE` },
+      { label: "Security", href: `${GITHUB_URL}/security` },
+    ],
+  },
 ];
 
 export function LandingFooter() {
@@ -35,10 +60,10 @@ export function LandingFooter() {
                 <GithubIcon className="h-5 w-5" />
               </a>
               <a
-                href={GITHUB_URL}
+                href={`${GITHUB_URL}/discussions`}
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Community"
+                aria-label="Discussions"
                 className="text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-white"
               >
                 <MessageSquare className="h-5 w-5" />
@@ -51,18 +76,22 @@ export function LandingFooter() {
                 {col.title}
               </h4>
               <ul className="space-y-3 text-sm text-zinc-600 dark:text-zinc-400">
-                {col.links.map((link) => (
-                  <li key={link}>
-                    <a
-                      href={GITHUB_URL}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="transition-colors hover:text-zinc-950 dark:hover:text-white"
-                    >
-                      {link}
-                    </a>
-                  </li>
-                ))}
+                {col.links.map((link) => {
+                  const external = link.href.startsWith("http");
+                  return (
+                    <li key={link.label}>
+                      <a
+                        href={link.href}
+                        {...(external
+                          ? { target: "_blank", rel: "noreferrer" }
+                          : {})}
+                        className="transition-colors hover:text-zinc-950 dark:hover:text-white"
+                      >
+                        {link.label}
+                      </a>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -70,7 +99,10 @@ export function LandingFooter() {
         <div className="flex flex-col items-center justify-between gap-4 border-t border-zinc-200 pt-8 text-sm text-zinc-500 dark:border-zinc-900 md:flex-row">
           <p>© {new Date().getFullYear()} Furan · Self-hosted and open.</p>
           <span className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-brand shadow-[0_0_8px_rgba(168,255,83,0.8)]" />
+            <span
+              aria-hidden="true"
+              className="h-2 w-2 rounded-full bg-brand shadow-[0_0_8px_rgba(168,255,83,0.8)]"
+            />
             All systems operational
           </span>
         </div>

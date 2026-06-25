@@ -3,7 +3,7 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 
 import { cn } from "@/lib/cn";
 
-type Variant = "default" | "secondary" | "destructive" | "ghost";
+type Variant = "default" | "glow" | "secondary" | "destructive" | "ghost";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -13,6 +13,9 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<Variant, string> = {
   default: "bg-brand text-black hover:bg-brand/90",
+  // Primary CTA with the neon brand glow (landing hero / final CTA / login).
+  // The base class already transitions box-shadow.
+  glow: "bg-brand text-black hover:bg-brand/90 shadow-[0_8px_30px_-10px_rgba(168,255,83,0.7)] hover:shadow-[0_12px_40px_-8px_rgba(168,255,83,0.75)]",
   secondary:
     "border border-zinc-200 text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900",
   destructive:

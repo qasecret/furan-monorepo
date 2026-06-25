@@ -7,10 +7,10 @@ import { LandingNav } from "./landing-nav";
 import { LandingProductPreview } from "./landing-product-preview";
 import { LandingSdk } from "./landing-sdk";
 import { LandingWorksWith } from "./landing-works-with";
-import { PublicThemeProvider } from "./public-theme-provider";
 
 /**
- * Furan marketing landing — the public front door at `/`.
+ * Furan marketing landing — the public front door at `/`. Theme comes from the
+ * root layout's ThemeProvider.
  *
  * Owns its own scroll: the app shell locks `body { overflow: hidden }`, so the
  * one-pager scrolls inside a full-height `overflow-y-auto` container. `scroll-pt`
@@ -19,20 +19,18 @@ import { PublicThemeProvider } from "./public-theme-provider";
  */
 export function LandingPage() {
   return (
-    <PublicThemeProvider>
-      <div className="h-dvh overflow-y-auto scroll-pt-24 scroll-smooth bg-white text-zinc-900 antialiased dark:bg-black dark:text-white">
-        <LandingNav />
-        <main>
-          <LandingHero />
-          <LandingProductPreview />
-          <LandingWorksWith />
-          <LandingFeatures />
-          <LandingSdk />
-          <LandingCapabilities />
-          <LandingFinalCta />
-        </main>
-        <LandingFooter />
-      </div>
-    </PublicThemeProvider>
+    <div className="h-dvh overflow-y-auto scroll-pt-24 scroll-smooth bg-white text-zinc-900 antialiased dark:bg-black dark:text-white">
+      <LandingNav />
+      <main>
+        <LandingHero />
+        <LandingProductPreview />
+        <LandingWorksWith />
+        <LandingFeatures />
+        <LandingSdk />
+        <LandingCapabilities />
+        <LandingFinalCta />
+      </main>
+      <LandingFooter />
+    </div>
   );
 }

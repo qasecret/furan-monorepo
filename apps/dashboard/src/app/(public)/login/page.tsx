@@ -2,7 +2,7 @@
 
 import { ArrowRight, Check, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { loginAction } from "./action";
 
@@ -25,6 +25,14 @@ const SHOWCASE_POINTS = [
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  // `autoFocus` fires only on mount; after a failed submit useActionState
+  // re-renders the same inputs (no remount), so move focus to the password
+  // field explicitly whenever the server action returns an error.
+  useEffect(() => {
+    if (state?.error) passwordRef.current?.focus();
+  }, [state]);
 
   return (
     <main className="grid h-dvh grid-cols-1 overflow-y-auto bg-white dark:bg-black lg:grid-cols-2">
@@ -37,8 +45,8 @@ export default function LoginPage() {
           <ThemeToggle />
         </div>
 
-        <div className="flex flex-1 items-center justify-center py-10">
-          <div className="w-full max-w-sm animate-[content-fade-up_500ms_var(--ease-out)_both]">
+        <div className="flex flex-1 flex-col items-center py-10">
+          <div className="my-auto w-full max-w-sm animate-[content-fade-up_500ms_var(--ease-out)_both]">
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
               Sign in to Furan
             </h1>
@@ -70,12 +78,12 @@ export default function LoginPage() {
                 </div>
                 <div className="relative">
                   <Input
+                    ref={passwordRef}
                     id="password"
                     name="password"
                     type={showPassword ? "text" : "password"}
                     required
                     autoComplete="current-password"
-                    autoFocus={!!state?.email}
                     className="h-11 pr-10"
                   />
                   {/*
@@ -114,7 +122,8 @@ export default function LoginPage() {
               )}
               <Button
                 type="submit"
-                className="h-11 w-full text-base shadow-[0_8px_30px_-12px_rgba(168,255,83,0.7)] transition-shadow hover:shadow-[0_10px_36px_-10px_rgba(168,255,83,0.75)]"
+                variant="glow"
+                className="h-11 w-full text-base"
                 disabled={pending}
               >
                 {pending ? (
@@ -134,12 +143,17 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* ── Brand showcase column (desktop) ───────────────────────── */}
-      <aside className="relative hidden overflow-hidden border-l border-zinc-200 bg-gradient-to-br from-zinc-50 to-white dark:border-zinc-900 dark:from-zinc-950 dark:to-black lg:flex lg:flex-col lg:justify-center">
+      {/* ── Brand showcase column (desktop) — purely decorative ─────
+          marketing motif, hidden from assistive tech (the sign-in form is
+          the actual content); scrolls instead of clipping on short windows. */}
+      <aside
+        aria-hidden="true"
+        className="relative hidden overflow-x-hidden overflow-y-auto border-l border-zinc-200 bg-gradient-to-br from-zinc-50 to-white dark:border-zinc-900 dark:from-zinc-950 dark:to-black lg:flex lg:flex-col"
+      >
         <div className="bg-dotgrid pointer-events-none absolute inset-0 opacity-70 [mask-image:radial-gradient(ellipse_70%_60%_at_65%_35%,#000,transparent)]" />
         <div className="pointer-events-none absolute -right-24 top-8 h-[420px] w-[420px] rounded-full bg-[var(--furan-glow)] blur-[120px]" />
 
-        <div className="relative z-10 mx-auto max-w-md px-12">
+        <div className="relative z-10 mx-auto my-auto max-w-md px-12 py-12">
           <span className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-medium text-brand-text backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/60">
             <span className="h-1.5 w-1.5 rounded-full bg-brand" />
             Self-hosted visual QA
