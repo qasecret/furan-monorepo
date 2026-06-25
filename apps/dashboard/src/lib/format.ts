@@ -23,3 +23,36 @@ export function formatRelativeTime(
   if (day < 30) return `${day}d ago`;
   return d.toLocaleDateString();
 }
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/**
+ * Absolute batch timestamp — "20 Nov 2024 at 7:23 PM" — for the batch-history
+ * list, where a precise run time reads better than a relative "15h ago".
+ * Manual format (not toLocale*) so it's deterministic across timezones/ICU.
+ */
+export function formatBatchDateTime(
+  value: string | Date | null | undefined,
+): string {
+  if (value == null) return "";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "";
+  const hours24 = d.getHours();
+  const ampm = hours24 >= 12 ? "PM" : "AM";
+  const hour12 = hours24 % 12 || 12;
+  const minutes = d.getMinutes().toString().padStart(2, "0");
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} at ${hour12}:${minutes} ${ampm}`;
+}

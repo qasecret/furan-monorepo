@@ -68,46 +68,57 @@ export function BuildsListPanel({ projectId }: Props) {
   };
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
-      <div className="px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Recent batch runs
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+        <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Recent batch runs
+        </span>
+        {items.length > 0 && (
+          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            {items.length}
+          </span>
+        )}
       </div>
-      <PropertiesFilter
-        projectId={projectId}
-        value={properties}
-        onChange={onPropertiesChange}
-      />
+      <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
+        <PropertiesFilter
+          projectId={projectId}
+          value={properties}
+          onChange={onPropertiesChange}
+        />
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto" data-testid="builds-list">
         {isLoading && !data ? (
-          <p className="px-1 text-sm text-zinc-500">Loading…</p>
+          <p className="p-3 text-sm text-zinc-500">Loading…</p>
         ) : error ? (
-          <p className="px-1 text-sm text-red-600 dark:text-red-400">
+          <p className="p-3 text-sm text-red-600 dark:text-red-400">
             Error: {error.message}
           </p>
         ) : items.length === 0 ? (
-          <EmptyState
-            title="No builds yet"
-            description={
-              <>
-                Connect the SDK to start sending runs.{" "}
-                <code className="font-mono text-xs">
-                  io.github.qasecret:furan-selenium:{FURAN_SDK_VERSION}
-                </code>{" "}
-                · API: {browserEnv.NEXT_PUBLIC_API_URL}
-              </>
-            }
-            action={
-              <Link
-                href="/account/tokens"
-                className="text-brand-text hover:underline"
-                data-testid="empty-builds-cta-token-link"
-              >
-                Create a personal access token →
-              </Link>
-            }
-          />
+          <div className="p-3">
+            <EmptyState
+              title="No builds yet"
+              description={
+                <>
+                  Connect the SDK to start sending runs.{" "}
+                  <code className="font-mono text-xs">
+                    io.github.qasecret:furan-selenium:{FURAN_SDK_VERSION}
+                  </code>{" "}
+                  · API: {browserEnv.NEXT_PUBLIC_API_URL}
+                </>
+              }
+              action={
+                <Link
+                  href="/account/tokens"
+                  className="text-brand-text hover:underline"
+                  data-testid="empty-builds-cta-token-link"
+                >
+                  Create a personal access token →
+                </Link>
+              }
+            />
+          </div>
         ) : (
-          <div className="space-y-1">
+          <div className="divide-y divide-zinc-100 dark:divide-zinc-900">
             {items.map((b) => (
               <BuildListItem
                 key={b.id}
@@ -120,9 +131,15 @@ export function BuildsListPanel({ projectId }: Props) {
         )}
       </div>
       {data?.nextCursor && items.length > 0 && (
-        <Button variant="secondary" onClick={onLoadMore} className="w-full">
-          Load more
-        </Button>
+        <div className="border-t border-zinc-200 p-2 dark:border-zinc-800">
+          <Button
+            variant="secondary"
+            onClick={onLoadMore}
+            className="h-8 w-full text-xs"
+          >
+            Load more
+          </Button>
+        </div>
       )}
     </div>
   );
