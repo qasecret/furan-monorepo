@@ -33,6 +33,14 @@ interface ShortcutOptions {
   onHelpToggle?: () => void;
   onNextDiff?: () => void;
   onPrevDiff?: () => void;
+  /**
+   * Step (checkpoint) navigation for ←/→ — the reference TestStep binds the
+   * arrows to "navigate" between steps. When supplied these take precedence
+   * over prev/nextDiffHref (run-level navigation, currently inert under
+   * ADR-038); callers without checkpoints fall back to the href behaviour.
+   */
+  onPrevStep?: () => void;
+  onNextStep?: () => void;
 }
 
 function isTypingInInput(): boolean {
@@ -73,12 +81,22 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
   useEffect(() => {
     return tinykeys(window, {
       ArrowLeft: () => {
-        const href = optsRef.current.prevDiffHref;
-        if (href) router.push(href);
+        if (isTypingInInput()) return;
+        const o = optsRef.current;
+        if (o.onPrevStep) {
+          o.onPrevStep();
+          return;
+        }
+        if (o.prevDiffHref) router.push(o.prevDiffHref);
       },
       ArrowRight: () => {
-        const href = optsRef.current.nextDiffHref;
-        if (href) router.push(href);
+        if (isTypingInInput()) return;
+        const o = optsRef.current;
+        if (o.onNextStep) {
+          o.onNextStep();
+          return;
+        }
+        if (o.nextDiffHref) router.push(o.nextDiffHref);
       },
       D: () => {
         if (isTypingInInput()) return;

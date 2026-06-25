@@ -4,19 +4,16 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
-import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
 import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
 import { ContextualHeader } from "./ContextualHeader";
-import { orderDiffRegions } from "./diff-order";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
-import { RegionListPanel } from "./RegionListPanel";
-import { RunCommentPanel } from "./RunCommentPanel";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
+import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
@@ -24,10 +21,10 @@ import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
-import { WhyPanel } from "./WhyPanel";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
+import { formatDuration } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -200,6 +197,14 @@ export function DiffViewer({
     { enabled: !!data?.projectId },
   );
   const project = projectQuery.data;
+
+  // "Run by" for the INFO sidebar lives on the build (test_runs has no
+  // userId column); builds.getById already exposes runByName, so reuse it
+  // instead of widening the runs.getById payload.
+  const buildQuery = trpc.builds.getById.useQuery(
+    { buildId: data?.buildId ?? "" },
+    { enabled: !!data?.buildId },
+  );
 
   // T11: keyboard-shortcut mutations. These are deliberately separate hook
   // instances from the ones inside <ApprovalBar>; both invalidate the same
@@ -407,6 +412,21 @@ export function DiffViewer({
 
   const stepper = useDiffStepper(regions);
 
+  // ←/→ step navigation over the checkpoint list (the reference TestStep
+  // binds the arrows to "navigate"). Computed before the early-returns so the
+  // shortcut hook can consume them; falls back to run-level href nav.
+  const navIndex = checkpointSummaries.findIndex(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const onPrevStep =
+    navIndex > 0
+      ? () => handleCheckpointSelect(checkpointSummaries[navIndex - 1]!.id)
+      : undefined;
+  const onNextStep =
+    navIndex >= 0 && navIndex < checkpointSummaries.length - 1
+      ? () => handleCheckpointSelect(checkpointSummaries[navIndex + 1]!.id)
+      : undefined;
+
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
@@ -421,6 +441,8 @@ export function DiffViewer({
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
+    onPrevStep,
+    onNextStep,
   });
 
   if (isLoading)
@@ -460,6 +482,38 @@ export function DiffViewer({
           onNext: nextCp ? () => handleCheckpointSelect(nextCp.id) : undefined,
         }
       : undefined;
+
+  // INFO sidebar metadata (reference TestStep): test details, environment,
+  // execution. Environment lives per-checkpoint on the candidate screenshot
+  // (ADR-038); "Run by" + app name come from the build/project siblings.
+  const selectedCheckpointItem = checkpointsQuery.data?.items?.find(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const cand = candidateScreenshot as {
+    os?: string | null;
+    browser?: string | null;
+    viewport?: string | null;
+    matchLevel?: string | null;
+  } | null;
+  const runMeta = data as {
+    createdAt?: string | Date | null;
+    updatedAt?: string | Date | null;
+  };
+  const durationMs =
+    runMeta.createdAt && runMeta.updatedAt
+      ? new Date(runMeta.updatedAt).getTime() -
+        new Date(runMeta.createdAt).getTime()
+      : null;
+  const stepLabel =
+    cpIndex >= 0
+      ? `${cpIndex + 1}/${checkpointSummaries.length} ${
+          selectedCheckpointItem?.name ?? ""
+        }`.trim()
+      : null;
+  const runByName =
+    (buildQuery.data as { runByName?: string | null } | undefined)?.runByName ??
+    null;
+  const appName = (project as { name?: string } | undefined)?.name ?? null;
 
   return (
     <div
@@ -555,26 +609,9 @@ export function DiffViewer({
               {baselineDims && candidateDims && (
                 <SizeChip baseline={baselineDims} candidate={candidateDims} />
               )}
-              {/*
-                ADR-038: BaselineHistoryPanel binds to the currently-selected
-                checkpoint's testVariationId, not the run's (the run no longer
-                has one — it has N checkpoints with one variation each).
-              */}
-              {(() => {
-                const selectedCheckpoint = checkpointsQuery.data?.items?.find(
-                  (c) => c.id === selectedCheckpointId,
-                );
-                if (!selectedCheckpoint?.testVariationId) return null;
-                return (
-                  <BaselineHistoryPanel
-                    testVariationId={selectedCheckpoint.testVariationId}
-                    currentBaselineKey={data.baselineName ?? null}
-                  />
-                );
-              })()}
             </div>
             {/* ADR-038: checkpoint rail left column + canvas/right-rail */}
-            <div className="flex flex-1 overflow-hidden">
+            <div className="relative flex flex-1 overflow-hidden">
               {/* Checkpoint rail: 240px left column listing all checkpoints */}
               {checkpointSummaries.length > 0 &&
                 selectedCheckpointId !== "_first" && (
@@ -593,33 +630,69 @@ export function DiffViewer({
                   elementMap={elementMap ?? null}
                 />
               </div>
-              {(() => {
-                const top = orderDiffRegions(regions)[0];
-                const summary = top?.description?.trim() || "Region details";
-                const source = top ? "pixels" : undefined;
-                return (
-                  <WhyPanel
-                    summary={summary}
-                    severity={top?.severity}
-                    source={source}
-                  >
-                    <RegionListPanel
-                      regions={regions}
-                      vlmDescription={data?.vlmDescription ?? null}
-                    />
-                  </WhyPanel>
-                );
-              })()}
+              <TestInfoSidebar
+                test={data.name ?? "Untitled run"}
+                stepLabel={stepLabel}
+                match={cand?.matchLevel ?? null}
+                app={appName}
+                branch={data.branchName ?? null}
+                os={cand?.os ?? null}
+                browser={cand?.browser ?? null}
+                viewport={cand?.viewport ?? null}
+                startedAt={runMeta.createdAt ?? null}
+                duration={
+                  durationMs != null ? formatDuration(durationMs) : null
+                }
+                runBy={runByName}
+                regions={regions}
+                vlmDescription={data?.vlmDescription ?? null}
+                testVariationId={
+                  selectedCheckpointItem?.testVariationId ?? null
+                }
+                currentBaselineKey={data.baselineName ?? null}
+                runId={runId}
+              />
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
                   onDelete={handleDeleteIgnoreRegion}
                 />
               )}
+              {/* Keyboard hint bar (reference TestStep): floats over the
+                  canvas; ←/→ navigate steps, A approve, R reject. */}
+              <div
+                className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
+                data-testid="diff-viewer-shortcut-hints"
+              >
+                <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white/90 px-3 py-1.5 text-xs text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400">
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      ←
+                    </kbd>
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      →
+                    </kbd>
+                    navigate
+                  </span>
+                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      A
+                    </kbd>
+                    approve
+                  </span>
+                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      R
+                    </kbd>
+                    reject
+                  </span>
+                </div>
+              </div>
             </div>
           </>
         )}
-        <RunCommentPanel runId={runId} />
       </div>
     </div>
   );

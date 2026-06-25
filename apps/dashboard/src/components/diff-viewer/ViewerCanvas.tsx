@@ -822,7 +822,7 @@ export function ViewerCanvas({
       <div className="grid grid-cols-2 gap-2 p-2 h-full min-h-[500px]">
         <div className="border rounded flex flex-col overflow-hidden">
           <div
-            className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1"
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1.5"
             title="Baseline"
             aria-label="Baseline"
           >
@@ -830,7 +830,7 @@ export function ViewerCanvas({
               className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
               aria-hidden
             />
-            B
+            Baseline
           </div>
           <div
             ref={baselineRef}
@@ -847,7 +847,7 @@ export function ViewerCanvas({
         </div>
         <div className="border rounded flex flex-col overflow-hidden relative">
           <div
-            className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1"
+            className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1.5"
             title="Candidate"
             aria-label="Candidate"
           >
@@ -855,7 +855,7 @@ export function ViewerCanvas({
               className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
               aria-hidden
             />
-            C
+            Current
           </div>
           <div
             ref={candidateRef}

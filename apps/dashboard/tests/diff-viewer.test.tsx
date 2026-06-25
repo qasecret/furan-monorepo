@@ -152,6 +152,16 @@ vi.mock("../src/lib/trpc", () => {
           }),
         },
       },
+      // INFO sidebar reads runByName off the build sibling query.
+      builds: {
+        getById: {
+          useQuery: () => ({
+            data: { runByName: null },
+            isLoading: false,
+            error: null,
+          }),
+        },
+      },
       baselines: {
         listForVariation: {
           useQuery: () => ({ data: { items: [] }, isLoading: false }),
