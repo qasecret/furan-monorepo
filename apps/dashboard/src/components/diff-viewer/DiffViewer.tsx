@@ -343,6 +343,7 @@ export function DiffViewer({
   // mount is next to RegionListPanel below).
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const activeViewport = useViewerStore((s) => s.viewport);
+  const setViewport = useViewerStore((s) => s.setViewport);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
   const deleteSelected = useViewerStore((s) => s.deleteSelected);
   const handleDeleteIgnoreRegion = useCallback(
@@ -390,6 +391,28 @@ export function DiffViewer({
       .filter((v): v is string => Boolean(v));
     return Array.from(new Set(vps));
   }, [data?.screenshots]);
+
+  // Initialize / re-sync the editor viewport to this run's actual viewport.
+  // The store viewport is stamped onto every ignore region drawn on the
+  // canvas, and the API requires it non-empty (`z.string().min(1)`). The
+  // ViewportSwitcher only renders for multi-viewport runs, so on a single-
+  // viewport run nothing else would ever set it — leaving it "" and making
+  // "Save regions" fail with a 400. The store is a module singleton, so we
+  // also re-sync when landing on a run whose viewport set doesn't include
+  // the (stale) carried-over value. A user's explicit switch is preserved:
+  // once activeViewport is one of this run's viewports we leave it alone.
+  useEffect(() => {
+    if (uniqueViewports.length === 0) return;
+    if (activeViewport && uniqueViewports.includes(activeViewport)) return;
+    const preferred = (
+      candidateScreenshot as { viewport?: string | null } | null
+    )?.viewport;
+    const next =
+      preferred && uniqueViewports.includes(preferred)
+        ? preferred
+        : uniqueViewports[0];
+    if (next) setViewport(next);
+  }, [uniqueViewports, activeViewport, candidateScreenshot, setViewport]);
 
   const baselineUrl = useAuthedImage(baselineScreenshot?.imageKey);
   const candidateUrl = useAuthedImage(candidateScreenshot?.imageKey);

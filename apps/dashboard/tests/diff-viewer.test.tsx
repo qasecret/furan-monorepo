@@ -240,6 +240,37 @@ describe("DiffViewer", () => {
     expect(useViewerStore.getState().mode).toBe("difference");
   });
 
+  test("initializes the editor viewport from the run's screenshots (single-viewport run)", () => {
+    // Regression: the store viewport is stamped onto every drawn ignore
+    // region, and the API requires it non-empty. The ViewportSwitcher only
+    // renders for multi-viewport runs, so without the init effect a single-
+    // viewport run would leave viewport "" and "Save regions" would 400.
+    mockGetByIdData = {
+      ...defaultMockData,
+      screenshots: [{ id: "cp1", viewport: "1280x720" }],
+    };
+    render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().viewport).toBe("1280x720");
+  });
+
+  test("does not clobber an explicit viewport selection valid for the run", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      screenshots: [
+        { id: "cp1", viewport: "1280x720" },
+        { id: "cp2", viewport: "375x812" },
+      ],
+    };
+    // Simulate the user having picked the second viewport via the switcher.
+    useViewerStore.setState({ viewport: "375x812" });
+    render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().viewport).toBe("375x812");
+  });
+
   test("renders the Auto-approved badge when data.autoApproved is true", () => {
     mockGetByIdData = { ...defaultMockData, autoApproved: true };
     const r = render(
