@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Layers,
   Maximize2,
   Minimize2,
+  Pencil,
   SlidersHorizontal,
   SplitSquareHorizontal,
   ZoomIn,
@@ -354,21 +356,23 @@ export function ViewerToolbar({
         <Button
           type="button"
           variant="secondary"
-          className="px-2 py-1 text-xs"
+          className="gap-1.5 px-2 py-1 text-xs"
           data-testid="edit-regions-toggle"
           onClick={() => setIgnoreEditMode("variation")}
         >
+          <Pencil className="h-4 w-4" aria-hidden />
           Edit regions
         </Button>
       ) : (
         <Button
           type="button"
           variant="default"
-          className="px-2 py-1 text-xs"
+          className="gap-1.5 px-2 py-1 text-xs"
           data-testid="edit-regions-toggle"
           onClick={() => setIgnoreEditMode("off")}
         >
-          Editing regions ×
+          <Check className="h-4 w-4" aria-hidden />
+          Done editing
         </Button>
       )}
 
