@@ -5,27 +5,28 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => undefined,
 }));
+// Step cards (rendered by RunResults) fetch their thumbnail through this hook;
+// stub it so the page test never hits the network.
+vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
 
 const getByIdMock = vi.fn();
 const listMock = vi.fn();
-const approveMock = vi.fn();
-const rejectMock = vi.fn();
+const listCheckpointsMock = vi.fn();
 const bulkApproveMock = vi.fn();
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     builds: { getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) } },
     runs: {
       list: { useQuery: (...a: unknown[]) => listMock(...a) },
-      approve: {
-        useMutation: () => ({ mutate: approveMock, isPending: false }),
+      listCheckpoints: {
+        useQuery: (...a: unknown[]) => listCheckpointsMock(...a),
       },
-      reject: { useMutation: () => ({ mutate: rejectMock, isPending: false }) },
       bulkApproveByBuild: {
         useMutation: () => ({ mutate: bulkApproveMock, isPending: false }),
       },
@@ -47,6 +48,14 @@ vi.mock("next/navigation", () => ({
 import { BatchPage } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/batch-page";
 
 afterEach(cleanup);
+beforeEach(() => {
+  // Default: runs have no resolvable checkpoints yet, so each renders as a
+  // single fallback result row carrying the test name.
+  listCheckpointsMock.mockReturnValue({
+    data: { items: [] },
+    isLoading: false,
+  });
+});
 
 const build = {
   id: "b1",
@@ -65,7 +74,7 @@ const build = {
 };
 
 describe("BatchPage", () => {
-  test("renders the header from getById and a card grid from runs.list", async () => {
+  test("renders the header from getById and a result row per test from runs.list", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -234,7 +243,7 @@ describe("BatchPage", () => {
     );
   });
 
-  test("canReview=false hides per-card approve/reject and the Approve-all button", async () => {
+  test("canReview=false hides the Approve-all button but still lists the test rows", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -260,7 +269,8 @@ describe("BatchPage", () => {
     render(<BatchPage projectId="p1" buildId="b1" canReview={false} />);
     await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
     expect(screen.queryByTestId("batch-approve-all")).toBeNull();
-    expect(screen.queryByTestId("test-card-approve-r1")).toBeNull();
-    expect(screen.queryByTestId("test-card-reject-r1")).toBeNull();
+    // Review (approve/reject) now lives in the diff viewer, opened from a row's
+    // step cards — there are no inline approve/reject controls on the rows.
+    expect(screen.getByTestId("result-row-r1")).toBeDefined();
   });
 });

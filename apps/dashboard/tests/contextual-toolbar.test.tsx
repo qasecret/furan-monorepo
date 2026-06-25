@@ -13,6 +13,7 @@ describe("ContextualToolbar", () => {
       <ContextualToolbar
         chip="needs-review"
         onChipChange={onChip}
+        resultCount={3}
         canApproveAll
         onApproveAll={onApproveAll}
         isApproving={false}
@@ -22,6 +23,7 @@ describe("ContextualToolbar", () => {
     expect(onChip).toHaveBeenCalledWith("passed");
     fireEvent.click(screen.getByTestId("batch-approve-all"));
     expect(onApproveAll).toHaveBeenCalled();
+    expect(screen.getByTestId("batch-result-count").textContent).toContain("3");
   });
 
   test("hides approve-all when not allowed", () => {
@@ -29,6 +31,7 @@ describe("ContextualToolbar", () => {
       <ContextualToolbar
         chip="all"
         onChipChange={vi.fn()}
+        resultCount={0}
         canApproveAll={false}
         onApproveAll={vi.fn()}
         isApproving={false}

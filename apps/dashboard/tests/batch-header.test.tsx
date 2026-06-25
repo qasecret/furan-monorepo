@@ -33,11 +33,24 @@ const data: BatchHeaderData = {
 };
 
 describe("BatchHeader", () => {
-  test("renders display name, summary counts, and properties", () => {
+  test("renders the 'Test results of batch' title, display name, and properties", () => {
     render(<BatchHeader build={data} />);
+    expect(screen.getByText(/Test results of batch/i)).toBeDefined();
     expect(screen.getByText(/#42/)).toBeDefined();
-    expect(screen.getByText(/3 unresolved/)).toBeDefined();
     expect(screen.getByText(/region=us-east/)).toBeDefined();
+  });
+
+  test("renders the labelled status counts (value + label)", () => {
+    render(<BatchHeader build={data} />);
+    // "Unresolved" also appears in the aggregate status badge, so allow >=1.
+    expect(screen.getAllByText("Unresolved").length).toBeGreaterThan(0);
+    expect(screen.getByText("Failed")).toBeDefined();
+    expect(screen.getByText("Passed")).toBeDefined();
+  });
+
+  test("renders a Share action", () => {
+    render(<BatchHeader build={data} />);
+    expect(screen.getByTestId("batch-share")).toBeDefined();
   });
 
   test("does not render the Approve all button (moved to ContextualToolbar)", () => {
