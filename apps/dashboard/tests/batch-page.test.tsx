@@ -122,7 +122,7 @@ describe("BatchPage", () => {
     expect(screen.getByText(/#42/)).toBeDefined();
   });
 
-  test("defaults the runs.list query to the needs-review statuses", async () => {
+  test("defaults the runs.list query to All (no status filter)", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -140,7 +140,7 @@ describe("BatchPage", () => {
       expect.objectContaining({
         buildId: "b1",
         projectId: "p1",
-        status: ["unresolved", "failed"],
+        status: undefined,
       }),
     );
   });

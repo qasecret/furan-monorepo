@@ -35,14 +35,15 @@ const ACCENT: Record<string, string> = {
   empty: "bg-zinc-400 dark:bg-zinc-600",
 };
 
-/** Formats the created→updated span as HH:MM:SS (the reference's Duration). */
+/**
+ * Formats the created→updated span as HH:MM:SS (the reference's Duration).
+ * When the build was never updated after creation (equal timestamps) there's
+ * no real run span, so we show "—" rather than a misleading 00:00:00 timer.
+ */
 function formatDuration(startIso: string, endIso: string): string {
-  let secs = Math.max(
-    0,
-    Math.round(
-      (new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000,
-    ),
-  );
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (!(ms > 0)) return "—";
+  let secs = Math.round(ms / 1000);
   const h = Math.floor(secs / 3600);
   secs -= h * 3600;
   const m = Math.floor(secs / 60);

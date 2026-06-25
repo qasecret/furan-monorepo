@@ -37,7 +37,7 @@ interface Props {
 
 export function BatchPage({ projectId, buildId, canReview }: Props) {
   useProjectEvents(projectId);
-  const [chip, setChip] = useState<Chip>("needs-review");
+  const [chip, setChip] = useState<Chip>("all");
   const [view, setView] = useState<ResultView>("list");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<RunRow[]>([]);
@@ -136,10 +136,14 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
         view={view}
         onViewChange={setView}
         onRefresh={() => {
+          // Re-page from the top so the refreshed list reflects the current
+          // filter cleanly (not stale accumulated rows), then refetch both.
+          setAccumulated([]);
+          setCursor(undefined);
           void list.refetch();
           void buildQ.refetch();
         }}
-        isRefreshing={list.isFetching}
+        isRefreshing={list.isFetching || buildQ.isFetching}
         canApproveAll={canApproveAll}
         onApproveAll={onApproveAll}
         isApproving={bulkApprove.isPending}
