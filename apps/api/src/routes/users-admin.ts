@@ -205,8 +205,7 @@ export async function registerUsersAdminRoutes(
 
       const updated = result[0]!;
 
-      // Audit privileged changes for accountability — using the PERSISTED row
-      // and only when role/activation actually changed (no phantom no-op rows).
+      // Audit + invalidate on a real role/activation change (skip no-ops).
       if (
         updated.role !== target.role ||
         updated.isActive !== target.isActive
@@ -223,6 +222,9 @@ export async function registerUsersAdminRoutes(
           },
           "audit_user_updated",
         );
+        // Drop the cached auth snapshot so the demotion/deactivation takes
+        // effect on the target's NEXT request, cluster-wide (shared Redis).
+        await app.cache?.del(targetId);
       }
 
       return updated;

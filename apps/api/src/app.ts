@@ -16,9 +16,11 @@ import Fastify, {
 
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
-import { loadActiveUser, loadActiveUserByPat } from "./lib/load-active-user.js";
+import { loadActiveUserByPat } from "./lib/load-active-user.js";
+import { resolveAuthUser } from "./lib/resolve-auth-user.js";
 import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
+import type { UserAuthCache } from "./lib/user-auth-cache.js";
 import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -44,6 +46,8 @@ export interface AppDeps {
   env: Env;
   diffQueue: DiffQueueProducer;
   broadcaster: Broadcaster;
+  /** Optional cache for the per-request JWT user lookup. Absent → direct DB read. */
+  cache?: UserAuthCache;
 }
 
 declare module "fastify" {
@@ -53,6 +57,7 @@ declare module "fastify" {
     env: Env;
     diffQueue: DiffQueueProducer;
     broadcaster: Broadcaster;
+    cache: UserAuthCache | null;
   }
 }
 
@@ -84,6 +89,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("env", deps.env);
   app.decorate("diffQueue", deps.diffQueue);
   app.decorate("broadcaster", deps.broadcaster);
+  app.decorate("cache", deps.cache ?? null);
 
   // Generic 5xx body so internal failures don't leak SQL, query params, or
   // stack frames to the client. Fastify's default error handler returns
@@ -232,10 +238,15 @@ async function softAuthenticate(
     return; // bad signature → leave req.auth null
   }
 
-  // Reflect LIVE role/active state rather than the stale token claim: a demoted
-  // user gets their lower role and a deactivated user resolves to null (the
-  // per-procedure `authed`/`projectMember` middleware then rejects). Soft path,
-  // so null just means "not authenticated"; a DB error propagates like the PAT
-  // branch above.
-  req.auth = await loadActiveUser(app.db, payload.sub);
+  // Reflect LIVE role/active state (cache → DB) rather than the stale claim: a
+  // demoted user gets their lower role; a deactivated/missing user resolves to
+  // null and the per-procedure `authed`/`projectMember` middleware rejects. Soft
+  // path, so null just means "not authenticated"; a DB error propagates like the
+  // PAT branch above.
+  const fresh = await resolveAuthUser(
+    { db: app.db, cache: app.cache },
+    payload.sub,
+  );
+  req.auth =
+    fresh && fresh.isActive ? { id: payload.sub, role: fresh.role } : null;
 }
