@@ -79,6 +79,13 @@ export interface DiffMetrics {
   rulesEvaluationDuration: Histogram<string>;
   rulesMatched: Counter<"action">;
   rulesEvaluationErrors: Counter<string>;
+  /**
+   * Outcome of resolving an auto-rule CSS selector against the candidate's DOM
+   * + element-map sidecar: `resolved` (leaf hit), `resolved_ancestor` (mapped
+   * ancestor hit), `selector_miss` (matched the DOM but no mapped element),
+   * `invalid_selector` (unparseable user CSS), `dom_unparseable`.
+   */
+  rulesSelectorResolution: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -141,6 +148,12 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     rulesEvaluationErrors: new Counter({
       name: "furan_diff_rules_evaluation_errors_total",
       help: "Auto rule evaluation failures (fail-open)",
+      registers: [registry],
+    }),
+    rulesSelectorResolution: new Counter({
+      name: "furan_diff_rules_selector_resolution_total",
+      help: "Outcome of resolving an auto-rule CSS selector to element-map bboxes",
+      labelNames: ["outcome"],
       registers: [registry],
     }),
   };

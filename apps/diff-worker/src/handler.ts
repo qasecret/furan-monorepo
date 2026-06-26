@@ -47,6 +47,7 @@ import {
 import type {
   AutoRule,
   DiffRegion as RulesDiffRegion,
+  ElementMap as RulesElementMap,
   EvaluationResult,
 } from "@furan/rules-engine";
 import { objectKey, type Storage } from "@furan/storage";
@@ -68,6 +69,7 @@ import {
 } from "./element-map-resolver.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
+import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
 import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
@@ -197,6 +199,10 @@ interface PerViewportResult {
   ranTiers: Array<"l1">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
+  /** Auto-rule selectors resolved against this checkpoint's DOM + element-map
+   * (engine-shaped, keyed by the rule's selector string). Empty when there are
+   * no rules / no DOM / no element-map. */
+  ruleElementMap?: RulesElementMap;
   /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
    * its computed diff signature. Set only on the paired-baseline (diffed) path
    * — pass OR unresolved; the no-baseline/first-baseline path leaves them
@@ -698,6 +704,41 @@ async function handleDiffJobInner(
   // all resolve against the same map (the common case).
   const elementMapCache = new Map<string, ElementMap | null>();
 
+  // Auto Rules: fetch enabled rules once up front. Their distinct CSS selectors
+  // drive per-checkpoint element-map resolution INSIDE the loop (the candidate
+  // DOM is only in scope there); the rows themselves are compiled + evaluated
+  // after the loop. Fail-open: a fetch error disables rules for this run only.
+  let projectRules: (typeof autoRules.$inferSelect)[] = [];
+  let ruleSelectors: string[] = [];
+  try {
+    projectRules = await deps.db
+      .select()
+      .from(autoRules)
+      .where(
+        and(
+          eq(autoRules.projectId, data.projectId),
+          eq(autoRules.enabled, true),
+          isNull(autoRules.deletedAt),
+        ),
+      );
+    const selectorSet = new Set<string>();
+    for (const r of projectRules) {
+      const m = r.match as { type?: unknown; value?: unknown } | null;
+      if (m && m.type === "selector" && typeof m.value === "string") {
+        selectorSet.add(m.value);
+      }
+    }
+    ruleSelectors = [...selectorSet];
+  } catch (err) {
+    logger.error(
+      { err, runId: data.runId, projectId: data.projectId },
+      "auto-rule fetch failed; proceeding without rule decisions",
+    );
+    deps.metrics?.rulesEvaluationErrors.inc();
+    projectRules = [];
+    ruleSelectors = [];
+  }
+
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
     // Try exact viewport match first; for legacy v0.4 candidate (NULL),
@@ -1004,6 +1045,27 @@ async function handleDiffJobInner(
       },
     });
 
+    // Resolve this checkpoint's auto-rule selectors against its DOM +
+    // element-map sidecar, producing an engine-shaped map keyed by the rule
+    // selector string. Done here (not in the engine) because matching needs a
+    // real DOM — esp. attribute selectors the cssPath keys can't express.
+    const ruleElementMap: RulesElementMap =
+      ruleSelectors.length > 0
+        ? resolveRuleSelectorElementMap(
+            ruleSelectors,
+            candidateDom,
+            elementMap,
+            {
+              rulesSelectorResolution: {
+                labels: (l) => ({
+                  inc: () =>
+                    deps.metrics?.rulesSelectorResolution.labels(l).inc(),
+                }),
+              },
+            },
+          )
+        : [];
+
     let strictFailed = false;
     // Strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
@@ -1188,6 +1250,7 @@ async function handleDiffJobInner(
       vlmDescription,
       screenshotId: cs.id,
       diffSignature: computeCheckpointSignature(result.regions, bounds),
+      ruleElementMap,
     });
   }
 
@@ -1195,17 +1258,6 @@ async function handleDiffJobInner(
   let rulesResult: EvaluationResult | null = null;
 
   try {
-    const projectRules = await deps.db
-      .select()
-      .from(autoRules)
-      .where(
-        and(
-          eq(autoRules.projectId, data.projectId),
-          eq(autoRules.enabled, true),
-          isNull(autoRules.deletedAt),
-        ),
-      );
-
     if (projectRules.length > 0) {
       const ruleT0 = performance.now();
       const { matchers, conditions } = createDefaultRegistries();
@@ -1247,14 +1299,15 @@ async function handleDiffJobInner(
           // NOTE: this is the viewport-level diff %, not a per-region value
           // (the engine does not yet emit per-region diff). The maxDiff
           // condition therefore compares against the whole-viewport diff.
-          // Revisit when per-region diff % is available. (Moot today: the
-          // selector matcher is inert while elementMap is null.)
+          // Revisit when per-region diff % is available.
           diffPercent: vp.diffPercent,
         }));
 
         return evaluateCompiled({
           diffRegions: ruleRegions,
-          elementMap: null,
+          // Selectors resolved against this checkpoint's DOM + element-map
+          // during the loop; null when the SDK shipped no DOM/map sidecar.
+          elementMap: vp.ruleElementMap ?? null,
           ruleset: compiled,
         });
       });
