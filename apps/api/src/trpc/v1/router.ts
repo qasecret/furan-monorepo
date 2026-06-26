@@ -1,6 +1,7 @@
 import { t } from "../trpc.js";
 
 import { analyticsRouter } from "./analytics.js";
+import { autoRulesRouter } from "./auto-rules.js";
 import { baselinesRouter } from "./baselines.js";
 import { buildsRouter } from "./builds.js";
 import { inboxRouter } from "./inbox.js";
@@ -12,6 +13,7 @@ import { variationsRouter } from "./variations.js";
 
 export const appRouter = t.router({
   analytics: analyticsRouter,
+  autoRules: autoRulesRouter,
   baselines: baselinesRouter,
   builds: buildsRouter,
   inbox: inboxRouter,
