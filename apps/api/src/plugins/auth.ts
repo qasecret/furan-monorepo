@@ -1,9 +1,12 @@
 import fastifyJwt from "@fastify/jwt";
-import { eq, tokens, users } from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
-import { hashToken, isPatFormat } from "../lib/token.js";
+import {
+  loadActiveUser,
+  loadActiveUserByPat,
+} from "../lib/load-active-user.js";
+import { isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
 export type UserRole = "admin" | "editor" | "guest";
@@ -48,24 +51,12 @@ export default fp(async (app) => {
       }
 
       if (isPatFormat(raw)) {
-        const hash = hashToken(raw);
-        const rows = await app.db
-          .select({
-            tokenId: tokens.id,
-            userId: tokens.userId,
-            role: users.role,
-            isActive: users.isActive,
-          })
-          .from(tokens)
-          .innerJoin(users, eq(users.id, tokens.userId))
-          .where(eq(tokens.hash, hash))
-          .limit(1);
-        const row = rows[0];
-        if (!row || !row.isActive) {
+        const pat = await loadActiveUserByPat(app.db, raw);
+        if (!pat) {
           return reply.code(401).send({ error: "invalid_token" });
         }
-        req.auth = { id: row.userId, role: row.role };
-        await touchTokenLastUsed(app.db, row.tokenId);
+        req.auth = { id: pat.id, role: pat.role };
+        await touchTokenLastUsed(app.db, pat.tokenId);
         return;
       }
 
@@ -75,19 +66,27 @@ export default fp(async (app) => {
         return reply.code(401).send({ error: "invalid_token_format" });
       }
 
+      let payload: { sub: string };
       try {
         // Verify the token we extracted (Bearer header *or* furan_jwt
         // cookie). `req.jwtVerify()` only inspects the Authorization
         // header, so it would miss the cookie path — `app.jwt.verify`
-        // takes the raw token explicitly.
-        const payload = app.jwt.verify(raw) as {
-          sub: string;
-          role: UserRole;
-        };
-        req.auth = { id: payload.sub, role: payload.role };
+        // takes the raw token explicitly. The role claim is intentionally
+        // ignored — the live role comes from loadActiveUser below.
+        payload = app.jwt.verify(raw) as { sub: string };
       } catch {
         return reply.code(401).send({ error: "invalid_jwt" });
       }
+
+      // Reflect LIVE role/active state, not the (up-to-7-day) token claim, so a
+      // demoted or deactivated user loses access on their next request. A DB
+      // error here propagates (500) rather than falling back to the claim.
+      const fresh = await loadActiveUser(app.db, payload.sub);
+      if (!fresh) {
+        // missing or deactivated — same 401 shape as a bad token (no state leak)
+        return reply.code(401).send({ error: "invalid_jwt" });
+      }
+      req.auth = fresh;
     },
   );
 });
