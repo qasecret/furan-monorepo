@@ -1269,7 +1269,7 @@ async function handleDiffJobInner(
 
       // evaluateCompiled is synchronous CPU work (no I/O), so a plain map is
       // correct — Promise.all here would only add microtask overhead.
-      const perVpResults = perViewport.map((vp) => {
+      const perVpResults = perViewport.map((vp, vpIdx) => {
         if (vp.regions.length === 0) {
           return {
             decisions: [],
@@ -1285,7 +1285,7 @@ async function handleDiffJobInner(
         }
 
         const ruleRegions: RulesDiffRegion[] = vp.regions.map((r, i) => ({
-          id: regionEngineId(vp.viewport, i),
+          id: regionEngineId(vpIdx, i),
           severity: r.severity,
           category: r.category,
           bbox: r.bbox as {
@@ -1381,7 +1381,6 @@ async function handleDiffJobInner(
   // its unit tests). Extracted so this branching is testable without a DB.
   const { aggregateFailed, resolutionSource } = aggregateRuleStatus(
     perViewport.map((vp) => ({
-      viewport: vp.viewport,
       passed: vp.passed,
       regionCount: vp.regions.length,
     })),
@@ -1529,8 +1528,8 @@ async function handleDiffJobInner(
       // engineIds enumerate regions in the SAME order as aggregateRegions (and
       // therefore insertedRegionIds), so zipping the two is a stable mapping
       // with no positional drift between separate traversals.
-      const engineIds = perViewport.flatMap((vp) =>
-        vp.regions.map((_r, i) => regionEngineId(vp.viewport, i)),
+      const engineIds = perViewport.flatMap((vp, vpIdx) =>
+        vp.regions.map((_r, i) => regionEngineId(vpIdx, i)),
       );
       const regionIdMap = new Map<string, string>();
       for (

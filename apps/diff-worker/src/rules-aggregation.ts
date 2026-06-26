@@ -1,19 +1,21 @@
 import type { EvaluationResult } from "@furan/rules-engine";
 
 /**
- * Stable per-(viewport, region-index) id shared by rule evaluation, status
+ * Stable per-(checkpoint, region-index) id shared by rule evaluation, status
  * aggregation, and application persistence in the diff handler. Kept in one
  * place so the encoding can never drift between those call sites.
+ *
+ * Discriminated by the checkpoint's index in `perViewport`, NOT its viewport
+ * string: a single run can contain multiple checkpoints at the SAME viewport
+ * (e.g. HomePage + searchResult both at 1280x720), so a viewport-keyed id would
+ * collide across them and cross-wire decisions/applications.
  */
-export const regionEngineId = (
-  viewport: string | null | undefined,
-  i: number,
-) => `${viewport ?? "default"}:${i}`;
+export const regionEngineId = (checkpointIndex: number, i: number) =>
+  `${checkpointIndex}:${i}`;
 
 export interface ViewportStatusInput {
-  viewport: string | null | undefined;
   passed: boolean;
-  /** Number of diff regions emitted for this viewport. */
+  /** Number of diff regions emitted for this checkpoint. */
   regionCount: number;
 }
 
@@ -40,12 +42,14 @@ export function aggregateRuleStatus(
     ? new Map(rulesResult.decisions.map((d) => [d.regionId, d]))
     : null;
 
-  const aggregateFailed = viewports.some((vp) => {
+  const aggregateFailed = viewports.some((vp, checkpointIndex) => {
     if (vp.passed) return false;
     if (!decisionByRegionId) return true;
     if (vp.regionCount === 0) return true;
     for (let i = 0; i < vp.regionCount; i++) {
-      const decision = decisionByRegionId.get(regionEngineId(vp.viewport, i));
+      const decision = decisionByRegionId.get(
+        regionEngineId(checkpointIndex, i),
+      );
       if (!decision || decision.finalAction !== "auto_approve") return true;
     }
     return false;
