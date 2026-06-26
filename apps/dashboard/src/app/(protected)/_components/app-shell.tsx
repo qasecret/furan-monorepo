@@ -4,7 +4,7 @@ import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 
 interface Props {
-  userRole: "admin" | "editor" | "guest";
+  userRole: "owner" | "admin" | "editor" | "guest";
   userEmail: string;
   userInitial: string;
   children: ReactNode;

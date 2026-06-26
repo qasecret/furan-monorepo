@@ -7,7 +7,7 @@ import { resolveAuthUser } from "../lib/resolve-auth-user.js";
 import { isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
-export type UserRole = "admin" | "editor" | "guest";
+export type UserRole = "admin" | "editor" | "guest" | "owner";
 
 export interface AuthedUser {
   id: string;

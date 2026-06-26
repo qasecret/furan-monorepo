@@ -1,8 +1,12 @@
 import { cache } from "react";
 
 import { apiGet } from "./api-client";
+import type { ViewerRole } from "./roles";
 
-export type ViewerRole = "admin" | "editor" | "guest";
+// Re-exported so existing `@/lib/get-viewer` importers keep working; the pure
+// helpers + type now live in `./roles` (no React/network deps).
+export type { ViewerRole } from "./roles";
+export { isAtLeastAdmin, isOwner, canReviewRole } from "./roles";
 
 /**
  * The current viewer's workspace role, request-`cache()`d so multiple server
@@ -16,8 +20,3 @@ export const getViewerRole = cache(async (): Promise<ViewerRole> => {
   }));
   return me.data?.role ?? "guest";
 });
-
-/** Editor/admin can approve/reject; guests are read-only. */
-export function canReviewRole(role: ViewerRole): boolean {
-  return role === "admin" || role === "editor";
-}

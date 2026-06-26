@@ -559,7 +559,7 @@ const TABS: ReadonlyArray<{
 
 interface Props {
   projectId: string;
-  userRole: "admin" | "editor" | "guest";
+  userRole: "owner" | "admin" | "editor" | "guest";
 }
 
 export function ProjectSettingsForm({ projectId, userRole }: Props) {

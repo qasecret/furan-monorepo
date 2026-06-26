@@ -2,6 +2,7 @@ import { dashboardTelemetryEvents, sql, testRuns, users } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
 import { t } from "../trpc.js";
 
@@ -13,7 +14,7 @@ const windowInput = z.object({
 // (We don't have a generic adminOnly middleware factory; inline check
 // keeps this self-contained.)
 function requireAdmin(role: string | undefined) {
-  if (role !== "admin") {
+  if (!isAtLeastAdmin(role)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "Admin role required" });
   }
 }

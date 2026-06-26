@@ -20,13 +20,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { isOwner, type ViewerRole } from "@/lib/roles";
 
 export interface MemberRow {
   id: string;
   email: string;
   firstName?: string | null;
   lastName?: string | null;
-  role: "admin" | "editor" | "guest";
+  role: "owner" | "admin" | "editor" | "guest";
   isActive: boolean;
   defaultProjectId?: string | null;
 }
@@ -34,6 +35,8 @@ export interface MemberRow {
 interface MembersTableProps {
   initialUsers: MemberRow[];
   currentUserId: string;
+  /** The signed-in viewer's role — gates owner-only controls on owner rows. */
+  viewerRole: ViewerRole;
   allProjects: { id: string; name: string }[];
   onSearch?: (q: string) => void;
 }
@@ -57,6 +60,7 @@ function displayName(u: MemberRow): string | null {
 export function MembersTable({
   initialUsers,
   currentUserId,
+  viewerRole,
   allProjects,
   onSearch,
 }: MembersTableProps) {
@@ -67,6 +71,7 @@ export function MembersTable({
   const [, startTransition] = useTransition();
   const firstRender = useRef(true);
   const projectNameById = new Map(allProjects.map((p) => [p.id, p.name]));
+  const viewerIsOwner = isOwner(viewerRole);
 
   useEffect(() => {
     if (firstRender.current) {
@@ -176,6 +181,7 @@ export function MembersTable({
                         userId={u.id}
                         value={u.role}
                         disabled={u.id === currentUserId}
+                        viewerIsOwner={viewerIsOwner}
                         onChanged={() => router.refresh()}
                       />
                     </TableCell>
@@ -198,6 +204,7 @@ export function MembersTable({
                           userId={u.id}
                           isActive={u.isActive}
                           isSelf={u.id === currentUserId}
+                          lockedForViewer={u.role === "owner" && !viewerIsOwner}
                           onChanged={() => router.refresh()}
                         />
                       </div>

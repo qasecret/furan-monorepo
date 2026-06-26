@@ -39,7 +39,7 @@ const schema = z.object({
   password: z.string().min(8, "At least 8 characters"),
   firstName: z.string().min(1, "Required").max(80),
   lastName: z.string().min(1, "Required").max(80),
-  role: z.enum(["admin", "editor", "guest"]),
+  role: z.enum(["owner", "admin", "editor", "guest"]),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -171,6 +171,7 @@ export function CreateUserDialog({ onCreated }: CreateUserDialogProps) {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="owner">Owner</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="editor">Editor</SelectItem>
                         <SelectItem value="guest">Guest</SelectItem>

@@ -8,6 +8,7 @@ import {
   mergeBranchBaselinesImpl,
   SameBranchError,
 } from "../lib/branch-merge.js";
+import { isAtLeastAdmin } from "../lib/roles.js";
 
 export const mergeBody = z.object({
   fromBranch: z.string().min(1).max(255),
@@ -47,7 +48,7 @@ export async function registerProjectsRoutes(
       return reply.code(401).send({ error: "unauthenticated" });
     }
     if (req.auth.role === "guest") return [];
-    if (req.auth.role === "admin") {
+    if (isAtLeastAdmin(req.auth.role)) {
       return app.db.select().from(projects).orderBy(asc(projects.name));
     }
     // editor — only member-of projects

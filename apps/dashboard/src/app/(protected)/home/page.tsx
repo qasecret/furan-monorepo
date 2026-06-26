@@ -7,7 +7,7 @@ import { apiGet } from "@/lib/api-client";
 export const dynamic = "force-dynamic";
 
 interface Me {
-  role: "admin" | "editor" | "guest";
+  role: "owner" | "admin" | "editor" | "guest";
   defaultProjectId: string | null;
 }
 

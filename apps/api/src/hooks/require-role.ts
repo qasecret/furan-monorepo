@@ -7,7 +7,8 @@ export function requireRole(...roles: UserRole[]) {
     if (!req.auth) {
       return reply.code(401).send({ error: "unauthenticated" });
     }
-    if (!roles.includes(req.auth.role)) {
+    // Owner ⊇ every role, so an owner satisfies any required-role gate.
+    if (req.auth.role !== "owner" && !roles.includes(req.auth.role)) {
       return reply.code(403).send({ error: "forbidden" });
     }
   };

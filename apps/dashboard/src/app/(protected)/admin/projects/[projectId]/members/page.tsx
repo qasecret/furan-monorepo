@@ -6,6 +6,7 @@ import { ProjectMembersTable } from "./_components/project-members-table";
 import { Forbidden } from "@/components/ui/forbidden";
 import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
+import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export const metadata: Metadata = {
 
 interface Me {
   id: string;
-  role: "admin" | "editor" | "guest";
+  role: ViewerRole;
 }
 
 interface Project {
@@ -35,7 +36,7 @@ export default async function ProjectMembersPage({
     me.status === 401 ||
     me.status === 403 ||
     !me.data ||
-    me.data.role !== "admin"
+    !isAtLeastAdmin(me.data.role)
   ) {
     return (
       <PageContainer>

@@ -7,7 +7,7 @@ export const meResponse = z.object({
   email: z.string().email(),
   firstName: z.string(),
   lastName: z.string(),
-  role: z.enum(["admin", "editor", "guest"]),
+  role: z.enum(["owner", "admin", "editor", "guest"]),
   isActive: z.boolean(),
   defaultProjectId: z.string().uuid().nullable(),
   createdAt: z.date(),

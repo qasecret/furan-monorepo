@@ -22,6 +22,7 @@ import {
 } from "@furan/shared-types";
 import { z } from "zod";
 
+import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { t } from "../trpc.js";
@@ -59,7 +60,7 @@ async function listMemberProjectIds(
   db: DB,
   user: { id: string; role: string },
 ): Promise<string[]> {
-  if (user.role === "admin") {
+  if (isAtLeastAdmin(user.role)) {
     const rows = await db.select({ id: projects.id }).from(projects);
     return rows.map((r) => r.id);
   }

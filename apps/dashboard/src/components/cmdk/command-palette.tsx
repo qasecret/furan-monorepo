@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { browserEnv } from "@/lib/env";
 import { getRecentProjects, type RecentProject } from "@/lib/recent-projects";
+import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
 interface Project {
   id: string;
@@ -40,7 +41,7 @@ interface Props {
    * Server-Component layout after a `/users/me` lookup so we don't
    * leak admin surfaces to editors/guests.
    */
-  userRole: "admin" | "editor" | "guest";
+  userRole: ViewerRole;
 }
 
 /**
@@ -198,7 +199,7 @@ export function CommandPalette({ userRole }: Props) {
                 value="api keys tokens"
                 onSelect={() =>
                   go(
-                    userRole === "admin"
+                    isAtLeastAdmin(userRole)
                       ? "/admin/api-keys"
                       : "/account/tokens",
                   )
@@ -206,11 +207,13 @@ export function CommandPalette({ userRole }: Props) {
                 className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
                 data-testid="cmd-api-keys"
               >
-                {userRole === "admin" ? "/admin/api-keys" : "/account/tokens"}
+                {isAtLeastAdmin(userRole)
+                  ? "/admin/api-keys"
+                  : "/account/tokens"}
               </Command.Item>
             </Command.Group>
 
-            {userRole === "admin" && (
+            {isAtLeastAdmin(userRole) && (
               <Command.Group heading="Admin" className={CMD_GROUP_CLASS}>
                 <Command.Item
                   value="admin"

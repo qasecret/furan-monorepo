@@ -23,32 +23,48 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { browserEnv } from "@/lib/env";
+import { isAtLeastAdmin } from "@/lib/roles";
 
-export type Role = "admin" | "editor" | "guest";
+export type Role = "owner" | "admin" | "editor" | "guest";
 
 interface ChangeRoleCellProps {
   userId: string;
   value: Role;
   disabled?: boolean;
+  /**
+   * Whether the signed-in viewer is an owner. Only an owner may demote an owner
+   * (separation of duties), so the cell is read-only when an admin views an
+   * owner row. The API enforces this regardless (403 `owner_protected`); this is
+   * defense-in-depth + clearer UX.
+   */
+  viewerIsOwner?: boolean;
   onChanged?: (next: Role) => void;
 }
 
 const ROLE_LABEL: Record<Role, string> = {
+  owner: "Owner",
   admin: "Admin",
   editor: "Editor",
   guest: "Guest",
 };
 
+/** Granting or removing an admin/owner tier is privileged → confirm first. */
+const isPrivileged = (role: Role): boolean => isAtLeastAdmin(role);
+
 export function ChangeRoleCell({
   userId,
   value,
   disabled,
+  viewerIsOwner = false,
   onChanged,
 }: ChangeRoleCellProps) {
   const [pending, setPending] = useState(false);
   const [current, setCurrent] = useState<Role>(value);
-  // Non-null while a privileged (admin-involving) change awaits confirmation.
+  // Non-null while a privileged (admin/owner-involving) change awaits confirm.
   const [confirmRole, setConfirmRole] = useState<Role | null>(null);
+
+  // An admin cannot demote/deactivate an owner — lock the cell on owner rows.
+  const lockedForViewer = current === "owner" && !viewerIsOwner;
 
   const applyChange = async (next: Role): Promise<void> => {
     setPending(true);
@@ -78,8 +94,8 @@ export function ChangeRoleCell({
 
   const handleSelect = (next: Role): void => {
     if (next === current) return;
-    // Granting or removing admin is privileged — confirm before applying.
-    if (next === "admin" || current === "admin") {
+    // Granting or removing an admin/owner tier is privileged — confirm first.
+    if (isPrivileged(next) || isPrivileged(current)) {
       setConfirmRole(next);
       return;
     }
@@ -91,7 +107,9 @@ export function ChangeRoleCell({
       <Select
         value={current}
         onValueChange={(v) => handleSelect(v as Role)}
-        disabled={disabled || pending || confirmRole !== null}
+        disabled={
+          disabled || lockedForViewer || pending || confirmRole !== null
+        }
       >
         <SelectTrigger
           className="w-28"
@@ -101,6 +119,7 @@ export function ChangeRoleCell({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value="owner">Owner</SelectItem>
           <SelectItem value="admin">Admin</SelectItem>
           <SelectItem value="editor">Editor</SelectItem>
           <SelectItem value="guest">Guest</SelectItem>
@@ -116,14 +135,20 @@ export function ChangeRoleCell({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmRole === "admin"
-                ? "Grant admin access?"
-                : "Remove admin access?"}
+              {confirmRole && isPrivileged(confirmRole)
+                ? `Grant ${ROLE_LABEL[confirmRole]} access?`
+                : "Remove elevated access?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRole === "admin"
-                ? `This gives the user full admin privileges (${ROLE_LABEL[current]} → Admin).`
-                : `This removes admin privileges (Admin → ${
+              {confirmRole && isPrivileged(confirmRole)
+                ? `This gives the user full ${ROLE_LABEL[
+                    confirmRole
+                  ].toLowerCase()} privileges (${ROLE_LABEL[current]} → ${
+                    ROLE_LABEL[confirmRole]
+                  }).`
+                : `This removes ${ROLE_LABEL[
+                    current
+                  ].toLowerCase()} privileges (${ROLE_LABEL[current]} → ${
                     confirmRole ? ROLE_LABEL[confirmRole] : ""
                   }).`}
             </AlertDialogDescription>

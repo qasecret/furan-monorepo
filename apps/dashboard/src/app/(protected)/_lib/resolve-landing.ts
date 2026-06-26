@@ -1,3 +1,5 @@
+import { isAtLeastAdmin } from "@/lib/roles";
+
 /**
  * Single-project tenancy landing resolver (U8).
  *
@@ -27,6 +29,6 @@ export function resolveLanding(
     return `/projects/${me.defaultProjectId}/builds`;
   const sole = projects[0];
   if (projects.length === 1 && sole) return `/projects/${sole.id}/builds`;
-  if (me.role === "admin") return "/admin/projects";
+  if (isAtLeastAdmin(me.role)) return "/admin/projects";
   return null;
 }

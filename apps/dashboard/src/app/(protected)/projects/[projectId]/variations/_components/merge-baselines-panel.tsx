@@ -17,7 +17,7 @@ import { trpc } from "@/lib/trpc";
 
 interface Props {
   projectId: string;
-  userRole: "admin" | "editor" | "guest";
+  userRole: "owner" | "admin" | "editor" | "guest";
 }
 
 /**

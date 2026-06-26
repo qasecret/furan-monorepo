@@ -16,7 +16,7 @@ interface Me {
   email: string;
   firstName: string;
   lastName: string;
-  role: "admin" | "editor" | "guest";
+  role: "owner" | "admin" | "editor" | "guest";
   defaultProjectId: string | null;
 }
 

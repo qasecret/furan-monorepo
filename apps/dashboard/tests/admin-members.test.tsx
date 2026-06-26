@@ -109,6 +109,7 @@ describe("MembersTable", () => {
       <MembersTable
         initialUsers={users}
         currentUserId="someone-else"
+        viewerRole="admin"
         allProjects={[]}
       />,
     );
@@ -125,6 +126,7 @@ describe("MembersTable", () => {
       <MembersTable
         initialUsers={users}
         currentUserId="someone-else"
+        viewerRole="admin"
         allProjects={[]}
       />,
     );
@@ -153,6 +155,7 @@ describe("MembersTable", () => {
       <MembersTable
         initialUsers={users}
         currentUserId={users[0]!.id}
+        viewerRole="admin"
         allProjects={[]}
       />,
     );
@@ -250,8 +253,12 @@ describe("ChangeRoleCell", () => {
     fireEvent.click(screen.getByTestId("role-cell-u1"));
 
     // The option lives in a portal; findByRole works once it's mounted.
-    const adminOption = await screen.findByRole("option", { name: /admin/i });
+    const adminOption = await screen.findByRole("option", { name: "Admin" });
     fireEvent.click(adminOption);
+
+    // Granting admin is privileged → an explicit confirmation gate fires first.
+    const confirmBtn = await screen.findByRole("button", { name: /confirm/i });
+    fireEvent.click(confirmBtn);
 
     await waitFor(() => {
       const patch = calls.find((c) => c.init?.method === "PATCH");

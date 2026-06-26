@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 interface Me {
   id: string;
-  role: "admin" | "editor" | "guest";
+  role: "owner" | "admin" | "editor" | "guest";
 }
 
 export default async function ProjectSettingsPage({
