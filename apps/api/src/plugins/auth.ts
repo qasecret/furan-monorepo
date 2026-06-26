@@ -3,6 +3,7 @@ import { eq, tokens, users } from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
+import { loadActiveUser } from "../lib/load-active-user.js";
 import { hashToken, isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
@@ -75,19 +76,26 @@ export default fp(async (app) => {
         return reply.code(401).send({ error: "invalid_token_format" });
       }
 
+      let payload: { sub: string; role: UserRole };
       try {
         // Verify the token we extracted (Bearer header *or* furan_jwt
         // cookie). `req.jwtVerify()` only inspects the Authorization
         // header, so it would miss the cookie path — `app.jwt.verify`
         // takes the raw token explicitly.
-        const payload = app.jwt.verify(raw) as {
-          sub: string;
-          role: UserRole;
-        };
-        req.auth = { id: payload.sub, role: payload.role };
+        payload = app.jwt.verify(raw) as { sub: string; role: UserRole };
       } catch {
         return reply.code(401).send({ error: "invalid_jwt" });
       }
+
+      // Reflect LIVE role/active state, not the (up-to-7-day) token claim, so a
+      // demoted or deactivated user loses access on their next request. A DB
+      // error here propagates (500) rather than falling back to the claim.
+      const fresh = await loadActiveUser(app.db, payload.sub);
+      if (!fresh) {
+        // missing or deactivated — same 401 shape as a bad token (no state leak)
+        return reply.code(401).send({ error: "invalid_jwt" });
+      }
+      req.auth = fresh;
     },
   );
 });

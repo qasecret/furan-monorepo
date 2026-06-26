@@ -16,6 +16,7 @@ import Fastify, {
 
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
+import { loadActiveUser } from "./lib/load-active-user.js";
 import { hashToken, isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
 import docsPlugin from "./openapi/docs-plugin.js";
@@ -233,15 +234,22 @@ async function softAuthenticate(
     return;
   }
 
+  let payload: { sub: string; role: "admin" | "editor" | "guest" };
   try {
     // Verify the extracted token (Bearer header *or* furan_jwt cookie);
     // see plugins/auth.ts for the same pattern.
-    const payload = app.jwt.verify(raw) as {
+    payload = app.jwt.verify(raw) as {
       sub: string;
       role: "admin" | "editor" | "guest";
     };
-    req.auth = { id: payload.sub, role: payload.role };
   } catch {
-    // leave req.auth null
+    return; // bad signature → leave req.auth null
   }
+
+  // Reflect LIVE role/active state rather than the stale token claim: a demoted
+  // user gets their lower role and a deactivated user resolves to null (the
+  // per-procedure `authed`/`projectMember` middleware then rejects). Soft path,
+  // so null just means "not authenticated"; a DB error propagates like the PAT
+  // branch above.
+  req.auth = await loadActiveUser(app.db, payload.sub);
 }
