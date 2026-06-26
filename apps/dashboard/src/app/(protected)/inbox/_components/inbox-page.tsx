@@ -4,7 +4,7 @@ import type { BuildAggregateStatus } from "@furan/shared-types";
 import { Filter, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,14 @@ export function InboxPage({ initialStatus }: Props) {
   const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [accumulated, setAccumulated] = useState<BuildRow[]>([]);
+  const prevStatus = useRef(initialStatus);
+  useEffect(() => {
+    if (prevStatus.current !== initialStatus) {
+      prevStatus.current = initialStatus;
+      setCursor(null);
+      setAccumulated([]);
+    }
+  }, [initialStatus]);
 
   // Auto-refresh on build/run events for this project (ref-counted pool).
   useProjectEvents(currentProjectId ?? "");
@@ -97,7 +105,14 @@ export function InboxPage({ initialStatus }: Props) {
 
   const loadMore = () => {
     if (!list.data?.nextCursor) return;
-    setAccumulated(items);
+    setAccumulated((prev) => {
+      const seen = new Set(prev.map((b) => b.id));
+      const merged = [...prev];
+      for (const b of currentPage) {
+        if (!seen.has(b.id)) merged.push(b);
+      }
+      return merged;
+    });
     setCursor(list.data.nextCursor);
   };
 

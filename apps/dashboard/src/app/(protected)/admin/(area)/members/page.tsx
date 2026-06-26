@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { MembersTable, type MemberRow } from "./_components/members-table";
 
 import { PageTour } from "@/components/tour/page-tour";
-import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 import { getViewerRole } from "@/lib/get-viewer";
 
@@ -40,14 +39,8 @@ export default async function MembersPage({
 }: {
   searchParams?: Promise<SearchParams>;
 }) {
-  // The (area)/layout.tsx renders the 403 Card for non-admins, but Next.js still
-  // executes this page's RSC — so re-check the (request-cached, free) role and
-  // bail BEFORE the admin-only /users fetch, restoring the pre-move ordering.
   if ((await getViewerRole()) !== "admin") return null;
 
-  // The current user's id flags their own row ("(you)") + gates self-deactivation.
-  // If it can't be resolved, bail rather than render the table with an empty id
-  // (which would silently disable the self-row guard).
   const me = await apiGet<Me>("/users/me");
   if (!me.data) return null;
 
@@ -65,21 +58,15 @@ export default async function MembersPage({
   const allProjects = projectList.data ?? [];
 
   return (
-    <PageContainer>
-      <div className="space-y-4">
-        <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
-        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Manage user access. Admins can create users, change roles, and
-          deactivate accounts.
-        </p>
-        <div id="members-table">
-          <MembersTable
-            initialUsers={members}
-            currentUserId={me.data.id}
-            allProjects={allProjects}
-          />
-        </div>
+    <>
+      <PageTour pageId="admin-members" steps={MEMBERS_PAGE_TOUR} />
+      <div id="members-table">
+        <MembersTable
+          initialUsers={members}
+          currentUserId={me.data.id}
+          allProjects={allProjects}
+        />
       </div>
-    </PageContainer>
+    </>
   );
 }

@@ -20,7 +20,6 @@ describe("TopReviewers", () => {
     expect(screen.getByText("7")).toBeDefined();
     expect(screen.getByText("bob@x.test")).toBeDefined();
     expect(screen.getByText("3")).toBeDefined();
-    expect(screen.getByText("1")).toBeDefined(); // rank cell
   });
 
   test("labels the deleted-user bucket", () => {

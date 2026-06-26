@@ -3,7 +3,7 @@
 import { BarChart3, Layers, ShieldCheck, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
+import { type ComponentType, useEffect } from "react";
 
 import { InboxBadge } from "./inbox-badge";
 import { useSidebarStore } from "./use-sidebar-store";
@@ -118,6 +118,20 @@ export function Sidebar({ userRole }: { userRole: string }) {
   const isAdmin = userRole === "admin";
   const open = useSidebarStore((s) => s.open);
   const setOpen = useSidebarStore((s) => s.setOpen);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, setOpen]);
 
   return (
     <>

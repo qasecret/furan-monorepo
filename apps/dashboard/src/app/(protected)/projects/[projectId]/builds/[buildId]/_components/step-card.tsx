@@ -101,7 +101,7 @@ export function StepCard({
             <div className="h-full w-full bg-[repeating-linear-gradient(45deg,#e4e4e7,#e4e4e7_4px,#d4d4d8_4px,#d4d4d8_8px)] dark:bg-[repeating-linear-gradient(45deg,#18181b,#18181b_4px,#1f1f23_4px,#1f1f23_8px)]" />
           )}
         </button>
-        <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex items-center gap-1">
             {canReview && (
               <button

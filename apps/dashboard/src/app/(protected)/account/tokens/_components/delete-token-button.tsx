@@ -21,12 +21,14 @@ interface DeleteTokenButtonProps {
   tokenId: string;
   label: string;
   onDeleted?: () => void;
+  children?: React.ReactNode;
 }
 
 export function DeleteTokenButton({
   tokenId,
   label,
   onDeleted,
+  children,
 }: DeleteTokenButtonProps) {
   const [pending, setPending] = useState(false);
 
@@ -48,9 +50,11 @@ export function DeleteTokenButton({
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="secondary" data-testid={`delete-token-${tokenId}`}>
-          Delete
-        </Button>
+        {children ?? (
+          <Button variant="secondary" data-testid={`delete-token-${tokenId}`}>
+            Delete
+          </Button>
+        )}
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>

@@ -11,7 +11,7 @@ import { AdminTabs } from "@/app/(protected)/admin/(area)/_components/admin-tabs
 afterEach(cleanup);
 
 describe("AdminTabs", () => {
-  test("renders Members + Projects + Installations tabs with hrefs", () => {
+  test("renders Members + Projects + API Keys + Installations tabs with hrefs", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     expect(
@@ -21,31 +21,33 @@ describe("AdminTabs", () => {
       screen.getByRole("link", { name: /Projects/ }).getAttribute("href"),
     ).toBe("/admin/projects");
     expect(
+      screen.getByRole("link", { name: /API Keys/ }).getAttribute("href"),
+    ).toBe("/admin/api-keys");
+    expect(
       screen.getByRole("link", { name: /Installations/ }).getAttribute("href"),
     ).toBe("/admin/installations");
   });
 
-  test("orders Projects between Members and Installations", () => {
+  test("orders tabs: Members, Projects, API Keys, Installations", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     const labels = screen
       .getAllByRole("link")
       .map((a) => a.textContent?.trim());
-    expect(labels).toEqual(["Members", "Projects", "Installations"]);
+    expect(labels).toEqual([
+      "Members",
+      "Projects",
+      "API Keys",
+      "Installations",
+    ]);
   });
 
   test("marks the active tab from the pathname", () => {
     mockPath = "/admin/installations";
     render(<AdminTabs />);
-    expect(
-      screen
-        .getByRole("link", { name: /Installations/ })
-        .getAttribute("aria-current"),
-    ).toBe("page");
-    expect(
-      screen
-        .getByRole("link", { name: /Members/ })
-        .getAttribute("aria-current"),
-    ).toBeNull();
+    const installLink = screen.getByRole("link", { name: /Installations/ });
+    const membersLink = screen.getByRole("link", { name: /Members/ });
+    expect(installLink.className).toContain("border-brand");
+    expect(membersLink.className).not.toContain("border-brand");
   });
 });

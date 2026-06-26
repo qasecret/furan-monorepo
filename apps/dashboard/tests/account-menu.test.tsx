@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
-// AccountMenu reads the current project for its Settings / Variations links.
+// AccountMenu reads the current project for its Settings link.
 vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
   useCurrentProject: () => ({
     currentProjectId: "p1",
@@ -27,7 +27,7 @@ describe("AccountMenu", () => {
     expect(trigger.textContent).toContain("M");
   });
 
-  test("open menu shows email, project links, Tokens, and Sign out", async () => {
+  test("open menu shows email, project Settings, and Sign out", async () => {
     const user = userEvent.setup();
     render(<AccountMenu email="me@x.io" initial="M" role="admin" />);
     await user.click(screen.getByTestId("account-menu-trigger"));
@@ -35,13 +35,6 @@ describe("AccountMenu", () => {
     expect(
       screen.getByRole("menuitem", { name: /settings/i }).getAttribute("href"),
     ).toBe("/projects/p1/settings");
-    expect(
-      screen
-        .getByRole("menuitem", { name: /variations/i })
-        .getAttribute("href"),
-    ).toBe("/projects/p1/variations");
-    const tokens = screen.getByRole("menuitem", { name: /tokens/i });
-    expect(tokens.getAttribute("href")).toBe("/account/tokens");
     const signOut = screen.getByRole("menuitem", { name: /sign out/i });
     expect(signOut.tagName).toBe("BUTTON");
     expect(signOut.getAttribute("type")).toBe("submit");

@@ -48,15 +48,6 @@ function formatDuration(startIso: string, endIso: string): string {
   return `${pad(h)}:${pad(m)}:${pad(secs)}`;
 }
 
-/**
- * Coerces a possibly-absent count to 0 — resilience against API/dashboard
- * version skew (the two deploy independently), where an older API image may
- * omit the newer aggregate fields rather than returning a number.
- */
-function num(v: number | null | undefined): number {
-  return v == null ? 0 : v;
-}
-
 /** One labelled meta group — "Tests: 1 in total | 0 unresolved | 1 new". */
 function MetaGroup({ label, parts }: { label: string; parts: string[] }) {
   return (
@@ -117,14 +108,18 @@ export function BatchHeader({ build }: Props) {
                 parts={[
                   `${build.runCount} in total`,
                   `${build.unresolvedCount} unresolved`,
-                  `${num(build.newCount)} new`,
+                  ...(build.newCount != null ? [`${build.newCount} new`] : []),
                 ]}
               />
-              <Bullet />
-              <MetaGroup
-                label="Steps"
-                parts={[`${num(build.stepsTotal)} in total`]}
-              />
+              {build.stepsTotal != null && (
+                <>
+                  <Bullet />
+                  <MetaGroup
+                    label="Steps"
+                    parts={[`${build.stepsTotal} in total`]}
+                  />
+                </>
+              )}
               <Bullet />
               <MetaGroup
                 label="Duration"

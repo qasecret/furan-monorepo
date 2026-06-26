@@ -1,13 +1,23 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  Clock,
+  Gauge,
+  GitCompareArrows,
+  Layers,
+  ScanEye,
+  Settings,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm, type FieldErrors, type UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { MergeBaselinesPanel } from "../../variations/_components/merge-baselines-panel";
+import { VariationsList } from "../../variations/_components/variations-list";
+
 import { Button } from "@/components/ui/button";
-import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import {
   Form,
   FormControl,
@@ -217,6 +227,7 @@ type FormValues = z.infer<typeof schema>;
  * even if the user collapsed it.
  */
 type SectionId = "basics" | "diff" | "image" | "limits" | "retention";
+type TabId = SectionId | "variations";
 const FIELD_SECTION: Record<string, SectionId> = {
   name: "basics",
   mainBranchName: "basics",
@@ -499,6 +510,53 @@ function EngineKnobsEditor({
   );
 }
 
+const LABEL_CLS =
+  "text-xs font-medium uppercase tracking-wider font-mono text-zinc-500 dark:text-zinc-400";
+
+const TABS: ReadonlyArray<{
+  id: TabId;
+  label: string;
+  icon: typeof Settings;
+  desc: string;
+}> = [
+  {
+    id: "basics",
+    label: "Basics",
+    icon: Settings,
+    desc: "Project identity and branch configuration.",
+  },
+  {
+    id: "diff",
+    label: "Diff behavior",
+    icon: GitCompareArrows,
+    desc: "Threshold, dynamic text, and auto-approve settings.",
+  },
+  {
+    id: "image",
+    label: "Image comparison",
+    icon: ScanEye,
+    desc: "Pixel comparison algorithm and engine-specific knobs.",
+  },
+  {
+    id: "limits",
+    label: "Limits",
+    icon: Gauge,
+    desc: "Maximum builds and branch lifetime caps.",
+  },
+  {
+    id: "retention",
+    label: "Retention",
+    icon: Clock,
+    desc: "How long old runs are kept before cleanup.",
+  },
+  {
+    id: "variations",
+    label: "Variations",
+    icon: Layers,
+    desc: "Viewport and browser variations tracked by this project.",
+  },
+];
+
 interface Props {
   projectId: string;
   userRole: "admin" | "editor" | "guest";
@@ -528,31 +586,16 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
     },
   });
 
-  // Collapsible-section open state. All sections start expanded; a section
-  // can be force-opened when it holds a submit-time validation error.
-  const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(
-    () => ({
-      basics: true,
-      diff: true,
-      image: true,
-      limits: true,
-      retention: true,
-    }),
-  );
-  const setSectionOpen = (id: SectionId, open: boolean): void =>
-    setOpenSections((s) => ({ ...s, [id]: open }));
+  const [activeTab, setActiveTab] = useState<TabId>("basics");
 
-  // On an invalid submit, expand every section that owns an errored field so
-  // the user can see the message (RHF won't scroll into a collapsed region).
-  const onInvalidExpandSections = (errors: FieldErrors<FormValues>): void => {
-    setOpenSections((s) => {
-      const next = { ...s };
-      for (const field of Object.keys(errors)) {
-        const sec = FIELD_SECTION[field];
-        if (sec) next[sec] = true;
+  const onInvalidSwitchTab = (errors: FieldErrors<FormValues>): void => {
+    for (const field of Object.keys(errors)) {
+      const sec = FIELD_SECTION[field];
+      if (sec) {
+        setActiveTab(sec);
+        return;
       }
-      return next;
-    });
+    }
   };
 
   // Populate form when project data lands. `form.reset` here is
@@ -610,314 +653,371 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
     update.mutate({ projectId, ...values });
   };
 
+  const activeMeta = TABS.find((t) => t.id === activeTab)!;
+  const isFormTab = activeTab !== "variations";
+
   return (
-    <Form {...form}>
-      <form
-        onSubmit={form.handleSubmit(onSubmit, onInvalidExpandSections)}
-        className="space-y-6"
-        data-testid="project-settings-form"
-      >
-        <CollapsibleSection
-          title="Basics"
-          open={openSections.basics}
-          onOpenChange={(o) => setSectionOpen("basics", o)}
-        >
-          <div className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Project name</FormLabel>
-                  <FormControl>
-                    <Input {...field} data-testid="name-input" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="mainBranchName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Main branch</FormLabel>
-                  <FormControl>
-                    <Input {...field} data-testid="main-branch-input" />
-                  </FormControl>
-                  <FormDescription>
-                    The default branch used as the baseline fallback (e.g.{" "}
-                    <code>main</code> or <code>master</code>).
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title="Diff behavior"
-          open={openSections.diff}
-          onOpenChange={(o) => setSectionOpen("diff", o)}
-        >
-          <div className="space-y-4">
-            <FormField
-              control={form.control}
-              name="diffThreshold"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Diff threshold: {(field.value * 100).toFixed(2)}%
-                  </FormLabel>
-                  <FormControl>
-                    <Slider
-                      value={[field.value * 100]}
-                      onValueChange={([v]: number[]) =>
-                        field.onChange((v ?? 0) / 100)
-                      }
-                      min={0}
-                      max={100}
-                      step={0.05}
-                      data-testid="diff-threshold-slider"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    A run is flagged as changed when its pixel-diff exceeds this
-                    threshold. Default 0.10%.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="dynamicTextEnabled"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between gap-4">
-                  <div>
-                    <FormLabel>Dynamic text regions</FormLabel>
-                    <FormDescription>
-                      Enable regex-anchored ignore regions. For each region
-                      tagged &quot;dynamic text&quot;, Furan runs OCR on the
-                      candidate screenshot and masks the region only when the
-                      extracted text matches the pattern. Adds ~200ms–2s per
-                      diff for projects with dynamic-text regions.
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                      data-testid="dynamic-text-enabled-switch"
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="autoApproveFeature"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between gap-4">
-                  <div>
-                    <FormLabel>Auto-approve feature branches</FormLabel>
-                    <FormDescription>
-                      Mark feature-branch runs as approved automatically (use
-                      with caution).
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                      data-testid="auto-approve-switch"
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title="Image comparison"
-          open={openSections.image}
-          onOpenChange={(o) => setSectionOpen("image", o)}
-        >
-          <div className="space-y-4">
-            <FormField
-              control={form.control}
-              name="imageComparison"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Algorithm</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={(v) => {
-                      if (v) field.onChange(v);
-                    }}
-                  >
-                    <FormControl>
-                      <SelectTrigger data-testid="image-comparison-select">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="odiff">Odiff (default)</SelectItem>
-                      <SelectItem value="pixelmatch">Pixelmatch</SelectItem>
-                      <SelectItem value="looks_same">Looks-Same</SelectItem>
-                      <SelectItem value="vlm">VLM (AI Vision)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>
-                    Pixel comparison backend. Odiff is the default; Pixelmatch
-                    matches the jest-image-snapshot / Percy world; Looks-Same is
-                    perceptual and antialiasing-tolerant; VLM uses an AI vision
-                    model for semantic diff analysis.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <EngineKnobsEditor
-              engine={form.watch("imageComparison")}
-              form={form}
-              disabled={isGuest}
-            />
-            <FormField
-              control={form.control}
-              name="imageComparisonConfig"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Algorithm config (JSON — advanced)</FormLabel>
-                  <FormControl>
-                    <textarea
-                      {...field}
-                      rows={4}
-                      className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
-                      data-testid="image-config-textarea"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    The structured editor above writes here. Edit directly to
-                    set custom keys the structured form doesn't expose, or leave
-                    blank for engine defaults.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title="Limits"
-          open={openSections.limits}
-          onOpenChange={(o) => setSectionOpen("limits", o)}
-        >
-          <div className="space-y-4">
-            <FormField
-              control={form.control}
-              name="maxBuildAllowed"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Max builds retained</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      value={field.value as unknown as string}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      onBlur={field.onBlur}
-                      name={field.name}
-                      ref={field.ref}
-                      data-testid="max-build-input"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="maxBranchLifetime"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Max branch lifetime (days)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      value={field.value as unknown as string}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      onBlur={field.onBlur}
-                      name={field.name}
-                      ref={field.ref}
-                      data-testid="max-branch-input"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title="Retention"
-          open={openSections.retention}
-          onOpenChange={(o) => setSectionOpen("retention", o)}
-        >
-          <FormField
-            control={form.control}
-            name="retentionDays"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Retention (days)</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    value={field.value as unknown as string}
-                    onChange={(e) => field.onChange(e.target.value)}
-                    onBlur={field.onBlur}
-                    name={field.name}
-                    ref={field.ref}
-                    data-testid="retention-input"
-                  />
-                </FormControl>
-                <FormDescription>
-                  Old runs are deleted after this many days. Enforced nightly by
-                  the diff-worker retention job.
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </CollapsibleSection>
-
-        {/* Sticky save: wrapped in a backdrop "pill" so the floating control
-            reads as an intentional toolbar rather than a bare button colliding
-            with the form field scrolling behind it. */}
-        <div className="sticky bottom-4 z-10 flex justify-end">
-          <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2 shadow-md backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/90">
-            {form.formState.isDirty && !update.isPending && (
-              <span className="text-xs text-amber-600 dark:text-amber-400">
-                Unsaved changes
-              </span>
-            )}
-            <Button
-              type="submit"
-              disabled={isGuest || update.isPending}
-              title={
-                isGuest ? "Guests can't modify project settings" : undefined
-              }
-              data-testid="save-button"
-              variant={form.formState.isDirty ? "default" : "secondary"}
+    <div className="flex gap-8" data-testid="project-settings-form">
+      {/* Sidebar tabs */}
+      <nav className="w-52 shrink-0">
+        <div className="space-y-1">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === t.id
+                  ? "border-l-2 border-brand bg-zinc-100 pl-[10px] text-brand dark:bg-zinc-900"
+                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-white"
+              }`}
             >
-              {update.isPending ? "Saving…" : "Save"}
-            </Button>
+              <t.icon className="h-4 w-4" />
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {/* Content area */}
+      <div className="min-w-0 flex-1">
+        <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+            <h3 className="text-base font-medium text-zinc-950 dark:text-white">
+              {activeMeta.label}
+            </h3>
+            <p className="mt-1 text-xs text-zinc-500">{activeMeta.desc}</p>
+          </div>
+          <div className="p-6">
+            {/* Settings form — hidden when on variations tab, stays mounted for RHF */}
+            <Form {...form}>
+              <form
+                onSubmit={form.handleSubmit(onSubmit, onInvalidSwitchTab)}
+                className={isFormTab ? "" : "hidden"}
+              >
+                {/* ── Basics ── */}
+                <div
+                  className={activeTab === "basics" ? "space-y-4" : "hidden"}
+                >
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Project name
+                        </FormLabel>
+                        <FormControl>
+                          <Input {...field} data-testid="name-input" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="mainBranchName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>Main branch</FormLabel>
+                        <FormControl>
+                          <Input {...field} data-testid="main-branch-input" />
+                        </FormControl>
+                        <FormDescription>
+                          The default branch used as the baseline fallback (e.g.{" "}
+                          <code>main</code> or <code>master</code>).
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* ── Diff behavior ── */}
+                <div className={activeTab === "diff" ? "space-y-4" : "hidden"}>
+                  <FormField
+                    control={form.control}
+                    name="diffThreshold"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Diff threshold: {(field.value * 100).toFixed(2)}%
+                        </FormLabel>
+                        <FormControl>
+                          <Slider
+                            value={[field.value * 100]}
+                            onValueChange={([v]: number[]) =>
+                              field.onChange((v ?? 0) / 100)
+                            }
+                            min={0}
+                            max={100}
+                            step={0.05}
+                            data-testid="diff-threshold-slider"
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          A run is flagged as changed when its pixel-diff
+                          exceeds this threshold. Default 0.10%.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="dynamicTextEnabled"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center justify-between gap-4">
+                        <div>
+                          <FormLabel className={LABEL_CLS}>
+                            Dynamic text regions
+                          </FormLabel>
+                          <FormDescription>
+                            Enable regex-anchored ignore regions. For each
+                            region tagged &quot;dynamic text&quot;, Furan runs
+                            OCR on the candidate screenshot and masks the region
+                            only when the extracted text matches the pattern.
+                            Adds ~200ms–2s per diff for projects with
+                            dynamic-text regions.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="dynamic-text-enabled-switch"
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="autoApproveFeature"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center justify-between gap-4">
+                        <div>
+                          <FormLabel className={LABEL_CLS}>
+                            Auto-approve feature branches
+                          </FormLabel>
+                          <FormDescription>
+                            Mark feature-branch runs as approved automatically
+                            (use with caution).
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="auto-approve-switch"
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* ── Image comparison ── */}
+                <div className={activeTab === "image" ? "space-y-4" : "hidden"}>
+                  <FormField
+                    control={form.control}
+                    name="imageComparison"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>Algorithm</FormLabel>
+                        <Select
+                          value={field.value}
+                          onValueChange={(v) => {
+                            if (v) field.onChange(v);
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="image-comparison-select">
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="odiff">
+                              Odiff (default)
+                            </SelectItem>
+                            <SelectItem value="pixelmatch">
+                              Pixelmatch
+                            </SelectItem>
+                            <SelectItem value="looks_same">
+                              Looks-Same
+                            </SelectItem>
+                            <SelectItem value="vlm">VLM (AI Vision)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          Pixel comparison backend. Odiff is the default;
+                          Pixelmatch matches the jest-image-snapshot / Percy
+                          world; Looks-Same is perceptual and
+                          antialiasing-tolerant; VLM uses an AI vision model for
+                          semantic diff analysis.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <EngineKnobsEditor
+                    engine={form.watch("imageComparison")}
+                    form={form}
+                    disabled={isGuest}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="imageComparisonConfig"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Algorithm config (JSON — advanced)
+                        </FormLabel>
+                        <FormControl>
+                          <textarea
+                            {...field}
+                            rows={4}
+                            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
+                            data-testid="image-config-textarea"
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          The structured editor above writes here. Edit directly
+                          to set custom keys the structured form doesn't expose,
+                          or leave blank for engine defaults.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* ── Limits ── */}
+                <div
+                  className={activeTab === "limits" ? "space-y-4" : "hidden"}
+                >
+                  <FormField
+                    control={form.control}
+                    name="maxBuildAllowed"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Max builds retained
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            value={field.value as unknown as string}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                            data-testid="max-build-input"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="maxBranchLifetime"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Max branch lifetime (days)
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            value={field.value as unknown as string}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                            data-testid="max-branch-input"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* ── Retention ── */}
+                <div
+                  className={activeTab === "retention" ? "space-y-4" : "hidden"}
+                >
+                  <FormField
+                    control={form.control}
+                    name="retentionDays"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className={LABEL_CLS}>
+                          Retention (days)
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            value={field.value as unknown as string}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                            data-testid="retention-input"
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Old runs are deleted after this many days. Enforced
+                          nightly by the diff-worker retention job.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Save row inside the card */}
+                <div className="mt-6 flex justify-end gap-3">
+                  {form.formState.isDirty && !update.isPending && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => form.reset()}
+                      data-testid="cancel-button"
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    type="submit"
+                    disabled={isGuest || update.isPending}
+                    title={
+                      isGuest
+                        ? "Guests can't modify project settings"
+                        : undefined
+                    }
+                    data-testid="save-button"
+                  >
+                    {update.isPending ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+
+            {/* ── Variations ── */}
+            {activeTab === "variations" && (
+              <div className="space-y-6">
+                <MergeBaselinesPanel
+                  projectId={projectId}
+                  userRole={userRole}
+                />
+                <VariationsList projectId={projectId} />
+              </div>
+            )}
           </div>
         </div>
-      </form>
-    </Form>
+      </div>
+    </div>
   );
 }

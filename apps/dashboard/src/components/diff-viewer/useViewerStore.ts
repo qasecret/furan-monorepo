@@ -232,13 +232,6 @@ interface State {
   /** Increment current pan by (dx,dy) in canvas-CSS pixels. */
   panBy: (dx: number, dy: number) => void;
 
-  /** ADR-038: which region-kind tab is active above RegionListPanel. */
-  selectedRegionKind: RegionKindTab;
-  setSelectedRegionKind: (k: RegionKindTab) => void;
-  /** ADR-038: which checkpoint is currently open in the diff viewer. */
-  selectedCheckpointId: string | null;
-  setSelectedCheckpointId: (id: string | null) => void;
-
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   setRegionInputMode: (mode: RegionInputMode) => void;
   hydrateSavedIgnoreAreas: (
@@ -331,9 +324,6 @@ export const useViewerStore = create<State>((set) => ({
   // moment a diff opens (matches the reference's active "Highlight diffs").
   highlightActive: true,
 
-  selectedRegionKind: "ignore",
-  selectedCheckpointId: null,
-
   ignoreEditMode: "off",
   regionInputMode: "drag",
   savedRunIgnoreAreas: [],
@@ -396,10 +386,6 @@ export const useViewerStore = create<State>((set) => ({
   setHighlightActive: (highlightActive) => set({ highlightActive }),
   setView: ({ zoom, panX, panY }) => set({ zoom: clampZoom(zoom), panX, panY }),
 
-  setSelectedRegionKind: (selectedRegionKind) => set({ selectedRegionKind }),
-  setSelectedCheckpointId: (selectedCheckpointId) =>
-    set({ selectedCheckpointId }),
-
   setIgnoreEditMode: (ignoreEditMode) =>
     set((s) => ({
       ignoreEditMode,
@@ -418,9 +404,36 @@ export const useViewerStore = create<State>((set) => ({
         s.thresholdOverrides.size > 0 ||
         s.selectorOverrides.size > 0 ||
         s.geometryOverrides.size > 0;
+
+      // Build a geometry-key → existing-id lookup so we can reuse IDs
+      // across hydrations. This keeps override map entries valid when a
+      // spurious refetch fires while the user has pending edits.
+      const existingIds = new Map<string, string>();
+      const geoKey = (r: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        viewport: string;
+      }) => `${r.x}:${r.y}:${r.width}:${r.height}:${r.viewport}`;
+      for (const r of s.savedRunIgnoreAreas) existingIds.set(geoKey(r), r.id);
+      for (const r of s.savedVariationIgnoreAreas)
+        existingIds.set(geoKey(r), r.id);
+
       const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
         ...r,
-        id: crypto.randomUUID(),
+        id:
+          existingIds.get(
+            geoKey(
+              r as unknown as {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+                viewport: string;
+              },
+            ),
+          ) ?? crypto.randomUUID(),
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind ?? "ignore",
         pattern: r.pattern,
@@ -433,7 +446,8 @@ export const useViewerStore = create<State>((set) => ({
       if (hasUnsaved) {
         // Spurious refetch (window focus, SSE invalidation, mutation
         // success on a *sibling* mutation) must not destroy in-progress
-        // user work. Update only the server-derived slices.
+        // user work. Update only the server-derived slices, preserving
+        // IDs so override maps stay keyed correctly.
         return saved;
       }
       return {
@@ -804,6 +818,9 @@ export function selectEffectiveRegion(
     | "savedVariationIgnoreAreas"
     | "paddingOverrides"
     | "kindOverrides"
+    | "geometryOverrides"
+    | "thresholdOverrides"
+    | "selectorOverrides"
   >,
 ): IgnoreArea | null {
   if (!s.selectedIgnoreId) return null;
@@ -815,10 +832,18 @@ export function selectEffectiveRegion(
   if (!saved) return null;
   const padOv = s.paddingOverrides.get(saved.id);
   const kindOv = s.kindOverrides.get(saved.id);
+  const geomOv = s.geometryOverrides.get(saved.id);
+  const threshOv = s.thresholdOverrides.has(saved.id)
+    ? s.thresholdOverrides.get(saved.id)
+    : saved.thresholdOverride;
+  const selOv = s.selectorOverrides.get(saved.id);
   return {
     ...saved,
+    ...(geomOv ?? {}),
     paddingPx: padOv ?? saved.paddingPx,
     kind: kindOv?.kind ?? saved.kind,
     pattern: kindOv ? kindOv.pattern : saved.pattern,
+    thresholdOverride: threshOv,
+    selector: selOv === null ? undefined : (selOv ?? saved.selector),
   };
 }

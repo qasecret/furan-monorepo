@@ -70,8 +70,8 @@ export const RESULT_GRID =
 const SEVERITY: RunStatus[] = [
   "failed",
   "unresolved",
-  "running",
   "new",
+  "running",
   "passed",
   "aborted",
   "empty",

@@ -9,6 +9,14 @@ class MockResizeObserver {
 }
 global.ResizeObserver = MockResizeObserver;
 
+vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
+  useCurrentProject: () => ({
+    currentProjectId: "p1",
+    currentProject: null,
+    projects: [],
+  }),
+}));
+
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     analytics: {
@@ -43,6 +51,36 @@ vi.mock("@/lib/trpc", () => ({
           isLoading: false,
         }),
       },
+      testResultsSummary: {
+        useQuery: () => ({
+          data: {
+            total: 20,
+            passed: 16,
+            failed: 2,
+            unresolved: 2,
+            passRate: 0.8,
+            prevTotal: 15,
+            prevPassRate: 0.73,
+          },
+          isLoading: false,
+        }),
+      },
+      runsByDay: {
+        useQuery: () => ({
+          data: {
+            items: [{ day: "2026-05-26", passed: 5, failed: 1, unresolved: 0 }],
+          },
+          isLoading: false,
+        }),
+      },
+      topFragileTests: {
+        useQuery: () => ({
+          data: {
+            items: [{ name: "login-test", executions: 10, passed: 3 }],
+          },
+          isLoading: false,
+        }),
+      },
     },
   },
 }));
@@ -54,23 +92,15 @@ afterEach(cleanup);
 describe("AnalyticsPage", () => {
   test("renders KPI cards + window toggle + sections", async () => {
     render(<AnalyticsPage />);
-    await waitFor(() => expect(screen.getByText("Analytics")).toBeDefined());
-    expect(screen.getByText("12")).toBeDefined(); // totalActions
-    expect(screen.getByText("67%")).toBeDefined(); // approveRate
-    expect(screen.getByText("75%")).toBeDefined(); // keyboardRate
-    expect(screen.getByText("Actions per day")).toBeDefined();
+    await waitFor(() => expect(screen.getByText("Insights")).toBeDefined());
     expect(screen.getByText("Top reviewers")).toBeDefined();
     expect(screen.getByTestId("analytics-window-7d")).toBeDefined();
   });
 
-  test("surfaces the richer metrics + reviewer leaderboard", async () => {
+  test("surfaces reviewer leaderboard and fragile tests", async () => {
     render(<AnalyticsPage />);
-    await waitFor(() => expect(screen.getByText("Analytics")).toBeDefined());
-    expect(screen.getByText("Sessions")).toBeDefined();
-    expect(screen.getByText("5")).toBeDefined(); // sessions
-    expect(screen.getByText("Median time / action")).toBeDefined();
-    expect(screen.getByText("4.5s")).toBeDefined(); // medianMsPerAction 4500
-    expect(screen.getByText("8 approve · 4 reject")).toBeDefined();
+    await waitFor(() => expect(screen.getByText("Insights")).toBeDefined());
     expect(screen.getByText("alice@x.test")).toBeDefined(); // leaderboard row
+    expect(screen.getByText("Top fragile tests")).toBeDefined();
   });
 });

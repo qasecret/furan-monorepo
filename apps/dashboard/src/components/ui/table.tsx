@@ -18,16 +18,21 @@ import { cn } from "@/lib/cn";
  */
 export function Table({
   className,
+  bare,
   children,
   ...props
-}: TableHTMLAttributes<HTMLTableElement>) {
+}: TableHTMLAttributes<HTMLTableElement> & { bare?: boolean }) {
+  const table = (
+    <div className="overflow-x-auto">
+      <table className={cn("w-full text-sm", className)} {...props}>
+        {children}
+      </table>
+    </div>
+  );
+  if (bare) return table;
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="overflow-x-auto">
-        <table className={cn("w-full text-sm", className)} {...props}>
-          {children}
-        </table>
-      </div>
+      {table}
     </div>
   );
 }

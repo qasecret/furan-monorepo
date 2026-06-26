@@ -106,9 +106,9 @@ describe("TokensTable", () => {
     expect(screen.getByTestId("token-row-tok-2")).toBeDefined();
     expect(screen.getByText("CI — main")).toBeDefined();
     expect(screen.getByText("Laptop")).toBeDefined();
-    // last-used dash for the never-used token
+    // "Never" label for the never-used token
     const row2 = screen.getByTestId("token-row-tok-2");
-    expect(row2.textContent).toContain("—");
+    expect(row2.textContent).toContain("Never");
   });
 
   test("renders an empty state when there are no tokens", () => {
