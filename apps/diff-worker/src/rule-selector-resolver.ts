@@ -9,7 +9,10 @@ export type RuleSelectorResolution =
   | "resolved_ancestor"
   | "selector_miss"
   | "invalid_selector"
-  | "dom_unparseable";
+  | "dom_unparseable"
+  // Rules exist but the capture shipped no DOM/element-map sidecar — e.g. an
+  // Appium NATIVE capture (no HTML DOM). Selector rules cannot apply.
+  | "no_dom";
 
 interface ResolutionMetric {
   labels: (l: { outcome: RuleSelectorResolution }) => { inc: () => void };
@@ -45,7 +48,14 @@ export function resolveRuleSelectorElementMap(
   elementMap: ElementMap | null,
   metrics?: Metrics,
 ): RulesElementMap {
-  if (!candidateDom || !elementMap || selectors.length === 0) return [];
+  if (selectors.length === 0) return [];
+  if (!candidateDom || !elementMap) {
+    // Rules exist but this capture has no DOM/element-map sidecar (e.g. an
+    // Appium native capture). Record it so the no-op is observable rather than
+    // silent; selector rules simply can't apply here.
+    metrics?.rulesSelectorResolution.labels({ outcome: "no_dom" }).inc();
+    return [];
+  }
 
   let dom: JSDOM;
   try {

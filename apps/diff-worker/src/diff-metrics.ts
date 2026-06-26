@@ -83,7 +83,9 @@ export interface DiffMetrics {
    * Outcome of resolving an auto-rule CSS selector against the candidate's DOM
    * + element-map sidecar: `resolved` (leaf hit), `resolved_ancestor` (mapped
    * ancestor hit), `selector_miss` (matched the DOM but no mapped element),
-   * `invalid_selector` (unparseable user CSS), `dom_unparseable`.
+   * `invalid_selector` (unparseable user CSS), `dom_unparseable`, `no_dom`
+   * (capture shipped no DOM/element-map — e.g. an Appium native capture, so
+   * selector rules can't apply).
    */
   rulesSelectorResolution: Counter<"outcome">;
 }

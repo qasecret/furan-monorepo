@@ -84,16 +84,39 @@ describe("resolveRuleSelectorElementMap", () => {
     );
   });
 
-  it("returns [] when the DOM is absent", () => {
+  it("returns [] and records no_dom when the DOM is absent (e.g. Appium native)", () => {
+    const outcomes: string[] = [];
+    const metrics = {
+      rulesSelectorResolution: {
+        labels: (l: { outcome: string }) => ({
+          inc: () => outcomes.push(l.outcome),
+        }),
+      },
+    };
     expect(
-      resolveRuleSelectorElementMap([".timestamp"], undefined, elementMap),
+      resolveRuleSelectorElementMap(
+        [".timestamp"],
+        undefined,
+        elementMap,
+        metrics,
+      ),
     ).toEqual([]);
+    expect(outcomes).toEqual(["no_dom"]);
   });
 
-  it("returns [] when the element-map is absent", () => {
-    expect(resolveRuleSelectorElementMap([".timestamp"], DOM, null)).toEqual(
-      [],
-    );
+  it("returns [] and records no_dom when the element-map is absent", () => {
+    const outcomes: string[] = [];
+    const metrics = {
+      rulesSelectorResolution: {
+        labels: (l: { outcome: string }) => ({
+          inc: () => outcomes.push(l.outcome),
+        }),
+      },
+    };
+    expect(
+      resolveRuleSelectorElementMap([".timestamp"], DOM, null, metrics),
+    ).toEqual([]);
+    expect(outcomes).toEqual(["no_dom"]);
   });
 
   it("falls back to the nearest mapped ancestor when the leaf isn't in the map", () => {

@@ -19,6 +19,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -116,6 +117,11 @@ export function CreateRuleDialog({
                       {...field}
                     />
                   </FormControl>
+                  <FormDescription>
+                    Matched against web &amp; webview captures (Selenium /
+                    Playwright). Native mobile (Appium) captures have no DOM, so
+                    selector rules don&apos;t apply there yet.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
