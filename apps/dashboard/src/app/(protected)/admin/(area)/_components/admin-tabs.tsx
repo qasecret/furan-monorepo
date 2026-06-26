@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderOpen, Globe, KeyRound, Users } from "lucide-react";
+import { FolderOpen, Globe, KeyRound, Users, Zap } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -19,6 +19,11 @@ const TABS = [
     label: "API Keys",
     href: "/admin/api-keys",
     icon: KeyRound,
+  },
+  {
+    label: "Auto Rules",
+    href: "/admin/auto-rules",
+    icon: Zap,
   },
   {
     label: "Installations",
