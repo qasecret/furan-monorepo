@@ -68,6 +68,7 @@ import {
 } from "./element-map-resolver.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
+import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 const engineConfigSchema = z.object({
@@ -1214,44 +1215,49 @@ async function handleDiffJobInner(
         conditions,
       );
 
-      const perVpResults = await Promise.all(
-        perViewport.map(async (vp) => {
-          if (vp.regions.length === 0) {
-            return {
-              decisions: [],
-              counts: { auto_approve: 0, flag: 0, unmatched: 0 },
-              diagnostics: {
-                evaluatedRules: 0,
-                matchedRules: 0,
-                skippedBecauseNoElementMap: 0,
-                selectorMisses: 0,
-                durationMs: 0,
-              },
-            };
-          }
-
-          const ruleRegions: RulesDiffRegion[] = vp.regions.map((r, i) => ({
-            id: `${vp.viewport ?? "default"}:${i}`,
-            severity: r.severity,
-            category: r.category,
-            bbox: r.bbox as {
-              x: number;
-              y: number;
-              width: number;
-              height: number;
+      // evaluateCompiled is synchronous CPU work (no I/O), so a plain map is
+      // correct — Promise.all here would only add microtask overhead.
+      const perVpResults = perViewport.map((vp) => {
+        if (vp.regions.length === 0) {
+          return {
+            decisions: [],
+            counts: { auto_approve: 0, flag: 0, unmatched: 0 },
+            diagnostics: {
+              evaluatedRules: 0,
+              matchedRules: 0,
+              skippedBecauseNoElementMap: 0,
+              selectorMisses: 0,
+              durationMs: 0,
             },
-            description: r.description ?? "",
-            source: r.source,
-            diffPercent: vp.diffPercent,
-          }));
+          };
+        }
 
-          return evaluateCompiled({
-            diffRegions: ruleRegions,
-            elementMap: null,
-            ruleset: compiled,
-          });
-        }),
-      );
+        const ruleRegions: RulesDiffRegion[] = vp.regions.map((r, i) => ({
+          id: regionEngineId(vp.viewport, i),
+          severity: r.severity,
+          category: r.category,
+          bbox: r.bbox as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          },
+          description: r.description ?? "",
+          source: r.source,
+          // NOTE: this is the viewport-level diff %, not a per-region value
+          // (the engine does not yet emit per-region diff). The maxDiff
+          // condition therefore compares against the whole-viewport diff.
+          // Revisit when per-region diff % is available. (Moot today: the
+          // selector matcher is inert while elementMap is null.)
+          diffPercent: vp.diffPercent,
+        }));
+
+        return evaluateCompiled({
+          diffRegions: ruleRegions,
+          elementMap: null,
+          ruleset: compiled,
+        });
+      });
 
       const allDecisions = perVpResults.flatMap((r) => r.decisions);
       const allCounts = summarizeDecisions(allDecisions);
@@ -1317,24 +1323,18 @@ async function handleDiffJobInner(
   // - diffPercent: MAX across viewports (surfaces the worst viewport).
   // - pixelMisMatchCount: SUM across viewports.
   // - diffName: overlay key of the viewport with max diffPercent (or null).
-  const aggregateFailed = perViewport.some((vp) => {
-    if (vp.passed) return false;
+  // Derive run status + resolution attribution from per-viewport pixel results
+  // and the rule decisions (see rules-aggregation.ts for the exact rules and
+  // its unit tests). Extracted so this branching is testable without a DB.
+  const { aggregateFailed, resolutionSource } = aggregateRuleStatus(
+    perViewport.map((vp) => ({
+      viewport: vp.viewport,
+      passed: vp.passed,
+      regionCount: vp.regions.length,
+    })),
+    rulesResult,
+  );
 
-    if (rulesResult) {
-      const vpPrefix = `${vp.viewport ?? "default"}:`;
-      const vpDecisions = rulesResult.decisions.filter((d) =>
-        d.regionId.startsWith(vpPrefix),
-      );
-      const hasUnresolvedRegion = vp.regions.some((_r, i) => {
-        const regionId = `${vp.viewport ?? "default"}:${i}`;
-        const decision = vpDecisions.find((d) => d.regionId === regionId);
-        return !decision || decision.finalAction !== "auto_approve";
-      });
-      return hasUnresolvedRegion;
-    }
-
-    return true;
-  });
   const aggregateDiffPercent = perViewport.reduce(
     (m, v) => (v.diffPercent > m ? v.diffPercent : m),
     0,
@@ -1381,6 +1381,11 @@ async function handleDiffJobInner(
     })),
   );
 
+  // Captured from the core transaction so the (fail-open) auto-rule
+  // application persistence can run in its OWN transaction afterwards —
+  // an audit-write failure must never roll back the committed run result.
+  let insertedRegionIds: string[] = [];
+
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
       .update(testRuns)
@@ -1392,15 +1397,10 @@ async function handleDiffJobInner(
         baselineSource: baseline.source,
         vlmDescription: aggregateVlmDescription,
         primarySignature,
-        resolutionSource:
-          rulesResult &&
-          rulesResult.decisions.some((d) => d.matchedRules.length > 0)
-            ? "rule"
-            : null,
+        resolutionSource,
       })
       .where(eq(testRuns.id, data.runId));
 
-    let insertedRegionIds: string[] = [];
     if (aggregateRegions.length > 0) {
       const inserted = await tx
         .insert(diffRegions)
@@ -1419,87 +1419,6 @@ async function handleDiffJobInner(
         )
         .returning({ id: diffRegions.id });
       insertedRegionIds = inserted.map((r) => r.id);
-    }
-
-    if (
-      rulesResult &&
-      rulesResult.decisions.length > 0 &&
-      insertedRegionIds.length > 0
-    ) {
-      const regionIdMap = new Map<string, string>();
-      let idx = 0;
-      for (const vp of perViewport) {
-        for (let i = 0; i < vp.regions.length; i++) {
-          const engineId = `${vp.viewport ?? "default"}:${i}`;
-          if (idx < insertedRegionIds.length) {
-            regionIdMap.set(engineId, insertedRegionIds[idx]!);
-            idx++;
-          }
-        }
-      }
-
-      const applicationRows: Array<{
-        ruleId: string;
-        ruleVersion: number;
-        testRunId: string;
-        diffRegionId: string;
-        regionDiffPct: number;
-        severity: number;
-        won: boolean;
-      }> = [];
-
-      for (const decision of rulesResult.decisions) {
-        const dbRegionId = regionIdMap.get(decision.regionId);
-        if (!dbRegionId) continue;
-        for (const rm of decision.matchedRules) {
-          applicationRows.push({
-            ruleId: rm.ruleId,
-            ruleVersion: rm.ruleVersion,
-            testRunId: data.runId,
-            diffRegionId: dbRegionId,
-            regionDiffPct: rm.regionDiffPct,
-            severity: rm.severity,
-            won: rm.won,
-          });
-        }
-      }
-
-      if (applicationRows.length > 0) {
-        const insertedApps = await tx
-          .insert(autoRuleApplications)
-          .values(applicationRows)
-          .returning({
-            id: autoRuleApplications.id,
-            diffRegionId: autoRuleApplications.diffRegionId,
-            won: autoRuleApplications.won,
-          });
-
-        for (const app of insertedApps) {
-          if (app.won) {
-            await tx
-              .update(diffRegions)
-              .set({ resolvedByApplicationId: app.id })
-              .where(eq(diffRegions.id, app.diffRegionId));
-          }
-        }
-
-        const countsByRule = new Map<string, number>();
-        for (const row of applicationRows) {
-          countsByRule.set(row.ruleId, (countsByRule.get(row.ruleId) ?? 0) + 1);
-        }
-        if (countsByRule.size > 0) {
-          await tx.execute(sql`
-            UPDATE auto_rules SET applied_count = applied_count + v.cnt
-            FROM (VALUES ${sql.join(
-              [...countsByRule].map(
-                ([id, cnt]) => sql`(${id}::uuid, ${cnt}::int)`,
-              ),
-              sql`, `,
-            )}) AS v(id, cnt)
-            WHERE auto_rules.id = v.id
-          `);
-        }
-      }
     }
 
     // ADR-042: persist each diffed checkpoint's signature for build-scoped
@@ -1544,6 +1463,107 @@ async function handleDiffJobInner(
     }
   });
 
+  // ── Auto Rules application persistence (fail-open) ───────────
+  // Runs in its OWN transaction AFTER the core run result is committed, wrapped
+  // in try/catch: a failure here loses only the rule audit trail, never the
+  // run's status or diff regions. (Rule evaluation already fails open above.)
+  if (
+    rulesResult &&
+    rulesResult.decisions.length > 0 &&
+    insertedRegionIds.length > 0
+  ) {
+    try {
+      // engineIds enumerate regions in the SAME order as aggregateRegions (and
+      // therefore insertedRegionIds), so zipping the two is a stable mapping
+      // with no positional drift between separate traversals.
+      const engineIds = perViewport.flatMap((vp) =>
+        vp.regions.map((_r, i) => regionEngineId(vp.viewport, i)),
+      );
+      const regionIdMap = new Map<string, string>();
+      for (
+        let idx = 0;
+        idx < engineIds.length && idx < insertedRegionIds.length;
+        idx++
+      ) {
+        regionIdMap.set(engineIds[idx]!, insertedRegionIds[idx]!);
+      }
+
+      const applicationRows = rulesResult.decisions.flatMap((decision) => {
+        const dbRegionId = regionIdMap.get(decision.regionId);
+        if (!dbRegionId) return [];
+        return decision.matchedRules.map((rm) => ({
+          ruleId: rm.ruleId,
+          ruleVersion: rm.ruleVersion,
+          testRunId: data.runId,
+          diffRegionId: dbRegionId,
+          regionDiffPct: rm.regionDiffPct,
+          // Policy rank of the rule's ACTION (1=auto_approve, 2=flag), not the
+          // region's visual severity — see auto_rule_applications schema.
+          actionPriority: rm.severity,
+          won: rm.won,
+        }));
+      });
+
+      if (applicationRows.length > 0) {
+        await withProjectScope(deps.db, data.projectId, async (tx) => {
+          const insertedApps = await tx
+            .insert(autoRuleApplications)
+            .values(applicationRows)
+            .returning({
+              id: autoRuleApplications.id,
+              diffRegionId: autoRuleApplications.diffRegionId,
+              won: autoRuleApplications.won,
+            });
+
+          // Link each region to its WINNING application in one statement
+          // (UPDATE … FROM VALUES) rather than one round-trip per winner.
+          const wonApps = insertedApps.filter((a) => a.won);
+          if (wonApps.length > 0) {
+            await tx.execute(sql`
+              UPDATE diff_regions SET resolved_by_application_id = v.app_id::uuid
+              FROM (VALUES ${sql.join(
+                wonApps.map(
+                  (a) => sql`(${a.diffRegionId}::uuid, ${a.id}::uuid)`,
+                ),
+                sql`, `,
+              )}) AS v(region_id, app_id)
+              WHERE diff_regions.id = v.region_id
+            `);
+          }
+
+          // Credit applied_count ONLY to rules that actually won a region; a
+          // rule that matched but lost the severity tiebreak resolved nothing.
+          const countsByRule = new Map<string, number>();
+          for (const row of applicationRows) {
+            if (!row.won) continue;
+            countsByRule.set(
+              row.ruleId,
+              (countsByRule.get(row.ruleId) ?? 0) + 1,
+            );
+          }
+          if (countsByRule.size > 0) {
+            await tx.execute(sql`
+              UPDATE auto_rules SET applied_count = applied_count + v.cnt
+              FROM (VALUES ${sql.join(
+                [...countsByRule].map(
+                  ([id, cnt]) => sql`(${id}::uuid, ${cnt}::int)`,
+                ),
+                sql`, `,
+              )}) AS v(id, cnt)
+              WHERE auto_rules.id = v.id
+            `);
+          }
+        });
+      }
+    } catch (err) {
+      logger.error(
+        { err, runId: data.runId, projectId: data.projectId },
+        "auto-rule application persistence failed; run result preserved",
+      );
+      deps.metrics?.rulesEvaluationErrors.inc();
+    }
+  }
+
   const durationMs = Date.now() - t0;
   const ranTiersUnion = Array.from(
     new Set(perViewport.flatMap((v) => v.ranTiers)),
@@ -1578,11 +1598,7 @@ async function handleDiffJobInner(
       diffPercent: aggregateDiffPercent,
       branchName: run.branchName,
       numChanges: aggregateRegions.length,
-      resolutionSource: rulesResult?.decisions.some(
-        (d) => d.matchedRules.length > 0,
-      )
-        ? "rule"
-        : null,
+      resolutionSource,
       rulesSummary: rulesResult?.counts ?? null,
     }),
   );

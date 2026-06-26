@@ -24,7 +24,7 @@ CREATE TABLE "auto_rule_applications" (
 	"test_run_id" uuid NOT NULL,
 	"diff_region_id" uuid NOT NULL,
 	"region_diff_pct" real NOT NULL,
-	"severity" integer NOT NULL,
+	"action_priority" integer NOT NULL,
 	"won" boolean DEFAULT false NOT NULL,
 	"applied_at" timestamp with time zone DEFAULT now() NOT NULL
 );

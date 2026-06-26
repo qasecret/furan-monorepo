@@ -27,7 +27,11 @@ export const autoRuleApplications = pgTable(
       .notNull()
       .references(() => diffRegions.id, { onDelete: "cascade" }),
     regionDiffPct: real("region_diff_pct").notNull(),
-    severity: integer("severity").notNull(),
+    // The winning policy rank of the matched rule's ACTION (1=auto_approve,
+    // 2=flag) — NOT the diff region's visual severity (that lives on
+    // diff_regions.severity, joinable via diff_region_id). Named explicitly to
+    // avoid being mistaken for region severity.
+    actionPriority: integer("action_priority").notNull(),
     won: boolean("won").notNull().default(false),
     appliedAt: timestamp("applied_at", { withTimezone: true })
       .notNull()

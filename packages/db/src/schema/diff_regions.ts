@@ -45,6 +45,13 @@ export const diffRegions = pgTable(
     viewport: text("viewport"),
     ocrText: text("ocr_text"),
     ocrMatched: boolean("ocr_matched"),
+    // The auto_rule_application that resolved this region (auto_approve), or
+    // null. Intentionally NOT a DB foreign key: auto_rule_applications already
+    // references diff_regions.id (cascade), so a real FK here would create a
+    // circular table dependency. The diff-worker writes this only with ids it
+    // just inserted in the same flow, and an orphan would at worst lose
+    // provenance (the join returns no row) — never corrupt a diff. If this is
+    // ever widened to external writers, add a deferred FK with ON DELETE SET NULL.
     resolvedByApplicationId: uuid("resolved_by_application_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

@@ -41,4 +41,23 @@ describe("maxDiffCondition", () => {
   it("passes when threshold is 0 and diff is 0", () => {
     expect(maxDiffCondition(0, { region: region(0), candidate })).toBe(true);
   });
+
+  it("fails safe (returns false) for a NaN threshold", () => {
+    expect(maxDiffCondition(NaN, { region: region(0), candidate })).toBe(false);
+  });
+
+  it("fails safe for a non-numeric (string) threshold", () => {
+    expect(maxDiffCondition("ten", { region: region(0), candidate })).toBe(
+      false,
+    );
+  });
+
+  it("fails safe for an undefined/null threshold", () => {
+    expect(maxDiffCondition(undefined, { region: region(0), candidate })).toBe(
+      false,
+    );
+    expect(maxDiffCondition(null, { region: region(0), candidate })).toBe(
+      false,
+    );
+  });
 });

@@ -2366,8 +2366,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "severity": {
-          "name": "severity",
+        "action_priority": {
+          "name": "action_priority",
           "type": "integer",
           "primaryKey": false,
           "notNull": true

@@ -20,6 +20,22 @@ import {
 } from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
 
+/**
+ * `match` is a jsonb column typed as `unknown` on the wire. Parse defensively
+ * so a malformed/legacy row renders a placeholder instead of crashing the
+ * whole table (a bare `as` cast would throw on a null/odd shape).
+ */
+function parseMatch(raw: unknown): { type: string; value: string } {
+  if (raw && typeof raw === "object") {
+    const m = raw as { type?: unknown; value?: unknown };
+    return {
+      type: typeof m.type === "string" ? m.type : "unknown",
+      value: typeof m.value === "string" ? m.value : "—",
+    };
+  }
+  return { type: "unknown", value: "—" };
+}
+
 export function AutoRulesTable() {
   const { currentProjectId } = useCurrentProject();
   const { data: rules, isLoading } = trpc.autoRules.list.useQuery(
@@ -41,6 +57,11 @@ export function AutoRulesTable() {
     onError: (e) => toast.error(e.message || "Failed to delete rule"),
   });
 
+  // Guard the non-null assertions below: until the active project resolves the
+  // list query is disabled, so don't render the table or hand a null projectId
+  // to the create dialog.
+  if (!currentProjectId)
+    return <p className="text-sm text-zinc-500">No project selected.</p>;
   if (isLoading) return <p className="text-sm text-zinc-500">Loading…</p>;
 
   return (
@@ -55,7 +76,7 @@ export function AutoRulesTable() {
           </span>
         </div>
         <CreateRuleDialog
-          projectId={currentProjectId!}
+          projectId={currentProjectId}
           onCreated={() => utils.autoRules.list.invalidate()}
         />
       </div>
@@ -78,7 +99,7 @@ export function AutoRulesTable() {
             </TableEmpty>
           ) : (
             rules.map((rule) => {
-              const match = rule.match as { type: string; value: string };
+              const match = parseMatch(rule.match);
               return (
                 <TableRow key={rule.id}>
                   <TableCell>
