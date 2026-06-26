@@ -207,4 +207,79 @@ describe("admin user CRUD", () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  async function findUserId(role: string): Promise<string> {
+    const list = await h.app.inject({
+      method: "GET",
+      url: "/users",
+      headers: { authorization: `Bearer ${adminJwt}` },
+    });
+    const row = (list.json() as Array<{ id: string; role: string }>).find(
+      (u) => u.role === role,
+    );
+    if (!row) throw new Error(`no ${role} seeded`);
+    return row.id;
+  }
+
+  test("PATCH /users/:id (admin) - cannot change own role", async () => {
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${adminId}`,
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { role: "editor" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toBe(
+      "cannot_change_own_role",
+    );
+  });
+
+  test("PATCH /users/:id - cannot demote the last active admin", async () => {
+    // The editor holds a (stale) admin token and tries to demote the only real
+    // admin. Actor != target so the self-guard doesn't apply; the DB-count
+    // invariant must still reject it.
+    const editorId = await findUserId("editor");
+    const staleAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${adminId}`,
+      headers: { authorization: `Bearer ${staleAdminJwt}` },
+      payload: { role: "editor" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: string }).error).toBe("last_admin");
+  });
+
+  test("PATCH /users/:id - cannot deactivate the last active admin", async () => {
+    const editorId = await findUserId("editor");
+    const staleAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${adminId}`,
+      headers: { authorization: `Bearer ${staleAdminJwt}` },
+      payload: { isActive: false },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: string }).error).toBe("last_admin");
+  });
+
+  test("PATCH /users/:id - can demote an admin when another admin remains", async () => {
+    const editorId = await findUserId("editor");
+    // Promote the editor so there are two admins.
+    await h.app.inject({
+      method: "PATCH",
+      url: `/users/${editorId}`,
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { role: "admin" },
+    });
+    // Now demoting that second admin is allowed (the seed admin remains).
+    const res = await h.app.inject({
+      method: "PATCH",
+      url: `/users/${editorId}`,
+      headers: { authorization: `Bearer ${adminJwt}` },
+      payload: { role: "editor" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { role: string }).role).toBe("editor");
+  });
 });

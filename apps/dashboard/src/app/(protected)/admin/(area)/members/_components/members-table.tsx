@@ -175,6 +175,7 @@ export function MembersTable({
                       <ChangeRoleCell
                         userId={u.id}
                         value={u.role}
+                        disabled={u.id === currentUserId}
                         onChanged={() => router.refresh()}
                       />
                     </TableCell>

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { readApiErrorCode, USER_MUTATION_ERROR } from "./user-mutation-errors";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,7 +49,10 @@ export function DeactivateButton({
     );
     setPending(false);
     if (!res.ok) {
-      toast.error(`Failed to ${label.toLowerCase()}`);
+      const code = await readApiErrorCode(res);
+      toast.error(
+        USER_MUTATION_ERROR[code] ?? `Failed to ${label.toLowerCase()}`,
+      );
       return;
     }
     toast.success(`User ${targetActive ? "reactivated" : "deactivated"}`);
