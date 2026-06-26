@@ -144,4 +144,90 @@ describe("RegionListPanel", () => {
     expect(document.querySelector('[data-region-id="l1real"]')).not.toBeNull();
     expect(screen.getByText(/Regions \(2\)/)).toBeTruthy();
   });
+
+  it("declutters image rows: size chip, no 'tiles' jargon, no 'image' label", () => {
+    const regions: DiffRegion[] = [
+      {
+        id: "img1",
+        severity: "cosmetic",
+        category: "image",
+        bbox: { x: 0, y: 0, width: 240, height: 240 },
+        description: "Pixel diff cluster (30 tiles, 240×240)",
+        source: "l1_pixel",
+      },
+    ];
+    render(<RegionListPanel regions={regions} />);
+    const row = document.querySelector(
+      '[data-region-id="img1"]',
+    ) as HTMLElement;
+    // size surfaces as its own chip…
+    expect(row.querySelector('[data-testid="region-size"]')?.textContent).toBe(
+      "240×240",
+    );
+    // …and the engine jargon + redundant "image" category label are gone.
+    expect(row.textContent).not.toMatch(/tiles?/i);
+    expect(row.textContent).not.toMatch(/\bimage\b/i);
+    expect(row.textContent).toContain("Pixel diff cluster");
+  });
+
+  it("keeps the category label for non-image categories", () => {
+    // mockRegions[0] is category "text" → the label should still render.
+    render(<RegionListPanel regions={[mockRegions[0]!]} />);
+    expect(screen.getByText("text")).toBeTruthy();
+  });
+
+  const dupCluster = (id: string, x: number): DiffRegion => ({
+    id,
+    severity: "cosmetic",
+    category: "image",
+    bbox: { x, y: 0, width: 192, height: 96 },
+    description: "Pixel diff cluster (7 tiles, 192×96)",
+    source: "l1_pixel",
+  });
+
+  it("collapses duplicate clusters into one '×N' row", () => {
+    const regions = [
+      dupCluster("a", 0),
+      dupCluster("b", 200),
+      dupCluster("c", 400),
+    ];
+    render(<RegionListPanel regions={regions} />);
+    const rows = screen
+      .getAllByRole("button")
+      .filter((b) => b.hasAttribute("data-region-id"));
+    expect(rows).toHaveLength(1); // 3 identical clusters → 1 row
+    expect(screen.getByTestId("region-count").textContent).toBe("×3");
+    // header still reports the true total region count (matches the stepper)
+    expect(screen.getByText(/Regions \(3\)/)).toBeTruthy();
+  });
+
+  it("does not merge clusters that differ in size", () => {
+    const regions = [
+      dupCluster("a", 0),
+      { ...dupCluster("b", 0), bbox: { x: 0, y: 0, width: 64, height: 64 } },
+    ];
+    render(<RegionListPanel regions={regions} />);
+    const rows = screen
+      .getAllByRole("button")
+      .filter((b) => b.hasAttribute("data-region-id"));
+    expect(rows).toHaveLength(2); // different size → distinct rows
+    expect(screen.queryByTestId("region-count")).toBeNull(); // no ×N
+  });
+
+  it("treats a non-representative member selection as selecting the row", () => {
+    useViewerStore.setState({ selectedRegionId: "c" });
+    render(
+      <RegionListPanel
+        regions={[
+          dupCluster("a", 0),
+          dupCluster("b", 200),
+          dupCluster("c", 400),
+        ]}
+      />,
+    );
+    const row = screen
+      .getAllByRole("button")
+      .find((b) => b.hasAttribute("data-region-id"))!;
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+  });
 });

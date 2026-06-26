@@ -36,6 +36,7 @@ type FormValues = z.infer<typeof schema>;
 
 interface CreateTokenDialogProps {
   onCreated?: () => void;
+  children?: React.ReactNode;
 }
 
 /**
@@ -53,7 +54,10 @@ interface CreateTokenDialogProps {
  *  - On close, `rawToken` is cleared. No setItem to localStorage or
  *    sessionStorage anywhere in this file — a dedicated test enforces this.
  */
-export function CreateTokenDialog({ onCreated }: CreateTokenDialogProps) {
+export function CreateTokenDialog({
+  onCreated,
+  children,
+}: CreateTokenDialogProps) {
   const [open, setOpen] = useState(false);
   const [rawToken, setRawToken] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -123,7 +127,9 @@ export function CreateTokenDialog({ onCreated }: CreateTokenDialogProps) {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button data-testid="create-token-button">Create token</Button>
+        {children ?? (
+          <Button data-testid="create-token-button">Create token</Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         {rawToken === null ? (

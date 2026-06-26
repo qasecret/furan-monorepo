@@ -27,17 +27,35 @@ const data: BatchHeaderData = {
   passedCount: 8,
   abortedCount: 0,
   emptyCount: 0,
+  newCount: 0,
+  stepsTotal: 24,
+  runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
 
 describe("BatchHeader", () => {
-  test("renders display name, summary counts, and properties", () => {
+  test("renders the title with the status word and batch name", () => {
     render(<BatchHeader build={data} />);
+    expect(screen.getByText(/Test results of batch/i)).toBeDefined();
     expect(screen.getByText(/#42/)).toBeDefined();
-    expect(screen.getByText(/3 unresolved/)).toBeDefined();
-    expect(screen.getByText(/region=us-east/)).toBeDefined();
+    // The aggregate status renders as a coloured word before the title.
+    expect(screen.getByText("Unresolved")).toBeDefined();
+  });
+
+  test("renders the Tests / Steps / Duration / Run by meta strip", () => {
+    render(<BatchHeader build={data} />);
+    expect(screen.getByText("Tests:")).toBeDefined();
+    expect(screen.getByText("Steps:")).toBeDefined();
+    expect(screen.getByText("Duration:")).toBeDefined();
+    expect(screen.getByText("Run by:")).toBeDefined();
+    expect(screen.getByText("Jane Doe")).toBeDefined();
+  });
+
+  test("does not render a Share action (removed — the URL is already shareable)", () => {
+    render(<BatchHeader build={data} />);
+    expect(screen.queryByTestId("batch-share")).toBeNull();
   });
 
   test("does not render the Approve all button (moved to ContextualToolbar)", () => {

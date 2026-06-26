@@ -1,22 +1,23 @@
 "use client";
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
-import { BaselineHistoryPanel } from "./BaselineHistoryPanel";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
-import { nextUnresolvedCheckpointId } from "./checkpoint-nav";
-import { CheckpointRail, type CheckpointSummary } from "./CheckpointRail";
+import {
+  nextUnresolvedCheckpointId,
+  type CheckpointSummary,
+} from "./checkpoint-nav";
 import { ContextualHeader } from "./ContextualHeader";
-import { orderDiffRegions } from "./diff-order";
 import { EmptyRunCard } from "./EmptyRunCard";
+import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
-import { RegionListPanel } from "./RegionListPanel";
-import { RunCommentPanel } from "./RunCommentPanel";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
+import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
@@ -24,10 +25,10 @@ import { useViewerStore } from "./useViewerStore";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
-import { WhyPanel } from "./WhyPanel";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
+import { formatDuration } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -201,6 +202,14 @@ export function DiffViewer({
   );
   const project = projectQuery.data;
 
+  // "Run by" for the INFO sidebar lives on the build (test_runs has no
+  // userId column); builds.getById already exposes runByName, so reuse it
+  // instead of widening the runs.getById payload.
+  const buildQuery = trpc.builds.getById.useQuery(
+    { buildId: data?.buildId ?? "" },
+    { enabled: !!data?.buildId },
+  );
+
   // T11: keyboard-shortcut mutations. These are deliberately separate hook
   // instances from the ones inside <ApprovalBar>; both invalidate the same
   // runs.getById query on success, so the UI converges regardless of source.
@@ -334,6 +343,7 @@ export function DiffViewer({
   // mount is next to RegionListPanel below).
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const activeViewport = useViewerStore((s) => s.viewport);
+  const setViewport = useViewerStore((s) => s.setViewport);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
   const deleteSelected = useViewerStore((s) => s.deleteSelected);
   const handleDeleteIgnoreRegion = useCallback(
@@ -382,6 +392,28 @@ export function DiffViewer({
     return Array.from(new Set(vps));
   }, [data?.screenshots]);
 
+  // Initialize / re-sync the editor viewport to this run's actual viewport.
+  // The store viewport is stamped onto every ignore region drawn on the
+  // canvas, and the API requires it non-empty (`z.string().min(1)`). The
+  // ViewportSwitcher only renders for multi-viewport runs, so on a single-
+  // viewport run nothing else would ever set it — leaving it "" and making
+  // "Save regions" fail with a 400. The store is a module singleton, so we
+  // also re-sync when landing on a run whose viewport set doesn't include
+  // the (stale) carried-over value. A user's explicit switch is preserved:
+  // once activeViewport is one of this run's viewports we leave it alone.
+  useEffect(() => {
+    if (uniqueViewports.length === 0) return;
+    if (activeViewport && uniqueViewports.includes(activeViewport)) return;
+    const preferred = (
+      candidateScreenshot as { viewport?: string | null } | null
+    )?.viewport;
+    const next =
+      preferred && uniqueViewports.includes(preferred)
+        ? preferred
+        : uniqueViewports[0];
+    if (next) setViewport(next);
+  }, [uniqueViewports, activeViewport, candidateScreenshot, setViewport]);
+
   const baselineUrl = useAuthedImage(baselineScreenshot?.imageKey);
   const candidateUrl = useAuthedImage(candidateScreenshot?.imageKey);
   const diffOverlayUrl = useAuthedImage(diffOverlayKey);
@@ -407,6 +439,21 @@ export function DiffViewer({
 
   const stepper = useDiffStepper(regions);
 
+  // ←/→ step navigation over the checkpoint list (the reference TestStep
+  // binds the arrows to "navigate"). Computed before the early-returns so the
+  // shortcut hook can consume them; falls back to run-level href nav.
+  const navIndex = checkpointSummaries.findIndex(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const onPrevStep =
+    navIndex > 0
+      ? () => handleCheckpointSelect(checkpointSummaries[navIndex - 1]!.id)
+      : undefined;
+  const onNextStep =
+    navIndex >= 0 && navIndex < checkpointSummaries.length - 1
+      ? () => handleCheckpointSelect(checkpointSummaries[navIndex + 1]!.id)
+      : undefined;
+
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
@@ -421,6 +468,8 @@ export function DiffViewer({
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
+    onPrevStep,
+    onNextStep,
   });
 
   if (isLoading)
@@ -441,6 +490,77 @@ export function DiffViewer({
     );
 
   const isEmpty = data?.status === "empty";
+
+  // Step prev/next for the contextual header — walks the checkpoint list.
+  const cpIndex = checkpointSummaries.findIndex(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const prevCp = cpIndex > 0 ? checkpointSummaries[cpIndex - 1] : undefined;
+  const nextCp =
+    cpIndex >= 0 && cpIndex < checkpointSummaries.length - 1
+      ? checkpointSummaries[cpIndex + 1]
+      : undefined;
+  const headerNav =
+    cpIndex >= 0 && checkpointSummaries.length > 1
+      ? {
+          index: cpIndex,
+          total: checkpointSummaries.length,
+          onPrev: prevCp ? () => handleCheckpointSelect(prevCp.id) : undefined,
+          onNext: nextCp ? () => handleCheckpointSelect(nextCp.id) : undefined,
+        }
+      : undefined;
+
+  // INFO sidebar metadata (reference TestStep): test details, environment,
+  // execution. Environment lives per-checkpoint on the candidate screenshot
+  // (ADR-038); "Run by" + app name come from the build/project siblings.
+  const selectedCheckpointItem = checkpointsQuery.data?.items?.find(
+    (c) => c.id === selectedCheckpointId,
+  );
+  const cand = candidateScreenshot as {
+    os?: string | null;
+    browser?: string | null;
+    viewport?: string | null;
+    matchLevel?: string | null;
+  } | null;
+  const runMeta = data as {
+    createdAt?: string | Date | null;
+    updatedAt?: string | Date | null;
+  };
+  const durationMs =
+    runMeta.createdAt && runMeta.updatedAt
+      ? new Date(runMeta.updatedAt).getTime() -
+        new Date(runMeta.createdAt).getTime()
+      : null;
+  const stepLabel =
+    cpIndex >= 0
+      ? `${cpIndex + 1}/${checkpointSummaries.length} ${
+          selectedCheckpointItem?.name ?? ""
+        }`.trim()
+      : null;
+  const runByName =
+    (buildQuery.data as { runByName?: string | null } | undefined)?.runByName ??
+    null;
+  const appName = (project as { name?: string } | undefined)?.name ?? null;
+
+  // The metadata strip below the toolbar only carries signal in non-default
+  // cases — the viewport itself already lives in the INFO sidebar. Show each
+  // piece (and the strip) only when it's noteworthy so a normal run stays a
+  // clean two-pane: a viewport switcher only for multi-viewport runs, the size
+  // chip only on a dimension mismatch, and the baseline badge only on a
+  // parent-PR / default-branch fallback (not the expected "this branch").
+  const sizeMismatch =
+    !!baselineDims &&
+    !!candidateDims &&
+    (baselineDims.width !== candidateDims.width ||
+      baselineDims.height !== candidateDims.height);
+  const showViewportSwitcher = uniqueViewports.length > 1;
+  const baselineFallback =
+    baselineSource === "parent_pr" || baselineSource === "default_branch";
+  const showMetaStrip =
+    showViewportSwitcher ||
+    sizeMismatch ||
+    baselineFallback ||
+    Boolean(data.autoApproved);
 
   return (
     <div
@@ -473,20 +593,50 @@ export function DiffViewer({
           </p>
         </div>
       </div>
-      <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
+      <div
+        id="diff-viewer-root"
+        className="hidden bg-white md:flex md:flex-col md:flex-1 md:min-h-0 dark:bg-zinc-950"
+      >
         <ContextualHeader
           title={data.name ?? "Untitled run"}
           status={data.status}
-          metadata={{
-            branch: data.branchName,
-            checkpointCount:
-              data.checkpointCount ??
-              checkpointsQuery.data?.items?.length ??
-              null,
-            startedAt: data.createdAt,
-            completedAt: data.completedAt,
-          }}
+          branch={data.branchName}
+          backHref={
+            data.buildId
+              ? `/projects/${data.projectId}/builds/${data.buildId}`
+              : undefined
+          }
+          nav={headerNav}
+          rightActions={
+            <ApprovalBar
+              runId={runId}
+              checkpointId={
+                selectedCheckpointId !== "_first"
+                  ? selectedCheckpointId
+                  : undefined
+              }
+              status={data?.status}
+              diffRegions={regions}
+              onResolved={advanceToNextUnresolved}
+              inline
+              showStatus={false}
+              checkpointCount={checkpointSummaries.length}
+            />
+          }
         />
+        {/* Group-approval callout — inline ApprovalBar defers it here so it
+            gets a full-width strip under the single-row header. Self-nulls
+            when the checkpoint isn't part of a same-change group. */}
+        <div id="diff-viewer-approval">
+          <GroupApprovalCallout
+            runId={runId}
+            checkpointId={
+              selectedCheckpointId !== "_first"
+                ? selectedCheckpointId
+                : undefined
+            }
+          />
+        </div>
         {isEmpty ? (
           <EmptyRunCard
             projectId={data.projectId}
@@ -510,99 +660,141 @@ export function DiffViewer({
                 stepper={stepper}
               />
             </div>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-              <BaselineSourceBadge source={baselineSource} />
-              {data.autoApproved && (
-                <span
-                  className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-                  data-testid="auto-approved-badge"
-                  title="System-approved: candidate's image bytes matched the baseline exactly."
-                >
-                  Auto-approved
-                </span>
-              )}
-              <ViewportSwitcher viewports={uniqueViewports} />
-              {baselineDims && candidateDims && (
-                <SizeChip baseline={baselineDims} candidate={candidateDims} />
-              )}
-              {/*
-                ADR-038: BaselineHistoryPanel binds to the currently-selected
-                checkpoint's testVariationId, not the run's (the run no longer
-                has one — it has N checkpoints with one variation each).
-              */}
-              {(() => {
-                const selectedCheckpoint = checkpointsQuery.data?.items?.find(
-                  (c) => c.id === selectedCheckpointId,
-                );
-                if (!selectedCheckpoint?.testVariationId) return null;
-                return (
-                  <BaselineHistoryPanel
-                    testVariationId={selectedCheckpoint.testVariationId}
-                    currentBaselineKey={data.baselineName ?? null}
-                  />
-                );
-              })()}
-            </div>
-            {/* ADR-038: checkpoint rail left column + canvas/right-rail */}
-            <div className="flex flex-1 overflow-hidden">
-              {/* Checkpoint rail: 240px left column listing all checkpoints */}
-              {checkpointSummaries.length > 0 &&
-                selectedCheckpointId !== "_first" && (
-                  <CheckpointRail
-                    items={checkpointSummaries}
-                    selectedId={selectedCheckpointId}
-                    onSelect={handleCheckpointSelect}
-                  />
+            {showMetaStrip && (
+              <div
+                className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800"
+                data-testid="diff-viewer-meta-strip"
+              >
+                {baselineFallback && (
+                  <BaselineSourceBadge source={baselineSource} />
                 )}
-              <div id="diff-viewer-canvas" className="flex-1 overflow-auto">
-                <ViewerCanvas
-                  baselineUrl={baselineUrl}
-                  candidateUrl={candidateUrl}
-                  diffOverlayUrl={diffOverlayUrl}
-                  regions={regions}
-                  elementMap={elementMap ?? null}
-                />
-              </div>
-              {(() => {
-                const top = orderDiffRegions(regions)[0];
-                const summary = top?.description?.trim() || "Region details";
-                const source = top ? "pixels" : undefined;
-                return (
-                  <WhyPanel
-                    summary={summary}
-                    severity={top?.severity}
-                    source={source}
+                {data.autoApproved && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                    data-testid="auto-approved-badge"
+                    title="System-approved: candidate's image bytes matched the baseline exactly."
                   >
-                    <RegionListPanel
-                      regions={regions}
-                      vlmDescription={data?.vlmDescription ?? null}
-                    />
-                  </WhyPanel>
-                );
-              })()}
+                    Auto-approved
+                  </span>
+                )}
+                {showViewportSwitcher && (
+                  <ViewportSwitcher viewports={uniqueViewports} />
+                )}
+                {sizeMismatch && baselineDims && candidateDims && (
+                  <SizeChip baseline={baselineDims} candidate={candidateDims} />
+                )}
+              </div>
+            )}
+            {/* Canvas + right INFO sidebar. The left checkpoint rail was
+                removed — navigation is the batch-detail grid (enter) plus the
+                top-bar prev/next stepper (move between checkpoints), matching
+                the reference's two-pane layout. */}
+            <div className="relative flex flex-1 overflow-hidden">
+              <div className="relative flex-1 min-w-0">
+                <div id="diff-viewer-canvas" className="h-full overflow-auto">
+                  <ViewerCanvas
+                    baselineUrl={baselineUrl}
+                    candidateUrl={candidateUrl}
+                    diffOverlayUrl={diffOverlayUrl}
+                    regions={regions}
+                    elementMap={elementMap ?? null}
+                    baselineDims={baselineDims}
+                    candidateDims={candidateDims}
+                  />
+                </div>
+                {/* Large side step-arrows (reference Applitools): navigate
+                    between checkpoints; disabled at the ends. */}
+                {headerNav && headerNav.total > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onPrevStep}
+                      disabled={!onPrevStep}
+                      aria-label="Previous step"
+                      data-testid="diff-viewer-step-prev"
+                      className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    >
+                      <ChevronLeft className="h-5 w-5" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onNextStep}
+                      disabled={!onNextStep}
+                      aria-label="Next step"
+                      data-testid="diff-viewer-step-next"
+                      className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                    >
+                      <ChevronRight className="h-5 w-5" aria-hidden />
+                    </button>
+                  </>
+                )}
+              </div>
+              <TestInfoSidebar
+                test={data.name ?? "Untitled run"}
+                stepLabel={stepLabel}
+                match={cand?.matchLevel ?? null}
+                app={appName}
+                branch={data.branchName ?? null}
+                os={cand?.os ?? null}
+                browser={cand?.browser ?? null}
+                viewport={cand?.viewport ?? null}
+                startedAt={runMeta.createdAt ?? null}
+                duration={
+                  durationMs != null ? formatDuration(durationMs) : null
+                }
+                runBy={runByName}
+                pixelDiffPercent={
+                  (data as { diffPercent?: number | null }).diffPercent ?? null
+                }
+                regions={regions}
+                vlmDescription={data?.vlmDescription ?? null}
+                testVariationId={
+                  selectedCheckpointItem?.testVariationId ?? null
+                }
+                currentBaselineKey={data.baselineName ?? null}
+                runId={runId}
+              />
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
                   onDelete={handleDeleteIgnoreRegion}
                 />
               )}
+              {/* Keyboard hint bar (reference TestStep): floats over the
+                  canvas; ←/→ navigate steps, A approve, R reject. */}
+              <div
+                className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
+                data-testid="diff-viewer-shortcut-hints"
+              >
+                <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white/90 px-3 py-1.5 text-xs text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400">
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      ←
+                    </kbd>
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      →
+                    </kbd>
+                    navigate
+                  </span>
+                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      A
+                    </kbd>
+                    approve
+                  </span>
+                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      R
+                    </kbd>
+                    reject
+                  </span>
+                </div>
+              </div>
             </div>
           </>
         )}
-        <div id="diff-viewer-approval">
-          <ApprovalBar
-            runId={runId}
-            checkpointId={
-              selectedCheckpointId !== "_first"
-                ? selectedCheckpointId
-                : undefined
-            }
-            status={data?.status}
-            diffRegions={regions}
-            onResolved={advanceToNextUnresolved}
-          />
-        </div>
-        <RunCommentPanel runId={runId} />
       </div>
     </div>
   );

@@ -1,3 +1,20 @@
+import type { RunStatus } from "@furan/shared-types";
+
+/**
+ * Per-checkpoint summary for a run's checkpoint list. The left checkpoint
+ * rail that consumed this was removed (navigation is the batch-detail grid +
+ * the diff-viewer top-bar prev/next); the type lives on for the viewer's step
+ * navigation, status auto-advance, and step labels.
+ */
+export interface CheckpointSummary {
+  id: string;
+  name: string;
+  status: RunStatus;
+  diffPercent: number | null;
+  thumbnailUrl?: string;
+  testVariationId?: string | null;
+}
+
 /**
  * The next checkpoint AFTER `currentId` whose status still needs review
  * (`"unresolved"`), or null if none remain (forward-only; no wrap). Powers

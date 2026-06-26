@@ -5,6 +5,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 vi.mock("@/app/(protected)/_components/logout-action", () => ({
   logoutAction: vi.fn(),
 }));
+// AccountMenu reads the current project for its Settings link.
+vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
+  useCurrentProject: () => ({
+    currentProjectId: "p1",
+    currentProject: null,
+    projects: [],
+  }),
+}));
 
 import { AccountMenu } from "@/app/(protected)/_components/account-menu";
 
@@ -19,13 +27,14 @@ describe("AccountMenu", () => {
     expect(trigger.textContent).toContain("M");
   });
 
-  test("open menu shows email, Tokens link, and a Sign out submit", async () => {
+  test("open menu shows email, project Settings, and Sign out", async () => {
     const user = userEvent.setup();
     render(<AccountMenu email="me@x.io" initial="M" role="admin" />);
     await user.click(screen.getByTestId("account-menu-trigger"));
     expect(screen.getByText("me@x.io")).toBeDefined();
-    const tokens = screen.getByRole("menuitem", { name: /tokens/i });
-    expect(tokens.getAttribute("href")).toBe("/account/tokens");
+    expect(
+      screen.getByRole("menuitem", { name: /settings/i }).getAttribute("href"),
+    ).toBe("/projects/p1/settings");
     const signOut = screen.getByRole("menuitem", { name: /sign out/i });
     expect(signOut.tagName).toBe("BUTTON");
     expect(signOut.getAttribute("type")).toBe("submit");

@@ -42,7 +42,7 @@ export function ActionsByDayChart({ items, isLoading }: Props) {
     );
   }
   return (
-    <div className="h-64 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
+    <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={items}>
           <defs>

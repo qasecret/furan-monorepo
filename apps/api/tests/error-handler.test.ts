@@ -48,4 +48,22 @@ describe("global error handler — 5xx body never leaks internals", () => {
     const body = res.json() as { message?: string };
     expect(body.message).toBe("not-found-internal-trace");
   });
+
+  // Regression: tRPC's httpBatchLink encodes the batched procedure list into
+  // the URL PATH. Fastify caps a single route param at `maxParamLength`
+  // (default 100) and 404s "Route ... not found" past it, so a ~6-procedure
+  // batch (101 chars here) failed the whole request and react-query retried it
+  // into a loop. We raise maxParamLength so the long path routes to the tRPC
+  // handler instead. (The procedures themselves 401 without auth — that's fine;
+  // what matters is that it's NOT the Fastify route-not-found rejection.)
+  test("long batched tRPC URLs route past Fastify's maxParamLength limit", async () => {
+    const path =
+      "inbox.count,builds.getById,runs.listCheckpoints,runs.getById,projects.getById,runs.getCheckpointGroup";
+    expect(path.length).toBeGreaterThan(100);
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/trpc/${path}?batch=1&input=${encodeURIComponent("{}")}`,
+    });
+    expect(res.body).not.toMatch(/Route GET:.*not found/i);
+  });
 });

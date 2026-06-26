@@ -8,6 +8,7 @@ import { ChangeRoleCell } from "./change-role-cell";
 import { CreateUserDialog } from "./create-user-dialog";
 import { DeactivateButton } from "./deactivate-button";
 
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
@@ -33,14 +34,24 @@ export interface MemberRow {
 interface MembersTableProps {
   initialUsers: MemberRow[];
   currentUserId: string;
-  /** All projects in the install — drives the per-user assign-projects dialog. */
   allProjects: { id: string; name: string }[];
-  /**
-   * Optional onSearch callback — used by tests to assert the search URL is
-   * computed correctly without mounting next/navigation router internals.
-   * In production the router.push effect is the source of truth.
-   */
   onSearch?: (q: string) => void;
+}
+
+const LABEL_CLS =
+  "text-xs font-medium uppercase tracking-wider font-mono text-zinc-500 dark:text-zinc-400";
+
+function initials(u: MemberRow): string {
+  if (u.firstName && u.lastName) {
+    return `${u.firstName[0]}${u.lastName[0]}`.toUpperCase();
+  }
+  if (u.firstName) return u.firstName[0]!.toUpperCase();
+  return u.email[0]!.toUpperCase();
+}
+
+function displayName(u: MemberRow): string | null {
+  const parts = [u.firstName, u.lastName].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 export function MembersTable({
@@ -75,97 +86,128 @@ export function MembersTable({
       });
     }, 300);
     return () => clearTimeout(timer);
-    // We intentionally exclude searchParams/router/onSearch from deps so the
-    // debounce only re-arms when the user actually edits the input. Listing
-    // searchParams would loop on push; listing router/onSearch would re-fire
-    // on every parent re-render.
   }, [search]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Input
-          placeholder="Search by email…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-sm"
-          data-testid="members-search-input"
-          aria-label="Search members by email"
-        />
-        <div className="flex-1" />
-        <CreateUserDialog onCreated={() => router.refresh()} />
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      {/* Card header */}
+      <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+        <div className="flex items-center gap-3">
+          <h3 className="text-base font-medium text-zinc-950 dark:text-white">
+            Members
+          </h3>
+          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-100 px-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            {initialUsers.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <Input
+            placeholder="Search members…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-56"
+            data-testid="members-search-input"
+            aria-label="Search members by email"
+          />
+          <CreateUserDialog onCreated={() => router.refresh()} />
+        </div>
       </div>
-      <Table data-testid="members-table">
-        <TableHeader>
-          <tr>
-            <TableHead>Email</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </tr>
-        </TableHeader>
-        <TableBody>
-          {initialUsers.length === 0 ? (
-            <TableEmpty colSpan={4} data-testid="members-empty">
-              No users found.
-            </TableEmpty>
-          ) : (
-            initialUsers.map((u) => (
-              <TableRow key={u.id} data-testid={`user-row-${u.id}`}>
-                <TableCell>
-                  <span className="font-medium">{u.email}</span>
-                  {u.id === currentUserId && (
-                    <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-500">
-                      (you)
-                    </span>
-                  )}
-                  {(u.firstName || u.lastName) && (
-                    <div className="text-xs text-zinc-500 dark:text-zinc-500">
-                      {[u.firstName, u.lastName].filter(Boolean).join(" ")}
-                    </div>
-                  )}
-                  {u.defaultProjectId &&
-                    projectNameById.has(u.defaultProjectId) && (
-                      <div className="text-xs text-zinc-500 dark:text-zinc-500">
-                        default: {projectNameById.get(u.defaultProjectId)}
+
+      {/* Table */}
+      <div>
+        <Table bare data-testid="members-table">
+          <TableHeader>
+            <tr>
+              <TableHead className={LABEL_CLS}>Member</TableHead>
+              <TableHead className={LABEL_CLS}>Role</TableHead>
+              <TableHead className={LABEL_CLS}>Status</TableHead>
+              <TableHead className={`${LABEL_CLS} text-right`}>
+                Actions
+              </TableHead>
+            </tr>
+          </TableHeader>
+          <TableBody>
+            {initialUsers.length === 0 ? (
+              <TableEmpty colSpan={4} data-testid="members-empty">
+                No users found.
+              </TableEmpty>
+            ) : (
+              initialUsers.map((u) => {
+                const name = displayName(u);
+                return (
+                  <TableRow key={u.id} data-testid={`user-row-${u.id}`}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Avatar initial={initials(u)} />
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-zinc-950 ${
+                              u.isActive
+                                ? "bg-emerald-500"
+                                : "bg-zinc-400 dark:bg-zinc-600"
+                            }`}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-zinc-950 dark:text-white">
+                            {name ?? u.email}
+                            {u.id === currentUserId && (
+                              <span className="ml-1.5 text-xs font-normal text-zinc-500">
+                                (you)
+                              </span>
+                            )}
+                          </p>
+                          {name && (
+                            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                              {u.email}
+                            </p>
+                          )}
+                          {u.defaultProjectId &&
+                            projectNameById.has(u.defaultProjectId) && (
+                              <p className="truncate text-xs text-zinc-500 dark:text-zinc-500">
+                                {projectNameById.get(u.defaultProjectId)}
+                              </p>
+                            )}
+                        </div>
                       </div>
-                    )}
-                </TableCell>
-                <TableCell>
-                  <ChangeRoleCell
-                    userId={u.id}
-                    value={u.role}
-                    onChanged={() => router.refresh()}
-                  />
-                </TableCell>
-                <TableCell>
-                  {u.isActive ? (
-                    <Badge variant="success">Active</Badge>
-                  ) : (
-                    <Badge variant="secondary">Disabled</Badge>
-                  )}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <AssignProjectsDialog
-                      userId={u.id}
-                      userEmail={u.email}
-                      defaultProjectId={u.defaultProjectId ?? null}
-                      allProjects={allProjects}
-                    />
-                    <DeactivateButton
-                      userId={u.id}
-                      isActive={u.isActive}
-                      isSelf={u.id === currentUserId}
-                      onChanged={() => router.refresh()}
-                    />
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+                    </TableCell>
+                    <TableCell>
+                      <ChangeRoleCell
+                        userId={u.id}
+                        value={u.role}
+                        onChanged={() => router.refresh()}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {u.isActive ? (
+                        <Badge variant="success">Active</Badge>
+                      ) : (
+                        <Badge variant="secondary">Disabled</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <AssignProjectsDialog
+                          userId={u.id}
+                          userEmail={u.email}
+                          defaultProjectId={u.defaultProjectId ?? null}
+                          allProjects={allProjects}
+                        />
+                        <DeactivateButton
+                          userId={u.id}
+                          isActive={u.isActive}
+                          isSelf={u.id === currentUserId}
+                          onChanged={() => router.refresh()}
+                        />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

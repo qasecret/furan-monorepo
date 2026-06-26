@@ -167,25 +167,16 @@ describe("ApprovalBar", () => {
   });
   afterEach(() => cleanup());
 
-  it("renders status pill + buttons; Comment toggles the viewer store's commentPanelOpen", async () => {
-    const { useViewerStore } =
-      await import("../src/components/diff-viewer/useViewerStore");
-    // Reset store before the test so we exercise the off→on transition.
-    useViewerStore.setState({ commentPanelOpen: false });
-
+  it("renders the status pill + core action buttons (no Comment button)", () => {
     render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
     expect(screen.getByTestId("approval-bar-status")).toBeDefined();
     expect(screen.getByTestId("run-status-badge-unresolved")).toBeDefined();
+    expect(screen.getByTestId("mark-as-bug-button")).toBeDefined();
     expect(screen.getByTestId("approve-button")).toBeDefined();
     expect(screen.getByTestId("reject-button")).toBeDefined();
     expect(screen.getByTestId("approval-more-menu")).toBeDefined();
-    const comment = screen.getByTestId("comment-button") as HTMLButtonElement;
-    expect(comment.disabled).toBe(false);
-
-    fireEvent.click(comment);
-    expect(useViewerStore.getState().commentPanelOpen).toBe(true);
-    fireEvent.click(comment);
-    expect(useViewerStore.getState().commentPanelOpen).toBe(false);
+    // Commenting lives in the sidebar's COMMENTS tab now — no Comment button.
+    expect(screen.queryByTestId("comment-button")).toBeNull();
   });
 
   it("Approve click invokes the runs.approve mutation with the runId and invalidates the run query", () => {
@@ -239,6 +230,17 @@ describe("ApprovalBar", () => {
     fireEvent.click(screen.getByTestId("reject-button"));
     expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  it("Mark as Bug rejects the run and opens a pre-filled comment", async () => {
+    const { useViewerStore } =
+      await import("../src/components/diff-viewer/useViewerStore");
+    useViewerStore.setState({ commentPanelOpen: false, commentPrefill: null });
+    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    fireEvent.click(screen.getByTestId("mark-as-bug-button"));
+    expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
+    expect(useViewerStore.getState().commentPanelOpen).toBe(true);
+    expect(useViewerStore.getState().commentPrefill).toContain("Marked as bug");
   });
 
   it("invalidates listCheckpoints (checkpoint rail) after approve", () => {

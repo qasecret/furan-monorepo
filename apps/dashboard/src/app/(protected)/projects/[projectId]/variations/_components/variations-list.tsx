@@ -74,41 +74,45 @@ export function VariationsList({ projectId }: Props) {
             : "No variations yet for this project. Connect the SDK and run your first test to populate this list."}
         </p>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
-            <tr>
-              <th className="py-1.5">Name</th>
-              <th className="py-1.5">Viewport</th>
-              <th className="py-1.5">Browser</th>
-              <th className="py-1.5">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {query.data?.items.map((v) => (
-              <tr
-                key={v.id}
-                className="border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/40"
-                data-testid={`variation-row-${v.id}`}
-              >
-                <td className="py-2">
-                  <Link
-                    href={`/projects/${projectId}/variations/${v.id}`}
-                    className="font-medium text-zinc-900 hover:underline dark:text-white"
-                  >
-                    {v.name}
-                  </Link>
-                </td>
-                <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                  {v.viewport ?? "—"}
-                </td>
-                <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                  {v.browser ?? "—"}
-                </td>
-                <td className="py-2 text-zinc-500">{relative(v.createdAt)}</td>
+        <div className="-mx-4 overflow-x-auto border-y border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-100/70 text-left text-zinc-500 dark:bg-zinc-900/50 dark:text-zinc-400">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Name</th>
+                <th className="px-4 py-2.5 font-medium">Viewport</th>
+                <th className="px-4 py-2.5 font-medium">Browser</th>
+                <th className="px-4 py-2.5 font-medium">Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              {query.data?.items.map((v) => (
+                <tr
+                  key={v.id}
+                  className="group transition-colors hover:bg-zinc-100/70 dark:hover:bg-zinc-900/40"
+                  data-testid={`variation-row-${v.id}`}
+                >
+                  <td className="px-4 py-2.5">
+                    <Link
+                      href={`/projects/${projectId}/variations/${v.id}`}
+                      className="font-medium text-zinc-900 transition-colors group-hover:text-brand-text dark:text-white"
+                    >
+                      {v.name}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                    {v.viewport ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                    {v.browser ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-zinc-500">
+                    {relative(v.createdAt)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {query.data?.nextCursor && (
         <button

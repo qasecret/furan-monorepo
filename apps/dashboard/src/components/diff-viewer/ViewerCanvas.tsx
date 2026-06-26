@@ -10,6 +10,15 @@ import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
 import { mountImageLayer } from "./layers/ImageLayer";
 import type { DiffRegion } from "./layers/regionTypes";
+import {
+  applyHandleResize,
+  applyMove,
+  HANDLE_CURSOR,
+  hitTestHandle,
+  isInsideBbox,
+  type Bbox,
+  type Handle,
+} from "./region-resize";
 import { findSmallestElementAtPoint } from "./snap-to-element";
 import {
   applyViewToPane,
@@ -19,6 +28,7 @@ import type { ElementBbox, ElementMap } from "./useElementMap";
 import { useImageSpaceCoords } from "./useImageSpaceCoords";
 import { useReducedMotion } from "./useReducedMotion";
 import {
+  selectEffectiveGeometryById,
   useViewerStore,
   type DraftIgnoreArea,
   type IgnoreArea,
@@ -39,10 +49,51 @@ interface Props {
    * to drag-only.
    */
   elementMap?: ElementMap | null;
+  /**
+   * Natural pixel dimensions of each image. Used to size each card to its
+   * image's aspect ratio so a short/landscape screenshot fills its card
+   * instead of sitting in a tall box with big empty bands above and below.
+   */
+  baselineDims?: { width: number; height: number } | null;
+  candidateDims?: { width: number; height: number } | null;
+}
+
+/** Card aspect-ratio style from natural image dims (no-op until measured). */
+function aspectStyle(
+  dims?: { width: number; height: number } | null,
+): React.CSSProperties | undefined {
+  return dims && dims.width > 0 && dims.height > 0
+    ? { aspectRatio: `${dims.width} / ${dims.height}` }
+    : undefined;
+}
+
+/**
+ * Small inline "≠" badge marking an image that has differences. Lives in the
+ * label row above the card (not over the image) so it never obscures content.
+ */
+function DiffBadge() {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded border border-zinc-300 bg-white text-[10px] font-bold leading-none text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+      data-testid="diff-badge"
+      aria-label="Has differences"
+      title="This image has differences"
+    >
+      ≠
+    </span>
+  );
 }
 
 /** Minimum draw size in image-pixel space (anything smaller is treated as a misclick). */
 const MIN_DRAW_PX = 5;
+/** Grab radius (screen px) for the resize handles; divided by world scale. */
+const HANDLE_HIT_PX = 11;
+
+/** Active resize / move gesture on the selected region (null = none / drawing). */
+type RegionDrag =
+  | { kind: "resize"; handle: Handle; start: Bbox }
+  | { kind: "move"; startPt: { x: number; y: number }; start: Bbox }
+  | null;
 
 /** Fallback dimensions used before the host element has been laid out. */
 const FALLBACK_W = 800;
@@ -86,6 +137,8 @@ export function ViewerCanvas({
   diffOverlayUrl,
   regions,
   elementMap,
+  baselineDims,
+  candidateDims,
 }: Props) {
   const baselineRef = useRef<HTMLDivElement>(null);
   const candidateRef = useRef<HTMLDivElement>(null);
@@ -118,6 +171,9 @@ export function ViewerCanvas({
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
   const highlightActive = useViewerStore((s) => s.highlightActive);
+  // "Hide displacement" also drops position-only (layout) regions from the
+  // canvas shading — not just the diff-stepper — so toggling it is visible.
+  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
   const reducedMotion = useReducedMotion();
   // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
   const zoom = useViewerStore((s) => s.zoom);
@@ -143,6 +199,10 @@ export function ViewerCanvas({
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
+  const setGeometryForSelected = useViewerStore(
+    (s) => s.setGeometryForSelected,
+  );
+  const geometryOverrides = useViewerStore((s) => s.geometryOverrides);
   const regionInputMode = useViewerStore((s) => s.regionInputMode);
   // Hovered element under the cursor in pick mode. Kept as state so the
   // ignore-region layer re-renders the preview rect on every hover step.
@@ -365,7 +425,7 @@ export function ViewerCanvas({
     const world = candidateWorldRef.current;
     const app = candidateAppRef.current;
     if (!world || !app) return;
-    const shadingRegions = orderDiffRegions(regions);
+    const shadingRegions = orderDiffRegions(regions, { hideDisplacement });
     if (shadingRegions.length === 0) return;
     const layer = mountDiffShadingLayer(
       world,
@@ -390,6 +450,7 @@ export function ViewerCanvas({
     regions,
     selectedRegionId,
     highlightActive,
+    hideDisplacement,
     reducedMotion,
   ]);
 
@@ -611,6 +672,8 @@ export function ViewerCanvas({
       draftIgnoreAreas,
       markedForDeletion,
       selectedIgnoreId,
+      geometryOverrides,
+      scale: world.scale.x,
       viewport,
       onSelect: (id) => setSelectedIgnoreId(id),
       pickPreviewBbox:
@@ -635,6 +698,8 @@ export function ViewerCanvas({
     paddingOverrides,
     kindOverrides,
     selectedIgnoreId,
+    geometryOverrides,
+    zoom,
     viewport,
     setSelectedIgnoreId,
   ]);
@@ -648,6 +713,13 @@ export function ViewerCanvas({
     worldRef: activeWorldRef,
     spriteRef: candidateSpriteRef,
   });
+
+  // Resize / move gesture, kept in a ref so pointermove reads it synchronously
+  // without a re-render per mouse step (geometry is pushed to the store live).
+  const dragModeRef = useRef<RegionDrag>(null);
+  // Cursor for the overlay while idle-hovering the selected region (resize
+  // arrow over a handle, "move" over the body). Null → the base crosshair.
+  const [hoverCursor, setHoverCursor] = useState<string | null>(null);
 
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
     null,
@@ -703,6 +775,32 @@ export function ViewerCanvas({
     if (pickModeActive) return; // pick fires on pointerup, not down
     const pt = toImage(e);
     if (!pt) return;
+    // Grab a resize handle / the body of the selected region before falling
+    // through to drag-to-draw. Read fresh store state for the live geometry.
+    if (selectedIgnoreId) {
+      const sel = selectEffectiveGeometryById(
+        useViewerStore.getState(),
+        selectedIgnoreId,
+      );
+      if (sel) {
+        const scale = activeWorldRef.current?.scale.x ?? 1;
+        const handle = hitTestHandle(
+          pt,
+          sel,
+          HANDLE_HIT_PX / Math.max(scale, 1e-6),
+        );
+        if (handle) {
+          dragModeRef.current = { kind: "resize", handle, start: sel };
+          (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
+          return;
+        }
+        if (isInsideBbox(pt, sel)) {
+          dragModeRef.current = { kind: "move", startPt: pt, start: sel };
+          (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+    }
     setDragStart(pt);
     setDragCurrent(pt);
     (e.target as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -710,6 +808,54 @@ export function ViewerCanvas({
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
+    const drag = dragModeRef.current;
+    if (drag) {
+      const pt = toImage(e);
+      if (!pt) return;
+      if (drag.kind === "resize") {
+        setGeometryForSelected(applyHandleResize(drag.handle, drag.start, pt));
+      } else {
+        const tex = candidateSpriteRef.current?.texture;
+        setGeometryForSelected(
+          applyMove(
+            drag.start,
+            pt.x - drag.startPt.x,
+            pt.y - drag.startPt.y,
+            tex?.width ?? Number.POSITIVE_INFINITY,
+            tex?.height ?? Number.POSITIVE_INFINITY,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Idle hover feedback: resize arrow over a handle, "move" over the body of
+    // the selected region. Only update state when the cursor actually changes.
+    let nextCursor: string | null = null;
+    if (!pickModeActive && !dragStart && selectedIgnoreId) {
+      const hp = toImage(e);
+      const sel = hp
+        ? selectEffectiveGeometryById(
+            useViewerStore.getState(),
+            selectedIgnoreId,
+          )
+        : null;
+      if (hp && sel) {
+        const scale = activeWorldRef.current?.scale.x ?? 1;
+        const handle = hitTestHandle(
+          hp,
+          sel,
+          HANDLE_HIT_PX / Math.max(scale, 1e-6),
+        );
+        nextCursor = handle
+          ? HANDLE_CURSOR[handle]
+          : isInsideBbox(hp, sel)
+            ? "move"
+            : null;
+      }
+    }
+    if (nextCursor !== hoverCursor) setHoverCursor(nextCursor);
+
     if (pickModeActive) {
       const pt = toImage(e);
       if (!pt) {
@@ -742,6 +888,12 @@ export function ViewerCanvas({
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
     if (e.button !== 0) return;
+    if (dragModeRef.current) {
+      // Geometry was pushed to the store live during the drag; just end it.
+      dragModeRef.current = null;
+      (e.target as HTMLDivElement).releasePointerCapture(e.pointerId);
+      return;
+    }
     if (pickModeActive) {
       const pt = toImage(e);
       if (!pt) return;
@@ -805,6 +957,7 @@ export function ViewerCanvas({
 
   const handlePointerCancel = (_e: React.PointerEvent<HTMLDivElement>) => {
     if (!overlayActive) return;
+    dragModeRef.current = null;
     setDragStart(null);
     setDragCurrent(null);
     if (pickPreview) setPickPreview(null);
@@ -812,76 +965,87 @@ export function ViewerCanvas({
 
   const handlePointerLeave = (_e: React.PointerEvent<HTMLDivElement>) => {
     if (pickPreview) setPickPreview(null);
+    if (hoverCursor) setHoverCursor(null);
   };
 
   // Container layout: the pane wrapper is given an explicit min height so
   // the Pixi canvas has a stable box to fill (and the ResizeObserver fires
   // on real layout changes, not on every parent re-render).
   if (mode === "side-by-side") {
+    // Reference TestStep layout: a floating, uppercase label above each clean
+    // shadowed card (no bordered box with an inset header bar). The card IS the
+    // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
     return (
-      <div className="grid grid-cols-2 gap-2 p-2 h-full min-h-[500px]">
-        <div className="border rounded flex flex-col overflow-hidden">
-          <div
-            className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1"
-            title="Baseline"
-            aria-label="Baseline"
-          >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
-              aria-hidden
-            />
-            B
-          </div>
-          <div
-            ref={baselineRef}
-            data-testid="baseline-canvas-host"
-            className="flex-1 min-h-0 relative"
-          >
-            {!baselineUrl && (
-              <CanvasEmptyState label="No baseline yet">
-                Approve this run to set its candidate as the first baseline for
-                this variation.
-              </CanvasEmptyState>
-            )}
-          </div>
-        </div>
-        <div className="border rounded flex flex-col overflow-hidden relative">
-          <div
-            className="text-[10px] font-medium text-muted-foreground px-1.5 py-0.5 border-b shrink-0 flex items-center gap-1"
-            title="Candidate"
-            aria-label="Candidate"
-          >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
-              aria-hidden
-            />
-            C
-          </div>
-          <div
-            ref={candidateRef}
-            data-testid="candidate-canvas-host"
-            className="flex-1 min-h-0 relative"
-          >
-            {!candidateUrl && (
-              <CanvasEmptyState label="Waiting for capture…">
-                The SDK upload for this run hasn’t arrived yet. This panel will
-                fill in automatically when the screenshot lands.
-              </CanvasEmptyState>
-            )}
-            {overlayActive && (
-              <div
-                className={`absolute inset-0 ${
-                  pickModeActive ? "cursor-pointer" : "cursor-crosshair"
-                }`}
-                data-testid="ignore-region-overlay"
-                data-input-mode={regionInputMode}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerCancel}
-                onPointerLeave={handlePointerLeave}
+      <div className="flex min-h-full p-6">
+        <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
+          <div className="flex flex-col gap-2">
+            <div
+              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              title="Baseline"
+              aria-label="Baseline"
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
+                aria-hidden
               />
-            )}
+              Baseline
+              {regions.length > 0 && <DiffBadge />}
+            </div>
+            <div
+              ref={baselineRef}
+              data-testid="baseline-canvas-host"
+              style={aspectStyle(baselineDims)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+            >
+              {!baselineUrl && (
+                <CanvasEmptyState label="No baseline yet">
+                  Approve this run to set its candidate as the first baseline
+                  for this variation.
+                </CanvasEmptyState>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <div
+              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              title="Candidate"
+              aria-label="Candidate"
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                aria-hidden
+              />
+              Current
+              {regions.length > 0 && <DiffBadge />}
+            </div>
+            <div
+              ref={candidateRef}
+              data-testid="candidate-canvas-host"
+              style={aspectStyle(candidateDims)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+            >
+              {!candidateUrl && (
+                <CanvasEmptyState label="Waiting for capture…">
+                  The SDK upload for this run hasn’t arrived yet. This panel
+                  will fill in automatically when the screenshot lands.
+                </CanvasEmptyState>
+              )}
+              {overlayActive && (
+                <div
+                  className={`absolute inset-0 ${
+                    pickModeActive ? "cursor-pointer" : "cursor-crosshair"
+                  }`}
+                  style={{ cursor: hoverCursor ?? undefined }}
+                  data-testid="ignore-region-overlay"
+                  data-input-mode={regionInputMode}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerCancel}
+                  onPointerLeave={handlePointerLeave}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -889,9 +1053,10 @@ export function ViewerCanvas({
   }
 
   return (
-    <div className="p-2 h-full min-h-[500px] relative flex flex-col">
+    <div className="flex min-h-full p-6">
       <div
-        className="border rounded flex-1 min-h-0 relative"
+        style={aspectStyle(candidateDims ?? baselineDims)}
+        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
@@ -908,6 +1073,7 @@ export function ViewerCanvas({
             className={`absolute inset-0 ${
               pickModeActive ? "cursor-pointer" : "cursor-crosshair"
             }`}
+            style={{ cursor: hoverCursor ?? undefined }}
             data-testid="ignore-region-overlay"
             data-input-mode={regionInputMode}
             onPointerDown={handlePointerDown}

@@ -48,10 +48,17 @@ export default async function ProjectSettingsPage({
   }
 
   return (
-    <PageContainer maxWidth="3xl">
-      <div className="space-y-4">
-        <ProjectSettingsForm projectId={projectId} userRole={me.data.role} />
+    <PageContainer maxWidth="5xl">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-zinc-950 dark:text-white">
+          Settings
+        </h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Manage your project settings, diff configuration, and retention
+          policies.
+        </p>
       </div>
+      <ProjectSettingsForm projectId={projectId} userRole={me.data.role} />
     </PageContainer>
   );
 }

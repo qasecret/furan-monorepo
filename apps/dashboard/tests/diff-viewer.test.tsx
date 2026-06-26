@@ -92,6 +92,9 @@ const defaultMockData: MockData = {
   nextRunId: null,
 };
 let mockGetByIdData: MockData = { ...defaultMockData };
+// ADR-038 checkpoint list — configurable per-test so the side step-arrows
+// (which need total > 1) can be exercised. Empty by default.
+let mockCheckpoints: { items: unknown[] } = { items: [] };
 
 // Mock the tRPC client.
 // T9: getById response includes baselineScreenshot + diffName.
@@ -116,10 +119,10 @@ vi.mock("../src/lib/trpc", () => {
             error: null,
           }),
         },
-        // ADR-038: checkpoint list — returns empty items so the rail doesn't render
+        // ADR-038: checkpoint list — configurable via mockCheckpoints.
         listCheckpoints: {
           useQuery: () => ({
-            data: { items: [] },
+            data: mockCheckpoints,
             isLoading: false,
             error: null,
           }),
@@ -147,6 +150,16 @@ vi.mock("../src/lib/trpc", () => {
         getById: {
           useQuery: () => ({
             data: { dynamicTextEnabled: false },
+            isLoading: false,
+            error: null,
+          }),
+        },
+      },
+      // INFO sidebar reads runByName off the build sibling query.
+      builds: {
+        getById: {
+          useQuery: () => ({
+            data: { runByName: null },
             isLoading: false,
             error: null,
           }),
@@ -190,6 +203,7 @@ describe("DiffViewer", () => {
   beforeEach(() => {
     pixiInitCount = 0;
     mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [] };
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
@@ -212,18 +226,49 @@ describe("DiffViewer", () => {
     expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
     expect(r.getByRole("tab", { name: /side by side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /^difference$/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /^diff only$/i })).toBeDefined();
   });
 
   test("clicking a tab updates useViewerStore.mode", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
-    fireEvent.mouseDown(r.getByRole("tab", { name: /^overlay$/i }));
+    fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
     expect(useViewerStore.getState().mode).toBe("overlay");
 
-    fireEvent.mouseDown(r.getByRole("tab", { name: /^difference$/i }));
+    fireEvent.click(r.getByRole("tab", { name: /^diff only$/i }));
     expect(useViewerStore.getState().mode).toBe("difference");
+  });
+
+  test("initializes the editor viewport from the run's screenshots (single-viewport run)", () => {
+    // Regression: the store viewport is stamped onto every drawn ignore
+    // region, and the API requires it non-empty. The ViewportSwitcher only
+    // renders for multi-viewport runs, so without the init effect a single-
+    // viewport run would leave viewport "" and "Save regions" would 400.
+    mockGetByIdData = {
+      ...defaultMockData,
+      screenshots: [{ id: "cp1", viewport: "1280x720" }],
+    };
+    render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().viewport).toBe("1280x720");
+  });
+
+  test("does not clobber an explicit viewport selection valid for the run", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      screenshots: [
+        { id: "cp1", viewport: "1280x720" },
+        { id: "cp2", viewport: "375x812" },
+      ],
+    };
+    // Simulate the user having picked the second viewport via the switcher.
+    useViewerStore.setState({ viewport: "375x812" });
+    render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(useViewerStore.getState().viewport).toBe("375x812");
   });
 
   test("renders the Auto-approved badge when data.autoApproved is true", () => {
@@ -240,6 +285,61 @@ describe("DiffViewer", () => {
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     expect(r.queryByTestId("auto-approved-badge")).toBeNull();
+  });
+
+  test("hides the whole metadata strip for a nominal run (no signal to show)", () => {
+    // Default mock: single/no extra viewport, matching sizes, this-branch
+    // baseline, not auto-approved → the strip carries nothing, so it's gone
+    // (viewport already lives in the INFO sidebar).
+    mockGetByIdData = { ...defaultMockData, autoApproved: false };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.queryByTestId("diff-viewer-meta-strip")).toBeNull();
+  });
+
+  test("shows the metadata strip when there is a signal (e.g. auto-approved)", () => {
+    mockGetByIdData = { ...defaultMockData, autoApproved: true };
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.getByTestId("diff-viewer-meta-strip")).toBeDefined();
+  });
+
+  test("renders large side step-arrows for a multi-checkpoint run", () => {
+    mockCheckpoints = {
+      items: [
+        { id: "c1", name: "Home", status: "unresolved" },
+        { id: "c2", name: "Search", status: "unresolved" },
+      ],
+    };
+    const r = render(
+      <DiffViewer
+        runId="00000000-0000-0000-0000-000000000000"
+        projectId="p1"
+        initialCheckpointId="c1"
+      />,
+    );
+    const prev = r.getByTestId("diff-viewer-step-prev") as HTMLButtonElement;
+    const next = r.getByTestId("diff-viewer-step-next") as HTMLButtonElement;
+    // At the first checkpoint: prev disabled, next enabled.
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
+  });
+
+  test("hides the side step-arrows for a single-checkpoint run", () => {
+    mockCheckpoints = {
+      items: [{ id: "c1", name: "Home", status: "unresolved" }],
+    };
+    const r = render(
+      <DiffViewer
+        runId="00000000-0000-0000-0000-000000000000"
+        projectId="p1"
+        initialCheckpointId="c1"
+      />,
+    );
+    expect(r.queryByTestId("diff-viewer-step-prev")).toBeNull();
+    expect(r.queryByTestId("diff-viewer-step-next")).toBeNull();
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {

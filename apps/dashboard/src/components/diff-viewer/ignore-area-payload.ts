@@ -30,6 +30,10 @@ export interface IgnorePayloadState {
   >;
   thresholdOverrides: ReadonlyMap<string, number | undefined>;
   selectorOverrides: ReadonlyMap<string, string | null>;
+  geometryOverrides: ReadonlyMap<
+    string,
+    { x: number; y: number; width: number; height: number }
+  >;
 }
 
 /**
@@ -46,7 +50,8 @@ export function hasUnsavedIgnoreChanges(s: IgnorePayloadState): boolean {
     s.paddingOverrides.size > 0 ||
     s.kindOverrides.size > 0 ||
     s.thresholdOverrides.size > 0 ||
-    s.selectorOverrides.size > 0
+    s.selectorOverrides.size > 0 ||
+    s.geometryOverrides.size > 0
   );
 }
 
@@ -76,11 +81,12 @@ export function buildIgnoreAreasPayload(
             ? s.thresholdOverrides.get(r.id)
             : r.thresholdOverride
           : undefined;
+      const geo = s.geometryOverrides.get(r.id) ?? r;
       return {
-        x: r.x,
-        y: r.y,
-        width: r.width,
-        height: r.height,
+        x: geo.x,
+        y: geo.y,
+        width: geo.width,
+        height: geo.height,
         viewport: r.viewport,
         paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
         kind: effectiveKind,

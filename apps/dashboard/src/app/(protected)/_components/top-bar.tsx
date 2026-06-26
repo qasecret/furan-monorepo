@@ -1,22 +1,21 @@
 "use client";
 
-import { Bell, Search } from "lucide-react";
-import Link from "next/link";
+import { Bell, Menu, Search } from "lucide-react";
 
 import { AccountMenu } from "./account-menu";
 import { ProjectSelector } from "./project-selector";
-import { ViewSelector } from "./view-selector";
+import { useSidebarStore } from "./use-sidebar-store";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { HelpButton } from "@/components/tour/help-button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
- * App-shell top bar. The "search input" is a button that opens the cmdk
- * palette — there is no inline search; the palette is the search.
+ * App-shell top bar, beside the navigation Sidebar. The "search input" is a
+ * button that opens the cmdk palette — the palette is the search.
  *
- * The left cluster contains: ProjectSelector → ViewSelector → palette search.
- * The right cluster contains: HelpButton → ThemeToggle → bell → AccountMenu.
+ * The left cluster contains: mobile sidebar toggle → ProjectSelector → palette
+ * search. The right cluster: HelpButton → ThemeToggle → bell → AccountMenu.
  *
  * The bell renders disabled for v1.0; a real notification feed lands in
  * a later phase (see plan-roadmap §7.1).
@@ -29,6 +28,7 @@ interface TopBarProps {
 
 export function TopBar({ email, initial, role }: TopBarProps) {
   const setPaletteOpen = usePaletteStore((s) => s.setOpen);
+  const toggleSidebar = useSidebarStore((s) => s.toggle);
 
   return (
     <header
@@ -36,21 +36,16 @@ export function TopBar({ email, initial, role }: TopBarProps) {
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <Link
-          href="/inbox"
-          aria-label="Furan home"
-          data-testid="top-bar-logo"
-          className="flex shrink-0 items-center gap-2"
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          aria-label="Open menu"
+          data-testid="sidebar-toggle"
+          className="-ml-1 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900 md:hidden"
         >
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-brand">
-            <div className="h-2.5 w-2.5 rounded-sm bg-black" />
-          </div>
-          <span className="hidden text-lg font-semibold tracking-tight text-zinc-950 lg:inline dark:text-white">
-            Furan
-          </span>
-        </Link>
+          <Menu className="h-5 w-5" />
+        </button>
         <ProjectSelector />
-        <ViewSelector userRole={role} />
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}

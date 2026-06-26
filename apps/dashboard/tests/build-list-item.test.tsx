@@ -37,5 +37,7 @@ describe("BuildListItem", () => {
     expect(link.getAttribute("href")).toBe("/projects/p1/builds/b1");
     expect(link.getAttribute("aria-current")).toBe("page");
     expect(screen.getByText("main")).toBeDefined();
+    // The aggregate status renders as a word in the row.
+    expect(screen.getByText("Unresolved")).toBeDefined();
   });
 });

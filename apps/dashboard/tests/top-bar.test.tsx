@@ -17,11 +17,14 @@ vi.mock("@/app/(protected)/_components/project-selector", () => ({
   ),
 }));
 
-// ViewSelector also calls useCurrentProject() and usePathname(); stub it.
-vi.mock("@/app/(protected)/_components/view-selector", () => ({
-  ViewSelector: () => (
-    <div data-testid="view-selector-stub" aria-hidden="true" />
-  ),
+// AccountMenu (rendered inside TopBar) now calls useCurrentProject(); stub the
+// provider so the menu mounts without a real provider tree.
+vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
+  useCurrentProject: () => ({
+    currentProjectId: null,
+    currentProject: null,
+    projects: [],
+  }),
 }));
 
 import { TopBar } from "@/app/(protected)/_components/top-bar";

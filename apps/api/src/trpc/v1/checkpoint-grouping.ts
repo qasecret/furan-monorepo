@@ -73,7 +73,8 @@ export interface CheckpointStatusInput {
 /**
  * Derive each checkpoint's review status using the SAME signals as
  * runs.listCheckpoints (single source of truth — do NOT fork this):
- *   - test_variations.baseline_name IS NULL                  -> "new"
+ *   - run approved (test_runs.status = 'passed')              -> "passed"
+ *   - else test_variations.baseline_name IS NULL              -> "new"
  *   - else any diff_regions row with severity != 'none' for
  *     this checkpoint (modern: screenshot_id match; legacy
  *     NULL screenshot_id: viewport fallback, scoped per run)  -> "unresolved"
@@ -89,6 +90,19 @@ export async function deriveCheckpointStatuses(
   if (checkpoints.length === 0) return out;
 
   const runIds = [...new Set(checkpoints.map((c) => c.runId))];
+
+  // A run approved to "passed" has — by the v1.1 "no partial approval" rule
+  // (approving any checkpoint flips the whole run) — resolved every one of its
+  // checkpoints, even though the diff_regions that triggered review are kept
+  // for display. Without this an approved run's checkpoints stay "unresolved"
+  // forever (no approve path deletes diff_regions), so a batch row never flips
+  // to passed after "Approve" / "Approve all".
+  const approvedRunRows = await db
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(and(inArray(testRuns.id, runIds), eq(testRuns.status, "passed")));
+  const approvedRuns = new Set(approvedRunRows.map((r) => r.id));
+
   const unresolvedRows = await db
     .select({
       screenshotId: diffRegions.screenshotId,
@@ -122,8 +136,9 @@ export async function deriveCheckpointStatuses(
   );
 
   for (const c of checkpoints) {
-    const status: CheckpointStatus =
-      c.baselineName === null
+    const status: CheckpointStatus = approvedRuns.has(c.runId)
+      ? "passed"
+      : c.baselineName === null
         ? "new"
         : unresolvedScreenshotSet.has(c.id) ||
             legacyUnresolvedSet.has(legacyKey(c.runId, c.viewport))

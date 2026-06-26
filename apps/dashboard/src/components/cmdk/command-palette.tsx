@@ -195,12 +195,18 @@ export function CommandPalette({ userRole }: Props) {
 
             <Command.Group heading="Account" className={CMD_GROUP_CLASS}>
               <Command.Item
-                value="account tokens"
-                onSelect={() => go("/account/tokens")}
+                value="api keys tokens"
+                onSelect={() =>
+                  go(
+                    userRole === "admin"
+                      ? "/admin/api-keys"
+                      : "/account/tokens",
+                  )
+                }
                 className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
-                data-testid="cmd-account-tokens"
+                data-testid="cmd-api-keys"
               >
-                /account/tokens
+                {userRole === "admin" ? "/admin/api-keys" : "/account/tokens"}
               </Command.Item>
             </Command.Group>
 

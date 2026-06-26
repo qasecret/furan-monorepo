@@ -1,160 +1,120 @@
 "use client";
 
-import type { InboxStatusFilter, InboxWindowFilter } from "@furan/shared-types";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-
-import { ClusterBlock } from "./cluster-block";
-import { groupIntoClusters, type ClusterGroup } from "./cluster-grouping";
-import { EmptyState } from "./empty-state";
-import { FilterBar } from "./filter-bar";
-import { InboxPreviewPane } from "./inbox-preview-pane";
-import { Pagination } from "./pagination";
-import { RejectClusterDialog } from "./reject-cluster-dialog";
+import type { BuildAggregateStatus } from "@furan/shared-types";
+import { Filter, RefreshCw, Search } from "lucide-react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useCurrentProject } from "@/app/(protected)/_components/current-project-provider";
-import { KeyboardScope } from "@/components/triage/keyboard-scope";
-import { QueueRow } from "@/components/triage/queue-row";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/ui/page-container";
+import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { InboxRealtime } from "@/hooks/InboxRealtime";
-import { plural } from "@/lib/format";
-import { recordTelemetry } from "@/lib/telemetry";
-import { trpc } from "@/lib/trpc";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
+import { buildDisplayName } from "@/lib/build-display-name";
+import { buildStatusMeta } from "@/lib/build-status-meta";
+import { cn } from "@/lib/cn";
+import { formatBatchDateTime } from "@/lib/format";
+import { trpc, type RouterOutputs } from "@/lib/trpc";
+
+type BuildRow = RouterOutputs["builds"]["list"]["items"][number];
+
+/** Status filter pills — `all` clears the filter. */
+const FILTERS: { value: BuildAggregateStatus | "all"; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "unresolved", label: "Unresolved" },
+  { value: "failed", label: "Failed" },
+  { value: "running", label: "Running" },
+  { value: "passed", label: "Passed" },
+];
 
 interface Props {
-  initialStatus: InboxStatusFilter;
-  initialWindow: InboxWindowFilter;
-  initialGroup: boolean;
+  initialStatus: BuildAggregateStatus | "all";
 }
 
-export function InboxPage({
-  initialStatus,
-  initialWindow,
-  initialGroup,
-}: Props) {
+/**
+ * Inbox — a full-width table of test-result batches (builds) for the current
+ * project, modeled on the reference Batches page. Each row links to that
+ * build's Review page; status filter + search + refresh sit in the header.
+ * No per-row triage actions — review happens on the batch page.
+ */
+export function InboxPage({ initialStatus }: Props) {
   const { currentProjectId } = useCurrentProject();
-
+  const router = useRouter();
+  const params = useSearchParams();
+  const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [accumulated, setAccumulated] = useState<BuildRow[]>([]);
+  const prevStatus = useRef(initialStatus);
+  useEffect(() => {
+    if (prevStatus.current !== initialStatus) {
+      prevStatus.current = initialStatus;
+      setCursor(null);
+      setAccumulated([]);
+    }
+  }, [initialStatus]);
 
-  const actionsCountRef = useRef(0);
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  // Auto-refresh on build/run events for this project (ref-counted pool).
+  useProjectEvents(currentProjectId ?? "");
 
-  const list = trpc.inbox.list.useQuery(
+  const list = trpc.builds.list.useQuery(
     {
-      status: initialStatus,
-      window: initialWindow,
-      cursor,
-      group: initialGroup ? "similarity" : undefined,
-      projectIds: currentProjectId ? [currentProjectId] : undefined,
+      projectId: currentProjectId ?? "",
+      status: initialStatus === "all" ? undefined : initialStatus,
+      cursor: cursor ?? undefined,
     },
     { enabled: !!currentProjectId },
   );
-  const approve = trpc.inbox.approve.useMutation({
-    onSuccess: () => {
-      toast.success("Approved");
-      void list.refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-  const reject = trpc.inbox.reject.useMutation({
-    onSuccess: () => {
-      toast.success("Rejected");
-      void list.refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
 
-  const [rejectTarget, setRejectTarget] = useState<ClusterGroup | null>(null);
-  const rejectCluster = trpc.inbox.rejectCluster.useMutation({
-    onSuccess: (res) => {
-      const total = rejectTarget?.runCount ?? res.rejected;
-      toast.success(
-        res.capped
-          ? `Rejected ${res.rejected} of ${total} runs (cap ${res.cap})`
-          : `Rejected ${res.rejected} run${plural(res.rejected)} across ${res.buildCount} build${plural(res.buildCount)}`,
-      );
-      setRejectTarget(null);
-      void list.refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const items = list.data?.items ?? [];
-  const current = items[selectedIndex];
-  const moveSelection = useCallback(
-    (delta: number) => {
-      setSelectedIndex((i) =>
-        Math.max(0, Math.min(items.length - 1, i + delta)),
-      );
-    },
-    [items.length],
-  );
-
-  // Fire inbox.viewed once on mount with current filter state.
-  useEffect(() => {
-    recordTelemetry("inbox.viewed", {
-      sessionId: sessionIdRef.current,
-      filterStatus: initialStatus,
-      filterWindow: initialWindow,
-      groupBy: initialGroup,
-      itemCount: items.length,
-    });
-  }, []); // intentionally empty — fires once per mount
-
-  // Record session_duration on unmount.
-  useEffect(() => {
-    const startMs = Date.now();
-    actionsCountRef.current = 0;
-    return () => {
-      recordTelemetry("inbox.session_duration", {
-        sessionId: sessionIdRef.current,
-        durationMs: Date.now() - startMs,
-        actionsTaken: actionsCountRef.current,
-      });
-    };
-  }, []); // intentionally empty — captures mount time, cleans up on unmount
-
-  // Reset the keyboard selection when the filter/group changes — FilterBar
-  // navigates via router.replace (no remount), so this component persists while
-  // `items` reshapes; a stale selectedIndex would point the highlight + a/r at a
-  // run the user never selected.
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [initialStatus, initialWindow, initialGroup]);
-
-  // Keep the selection in range when the list shrinks — an approve/reject
-  // refetch removes the acted-on run, or a shorter page loads. Without this a
-  // stale index past the new end leaves `current` undefined: the preview blanks
-  // and a/r no-op even though runs remain. Clamping lands on the new last row.
-  useEffect(() => {
-    setSelectedIndex((i) => Math.min(i, Math.max(0, items.length - 1)));
-  }, [items.length]);
-
-  const fireAction = useCallback(
-    (
-      action: "approve" | "reject",
-      row: (typeof items)[number],
-      viaKeyboard: boolean,
-    ) => {
-      actionsCountRef.current += 1;
-      recordTelemetry("inbox.row_action", {
-        sessionId: sessionIdRef.current,
-        action,
-        viaKeyboard,
-        rowAge: Math.floor(
-          (Date.now() - new Date(row.createdAt).getTime()) / 1000,
-        ),
-      });
-      if (action === "approve") {
-        approve.mutate({ runId: row.runId });
-      } else {
-        reject.mutate({ runId: row.runId, reason: null });
+  // Merge loaded pages (dedupe by id) — cursor pagination can overlap on a
+  // page boundary when createdAt isn't strictly monotonic.
+  const currentPage = list.data?.items ?? [];
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    const out: BuildRow[] = [];
+    for (const b of [...accumulated, ...currentPage]) {
+      if (!seen.has(b.id)) {
+        seen.add(b.id);
+        out.push(b);
       }
-    },
-    [approve, reject],
-  );
+    }
+    return out;
+  }, [accumulated, currentPage]);
+
+  // Client-side search over the loaded rows (batch name / branch).
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (b) =>
+        buildDisplayName(b).toLowerCase().includes(q) ||
+        (b.branchName ?? "").toLowerCase().includes(q),
+    );
+  }, [items, search]);
+
+  const setStatus = (value: BuildAggregateStatus | "all") => {
+    const next = new URLSearchParams(params.toString());
+    if (value === "all") next.delete("status");
+    else next.set("status", value);
+    router.replace(`?${next.toString()}`, { scroll: false });
+    setCursor(null);
+    setAccumulated([]);
+  };
+
+  const loadMore = () => {
+    if (!list.data?.nextCursor) return;
+    setAccumulated((prev) => {
+      const seen = new Set(prev.map((b) => b.id));
+      const merged = [...prev];
+      for (const b of currentPage) {
+        if (!seen.has(b.id)) merged.push(b);
+      }
+      return merged;
+    });
+    setCursor(list.data.nextCursor);
+  };
 
   if (!currentProjectId) {
     return (
@@ -168,172 +128,173 @@ export function InboxPage({
   }
 
   return (
-    <KeyboardScope
-      // While the reject-cluster dialog is open, suppress the row shortcuts so a
-      // stray a/r/j/k can't fire a single-run mutation on the row behind the modal.
-      bindings={
-        rejectTarget
-          ? {}
-          : {
-              ArrowDown: () => moveSelection(1),
-              ArrowUp: () => moveSelection(-1),
-              j: () => moveSelection(1),
-              k: () => moveSelection(-1),
-              a: () => current && fireAction("approve", current, true),
-              r: () => current && fireAction("reject", current, true),
-            }
-      }
-    >
-      <InboxRealtime />
-      <PageContainer fullBleed>
-        <header
-          id="inbox-header"
-          className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-900"
-        >
-          <h1 className="text-xl font-semibold">Inbox</h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Open runs · Press{" "}
-            <kbd
-              id="inbox-shortcut-hint"
-              className="rounded border border-zinc-200 bg-zinc-50 px-1 text-xs dark:border-zinc-800 dark:bg-zinc-900"
-            >
-              ?
-            </kbd>{" "}
-            for shortcuts
-          </p>
-        </header>
-        <FilterBar
-          status={initialStatus}
-          window={initialWindow}
-          groupBy={initialGroup}
+    <PageContainer fullBleed>
+      <div className="flex min-h-0 flex-1 flex-col gap-5 px-6 py-6">
+        <PageHeader
+          title="Batches"
+          description="All test result batches across your project."
+          actions={
+            <>
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                  aria-hidden
+                />
+                <Input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search batches…"
+                  className="h-9 w-56 pl-8"
+                  data-testid="inbox-search-input"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                className="h-9 gap-2"
+                onClick={() => void list.refetch()}
+                disabled={list.isFetching}
+                title="Refresh"
+              >
+                <RefreshCw
+                  className={cn("h-4 w-4", list.isFetching && "animate-spin")}
+                  aria-hidden
+                />
+                Refresh
+              </Button>
+            </>
+          }
         />
-        <div className="flex min-h-0 flex-1">
-          {/* Left — the queue (full-width on narrow; fixed column on md+). */}
-          <div className="flex min-h-0 w-full flex-col md:w-[380px] md:border-r md:border-zinc-200 lg:w-[420px] dark:md:border-zinc-900">
-            {list.isLoading ? (
-              <SkeletonList />
-            ) : items.length === 0 ? (
-              <EmptyState />
-            ) : initialGroup ? (
-              <ul
-                id="inbox-queue-list"
-                role="list"
-                className="min-h-0 flex-1 overflow-y-auto"
+
+        <div
+          id="inbox-status-filter"
+          className="flex flex-wrap items-center gap-2 text-sm"
+        >
+          <Filter className="h-4 w-4 text-zinc-400" aria-hidden />
+          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Status:
+          </span>
+          {FILTERS.map((f) => {
+            const active = f.value === initialStatus;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setStatus(f.value)}
+                aria-pressed={active}
+                className={cn(
+                  "rounded-full px-3 py-1 font-medium transition-colors",
+                  active
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
+                )}
               >
-                {(() => {
-                  const groups = groupIntoClusters(items);
-                  let flat = 0;
-                  return groups.map((g) => {
-                    if (g.kind === "single") {
-                      const idx = flat++;
-                      return (
-                        <QueueRow
-                          key={g.row.runId}
-                          row={g.row}
-                          selected={idx === selectedIndex}
-                          onApprove={() => fireAction("approve", g.row, false)}
-                          onReject={() => fireAction("reject", g.row, false)}
-                          onSelect={() => setSelectedIndex(idx)}
-                        />
-                      );
-                    }
-                    const base = flat;
-                    flat += g.rows.length;
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          id="inbox-batches-table"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Batch</th>
+                  <th className="px-5 py-3 font-medium">Branch</th>
+                  <th className="px-5 py-3 font-medium">Tests</th>
+                  <th className="px-5 py-3 font-medium">Started</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {list.isLoading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-5 py-3.5" colSpan={5}>
+                        <Skeleton className="h-5 w-full" />
+                      </td>
+                    </tr>
+                  ))
+                ) : rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-5 py-16 text-center text-sm text-zinc-500"
+                    >
+                      {search
+                        ? `No batches match "${search}".`
+                        : "No batches yet. Run a test through the SDK to populate this list."}
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((b) => {
+                    const href = `/projects/${b.projectId}/builds/${b.id}`;
+                    const meta = buildStatusMeta(b.aggregateStatus);
                     return (
-                      <ClusterBlock
-                        key={`${g.projectId}:${g.signature}`}
-                        cluster={g}
-                        baseIndex={base}
-                        selectedIndex={selectedIndex}
-                        onApprove={(row) => fireAction("approve", row, false)}
-                        onReject={(row) => fireAction("reject", row, false)}
-                        onRejectAll={setRejectTarget}
-                        onSelect={setSelectedIndex}
-                      />
+                      <tr
+                        key={b.id}
+                        onClick={() => router.push(href)}
+                        className="group cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+                        data-testid={`inbox-batch-row-${b.id}`}
+                      >
+                        <td className="px-5 py-3.5 align-middle">
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium",
+                              meta.pill,
+                            )}
+                          >
+                            {meta.word}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle">
+                          <Link
+                            href={href}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-zinc-950 transition-colors group-hover:text-brand-text dark:text-white"
+                          >
+                            {buildDisplayName(b)}
+                          </Link>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                          {b.branchName ?? "—"}
+                        </td>
+                        <td className="px-5 py-3.5 align-middle tabular-nums text-zinc-600 dark:text-zinc-400">
+                          {b.runCount}
+                          {b.unresolvedCount > 0 && (
+                            <span className="font-medium text-red-500">
+                              {" "}
+                              ({b.unresolvedCount})
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5 align-middle whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                          {formatBatchDateTime(b.createdAt)}
+                        </td>
+                      </tr>
                     );
-                  });
-                })()}
-              </ul>
-            ) : (
-              <ul
-                id="inbox-queue-list"
-                role="list"
-                className="min-h-0 flex-1 overflow-y-auto"
-              >
-                {items.map((row, idx) => (
-                  <QueueRow
-                    key={row.runId}
-                    row={row}
-                    selected={idx === selectedIndex}
-                    onApprove={() => fireAction("approve", row, false)}
-                    onReject={() => fireAction("reject", row, false)}
-                    onSelect={() => setSelectedIndex(idx)}
-                  />
-                ))}
-              </ul>
+                  })
+                )}
+              </tbody>
+            </table>
+            {list.data?.nextCursor && !search && (
+              <div className="flex justify-center border-t border-zinc-200 p-3 dark:border-zinc-800">
+                <Button
+                  variant="secondary"
+                  onClick={loadMore}
+                  disabled={list.isFetching}
+                >
+                  Load more
+                </Button>
+              </div>
             )}
-            <Pagination
-              hasMore={
-                list.data?.nextCursor !== null &&
-                list.data?.nextCursor !== undefined
-              }
-              onNext={() => setCursor(list.data?.nextCursor ?? null)}
-            />
-          </div>
-          {/* Right — preview (md+ only; the queue's own open-diff link covers narrow). */}
-          <div
-            id="inbox-preview-pane"
-            className="hidden min-h-0 flex-1 md:flex"
-          >
-            <InboxPreviewPane
-              run={current}
-              onApprove={() => current && fireAction("approve", current, false)}
-              onReject={() => current && fireAction("reject", current, false)}
-              isActing={approve.isPending || reject.isPending}
-            />
           </div>
         </div>
-        {rejectTarget && (
-          <RejectClusterDialog
-            open
-            runCount={rejectTarget.runCount}
-            buildCount={rejectTarget.buildCount}
-            runNames={rejectTarget.rows.map((r) => r.variationName)}
-            isPending={rejectCluster.isPending}
-            onOpenChange={(o) => {
-              if (!o) setRejectTarget(null);
-            }}
-            onConfirm={() =>
-              rejectCluster.mutate({
-                projectId: rejectTarget.projectId,
-                signature: rejectTarget.signature,
-                status: initialStatus,
-                window: initialWindow,
-              })
-            }
-          />
-        )}
-      </PageContainer>
-    </KeyboardScope>
-  );
-}
-
-function SkeletonList() {
-  return (
-    <ul role="list" aria-busy="true" className="min-h-0 flex-1">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <li
-          key={i}
-          className="flex items-center gap-3 border-b border-zinc-100 px-4 py-3 dark:border-zinc-900"
-        >
-          <Skeleton className="h-4 w-4" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-1/3" />
-            <Skeleton className="h-3 w-1/4" />
-          </div>
-          <Skeleton className="h-10 w-16" />
-        </li>
-      ))}
-    </ul>
+      </div>
+    </PageContainer>
   );
 }

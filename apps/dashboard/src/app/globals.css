@@ -142,6 +142,9 @@ body {
   --chart-rejects: #dc2626; /* red-600 — saturated red reads fine on white */
   --chart-rejects-fill: #dc2626;
   --chart-bar: #65a30d; /* lime-700 (matches approves) */
+  --chart-passed: #16a34a; /* green-600 */
+  --chart-failed: #dc2626; /* red-600 */
+  --chart-unresolved: #d97706; /* amber-600 */
 }
 
 html.dark {
@@ -155,6 +158,9 @@ html.dark {
   --chart-rejects: #f87171; /* red-400 — saturated red reads fine on dark */
   --chart-rejects-fill: #f87171;
   --chart-bar: #a8ff53; /* brand */
+  --chart-passed: #4ade80; /* green-400 */
+  --chart-failed: #f87171; /* red-400 */
+  --chart-unresolved: #fbbf24; /* amber-400 */
 }
 
 /* ─── Radix component animations ─────────────────────────────────────

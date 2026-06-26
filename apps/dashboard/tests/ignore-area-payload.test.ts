@@ -29,6 +29,10 @@ const emptyState = {
   >(),
   thresholdOverrides: new Map<string, number | undefined>(),
   selectorOverrides: new Map<string, string | null>(),
+  geometryOverrides: new Map<
+    string,
+    { x: number; y: number; width: number; height: number }
+  >(),
 };
 
 describe("buildIgnoreAreasPayload", () => {

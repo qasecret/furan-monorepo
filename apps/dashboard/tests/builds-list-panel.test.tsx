@@ -48,6 +48,34 @@ describe("BuildsListPanel", () => {
     expect(link.getAttribute("aria-current")).toBe("page");
   });
 
+  test("filter is collapsed by default and the filter icon toggles it open", () => {
+    listMock.mockReturnValue({
+      data: { items: [item], nextCursor: null },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<BuildsListPanel projectId="p1" />);
+    // Reference batch-history sidebar shows only the refresh + filter icons.
+    expect(screen.queryByTestId("filter")).toBeNull();
+    expect(screen.getByTestId("builds-refresh")).toBeDefined();
+    fireEvent.click(screen.getByTestId("builds-filter-toggle"));
+    expect(screen.getByTestId("filter")).toBeDefined();
+  });
+
+  test("the refresh icon refetches the builds list", () => {
+    const refetch = vi.fn();
+    listMock.mockReturnValue({
+      data: { items: [item], nextCursor: null },
+      isLoading: false,
+      error: null,
+      refetch,
+    });
+    render(<BuildsListPanel projectId="p1" />);
+    fireEvent.click(screen.getByTestId("builds-refresh"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   test("shows the SDK onboarding empty state when there are no builds", () => {
     listMock.mockReturnValue({
       data: { items: [], nextCursor: null },

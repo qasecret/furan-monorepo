@@ -193,34 +193,26 @@ describe("ProjectSettingsForm", () => {
     expect(toast.success).toHaveBeenCalledWith("Settings saved");
   });
 
-  test("submitting with an invalid value in a collapsed section auto-expands it", async () => {
+  test("submitting with an invalid value on an inactive tab switches back to it", async () => {
     render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
 
-    // The "Basics" section is open by default; its name field is visible.
+    // The "Basics" tab is active by default; its name field is visible.
     const nameInput = await screen.findByTestId("name-input");
     // Make it invalid (name is `.min(1, "Required")`).
     fireEvent.input(nameInput, { target: { value: "" } });
 
-    // Collapse the Basics section via its header button.
-    const basicsHeader = screen.getByRole("button", { name: /basics/i });
-    expect(basicsHeader.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(basicsHeader);
-    expect(basicsHeader.getAttribute("aria-expanded")).toBe("false");
-    // Collapsed: the name field is no longer rendered.
-    expect(screen.queryByTestId("name-input")).toBeNull();
+    // Switch to the Diff tab so Basics content is hidden.
+    const diffTab = screen.getByRole("button", { name: /diff/i });
+    fireEvent.click(diffTab);
 
-    // Submit — validation fails, so the invalid section must re-expand.
+    // Submit — validation fails, so the form should switch back to Basics.
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => {
-      expect(
-        screen
-          .getByRole("button", { name: /basics/i })
-          .getAttribute("aria-expanded"),
-      ).toBe("true");
+      // The basics tab should be active again (its content visible).
+      const nameField = screen.getByTestId("name-input");
+      expect(nameField.closest('[class*="hidden"]')).toBeNull();
     });
-    // Its content (the name field) is visible again.
-    expect(screen.getByTestId("name-input")).toBeTruthy();
     // The invalid submit never reached the mutation.
     expect(updateMutate).not.toHaveBeenCalled();
   });

@@ -6,15 +6,22 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { BatchHeader } from "./batch-header";
-import { ContextualToolbar, type Chip } from "./contextual-toolbar";
-import { TestCard, type TestCardData } from "./test-card";
+import {
+  ContextualToolbar,
+  type Chip,
+  type ResultView,
+} from "./contextual-toolbar";
+import { RESULT_GRID, RunResults } from "./run-results";
 
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
+import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
-import { trpc } from "@/lib/trpc";
+import { trpc, type RouterOutputs } from "@/lib/trpc";
+
+type RunRow = RouterOutputs["runs"]["list"]["items"][number];
 
 const CHIP_STATUS: Record<Chip, RunStatus[] | undefined> = {
   "needs-review": ["unresolved", "failed"],
@@ -30,9 +37,10 @@ interface Props {
 
 export function BatchPage({ projectId, buildId, canReview }: Props) {
   useProjectEvents(projectId);
-  const [chip, setChip] = useState<Chip>("needs-review");
+  const [chip, setChip] = useState<Chip>("all");
+  const [view, setView] = useState<ResultView>("list");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [accumulated, setAccumulated] = useState<TestCardData[]>([]);
+  const [accumulated, setAccumulated] = useState<RunRow[]>([]);
 
   const buildQ = trpc.builds.getById.useQuery({ buildId });
   const list = trpc.runs.list.useQuery({
@@ -42,20 +50,11 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
     cursor,
   });
 
-  const approve = trpc.runs.approve.useMutation({
-    onError: (e) => toast.error(e.message),
-  });
-  const reject = trpc.runs.reject.useMutation({
-    onError: (e) => toast.error(e.message),
-  });
+  const utils = trpc.useUtils();
   const bulkApprove = trpc.runs.bulkApproveByBuild.useMutation({
     onError: (e) => toast.error(e.message),
   });
 
-  const onApprove = (runId: string) =>
-    approve.mutate({ runId }, { onSuccess: () => toast.success("Approved") });
-  const onReject = (runId: string) =>
-    reject.mutate({ runId }, { onSuccess: () => toast.success("Rejected") });
   const onApproveAll = () =>
     bulkApprove.mutate(
       { buildId },
@@ -65,6 +64,17 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           capped: boolean;
           cap: number;
         }) => {
+          // Refetch the rows + build aggregate so the just-approved runs flip
+          // out of "Unresolved" immediately — the row badge is derived from
+          // runs.listCheckpoints, not the toast. (Mirrors ApprovalBar's
+          // post-approve invalidate; we can't rely on the SSE alone.)
+          void utils.runs.list.invalidate();
+          void utils.runs.listCheckpoints.invalidate();
+          void utils.builds.getById.invalidate({ buildId });
+          // Re-page from the top so approved runs drop out of "Needs review"
+          // instead of lingering in the accumulated set.
+          setAccumulated([]);
+          setCursor(undefined);
           toast.success(
             `Approved ${res.approved} run${plural(res.approved)}` +
               (res.capped ? ` (capped at ${res.cap})` : ""),
@@ -79,9 +89,6 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
   // (FORBIDDEN, network, 500, transient background-refetch) gets a real
   // error state instead of masquerading as a 404 or a headerless shell.
   if (buildQ.error?.data?.code === "NOT_FOUND") notFound();
-  // `notFound()` above returns `never`, so reaching here means the error (if
-  // any) is not NOT_FOUND — a FORBIDDEN / network / 500 / transient refetch
-  // failure. Show a real error state rather than a headerless shell.
   if (buildQ.isError && !build) {
     return (
       <div className="flex h-full items-center justify-center p-8">
@@ -96,15 +103,9 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
   // pagination on a non-strictly-monotonic createdAt could legitimately
   // return overlapping rows on a page boundary.
   const currentPage = list.data?.items ?? [];
-  const items: TestCardData[] = [];
+  const items: RunRow[] = [];
   const seen = new Set<string>();
-  for (const r of accumulated) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      items.push(r);
-    }
-  }
-  for (const r of currentPage) {
+  for (const r of [...accumulated, ...currentPage]) {
     if (!seen.has(r.id)) {
       seen.add(r.id);
       items.push(r);
@@ -132,61 +133,99 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           setCursor(undefined);
           setAccumulated([]);
         }}
+        view={view}
+        onViewChange={setView}
+        onRefresh={() => {
+          // Re-page from the top so the refreshed list reflects the current
+          // filter cleanly (not stale accumulated rows), then refetch both.
+          setAccumulated([]);
+          setCursor(undefined);
+          void list.refetch();
+          void buildQ.refetch();
+        }}
+        isRefreshing={list.isFetching || buildQ.isFetching}
         canApproveAll={canApproveAll}
         onApproveAll={onApproveAll}
         isApproving={bulkApprove.isPending}
       />
-      {list.isLoading ? (
-        <CardSkeletonGrid />
-      ) : list.isError ? (
-        <p className="p-8 text-center text-sm text-red-600 dark:text-red-400">
-          Error loading tests: {list.error?.message}
-        </p>
-      ) : items.length === 0 ? (
-        <p className="p-8 text-center text-sm text-zinc-600 dark:text-zinc-400">
-          No tests{" "}
-          {chip === "needs-review"
-            ? "need review"
-            : `in ${chip === "passed" ? "Passed" : "All"}`}
-          .
-        </p>
-      ) : (
-        <div className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(185px,1fr))] gap-3 overflow-y-auto p-4">
-          {items.map((row) => (
-            <TestCard
-              key={row.id}
-              projectId={projectId}
-              row={row}
-              onApprove={onApprove}
-              onReject={onReject}
-              canReview={canReview}
-            />
-          ))}
-        </div>
-      )}
-      {list.data?.nextCursor && (
-        <div className="flex justify-center p-3">
-          <Button
-            variant="secondary"
-            onClick={onLoadMore}
-            disabled={list.isFetching}
-          >
-            Load more
-          </Button>
-        </div>
-      )}
+      <div className="flex-1 overflow-y-auto">
+        <ResultsColumnHeader />
+        {list.isLoading ? (
+          <RowSkeletons />
+        ) : list.isError ? (
+          <p className="p-8 text-center text-sm text-red-600 dark:text-red-400">
+            Error loading tests: {list.error?.message}
+          </p>
+        ) : items.length === 0 ? (
+          <p className="p-10 text-center text-sm text-zinc-600 dark:text-zinc-400">
+            No tests{" "}
+            {chip === "needs-review"
+              ? "need review"
+              : `in ${chip === "passed" ? "Passed" : "All"}`}
+            .
+          </p>
+        ) : (
+          <div data-testid="batch-results">
+            {items.map((row) => (
+              <RunResults
+                key={row.id}
+                projectId={projectId}
+                runId={row.id}
+                testName={row.name}
+                branchName={build?.branchName ?? null}
+                fallbackStatus={row.status}
+                view={view}
+                canReview={canReview}
+              />
+            ))}
+          </div>
+        )}
+        {list.data?.nextCursor && (
+          <div className="flex justify-center p-3">
+            <Button
+              variant="secondary"
+              onClick={onLoadMore}
+              disabled={list.isFetching}
+            >
+              Load more
+            </Button>
+          </div>
+        )}
+      </div>
     </PageContainer>
   );
 }
 
-function CardSkeletonGrid() {
+/** Sticky column header that aligns to every result row's grid. */
+function ResultsColumnHeader() {
   return (
     <div
-      className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(185px,1fr))] gap-3 p-4"
-      aria-busy="true"
+      className={cn(
+        RESULT_GRID,
+        "sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50/80 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-500",
+      )}
     >
-      {Array.from({ length: 8 }).map((_, i) => (
-        <Skeleton key={i} className="h-40 rounded-lg" />
+      <span>Status</span>
+      <span>Execution Cloud</span>
+      <span>Test</span>
+      <span>Branch</span>
+      <span>OS</span>
+      <span>Browser</span>
+      <span>Viewport</span>
+    </div>
+  );
+}
+
+function RowSkeletons() {
+  return (
+    <div aria-busy="true">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          className="border-b border-zinc-100 px-4 py-3.5 dark:border-zinc-900"
+        >
+          <Skeleton className="h-5 w-full rounded" />
+        </div>
       ))}
     </div>
   );

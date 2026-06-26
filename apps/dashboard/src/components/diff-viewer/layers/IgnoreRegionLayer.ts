@@ -1,5 +1,12 @@
-import { type Container as PixiContainer, Container, Graphics } from "pixi.js";
+import {
+  type Container as PixiContainer,
+  Container,
+  Graphics,
+  Text,
+} from "pixi.js";
 
+import type { Bbox } from "../region-resize";
+import { handlePoints, HANDLES } from "../region-resize";
 import type {
   DraftIgnoreArea,
   IgnoreArea,
@@ -105,6 +112,65 @@ const SELECTED_STROKE_WIDTH = 4;
 const MARKED_STRIKE_COLOR = 0xff0000;
 const MARKED_STRIKE_WIDTH = 3;
 
+// Resize-handle + readout sizes are SCREEN pixels; divided by the world scale
+// at draw time so they stay constant on zoom (the layer is in image space).
+const HANDLE_PX = 9;
+const READOUT_FONT_PX = 12;
+const READOUT_PAD_PX = 5;
+const READOUT_GAP_PX = 6;
+
+/** White grab-squares at the 8 handle points of the selected region. */
+function drawResizeHandles(
+  container: Container,
+  b: Bbox,
+  strokeColor: number,
+  scale: number,
+): void {
+  const s = Math.max(scale, 1e-6);
+  const hs = HANDLE_PX / s;
+  const border = Math.max(1 / s, 0.5);
+  const pts = handlePoints(b);
+  for (const handle of HANDLES) {
+    const pt = pts[handle];
+    const g = new Graphics();
+    g.rect(pt.x - hs / 2, pt.y - hs / 2, hs, hs)
+      .fill({ color: 0xffffff, alpha: 1 })
+      .stroke({ color: strokeColor, width: border, alpha: 1 });
+    container.addChild(g);
+  }
+}
+
+/** Floating "X .. Y .. W .. H .." chip above the selected region. */
+function drawReadout(container: Container, b: Bbox, scale: number): void {
+  const s = Math.max(scale, 1e-6);
+  const pad = READOUT_PAD_PX / s;
+  const gap = READOUT_GAP_PX / s;
+  const label =
+    `X ${Math.round(b.x)}   Y ${Math.round(b.y)}` +
+    `   W ${Math.round(b.width)}   H ${Math.round(b.height)}`;
+  const text = new Text({
+    text: label,
+    style: {
+      fontFamily: "monospace",
+      fontSize: READOUT_FONT_PX / s,
+      fill: 0x1f2937,
+    },
+  });
+  const boxW = text.width + pad * 2;
+  const boxH = text.height + pad * 2;
+  // Sit above the top-left; if that clips the image top, drop below the box.
+  const boxX = b.x;
+  const boxY = b.y - gap - boxH >= 0 ? b.y - gap - boxH : b.y + b.height + gap;
+  const bg = new Graphics();
+  bg.rect(boxX, boxY, boxW, boxH)
+    .fill({ color: 0xffffff, alpha: 0.92 })
+    .stroke({ color: 0xd1d5db, width: Math.max(1 / s, 0.5), alpha: 1 });
+  container.addChild(bg);
+  text.x = boxX + pad;
+  text.y = boxY + pad;
+  container.addChild(text);
+}
+
 interface MountInput {
   /** The active edit scope ("off" = read-only render of all regions). */
   editMode: IgnoreEditMode;
@@ -116,8 +182,19 @@ interface MountInput {
   draftIgnoreAreas: DraftIgnoreArea[];
   /** Saved regions flagged for deletion (rendered with strikethrough). */
   markedForDeletion: Set<string>;
-  /** Currently selected region id (rendered with thicker stroke). */
+  /** Currently selected region id (rendered with thicker stroke + handles). */
   selectedIgnoreId: string | null;
+  /**
+   * Live geometry edits (mouse resize / move) for saved regions, keyed by id.
+   * Drafts carry their edited bbox directly; saved regions read through here.
+   */
+  geometryOverrides: ReadonlyMap<string, Bbox>;
+  /**
+   * World (image→screen) scale, so resize handles + the X/Y/W/H readout stay
+   * a roughly constant SCREEN size instead of scaling with zoom. Caller passes
+   * the pixi world's current scale.x; the layer re-mounts on zoom change.
+   */
+  scale: number;
   /** Only render regions matching this viewport (or regions with no viewport). */
   viewport: string;
   /**
@@ -261,11 +338,18 @@ export function mountIgnoreRegionLayer(
     const strokeWidth = isSelected
       ? SELECTED_STROKE_WIDTH
       : it.style.strokeWidth;
+    // Live geometry (mouse resize / move): drafts mutate in place; saved
+    // regions read the override. Falls back to the item's own bbox.
+    const eff = input.geometryOverrides.get(it.id);
+    const bx = eff?.x ?? it.x;
+    const by = eff?.y ?? it.y;
+    const bw = eff?.width ?? it.width;
+    const bh = eff?.height ?? it.height;
     const p = it.paddingPx;
-    const x = it.x - p;
-    const y = it.y - p;
-    const w = it.width + 2 * p;
-    const h = it.height + 2 * p;
+    const x = bx - p;
+    const y = by - p;
+    const w = bw + 2 * p;
+    const h = bh + 2 * p;
     const g = new Graphics();
     g.rect(x, y, w, h)
       .fill({ color: it.style.fill, alpha: it.style.fillAlpha })
@@ -288,9 +372,25 @@ export function mountIgnoreRegionLayer(
       // masked. Same stroke color, low alpha, thin stroke.
       const inner = new Graphics();
       inner
-        .rect(it.x, it.y, it.width, it.height)
+        .rect(bx, by, bw, bh)
         .stroke({ color: it.style.stroke, width: 1, alpha: 0.4 });
       container.addChild(inner);
+    }
+
+    // Resize handles + X/Y/W/H readout on the selected, editable region —
+    // drawn on the UNPADDED bbox (the geometry the user actually edits).
+    if (isSelected && it.selectable) {
+      drawResizeHandles(
+        container,
+        { x: bx, y: by, width: bw, height: bh },
+        it.style.stroke,
+        input.scale,
+      );
+      drawReadout(
+        container,
+        { x: bx, y: by, width: bw, height: bh },
+        input.scale,
+      );
     }
   }
 

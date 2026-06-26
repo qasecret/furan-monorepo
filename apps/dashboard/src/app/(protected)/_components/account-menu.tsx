@@ -1,7 +1,9 @@
 "use client";
 
+import { LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 
+import { useCurrentProject } from "./current-project-provider";
 import { logoutAction } from "./logout-action";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -9,6 +11,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -18,8 +21,18 @@ interface Props {
   role: string;
 }
 
-/** Top-bar account control: avatar trigger → email/role, Tokens, Sign out. */
+const ROLE_STYLE: Record<string, string> = {
+  admin:
+    "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+  editor: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
+  guest: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+};
+
+const NEON_HOVER =
+  "data-[highlighted]:bg-[#a8ff53]/10 data-[highlighted]:text-[#5a8a2a] dark:data-[highlighted]:bg-[#a8ff53]/10 dark:data-[highlighted]:text-[#a8ff53]";
+
 export function AccountMenu({ email, initial, role }: Props) {
+  const { currentProjectId } = useCurrentProject();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -32,20 +45,39 @@ export function AccountMenu({ email, initial, role }: Props) {
           <Avatar initial={initial} />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[12rem]">
-        <div className="px-2 py-1.5">
-          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            {email || "Signed in"}
-          </p>
-          <p className="text-xs capitalize text-zinc-500">{role}</p>
+      <DropdownMenuContent align="end" className="min-w-[13rem]">
+        <div className="flex items-center gap-2.5 px-2 py-2">
+          <Avatar initial={initial} className="h-7 w-7 shrink-0 text-[11px]" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              {email || "Signed in"}
+            </p>
+            <span
+              className={`mt-0.5 inline-block rounded px-1.5 py-px text-[10px] font-semibold capitalize leading-tight ${ROLE_STYLE[role] ?? ROLE_STYLE.guest}`}
+            >
+              {role}
+            </span>
+          </div>
         </div>
-        <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
-        <DropdownMenuItem asChild>
-          <Link href="/account/tokens">Tokens</Link>
-        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {currentProjectId && (
+          <>
+            <DropdownMenuItem asChild className={NEON_HOVER}>
+              <Link href={`/projects/${currentProjectId}/settings`}>
+                <Settings className="mr-2 h-3.5 w-3.5 text-zinc-400" />
+                Settings
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <form action={logoutAction}>
-          <DropdownMenuItem asChild>
+          <DropdownMenuItem
+            asChild
+            className="text-red-600 data-[highlighted]:bg-red-50 data-[highlighted]:text-red-700 dark:text-red-400 dark:data-[highlighted]:bg-red-950/40 dark:data-[highlighted]:text-red-300"
+          >
             <button type="submit" className="w-full cursor-default text-left">
+              <LogOut className="mr-2 h-3.5 w-3.5" />
               Sign out
             </button>
           </DropdownMenuItem>

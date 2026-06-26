@@ -11,6 +11,12 @@ const MAX_LEN = 10_000;
 
 interface Props {
   runId: string;
+  /**
+   * Embedded mode: render inline inside the diff-viewer's INFO sidebar
+   * COMMENTS tab. Skips the store-driven open gate and the Close button —
+   * the parent tab controls visibility instead.
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -26,9 +32,11 @@ interface Props {
  * global `tinykeys` binding (e.g. the `A`/`R`/`C` shortcuts wired by
  * `useDiffViewerShortcuts`) does not fire while the user is typing.
  */
-export function RunCommentPanel({ runId }: Props) {
+export function RunCommentPanel({ runId, embedded = false }: Props) {
   const open = useViewerStore((s) => s.commentPanelOpen);
   const setOpen = useViewerStore((s) => s.setCommentPanelOpen);
+  const commentPrefill = useViewerStore((s) => s.commentPrefill);
+  const setCommentPrefill = useViewerStore((s) => s.setCommentPrefill);
   const utils = trpc.useUtils();
   const { data } = trpc.runs.getById.useQuery({ runId });
   const serverValue = data?.comment ?? "";
@@ -44,6 +52,15 @@ export function RunCommentPanel({ runId }: Props) {
     setValue(serverValue);
   }, [serverValue]);
 
+  // "Mark as bug" seeds a one-shot prefill; apply it once (only when the box
+  // is empty so we never clobber an existing note) then clear it so it
+  // doesn't re-apply on the next open.
+  useEffect(() => {
+    if (!embedded || commentPrefill == null) return;
+    setValue((v) => (v.trim().length === 0 ? commentPrefill : v));
+    setCommentPrefill(null);
+  }, [embedded, commentPrefill, setCommentPrefill]);
+
   const setComment = trpc.runs.setComment.useMutation({
     onMutate: () => setError(null),
     onSuccess: () => {
@@ -52,7 +69,7 @@ export function RunCommentPanel({ runId }: Props) {
     onError: (e) => setError(e.message),
   });
 
-  if (!open) return null;
+  if (!embedded && !open) return null;
 
   const save = () => {
     const trimmed = value.trim();
@@ -72,22 +89,28 @@ export function RunCommentPanel({ runId }: Props) {
 
   return (
     <div
-      className="border-t border-zinc-200 bg-white p-3 space-y-2 dark:border-zinc-800 dark:bg-zinc-950"
+      className={
+        embedded
+          ? "space-y-2"
+          : "border-t border-zinc-200 bg-white p-3 space-y-2 dark:border-zinc-800 dark:bg-zinc-950"
+      }
       data-testid="comment-panel"
     >
       <div className="flex items-center justify-between">
         <label htmlFor="run-comment-textarea" className="text-sm font-medium">
           Comment
         </label>
-        <Button
-          type="button"
-          variant="secondary"
-          className="px-2 py-1 text-xs"
-          onClick={() => setOpen(false)}
-          data-testid="comment-close-button"
-        >
-          Close
-        </Button>
+        {!embedded && (
+          <Button
+            type="button"
+            variant="secondary"
+            className="px-2 py-1 text-xs"
+            onClick={() => setOpen(false)}
+            data-testid="comment-close-button"
+          >
+            Close
+          </Button>
+        )}
       </div>
       <textarea
         id="run-comment-textarea"

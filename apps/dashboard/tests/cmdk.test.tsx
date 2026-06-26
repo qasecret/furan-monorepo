@@ -93,8 +93,8 @@ describe("CommandPalette", () => {
     act(() => usePaletteStore.setState({ open: true }));
     await screen.findByTestId("command-palette");
     expect(screen.queryByTestId("cmd-admin-members")).toBeNull();
-    // Account command is visible to all roles.
-    expect(screen.queryByTestId("cmd-account-tokens")).not.toBeNull();
+    // API Keys command is visible to all roles.
+    expect(screen.queryByTestId("cmd-api-keys")).not.toBeNull();
 
     cleanup();
     usePaletteStore.setState({ open: false });

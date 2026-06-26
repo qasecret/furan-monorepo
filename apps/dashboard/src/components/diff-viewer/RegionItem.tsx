@@ -1,6 +1,7 @@
 "use client";
 
 import type { DiffRegion, Severity } from "./layers/regionTypes";
+import { cleanDescription, sizeLabel } from "./region-format";
 import { useViewerStore } from "./useViewerStore";
 
 import { Badge } from "@/components/ui/badge";
@@ -66,10 +67,21 @@ function asSeverity(v: string): Severity {
   }
 }
 
-export function RegionItem({ region }: { region: DiffRegion }) {
+export function RegionItem({
+  region,
+  memberIds,
+}: {
+  region: DiffRegion;
+  /** All region ids this row stands in for (≥1); defaults to the region's
+   *  own id. A row with >1 member renders a "×N" count and counts as
+   *  selected when any member is the active selection. */
+  memberIds?: string[];
+}) {
   const selectedId = useViewerStore((s) => s.selectedRegionId);
   const setSelected = useViewerStore((s) => s.setSelected);
-  const isSelected = selectedId === region.id;
+  const ids = memberIds ?? [region.id];
+  const count = ids.length;
+  const isSelected = selectedId != null && ids.includes(selectedId);
   const sev = asSeverity(region.severity);
   const style = SEVERITY_STYLE[sev];
 
@@ -111,11 +123,17 @@ export function RegionItem({ region }: { region: DiffRegion }) {
     );
   }
 
+  const size = sizeLabel(region.bbox);
+  const showCategory =
+    !!region.category && region.category.toLowerCase() !== "image";
+
   return (
     <button
       type="button"
       onClick={() => setSelected(region.id)}
-      aria-label={`${SEVERITY_LABEL[sev]} ${region.category}: ${region.description}`}
+      aria-label={`${SEVERITY_LABEL[sev]} ${region.category}: ${region.description}${
+        count > 1 ? ` (${count} similar)` : ""
+      }`}
       aria-pressed={isSelected}
       className={cn(
         "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1",
@@ -133,9 +151,22 @@ export function RegionItem({ region }: { region: DiffRegion }) {
         >
           {SEVERITY_LABEL[sev]}
         </Badge>
-        <span className="text-xs text-zinc-500 capitalize">
-          {region.category}
-        </span>
+        {count > 1 && (
+          <span
+            className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            data-testid="region-count"
+          >
+            ×{count}
+          </span>
+        )}
+        {/* Category is only worth a label when it isn't the obvious "image"
+            default — every pixel diff is an image region, so the chip was
+            pure repetition. Text / color / a11y categories still surface. */}
+        {showCategory && (
+          <span className="text-xs text-zinc-500 capitalize">
+            {region.category}
+          </span>
+        )}
         {(region.source === "layout_kept" ||
           region.source === "layout_suppressed") && (
           <Badge
@@ -148,9 +179,17 @@ export function RegionItem({ region }: { region: DiffRegion }) {
               : "Layout · geometry"}
           </Badge>
         )}
+        {size && (
+          <span
+            className="ml-auto font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500"
+            data-testid="region-size"
+          >
+            {size}
+          </span>
+        )}
       </div>
       <p className="text-sm text-zinc-800 line-clamp-2 dark:text-zinc-200">
-        {region.description}
+        {cleanDescription(region.description)}
       </p>
     </button>
   );

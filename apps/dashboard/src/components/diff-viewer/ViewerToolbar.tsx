@@ -1,6 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  Maximize2,
+  Minimize2,
+  Pencil,
+  SlidersHorizontal,
+  SplitSquareHorizontal,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { buildIgnoreAreasPayload } from "./ignore-area-payload";
@@ -16,22 +29,16 @@ import {
 } from "./useViewerStore";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/cn";
 import { trpc } from "@/lib/trpc";
 
-const MODES: { value: ViewerMode; label: string }[] = [
-  { value: "side-by-side", label: "Side by side" },
-  { value: "overlay", label: "Overlay" },
-  { value: "difference", label: "Difference" },
+const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
+  { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
+  { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
+  { value: "difference", label: "Diff only", Icon: Layers },
 ];
 
 interface Props {
@@ -111,12 +118,29 @@ export function ViewerToolbar({
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const thresholdOverrides = useViewerStore((s) => s.thresholdOverrides);
   const selectorOverrides = useViewerStore((s) => s.selectorOverrides);
+  const geometryOverrides = useViewerStore((s) => s.geometryOverrides);
   // Region clipboard wiring (Copy/Paste). `useClipboardRegion` subscribes
   // to same-tab + cross-tab clipboard events so the Paste button's
   // disabled state reflects the live clipboard.
   const clipboard = useClipboardRegion(projectId);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
+
+  // Fullscreen toggle for the diff-viewer root (reference TestStep toolbar).
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    const el = document.getElementById("diff-viewer-root");
+    if (!document.fullscreenElement) {
+      void el?.requestFullscreen?.();
+    } else {
+      void document.exitFullscreen?.();
+    }
+  };
 
   const utils = trpc.useUtils();
   const setIgnoreAreas = trpc.runs.setIgnoreAreas.useMutation({
@@ -132,10 +156,6 @@ export function ViewerToolbar({
     },
   });
 
-  const [pendingScopeSwitch, setPendingScopeSwitch] = useState<
-    "run" | "variation" | null
-  >(null);
-
   const showSlider = mode === "overlay";
   const sliderLabel = "Candidate opacity";
 
@@ -149,24 +169,8 @@ export function ViewerToolbar({
     draftIgnoreAreas.length > 0 ||
     markedForDeletion.size > 0 ||
     selectorOverrides.size > 0 ||
-    thresholdOverrides.size > 0;
-
-  const requestEditMode = (next: "run" | "variation") => {
-    if (editing && ignoreEditMode !== next && hasPendingChanges) {
-      setPendingScopeSwitch(next);
-      return;
-    }
-    setIgnoreEditMode(next);
-  };
-
-  const confirmScopeSwitch = () => {
-    if (!pendingScopeSwitch) return;
-    discardIgnoreChanges();
-    setIgnoreEditMode(pendingScopeSwitch);
-    setPendingScopeSwitch(null);
-  };
-
-  const cancelScopeSwitch = () => setPendingScopeSwitch(null);
+    thresholdOverrides.size > 0 ||
+    geometryOverrides.size > 0;
 
   const handleSave = () => {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
@@ -180,6 +184,7 @@ export function ViewerToolbar({
         kindOverrides,
         thresholdOverrides,
         selectorOverrides,
+        geometryOverrides,
       },
       scope,
     );
@@ -193,15 +198,34 @@ export function ViewerToolbar({
 
   return (
     <div className="flex items-center gap-4 flex-wrap p-2 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <Tabs value={mode} onValueChange={(v) => setMode(v as ViewerMode)}>
-        <TabsList>
-          {MODES.map((m) => (
-            <TabsTrigger key={m.value} value={m.value} data-mode={m.value}>
+      <div
+        className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100/60 p-1 dark:border-zinc-800 dark:bg-zinc-900/50"
+        role="tablist"
+        aria-label="View mode"
+      >
+        {MODES.map((m) => {
+          const active = mode === m.value;
+          return (
+            <button
+              key={m.value}
+              type="button"
+              role="tab"
+              data-mode={m.value}
+              aria-selected={active}
+              onClick={() => setMode(m.value)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                active
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white",
+              )}
+            >
+              <m.Icon className="h-4 w-4" aria-hidden />
               {m.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+            </button>
+          );
+        })}
+      </div>
 
       <SensitivityControl
         runId={runId}
@@ -223,7 +247,7 @@ export function ViewerToolbar({
           title="Zoom out (−)"
           onClick={() => zoomBy(1 / ZOOM_STEP)}
         >
-          −
+          <ZoomOut className="h-4 w-4" aria-hidden />
         </Button>
         <Button
           type="button"
@@ -245,7 +269,22 @@ export function ViewerToolbar({
           title="Zoom in (+)"
           onClick={() => zoomBy(ZOOM_STEP)}
         >
-          +
+          <ZoomIn className="h-4 w-4" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="px-2 py-1 text-xs h-7 w-7"
+          data-testid="fullscreen-toggle"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? (
+            <Minimize2 className="h-4 w-4" aria-hidden />
+          ) : (
+            <Maximize2 className="h-4 w-4" aria-hidden />
+          )}
         </Button>
       </div>
 
@@ -263,7 +302,7 @@ export function ViewerToolbar({
             aria-label="Previous change"
             onClick={stepper.prev}
           >
-            ‹
+            <ChevronLeft className="h-4 w-4" aria-hidden />
           </Button>
           <span
             className="text-xs font-mono min-w-[4.5rem] text-center"
@@ -279,7 +318,7 @@ export function ViewerToolbar({
             aria-label="Next change"
             onClick={stepper.next}
           >
-            ›
+            <ChevronRight className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       )}
@@ -299,131 +338,83 @@ export function ViewerToolbar({
         </Label>
       </div>
 
-      <Button
-        type="button"
-        variant={highlightActive ? "default" : "secondary"}
-        className="px-2 py-1 text-xs"
-        data-testid="highlight-toggle"
-        aria-pressed={highlightActive}
-        onClick={() => setHighlightActive(!highlightActive)}
-      >
-        Highlight diffs
-      </Button>
+      <div className="flex items-center gap-2">
+        <Switch
+          id="highlight-toggle"
+          checked={highlightActive}
+          onCheckedChange={setHighlightActive}
+          data-testid="highlight-toggle"
+        />
+        <Label htmlFor="highlight-toggle" className="cursor-pointer text-xs">
+          Highlight diffs
+        </Label>
+      </div>
 
-      {/* When not editing: a single DropdownMenu with the toggle as its
-          trigger so users can pick a scope to start editing. */}
-      {!editing && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="secondary"
-              className="px-2 py-1 text-xs"
-              data-testid="edit-regions-toggle"
-            >
-              Edit regions ▾
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem
-              data-testid="edit-regions-run"
-              onClick={() => requestEditMode("run")}
-            >
-              Edit for this run
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="edit-regions-variation"
-              onClick={() => requestEditMode("variation")}
-            >
-              Edit for all runs of this test
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {/* Single "Edit regions" button. Both scopes currently persist to the
+          test variation (per-run storage is deferred — ADR-038/Phase 5), so a
+          run-vs-variation dropdown would be a distinction without a difference.
+          The "Temporary (this run only)" toggle below is the genuine one-off
+          path (stored on the run, not the variation). */}
+      {!editing ? (
+        <Button
+          type="button"
+          variant="secondary"
+          className="gap-1.5 px-2 py-1 text-xs"
+          data-testid="edit-regions-toggle"
+          onClick={() => setIgnoreEditMode("variation")}
+        >
+          <Pencil className="h-4 w-4" aria-hidden />
+          Edit regions
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          variant="default"
+          className="gap-1.5 px-2 py-1 text-xs"
+          data-testid="edit-regions-toggle"
+          onClick={() => setIgnoreEditMode("off")}
+        >
+          <Check className="h-4 w-4" aria-hidden />
+          Done editing
+        </Button>
       )}
 
-      {/* When editing: a plain exit button (no dropdown) plus a separate
-          DropdownMenu for switching scope. This avoids the ambiguity of a
-          button that is simultaneously a dropdown trigger and an exit action —
-          with userEvent / Radix pointer-event handling, both would fire and
-          produce unpredictable results. */}
       {editing && (
         <>
-          <Button
-            type="button"
-            variant="default"
-            className="px-2 py-1 text-xs"
-            data-testid="edit-regions-toggle"
-            onClick={() => setIgnoreEditMode("off")}
-          >
-            {ignoreEditMode === "run"
-              ? "Editing: this run"
-              : "Editing: all runs"}{" "}
-            ×
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+          {/* Region input mode (Drag vs. Pick element) only matters when the
+              run has an element-map sidecar. Without one, "Drag" is the only
+              possibility (the canvas defaults to it), so we hide the toggle
+              entirely rather than show a permanently-disabled "Pick element"
+              button. Real SDK-captured runs carry the element map and get the
+              full toggle. */}
+          {hasElementMap && (
+            <div
+              className="flex items-center gap-1"
+              data-testid="region-input-mode-toggle"
+              aria-label="Region input mode"
+            >
               <Button
                 type="button"
-                variant="secondary"
-                className="px-2 py-1 text-xs"
-                data-testid="scope-switch-dropdown-trigger"
+                variant={regionInputMode === "drag" ? "default" : "secondary"}
+                className="h-7 px-2 text-xs"
+                data-testid="region-input-mode-drag"
+                onClick={() => setRegionInputMode("drag")}
+                title="Drag a rectangle on the canvas"
               >
-                Switch scope ▾
+                Drag
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem
-                data-testid="switch-scope-run"
-                onClick={() => requestEditMode("run")}
-                disabled={ignoreEditMode === "run"}
+              <Button
+                type="button"
+                variant={regionInputMode === "pick" ? "default" : "secondary"}
+                className="h-7 px-2 text-xs"
+                data-testid="region-input-mode-pick"
+                onClick={() => setRegionInputMode("pick")}
+                title="Click an element to capture its bbox as a region"
               >
-                Edit for this run
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                data-testid="switch-scope-variation"
-                onClick={() => requestEditMode("variation")}
-                disabled={ignoreEditMode === "variation"}
-              >
-                Edit for all runs of this test
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
-      )}
-
-      {editing && (
-        <>
-          <div
-            className="flex items-center gap-1"
-            data-testid="region-input-mode-toggle"
-            aria-label="Region input mode"
-          >
-            <Button
-              type="button"
-              variant={regionInputMode === "drag" ? "default" : "secondary"}
-              className="h-7 px-2 text-xs"
-              data-testid="region-input-mode-drag"
-              onClick={() => setRegionInputMode("drag")}
-              title="Drag a rectangle on the canvas"
-            >
-              Drag
-            </Button>
-            <Button
-              type="button"
-              variant={regionInputMode === "pick" ? "default" : "secondary"}
-              className="h-7 px-2 text-xs"
-              data-testid="region-input-mode-pick"
-              disabled={!hasElementMap}
-              onClick={() => setRegionInputMode("pick")}
-              title={
-                hasElementMap
-                  ? "Click an element to capture its bbox as a region"
-                  : "Element picker requires an element-map sidecar (SDK PR #61). Older runs are drag-only."
-              }
-            >
-              Pick element
-            </Button>
-          </div>
+                Pick element
+              </Button>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Switch
               id="temp-toggle"
@@ -500,34 +491,6 @@ export function ViewerToolbar({
             Paste
           </Button>
         </>
-      )}
-
-      {pendingScopeSwitch && (
-        <div
-          role="alertdialog"
-          data-testid="scope-switch-confirm"
-          className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-        >
-          <span>Discard unsaved changes and switch scope?</span>
-          <Button
-            type="button"
-            variant="destructive"
-            className="px-2 py-1 text-xs"
-            data-testid="scope-switch-confirm-yes"
-            onClick={confirmScopeSwitch}
-          >
-            Discard & switch
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className="px-2 py-1 text-xs"
-            data-testid="scope-switch-confirm-no"
-            onClick={cancelScopeSwitch}
-          >
-            Cancel
-          </Button>
-        </div>
       )}
 
       {editing && selectedIgnoreId && (

@@ -4,7 +4,6 @@ import { AdminTabs } from "./_components/admin-tabs";
 
 import { Forbidden } from "@/components/ui/forbidden";
 import { PageContainer } from "@/components/ui/page-container";
-import { PageHeader } from "@/components/ui/page-header";
 import { getViewerRole } from "@/lib/get-viewer";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +25,19 @@ export default async function AdminAreaLayout({
     );
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader title="Admin" className="px-6 pt-6" />
-      <AdminTabs />
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-    </div>
+    <PageContainer maxWidth="5xl">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-zinc-950 dark:text-white">
+          Admin
+        </h1>
+        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+          Manage users, projects, and integrations.
+        </p>
+      </div>
+      <div className="flex gap-8">
+        <AdminTabs />
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
+    </PageContainer>
   );
 }

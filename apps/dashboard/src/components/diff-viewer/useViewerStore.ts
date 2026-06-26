@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import type { Bbox } from "./region-resize";
 import type { ElementBbox } from "./useElementMap";
 
 export type ViewerMode = "side-by-side" | "overlay" | "difference";
@@ -122,6 +123,12 @@ interface State {
   viewport: string;
   commentPanelOpen: boolean;
   /**
+   * One-shot seed text for the embedded comment editor. "Mark as bug" sets
+   * this + opens the comments tab; RunCommentPanel consumes it once (then
+   * clears it) so the reviewer lands on a pre-filled note.
+   */
+  commentPrefill: string | null;
+  /**
    * Zoom relative to fit-to-canvas. 1 = fit. Applied uniformly to both
    * panes in side-by-side so reviewers compare like for like.
    */
@@ -190,6 +197,13 @@ interface State {
    * `applySaveSuccess` and the toolbar's save payload builder.
    */
   selectorOverrides: Map<string, string | null>;
+  /**
+   * Per-saved-region geometry overrides from mouse resize / move. Mirrors
+   * `paddingOverrides`: drafts mutate their own bbox in place; saved regions
+   * push the new {x,y,width,height} here, reconciled by `applySaveSuccess`
+   * and the save-payload builder. Same lifecycle (discard / save reset).
+   */
+  geometryOverrides: Map<string, Bbox>;
   selectedIgnoreId: string | null;
   isTemporaryMode: boolean;
   setTemporaryMode: (v: boolean) => void;
@@ -199,6 +213,7 @@ interface State {
   setSelected: (id: string | null) => void;
   setViewport: (viewport: string) => void;
   setCommentPanelOpen: (open: boolean) => void;
+  setCommentPrefill: (value: string | null) => void;
   /** Multiplicative zoom (e.g. ZOOM_STEP for +1 step). Clamped to [MIN,MAX]. */
   zoomBy: (factor: number) => void;
   /**
@@ -216,13 +231,6 @@ interface State {
   resetZoom: () => void;
   /** Increment current pan by (dx,dy) in canvas-CSS pixels. */
   panBy: (dx: number, dy: number) => void;
-
-  /** ADR-038: which region-kind tab is active above RegionListPanel. */
-  selectedRegionKind: RegionKindTab;
-  setSelectedRegionKind: (k: RegionKindTab) => void;
-  /** ADR-038: which checkpoint is currently open in the diff viewer. */
-  selectedCheckpointId: string | null;
-  setSelectedCheckpointId: (id: string | null) => void;
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   setRegionInputMode: (mode: RegionInputMode) => void;
@@ -252,6 +260,13 @@ interface State {
    * thresholdOverrides. Pass `undefined` to clear.
    */
   setThresholdForSelected: (threshold: number | undefined) => void;
+  /**
+   * Mouse resize / move geometry setter for the currently-selected region.
+   * Mutates drafts in place; for saved regions, sets an entry in
+   * `geometryOverrides`. Called live on every pointermove of a handle / body
+   * drag, so the canvas reflects the new bbox immediately.
+   */
+  setGeometryForSelected: (bbox: Bbox) => void;
   /**
    * F-a/3: record a snap suggestion for a freshly-drawn draft. Idempotent
    * on the same draft id — re-proposing keeps the first suggestion so
@@ -299,15 +314,15 @@ export const useViewerStore = create<State>((set) => ({
   selectedRegionId: null,
   viewport: "",
   commentPanelOpen: false,
+  commentPrefill: null,
   zoom: 1,
   panX: 0,
   panY: 0,
   focusBbox: null,
   hideDisplacement: false,
-  highlightActive: false,
-
-  selectedRegionKind: "ignore",
-  selectedCheckpointId: null,
+  // On by default so the Applitools-style pink diff shading is prominent the
+  // moment a diff opens (matches the reference's active "Highlight diffs").
+  highlightActive: true,
 
   ignoreEditMode: "off",
   regionInputMode: "drag",
@@ -320,6 +335,7 @@ export const useViewerStore = create<State>((set) => ({
   thresholdOverrides: new Map(),
   pendingSnaps: new Map(),
   selectorOverrides: new Map(),
+  geometryOverrides: new Map(),
   selectedIgnoreId: null,
   isTemporaryMode: false,
   setTemporaryMode: (isTemporaryMode) => set({ isTemporaryMode }),
@@ -333,6 +349,7 @@ export const useViewerStore = create<State>((set) => ({
   setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setViewport: (viewport) => set({ viewport }),
   setCommentPanelOpen: (commentPanelOpen) => set({ commentPanelOpen }),
+  setCommentPrefill: (commentPrefill) => set({ commentPrefill }),
   zoomBy: (factor) => set((s) => ({ zoom: clampZoom(s.zoom * factor) })),
   zoomAt: (factor, anchor, canvasSize) =>
     set((s) => {
@@ -369,10 +386,6 @@ export const useViewerStore = create<State>((set) => ({
   setHighlightActive: (highlightActive) => set({ highlightActive }),
   setView: ({ zoom, panX, panY }) => set({ zoom: clampZoom(zoom), panX, panY }),
 
-  setSelectedRegionKind: (selectedRegionKind) => set({ selectedRegionKind }),
-  setSelectedCheckpointId: (selectedCheckpointId) =>
-    set({ selectedCheckpointId }),
-
   setIgnoreEditMode: (ignoreEditMode) =>
     set((s) => ({
       ignoreEditMode,
@@ -389,10 +402,38 @@ export const useViewerStore = create<State>((set) => ({
         s.paddingOverrides.size > 0 ||
         s.kindOverrides.size > 0 ||
         s.thresholdOverrides.size > 0 ||
-        s.selectorOverrides.size > 0;
+        s.selectorOverrides.size > 0 ||
+        s.geometryOverrides.size > 0;
+
+      // Build a geometry-key → existing-id lookup so we can reuse IDs
+      // across hydrations. This keeps override map entries valid when a
+      // spurious refetch fires while the user has pending edits.
+      const existingIds = new Map<string, string>();
+      const geoKey = (r: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        viewport: string;
+      }) => `${r.x}:${r.y}:${r.width}:${r.height}:${r.viewport}`;
+      for (const r of s.savedRunIgnoreAreas) existingIds.set(geoKey(r), r.id);
+      for (const r of s.savedVariationIgnoreAreas)
+        existingIds.set(geoKey(r), r.id);
+
       const hydrate = (r: HydrateIgnoreArea): IgnoreArea => ({
         ...r,
-        id: crypto.randomUUID(),
+        id:
+          existingIds.get(
+            geoKey(
+              r as unknown as {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+                viewport: string;
+              },
+            ),
+          ) ?? crypto.randomUUID(),
         paddingPx: r.paddingPx ?? 0,
         kind: r.kind ?? "ignore",
         pattern: r.pattern,
@@ -405,7 +446,8 @@ export const useViewerStore = create<State>((set) => ({
       if (hasUnsaved) {
         // Spurious refetch (window focus, SSE invalidation, mutation
         // success on a *sibling* mutation) must not destroy in-progress
-        // user work. Update only the server-derived slices.
+        // user work. Update only the server-derived slices, preserving
+        // IDs so override maps stay keyed correctly.
         return saved;
       }
       return {
@@ -417,6 +459,7 @@ export const useViewerStore = create<State>((set) => ({
         thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
+        geometryOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
@@ -498,6 +541,21 @@ export const useViewerStore = create<State>((set) => ({
       overrides.set(s.selectedIgnoreId, threshold);
       return { thresholdOverrides: overrides };
     }),
+  setGeometryForSelected: (bbox) =>
+    set((s) => {
+      if (!s.selectedIgnoreId) return {};
+      const draftIdx = s.draftIgnoreAreas.findIndex(
+        (r) => r.id === s.selectedIgnoreId,
+      );
+      if (draftIdx !== -1) {
+        const next = [...s.draftIgnoreAreas];
+        next[draftIdx] = { ...next[draftIdx]!, ...bbox };
+        return { draftIgnoreAreas: next };
+      }
+      const overrides = new Map(s.geometryOverrides);
+      overrides.set(s.selectedIgnoreId, bbox);
+      return { geometryOverrides: overrides };
+    }),
   proposePendingSnap: (draftId, snap) =>
     set((s) => {
       // Idempotent: an effect that re-fires on dependency change must
@@ -553,6 +611,7 @@ export const useViewerStore = create<State>((set) => ({
       thresholdOverrides: new Map(),
       pendingSnaps: new Map(),
       selectorOverrides: new Map(),
+      geometryOverrides: new Map(),
       selectedIgnoreId: null,
       isTemporaryMode: false,
     }),
@@ -568,8 +627,10 @@ export const useViewerStore = create<State>((set) => ({
           const thresholdOv = s.thresholdOverrides.has(r.id)
             ? s.thresholdOverrides.get(r.id)
             : r.thresholdOverride;
+          const geomOv = s.geometryOverrides.get(r.id);
           return {
             ...r,
+            ...(geomOv ?? {}),
             paddingPx: s.paddingOverrides.get(r.id) ?? r.paddingPx,
             kind: kindOv?.kind ?? r.kind,
             pattern: kindOv ? kindOv.pattern : r.pattern,
@@ -593,10 +654,40 @@ export const useViewerStore = create<State>((set) => ({
         thresholdOverrides: new Map(),
         pendingSnaps: new Map(),
         selectorOverrides: new Map(),
+        geometryOverrides: new Map(),
         selectedIgnoreId: null,
       };
     }),
 }));
+
+/**
+ * Resolve a region's effective bbox (image space) by id — the live geometry
+ * after any in-session mouse resize / move. Drafts carry their own (mutated)
+ * bbox; saved regions read through `geometryOverrides`. Used by the canvas
+ * layer (render) and the overlay (hit-test the selected region's handles).
+ */
+export function selectEffectiveGeometryById(
+  s: Pick<
+    State,
+    | "geometryOverrides"
+    | "draftIgnoreAreas"
+    | "savedRunIgnoreAreas"
+    | "savedVariationIgnoreAreas"
+  >,
+  id: string,
+): Bbox | null {
+  const draft = s.draftIgnoreAreas.find((r) => r.id === id);
+  if (draft) {
+    return { x: draft.x, y: draft.y, width: draft.width, height: draft.height };
+  }
+  const saved =
+    s.savedRunIgnoreAreas.find((r) => r.id === id) ??
+    s.savedVariationIgnoreAreas.find((r) => r.id === id);
+  if (!saved) return null;
+  const ov = s.geometryOverrides.get(id);
+  const g = ov ?? saved;
+  return { x: g.x, y: g.y, width: g.width, height: g.height };
+}
 
 /**
  * Padding value to show on the slider for the currently-selected region.
@@ -727,6 +818,9 @@ export function selectEffectiveRegion(
     | "savedVariationIgnoreAreas"
     | "paddingOverrides"
     | "kindOverrides"
+    | "geometryOverrides"
+    | "thresholdOverrides"
+    | "selectorOverrides"
   >,
 ): IgnoreArea | null {
   if (!s.selectedIgnoreId) return null;
@@ -738,10 +832,18 @@ export function selectEffectiveRegion(
   if (!saved) return null;
   const padOv = s.paddingOverrides.get(saved.id);
   const kindOv = s.kindOverrides.get(saved.id);
+  const geomOv = s.geometryOverrides.get(saved.id);
+  const threshOv = s.thresholdOverrides.has(saved.id)
+    ? s.thresholdOverrides.get(saved.id)
+    : saved.thresholdOverride;
+  const selOv = s.selectorOverrides.get(saved.id);
   return {
     ...saved,
+    ...(geomOv ?? {}),
     paddingPx: padOv ?? saved.paddingPx,
     kind: kindOv?.kind ?? saved.kind,
     pattern: kindOv ? kindOv.pattern : saved.pattern,
+    thresholdOverride: threshOv,
+    selector: selOv === null ? undefined : (selOv ?? saved.selector),
   };
 }

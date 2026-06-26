@@ -1,145 +1,115 @@
 "use client";
 
 import type { RunStatus } from "@furan/shared-types";
-import { Clock, GitBranch, Layers } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
-import { formatRelativeTime } from "@/lib/format";
 
 interface Props {
+  /** Test / run name — the bold breadcrumb leaf. */
   title: string;
-  /** Optional pre-built status node. When omitted, falls back to a RunStatusBadge built from `status`. */
-  statusNode?: React.ReactNode;
-  /** Used as a fallback when `statusNode` is omitted. */
+  /** Optional pre-built status node. Falls back to a RunStatusBadge. */
+  statusNode?: ReactNode;
   status?: RunStatus;
-  /** Metadata strip. Each defined entry renders a chip; undefined entries are skipped. */
-  metadata?: {
-    branch?: string | null;
-    checkpointCount?: number | null;
-    startedAt?: Date | string | null;
-    completedAt?: Date | string | null;
+  /** Back link to the parent batch. */
+  backHref?: string;
+  /** Branch segment shown before the title in the breadcrumb. */
+  branch?: string | null;
+  /** Step navigation through the run's checkpoints. */
+  nav?: {
+    index: number;
+    total: number;
+    onPrev?: () => void;
+    onNext?: () => void;
   };
-  /** Right-aligned slot for actions (compare-to picker, watch button, etc.). */
-  rightActions?: React.ReactNode;
+  /** Right-aligned slot for actions (approve / reject / mark-as-bug, …). */
+  rightActions?: ReactNode;
 }
 
 /**
- * Two-row contextual header rendered above the diff viewer. Row 1 = run title +
- * status; Row 2 = metadata chips. High information density, mono font for
- * machine values, lucide icons for visual rhythm.
- *
- * Callers compose the metadata (server-fetched run data); the component is
- * otherwise pure presentation.
+ * Single-row contextual top bar above the diff viewer, modelled on the
+ * reference TestStep header: back ← · breadcrumb (branch / test) · step
+ * prev-next · status, with a right-aligned action slot. Pure presentation —
+ * the DiffViewer composes the data and actions.
  */
 export function ContextualHeader({
   title,
   statusNode,
   status,
-  metadata,
+  backHref,
+  branch,
+  nav,
   rightActions,
 }: Props) {
   return (
     <header
-      className="flex flex-col gap-2 border-b border-zinc-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-950"
+      className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="contextual-header"
     >
-      {/* Row 1: title · status — actions */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        {backHref ? (
+          <>
+            <Link
+              href={backHref}
+              aria-label="Back to batch"
+              data-testid="contextual-header-back"
+              className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white"
+            >
+              <ArrowLeft className="h-5 w-5" aria-hidden />
+            </Link>
+            <span className="h-4 w-px bg-zinc-200 dark:bg-zinc-800" />
+          </>
+        ) : null}
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          {branch ? (
+            <>
+              <span className="truncate font-mono text-zinc-500 dark:text-zinc-400">
+                {branch}
+              </span>
+              <span className="text-zinc-300 dark:text-zinc-600">/</span>
+            </>
+          ) : null}
           <h1
-            className="truncate text-base font-semibold leading-tight text-zinc-900 dark:text-white md:text-lg"
+            className="truncate font-medium text-zinc-900 dark:text-white"
             data-testid="contextual-header-title"
           >
             {title}
           </h1>
-          {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
         </div>
-        {rightActions ? (
-          <div className="flex shrink-0 items-center gap-2">{rightActions}</div>
+        {nav && nav.total > 1 ? (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Previous step"
+              data-testid="contextual-header-prev"
+              onClick={nav.onPrev}
+              disabled={!nav.onPrev}
+              className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:text-white"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <span className="w-12 text-center font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              {nav.index + 1} / {nav.total}
+            </span>
+            <button
+              type="button"
+              aria-label="Next step"
+              data-testid="contextual-header-next"
+              onClick={nav.onNext}
+              disabled={!nav.onNext}
+              className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:text-white"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
         ) : null}
+        {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
       </div>
-
-      {/* Row 2: metadata chips */}
-      {metadata ? <MetadataStrip {...metadata} /> : null}
+      {rightActions ? (
+        <div className="flex shrink-0 items-center gap-2">{rightActions}</div>
+      ) : null}
     </header>
   );
-}
-
-function MetadataStrip({
-  branch,
-  checkpointCount,
-  startedAt,
-  completedAt,
-}: NonNullable<Props["metadata"]>) {
-  const startedDate = toDate(startedAt);
-  const completedDate = toDate(completedAt);
-  const startedLabel = startedDate ? formatRelativeTime(startedDate) : null;
-  const durationLabel =
-    startedDate && completedDate
-      ? formatDuration(completedDate.getTime() - startedDate.getTime())
-      : startedDate
-        ? "in progress"
-        : null;
-
-  return (
-    <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400"
-      data-testid="contextual-header-meta"
-    >
-      {branch ? (
-        <MetaItem icon={<GitBranch className="h-3.5 w-3.5" />}>
-          <span className="font-mono text-zinc-700 dark:text-zinc-300">
-            {branch}
-          </span>
-        </MetaItem>
-      ) : null}
-      {typeof checkpointCount === "number" ? (
-        <MetaItem icon={<Layers className="h-3.5 w-3.5" />}>
-          {checkpointCount} checkpoint{checkpointCount === 1 ? "" : "s"}
-        </MetaItem>
-      ) : null}
-      {startedLabel ? (
-        <MetaItem icon={<Clock className="h-3.5 w-3.5" />}>
-          Started {startedLabel}
-        </MetaItem>
-      ) : null}
-      {durationLabel ? <span>Duration: {durationLabel}</span> : null}
-    </div>
-  );
-}
-
-function MetaItem({
-  icon,
-  children,
-}: {
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="text-zinc-400 dark:text-zinc-500" aria-hidden>
-        {icon}
-      </span>
-      <span>{children}</span>
-    </span>
-  );
-}
-
-function toDate(v: Date | string | null | undefined): Date | null {
-  if (!v) return null;
-  if (v instanceof Date) return v;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 0) return "—";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  if (min < 60) return rem ? `${min}m ${rem}s` : `${min}m`;
-  const hr = Math.floor(min / 60);
-  const mrem = min % 60;
-  return mrem ? `${hr}h ${mrem}m` : `${hr}h`;
 }
