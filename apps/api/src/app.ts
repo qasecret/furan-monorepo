@@ -1,6 +1,6 @@
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { eq, tokens, users, type DB } from "@furan/db";
+import { type DB } from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
 import {
   fastifyTRPCPlugin,
@@ -16,8 +16,8 @@ import Fastify, {
 
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
-import { loadActiveUser } from "./lib/load-active-user.js";
-import { hashToken, isPatFormat } from "./lib/token.js";
+import { loadActiveUser, loadActiveUserByPat } from "./lib/load-active-user.js";
+import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
 import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
@@ -214,34 +214,20 @@ async function softAuthenticate(
   if (!raw) return;
 
   if (isPatFormat(raw)) {
-    const hash = hashToken(raw);
-    const rows = await app.db
-      .select({
-        tokenId: tokens.id,
-        userId: tokens.userId,
-        role: users.role,
-        isActive: users.isActive,
-      })
-      .from(tokens)
-      .innerJoin(users, eq(users.id, tokens.userId))
-      .where(eq(tokens.hash, hash))
-      .limit(1);
-    const row = rows[0];
-    if (row && row.isActive) {
-      req.auth = { id: row.userId, role: row.role };
-      await touchTokenLastUsed(app.db, row.tokenId);
+    const pat = await loadActiveUserByPat(app.db, raw);
+    if (pat) {
+      req.auth = { id: pat.id, role: pat.role };
+      await touchTokenLastUsed(app.db, pat.tokenId);
     }
     return;
   }
 
-  let payload: { sub: string; role: "admin" | "editor" | "guest" };
+  let payload: { sub: string };
   try {
     // Verify the extracted token (Bearer header *or* furan_jwt cookie);
-    // see plugins/auth.ts for the same pattern.
-    payload = app.jwt.verify(raw) as {
-      sub: string;
-      role: "admin" | "editor" | "guest";
-    };
+    // see plugins/auth.ts for the same pattern. The role claim is ignored —
+    // the live role comes from loadActiveUser below.
+    payload = app.jwt.verify(raw) as { sub: string };
   } catch {
     return; // bad signature → leave req.auth null
   }
