@@ -3,10 +3,10 @@
 import { BarChart3, Layers, ShieldCheck, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ComponentType, useEffect } from "react";
+import { type ComponentType, useEffect, useLayoutEffect } from "react";
 
 import { InboxBadge } from "./inbox-badge";
-import { useSidebarStore } from "./use-sidebar-store";
+import { SIDEBAR_COLLAPSED_KEY, useSidebarStore } from "./use-sidebar-store";
 
 import { cn } from "@/lib/cn";
 
@@ -51,56 +51,74 @@ const ITEMS: NavItemDef[] = [
   },
 ];
 
-function Logo() {
+function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <Link
       href="/inbox"
       aria-label="Furan home"
       data-testid="sidebar-logo"
-      className="flex items-center gap-2 transition-opacity hover:opacity-80"
+      className={cn(
+        "flex items-center transition-opacity hover:opacity-80",
+        collapsed ? "justify-center" : "gap-2",
+      )}
     >
-      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-brand">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand">
         <span className="h-2.5 w-2.5 rounded-sm bg-black" />
       </span>
-      <span className="text-lg font-semibold tracking-tight text-zinc-950 dark:text-white">
-        Furan
-      </span>
+      {!collapsed && (
+        <span className="text-lg font-semibold tracking-tight text-zinc-950 dark:text-white">
+          Furan
+        </span>
+      )}
     </Link>
   );
 }
 
-function Nav({ isAdmin }: { isAdmin: boolean }) {
+function Nav({ isAdmin, collapsed }: { isAdmin: boolean; collapsed: boolean }) {
   const pathname = usePathname() ?? "";
   const close = useSidebarStore((s) => s.setOpen);
   const items = ITEMS.filter((i) => !i.adminOnly || isAdmin);
   return (
-    <nav className="flex flex-col gap-1 p-3">
+    <nav className={cn("flex flex-col gap-1", collapsed ? "p-2" : "p-3")}>
       {items.map((item, i) => {
         const active = item.active(pathname);
         const Icon = item.icon;
         const showDivider = item.adminOnly && !items[i - 1]?.adminOnly;
         return (
           <div key={item.href}>
-            {showDivider && (
-              <div className="mb-1 mt-3 px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                Admin
-              </div>
-            )}
+            {showDivider &&
+              (collapsed ? (
+                <div className="mx-2 mb-1.5 mt-3 h-px bg-zinc-200 dark:bg-zinc-800" />
+              ) : (
+                <div className="mb-1 mt-3 px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                  Admin
+                </div>
+              ))}
             <Link
               href={item.href}
               onClick={() => close(false)}
               aria-current={active ? "page" : undefined}
+              title={collapsed ? item.label : undefined}
               data-testid={`sidebar-nav-${item.label.toLowerCase()}`}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "relative flex items-center rounded-md text-sm font-medium transition-colors",
+                collapsed ? "justify-center py-2" : "gap-3 px-3 py-2",
                 active
-                  ? "bg-brand/10 text-brand-text shadow-[inset_2px_0_0_0_var(--color-brand)]"
+                  ? cn(
+                      "bg-brand/10 text-brand-text",
+                      !collapsed &&
+                        "shadow-[inset_2px_0_0_0_var(--color-brand)]",
+                    )
                   : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" aria-hidden />
-              <span className="flex-1">{item.label}</span>
-              {item.badge && <InboxBadge />}
+              {!collapsed && (
+                <>
+                  <span className="flex-1">{item.label}</span>
+                  {item.badge && <InboxBadge />}
+                </>
+              )}
             </Link>
           </div>
         );
@@ -118,6 +136,13 @@ export function Sidebar({ userRole }: { userRole: string }) {
   const isAdmin = userRole === "admin";
   const open = useSidebarStore((s) => s.open);
   const setOpen = useSidebarStore((s) => s.setOpen);
+  const collapsed = useSidebarStore((s) => s.collapsed);
+
+  useLayoutEffect(() => {
+    if (window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") {
+      useSidebarStore.setState({ collapsed: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -135,15 +160,24 @@ export function Sidebar({ userRole }: { userRole: string }) {
 
   return (
     <>
-      {/* Desktop: fixed rail */}
+      {/* Desktop: collapsible rail */}
       <aside
         data-testid="app-sidebar"
-        className="hidden w-56 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-950/50 md:flex"
+        className={cn(
+          "hidden shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/80 transition-[width] duration-200 ease-in-out dark:border-zinc-800 dark:bg-zinc-950/50 md:flex",
+          collapsed ? "w-16" : "w-56",
+        )}
       >
-        <div className="flex h-14 items-center border-b border-zinc-200 px-4 dark:border-zinc-800">
-          <Logo />
+        <div
+          className={cn(
+            "flex h-14 items-center border-b border-zinc-200 dark:border-zinc-800",
+            collapsed ? "justify-center px-2" : "px-4",
+          )}
+        >
+          <Logo collapsed={collapsed} />
         </div>
-        <Nav isAdmin={isAdmin} />
+
+        <Nav isAdmin={isAdmin} collapsed={collapsed} />
       </aside>
 
       {/* Mobile: drawer */}
@@ -157,7 +191,7 @@ export function Sidebar({ userRole }: { userRole: string }) {
           />
           <aside className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex h-14 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
-              <Logo />
+              <Logo collapsed={false} />
               <button
                 type="button"
                 aria-label="Close menu"
@@ -167,7 +201,7 @@ export function Sidebar({ userRole }: { userRole: string }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <Nav isAdmin={isAdmin} />
+            <Nav isAdmin={isAdmin} collapsed={false} />
           </aside>
         </div>
       )}

@@ -1,13 +1,11 @@
 "use client";
 
-import { Bell, Menu, Search } from "lucide-react";
+import { Bell, ChevronsLeft, ChevronsRight, Menu } from "lucide-react";
 
 import { AccountMenu } from "./account-menu";
 import { ProjectSelector } from "./project-selector";
 import { useSidebarStore } from "./use-sidebar-store";
 
-import { usePaletteStore } from "@/components/cmdk/use-command-palette";
-import { HelpButton } from "@/components/tour/help-button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
@@ -27,8 +25,9 @@ interface TopBarProps {
 }
 
 export function TopBar({ email, initial, role }: TopBarProps) {
-  const setPaletteOpen = usePaletteStore((s) => s.setOpen);
-  const toggleSidebar = useSidebarStore((s) => s.toggle);
+  const toggleDrawer = useSidebarStore((s) => s.toggle);
+  const collapsed = useSidebarStore((s) => s.collapsed);
+  const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
 
   return (
     <header
@@ -36,32 +35,35 @@ export function TopBar({ email, initial, role }: TopBarProps) {
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
+        {/* Mobile: open drawer */}
         <button
           type="button"
-          onClick={toggleSidebar}
+          onClick={toggleDrawer}
           aria-label="Open menu"
           data-testid="sidebar-toggle"
           className="-ml-1 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900 md:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
-        <ProjectSelector />
+        {/* Desktop: collapse / expand sidebar */}
         <button
           type="button"
-          onClick={() => setPaletteOpen(true)}
-          className="relative w-full md:w-72 md:shrink-0 flex items-center bg-white border border-zinc-200 rounded-md pl-9 pr-3 md:pr-16 py-1.5 text-sm text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:bg-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-300 dark:hover:border-zinc-700 transition-colors text-left truncate"
-          data-testid="top-bar-search"
-          aria-label="Open command palette"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          data-testid="sidebar-collapse-toggle"
+          className="hidden md:flex -ml-1 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
         >
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-          <span className="truncate">Jump to project, settings, account…</span>
-          <span className="hidden md:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500 font-mono border border-zinc-200 bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400 rounded px-1.5 py-0.5">
-            ⌘K
-          </span>
+          {collapsed ? (
+            <ChevronsRight className="h-5 w-5" />
+          ) : (
+            <ChevronsLeft className="h-5 w-5" />
+          )}
         </button>
+        <ProjectSelector />
       </div>
       <div className="flex items-center gap-3 shrink-0">
-        <HelpButton />
         <ThemeToggle />
         <button
           type="button"
