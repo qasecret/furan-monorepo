@@ -45,6 +45,7 @@ export const diffRegions = pgTable(
     viewport: text("viewport"),
     ocrText: text("ocr_text"),
     ocrMatched: boolean("ocr_matched"),
+    resolvedByApplicationId: uuid("resolved_by_application_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
