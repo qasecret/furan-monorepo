@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
+import { emitAudit } from "../lib/emit-audit.js";
 import { hashPassword } from "../lib/password.js";
 
 import {
@@ -109,6 +110,17 @@ export async function registerUsersAdminRoutes(
             isActive: true,
           })
           .returning(safeUserCols);
+        await emitAudit(
+          app.db,
+          {
+            actorId: req.auth?.id ?? null,
+            action: "user.created",
+            targetType: "user",
+            targetId: row?.id ?? null,
+            metadata: { email: parsed.data.email, role: parsed.data.role },
+          },
+          req.log,
+        );
         return reply.code(201).send(row);
       } catch (err) {
         req.log.warn({ err }, "user_create_failed");
@@ -210,17 +222,21 @@ export async function registerUsersAdminRoutes(
         updated.role !== target.role ||
         updated.isActive !== target.isActive
       ) {
-        req.log.info(
+        await emitAudit(
+          app.db,
           {
-            audit: "user.updated",
             actorId: req.auth.id,
+            action: "user.updated",
+            targetType: "user",
             targetId,
-            oldRole: target.role,
-            newRole: updated.role,
-            oldIsActive: target.isActive,
-            newIsActive: updated.isActive,
+            metadata: {
+              oldRole: target.role,
+              newRole: updated.role,
+              oldIsActive: target.isActive,
+              newIsActive: updated.isActive,
+            },
           },
-          "audit_user_updated",
+          req.log,
         );
         // Drop the cached auth snapshot so the demotion/deactivation takes
         // effect on the target's NEXT request, cluster-wide (shared Redis).

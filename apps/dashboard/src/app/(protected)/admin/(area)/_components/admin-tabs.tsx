@@ -1,6 +1,13 @@
 "use client";
 
-import { FolderOpen, Globe, KeyRound, Users, Zap } from "lucide-react";
+import {
+  FolderOpen,
+  Globe,
+  KeyRound,
+  ScrollText,
+  Users,
+  Zap,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -29,6 +36,11 @@ const TABS = [
     label: "Installations",
     href: "/admin/installations",
     icon: Globe,
+  },
+  {
+    label: "Audit Log",
+    href: "/admin/audit-log",
+    icon: ScrollText,
   },
 ] as const;
 
