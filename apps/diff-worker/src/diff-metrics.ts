@@ -76,6 +76,9 @@ export interface DiffMetrics {
    *   - `degraded_no_map` — kept: an element map was missing → degraded to Strict
    */
   layoutResolution: Counter<"outcome">;
+  rulesEvaluationDuration: Histogram<string>;
+  rulesMatched: Counter<"action">;
+  rulesEvaluationErrors: Counter<string>;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -121,6 +124,23 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
       name: "furan_layout_resolution_total",
       help: "Per-cluster outcome of the deterministic Layout match-level suppression pass",
       labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    rulesEvaluationDuration: new Histogram({
+      name: "furan_diff_rules_evaluation_duration_seconds",
+      help: "Time spent evaluating auto rules per run",
+      buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5],
+      registers: [registry],
+    }),
+    rulesMatched: new Counter({
+      name: "furan_diff_rules_matched_total",
+      help: "Auto rules that matched diff regions",
+      labelNames: ["action"],
+      registers: [registry],
+    }),
+    rulesEvaluationErrors: new Counter({
+      name: "furan_diff_rules_evaluation_errors_total",
+      help: "Auto rule evaluation failures (fail-open)",
       registers: [registry],
     }),
   };

@@ -1,11 +1,16 @@
 import {
+  and,
+  autoRuleApplications,
+  autoRules,
   baselines,
   desc,
   diffRegions,
   eq,
+  isNull,
   projects,
   resolveBaseline,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   withProjectScope,
@@ -33,6 +38,17 @@ import {
   type VlmProviderConfig,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
+import {
+  compileRules,
+  createDefaultRegistries,
+  evaluateCompiled,
+  summarize as summarizeDecisions,
+} from "@furan/rules-engine";
+import type {
+  AutoRule,
+  DiffRegion as RulesDiffRegion,
+  EvaluationResult,
+} from "@furan/rules-engine";
 import { objectKey, type Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
@@ -1174,13 +1190,151 @@ async function handleDiffJobInner(
     });
   }
 
+  // ── Auto Rules evaluation ───────────────────────────────────
+  let rulesResult: EvaluationResult | null = null;
+
+  try {
+    const projectRules = await deps.db
+      .select()
+      .from(autoRules)
+      .where(
+        and(
+          eq(autoRules.projectId, data.projectId),
+          eq(autoRules.enabled, true),
+          isNull(autoRules.deletedAt),
+        ),
+      );
+
+    if (projectRules.length > 0) {
+      const ruleT0 = performance.now();
+      const { matchers, conditions } = createDefaultRegistries();
+      const compiled = compileRules(
+        projectRules as AutoRule[],
+        matchers,
+        conditions,
+      );
+
+      const perVpResults = await Promise.all(
+        perViewport.map(async (vp) => {
+          if (vp.regions.length === 0) {
+            return {
+              decisions: [],
+              counts: { auto_approve: 0, flag: 0, unmatched: 0 },
+              diagnostics: {
+                evaluatedRules: 0,
+                matchedRules: 0,
+                skippedBecauseNoElementMap: 0,
+                selectorMisses: 0,
+                durationMs: 0,
+              },
+            };
+          }
+
+          const ruleRegions: RulesDiffRegion[] = vp.regions.map((r, i) => ({
+            id: `${vp.viewport ?? "default"}:${i}`,
+            severity: r.severity,
+            category: r.category,
+            bbox: r.bbox as {
+              x: number;
+              y: number;
+              width: number;
+              height: number;
+            },
+            description: r.description ?? "",
+            source: r.source,
+            diffPercent: vp.diffPercent,
+          }));
+
+          return evaluateCompiled({
+            diffRegions: ruleRegions,
+            elementMap: null,
+            ruleset: compiled,
+          });
+        }),
+      );
+
+      const allDecisions = perVpResults.flatMap((r) => r.decisions);
+      const allCounts = summarizeDecisions(allDecisions);
+
+      rulesResult = {
+        decisions: allDecisions,
+        counts: allCounts,
+        diagnostics: {
+          evaluatedRules: compiled.rules.length,
+          matchedRules: allDecisions.reduce(
+            (n, d) => n + d.matchedRules.length,
+            0,
+          ),
+          skippedBecauseNoElementMap: perVpResults.reduce(
+            (n, r) => n + r.diagnostics.skippedBecauseNoElementMap,
+            0,
+          ),
+          selectorMisses: perVpResults.reduce(
+            (n, r) => n + r.diagnostics.selectorMisses,
+            0,
+          ),
+          durationMs: performance.now() - ruleT0,
+        },
+      };
+
+      deps.metrics?.rulesEvaluationDuration.observe(
+        rulesResult.diagnostics.durationMs / 1000,
+      );
+      if (allCounts.auto_approve > 0)
+        deps.metrics?.rulesMatched
+          .labels({ action: "auto_approve" })
+          .inc(allCounts.auto_approve);
+      if (allCounts.flag > 0)
+        deps.metrics?.rulesMatched
+          .labels({ action: "flag" })
+          .inc(allCounts.flag);
+
+      logger.info(
+        {
+          runId: data.runId,
+          rulesCompiled: compiled.rules.length,
+          regionsEvaluated: allDecisions.length,
+          matched: rulesResult.diagnostics.matchedRules,
+          autoApproved: allCounts.auto_approve,
+          flagged: allCounts.flag,
+          durationMs: rulesResult.diagnostics.durationMs,
+        },
+        "rules evaluated",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, runId: data.runId, projectId: data.projectId },
+      "rules-engine evaluation failed; proceeding without rule decisions",
+    );
+    deps.metrics?.rulesEvaluationErrors.inc();
+    rulesResult = null;
+  }
+
   // Aggregate per-viewport results to the single test_runs row.
   // - status: "unresolved" if any viewport failed (per spec §3.2 the
   //   diff-worker NEVER writes "failed" — that's reviewer-rejected only).
   // - diffPercent: MAX across viewports (surfaces the worst viewport).
   // - pixelMisMatchCount: SUM across viewports.
   // - diffName: overlay key of the viewport with max diffPercent (or null).
-  const aggregateFailed = perViewport.some((v) => !v.passed);
+  const aggregateFailed = perViewport.some((vp) => {
+    if (vp.passed) return false;
+
+    if (rulesResult) {
+      const vpPrefix = `${vp.viewport ?? "default"}:`;
+      const vpDecisions = rulesResult.decisions.filter((d) =>
+        d.regionId.startsWith(vpPrefix),
+      );
+      const hasUnresolvedRegion = vp.regions.some((_r, i) => {
+        const regionId = `${vp.viewport ?? "default"}:${i}`;
+        const decision = vpDecisions.find((d) => d.regionId === regionId);
+        return !decision || decision.finalAction !== "auto_approve";
+      });
+      return hasUnresolvedRegion;
+    }
+
+    return true;
+  });
   const aggregateDiffPercent = perViewport.reduce(
     (m, v) => (v.diffPercent > m ? v.diffPercent : m),
     0,
@@ -1238,23 +1392,114 @@ async function handleDiffJobInner(
         baselineSource: baseline.source,
         vlmDescription: aggregateVlmDescription,
         primarySignature,
+        resolutionSource:
+          rulesResult &&
+          rulesResult.decisions.some((d) => d.matchedRules.length > 0)
+            ? "rule"
+            : null,
       })
       .where(eq(testRuns.id, data.runId));
 
+    let insertedRegionIds: string[] = [];
     if (aggregateRegions.length > 0) {
-      await tx.insert(diffRegions).values(
-        aggregateRegions.map((r) => ({
-          runId: data.runId,
-          projectId: data.projectId,
-          screenshotId: r.screenshotId,
-          severity: r.severity,
-          category: r.category,
-          bbox: r.bbox,
-          description: r.description,
-          source: r.source,
-          viewport: r.viewport,
-        })),
-      );
+      const inserted = await tx
+        .insert(diffRegions)
+        .values(
+          aggregateRegions.map((r) => ({
+            runId: data.runId,
+            projectId: data.projectId,
+            screenshotId: r.screenshotId,
+            severity: r.severity,
+            category: r.category,
+            bbox: r.bbox,
+            description: r.description,
+            source: r.source,
+            viewport: r.viewport,
+          })),
+        )
+        .returning({ id: diffRegions.id });
+      insertedRegionIds = inserted.map((r) => r.id);
+    }
+
+    if (
+      rulesResult &&
+      rulesResult.decisions.length > 0 &&
+      insertedRegionIds.length > 0
+    ) {
+      const regionIdMap = new Map<string, string>();
+      let idx = 0;
+      for (const vp of perViewport) {
+        for (let i = 0; i < vp.regions.length; i++) {
+          const engineId = `${vp.viewport ?? "default"}:${i}`;
+          if (idx < insertedRegionIds.length) {
+            regionIdMap.set(engineId, insertedRegionIds[idx]!);
+            idx++;
+          }
+        }
+      }
+
+      const applicationRows: Array<{
+        ruleId: string;
+        ruleVersion: number;
+        testRunId: string;
+        diffRegionId: string;
+        regionDiffPct: number;
+        severity: number;
+        won: boolean;
+      }> = [];
+
+      for (const decision of rulesResult.decisions) {
+        const dbRegionId = regionIdMap.get(decision.regionId);
+        if (!dbRegionId) continue;
+        for (const rm of decision.matchedRules) {
+          applicationRows.push({
+            ruleId: rm.ruleId,
+            ruleVersion: rm.ruleVersion,
+            testRunId: data.runId,
+            diffRegionId: dbRegionId,
+            regionDiffPct: rm.regionDiffPct,
+            severity: rm.severity,
+            won: rm.won,
+          });
+        }
+      }
+
+      if (applicationRows.length > 0) {
+        const insertedApps = await tx
+          .insert(autoRuleApplications)
+          .values(applicationRows)
+          .returning({
+            id: autoRuleApplications.id,
+            diffRegionId: autoRuleApplications.diffRegionId,
+            won: autoRuleApplications.won,
+          });
+
+        for (const app of insertedApps) {
+          if (app.won) {
+            await tx
+              .update(diffRegions)
+              .set({ resolvedByApplicationId: app.id })
+              .where(eq(diffRegions.id, app.diffRegionId));
+          }
+        }
+
+        const countsByRule = new Map<string, number>();
+        for (const row of applicationRows) {
+          countsByRule.set(row.ruleId, (countsByRule.get(row.ruleId) ?? 0) + 1);
+        }
+        if (countsByRule.size > 0) {
+          await tx.execute(sql`
+            UPDATE auto_rules SET applied_count = applied_count + v.cnt
+            FROM (VALUES ${sql.join(
+              [...countsByRule].map(
+                ([id, cnt]) => sql`(${id}::uuid, ${cnt}::int)`,
+              ),
+              sql`, `,
+            )}) AS v(id, cnt)
+            WHERE auto_rules.id = v.id
+          `);
+        }
+      }
     }
 
     // ADR-042: persist each diffed checkpoint's signature for build-scoped
@@ -1333,6 +1578,12 @@ async function handleDiffJobInner(
       diffPercent: aggregateDiffPercent,
       branchName: run.branchName,
       numChanges: aggregateRegions.length,
+      resolutionSource: rulesResult?.decisions.some(
+        (d) => d.matchedRules.length > 0,
+      )
+        ? "rule"
+        : null,
+      rulesSummary: rulesResult?.counts ?? null,
     }),
   );
   await publishProjectRunUpdate(
