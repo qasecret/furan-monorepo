@@ -1,9 +1,14 @@
-import { and, desc, eq, ilike, users } from "@furan/db";
+import { and, count, desc, eq, ilike, users } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
 import { hashPassword } from "../lib/password.js";
+
+import {
+  checkUserUpdateGuards,
+  updateMayRemoveAdmin,
+} from "./users-admin-guards.js";
 
 export const createBody = z.object({
   email: z.string().email(),
@@ -128,22 +133,72 @@ export async function registerUsersAdminRoutes(
         return reply.code(400).send({ error: "invalid_body" });
       }
 
-      if (
-        paramsParsed.data.id === req.auth.id &&
-        bodyParsed.data.isActive === false
-      ) {
-        return reply.code(400).send({ error: "cannot_disable_self" });
+      const targetId = paramsParsed.data.id;
+      const update = bodyParsed.data;
+
+      // Current target state — needed for the authorization invariants below
+      // (evaluated against the DB, never the request) and for the audit record.
+      const [target] = await app.db
+        .select({
+          id: users.id,
+          role: users.role,
+          isActive: users.isActive,
+        })
+        .from(users)
+        .where(eq(users.id, targetId))
+        .limit(1);
+      if (!target) {
+        return reply.code(404).send({ error: "not_found" });
+      }
+
+      // Only pay for the admin-count query when the change could remove an
+      // active admin. `count()` includes the target (an active admin in that
+      // case), so subtract one to get the number of OTHER active admins.
+      let otherActiveAdminCount = 0;
+      if (updateMayRemoveAdmin(target, update)) {
+        const [row] = await app.db
+          .select({ n: count() })
+          .from(users)
+          .where(and(eq(users.role, "admin"), eq(users.isActive, true)));
+        otherActiveAdminCount = Math.max(0, Number(row?.n ?? 0) - 1);
+      }
+
+      const guard = checkUserUpdateGuards({
+        actorId: req.auth.id,
+        target,
+        update,
+        otherActiveAdminCount,
+      });
+      if (!guard.ok) {
+        return reply.code(guard.status).send({ error: guard.error });
       }
 
       const result = await app.db
         .update(users)
-        .set({ ...bodyParsed.data, updatedAt: new Date() })
-        .where(eq(users.id, paramsParsed.data.id))
+        .set({ ...update, updatedAt: new Date() })
+        .where(eq(users.id, targetId))
         .returning(safeUserCols);
 
       if (result.length === 0) {
         return reply.code(404).send({ error: "not_found" });
       }
+
+      // Audit privileged changes (role / activation) for accountability.
+      if (update.role !== undefined || update.isActive !== undefined) {
+        req.log.info(
+          {
+            audit: "user.updated",
+            actorId: req.auth.id,
+            targetId,
+            oldRole: target.role,
+            newRole: update.role ?? target.role,
+            oldIsActive: target.isActive,
+            newIsActive: update.isActive ?? target.isActive,
+          },
+          "audit_user_updated",
+        );
+      }
+
       return result[0];
     },
   );
