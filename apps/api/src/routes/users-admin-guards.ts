@@ -23,6 +23,24 @@ export type UserUpdateGuard =
 const ADMIN: UserRole = "admin";
 
 /**
+ * Whether `update` would strip the target's ACTIVE-ADMIN status — i.e. the
+ * target is currently an active admin and the change demotes them or
+ * deactivates them. Single source of truth for both the guard's last-admin
+ * branch and the route's "do we need the admin-count query / atomic guard"
+ * decision, so the two can't drift.
+ */
+function removesActiveAdminAccess(
+  target: { role: UserRole; isActive: boolean },
+  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
+): boolean {
+  const targetIsActiveAdmin = target.role === ADMIN && target.isActive;
+  const removesAdminAccess =
+    (update.role !== undefined && update.role !== ADMIN) ||
+    update.isActive === false;
+  return targetIsActiveAdmin && removesAdminAccess;
+}
+
+/**
  * Authorization invariants for `PATCH /users/:id`. Pure + deterministic so the
  * security logic is unit-testable without a DB; the route supplies the
  * DB-derived `otherActiveAdminCount`.
@@ -50,18 +68,11 @@ export function checkUserUpdateGuards(
     return { ok: false, status: 400, error: "cannot_change_own_role" };
   }
 
-  // Last-active-admin invariant: if the target is currently an active admin and
-  // this change would strip that (role → non-admin, or deactivate), at least
-  // one OTHER active admin must remain.
-  const targetIsActiveAdmin = target.role === ADMIN && target.isActive;
-  const removesAdminAccess =
-    (update.role !== undefined && update.role !== ADMIN) ||
-    update.isActive === false;
-  if (
-    targetIsActiveAdmin &&
-    removesAdminAccess &&
-    otherActiveAdminCount === 0
-  ) {
+  // Last-active-admin invariant (fast path): if this change would strip the
+  // target's active-admin status, at least one OTHER active admin must remain.
+  // The route ALSO enforces this atomically in the UPDATE to close the
+  // read-then-write race; this branch is the friendly early rejection.
+  if (removesActiveAdminAccess(target, update) && otherActiveAdminCount === 0) {
     return { ok: false, status: 409, error: "last_admin" };
   }
 
@@ -76,9 +87,5 @@ export function updateMayRemoveAdmin(
   target: { role: UserRole; isActive: boolean },
   update: { role?: UserRole | undefined; isActive?: boolean | undefined },
 ): boolean {
-  const targetIsActiveAdmin = target.role === ADMIN && target.isActive;
-  const removesAdminAccess =
-    (update.role !== undefined && update.role !== ADMIN) ||
-    update.isActive === false;
-  return targetIsActiveAdmin && removesAdminAccess;
+  return removesActiveAdminAccess(target, update);
 }

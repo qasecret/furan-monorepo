@@ -1,4 +1,4 @@
-import { and, count, desc, eq, ilike, users } from "@furan/db";
+import { and, count, desc, eq, ilike, sql, users } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -173,33 +173,59 @@ export async function registerUsersAdminRoutes(
         return reply.code(guard.status).send({ error: guard.error });
       }
 
+      // Apply the change. When it would remove an active admin, enforce the
+      // last-admin invariant ATOMICALLY in the UPDATE's WHERE clause — the
+      // count-based guard above is only a fast path. The row updates only if
+      // another active admin still exists, closing the read-then-write race
+      // where two concurrent demotions both pass the count check and leave
+      // zero admins.
+      const removesAdmin = updateMayRemoveAdmin(target, update);
       const result = await app.db
         .update(users)
         .set({ ...update, updatedAt: new Date() })
-        .where(eq(users.id, targetId))
+        .where(
+          removesAdmin
+            ? and(
+                eq(users.id, targetId),
+                sql`EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role = 'admin' AND other.is_active = true AND other.id <> ${targetId})`,
+              )
+            : eq(users.id, targetId),
+        )
         .returning(safeUserCols);
 
       if (result.length === 0) {
-        return reply.code(404).send({ error: "not_found" });
+        // Plain path: the row vanished (concurrent delete) → 404.
+        // Removes-admin path: the EXISTS guard failed — a concurrent change
+        // removed the last other admin between our check and write — so this
+        // would have left zero admins → 409.
+        return reply
+          .code(removesAdmin ? 409 : 404)
+          .send({ error: removesAdmin ? "last_admin" : "not_found" });
       }
 
-      // Audit privileged changes (role / activation) for accountability.
-      if (update.role !== undefined || update.isActive !== undefined) {
+      const updated = result[0]!;
+
+      // Audit privileged changes for accountability — using the PERSISTED row
+      // and only when role/activation actually changed (no phantom no-op rows).
+      if (
+        updated.role !== target.role ||
+        updated.isActive !== target.isActive
+      ) {
         req.log.info(
           {
             audit: "user.updated",
             actorId: req.auth.id,
             targetId,
             oldRole: target.role,
-            newRole: update.role ?? target.role,
+            newRole: updated.role,
             oldIsActive: target.isActive,
-            newIsActive: update.isActive ?? target.isActive,
+            newIsActive: updated.isActive,
           },
           "audit_user_updated",
         );
       }
 
-      return result[0];
+      return updated;
     },
   );
 }

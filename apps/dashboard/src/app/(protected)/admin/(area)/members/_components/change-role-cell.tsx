@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { readApiErrorCode, USER_MUTATION_ERROR } from "./user-mutation-errors";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,14 +39,6 @@ const ROLE_LABEL: Record<Role, string> = {
   guest: "Guest",
 };
 
-// Server error code → human message. Mirrors the guards in
-// apps/api/src/routes/users-admin-guards.ts.
-const ERROR_MESSAGE: Record<string, string> = {
-  cannot_change_own_role: "You can't change your own role — ask another admin.",
-  last_admin: "At least one active admin must remain.",
-  cannot_disable_self: "You can't deactivate your own account.",
-};
-
 export function ChangeRoleCell({
   userId,
   value,
@@ -73,13 +67,8 @@ export function ChangeRoleCell({
     }
     setPending(false);
     if (!res.ok) {
-      let code = "";
-      try {
-        code = ((await res.json()) as { error?: string }).error ?? "";
-      } catch {
-        // non-JSON body — fall through to the generic message
-      }
-      toast.error(ERROR_MESSAGE[code] ?? "Failed to change role");
+      const code = await readApiErrorCode(res);
+      toast.error(USER_MUTATION_ERROR[code] ?? "Failed to change role");
       return;
     }
     setCurrent(next);
@@ -102,7 +91,7 @@ export function ChangeRoleCell({
       <Select
         value={current}
         onValueChange={(v) => handleSelect(v as Role)}
-        disabled={disabled || pending}
+        disabled={disabled || pending || confirmRole !== null}
       >
         <SelectTrigger
           className="w-28"
