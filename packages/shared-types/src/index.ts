@@ -16,3 +16,4 @@ export * from "./build.js";
 export * from "./region-patterns.js";
 export * from "./inbox.js";
 export * from "./dashboard-telemetry.js";
+export * from "./auto-rules.js";

@@ -28,3 +28,12 @@ export const runStatusEnum = pgEnum("run_status", [
 ]);
 
 export type RunStatus = (typeof runStatusEnum.enumValues)[number];
+
+export const autoRuleActionEnum = pgEnum("auto_rule_action", [
+  "auto_approve",
+  "flag",
+]);
+export type AutoRuleAction = (typeof autoRuleActionEnum.enumValues)[number];
+
+export const resolutionSourceEnum = pgEnum("resolution_source", ["rule"]);
+export type ResolutionSource = (typeof resolutionSourceEnum.enumValues)[number];

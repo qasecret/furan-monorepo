@@ -18,6 +18,7 @@
     "@furan/config": "workspace:*",
     "@furan/db": "workspace:^",
     "@furan/diff-engine": "workspace:^",
+    "@furan/rules-engine": "workspace:*",
     "@furan/queue": "workspace:*",
     "@furan/storage": "workspace:^",
     "@furan/telemetry": "workspace:*",

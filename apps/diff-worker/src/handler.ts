@@ -1,11 +1,16 @@
 import {
+  and,
+  autoRuleApplications,
+  autoRules,
   baselines,
   desc,
   diffRegions,
   eq,
+  isNull,
   projects,
   resolveBaseline,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   withProjectScope,
@@ -33,6 +38,18 @@ import {
   type VlmProviderConfig,
 } from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
+import {
+  compileRules,
+  createDefaultRegistries,
+  evaluateCompiled,
+  summarize as summarizeDecisions,
+} from "@furan/rules-engine";
+import type {
+  AutoRule,
+  DiffRegion as RulesDiffRegion,
+  ElementMap as RulesElementMap,
+  EvaluationResult,
+} from "@furan/rules-engine";
 import { objectKey, type Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
@@ -52,6 +69,8 @@ import {
 } from "./element-map-resolver.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
+import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
+import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 const engineConfigSchema = z.object({
@@ -180,6 +199,10 @@ interface PerViewportResult {
   ranTiers: Array<"l1">;
   firstBaseline: boolean;
   vlmDescription?: string | undefined;
+  /** Auto-rule selectors resolved against this checkpoint's DOM + element-map
+   * (engine-shaped, keyed by the rule's selector string). Empty when there are
+   * no rules / no DOM / no element-map. */
+  ruleElementMap?: RulesElementMap;
   /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
    * its computed diff signature. Set only on the paired-baseline (diffed) path
    * — pass OR unresolved; the no-baseline/first-baseline path leaves them
@@ -681,6 +704,41 @@ async function handleDiffJobInner(
   // all resolve against the same map (the common case).
   const elementMapCache = new Map<string, ElementMap | null>();
 
+  // Auto Rules: fetch enabled rules once up front. Their distinct CSS selectors
+  // drive per-checkpoint element-map resolution INSIDE the loop (the candidate
+  // DOM is only in scope there); the rows themselves are compiled + evaluated
+  // after the loop. Fail-open: a fetch error disables rules for this run only.
+  let projectRules: (typeof autoRules.$inferSelect)[] = [];
+  let ruleSelectors: string[] = [];
+  try {
+    projectRules = await deps.db
+      .select()
+      .from(autoRules)
+      .where(
+        and(
+          eq(autoRules.projectId, data.projectId),
+          eq(autoRules.enabled, true),
+          isNull(autoRules.deletedAt),
+        ),
+      );
+    const selectorSet = new Set<string>();
+    for (const r of projectRules) {
+      const m = r.match as { type?: unknown; value?: unknown } | null;
+      if (m && m.type === "selector" && typeof m.value === "string") {
+        selectorSet.add(m.value);
+      }
+    }
+    ruleSelectors = [...selectorSet];
+  } catch (err) {
+    logger.error(
+      { err, runId: data.runId, projectId: data.projectId },
+      "auto-rule fetch failed; proceeding without rule decisions",
+    );
+    deps.metrics?.rulesEvaluationErrors.inc();
+    projectRules = [];
+    ruleSelectors = [];
+  }
+
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
     // Try exact viewport match first; for legacy v0.4 candidate (NULL),
@@ -987,6 +1045,27 @@ async function handleDiffJobInner(
       },
     });
 
+    // Resolve this checkpoint's auto-rule selectors against its DOM +
+    // element-map sidecar, producing an engine-shaped map keyed by the rule
+    // selector string. Done here (not in the engine) because matching needs a
+    // real DOM — esp. attribute selectors the cssPath keys can't express.
+    const ruleElementMap: RulesElementMap =
+      ruleSelectors.length > 0
+        ? resolveRuleSelectorElementMap(
+            ruleSelectors,
+            candidateDom,
+            elementMap,
+            {
+              rulesSelectorResolution: {
+                labels: (l) => ({
+                  inc: () =>
+                    deps.metrics?.rulesSelectorResolution.labels(l).inc(),
+                }),
+              },
+            },
+          )
+        : [];
+
     let strictFailed = false;
     // Strict tolerance post-filter. Decode the diff image once
     // per viewport (sharp is cheap on PNG → raw RGBA). Any region
@@ -1171,7 +1250,124 @@ async function handleDiffJobInner(
       vlmDescription,
       screenshotId: cs.id,
       diffSignature: computeCheckpointSignature(result.regions, bounds),
+      ruleElementMap,
     });
+  }
+
+  // ── Auto Rules evaluation ───────────────────────────────────
+  let rulesResult: EvaluationResult | null = null;
+
+  try {
+    if (projectRules.length > 0) {
+      const ruleT0 = performance.now();
+      const { matchers, conditions } = createDefaultRegistries();
+      const compiled = compileRules(
+        projectRules as AutoRule[],
+        matchers,
+        conditions,
+      );
+
+      // evaluateCompiled is synchronous CPU work (no I/O), so a plain map is
+      // correct — Promise.all here would only add microtask overhead.
+      const perVpResults = perViewport.map((vp, vpIdx) => {
+        if (vp.regions.length === 0) {
+          return {
+            decisions: [],
+            counts: { auto_approve: 0, flag: 0, unmatched: 0 },
+            diagnostics: {
+              evaluatedRules: 0,
+              matchedRules: 0,
+              skippedBecauseNoElementMap: 0,
+              selectorMisses: 0,
+              durationMs: 0,
+            },
+          };
+        }
+
+        const ruleRegions: RulesDiffRegion[] = vp.regions.map((r, i) => ({
+          id: regionEngineId(vpIdx, i),
+          severity: r.severity,
+          category: r.category,
+          bbox: r.bbox as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          },
+          description: r.description ?? "",
+          source: r.source,
+          // NOTE: this is the viewport-level diff %, not a per-region value
+          // (the engine does not yet emit per-region diff). The maxDiff
+          // condition therefore compares against the whole-viewport diff.
+          // Revisit when per-region diff % is available.
+          diffPercent: vp.diffPercent,
+        }));
+
+        return evaluateCompiled({
+          diffRegions: ruleRegions,
+          // Selectors resolved against this checkpoint's DOM + element-map
+          // during the loop; null when the SDK shipped no DOM/map sidecar.
+          elementMap: vp.ruleElementMap ?? null,
+          ruleset: compiled,
+        });
+      });
+
+      const allDecisions = perVpResults.flatMap((r) => r.decisions);
+      const allCounts = summarizeDecisions(allDecisions);
+
+      rulesResult = {
+        decisions: allDecisions,
+        counts: allCounts,
+        diagnostics: {
+          evaluatedRules: compiled.rules.length,
+          matchedRules: allDecisions.reduce(
+            (n, d) => n + d.matchedRules.length,
+            0,
+          ),
+          skippedBecauseNoElementMap: perVpResults.reduce(
+            (n, r) => n + r.diagnostics.skippedBecauseNoElementMap,
+            0,
+          ),
+          selectorMisses: perVpResults.reduce(
+            (n, r) => n + r.diagnostics.selectorMisses,
+            0,
+          ),
+          durationMs: performance.now() - ruleT0,
+        },
+      };
+
+      deps.metrics?.rulesEvaluationDuration.observe(
+        rulesResult.diagnostics.durationMs / 1000,
+      );
+      if (allCounts.auto_approve > 0)
+        deps.metrics?.rulesMatched
+          .labels({ action: "auto_approve" })
+          .inc(allCounts.auto_approve);
+      if (allCounts.flag > 0)
+        deps.metrics?.rulesMatched
+          .labels({ action: "flag" })
+          .inc(allCounts.flag);
+
+      logger.info(
+        {
+          runId: data.runId,
+          rulesCompiled: compiled.rules.length,
+          regionsEvaluated: allDecisions.length,
+          matched: rulesResult.diagnostics.matchedRules,
+          autoApproved: allCounts.auto_approve,
+          flagged: allCounts.flag,
+          durationMs: rulesResult.diagnostics.durationMs,
+        },
+        "rules evaluated",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, runId: data.runId, projectId: data.projectId },
+      "rules-engine evaluation failed; proceeding without rule decisions",
+    );
+    deps.metrics?.rulesEvaluationErrors.inc();
+    rulesResult = null;
   }
 
   // Aggregate per-viewport results to the single test_runs row.
@@ -1180,7 +1376,17 @@ async function handleDiffJobInner(
   // - diffPercent: MAX across viewports (surfaces the worst viewport).
   // - pixelMisMatchCount: SUM across viewports.
   // - diffName: overlay key of the viewport with max diffPercent (or null).
-  const aggregateFailed = perViewport.some((v) => !v.passed);
+  // Derive run status + resolution attribution from per-viewport pixel results
+  // and the rule decisions (see rules-aggregation.ts for the exact rules and
+  // its unit tests). Extracted so this branching is testable without a DB.
+  const { aggregateFailed, resolutionSource } = aggregateRuleStatus(
+    perViewport.map((vp) => ({
+      passed: vp.passed,
+      regionCount: vp.regions.length,
+    })),
+    rulesResult,
+  );
+
   const aggregateDiffPercent = perViewport.reduce(
     (m, v) => (v.diffPercent > m ? v.diffPercent : m),
     0,
@@ -1227,6 +1433,11 @@ async function handleDiffJobInner(
     })),
   );
 
+  // Captured from the core transaction so the (fail-open) auto-rule
+  // application persistence can run in its OWN transaction afterwards —
+  // an audit-write failure must never roll back the committed run result.
+  let insertedRegionIds: string[] = [];
+
   await withProjectScope(deps.db, data.projectId, async (tx) => {
     await tx
       .update(testRuns)
@@ -1238,23 +1449,28 @@ async function handleDiffJobInner(
         baselineSource: baseline.source,
         vlmDescription: aggregateVlmDescription,
         primarySignature,
+        resolutionSource,
       })
       .where(eq(testRuns.id, data.runId));
 
     if (aggregateRegions.length > 0) {
-      await tx.insert(diffRegions).values(
-        aggregateRegions.map((r) => ({
-          runId: data.runId,
-          projectId: data.projectId,
-          screenshotId: r.screenshotId,
-          severity: r.severity,
-          category: r.category,
-          bbox: r.bbox,
-          description: r.description,
-          source: r.source,
-          viewport: r.viewport,
-        })),
-      );
+      const inserted = await tx
+        .insert(diffRegions)
+        .values(
+          aggregateRegions.map((r) => ({
+            runId: data.runId,
+            projectId: data.projectId,
+            screenshotId: r.screenshotId,
+            severity: r.severity,
+            category: r.category,
+            bbox: r.bbox,
+            description: r.description,
+            source: r.source,
+            viewport: r.viewport,
+          })),
+        )
+        .returning({ id: diffRegions.id });
+      insertedRegionIds = inserted.map((r) => r.id);
     }
 
     // ADR-042: persist each diffed checkpoint's signature for build-scoped
@@ -1299,6 +1515,107 @@ async function handleDiffJobInner(
     }
   });
 
+  // ── Auto Rules application persistence (fail-open) ───────────
+  // Runs in its OWN transaction AFTER the core run result is committed, wrapped
+  // in try/catch: a failure here loses only the rule audit trail, never the
+  // run's status or diff regions. (Rule evaluation already fails open above.)
+  if (
+    rulesResult &&
+    rulesResult.decisions.length > 0 &&
+    insertedRegionIds.length > 0
+  ) {
+    try {
+      // engineIds enumerate regions in the SAME order as aggregateRegions (and
+      // therefore insertedRegionIds), so zipping the two is a stable mapping
+      // with no positional drift between separate traversals.
+      const engineIds = perViewport.flatMap((vp, vpIdx) =>
+        vp.regions.map((_r, i) => regionEngineId(vpIdx, i)),
+      );
+      const regionIdMap = new Map<string, string>();
+      for (
+        let idx = 0;
+        idx < engineIds.length && idx < insertedRegionIds.length;
+        idx++
+      ) {
+        regionIdMap.set(engineIds[idx]!, insertedRegionIds[idx]!);
+      }
+
+      const applicationRows = rulesResult.decisions.flatMap((decision) => {
+        const dbRegionId = regionIdMap.get(decision.regionId);
+        if (!dbRegionId) return [];
+        return decision.matchedRules.map((rm) => ({
+          ruleId: rm.ruleId,
+          ruleVersion: rm.ruleVersion,
+          testRunId: data.runId,
+          diffRegionId: dbRegionId,
+          regionDiffPct: rm.regionDiffPct,
+          // Policy rank of the rule's ACTION (1=auto_approve, 2=flag), not the
+          // region's visual severity — see auto_rule_applications schema.
+          actionPriority: rm.severity,
+          won: rm.won,
+        }));
+      });
+
+      if (applicationRows.length > 0) {
+        await withProjectScope(deps.db, data.projectId, async (tx) => {
+          const insertedApps = await tx
+            .insert(autoRuleApplications)
+            .values(applicationRows)
+            .returning({
+              id: autoRuleApplications.id,
+              diffRegionId: autoRuleApplications.diffRegionId,
+              won: autoRuleApplications.won,
+            });
+
+          // Link each region to its WINNING application in one statement
+          // (UPDATE … FROM VALUES) rather than one round-trip per winner.
+          const wonApps = insertedApps.filter((a) => a.won);
+          if (wonApps.length > 0) {
+            await tx.execute(sql`
+              UPDATE diff_regions SET resolved_by_application_id = v.app_id::uuid
+              FROM (VALUES ${sql.join(
+                wonApps.map(
+                  (a) => sql`(${a.diffRegionId}::uuid, ${a.id}::uuid)`,
+                ),
+                sql`, `,
+              )}) AS v(region_id, app_id)
+              WHERE diff_regions.id = v.region_id
+            `);
+          }
+
+          // Credit applied_count ONLY to rules that actually won a region; a
+          // rule that matched but lost the severity tiebreak resolved nothing.
+          const countsByRule = new Map<string, number>();
+          for (const row of applicationRows) {
+            if (!row.won) continue;
+            countsByRule.set(
+              row.ruleId,
+              (countsByRule.get(row.ruleId) ?? 0) + 1,
+            );
+          }
+          if (countsByRule.size > 0) {
+            await tx.execute(sql`
+              UPDATE auto_rules SET applied_count = applied_count + v.cnt
+              FROM (VALUES ${sql.join(
+                [...countsByRule].map(
+                  ([id, cnt]) => sql`(${id}::uuid, ${cnt}::int)`,
+                ),
+                sql`, `,
+              )}) AS v(id, cnt)
+              WHERE auto_rules.id = v.id
+            `);
+          }
+        });
+      }
+    } catch (err) {
+      logger.error(
+        { err, runId: data.runId, projectId: data.projectId },
+        "auto-rule application persistence failed; run result preserved",
+      );
+      deps.metrics?.rulesEvaluationErrors.inc();
+    }
+  }
+
   const durationMs = Date.now() - t0;
   const ranTiersUnion = Array.from(
     new Set(perViewport.flatMap((v) => v.ranTiers)),
@@ -1333,6 +1650,8 @@ async function handleDiffJobInner(
       diffPercent: aggregateDiffPercent,
       branchName: run.branchName,
       numChanges: aggregateRegions.length,
+      resolutionSource,
+      rulesSummary: rulesResult?.counts ?? null,
     }),
   );
   await publishProjectRunUpdate(

@@ -76,6 +76,18 @@ export interface DiffMetrics {
    *   - `degraded_no_map` — kept: an element map was missing → degraded to Strict
    */
   layoutResolution: Counter<"outcome">;
+  rulesEvaluationDuration: Histogram<string>;
+  rulesMatched: Counter<"action">;
+  rulesEvaluationErrors: Counter<string>;
+  /**
+   * Outcome of resolving an auto-rule CSS selector against the candidate's DOM
+   * + element-map sidecar: `resolved` (leaf hit), `resolved_ancestor` (mapped
+   * ancestor hit), `selector_miss` (matched the DOM but no mapped element),
+   * `invalid_selector` (unparseable user CSS), `dom_unparseable`, `no_dom`
+   * (capture shipped no DOM/element-map — e.g. an Appium native capture, so
+   * selector rules can't apply).
+   */
+  rulesSelectorResolution: Counter<"outcome">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -120,6 +132,29 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
     layoutResolution: new Counter({
       name: "furan_layout_resolution_total",
       help: "Per-cluster outcome of the deterministic Layout match-level suppression pass",
+      labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    rulesEvaluationDuration: new Histogram({
+      name: "furan_diff_rules_evaluation_duration_seconds",
+      help: "Time spent evaluating auto rules per run",
+      buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5],
+      registers: [registry],
+    }),
+    rulesMatched: new Counter({
+      name: "furan_diff_rules_matched_total",
+      help: "Auto rules that matched diff regions",
+      labelNames: ["action"],
+      registers: [registry],
+    }),
+    rulesEvaluationErrors: new Counter({
+      name: "furan_diff_rules_evaluation_errors_total",
+      help: "Auto rule evaluation failures (fail-open)",
+      registers: [registry],
+    }),
+    rulesSelectorResolution: new Counter({
+      name: "furan_diff_rules_selector_resolution_total",
+      help: "Outcome of resolving an auto-rule CSS selector to element-map bboxes",
       labelNames: ["outcome"],
       registers: [registry],
     }),

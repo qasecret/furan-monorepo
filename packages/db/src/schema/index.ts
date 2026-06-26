@@ -14,3 +14,5 @@ export * from "./diff_regions.js";
 export * from "./installations.js";
 export * from "./run_reviewer_decisions.js";
 export * from "./dashboard_telemetry_events.js";
+export * from "./auto_rules.js";
+export * from "./auto_rule_applications.js";

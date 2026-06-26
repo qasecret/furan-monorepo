@@ -10,7 +10,12 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { builds } from "./builds.js";
-import { baselineSourceEnum, environmentEnum, runStatusEnum } from "./enums.js";
+import {
+  baselineSourceEnum,
+  environmentEnum,
+  resolutionSourceEnum,
+  runStatusEnum,
+} from "./enums.js";
 import { projects } from "./projects.js";
 
 export const testRuns = pgTable(
@@ -58,6 +63,7 @@ export const testRuns = pgTable(
     tempIgnoreAreas: text("temp_ignore_areas"),
     environment: environmentEnum("environment").notNull().default("default"),
     baselineSource: baselineSourceEnum("baseline_source"),
+    resolutionSource: resolutionSourceEnum("resolution_source"),
     thumbnailUrl: text("thumbnail_url"),
     checkpointCount: integer("checkpoint_count").notNull().default(0), // denormalized rollup
     completedAt: timestamp("completed_at", { withTimezone: true }), // set by POST /runs/:id/complete

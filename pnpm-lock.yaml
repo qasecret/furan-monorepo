@@ -329,6 +329,9 @@ importers:
       '@furan/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@furan/rules-engine':
+        specifier: workspace:*
+        version: link:../../packages/rules-engine
       '@furan/storage':
         specifier: workspace:^
         version: link:../../packages/storage
@@ -602,6 +605,27 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.10.1
+    devDependencies:
+      '@furan/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@furan/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)(lightningcss@1.32.0)
+
+  packages/rules-engine:
     devDependencies:
       '@furan/eslint-config':
         specifier: workspace:*
