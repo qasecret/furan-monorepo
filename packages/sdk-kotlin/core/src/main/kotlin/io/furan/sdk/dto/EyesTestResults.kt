@@ -3,6 +3,15 @@ package io.furan.sdk.dto
 /**
  * Applitools `TestResults`-shaped read-only VIEW over the canonical
  * [RunResult]. No parallel model — accessors derive from the wrapped run.
+ *
+ * Pass-gate guidance:
+ * - [isPassed] is the strict pass gate — false for NEW, UNRESOLVED, FAILED,
+ *   ABORTED, EMPTY, and RUNNING. Use this for CI pass/fail decisions.
+ * - [isDifferent] specifically means visual diffs were detected
+ *   (UNRESOLVED or FAILED) and intentionally excludes ABORTED; use
+ *   [isAborted] to check for aborted runs separately.
+ * - RUNNING is a non-terminal status and is not expected here — [close]
+ *   blocks until the run reaches a terminal status before returning.
  */
 class EyesTestResults(val run: RunResult) {
     val runId: String get() = run.runId

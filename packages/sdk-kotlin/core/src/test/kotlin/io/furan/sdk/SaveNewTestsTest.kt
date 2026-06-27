@@ -47,8 +47,8 @@ class SaveNewTestsTest {
     }
 
     /**
-     * Configurable stub that overrides [completeRun], [approveRun], and [getRun]
-     * without any network. Tracks call counts for assertions.
+     * Configurable stub that overrides [completeRun], [approveRun], [getRun],
+     * and `abortRun` without any network. Tracks call counts for assertions.
      */
     private class SaveNewTestsStubClient(
         config: FuranConfig,
@@ -71,6 +71,7 @@ class SaveNewTestsTest {
             return getRunResult
                 ?: error("getRun called unexpectedly — stub has no getRunResult configured")
         }
+
     }
 
     /**
@@ -208,5 +209,63 @@ class SaveNewTestsTest {
         // approve + getRun both happened before the verdict was applied.
         assertEquals(1, stub.approveCalls)
         assertEquals(1, stub.getRunCalls)
+    }
+
+    // -------------------------------------------------------------------------
+    // Behavior 6 (Fix #7): runId must NOT be nulled before all server interactions
+    // complete. When approveRun throws, runId must still be non-null so a
+    // subsequent abort() call can reach the server.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `Fix7 runId stays non-null when approveRun throws (save-new-tests path)`() {
+        val cfg = testConfig(saveNewTests = true)
+        val completeResult = RunResult(runId = "r6", status = RunStatus.NEW, checkpointCount = 1)
+        val stub = makeCaptureWith(
+            cfg,
+            completeResult,
+            approveAction = { throw RuntimeException("network error on approve") },
+            getRunResult = null,
+        )
+
+        val capture = FuranCapture(cfg, NoopDriver, adapter = "test", client = stub)
+        capture.injectRunId("r6")
+
+        // close() propagates the RuntimeException from approveRun
+        assertThrows<RuntimeException> { capture.close() }
+
+        // Fix #7 assertion: runId must NOT have been zeroed before approve threw.
+        // We verify this behaviorally: a second close() call (with a different
+        // stub returning PASSED) should still find the runId set and complete.
+        // But since we can't reconfigure the stub, we use reflection instead.
+        val runIdField = FuranCapture::class.java.getDeclaredField("runId")
+        runIdField.isAccessible = true
+        val runIdAfterThrow = runIdField.get(capture) as? String
+        assertEquals(
+            "r6",
+            runIdAfterThrow,
+            "runId must remain non-null after approveRun throws so the caller can abort/retry",
+        )
+    }
+
+    @Test
+    fun `Fix7 runId is null after successful close on saveNewTests path`() {
+        // Complementary test: runId IS nulled after a successful approve+getRun.
+        val cfg = testConfig(saveNewTests = true)
+        val completeResult = RunResult(runId = "r7", status = RunStatus.NEW, checkpointCount = 1)
+        val getRunResponse = RunResponse(id = "r7", projectId = "proj", buildId = "b1", status = RunStatus.PASSED)
+        val stub = makeCaptureWith(cfg, completeResult, getRunResult = getRunResponse)
+
+        val capture = FuranCapture(cfg, NoopDriver, adapter = "test", client = stub)
+        capture.injectRunId("r7")
+
+        val result = capture.close()
+        assertEquals(RunStatus.PASSED, result?.status)
+
+        // After a fully successful close, runId should be null (run is done).
+        val runIdField = FuranCapture::class.java.getDeclaredField("runId")
+        runIdField.isAccessible = true
+        val runIdAfterClose = runIdField.get(capture)
+        assertEquals(null, runIdAfterClose, "runId must be null after successful close")
     }
 }

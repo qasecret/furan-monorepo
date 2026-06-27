@@ -157,17 +157,21 @@ internal constructor(
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
         val result = client.completeAndAwaitRun(rid)
-        runId = null
         if (result.status == RunStatus.EMPTY) {
+            runId = null
             println("[furan-sdk] WARN: Visual test completed without checkpoints (run $rid).")
             return@runBlocking result
         }
         // Phase 3: Eyes saveNewTests — approve a no-baseline `new` run as a
         // DISTINCT step, then re-fetch. A failed approve propagates (we do NOT
         // report passed), keeping the lifecycle deterministic.
+        // runId is kept non-null until ALL server interactions complete so a
+        // network throw during approve/getRun leaves the run resolvable.
         if (result.status == RunStatus.NEW && config.saveNewTests) {
             client.approveRun(rid)
             val refreshed = client.getRun(rid)
+            // All server interactions done — safe to null the runId now.
+            runId = null
             // #3a: a null/unknown post-approve status must NOT read as a pass.
             // Fall back to UNRESOLVED (the safe non-passing default) rather
             // than fabricating PASSED — approve does not guarantee a passing
@@ -187,6 +191,8 @@ internal constructor(
             }
             return@runBlocking refreshedResult
         }
+        // All server interactions done — safe to null the runId now.
+        runId = null
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }

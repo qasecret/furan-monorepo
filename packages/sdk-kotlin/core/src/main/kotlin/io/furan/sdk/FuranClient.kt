@@ -222,7 +222,13 @@ open class FuranClient(
 
     /** POST /runs/:runId/approve — materialize a first baseline (saveNewTests). */
     open suspend fun approveRun(runId: String) {
-        transport.post<JsonObject, JsonObject>("runs/$runId/approve", JsonObject(emptyMap()))
+        try {
+            transport.post<JsonObject, JsonObject>("runs/$runId/approve", JsonObject(emptyMap()))
+            counter.recordSuccess()
+        } catch (e: Throwable) {
+            counter.recordError()
+            throw e
+        }
     }
 
     /**

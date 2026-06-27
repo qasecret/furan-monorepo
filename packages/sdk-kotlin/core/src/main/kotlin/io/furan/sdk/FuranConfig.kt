@@ -69,6 +69,12 @@ data class FuranConfig(
      * Eyes facade defaults this true. From FURAN_SAVE_NEW_TESTS.
      */
     val saveNewTests: Boolean = false,
+    /**
+     * RESERVED — currently unread; no behavior depends on this field yet.
+     * Reserved for future Eyes-vs-native divergence gating (e.g. controlling
+     * which close/approve semantics are applied). Do not branch on this value
+     * until a superseding ADR activates it.
+     */
     val compatibility: CompatibilityMode = CompatibilityMode.APPLITOOLS,
 ) {
     init {
