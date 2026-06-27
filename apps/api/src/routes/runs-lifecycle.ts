@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { rollupRunStatus } from "../lib/checkpoint-rollup.js";
+import { approveRun } from "../trpc/v1/runs.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
 
@@ -123,6 +124,44 @@ export async function registerRunLifecycleRoutes(
       });
 
       return reply.code(200).send({ runId: params.data.id, status: "aborted" });
+    },
+  );
+
+  // POST /runs/:id/approve — REST wrapper over approveRun (SDK saveNewTests).
+  app.post(
+    "/runs/:id/approve",
+    {
+      preHandler: [
+        app.authenticate,
+        requireProjectMember("write", {
+          from: {
+            resolver: async (req) => {
+              const params = req.params as Record<string, unknown>;
+              const id = typeof params.id === "string" ? params.id : "";
+              return resolveRunProjectId(app, id);
+            },
+          },
+        }),
+      ],
+    },
+    async (req, reply) => {
+      const params = runIdParam.safeParse(req.params);
+      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      if (!req.auth) return reply.code(401).send({ error: "unauthenticated" });
+      try {
+        const out = await approveRun(
+          {
+            db: app.db,
+            broadcaster: app.broadcaster,
+            user: { id: req.auth.id },
+          },
+          params.data.id,
+        );
+        return reply.code(200).send(out);
+      } catch (err) {
+        req.log.warn({ err }, "rest_approve_failed");
+        return reply.code(409).send({ error: "approve_failed" });
+      }
     },
   );
 }
