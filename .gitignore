@@ -55,6 +55,9 @@ CLAUDE.md
 
 # Local tooling scratch + local-only dev overlays (never commit).
 .claire/
+.playwright-mcp/
 skills-lock.json
 infra/docker/compose.*-local.yml
+infra/docker/compose.local-*.yml
 infra/docker/compose.pin-*.yml
+infra/docker/compose.main-images.yml
