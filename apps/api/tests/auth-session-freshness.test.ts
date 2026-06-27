@@ -71,7 +71,7 @@ describe("JWT session freshness", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  test("deactivation takes effect on the next request (token → 401)", async () => {
+  test("deactivation takes effect on the next request (token → 403 account_inactive)", async () => {
     await h.db
       .update(users)
       .set({ isActive: false })
@@ -82,8 +82,9 @@ describe("JWT session freshness", () => {
       url: "/users",
       headers: { authorization: `Bearer ${staleAdminJwt}` },
     });
-    expect(res.statusCode).toBe(401);
-    expect((res.json() as { error: string }).error).toBe("invalid_jwt");
+    // Valid token, disabled account → distinct from a bad/missing token (401).
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { error: string }).error).toBe("account_inactive");
   });
 
   test("a deleted user's token is rejected (401)", async () => {

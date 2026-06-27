@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { Toaster } from "sonner";
 
@@ -50,6 +51,14 @@ export default async function ProtectedLayout({
       data: [] as ProjectApiItem[],
     })),
   ]);
+  // A valid JWT whose user was deactivated (or demoted to no access) now gets a
+  // 403 from the API (account_inactive). /users/me is self-readable by any
+  // authenticated user, so a 403 here means the account is disabled — bounce to
+  // login with a reason instead of silently degrading to a guest shell. (The
+  // login page does not auto-redirect authed users, so this can't loop.)
+  if (me.status === 403) {
+    redirect("/login?reason=account_inactive");
+  }
   const userRole: Me["role"] = me.data?.role ?? "guest";
   const userEmail = me.data?.email ?? "";
   const userInitial = (me.data?.email ?? me.data?.role ?? "U")

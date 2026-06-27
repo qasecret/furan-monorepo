@@ -2,10 +2,8 @@ import fastifyJwt from "@fastify/jwt";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
-import {
-  loadActiveUser,
-  loadActiveUserByPat,
-} from "../lib/load-active-user.js";
+import { loadActiveUserByPat } from "../lib/load-active-user.js";
+import { resolveAuthUser } from "../lib/resolve-auth-user.js";
 import { isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
@@ -78,15 +76,21 @@ export default fp(async (app) => {
         return reply.code(401).send({ error: "invalid_jwt" });
       }
 
-      // Reflect LIVE role/active state, not the (up-to-7-day) token claim, so a
-      // demoted or deactivated user loses access on their next request. A DB
-      // error here propagates (500) rather than falling back to the claim.
-      const fresh = await loadActiveUser(app.db, payload.sub);
+      // Reflect LIVE role/active state (cache → DB), not the up-to-7-day token
+      // claim, so a demoted or deactivated user loses access on their next
+      // request. A DB error propagates (500) rather than trusting the claim.
+      const fresh = await resolveAuthUser(
+        { db: app.db, cache: app.cache },
+        payload.sub,
+      );
       if (!fresh) {
-        // missing or deactivated — same 401 shape as a bad token (no state leak)
-        return reply.code(401).send({ error: "invalid_jwt" });
+        return reply.code(401).send({ error: "invalid_jwt" }); // missing/bad
       }
-      req.auth = fresh;
+      if (!fresh.isActive) {
+        // valid token, but the account is disabled — distinct from a bad token
+        return reply.code(403).send({ error: "account_inactive" });
+      }
+      req.auth = { id: payload.sub, role: fresh.role };
     },
   );
 });

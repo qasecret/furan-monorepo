@@ -7,6 +7,7 @@ import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
 import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { createBroadcaster } from "./lib/broadcast.js";
+import { createRedisUserAuthCache } from "./lib/user-auth-cache.js";
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -24,7 +25,19 @@ async function main(): Promise<void> {
   const broadcasterRedis = createRedisConnection();
   const broadcaster = createBroadcaster(broadcasterRedis, telemetry);
 
-  const app = await createApp({ db, telemetry, env, diffQueue, broadcaster });
+  // Dedicated connection for the per-request JWT user-auth cache (get/set/del
+  // commands; separate from the broadcaster's publisher connection).
+  const cacheRedis = createRedisConnection();
+  const cache = createRedisUserAuthCache(cacheRedis);
+
+  const app = await createApp({
+    db,
+    telemetry,
+    env,
+    diffQueue,
+    broadcaster,
+    cache,
+  });
 
   // First-admin bootstrap. Runs at most once (no-op when users exist).
   // Never throws — operator can fall back to `seed-admin` CLI if it fails.
@@ -35,6 +48,7 @@ async function main(): Promise<void> {
     await app.close();
     await diffQueue.close();
     await broadcasterRedis.quit().catch(() => undefined);
+    await cacheRedis.quit().catch(() => undefined);
     await close();
     await telemetry.shutdown();
     process.exit(0);
