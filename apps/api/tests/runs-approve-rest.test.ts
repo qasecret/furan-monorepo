@@ -186,6 +186,8 @@ d("POST /runs/:id/approve", () => {
       headers,
     });
     // requireProjectMember returns 400 when the resolver returns null
+    // (the run doesn't exist so resolveRunProjectId returns null before
+    // approveRun is even reached — this is NOT a 404 from approveRun).
     expect(res.statusCode).toBe(400);
   });
 
@@ -207,6 +209,7 @@ d("POST /runs/:id/approve", () => {
       url: `/runs/${run!.id}/approve`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
+    // approveRun throws TRPCError BAD_REQUEST for illegal status → 409 Conflict
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({ error: "approve_failed" });
   });

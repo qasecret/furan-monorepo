@@ -1,4 +1,5 @@
 import { eq, screenshots, testRuns } from "@furan/db";
+import { TRPCError } from "@trpc/server";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -211,8 +212,24 @@ export async function registerRunLifecycleRoutes(
         );
         return reply.code(200).send(out);
       } catch (err) {
-        req.log.warn({ err }, "rest_approve_failed");
-        return reply.code(409).send({ error: "approve_failed" });
+        if (err instanceof TRPCError) {
+          switch (err.code) {
+            case "NOT_FOUND":
+              return reply.code(404).send({ error: "not_found" });
+            case "BAD_REQUEST":
+              // Run is in a non-approvable state → 409 Conflict
+              return reply.code(409).send({ error: "approve_failed" });
+            case "FORBIDDEN":
+              return reply.code(403).send({ error: "forbidden" });
+            case "UNAUTHORIZED":
+              return reply.code(401).send({ error: "unauthorized" });
+            default:
+              req.log.error({ err }, "rest_approve_unexpected_trpc_error");
+              return reply.code(500).send({ error: "internal_error" });
+          }
+        }
+        req.log.error({ err }, "rest_approve_failed");
+        return reply.code(500).send({ error: "internal_error" });
       }
     },
   );

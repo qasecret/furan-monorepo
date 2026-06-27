@@ -224,67 +224,80 @@ export async function approveRun(
    */
   ignoreAreas?: IgnoreRegionElement[] | null,
 ): Promise<{ runId: string; approved: true }> {
-  const runRows = await ctx.db
-    .select()
-    .from(testRuns)
-    .where(eq(testRuns.id, runId))
-    .limit(1);
-  const run = runRows[0];
-  if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+  // All DB reads + writes are wrapped in a single transaction so the
+  // status check and the subsequent UPDATE + INSERT are atomic. Two
+  // concurrent approves of the same run cannot both pass the check and
+  // both insert a baseline (TOCTOU fix — #14).
+  //
+  // Broadcaster calls are intentionally kept OUTSIDE the transaction: they
+  // are best-effort side-effects that must not roll back DB work if they
+  // fail, and the DB must be committed before consumers see the event.
+  const run = await ctx.db.transaction(async (tx) => {
+    const runRows = await tx
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, runId))
+      .limit(1);
+    const run = runRows[0];
+    if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-  // Per spec §3.3 + ADR-036: review terminal states plus `new`
-  // (first-baseline when autoApproveFeature=false). Reject mid-flight
-  // (`running`) and other system states (`aborted`, `empty`) — for
-  // those the right response is to re-run.
-  if (!APPROVE_LEGAL_FROM.has(run.status)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
-    });
-  }
-
-  await ctx.db
-    .update(testRuns)
-    .set({ status: "passed", merge: true })
-    .where(eq(testRuns.id, runId));
-
-  // ADR-038: runs no longer have a single testVariationId. Snapshot the
-  // first checkpoint's variation as the baseline for backward compat.
-  // Full per-checkpoint baseline promotion is handled by approveCheckpoint.
-  // For legacy approve (run-level), we find the first screenshot row and
-  // use its testVariationId.
-  const firstShot = await ctx.db
-    .select({
-      testVariationId: screenshots.testVariationId,
-      imageKey: screenshots.imageKey,
-    })
-    .from(screenshots)
-    .where(eq(screenshots.runId, runId))
-    .limit(1);
-
-  if (firstShot[0]) {
-    // ADR-036: persist any reviewer-drawn ignore regions onto the variation
-    // in the same flow — no separate diff enqueue, so nothing races the
-    // status=passed set above. Forward mask applied to future runs.
-    if (ignoreAreas !== undefined) {
-      await ctx.db
-        .update(testVariations)
-        .set({ ignoreRegions: ignoreAreas, updatedAt: new Date() })
-        .where(eq(testVariations.id, firstShot[0].testVariationId));
+    // Per spec §3.3 + ADR-036: review terminal states plus `new`
+    // (first-baseline when autoApproveFeature=false). Reject mid-flight
+    // (`running`) and other system states (`aborted`, `empty`) — for
+    // those the right response is to re-run.
+    if (!APPROVE_LEGAL_FROM.has(run.status)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
+      });
     }
-    await ctx.db.insert(baselines).values({
-      baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
-      testVariationId: firstShot[0].testVariationId,
-      testRunId: run.id,
-      userId: ctx.user.id,
-      ...(run.branchName ? { branchName: run.branchName } : {}),
-    });
-  } else {
-    // No screenshots yet — insert a placeholder baseline using run name.
-    // This branch handles legacy flow where runs might not have checkpoints.
-    // We skip the baseline insert rather than fail — approve still transitions status.
-  }
 
+    await tx
+      .update(testRuns)
+      .set({ status: "passed", merge: true })
+      .where(eq(testRuns.id, runId));
+
+    // ADR-038: runs no longer have a single testVariationId. Snapshot the
+    // first checkpoint's variation as the baseline for backward compat.
+    // Full per-checkpoint baseline promotion is handled by approveCheckpoint.
+    // For legacy approve (run-level), we find the first screenshot row and
+    // use its testVariationId.
+    const firstShot = await tx
+      .select({
+        testVariationId: screenshots.testVariationId,
+        imageKey: screenshots.imageKey,
+      })
+      .from(screenshots)
+      .where(eq(screenshots.runId, runId))
+      .limit(1);
+
+    if (firstShot[0]) {
+      // ADR-036: persist any reviewer-drawn ignore regions onto the variation
+      // in the same flow — no separate diff enqueue, so nothing races the
+      // status=passed set above. Forward mask applied to future runs.
+      if (ignoreAreas !== undefined) {
+        await tx
+          .update(testVariations)
+          .set({ ignoreRegions: ignoreAreas, updatedAt: new Date() })
+          .where(eq(testVariations.id, firstShot[0].testVariationId));
+      }
+      await tx.insert(baselines).values({
+        baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+        testVariationId: firstShot[0].testVariationId,
+        testRunId: run.id,
+        userId: ctx.user.id,
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+      });
+    } else {
+      // No screenshots yet — insert a placeholder baseline using run name.
+      // This branch handles legacy flow where runs might not have checkpoints.
+      // We skip the baseline insert rather than fail — approve still transitions status.
+    }
+
+    return run;
+  });
+
+  // Broadcaster calls after transaction commit — consumers see committed state.
   await ctx.broadcaster.publishProjectEvent(run.projectId, {
     event: "testRun_updated",
     data: { id: run.id },
