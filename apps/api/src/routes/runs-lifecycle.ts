@@ -11,8 +11,7 @@ const runIdParam = z.object({ id: z.string().uuid() });
 /**
  * Counts the run's persisted checkpoints (one screenshots row per
  * checkpoint). Used by /complete to decide `empty` vs leave-to-pipeline,
- * and to stamp `checkpointCount`. Mirrors the count rollupRunStatus used
- * before the eyes-compat fix, so the reported number is unchanged.
+ * and to stamp `checkpointCount`.
  */
 async function checkpointCountForRun(
   app: FastifyInstance,
@@ -70,9 +69,9 @@ export async function registerRunLifecycleRoutes(
 
       // Contract (post eyes-compat fix): /complete stamps the run as
       // *closed by the SDK* but does NOT decide the diff verdict — the
-      // diff pipeline owns `test_runs.status`. Earlier drafts called
-      // rollupRunStatus here and wrote its result, but rollup NEVER
-      // returns `running` (only empty / passed / unresolved). For a run
+      // diff pipeline owns `test_runs.status`. Earlier drafts computed a
+      // rollup status here and wrote it, but that rollup never returns
+      // `running` (only empty / passed / unresolved). For a run
       // whose async diff jobs are still in flight that produced a
       // premature `passed` (checkpoints exist, no diff_regions yet),
       // which the SDK's completeAndAwaitRun fast-returned as a false
