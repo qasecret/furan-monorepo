@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.0.0...sdk/v4.1.0) (2026-06-27)
+
+
+### Features
+
+* **sdk:** Applitools Eyes compatibility layer ([#315](https://github.com/qasecret/furan-monorepo/issues/315)) ([ccadab5](https://github.com/qasecret/furan-monorepo/commit/ccadab556cbf40a215f9623c74df0b0896e3ceed))
+
 ## [4.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.3.0...sdk/v4.0.0) (2026-06-24)
 
 
