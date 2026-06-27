@@ -292,4 +292,11 @@ class FuranConfigTest {
         val cfg = FuranConfig(apiUrl = "u", apiToken = "t", projectId = "p")
         assertEquals(FailOnDiff.None, cfg.failOnDiff)
     }
+
+    @Test
+    fun `fromEnv parses FURAN_SAVE_NEW_TESTS`() {
+        val base = mapOf("FURAN_API_URL" to "http://x", "FURAN_API_TOKEN" to "t", "FURAN_PROJECT_ID" to "p")
+        org.junit.jupiter.api.Assertions.assertEquals(false, FuranConfig.fromEnv(base).saveNewTests)
+        org.junit.jupiter.api.Assertions.assertEquals(true, FuranConfig.fromEnv(base + ("FURAN_SAVE_NEW_TESTS" to "true")).saveNewTests)
+    }
 }

@@ -1,8 +1,10 @@
 package io.furan.sdk.junit5
 
+import io.furan.sdk.FailOnDiff
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranConfigException
+import io.furan.sdk.FuranSuiteException
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 import org.junit.jupiter.api.extension.AfterAllCallback
@@ -126,10 +128,23 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
      * configured, `close()` may throw [io.furan.sdk.FuranDiffException],
      * which propagates as a JUnit5 assertion failure on the test.
      *
+     * Also stashes the Furan's [FailOnDiff] value under [FAIL_ON_DIFF_KEY]
+     * so [afterAll] can resolve the AfterAll decision even when [CONFIG_KEY]
+     * was never populated (i.e., the test used only the FURAN_KEY path).
+     *
      * No-op when no [FURAN_KEY] entry is present.
      */
     override fun afterEach(context: ExtensionContext) {
         val furan = context.getStore(NAMESPACE).get(FURAN_KEY) ?: return
+        // Reflectively read furan.config.failOnDiff and stash it on the
+        // class-level store so afterAll can resolve it on the FURAN_KEY path.
+        runCatching {
+            val furanConfig = furan.javaClass.getMethod("getConfig").invoke(furan)
+                ?: furan.javaClass.getDeclaredField("config").also { it.isAccessible = true }.get(furan)
+            if (furanConfig is FuranConfig) {
+                context.root.getStore(NAMESPACE).put(FAIL_ON_DIFF_KEY, furanConfig.failOnDiff)
+            }
+        }
         if (context.executionException.isPresent) {
             runCatching { invokeMethod(furan, "abort", emptyArray(), emptyArray()) }
         } else {
@@ -146,8 +161,16 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         // Close the client (drains the batch + posts telemetry) if it
         // was lazily created. Config is just a data class — no close.
         val store = context.getStore(NAMESPACE)
-        val client = store.get(CLIENT_KEY, FuranClient::class.java)
-        client?.close()
+        store.get(CLIENT_KEY, FuranClient::class.java)?.close()
+        // Resolve failOnDiff: prefer the injected CONFIG_KEY (parameter-injection
+        // path); fall back to FAIL_ON_DIFF_KEY (stashed by afterEach from the
+        // FURAN_KEY path). This ensures AfterAll fires regardless of which path
+        // the test used to get its Furan/config.
+        val failOnDiff: FailOnDiff? = store.get(CONFIG_KEY, FuranConfig::class.java)?.failOnDiff
+            ?: context.root.getStore(NAMESPACE).get(FAIL_ON_DIFF_KEY, FailOnDiff::class.java)
+        if (failOnDiff == FailOnDiff.AfterAll) {
+            suiteFailure(getSuiteResult(context))?.let { throw it }
+        }
     }
 
     companion object {
@@ -162,6 +185,15 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
          * class-level store so it survives across @Test methods.
          */
         const val RESULTS_KEY = "suite-results"
+
+        /**
+         * Store key for the [FailOnDiff] value stashed by [afterEach]
+         * from the FURAN_KEY path. Allows [afterAll] to resolve the
+         * AfterAll decision even when [CONFIG_KEY] was never populated
+         * (i.e., the test stored a Furan in `@BeforeEach` rather than
+         * injecting [FuranConfig] as a parameter).
+         */
+        const val FAIL_ON_DIFF_KEY = "fail-on-diff"
 
         /**
          * Tier 1.5 — aggregate every [RunResult] captured by the
@@ -221,6 +253,11 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
             if (list == null) return SuiteResult(emptyList())
             synchronized(list) { return SuiteResult(list.toList()) }
         }
+
+        /** AfterAll decision: an exception to throw if the suite has failures, else null. */
+        @JvmStatic
+        fun suiteFailure(suite: SuiteResult): FuranSuiteException? =
+            if (suite.hasFailures) FuranSuiteException(suite) else null
 
         /**
          * Store key under which a `io.furan.sdk.selenium.Furan` instance

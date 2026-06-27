@@ -62,6 +62,20 @@ data class FuranConfig(
      * Default: [FailOnDiff.None].
      */
     val failOnDiff: FailOnDiff = FailOnDiff.None,
+    /**
+     * Applitools `saveNewTests` analog. When true, a first-run/no-baseline
+     * `new` checkpoint is auto-approved client-side (seeds the baseline) and
+     * reported PASSED. Default false (native Furan = manual baseline). The
+     * Eyes facade defaults this true. From FURAN_SAVE_NEW_TESTS.
+     */
+    val saveNewTests: Boolean = false,
+    /**
+     * RESERVED — currently unread; no behavior depends on this field yet.
+     * Reserved for future Eyes-vs-native divergence gating (e.g. controlling
+     * which close/approve semantics are applied). Do not branch on this value
+     * until a superseding ADR activates it.
+     */
+    val compatibility: CompatibilityMode = CompatibilityMode.APPLITOOLS,
 ) {
     init {
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
@@ -128,6 +142,7 @@ data class FuranConfig(
                     FailOnDiff.entries.firstOrNull { it.name.equals(v, ignoreCase = true) }
                         ?: throw FuranConfigException("invalid FURAN_FAIL_ON_DIFF: $v")
                 } ?: FailOnDiff.None,
+                saveNewTests = env["FURAN_SAVE_NEW_TESTS"]?.let { it == "1" || it.lowercase() == "true" } ?: false,
             )
         }
 
@@ -307,6 +322,8 @@ data class FuranConfig(
                         FailOnDiff.None
                     }
                 },
+                saveNewTests = env["FURAN_SAVE_NEW_TESTS"]?.let { it == "1" || it.lowercase() == "true" }
+                    ?: yamlBool("saveNewTests") ?: false,
             )
         }
 

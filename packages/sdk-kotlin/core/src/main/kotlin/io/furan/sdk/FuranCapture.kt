@@ -6,6 +6,7 @@ import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.RunResult
+import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.SuiteResult
 import io.furan.sdk.spec.SpecDriver
 import kotlinx.coroutines.runBlocking
@@ -25,13 +26,34 @@ import kotlin.time.Duration.Companion.seconds
  *   (User-Agent), e.g. "selenium" / "playwright". Distinct from the baseline
  *   `browser` label, which the engine fills from `SpecDriver.getDriverInfo()`.
  */
-class FuranCapture(val config: FuranConfig, driver: SpecDriver, private val adapter: String) {
-    private val client = FuranClient(config, adapter = adapter)
+class FuranCapture
+/**
+ * Internal constructor used by tests to inject a pre-built [FuranClient] stub.
+ * Production code must use the public constructor, which creates the real client.
+ */
+internal constructor(
+    val config: FuranConfig,
+    driver: SpecDriver,
+    private val adapter: String,
+    private val client: FuranClient,
+) {
+    /** Primary public constructor — creates the real [FuranClient]. */
+    constructor(config: FuranConfig, driver: SpecDriver, adapter: String) :
+        this(config, driver, adapter, FuranClient(config, adapter = adapter))
+
     private val captureEngine = CaptureEngine(driver)
     private val ensureBuildMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
     @Volatile private var runId: String? = null
+
+    /**
+     * Test-only hook: pre-set the runId so [close] / [abort] can operate on a
+     * synthetic "open" run without going through the network path of [open].
+     */
+    internal fun injectRunId(id: String) {
+        runId = id
+    }
 
     /**
      * Opens a new test run with the given [testName]. Ensures a build exists
@@ -134,7 +156,42 @@ class FuranCapture(val config: FuranConfig, driver: SpecDriver, private val adap
      */
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
-        val result = client.completeRun(rid)
+        val result = client.completeAndAwaitRun(rid)
+        if (result.status == RunStatus.EMPTY) {
+            runId = null
+            println("[furan-sdk] WARN: Visual test completed without checkpoints (run $rid).")
+            return@runBlocking result
+        }
+        // Phase 3: Eyes saveNewTests — approve a no-baseline `new` run as a
+        // DISTINCT step, then re-fetch. A failed approve propagates (we do NOT
+        // report passed), keeping the lifecycle deterministic.
+        // runId is kept non-null until ALL server interactions complete so a
+        // network throw during approve/getRun leaves the run resolvable.
+        if (result.status == RunStatus.NEW && config.saveNewTests) {
+            client.approveRun(rid)
+            val refreshed = client.getRun(rid)
+            // All server interactions done — safe to null the runId now.
+            runId = null
+            // #3a: a null/unknown post-approve status must NOT read as a pass.
+            // Fall back to UNRESOLVED (the safe non-passing default) rather
+            // than fabricating PASSED — approve does not guarantee a passing
+            // verdict, and an absent status is a "couldn't determine" signal.
+            val refreshedResult = RunResult(
+                rid,
+                refreshed.status ?: RunStatus.UNRESOLVED,
+                result.checkpointCount,
+                result.checkpoints,
+            )
+            // #3b: the saveNewTests branch must still honor FailOnDiff. A
+            // post-approve non-passing status (e.g. the approve seeded a
+            // baseline but the run is still unresolved) must fail the test
+            // when failOnDiff == AfterEach, not silently return.
+            if (config.failOnDiff == FailOnDiff.AfterEach && !refreshedResult.status.isPassing()) {
+                throw FuranDiffException(refreshedResult)
+            }
+            return@runBlocking refreshedResult
+        }
+        // All server interactions done — safe to null the runId now.
         runId = null
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
