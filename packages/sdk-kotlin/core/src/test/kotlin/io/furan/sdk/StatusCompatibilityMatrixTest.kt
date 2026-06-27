@@ -1,6 +1,6 @@
 package io.furan.sdk
 
-import io.furan.sdk.dto.EyesTestResults
+import io.furan.sdk.dto.LoupeTestResults
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.RunStatus
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
  * SaveNewTestsTest; this file pins the status→Eyes-accessor mapping.
  */
 class StatusCompatibilityMatrixTest {
-    private fun view(s: RunStatus) = EyesTestResults(RunResult("r", s, 1))
+    private fun view(s: RunStatus) = LoupeTestResults(RunResult("r", s, 1))
 
     @Test fun `passed maps to Passed and is passing`() {
         assertTrue(view(RunStatus.PASSED).isPassed)

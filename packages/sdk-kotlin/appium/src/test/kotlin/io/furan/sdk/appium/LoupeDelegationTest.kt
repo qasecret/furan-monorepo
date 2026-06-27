@@ -10,14 +10,14 @@ import org.mockito.kotlin.whenever
 import org.openqa.selenium.Capabilities
 
 /**
- * Unit tests for the Appium [Eyes] Applitools-compat facade.
+ * Unit tests for the Appium [Loupe] Applitools-compat facade.
  *
  * All assertions are pure (no network / device calls):
  *   - `saveNewTests` default is true (Eyes-parity)
  *   - The facade exposes the expected lifecycle methods
  *   - check-before-open propagates the engine's guard (delegation confirmed)
  */
-class EyesDelegationTest {
+class LoupeDelegationTest {
 
     private fun testConfig() = FuranConfig(
         apiUrl = "http://127.0.0.1:1",
@@ -36,22 +36,22 @@ class EyesDelegationTest {
     }
 
     @Test
-    fun `Eyes defaults saveNewTests true on its config`() {
-        val eyes = Eyes(testConfig(), mockDriver())
-        assertTrue(eyes.config.saveNewTests)
+    fun `Loupe defaults saveNewTests true on its config`() {
+        val loupe = Loupe(testConfig(), mockDriver())
+        assertTrue(loupe.config.saveNewTests)
     }
 
     @Test
-    fun `Eyes exposes open check close abort`() {
-        val names = Eyes::class.java.declaredMethods.map { it.name }.toSet()
+    fun `Loupe exposes open check close abort`() {
+        val names = Loupe::class.java.declaredMethods.map { it.name }.toSet()
         assertTrue(names.containsAll(setOf("open", "check", "close", "abort")))
     }
 
     @Test
-    fun `Eyes check delegates to capture and throws before open (no network)`() {
-        val eyes = Eyes(testConfig(), mockDriver())
+    fun `Loupe check delegates to capture and throws before open (no network)`() {
+        val loupe = Loupe(testConfig(), mockDriver())
         val ex = assertThrows(IllegalStateException::class.java) {
-            eyes.check("step-without-open")
+            loupe.check("step-without-open")
         }
         assertTrue(ex.message?.contains("open") == true)
     }

@@ -165,15 +165,14 @@ async function seedCheckpoint(
   },
 ) {
   const viewport = opts.viewport ?? "1280x720";
+  const effectiveBaselineName =
+    opts.baselineName === undefined ? "existing-baseline" : opts.baselineName;
   const [variation] = await h.db
     .insert(testVariations)
     .values({
       name: opts.name,
       projectId: opts.projectId,
-      baselineName:
-        opts.baselineName === undefined
-          ? "existing-baseline"
-          : opts.baselineName,
+      baselineName: effectiveBaselineName,
     })
     .returning();
   const [run] = await h.db
@@ -181,7 +180,11 @@ async function seedCheckpoint(
     .values({
       buildId: opts.buildId,
       projectId: opts.projectId,
-      status: "unresolved",
+      // Run status mirrors the checkpoint intent: an unresolved checkpoint
+      // lives in an unresolved run; a non-unresolved one models a resolved
+      // (passed) run — so deriveCheckpointStatuses (which now reads the
+      // baselines table + the run verdict) classifies it correctly.
+      status: opts.unresolved ? "unresolved" : "passed",
       branchName: opts.branchName ?? "feature/x",
       name: opts.name,
     })
@@ -200,6 +203,17 @@ async function seedCheckpoint(
       diffSignature: opts.signature,
     })
     .returning();
+  // deriveCheckpointStatuses reads the authoritative `baselines` table (not
+  // test_variations.baseline_name), so a fixture representing a variation WITH
+  // a baseline must insert a real baselines row on the run's branch.
+  if (effectiveBaselineName !== null) {
+    await h.db.insert(baselines).values({
+      baselineName: effectiveBaselineName,
+      testVariationId: variation.id,
+      testRunId: run.id,
+      branchName: run.branchName ?? undefined,
+    });
+  }
   if (opts.unresolved) {
     await h.db.insert(diffRegions).values({
       runId: run.id,
@@ -2801,6 +2815,30 @@ d("tRPC runs router", () => {
         runId: cp.run.id,
       });
       expect(after.items[0]?.status).toBe("passed");
+    });
+
+    test("region-less unresolved run derives its checkpoint as unresolved", async () => {
+      // The diff-worker can mark a run `unresolved` (diffPercent > threshold)
+      // yet persist no severity!='none' diff_regions for a small/scattered
+      // diff (and no diff_signature) — leaving no per-checkpoint signal. The
+      // checkpoint must follow the run verdict, not read "passed".
+      const buildId = await getSeedBuildId(h, s.runId);
+      const cp = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "regionless",
+        signature: null,
+        unresolved: false, // baseline present, NO diff_regions
+      });
+      // Force the diff-worker's region-less unresolved state.
+      await h.db
+        .update(testRuns)
+        .set({ status: "unresolved" })
+        .where(eq(testRuns.id, cp.run.id));
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.listCheckpoints.query({ runId: cp.run.id });
+      expect(res.items[0]?.status).toBe("unresolved");
     });
   });
 

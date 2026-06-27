@@ -9,6 +9,7 @@ import io.furan.sdk.spec.SpecDriver
 import io.furan.sdk.spec.SpecElement
 import org.openqa.selenium.By
 import org.openqa.selenium.Dimension
+import org.openqa.selenium.HasCapabilities
 import org.openqa.selenium.JavascriptExecutor
 import org.openqa.selenium.NoSuchElementException
 import org.openqa.selenium.OutputType
@@ -21,10 +22,13 @@ import org.openqa.selenium.WebElement
  * code in the capture path. All capture logic lives in the engine
  * (io.furan.sdk.capture.CaptureEngine).
  *
- * [getDriverInfo] deliberately reports `browserName = "selenium"` (not the
- * real browser) so the engine reproduces today's hardcoded environment
- * tuple and existing baselines keep matching (ADR-054). See the plan's
- * behavior-preservation invariant 1.
+ * [getDriverInfo] reports the real browser from the WebDriver's capabilities
+ * (`browserName`, e.g. "chrome"/"firefox"), lower-cased, or null when the
+ * driver exposes no capabilities — the engine then falls back to the adapter
+ * name. This reverses ADR-054's "selenium" placeholder so the Browser column
+ * and the baseline identity reflect the actual browser; an operator can still
+ * override via FURAN_BROWSER (e.g. for a remote grid). Existing "selenium"
+ * variations re-baseline once.
  */
 class SeleniumSpecDriver(private val driver: WebDriver) : SpecDriver {
 
@@ -33,7 +37,11 @@ class SeleniumSpecDriver(private val driver: WebDriver) : SpecDriver {
         isMobile = false,
         platformName = null,
         deviceName = null,
-        browserName = "selenium",
+        browserName = (driver as? HasCapabilities)
+            ?.capabilities
+            ?.browserName
+            ?.takeIf { it.isNotBlank() }
+            ?.lowercase(),
         browserVersion = null,
         // Reflect what the wrapped driver can actually do rather than assuming.
         // A WebDriver that is not a JavascriptExecutor degrades to a plain

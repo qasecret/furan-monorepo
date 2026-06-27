@@ -8,6 +8,7 @@ import {
   eq,
   isNull,
   projects,
+  recordBaseline,
   resolveBaseline,
   screenshots,
   sql,
@@ -393,7 +394,10 @@ async function handleDiffJobInner(
   // primary variation from the first screenshot so we can locate the
   // baseline and read per-variation ignore regions.
   const firstShotRow = await deps.db
-    .select({ testVariationId: screenshots.testVariationId })
+    .select({
+      testVariationId: screenshots.testVariationId,
+      imageKey: screenshots.imageKey,
+    })
     .from(screenshots)
     .where(eq(screenshots.runId, data.runId))
     .limit(1);
@@ -401,6 +405,7 @@ async function handleDiffJobInner(
     throw new Error(`run_has_no_screenshots:${data.runId}`);
   }
   const runTestVariationId = firstShotRow[0].testVariationId;
+  const runImageKey = firstShotRow[0].imageKey;
 
   const baseline = await resolveBaseline(
     deps.db,
@@ -439,12 +444,13 @@ async function handleDiffJobInner(
         .set({ status: "new", merge: true })
         .where(eq(testRuns.id, data.runId));
       if (seedBaseline) {
-        await tx.insert(baselines).values({
-          baselineName: run.baselineName ?? run.name ?? "auto",
+        await recordBaseline(tx, {
           testVariationId: runTestVariationId,
           testRunId: run.id,
-          // userId omitted → defaults to NULL → signals auto-baseline.
-          ...(run.branchName ? { branchName: run.branchName } : {}),
+          imageKey: runImageKey,
+          runName: run.baselineName ?? run.name,
+          // userId omitted → auto-baseline.
+          branchName: run.branchName,
         });
       }
     });
@@ -540,12 +546,13 @@ async function handleDiffJobInner(
           baselineSource: baseline.source,
         })
         .where(eq(testRuns.id, data.runId));
-      await tx.insert(baselines).values({
-        baselineName: run.baselineName ?? run.name ?? "auto",
+      await recordBaseline(tx, {
         testVariationId: runTestVariationId,
         testRunId: run.id,
-        // userId omitted → defaults to NULL → signals auto-approve.
-        ...(run.branchName ? { branchName: run.branchName } : {}),
+        imageKey: candidateShots[0]!.imageKey,
+        runName: run.baselineName ?? run.name,
+        // userId omitted → auto-approve.
+        branchName: run.branchName,
       });
     });
 
@@ -617,11 +624,12 @@ async function handleDiffJobInner(
             baselineSource: baseline.source,
           })
           .where(eq(testRuns.id, data.runId));
-        await tx.insert(baselines).values({
-          baselineName: run.baselineName ?? run.name ?? "auto",
+        await recordBaseline(tx, {
           testVariationId: runTestVariationId,
           testRunId: run.id,
-          ...(run.branchName ? { branchName: run.branchName } : {}),
+          imageKey: candidateShots[0]!.imageKey,
+          runName: run.baselineName ?? run.name,
+          branchName: run.branchName,
         });
       });
 

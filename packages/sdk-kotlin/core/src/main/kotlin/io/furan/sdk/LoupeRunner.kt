@@ -1,11 +1,11 @@
 package io.furan.sdk
 
-import io.furan.sdk.dto.EyesTestResults
+import io.furan.sdk.dto.LoupeTestResults
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 
 /** Applitools `runner.getAllTestResults()` analog over [SuiteResult]. */
-class EyesRunner {
+class LoupeRunner {
     private val runs = mutableListOf<RunResult>()
 
     @Synchronized
@@ -14,9 +14,9 @@ class EyesRunner {
     }
 
     @Synchronized
-    fun getAllTestResults(throwException: Boolean = true): List<EyesTestResults> {
+    fun getAllTestResults(throwException: Boolean = true): List<LoupeTestResults> {
         val suite = SuiteResult(runs.toList())
         if (throwException && suite.hasFailures) throw FuranSuiteException(suite)
-        return suite.runs.map { EyesTestResults(it) }
+        return suite.runs.map { LoupeTestResults(it) }
     }
 }

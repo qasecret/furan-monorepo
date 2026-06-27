@@ -43,7 +43,7 @@ class AppiumSpecDriverTest {
         val info = AppiumSpecDriver(driverWithCaps("Android", "Pixel_7")).getDriverInfo()
         assertTrue(info.isNative)
         assertTrue(info.isMobile)
-        assertEquals("appium-android", info.browserName)
+        assertEquals("android", info.browserName)
         assertEquals("Pixel_7", info.deviceName)
         assertEquals(null, info.platformName) // os left null in the MVP
         assertTrue(info.features.isEmpty())    // native: degraded path, no JS/DOM/resize
@@ -52,7 +52,7 @@ class AppiumSpecDriverTest {
     @Test
     fun `getDriverInfo falls back to udid for device and unknown for platform`() {
         val info = AppiumSpecDriver(driverWithCaps(platform = null, device = null, udid = "emulator-5554")).getDriverInfo()
-        assertEquals("appium-unknown", info.browserName)
+        assertEquals(null, info.browserName)
         assertEquals("emulator-5554", info.deviceName)
     }
 
@@ -79,7 +79,7 @@ class AppiumSpecDriverTest {
         whenever(caps.getCapability("platformName")).thenReturn(org.openqa.selenium.Platform.ANDROID)
         val driver = mock<AppiumDriver>()
         whenever(driver.capabilities).thenReturn(caps)
-        assertEquals("appium-android", AppiumSpecDriver(driver).getDriverInfo().browserName)
+        assertEquals("android", AppiumSpecDriver(driver).getDriverInfo().browserName)
     }
 
     @Test

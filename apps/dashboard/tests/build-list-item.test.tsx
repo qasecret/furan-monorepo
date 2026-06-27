@@ -12,6 +12,7 @@ const build: BuildRowData = {
   number: 42,
   branchName: "main",
   name: null,
+  testName: null,
   status: null,
   properties: {},
   projectId: "p1",

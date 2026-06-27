@@ -20,16 +20,4 @@ class ScriptBridgeTest {
         )
     }
 
-    @Test
-    fun `playwrightBrowserLabel prefixes the browser type`() {
-        assertEquals("playwright-chromium", playwrightBrowserLabel("chromium"))
-        assertEquals("playwright-firefox", playwrightBrowserLabel("firefox"))
-        assertEquals("playwright-webkit", playwrightBrowserLabel("webkit"))
-    }
-
-    @Test
-    fun `playwrightBrowserLabel falls back when type is unknown`() {
-        assertEquals("playwright", playwrightBrowserLabel(null))
-        assertEquals("playwright", playwrightBrowserLabel(""))
-    }
 }

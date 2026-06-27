@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- * Behavior tests for the Eyes-scoped `saveNewTests` feature (phase-3 of close()).
+ * Behavior tests for the Loupe-scoped `saveNewTests` feature (phase-3 of close()).
  *
  * When `saveNewTests=true`, a terminal NEW result triggers:
  *   1. `approveRun(runId)` — client-side baseline seeding
