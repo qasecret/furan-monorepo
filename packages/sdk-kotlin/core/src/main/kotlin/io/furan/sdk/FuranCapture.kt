@@ -168,7 +168,24 @@ internal constructor(
         if (result.status == RunStatus.NEW && config.saveNewTests) {
             client.approveRun(rid)
             val refreshed = client.getRun(rid)
-            return@runBlocking RunResult(rid, refreshed.status ?: RunStatus.PASSED, result.checkpointCount, result.checkpoints)
+            // #3a: a null/unknown post-approve status must NOT read as a pass.
+            // Fall back to UNRESOLVED (the safe non-passing default) rather
+            // than fabricating PASSED — approve does not guarantee a passing
+            // verdict, and an absent status is a "couldn't determine" signal.
+            val refreshedResult = RunResult(
+                rid,
+                refreshed.status ?: RunStatus.UNRESOLVED,
+                result.checkpointCount,
+                result.checkpoints,
+            )
+            // #3b: the saveNewTests branch must still honor FailOnDiff. A
+            // post-approve non-passing status (e.g. the approve seeded a
+            // baseline but the run is still unresolved) must fail the test
+            // when failOnDiff == AfterEach, not silently return.
+            if (config.failOnDiff == FailOnDiff.AfterEach && !refreshedResult.status.isPassing()) {
+                throw FuranDiffException(refreshedResult)
+            }
+            return@runBlocking refreshedResult
         }
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)

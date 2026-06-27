@@ -181,6 +181,14 @@ open class FuranClient(
         val mark = TimeSource.Monotonic.markNow()
         val interval = config.pollIntervalSeconds.seconds
         var lastStatus: RunStatus? = completed.status
+        // #9: poll with the delay at the TOP of the loop (guarded), not the
+        // bottom. The previous bottom-delay structure wasted the final window
+        // — it always slept `interval` after the last poll before the
+        // wall-clock check tripped, so the last poll never got a follow-up
+        // and (when interval == timeout, allowed by FuranConfig.init) it
+        // degenerated to "one poll then an immediate timeout." Now: always
+        // do at least one getRun (mark.elapsedNow() is ~0 on entry), and only
+        // sleep before a poll when there's still time left for that poll.
         while (mark.elapsedNow() < timeout) {
             val run = getRun(runId)
             val status = run.status
@@ -193,6 +201,9 @@ open class FuranClient(
                 )
             }
             lastStatus = status
+            // Stop sleeping if the window is already exhausted — avoids
+            // burning the last `interval` on a delay we'll never poll after.
+            if (mark.elapsedNow() + interval >= timeout) break
             delay(interval)
         }
         throw FuranTimeoutException(runId, lastStatus, timeout.inWholeSeconds)

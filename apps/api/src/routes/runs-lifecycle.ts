@@ -1,12 +1,28 @@
-import { eq, testRuns } from "@furan/db";
+import { eq, screenshots, testRuns } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
-import { rollupRunStatus } from "../lib/checkpoint-rollup.js";
 import { approveRun } from "../trpc/v1/runs.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
+
+/**
+ * Counts the run's persisted checkpoints (one screenshots row per
+ * checkpoint). Used by /complete to decide `empty` vs leave-to-pipeline,
+ * and to stamp `checkpointCount`. Mirrors the count rollupRunStatus used
+ * before the eyes-compat fix, so the reported number is unchanged.
+ */
+async function checkpointCountForRun(
+  app: FastifyInstance,
+  runId: string,
+): Promise<number> {
+  const rows = await app.db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(eq(screenshots.runId, runId));
+  return rows.length;
+}
 
 /**
  * Looks up the projectId for a run by its UUID. Returns null when the UUID
@@ -51,42 +67,78 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });
 
-      // Roll up the current diff_regions state into a run status. We do
-      // NOT block here on outstanding diff jobs — earlier drafts polled
-      // for `rollup.status === "running"`, which rollupRunStatus never
-      // returns (it surfaces empty / passed / unresolved). The dashboard
-      // SSE (run.checkpoint_diffed / run.completed) refreshes the row
-      // as each checkpoint's diff settles, so the SDK gets a fast
-      // "synchronous-looking" reply here and the eventual final status
-      // arrives via the live channel.
+      // Contract (post eyes-compat fix): /complete stamps the run as
+      // *closed by the SDK* but does NOT decide the diff verdict — the
+      // diff pipeline owns `test_runs.status`. Earlier drafts called
+      // rollupRunStatus here and wrote its result, but rollup NEVER
+      // returns `running` (only empty / passed / unresolved). For a run
+      // whose async diff jobs are still in flight that produced a
+      // premature `passed` (checkpoints exist, no diff_regions yet),
+      // which the SDK's completeAndAwaitRun fast-returned as a false
+      // PASS — never polling for the true verdict and never reaching the
+      // `new` state that saveNewTests keys on.
       //
-      // Tightening this to a real synchronous wait requires either a
-      // per-checkpoint diff_outcome column or a queue.getJobs filter on
-      // the BullMQ side — both deferred as v1.1.2+ polish.
-      const rollup = await rollupRunStatus(app.db, params.data.id);
+      // New behavior, two cases keyed on checkpoint count:
+      //   * 0 checkpoints  → genuinely terminal `empty` (the diff-worker
+      //     will never run for this run), stamp status + completedAt.
+      //   * >=1 checkpoint  → stamp ONLY completedAt + checkpointCount;
+      //     leave `status` untouched (it stays `running` until the
+      //     diff-worker writes new/unresolved/passed/aborted). Re-read
+      //     and return the CURRENT status so the SDK sees `running` and
+      //     polls getRun until the worker settles it.
+      //
+      // The dashboard does NOT depend on a synchronous status here — it
+      // refreshes the row from the worker's `run.completed` /
+      // `run.checkpoint_diffed` SSE — so leaving the verdict to the
+      // pipeline is safe.
+      const checkpointCount = await checkpointCountForRun(app, params.data.id);
 
-      await app.db
-        .update(testRuns)
-        .set({
-          status: rollup.status,
-          checkpointCount: rollup.checkpointCount,
-          completedAt: new Date(),
-        })
-        .where(eq(testRuns.id, params.data.id));
+      let status: string;
+      if (checkpointCount === 0) {
+        await app.db
+          .update(testRuns)
+          .set({
+            status: "empty",
+            checkpointCount,
+            completedAt: new Date(),
+          })
+          .where(eq(testRuns.id, params.data.id));
+        status = "empty";
+      } else {
+        // Stamp completion only — the diff pipeline owns `status`.
+        await app.db
+          .update(testRuns)
+          .set({
+            checkpointCount,
+            completedAt: new Date(),
+          })
+          .where(eq(testRuns.id, params.data.id));
+        // Re-read the live status so the payload + reply reflect reality
+        // (running until diffs settle), never a premature rollup.
+        const rows = await app.db
+          .select({ status: testRuns.status })
+          .from(testRuns)
+          .where(eq(testRuns.id, params.data.id))
+          .limit(1);
+        status = rows[0]?.status ?? "running";
+      }
 
+      // Preserve the existing `run.completed` broadcast (the dashboard +
+      // integrations listen for it), but its payload status now reflects
+      // the actual current status rather than a premature rollup.
       await app.broadcaster.publishRunEvent?.({
         type: "run.completed",
         runId: params.data.id,
         payload: {
-          status: rollup.status,
-          checkpointCount: rollup.checkpointCount,
+          status,
+          checkpointCount,
         },
       });
 
       return reply.code(200).send({
         runId: params.data.id,
-        status: rollup.status,
-        checkpointCount: rollup.checkpointCount,
+        status,
+        checkpointCount,
       });
     },
   );

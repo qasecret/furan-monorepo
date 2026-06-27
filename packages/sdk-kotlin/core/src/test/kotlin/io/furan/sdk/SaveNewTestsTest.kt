@@ -151,4 +151,62 @@ class SaveNewTestsTest {
         assertEquals(0, stub.approveCalls, "approveRun must NOT be called when saveNewTests=false")
         assertEquals(0, stub.getRunCalls, "getRun must NOT be called when saveNewTests=false")
     }
+
+    // -------------------------------------------------------------------------
+    // Behavior 4 (#3a): NEW + saveNewTests=true + approve succeeds, but the
+    // post-approve getRun returns a NULL status → result must be UNRESOLVED,
+    // NEVER fabricated PASSED. A null/unknown status is a "couldn't determine"
+    // signal and must not read as a pass.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `saveNewTests=true with NEW result and null post-approve status returns UNRESOLVED not PASSED`() {
+        // FailOnDiff.None so a non-passing status is returned rather than thrown.
+        val cfg = testConfig(saveNewTests = true, failOnDiff = FailOnDiff.None)
+        val completeResult = RunResult(runId = "r4", status = RunStatus.NEW, checkpointCount = 1)
+        // getRun returns status = null (server hasn't settled, or unknown wire).
+        val getRunResponse =
+            RunResponse(id = "r4", projectId = "proj", buildId = "b1", status = null)
+        val stub = makeCaptureWith(cfg, completeResult, getRunResult = getRunResponse)
+
+        val capture = FuranCapture(cfg, NoopDriver, adapter = "test", client = stub)
+        capture.injectRunId("r4")
+
+        val result = capture.close()
+        assertEquals(
+            RunStatus.UNRESOLVED,
+            result?.status,
+            "null post-approve status must fall back to UNRESOLVED, not PASSED",
+        )
+        assertEquals(1, stub.approveCalls)
+        assertEquals(1, stub.getRunCalls)
+    }
+
+    // -------------------------------------------------------------------------
+    // Behavior 5 (#3b): NEW + saveNewTests=true + approve succeeds, but the
+    // post-approve status is non-passing (UNRESOLVED) AND failOnDiff=AfterEach
+    // → close() must throw FuranDiffException. The saveNewTests branch must not
+    // bypass the FailOnDiff verdict.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `saveNewTests=true + AfterEach + non-passing post-approve status throws FuranDiffException`() {
+        val cfg = testConfig(saveNewTests = true, failOnDiff = FailOnDiff.AfterEach)
+        val completeResult = RunResult(runId = "r5", status = RunStatus.NEW, checkpointCount = 1)
+        // Approve seeded a baseline, but the run is still unresolved.
+        val getRunResponse =
+            RunResponse(id = "r5", projectId = "proj", buildId = "b1", status = RunStatus.UNRESOLVED)
+        val stub = makeCaptureWith(cfg, completeResult, getRunResult = getRunResponse)
+
+        val capture = FuranCapture(cfg, NoopDriver, adapter = "test", client = stub)
+        capture.injectRunId("r5")
+
+        val ex = assertThrows<FuranDiffException> { capture.close() }
+        // The exception carries the REFRESHED (post-approve) result.
+        assertEquals("r5", ex.runResult.runId)
+        assertEquals(RunStatus.UNRESOLVED, ex.runResult.status)
+        // approve + getRun both happened before the verdict was applied.
+        assertEquals(1, stub.approveCalls)
+        assertEquals(1, stub.getRunCalls)
+    }
 }

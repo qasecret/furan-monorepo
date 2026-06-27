@@ -163,6 +163,44 @@ class FuranClientCompleteAwaitTest {
         }
 
     @Test
+    fun `completeAndAwaitRun polls at least once when interval equals timeout (#9 edge)`() = runTest {
+        // FuranConfig.init allows pollIntervalSeconds == pollTimeoutSeconds.
+        // The old bottom-delay loop degenerated to "one poll then immediate
+        // timeout"; the fix guarantees the first getRun runs and a terminal
+        // observed on that first poll is returned (not lost to a leading delay
+        // or a wasted trailing delay).
+        val config = FuranConfig(
+            apiUrl = "http://127.0.0.1:1",
+            apiToken = "furan_pat_test_abcdefghijklmnopqrst",
+            projectId = "00000000-0000-0000-0000-000000000000",
+            telemetryEnabled = false,
+            pollTimeoutSeconds = 2,
+            pollIntervalSeconds = 2, // interval == timeout
+        )
+        val completeResult = RunResult(runId = "r6", status = RunStatus.RUNNING, checkpointCount = 1)
+        // First (and only) poll already terminal — must be returned.
+        val getResponses = ArrayDeque(
+            listOf(
+                RunResponse(id = "r6", projectId = "proj", buildId = "b1", status = RunStatus.PASSED),
+            ),
+        )
+        val client = StubClient(
+            config = config,
+            completeResponses = ArrayDeque(listOf(completeResult)),
+            getRunResponses = getResponses,
+        )
+        try {
+            val result = client.completeAndAwaitRun("r6", timeout = 2.seconds)
+            assertEquals(RunStatus.PASSED, result.status)
+            assertEquals("r6", result.runId)
+            // At least one poll happened (the first getRun was not starved).
+            assertEquals(1, client.getRunCalls)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `completeAndAwaitRun returns NEW when poll returns NEW before terminal`() = runTest {
         val config = testConfig()
         // completeRun returns RUNNING (non-terminal) → triggers polling
