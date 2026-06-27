@@ -23,21 +23,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { browserEnv } from "@/lib/env";
-import { isAtLeastAdmin } from "@/lib/roles";
+import { isAtLeastAdmin, roleRank, type ViewerRole } from "@/lib/roles";
 
-export type Role = "owner" | "admin" | "editor" | "guest";
+export type Role = ViewerRole;
 
 interface ChangeRoleCellProps {
   userId: string;
   value: Role;
   disabled?: boolean;
   /**
-   * Whether the signed-in viewer is an owner. Only an owner may demote an owner
-   * (separation of duties), so the cell is read-only when an admin views an
-   * owner row. The API enforces this regardless (403 `owner_protected`); this is
+   * The row is an owner and the viewer is not — only an owner may change/demote
+   * an owner (separation of duties), so the cell is read-only. Computed once by
+   * the table (see `ownerRowLockedForViewer`) and shared with the deactivate
+   * control. The API enforces this regardless (403 `owner_protected`); this is
    * defense-in-depth + clearer UX.
    */
-  viewerIsOwner?: boolean;
+  lockedForViewer?: boolean;
   onChanged?: (next: Role) => void;
 }
 
@@ -55,16 +56,13 @@ export function ChangeRoleCell({
   userId,
   value,
   disabled,
-  viewerIsOwner = false,
+  lockedForViewer = false,
   onChanged,
 }: ChangeRoleCellProps) {
   const [pending, setPending] = useState(false);
   const [current, setCurrent] = useState<Role>(value);
   // Non-null while a privileged (admin/owner-involving) change awaits confirm.
   const [confirmRole, setConfirmRole] = useState<Role | null>(null);
-
-  // An admin cannot demote/deactivate an owner — lock the cell on owner rows.
-  const lockedForViewer = current === "owner" && !viewerIsOwner;
 
   const applyChange = async (next: Role): Promise<void> => {
     setPending(true);
@@ -135,22 +133,20 @@ export function ChangeRoleCell({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmRole && isPrivileged(confirmRole)
+              {confirmRole && roleRank(confirmRole) > roleRank(current)
                 ? `Grant ${ROLE_LABEL[confirmRole]} access?`
-                : "Remove elevated access?"}
+                : `Change role to ${confirmRole ? ROLE_LABEL[confirmRole] : ""}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRole && isPrivileged(confirmRole)
+              {confirmRole && roleRank(confirmRole) > roleRank(current)
                 ? `This gives the user full ${ROLE_LABEL[
                     confirmRole
                   ].toLowerCase()} privileges (${ROLE_LABEL[current]} → ${
                     ROLE_LABEL[confirmRole]
                   }).`
-                : `This removes ${ROLE_LABEL[
-                    current
-                  ].toLowerCase()} privileges (${ROLE_LABEL[current]} → ${
+                : `This changes the user from ${ROLE_LABEL[current]} to ${
                     confirmRole ? ROLE_LABEL[confirmRole] : ""
-                  }).`}
+                  }.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

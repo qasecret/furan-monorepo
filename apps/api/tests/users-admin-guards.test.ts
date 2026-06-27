@@ -193,6 +193,28 @@ describe("checkUserUpdateGuards — owner separation of duties", () => {
     ).toEqual({ ok: false, status: 403, error: "owner_protected" });
   });
 
+  it("blocks an ADMIN from REACTIVATING a deactivated owner (403 owner_protected)", () => {
+    expect(
+      guard({
+        actorId: ADMIN_A,
+        actorRole: "admin",
+        target: { id: OWNER_B, role: "owner", isActive: false },
+        update: { isActive: true },
+      }),
+    ).toEqual({ ok: false, status: 403, error: "owner_protected" });
+  });
+
+  it("lets an OWNER reactivate a deactivated owner", () => {
+    expect(
+      guard({
+        actorId: OWNER_A,
+        actorRole: "owner",
+        target: { id: OWNER_B, role: "owner", isActive: false },
+        update: { isActive: true },
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("lets an OWNER demote another owner when others remain", () => {
     expect(
       guard({

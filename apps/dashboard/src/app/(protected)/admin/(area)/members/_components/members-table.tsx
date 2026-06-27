@@ -27,7 +27,7 @@ export interface MemberRow {
   email: string;
   firstName?: string | null;
   lastName?: string | null;
-  role: "owner" | "admin" | "editor" | "guest";
+  role: ViewerRole;
   isActive: boolean;
   defaultProjectId?: string | null;
 }
@@ -57,6 +57,18 @@ function displayName(u: MemberRow): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+/**
+ * Owner rows are read-only (role change + deactivate) for non-owner viewers —
+ * the UI mirror of the API's `owner_protected` rule. Single encoding, shared by
+ * both row controls so the two can't disagree.
+ */
+function ownerRowLockedForViewer(
+  rowRole: ViewerRole,
+  viewerRole: ViewerRole,
+): boolean {
+  return isOwner(rowRole) && !isOwner(viewerRole);
+}
+
 export function MembersTable({
   initialUsers,
   currentUserId,
@@ -71,7 +83,6 @@ export function MembersTable({
   const [, startTransition] = useTransition();
   const firstRender = useRef(true);
   const projectNameById = new Map(allProjects.map((p) => [p.id, p.name]));
-  const viewerIsOwner = isOwner(viewerRole);
 
   useEffect(() => {
     if (firstRender.current) {
@@ -139,6 +150,10 @@ export function MembersTable({
             ) : (
               initialUsers.map((u) => {
                 const name = displayName(u);
+                const lockedForViewer = ownerRowLockedForViewer(
+                  u.role,
+                  viewerRole,
+                );
                 return (
                   <TableRow key={u.id} data-testid={`user-row-${u.id}`}>
                     <TableCell>
@@ -181,7 +196,7 @@ export function MembersTable({
                         userId={u.id}
                         value={u.role}
                         disabled={u.id === currentUserId}
-                        viewerIsOwner={viewerIsOwner}
+                        lockedForViewer={lockedForViewer}
                         onChanged={() => router.refresh()}
                       />
                     </TableCell>
@@ -204,7 +219,7 @@ export function MembersTable({
                           userId={u.id}
                           isActive={u.isActive}
                           isSelf={u.id === currentUserId}
-                          lockedForViewer={u.role === "owner" && !viewerIsOwner}
+                          lockedForViewer={lockedForViewer}
                           onChanged={() => router.refresh()}
                         />
                       </div>

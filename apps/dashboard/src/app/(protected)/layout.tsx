@@ -10,13 +10,14 @@ import { CommandPalette } from "@/components/cmdk/command-palette";
 import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
 import { apiGet } from "@/lib/api-client";
 import { requireJwt } from "@/lib/auth";
+import type { ViewerRole } from "@/lib/roles";
 
 interface Me {
   id: string;
   email: string;
   firstName: string;
   lastName: string;
-  role: "owner" | "admin" | "editor" | "guest";
+  role: ViewerRole;
   defaultProjectId: string | null;
 }
 

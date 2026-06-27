@@ -1,6 +1,12 @@
 import { isAtLeastAdmin, isOwner } from "../lib/roles.js";
 import type { UserRole } from "../plugins/auth.js";
 
+type TargetState = { role: UserRole; isActive: boolean };
+type UpdateFields = {
+  role?: UserRole | undefined;
+  isActive?: boolean | undefined;
+};
+
 export interface UserUpdateGuardInput {
   /** The authenticated admin/owner performing the change. */
   actorId: string;
@@ -8,9 +14,9 @@ export interface UserUpdateGuardInput {
    * request) — gates the owner-protection rule. */
   actorRole: UserRole;
   /** The target user's CURRENT state (from the DB, not the request). */
-  target: { id: string; role: UserRole; isActive: boolean };
+  target: { id: string } & TargetState;
   /** The requested changes (only the fields present are applied). */
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined };
+  update: UpdateFields;
   /**
    * Count of OTHER active ADMIN-CAPABLE users (role ∈ {admin, owner} AND
    * is_active, excluding the target). Read from the DB so the last-admin
@@ -32,54 +38,41 @@ export type UserUpdateGuard =
   | { ok: false; status: number; error: string };
 
 /**
- * Whether `update` would strip the target's ACTIVE ADMIN-CAPABLE status — i.e.
- * the target is currently an active admin or owner and the change demotes them
- * below admin (to editor/guest) or deactivates them. Single source of truth for
- * both the guard's last-admin branch and the route's "do we need the admin-count
- * query / atomic guard" decision, so the two can't drift.
+ * Whether `update` would strip the target's ACTIVE access for the tier matched
+ * by `hasTier` — i.e. the target currently holds that tier and is active, and
+ * the change demotes them below it or deactivates them. One parameterized
+ * source of truth for both the admin-capable and the owner invariants (and the
+ * route's "do we need the count query / atomic guard" decision), so they can't
+ * drift.
  */
-function removesActiveAdminAccess(
-  target: { role: UserRole; isActive: boolean },
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
+function removesActiveAccess(
+  target: TargetState,
+  update: UpdateFields,
+  hasTier: (role: UserRole) => boolean,
 ): boolean {
-  const targetIsActiveAdmin = isAtLeastAdmin(target.role) && target.isActive;
-  const removesAdminAccess =
-    (update.role !== undefined && !isAtLeastAdmin(update.role)) ||
+  const targetHasTier = hasTier(target.role) && target.isActive;
+  const removesTier =
+    (update.role !== undefined && !hasTier(update.role)) ||
     update.isActive === false;
-  return targetIsActiveAdmin && removesAdminAccess;
+  return targetHasTier && removesTier;
 }
 
 /**
- * Whether `update` would strip the target's ACTIVE OWNER status — the target is
- * currently an active owner and the change demotes them below owner or
- * deactivates them. Drives the last-owner invariant + the route's owner-count
- * atomic guard.
+ * Whether `update` mutates an OWNER target's role or active status in EITHER
+ * direction — demote-below-owner, deactivate, OR reactivate — regardless of the
+ * target's current active status. The trigger for owner-protection: only an
+ * owner may touch another owner's standing (active-status is ignored so an
+ * admin can neither quietly demote an inactive owner nor resurrect a
+ * deactivated one without owner sign-off). Name-only edits don't trigger it.
  */
-function removesActiveOwnerAccess(
-  target: { role: UserRole; isActive: boolean },
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
+function affectsOwnerStatus(
+  target: TargetState,
+  update: UpdateFields,
 ): boolean {
-  const targetIsActiveOwner = isOwner(target.role) && target.isActive;
-  const removesOwnerAccess =
+  const touchesOwnerStanding =
     (update.role !== undefined && !isOwner(update.role)) ||
-    update.isActive === false;
-  return targetIsActiveOwner && removesOwnerAccess;
-}
-
-/**
- * Whether `update` demotes-below-owner or deactivates an OWNER target,
- * regardless of the target's active status — the trigger for owner-protection.
- * (Active-status is ignored here on purpose: an admin must not be able to
- * quietly demote an inactive owner before it can be reactivated.)
- */
-function stripsOwnerStatus(
-  target: { role: UserRole; isActive: boolean },
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
-): boolean {
-  const stripsOwner =
-    (update.role !== undefined && !isOwner(update.role)) ||
-    update.isActive === false;
-  return isOwner(target.role) && stripsOwner;
+    update.isActive !== undefined;
+  return isOwner(target.role) && touchesOwnerStanding;
 }
 
 /**
@@ -90,8 +83,9 @@ function stripsOwnerStatus(
  * Layered intentionally (most-specific authorization first, then integrity):
  * - Self-protection (friendly, common footgun): a caller can neither deactivate
  *   nor change the role of their own account (so no self-promotion to owner).
- * - Owner-protection (separation of duties): only an owner may demote or
- *   deactivate an owner; an admin acting on an owner is rejected `403`.
+ * - Owner-protection (separation of duties): only an owner may demote,
+ *   deactivate, or reactivate an owner; a non-owner acting on an owner is
+ *   rejected `403`.
  * - Last-active-owner invariant: an operation may never remove the last active
  *   owner (count-based; the route also enforces it atomically).
  * - Last-active-admin invariant (system integrity backstop, count-based so it
@@ -121,10 +115,11 @@ export function checkUserUpdateGuards(
     return { ok: false, status: 400, error: "cannot_change_own_role" };
   }
 
-  // Owner-protection: only an owner may demote or deactivate an owner. An admin
-  // acting on an owner target is unauthorized (checked before the integrity
-  // invariants — a non-owner shouldn't even learn whether it's the last owner).
-  if (stripsOwnerStatus(target, update) && !isOwner(actorRole)) {
+  // Owner-protection: only an owner may demote/deactivate/reactivate an owner.
+  // A non-owner acting on an owner target is unauthorized (checked before the
+  // integrity invariants — a non-owner shouldn't even learn whether it's the
+  // last owner).
+  if (affectsOwnerStatus(target, update) && !isOwner(actorRole)) {
     return { ok: false, status: 403, error: "owner_protected" };
   }
 
@@ -132,14 +127,20 @@ export function checkUserUpdateGuards(
   // target's active-owner status, at least one OTHER active owner must remain.
   // The route ALSO enforces this atomically in the UPDATE to close the
   // read-then-write race (two owners demoting each other concurrently).
-  if (removesActiveOwnerAccess(target, update) && otherActiveOwnerCount === 0) {
+  if (
+    removesActiveAccess(target, update, isOwner) &&
+    otherActiveOwnerCount === 0
+  ) {
     return { ok: false, status: 409, error: "last_owner" };
   }
 
   // Last-active-admin invariant (fast path): if this change would strip the
   // target's active admin-capable status, at least one OTHER active
   // admin-capable user (admin or owner) must remain.
-  if (removesActiveAdminAccess(target, update) && otherActiveAdminCount === 0) {
+  if (
+    removesActiveAccess(target, update, isAtLeastAdmin) &&
+    otherActiveAdminCount === 0
+  ) {
     return { ok: false, status: 409, error: "last_admin" };
   }
 
@@ -152,10 +153,10 @@ export function checkUserUpdateGuards(
  * admin-count query + atomic guard.
  */
 export function updateMayRemoveAdmin(
-  target: { role: UserRole; isActive: boolean },
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
+  target: TargetState,
+  update: UpdateFields,
 ): boolean {
-  return removesActiveAdminAccess(target, update);
+  return removesActiveAccess(target, update, isAtLeastAdmin);
 }
 
 /**
@@ -163,8 +164,8 @@ export function updateMayRemoveAdmin(
  * whether the route needs to run the owner-count query + atomic owner guard.
  */
 export function updateMayRemoveOwner(
-  target: { role: UserRole; isActive: boolean },
-  update: { role?: UserRole | undefined; isActive?: boolean | undefined },
+  target: TargetState,
+  update: UpdateFields,
 ): boolean {
-  return removesActiveOwnerAccess(target, update);
+  return removesActiveAccess(target, update, isOwner);
 }

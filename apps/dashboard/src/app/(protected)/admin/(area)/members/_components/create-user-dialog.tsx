@@ -1,5 +1,6 @@
 "use client";
 
+import { userRoleSchema } from "@furan/shared-types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -39,7 +40,7 @@ const schema = z.object({
   password: z.string().min(8, "At least 8 characters"),
   firstName: z.string().min(1, "Required").max(80),
   lastName: z.string().min(1, "Required").max(80),
-  role: z.enum(["owner", "admin", "editor", "guest"]),
+  role: userRoleSchema,
 });
 
 type FormValues = z.infer<typeof schema>;

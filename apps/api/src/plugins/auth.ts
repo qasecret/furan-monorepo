@@ -1,4 +1,5 @@
 import fastifyJwt from "@fastify/jwt";
+import type { UserRole } from "@furan/shared-types";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
@@ -7,7 +8,10 @@ import { resolveAuthUser } from "../lib/resolve-auth-user.js";
 import { isPatFormat } from "../lib/token.js";
 import { touchTokenLastUsed } from "../lib/touch-token.js";
 
-export type UserRole = "admin" | "editor" | "guest" | "owner";
+// The role model lives in @furan/shared-types (single source of truth across
+// the API + dashboard). Re-exported so the many `../plugins/auth.js` importers
+// keep resolving `UserRole` unchanged.
+export type { UserRole };
 
 export interface AuthedUser {
   id: string;

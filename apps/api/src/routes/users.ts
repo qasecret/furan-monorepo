@@ -1,4 +1,5 @@
 import { eq, users } from "@furan/db";
+import { userRoleSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -7,7 +8,7 @@ export const meResponse = z.object({
   email: z.string().email(),
   firstName: z.string(),
   lastName: z.string(),
-  role: z.enum(["owner", "admin", "editor", "guest"]),
+  role: userRoleSchema,
   isActive: z.boolean(),
   defaultProjectId: z.string().uuid().nullable(),
   createdAt: z.date(),

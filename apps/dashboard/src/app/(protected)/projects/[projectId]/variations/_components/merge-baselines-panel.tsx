@@ -13,11 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type ViewerRole } from "@/lib/roles";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
   projectId: string;
-  userRole: "owner" | "admin" | "editor" | "guest";
+  userRole: ViewerRole;
 }
 
 /**

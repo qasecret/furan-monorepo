@@ -5,6 +5,7 @@ import { MembersTable, type MemberRow } from "./_components/members-table";
 import { PageTour } from "@/components/tour/page-tour";
 import { apiGet } from "@/lib/api-client";
 import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
+import type { ViewerRole } from "@/lib/roles";
 
 export const metadata: Metadata = { title: "Members" };
 
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 interface Me {
   id: string;
-  role: "owner" | "admin" | "editor" | "guest";
+  role: ViewerRole;
 }
 
 interface Project {

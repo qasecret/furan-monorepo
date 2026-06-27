@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { ViewerRole } from "@/lib/roles";
 
 interface Props {
   email: string;
@@ -21,7 +22,10 @@ interface Props {
   role: string;
 }
 
-const ROLE_STYLE: Record<string, string> = {
+// Typed by role so a new tier is a compile error here (the previous
+// Record<string,…> silently fell back to the guest style for `owner`).
+const ROLE_STYLE: Record<ViewerRole, string> = {
+  owner: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
   admin:
     "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
   editor: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
@@ -53,7 +57,7 @@ export function AccountMenu({ email, initial, role }: Props) {
               {email || "Signed in"}
             </p>
             <span
-              className={`mt-0.5 inline-block rounded px-1.5 py-px text-[10px] font-semibold capitalize leading-tight ${ROLE_STYLE[role] ?? ROLE_STYLE.guest}`}
+              className={`mt-0.5 inline-block rounded px-1.5 py-px text-[10px] font-semibold capitalize leading-tight ${ROLE_STYLE[role as ViewerRole] ?? ROLE_STYLE.guest}`}
             >
               {role}
             </span>

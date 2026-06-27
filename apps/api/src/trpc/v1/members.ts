@@ -2,6 +2,7 @@ import { and, asc, eq, projectMembers, users } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { isOwner } from "../../lib/roles.js";
 import type { Context } from "../context.js";
 import { requireAdmin } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
@@ -164,13 +165,19 @@ export const membersRouter = t.router({
       }
       const target = (
         await ctx.db
-          .select({ id: users.id })
+          .select({ id: users.id, role: users.role })
           .from(users)
           .where(eq(users.id, input.userId))
           .limit(1)
       )[0];
       if (!target) {
         throw new TRPCError({ code: "NOT_FOUND", message: "no_such_user" });
+      }
+      // Owner-protection (separation of duties): only an owner may rewrite an
+      // owner's project memberships / default project — parallels the
+      // owner_protected rule on PATCH /users/:id.
+      if (isOwner(target.role) && !isOwner(ctx.user.role)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "owner_protected" });
       }
 
       try {
