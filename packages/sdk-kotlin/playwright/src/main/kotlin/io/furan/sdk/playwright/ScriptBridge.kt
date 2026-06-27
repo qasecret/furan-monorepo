@@ -14,7 +14,3 @@ package io.furan.sdk.playwright
  */
 internal fun wrapScript(script: String): String =
     "(a) => { return (function() { $script }).apply(null, a); }"
-
-/** Baseline browser label for the env tuple: `playwright-<type>` (or `playwright`). */
-internal fun playwrightBrowserLabel(browserType: String?): String =
-    if (browserType.isNullOrBlank()) "playwright" else "playwright-$browserType"

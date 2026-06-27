@@ -1,6 +1,6 @@
 # Migrating from Applitools Eyes to Furan
 
-Furan ships an Eyes compatibility layer (Eyes Compatibility Level v1, targeting Applitools Eyes SDK 5.x). If you already have tests written against the Applitools Java/Kotlin SDK, you can swap imports and migrate with minimal changes. The facade wraps Furan's native `FuranCapture` engine so you get Furan's capture, diff, and review pipeline behind an API surface that mirrors `Eyes.open / check / close`.
+Furan ships **Loupe** — an Applitools Eyes-compatible facade (Eyes Compatibility Level v1, targeting Applitools Eyes SDK 5.x). If you already have tests written against the Applitools Java/Kotlin SDK, you can swap imports and migrate with minimal changes. The facade wraps Furan's native `FuranCapture` engine so you get Furan's capture, diff, and review pipeline behind an API surface that mirrors Applitools' `Eyes.open / check / close`.
 
 ## Side-by-side comparison
 
@@ -15,21 +15,21 @@ eyes.checkWindow("Home");
 eyes.close();
 ```
 
-**Furan Eyes (Kotlin):**
+**Furan (Kotlin) — via the `Loupe` facade:**
 
 ```kotlin
 val driver = ChromeDriver()
-val eyes = Eyes(FuranConfig.fromEnv(), driver)
-eyes.open("App", "Test")
+val loupe = Loupe(FuranConfig.fromEnv(), driver)
+loupe.open("App", "Test")
 driver.get("https://example.com/")
-eyes.check("Home")
-eyes.close()
+loupe.check("Home")
+loupe.close()
 ```
 
 The key structural differences:
 
 - `FuranConfig.fromEnv()` replaces the API key setter; see [Config](#config) below.
-- The driver is injected into `Eyes(config, driver)` rather than passed to `open`.
+- The driver is injected into `Loupe(config, driver)` rather than passed to `open`.
 - `checkWindow` → `check(name)` (per-name checkpoint model, see below).
 - No `setServerURL` / `setBatch` — Furan uses project-level batching automatically.
 
@@ -52,10 +52,10 @@ When a run completes, Furan's `run_status` maps to Applitools Eyes concepts as f
 
 Furan's native API defaults to **manual first baseline**: the first run for a new test is `new` and sits in the dashboard awaiting human approval before it becomes the accepted baseline. This is a deliberate divergence from Applitools, which auto-seeds the baseline on the first run.
 
-The Eyes facade restores Applitools behavior: `saveNewTests` defaults to `true`, so the first `close()` auto-accepts the new screenshots as the baseline without manual approval. If you want the Furan-native behavior (manual approval gate on first run), construct the facade with `saveNewTests = false`:
+The Loupe facade restores Applitools behavior: `saveNewTests` defaults to `true`, so the first `close()` auto-accepts the new screenshots as the baseline without manual approval. If you want the Furan-native behavior (manual approval gate on first run), construct the facade with `saveNewTests = false`:
 
 ```kotlin
-val eyes = Eyes(FuranConfig.fromEnv(), driver, saveNewTests = false)
+val loupe = Loupe(FuranConfig.fromEnv(), driver, saveNewTests = false)
 ```
 
 ### Per-name checkpoint model
@@ -64,7 +64,7 @@ Each `check(name)` call is its own independent comparison keyed by name. Unlike 
 
 ### Native Furan features
 
-Advanced features — VLM semantic diff descriptions, ignore/strict/floating regions, accessibility (axe-core) regions, layout match level, element-map-based suppression — are only available through the native `Furan` API (`io.furan.sdk.selenium.Furan`). The `Eyes` facade is compatibility-conservative and will not surface these. If you want Furan-specific capabilities, migrate fully to the native API.
+Advanced features — VLM semantic diff descriptions, ignore/strict/floating regions, accessibility (axe-core) regions, layout match level, element-map-based suppression — are only available through the native `Furan` API (`io.furan.sdk.selenium.Furan`). The `Loupe` facade is compatibility-conservative and will not surface these. If you want Furan-specific capabilities, migrate fully to the native API.
 
 ## Fail-on-diff knob
 

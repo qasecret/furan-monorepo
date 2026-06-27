@@ -44,12 +44,13 @@ class AppiumSpecDriver(
         return DriverInfo(
             isNative = true,
             isMobile = true,
-            // Env tuple (ADR-054): the platform rides in the browser label
-            // (mirrors playwright-<type>) so Android and iOS keep separate
-            // baselines; device is populated; os is left null like the web
-            // adapters. A genuinely absent platformName collapses to
-            // "appium-unknown" — a misconfigured-session edge, not the norm.
-            browserName = "appium-" + (platform?.lowercase() ?: "unknown"),
+            // Env tuple: report the real browser for a webview/browser session
+            // (capability "browserName"); for a native session there is no
+            // browser, so fall back to the platform (android/ios) — which still
+            // keeps Android and iOS baselines distinct — dropping the old
+            // "appium-" framework prefix. Null only when neither is present (a
+            // misconfigured session); the engine then falls back to the adapter.
+            browserName = cap("browserName")?.lowercase() ?: platform?.lowercase(),
             deviceName = cap("deviceName") ?: cap("udid"),
             features = emptySet(),
         )

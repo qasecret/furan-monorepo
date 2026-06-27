@@ -10,10 +10,10 @@ package io.furan.sdk.dto
  * - [isDifferent] specifically means visual diffs were detected
  *   (UNRESOLVED or FAILED) and intentionally excludes ABORTED; use
  *   [isAborted] to check for aborted runs separately.
- * - RUNNING is a non-terminal status and is not expected here — [close]
+ * - RUNNING is a non-terminal status and is not expected here — Loupe.close()
  *   blocks until the run reaches a terminal status before returning.
  */
-class EyesTestResults(val run: RunResult) {
+class LoupeTestResults(val run: RunResult) {
     val runId: String get() = run.runId
     val status: RunStatus get() = run.status
     val checkpointCount: Int get() = run.checkpointCount

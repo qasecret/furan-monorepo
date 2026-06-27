@@ -90,7 +90,7 @@ class PlaywrightSpecDriverTest {
 
         val info = PlaywrightSpecDriver(page).getDriverInfo()
 
-        assertEquals("playwright-chromium", info.browserName)
+        assertEquals("chromium", info.browserName)
         assertFalse(info.isNative)
         assertTrue(
             info.features.containsAll(
@@ -112,7 +112,7 @@ class PlaywrightSpecDriverTest {
 
         val info = PlaywrightSpecDriver(page).getDriverInfo()
 
-        assertEquals("playwright-firefox", info.browserName)
+        assertEquals("firefox", info.browserName)
         assertFalse(Feature.RESIZE_VIEWPORT in info.features)
         // JS / DOM / element capture stay advertised — only resize is gated.
         assertTrue(Feature.JAVASCRIPT in info.features)

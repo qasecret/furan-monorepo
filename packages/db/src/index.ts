@@ -4,8 +4,8 @@ export * as schema from "./schema/index.js";
 // Re-export schema tables/enums as named exports for direct consumption.
 export * from "./schema/index.js";
 
-// Baseline resolution helper.
-export { resolveBaseline } from "./baseline.js";
+// Baseline resolution + creation helpers.
+export { resolveBaseline, recordBaseline } from "./baseline.js";
 export type { BaselineSource, GitRefs } from "./baseline.js";
 
 // Explicit type re-export for the run-status enum (the table-exports above

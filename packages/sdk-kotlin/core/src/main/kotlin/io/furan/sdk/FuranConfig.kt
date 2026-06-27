@@ -66,16 +66,37 @@ data class FuranConfig(
      * Applitools `saveNewTests` analog. When true, a first-run/no-baseline
      * `new` checkpoint is auto-approved client-side (seeds the baseline) and
      * reported PASSED. Default false (native Furan = manual baseline). The
-     * Eyes facade defaults this true. From FURAN_SAVE_NEW_TESTS.
+     * Loupe facade defaults this true. From FURAN_SAVE_NEW_TESTS.
      */
     val saveNewTests: Boolean = false,
     /**
      * RESERVED — currently unread; no behavior depends on this field yet.
-     * Reserved for future Eyes-vs-native divergence gating (e.g. controlling
+     * Reserved for future Loupe-vs-native divergence gating (e.g. controlling
      * which close/approve semantics are applied). Do not branch on this value
      * until a superseding ADR activates it.
      */
     val compatibility: CompatibilityMode = CompatibilityMode.APPLITOOLS,
+    /**
+     * Operating-system label for the captured environment (Applitools host-OS
+     * analog), e.g. "Windows", "macOS", "Linux". Part of the baseline identity
+     * (the `test_variations` environment tuple), so distinct OS values keep
+     * distinct baselines. From `FURAN_OS`. Null (default) leaves it to the
+     * adapter's captured OS, if any — preserving prior behavior when unset.
+     */
+    val os: String? = null,
+    /**
+     * Device label for the captured environment (Applitools device analog),
+     * e.g. "iPhone 15", "Pixel 8". Part of the baseline identity; mainly for
+     * Appium/mobile. From `FURAN_DEVICE`. Null (default) = unset.
+     */
+    val device: String? = null,
+    /**
+     * Browser label for the captured environment, e.g. "chrome", "firefox".
+     * Overrides the adapter's auto-detected browser (useful for remote grids
+     * where detection is unreliable). Part of the baseline identity. From
+     * `FURAN_BROWSER`. Null (default) = use the adapter's detected browser.
+     */
+    val browser: String? = null,
 ) {
     init {
         require(apiUrl.isNotBlank()) { "apiUrl must be non-blank" }
@@ -143,6 +164,9 @@ data class FuranConfig(
                         ?: throw FuranConfigException("invalid FURAN_FAIL_ON_DIFF: $v")
                 } ?: FailOnDiff.None,
                 saveNewTests = env["FURAN_SAVE_NEW_TESTS"]?.let { it == "1" || it.lowercase() == "true" } ?: false,
+                os = env["FURAN_OS"]?.trim()?.takeIf { it.isNotEmpty() },
+                device = env["FURAN_DEVICE"]?.trim()?.takeIf { it.isNotEmpty() },
+                browser = env["FURAN_BROWSER"]?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 
@@ -324,6 +348,9 @@ data class FuranConfig(
                 },
                 saveNewTests = env["FURAN_SAVE_NEW_TESTS"]?.let { it == "1" || it.lowercase() == "true" }
                     ?: yamlBool("saveNewTests") ?: false,
+                os = (env["FURAN_OS"] ?: yamlString("os"))?.trim()?.takeIf { it.isNotEmpty() },
+                device = (env["FURAN_DEVICE"] ?: yamlString("device"))?.trim()?.takeIf { it.isNotEmpty() },
+                browser = (env["FURAN_BROWSER"] ?: yamlString("browser"))?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
 

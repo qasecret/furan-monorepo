@@ -131,9 +131,13 @@ internal constructor(
             runId = rid,
             name = name,
             viewport = capture.viewport,
-            browser = capture.browser ?: adapter,
-            os = capture.os,
-            device = capture.device,
+            // Browser: explicit FURAN_BROWSER override wins, else the adapter's
+            // detected browser (capture.browser), else the adapter name as a
+            // last resort. os/device: explicit config wins over the (often
+            // null) adapter capture. All three feed the variation's env tuple.
+            browser = config.browser ?: capture.browser ?: adapter,
+            os = config.os ?: capture.os,
+            device = config.device ?: capture.device,
             matchLevel = options.matchLevel,
             regions = capture.regions,
             pngBytes = capture.pngBytes,

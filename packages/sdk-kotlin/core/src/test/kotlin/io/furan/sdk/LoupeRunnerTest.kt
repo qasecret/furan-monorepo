@@ -1,6 +1,6 @@
 package io.furan.sdk
 
-import io.furan.sdk.dto.EyesTestResults
+import io.furan.sdk.dto.LoupeTestResults
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.spec.DriverInfo
@@ -16,14 +16,14 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- * Tests for [EyesRunner] — verifying that runner.record() is called by
- * Eyes.close() and that getAllTestResults() aggregates correctly.
+ * Tests for [LoupeRunner] — verifying that runner.record() is called by
+ * Loupe.close() and that getAllTestResults() aggregates correctly.
  *
  * Test seam: uses [FuranCapture]'s internal constructor + [FuranCapture.injectRunId]
  * to simulate a closed run without network calls (same pattern as
  * [FuranCaptureCloseTest] and [SaveNewTestsTest]).
  */
-class EyesRunnerTest {
+class LoupeRunnerTest {
 
     private fun testConfig(failOnDiff: FailOnDiff = FailOnDiff.None) = FuranConfig(
         apiUrl = "http://127.0.0.1:1",
@@ -64,16 +64,16 @@ class EyesRunnerTest {
     }
 
     // -------------------------------------------------------------------------
-    // Fix #5: EyesRunner.record() is called from Eyes.close()
+    // Fix #5: LoupeRunner.record() is called from Loupe.close()
     // -------------------------------------------------------------------------
 
     /**
-     * Validates the EyesRunner contract directly: record() + getAllTestResults()
-     * roundtrip. This test does NOT involve the Eyes facade (it is in core).
+     * Validates the LoupeRunner contract directly: record() + getAllTestResults()
+     * roundtrip. This test does NOT involve the Loupe facade (it is in core).
      */
     @Test
-    fun `EyesRunner record and getAllTestResults roundtrip`() {
-        val runner = EyesRunner()
+    fun `LoupeRunner record and getAllTestResults roundtrip`() {
+        val runner = LoupeRunner()
         val rr1 = RunResult(runId = "r1", status = RunStatus.PASSED, checkpointCount = 1)
         val rr2 = RunResult(runId = "r2", status = RunStatus.UNRESOLVED, checkpointCount = 2)
 
@@ -89,8 +89,8 @@ class EyesRunnerTest {
     }
 
     @Test
-    fun `EyesRunner getAllTestResults throwException=true throws FuranSuiteException when any run failed`() {
-        val runner = EyesRunner()
+    fun `LoupeRunner getAllTestResults throwException=true throws FuranSuiteException when any run failed`() {
+        val runner = LoupeRunner()
         runner.record(RunResult(runId = "r1", status = RunStatus.PASSED, checkpointCount = 1))
         runner.record(RunResult(runId = "r2", status = RunStatus.UNRESOLVED, checkpointCount = 1))
 
@@ -100,8 +100,8 @@ class EyesRunnerTest {
     }
 
     @Test
-    fun `EyesRunner getAllTestResults throwException=true does NOT throw when all passed`() {
-        val runner = EyesRunner()
+    fun `LoupeRunner getAllTestResults throwException=true does NOT throw when all passed`() {
+        val runner = LoupeRunner()
         runner.record(RunResult(runId = "r1", status = RunStatus.PASSED, checkpointCount = 1))
 
         val results = runner.getAllTestResults(throwException = true)
@@ -110,16 +110,16 @@ class EyesRunnerTest {
     }
 
     @Test
-    fun `EyesRunner returns empty list when no runs recorded`() {
-        val runner = EyesRunner()
+    fun `LoupeRunner returns empty list when no runs recorded`() {
+        val runner = LoupeRunner()
         val results = runner.getAllTestResults(throwException = false)
         assertTrue(results.isEmpty())
     }
 
     /**
-     * Validates that FuranCapture.close() returns a RunResult (so Eyes.close()
-     * can call runner.record()). The Eyes facade delegation is tested in each
-     * adapter's EyesDelegationTest; here we verify the FuranCapture seam.
+     * Validates that FuranCapture.close() returns a RunResult (so Loupe.close()
+     * can call runner.record()). The Loupe facade delegation is tested in each
+     * adapter's LoupeDelegationTest; here we verify the FuranCapture seam.
      */
     @Test
     fun `FuranCapture close returns RunResult for a failing run (UNRESOLVED, failOnDiff=None)`() {
@@ -143,31 +143,31 @@ class EyesRunnerTest {
     }
 
     /**
-     * End-to-end simulation of the EyesRunner wiring:
+     * End-to-end simulation of the LoupeRunner wiring:
      * 1. Runner is created.
      * 2. A FuranCapture stub simulates a closed run with UNRESOLVED status.
-     * 3. The result is manually recorded on the runner (simulating Eyes.close()).
+     * 3. The result is manually recorded on the runner (simulating Loupe.close()).
      * 4. getAllTestResults() contains it; throwException=true throws FuranSuiteException.
      *
-     * Note: this test cannot instantiate selenium/playwright/appium Eyes directly
-     * (wrong module), but it exercises the exact code path that Eyes.close() uses:
-     * capture.close() → runner.record(rr) → EyesTestResults(rr).
+     * Note: this test cannot instantiate selenium/playwright/appium Loupe directly
+     * (wrong module), but it exercises the exact code path that Loupe.close() uses:
+     * capture.close() → runner.record(rr) → LoupeTestResults(rr).
      */
     @Test
-    fun `Eyes close wiring simulation — failing run recorded and throws on getAllTestResults`() {
-        val runner = EyesRunner()
+    fun `Loupe close wiring simulation — failing run recorded and throws on getAllTestResults`() {
+        val runner = LoupeRunner()
         val rr = RunResult(runId = "r-sim", status = RunStatus.UNRESOLVED, checkpointCount = 3)
 
-        // Simulate what Eyes.close() does:
+        // Simulate what Loupe.close() does:
         val capture = captureWith(rr, failOnDiff = FailOnDiff.None)
         val closed = capture.close() ?: error("close() returned null unexpectedly")
         runner.record(closed)
-        val eyesResult = EyesTestResults(closed)
+        val loupeResult = LoupeTestResults(closed)
 
-        // Verify the EyesTestResults wrapper
-        assertFalse(eyesResult.isPassed)
-        assertTrue(eyesResult.isDifferent)
-        assertFalse(eyesResult.isAborted)
+        // Verify the LoupeTestResults wrapper
+        assertFalse(loupeResult.isPassed)
+        assertTrue(loupeResult.isDifferent)
+        assertFalse(loupeResult.isAborted)
 
         // Verify the runner accumulated the result
         val allResults = runner.getAllTestResults(throwException = false)

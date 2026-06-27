@@ -4,6 +4,7 @@ import {
   diffRegions,
   eq,
   inArray,
+  projects,
   screenshots,
   sql,
   testRuns,
@@ -67,14 +68,22 @@ export interface CheckpointStatusInput {
   id: string;
   runId: string;
   viewport: string | null;
-  baselineName: string | null;
+  testVariationId: string;
 }
 
 /**
  * Derive each checkpoint's review status using the SAME signals as
  * runs.listCheckpoints (single source of truth — do NOT fork this):
  *   - run approved (test_runs.status = 'passed')              -> "passed"
- *   - else test_variations.baseline_name IS NULL              -> "new"
+ *   - else NO baseline resolvable for the checkpoint's variation
+ *     — i.e. no `baselines` row on the run's branch or the
+ *     project's default branch (the authoritative source
+ *     `resolveBaseline` diffs against). We deliberately do NOT
+ *     key off `test_variations.baseline_name`: run-level approve
+ *     (SDK `runs.approve` / saveNewTests) and diff-worker
+ *     auto-seed create a `baselines` row WITHOUT setting that
+ *     denormalized column, which made already-baselined runs
+ *     mis-render as "new".                                     -> "new"
  *   - else any diff_regions row with severity != 'none' for
  *     this checkpoint (modern: screenshot_id match; legacy
  *     NULL screenshot_id: viewport fallback, scoped per run)  -> "unresolved"
@@ -102,6 +111,62 @@ export async function deriveCheckpointStatuses(
     .from(testRuns)
     .where(and(inArray(testRuns.id, runIds), eq(testRuns.status, "passed")));
   const approvedRuns = new Set(approvedRunRows.map((r) => r.id));
+
+  // Per-run branch + project, and each project's default branch, so the
+  // baseline existence check below mirrors resolveBaseline's this_branch +
+  // default_branch tiers. (parent_pr is omitted — the badge has no PR base
+  // context; a PR run baselined only on its parent shows "new", a rare edge.)
+  const runMetaRows = await db
+    .select({
+      id: testRuns.id,
+      branchName: testRuns.branchName,
+      projectId: testRuns.projectId,
+      status: testRuns.status,
+    })
+    .from(testRuns)
+    .where(inArray(testRuns.id, runIds));
+  const runMeta = new Map(runMetaRows.map((r) => [r.id, r]));
+  const projectIds = [...new Set(runMetaRows.map((r) => r.projectId))];
+  const projectDefault = new Map<string, string>();
+  if (projectIds.length > 0) {
+    const projRows = await db
+      .select({ id: projects.id, mainBranchName: projects.mainBranchName })
+      .from(projects)
+      .where(inArray(projects.id, projectIds));
+    for (const p of projRows) projectDefault.set(p.id, p.mainBranchName);
+  }
+
+  // The authoritative "does this variation have a baseline?" signal: a row in
+  // the `baselines` table (what resolveBaseline resolves against), keyed by the
+  // branches it exists on. Distinct from the denormalized
+  // test_variations.baseline_name, which not every approve path maintains.
+  const variationIds = [...new Set(checkpoints.map((c) => c.testVariationId))];
+  const baselineBranches = new Map<string, Set<string>>();
+  if (variationIds.length > 0) {
+    const baselineRows = await db
+      .select({
+        testVariationId: baselines.testVariationId,
+        branchName: baselines.branchName,
+      })
+      .from(baselines)
+      .where(inArray(baselines.testVariationId, variationIds));
+    for (const b of baselineRows) {
+      let set = baselineBranches.get(b.testVariationId);
+      if (!set) {
+        set = new Set<string>();
+        baselineBranches.set(b.testVariationId, set);
+      }
+      set.add(b.branchName);
+    }
+  }
+  const hasBaseline = (c: CheckpointStatusInput): boolean => {
+    const branches = baselineBranches.get(c.testVariationId);
+    if (!branches || branches.size === 0) return false;
+    const meta = runMeta.get(c.runId);
+    if (meta?.branchName && branches.has(meta.branchName)) return true;
+    const def = meta ? projectDefault.get(meta.projectId) : undefined;
+    return def !== undefined && branches.has(def);
+  };
 
   const unresolvedRows = await db
     .select({
@@ -135,15 +200,29 @@ export async function deriveCheckpointStatuses(
       .map((r) => legacyKey(r.runId, r.viewport)),
   );
 
+  // Runs that have at least one severity!='none' region — gates the
+  // "trust the run verdict" fallback below to whole-region-less runs only, so a
+  // run that DID produce regions keeps its precise per-checkpoint split.
+  const runsWithAnyRegion = new Set(unresolvedRows.map((r) => r.runId));
+
   for (const c of checkpoints) {
     const status: CheckpointStatus = approvedRuns.has(c.runId)
       ? "passed"
-      : c.baselineName === null
+      : !hasBaseline(c)
         ? "new"
         : unresolvedScreenshotSet.has(c.id) ||
             legacyUnresolvedSet.has(legacyKey(c.runId, c.viewport))
           ? "unresolved"
-          : "passed";
+          : // Region-less fallback: the diff-worker can mark a run `unresolved`
+            // (diffPercent > threshold) yet persist no severity!='none' regions
+            // and no diff_signature for a small/scattered diff — leaving no
+            // per-checkpoint signal. Trust the run verdict, but ONLY when the
+            // whole run is region-less, so a run that DID produce regions keeps
+            // its precise split (genuinely-passed checkpoints aren't over-marked).
+            runMeta.get(c.runId)?.status === "unresolved" &&
+              !runsWithAnyRegion.has(c.runId)
+            ? "unresolved"
+            : "passed";
     out.set(c.id, status);
   }
   return out;

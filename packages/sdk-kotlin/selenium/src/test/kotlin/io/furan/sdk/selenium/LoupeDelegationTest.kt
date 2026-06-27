@@ -5,55 +5,55 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Unit tests for the [Eyes] Applitools-compat facade.
+ * Unit tests for the [Loupe] Applitools-compat facade.
  *
  * All assertions are pure (no network / browser calls):
  *   - `saveNewTests` default is true (Eyes-parity)
  *   - The facade exposes the expected lifecycle methods
  *   - snapshot-before-open propagates the engine's guard (delegation confirmed)
  */
-class EyesDelegationTest {
+class LoupeDelegationTest {
 
     @Test
-    fun `Eyes defaults saveNewTests true on its config`() {
+    fun `Loupe defaults saveNewTests true on its config`() {
         val cfg = FuranConfig(
             apiUrl = "http://127.0.0.1:1",
             apiToken = "furan_pat_test_abcdefghijklmnopqrst",
             projectId = "00000000-0000-0000-0000-000000000000",
             telemetryEnabled = false,
         )
-        val eyes = Eyes(cfg, EyesNoOpDriver())
-        assertTrue(eyes.config.saveNewTests)
+        val loupe = Loupe(cfg, LoupeNoOpDriver())
+        assertTrue(loupe.config.saveNewTests)
     }
 
     @Test
-    fun `Eyes exposes open check close abort`() {
-        val names = Eyes::class.java.declaredMethods.map { it.name }.toSet()
+    fun `Loupe exposes open check close abort`() {
+        val names = Loupe::class.java.declaredMethods.map { it.name }.toSet()
         assertTrue(names.containsAll(setOf("open", "check", "close", "abort")))
     }
 
     @Test
-    fun `Eyes check delegates to capture and throws before open (no network)`() {
+    fun `Loupe check delegates to capture and throws before open (no network)`() {
         val cfg = FuranConfig(
             apiUrl = "http://127.0.0.1:1",
             apiToken = "furan_pat_test_abcdefghijklmnopqrst",
             projectId = "00000000-0000-0000-0000-000000000000",
             telemetryEnabled = false,
         )
-        val eyes = Eyes(cfg, EyesNoOpDriver())
+        val loupe = Loupe(cfg, LoupeNoOpDriver())
         // FuranCapture.snapshot() throws IllegalStateException before any network call
         // when no run is open — confirms delegation is wired.
         val ex = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException::class.java) {
-            eyes.check("step-without-open")
+            loupe.check("step-without-open")
         }
         assertTrue(ex.message?.contains("open") == true)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Minimal WebDriver stub for Eyes unit tests — no browser, no server needed.
+// Minimal WebDriver stub for Loupe unit tests — no browser, no server needed.
 // ---------------------------------------------------------------------------
-private class EyesNoOpDriver : org.openqa.selenium.WebDriver {
+private class LoupeNoOpDriver : org.openqa.selenium.WebDriver {
     override fun get(url: String) = Unit
     override fun getCurrentUrl(): String = ""
     override fun getTitle(): String = ""

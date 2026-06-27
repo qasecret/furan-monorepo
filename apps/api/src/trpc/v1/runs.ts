@@ -11,6 +11,7 @@ import {
   isNull,
   lt,
   projects,
+  recordBaseline,
   resolveBaseline,
   screenshots,
   sql,
@@ -281,12 +282,13 @@ export async function approveRun(
           .set({ ignoreRegions: ignoreAreas, updatedAt: new Date() })
           .where(eq(testVariations.id, firstShot[0].testVariationId));
       }
-      await tx.insert(baselines).values({
-        baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+      await recordBaseline(tx, {
         testVariationId: firstShot[0].testVariationId,
         testRunId: run.id,
+        imageKey: firstShot[0].imageKey,
+        runName: run.name,
         userId: ctx.user.id,
-        ...(run.branchName ? { branchName: run.branchName } : {}),
+        branchName: run.branchName,
       });
     } else {
       // No screenshots yet — insert a placeholder baseline using run name.
@@ -1051,12 +1053,13 @@ export const runsRouter = t.router({
             .where(eq(screenshots.runId, run.id))
             .limit(1);
           if (firstShot[0]) {
-            await tx.insert(baselines).values({
-              baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+            await recordBaseline(tx, {
               testVariationId: firstShot[0].testVariationId,
               testRunId: run.id,
+              imageKey: firstShot[0].imageKey,
+              runName: run.name,
               userId: ctx.user.id,
-              ...(run.branchName ? { branchName: run.branchName } : {}),
+              branchName: run.branchName,
             });
           }
           approvedIds.push(run.id);
@@ -1159,12 +1162,13 @@ export const runsRouter = t.router({
             .where(eq(screenshots.runId, run.id))
             .limit(1);
           if (firstShot[0]) {
-            await tx.insert(baselines).values({
-              baselineName: firstShot[0].imageKey ?? run.name ?? "auto",
+            await recordBaseline(tx, {
               testVariationId: firstShot[0].testVariationId,
               testRunId: run.id,
+              imageKey: firstShot[0].imageKey,
+              runName: run.name,
               userId: ctx.user.id,
-              ...(run.branchName ? { branchName: run.branchName } : {}),
+              branchName: run.branchName,
             });
           }
           approvedIds.push(run.id);
@@ -1478,13 +1482,8 @@ export const runsRouter = t.router({
           imageKey: screenshots.imageKey,
           testVariationId: screenshots.testVariationId,
           createdAt: screenshots.createdAt,
-          baselineName: testVariations.baselineName,
         })
         .from(screenshots)
-        .leftJoin(
-          testVariations,
-          eq(testVariations.id, screenshots.testVariationId),
-        )
         .where(eq(screenshots.runId, input.runId))
         .orderBy(asc(screenshots.createdAt));
 
@@ -1496,7 +1495,7 @@ export const runsRouter = t.router({
           id: r.id,
           runId: input.runId,
           viewport: r.viewport,
-          baselineName: r.baselineName,
+          testVariationId: r.testVariationId,
         })),
       );
 
@@ -1559,14 +1558,10 @@ export const runsRouter = t.router({
           name: screenshots.name,
           viewport: screenshots.viewport,
           testName: testRuns.name,
-          baselineName: testVariations.baselineName,
+          testVariationId: screenshots.testVariationId,
         })
         .from(screenshots)
         .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .innerJoin(
-          testVariations,
-          eq(testVariations.id, screenshots.testVariationId),
-        )
         .where(
           and(
             eq(testRuns.buildId, seed.buildId),
@@ -1640,16 +1635,11 @@ export const runsRouter = t.router({
           contentRegions: screenshots.contentRegions,
           accessibilityRegions: screenshots.accessibilityRegions,
           matchLevel: screenshots.matchLevel,
-          baselineName: testVariations.baselineName,
           runName: testRuns.name,
           branchName: testRuns.branchName,
         })
         .from(screenshots)
         .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .innerJoin(
-          testVariations,
-          eq(testVariations.id, screenshots.testVariationId),
-        )
         .where(
           and(
             eq(testRuns.buildId, seed.buildId),
@@ -1742,14 +1732,10 @@ export const runsRouter = t.router({
           id: screenshots.id,
           runId: screenshots.runId,
           viewport: screenshots.viewport,
-          baselineName: testVariations.baselineName,
+          testVariationId: screenshots.testVariationId,
         })
         .from(screenshots)
         .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .innerJoin(
-          testVariations,
-          eq(testVariations.id, screenshots.testVariationId),
-        )
         .where(
           and(
             eq(testRuns.buildId, seed.buildId),

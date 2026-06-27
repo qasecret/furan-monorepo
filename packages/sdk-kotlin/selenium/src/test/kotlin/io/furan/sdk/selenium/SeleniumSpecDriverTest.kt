@@ -21,15 +21,26 @@ import org.openqa.selenium.WebElement
 
 class SeleniumSpecDriverTest {
     @Test
-    fun `getDriverInfo freezes browserName to selenium and advertises web features`() {
+    fun `getDriverInfo reports the real browser from capabilities and advertises web features`() {
         val info = SeleniumSpecDriver(SpecStubDriver(emptyMap())).getDriverInfo()
-        assertEquals("selenium", info.browserName)  // invariant 1 — do not change
+        assertEquals("chrome", info.browserName)  // real browser (lower-cased), via HasCapabilities
         assertEquals(null, info.platformName)
         assertEquals(null, info.deviceName)
         assertEquals(false, info.isNative)
         assertTrue(info.features.containsAll(
             setOf(Feature.JAVASCRIPT, Feature.DOM_SNAPSHOT, Feature.RESIZE_VIEWPORT, Feature.ELEMENT_SCREENSHOT),
         ))
+    }
+
+    @Test
+    fun `getDriverInfo reports null browser when the driver exposes no browser name`() {
+        // Not a HasCapabilities (NonJsStubDriver) or a blank browserName -> null,
+        // so FuranCapture falls back to the adapter name.
+        assertNull(SeleniumSpecDriver(NonJsStubDriver()).getDriverInfo().browserName)
+        assertNull(
+            SeleniumSpecDriver(SpecStubDriver(emptyMap(), browserName = null))
+                .getDriverInfo().browserName,
+        )
     }
 
     @Test
@@ -85,8 +96,17 @@ class SeleniumSpecDriverTest {
         private val elements: Map<String, WebElement>,
         private val screenshot: ByteArray = ByteArray(0),
         windowSize: Dimension = Dimension(1024, 768),
-    ) : WebDriver, org.openqa.selenium.JavascriptExecutor, TakesScreenshot {
+        private val browserName: String? = "chrome",
+    ) : WebDriver,
+        org.openqa.selenium.JavascriptExecutor,
+        TakesScreenshot,
+        org.openqa.selenium.HasCapabilities {
         val window = StubWindow(windowSize)
+
+        override fun getCapabilities(): org.openqa.selenium.Capabilities =
+            if (browserName != null)
+                org.openqa.selenium.ImmutableCapabilities("browserName", browserName)
+            else org.openqa.selenium.ImmutableCapabilities()
 
         override fun findElement(by: By): WebElement =
             elements[by.toString()] ?: throw NoSuchElementException("no element for $by")

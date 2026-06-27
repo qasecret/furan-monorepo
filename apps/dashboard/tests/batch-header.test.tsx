@@ -13,6 +13,7 @@ const data: BatchHeaderData = {
   ciBuildId: "ci-1",
   number: 42,
   name: null,
+  testName: null,
   branchName: "main",
   status: null,
   properties: { region: "us-east" },

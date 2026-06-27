@@ -117,6 +117,7 @@ export const buildsRouter = t.router({
         aborted_count: number;
         passed_count: number;
         empty_count: number;
+        test_name: string | null;
         aggregate_status: string;
       }>(sql`
         WITH run_agg AS (
@@ -128,7 +129,11 @@ export const buildsRouter = t.router({
             count(*) FILTER (WHERE status = 'failed')               AS failed_count,
             count(*) FILTER (WHERE status = 'aborted')              AS aborted_count,
             count(*) FILTER (WHERE status IN ('passed','new'))      AS passed_count,
-            count(*) FILTER (WHERE status = 'empty')                AS empty_count
+            count(*) FILTER (WHERE status = 'empty')                AS empty_count,
+            -- The build's single distinct test name (NULL when 0 or >1 tests),
+            -- so the Builds list can title a one-test build by its test rather
+            -- than the opaque build id. SDK runs are one-test-per-build (ADR-038).
+            CASE WHEN count(DISTINCT name) = 1 THEN min(name) ELSE NULL END AS test_name
           FROM test_runs
           WHERE build_id IN (SELECT id FROM builds WHERE project_id = ${input.projectId})
           GROUP BY build_id
@@ -144,6 +149,7 @@ export const buildsRouter = t.router({
           coalesce(r.aborted_count, 0)     AS aborted_count,
           coalesce(r.passed_count, 0)      AS passed_count,
           coalesce(r.empty_count, 0)       AS empty_count,
+          r.test_name                      AS test_name,
           ${aggregateStatusExpr}            AS aggregate_status
         FROM builds b
         LEFT JOIN run_agg r ON r.build_id = b.id
@@ -168,6 +174,7 @@ export const buildsRouter = t.router({
         branchName: r.branch_name,
         status: r.status,
         name: r.name,
+        testName: r.test_name,
         properties: r.properties,
         projectId: r.project_id,
         userId: r.user_id,
@@ -238,6 +245,7 @@ export const buildsRouter = t.router({
         steps_total: number;
         run_by_first_name: string | null;
         run_by_last_name: string | null;
+        test_name: string | null;
         aggregate_status: string;
       }>(sql`
         WITH run_agg AS (
@@ -250,7 +258,8 @@ export const buildsRouter = t.router({
             count(*) FILTER (WHERE status = 'aborted')              AS aborted_count,
             count(*) FILTER (WHERE status IN ('passed','new'))      AS passed_count,
             count(*) FILTER (WHERE status = 'new')                  AS new_count,
-            count(*) FILTER (WHERE status = 'empty')                AS empty_count
+            count(*) FILTER (WHERE status = 'empty')                AS empty_count,
+            CASE WHEN count(DISTINCT name) = 1 THEN min(name) ELSE NULL END AS test_name
           FROM test_runs
           WHERE build_id = ${input.buildId}
           GROUP BY build_id
@@ -275,6 +284,7 @@ export const buildsRouter = t.router({
           ), 0)                            AS steps_total,
           u.first_name                     AS run_by_first_name,
           u.last_name                      AS run_by_last_name,
+          r.test_name                      AS test_name,
           ${aggregateStatusExpr}            AS aggregate_status
         FROM builds b
         LEFT JOIN run_agg r ON r.build_id = b.id
@@ -293,6 +303,7 @@ export const buildsRouter = t.router({
         branchName: r.branch_name,
         status: r.status,
         name: r.name,
+        testName: r.test_name,
         properties: r.properties,
         projectId: r.project_id,
         userId: r.user_id,

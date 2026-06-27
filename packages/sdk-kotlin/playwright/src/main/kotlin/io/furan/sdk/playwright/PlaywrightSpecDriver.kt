@@ -29,9 +29,9 @@ class PlaywrightSpecDriver(private val page: Page) : SpecDriver {
     override fun getDriverInfo(): DriverInfo = DriverInfo(
         isNative = false,
         isMobile = false,
-        browserName = playwrightBrowserLabel(
-            page.context().browser()?.browserType()?.name()
-        ),
+        browserName = page.context().browser()?.browserType()?.name()
+            ?.takeIf { it.isNotBlank() }
+            ?.lowercase(),
         features = buildSet {
             add(Feature.JAVASCRIPT)
             add(Feature.DOM_SNAPSHOT)
