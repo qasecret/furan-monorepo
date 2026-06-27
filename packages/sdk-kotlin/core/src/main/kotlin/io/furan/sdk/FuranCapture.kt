@@ -6,6 +6,7 @@ import io.furan.sdk.dto.CheckpointResult
 import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.CreateBuildRequest
 import io.furan.sdk.dto.RunResult
+import io.furan.sdk.dto.RunStatus
 import io.furan.sdk.dto.SuiteResult
 import io.furan.sdk.spec.SpecDriver
 import kotlinx.coroutines.runBlocking
@@ -25,13 +26,34 @@ import kotlin.time.Duration.Companion.seconds
  *   (User-Agent), e.g. "selenium" / "playwright". Distinct from the baseline
  *   `browser` label, which the engine fills from `SpecDriver.getDriverInfo()`.
  */
-class FuranCapture(val config: FuranConfig, driver: SpecDriver, private val adapter: String) {
-    private val client = FuranClient(config, adapter = adapter)
+class FuranCapture
+/**
+ * Internal constructor used by tests to inject a pre-built [FuranClient] stub.
+ * Production code must use the public constructor, which creates the real client.
+ */
+internal constructor(
+    val config: FuranConfig,
+    driver: SpecDriver,
+    private val adapter: String,
+    private val client: FuranClient,
+) {
+    /** Primary public constructor — creates the real [FuranClient]. */
+    constructor(config: FuranConfig, driver: SpecDriver, adapter: String) :
+        this(config, driver, adapter, FuranClient(config, adapter = adapter))
+
     private val captureEngine = CaptureEngine(driver)
     private val ensureBuildMutex = Mutex()
 
     @Volatile private var buildId: String? = config.buildId
     @Volatile private var runId: String? = null
+
+    /**
+     * Test-only hook: pre-set the runId so [close] / [abort] can operate on a
+     * synthetic "open" run without going through the network path of [open].
+     */
+    internal fun injectRunId(id: String) {
+        runId = id
+    }
 
     /**
      * Opens a new test run with the given [testName]. Ensures a build exists
@@ -134,8 +156,12 @@ class FuranCapture(val config: FuranConfig, driver: SpecDriver, private val adap
      */
     fun close(): RunResult? = runBlocking {
         val rid = runId ?: return@runBlocking null
-        val result = client.completeRun(rid)
+        val result = client.completeAndAwaitRun(rid)
         runId = null
+        if (result.status == RunStatus.EMPTY) {
+            println("[furan-sdk] WARN: Visual test completed without checkpoints (run $rid).")
+            return@runBlocking result
+        }
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }
