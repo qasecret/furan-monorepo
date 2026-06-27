@@ -69,7 +69,7 @@ data class Regions(
 /** SDK-internal value returned by [FuranClient.createRun2] (ADR-038 v1.1.0). */
 data class CreatedRun(val runId: String, val status: RunStatus, val name: String)
 
-class FuranClient(
+open class FuranClient(
     val config: FuranConfig,
     val adapter: String = "unknown",
 ) : Closeable {
@@ -147,13 +147,54 @@ class FuranClient(
      * the run's checkpoint statuses and mark the run terminal.
      * Returns the [RunResult] (runId, status, checkpointCount).
      */
-    suspend fun completeRun(runId: String): RunResult = try {
+    open suspend fun completeRun(runId: String): RunResult = try {
         transport
             .post<JsonObject, RunResult>("runs/$runId/complete", JsonObject(emptyMap()))
             .also { counter.recordSuccess() }
     } catch (e: Throwable) {
         counter.recordError()
         throw e
+    }
+
+    /**
+     * ADR-038 / Eyes-compat P1: complete the run *and* poll until a terminal
+     * status is reached, then return the true verdict as a [RunResult].
+     *
+     * [completeRun] fires `POST /runs/:runId/complete`, which rolls up the
+     * run immediately but may still return `running` when diff jobs are
+     * outstanding. This method polls [getRun] every
+     * [FuranConfig.pollIntervalSeconds] until the status is terminal (or
+     * `NEW`, which never transitions further without manual approval and
+     * would always time out if we waited). Returns a [RunResult] whose
+     * `status` reflects the true terminal verdict and whose `checkpointCount`
+     * comes from the `completeRun` response.
+     *
+     * Throws [FuranTimeoutException] if no terminal is observed within
+     * [timeout] (defaults to [FuranConfig.pollTimeoutSeconds]).
+     */
+    suspend fun completeAndAwaitRun(
+        runId: String,
+        timeout: Duration = config.pollTimeoutSeconds.seconds,
+    ): RunResult {
+        val completed = completeRun(runId)
+        if (completed.status.isTerminal() || completed.status == RunStatus.NEW) return completed
+        val mark = TimeSource.Monotonic.markNow()
+        val interval = config.pollIntervalSeconds.seconds
+        var lastStatus: RunStatus? = completed.status
+        while (mark.elapsedNow() < timeout) {
+            val run = getRun(runId)
+            val status = run.status
+            if (status != null && (status.isTerminal() || status == RunStatus.NEW)) {
+                return RunResult(
+                    runId = runId,
+                    status = status,
+                    checkpointCount = completed.checkpointCount,
+                )
+            }
+            lastStatus = status
+            delay(interval)
+        }
+        throw FuranTimeoutException(runId, lastStatus, timeout.inWholeSeconds)
     }
 
     /**
@@ -363,7 +404,7 @@ class FuranClient(
     }
 
     /** Fetch a run's current state. Backs [snapshotAndAwait]'s polling loop. */
-    suspend fun getRun(runId: String): RunResponse =
+    open suspend fun getRun(runId: String): RunResponse =
         transport.get<RunResponse>("runs/$runId")
 
     /**
