@@ -1,6 +1,7 @@
 import { t } from "../trpc.js";
 
 import { analyticsRouter } from "./analytics.js";
+import { auditLogRouter } from "./audit-log.js";
 import { autoRulesRouter } from "./auto-rules.js";
 import { baselinesRouter } from "./baselines.js";
 import { buildsRouter } from "./builds.js";
@@ -13,6 +14,7 @@ import { variationsRouter } from "./variations.js";
 
 export const appRouter = t.router({
   analytics: analyticsRouter,
+  auditLog: auditLogRouter,
   autoRules: autoRulesRouter,
   baselines: baselinesRouter,
   builds: buildsRouter,
