@@ -162,6 +162,14 @@ internal constructor(
             println("[furan-sdk] WARN: Visual test completed without checkpoints (run $rid).")
             return@runBlocking result
         }
+        // Phase 3: Eyes saveNewTests — approve a no-baseline `new` run as a
+        // DISTINCT step, then re-fetch. A failed approve propagates (we do NOT
+        // report passed), keeping the lifecycle deterministic.
+        if (result.status == RunStatus.NEW && config.saveNewTests) {
+            client.approveRun(rid)
+            val refreshed = client.getRun(rid)
+            return@runBlocking RunResult(rid, refreshed.status ?: RunStatus.PASSED, result.checkpointCount, result.checkpoints)
+        }
         if (config.failOnDiff == FailOnDiff.AfterEach && !result.status.isPassing()) {
             throw FuranDiffException(result)
         }

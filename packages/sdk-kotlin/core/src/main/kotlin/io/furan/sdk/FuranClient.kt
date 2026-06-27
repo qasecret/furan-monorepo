@@ -209,6 +209,11 @@ open class FuranClient(
         }
     }
 
+    /** POST /runs/:runId/approve — materialize a first baseline (saveNewTests). */
+    open suspend fun approveRun(runId: String) {
+        transport.post<JsonObject, JsonObject>("runs/$runId/approve", JsonObject(emptyMap()))
+    }
+
     /**
      * ADR-038 v2 screenshot upload: multipart `POST /runs/:runId/screenshots`
      * carrying all new fields (`viewport`, `browser`, `os`, `device`,
