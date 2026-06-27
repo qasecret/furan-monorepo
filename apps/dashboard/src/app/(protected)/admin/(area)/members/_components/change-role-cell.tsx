@@ -23,31 +23,45 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { browserEnv } from "@/lib/env";
+import { isAtLeastAdmin, roleRank, type ViewerRole } from "@/lib/roles";
 
-export type Role = "admin" | "editor" | "guest";
+export type Role = ViewerRole;
 
 interface ChangeRoleCellProps {
   userId: string;
   value: Role;
   disabled?: boolean;
+  /**
+   * The row is an owner and the viewer is not — only an owner may change/demote
+   * an owner (separation of duties), so the cell is read-only. Computed once by
+   * the table (see `ownerRowLockedForViewer`) and shared with the deactivate
+   * control. The API enforces this regardless (403 `owner_protected`); this is
+   * defense-in-depth + clearer UX.
+   */
+  lockedForViewer?: boolean;
   onChanged?: (next: Role) => void;
 }
 
 const ROLE_LABEL: Record<Role, string> = {
+  owner: "Owner",
   admin: "Admin",
   editor: "Editor",
   guest: "Guest",
 };
 
+/** Granting or removing an admin/owner tier is privileged → confirm first. */
+const isPrivileged = (role: Role): boolean => isAtLeastAdmin(role);
+
 export function ChangeRoleCell({
   userId,
   value,
   disabled,
+  lockedForViewer = false,
   onChanged,
 }: ChangeRoleCellProps) {
   const [pending, setPending] = useState(false);
   const [current, setCurrent] = useState<Role>(value);
-  // Non-null while a privileged (admin-involving) change awaits confirmation.
+  // Non-null while a privileged (admin/owner-involving) change awaits confirm.
   const [confirmRole, setConfirmRole] = useState<Role | null>(null);
 
   const applyChange = async (next: Role): Promise<void> => {
@@ -78,8 +92,8 @@ export function ChangeRoleCell({
 
   const handleSelect = (next: Role): void => {
     if (next === current) return;
-    // Granting or removing admin is privileged — confirm before applying.
-    if (next === "admin" || current === "admin") {
+    // Granting or removing an admin/owner tier is privileged — confirm first.
+    if (isPrivileged(next) || isPrivileged(current)) {
       setConfirmRole(next);
       return;
     }
@@ -91,7 +105,9 @@ export function ChangeRoleCell({
       <Select
         value={current}
         onValueChange={(v) => handleSelect(v as Role)}
-        disabled={disabled || pending || confirmRole !== null}
+        disabled={
+          disabled || lockedForViewer || pending || confirmRole !== null
+        }
       >
         <SelectTrigger
           className="w-28"
@@ -101,6 +117,7 @@ export function ChangeRoleCell({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value="owner">Owner</SelectItem>
           <SelectItem value="admin">Admin</SelectItem>
           <SelectItem value="editor">Editor</SelectItem>
           <SelectItem value="guest">Guest</SelectItem>
@@ -116,16 +133,20 @@ export function ChangeRoleCell({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmRole === "admin"
-                ? "Grant admin access?"
-                : "Remove admin access?"}
+              {confirmRole && roleRank(confirmRole) > roleRank(current)
+                ? `Grant ${ROLE_LABEL[confirmRole]} access?`
+                : `Change role to ${confirmRole ? ROLE_LABEL[confirmRole] : ""}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmRole === "admin"
-                ? `This gives the user full admin privileges (${ROLE_LABEL[current]} → Admin).`
-                : `This removes admin privileges (Admin → ${
+              {confirmRole && roleRank(confirmRole) > roleRank(current)
+                ? `This gives the user full ${ROLE_LABEL[
+                    confirmRole
+                  ].toLowerCase()} privileges (${ROLE_LABEL[current]} → ${
+                    ROLE_LABEL[confirmRole]
+                  }).`
+                : `This changes the user from ${ROLE_LABEL[current]} to ${
                     confirmRole ? ROLE_LABEL[confirmRole] : ""
-                  }).`}
+                  }.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

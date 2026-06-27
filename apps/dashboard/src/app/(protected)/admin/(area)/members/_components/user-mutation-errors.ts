@@ -6,6 +6,8 @@ export const USER_MUTATION_ERROR: Record<string, string> = {
   cannot_change_own_role: "You can't change your own role — ask another admin.",
   cannot_disable_self: "You can't deactivate your own account.",
   last_admin: "At least one active admin must remain.",
+  last_owner: "At least one active owner must remain.",
+  owner_protected: "Only an owner can change or deactivate another owner.",
 };
 
 /** Read the `{ error }` code from a failed API response (empty string if none). */

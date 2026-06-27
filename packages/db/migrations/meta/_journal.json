@@ -218,6 +218,13 @@
       "when": 1782484832319,
       "tag": "0030_cute_agent_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1782491333896,
+      "tag": "0031_handy_psynapse",
+      "breakpoints": true
     }
   ]
 }

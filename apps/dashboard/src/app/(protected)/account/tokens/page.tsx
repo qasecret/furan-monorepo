@@ -4,14 +4,14 @@ import { redirect } from "next/navigation";
 import { TokensTable, type TokenRow } from "./_components/tokens-table";
 
 import { apiGet } from "@/lib/api-client";
-import { getViewerRole } from "@/lib/get-viewer";
+import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
 
 export const metadata: Metadata = { title: "Tokens" };
 export const dynamic = "force-dynamic";
 
 export default async function TokensPage() {
   const role = await getViewerRole();
-  if (role === "admin") redirect("/admin/api-keys");
+  if (isAtLeastAdmin(role)) redirect("/admin/api-keys");
 
   const { data } = await apiGet<TokenRow[]>("/account/tokens");
   const tokens = Array.isArray(data) ? data : [];

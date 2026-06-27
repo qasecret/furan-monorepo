@@ -1,11 +1,10 @@
 import { CreateProjectDialog } from "./create-project-dialog";
 
 import { Card } from "@/components/ui/card";
-
-type Role = "admin" | "editor" | "guest";
+import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
 interface Props {
-  role: Role;
+  role: ViewerRole;
 }
 
 /**
@@ -13,7 +12,7 @@ interface Props {
  * dialog trigger; non-admins see prose explaining the access model.
  */
 export function EmptyProjectsCta({ role }: Props) {
-  if (role === "admin") {
+  if (isAtLeastAdmin(role)) {
     return (
       <Card>
         <div className="space-y-4 p-2">

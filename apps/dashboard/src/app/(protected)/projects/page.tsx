@@ -3,11 +3,12 @@ import { redirect } from "next/navigation";
 import { NoProject } from "@/app/(protected)/_components/no-project";
 import { resolveLanding } from "@/app/(protected)/_lib/resolve-landing";
 import { apiGet } from "@/lib/api-client";
+import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
 interface Me {
-  role: "admin" | "editor" | "guest";
+  role: ViewerRole;
   defaultProjectId: string | null;
 }
 
@@ -33,8 +34,8 @@ export default async function ProjectsPage() {
     data: null as Me | null,
   }));
 
-  // Admins manage all projects from the dedicated hub.
-  if (meRes.data?.role === "admin") redirect("/admin/projects");
+  // Admins (and owners) manage all projects from the dedicated hub.
+  if (isAtLeastAdmin(meRes.data?.role)) redirect("/admin/projects");
 
   const projectsRes = await apiGet<Project[]>("/projects").catch(() => ({
     status: 0,

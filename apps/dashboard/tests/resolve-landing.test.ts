@@ -44,6 +44,12 @@ describe("resolveLanding", () => {
     ).toBe("/admin/projects");
   });
 
+  test("owner is treated like admin → /admin/projects", () => {
+    expect(resolveLanding({ role: "owner", defaultProjectId: null }, [])).toBe(
+      "/admin/projects",
+    );
+  });
+
   test("default null + editor + 0 projects → null", () => {
     expect(
       resolveLanding({ role: "editor", defaultProjectId: null }, []),

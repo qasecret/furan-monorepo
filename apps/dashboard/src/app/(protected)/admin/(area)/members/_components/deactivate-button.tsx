@@ -23,6 +23,12 @@ interface DeactivateButtonProps {
   userId: string;
   isActive: boolean;
   isSelf: boolean;
+  /**
+   * The target is an owner and the viewer is not — only an owner may deactivate
+   * an owner (separation of duties). The API enforces this (403
+   * `owner_protected`); this disables the control for clearer UX.
+   */
+  lockedForViewer?: boolean;
   onChanged?: (nextActive: boolean) => void;
 }
 
@@ -30,6 +36,7 @@ export function DeactivateButton({
   userId,
   isActive,
   isSelf,
+  lockedForViewer = false,
   onChanged,
 }: DeactivateButtonProps) {
   const [pending, setPending] = useState(false);
@@ -69,6 +76,22 @@ export function DeactivateButton({
         title="You can't deactivate your own account"
         data-testid={`deactivate-${userId}`}
         aria-label="You can't deactivate your own account"
+      >
+        Deactivate
+      </Button>
+    );
+  }
+
+  // Owner row viewed by a non-owner: deactivation is owner-only. Disable the
+  // control (reactivation is still allowed — it doesn't strip owner access).
+  if (lockedForViewer && isActive) {
+    return (
+      <Button
+        variant="secondary"
+        disabled
+        title="Only an owner can deactivate an owner"
+        data-testid={`deactivate-${userId}`}
+        aria-label="Only an owner can deactivate an owner"
       >
         Deactivate
       </Button>

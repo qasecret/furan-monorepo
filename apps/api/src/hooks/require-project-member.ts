@@ -1,6 +1,8 @@
 import { and, eq, projectMembers } from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { isAtLeastAdmin } from "../lib/roles.js";
+
 export type Action = "read" | "write";
 
 export type ScopeSource =
@@ -17,7 +19,7 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
     if (!req.auth) {
       return reply.code(401).send({ error: "unauthenticated" });
     }
-    if (req.auth.role === "admin") return; // admin bypass per arch-backend.md §4.3
+    if (isAtLeastAdmin(req.auth.role)) return; // admin/owner bypass per arch-backend.md §4.3
     if (req.auth.role === "guest") {
       return reply.code(403).send({ error: "forbidden", reason: "guest" });
     }

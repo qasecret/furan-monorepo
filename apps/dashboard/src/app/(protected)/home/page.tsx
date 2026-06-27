@@ -3,11 +3,12 @@ import { redirect } from "next/navigation";
 import { NoProject } from "@/app/(protected)/_components/no-project";
 import { resolveLanding } from "@/app/(protected)/_lib/resolve-landing";
 import { apiGet } from "@/lib/api-client";
+import type { ViewerRole } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
 interface Me {
-  role: "admin" | "editor" | "guest";
+  role: ViewerRole;
   defaultProjectId: string | null;
 }
 

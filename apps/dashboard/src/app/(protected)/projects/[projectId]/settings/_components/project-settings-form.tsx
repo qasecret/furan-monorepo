@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { type ViewerRole } from "@/lib/roles";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -559,7 +560,7 @@ const TABS: ReadonlyArray<{
 
 interface Props {
   projectId: string;
-  userRole: "admin" | "editor" | "guest";
+  userRole: ViewerRole;
 }
 
 export function ProjectSettingsForm({ projectId, userRole }: Props) {

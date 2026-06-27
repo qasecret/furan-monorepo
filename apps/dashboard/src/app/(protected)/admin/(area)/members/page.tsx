@@ -4,7 +4,8 @@ import { MembersTable, type MemberRow } from "./_components/members-table";
 
 import { PageTour } from "@/components/tour/page-tour";
 import { apiGet } from "@/lib/api-client";
-import { getViewerRole } from "@/lib/get-viewer";
+import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
+import type { ViewerRole } from "@/lib/roles";
 
 export const metadata: Metadata = { title: "Members" };
 
@@ -13,7 +14,7 @@ const MEMBERS_PAGE_TOUR = [
     target: "#members-table",
     title: "User management",
     content:
-      "Admins manage all users from here: create new ones, change roles (admin / editor / guest), or deactivate.",
+      "Admins manage all users from here: create new ones, change roles (owner / admin / editor / guest), or deactivate.",
     placement: "top" as const,
   },
 ];
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 interface Me {
   id: string;
-  role: "admin" | "editor" | "guest";
+  role: ViewerRole;
 }
 
 interface Project {
@@ -39,7 +40,7 @@ export default async function MembersPage({
 }: {
   searchParams?: Promise<SearchParams>;
 }) {
-  if ((await getViewerRole()) !== "admin") return null;
+  if (!isAtLeastAdmin(await getViewerRole())) return null;
 
   const me = await apiGet<Me>("/users/me");
   if (!me.data) return null;
@@ -64,6 +65,7 @@ export default async function MembersPage({
         <MembersTable
           initialUsers={members}
           currentUserId={me.data.id}
+          viewerRole={me.data.role}
           allProjects={allProjects}
         />
       </div>

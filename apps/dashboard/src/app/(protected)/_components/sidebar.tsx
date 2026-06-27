@@ -9,6 +9,7 @@ import { InboxBadge } from "./inbox-badge";
 import { SIDEBAR_COLLAPSED_KEY, useSidebarStore } from "./use-sidebar-store";
 
 import { cn } from "@/lib/cn";
+import { isAtLeastAdmin } from "@/lib/roles";
 
 /** Batches is the review surface — active across the inbox + the build/run pages. */
 function isReviewRoute(pathname: string): boolean {
@@ -133,7 +134,7 @@ function Nav({ isAdmin, collapsed }: { isAdmin: boolean; collapsed: boolean }) {
  * Furan logo + the Batches review destination, plus Analytics/Admin for admins.
  */
 export function Sidebar({ userRole }: { userRole: string }) {
-  const isAdmin = userRole === "admin";
+  const isAdmin = isAtLeastAdmin(userRole);
   const open = useSidebarStore((s) => s.open);
   const setOpen = useSidebarStore((s) => s.setOpen);
   const collapsed = useSidebarStore((s) => s.collapsed);

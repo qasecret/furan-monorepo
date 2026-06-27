@@ -1,6 +1,7 @@
 import { and, eq, projectMembers } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
+import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { Context } from "../context.js";
 import { t } from "../trpc.js";
 
@@ -23,7 +24,7 @@ export function projectMember<TInput>(
 ) {
   return t.middleware(async ({ ctx, input, next }) => {
     if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-    if (ctx.user.role === "admin") return next();
+    if (isAtLeastAdmin(ctx.user.role)) return next();
     if (ctx.user.role === "guest") {
       throw new TRPCError({ code: "FORBIDDEN" });
     }

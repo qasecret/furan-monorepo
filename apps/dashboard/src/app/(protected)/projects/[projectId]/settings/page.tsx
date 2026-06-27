@@ -7,13 +7,14 @@ import { Card } from "@/components/ui/card";
 import { PageContainer } from "@/components/ui/page-container";
 import { apiGet } from "@/lib/api-client";
 import { getProject } from "@/lib/get-project";
+import type { ViewerRole } from "@/lib/roles";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 interface Me {
   id: string;
-  role: "admin" | "editor" | "guest";
+  role: ViewerRole;
 }
 
 export default async function ProjectSettingsPage({

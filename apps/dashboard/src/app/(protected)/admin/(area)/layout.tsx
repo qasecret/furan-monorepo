@@ -4,7 +4,7 @@ import { AdminTabs } from "./_components/admin-tabs";
 
 import { Forbidden } from "@/components/ui/forbidden";
 import { PageContainer } from "@/components/ui/page-container";
-import { getViewerRole } from "@/lib/get-viewer";
+import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export default async function AdminAreaLayout({
   children: ReactNode;
 }) {
   const role = await getViewerRole();
-  if (role !== "admin") {
+  if (!isAtLeastAdmin(role)) {
     return (
       <PageContainer>
         <Forbidden

@@ -1,4 +1,5 @@
-import { and, count, desc, eq, ilike, sql, users } from "@furan/db";
+import { and, desc, eq, ilike, sql, users, type DB } from "@furan/db";
+import { userRoleSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -9,6 +10,7 @@ import { hashPassword } from "../lib/password.js";
 import {
   checkUserUpdateGuards,
   updateMayRemoveAdmin,
+  updateMayRemoveOwner,
 } from "./users-admin-guards.js";
 
 export const createBody = z.object({
@@ -16,12 +18,12 @@ export const createBody = z.object({
   password: z.string().min(8),
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
-  role: z.enum(["admin", "editor", "guest"]).default("editor"),
+  role: userRoleSchema.default("editor"),
 });
 
 export const updateBody = z
   .object({
-    role: z.enum(["admin", "editor", "guest"]).optional(),
+    role: userRoleSchema.optional(),
     isActive: z.boolean().optional(),
     firstName: z.string().min(1).max(80).optional(),
     lastName: z.string().min(1).max(80).optional(),
@@ -42,7 +44,7 @@ export const userResponse = z.object({
   email: z.string().email(),
   firstName: z.string(),
   lastName: z.string(),
-  role: z.enum(["admin", "editor", "guest"]),
+  role: userRoleSchema,
   isActive: z.boolean(),
   defaultProjectId: z.string().uuid().nullable(),
   createdAt: z.date(),
@@ -62,6 +64,29 @@ const safeUserCols = {
   createdAt: users.createdAt,
   updatedAt: users.updatedAt,
 };
+
+/**
+ * Counts, in ONE round-trip, the OTHER active users (excluding `targetId`) that
+ * hold each protected tier:
+ * - `owners`: active owners — feeds the last-owner invariant.
+ * - `admins`: active admin-capable users (admin OR owner, since owner ⊇ admin) —
+ *   feeds the last-admin invariant.
+ * Used by both the fast-path guard and the post-UPDATE cold path, so the count
+ * shape lives in one place. Postgres `count(*)` is bigint → string over the
+ * wire, hence the `Number(...)`.
+ */
+async function countOtherActiveTiers(
+  db: DB,
+  targetId: string,
+): Promise<{ owners: number; admins: number }> {
+  const [row] = await db
+    .select({
+      owners: sql<number>`count(*) filter (where ${users.role} = 'owner' and ${users.isActive} = true and ${users.id} <> ${targetId})`,
+      admins: sql<number>`count(*) filter (where ${users.role} in ('admin','owner') and ${users.isActive} = true and ${users.id} <> ${targetId})`,
+    })
+    .from(users);
+  return { owners: Number(row?.owners ?? 0), admins: Number(row?.admins ?? 0) };
+}
 
 export async function registerUsersAdminRoutes(
   app: FastifyInstance,
@@ -163,56 +188,74 @@ export async function registerUsersAdminRoutes(
         return reply.code(404).send({ error: "not_found" });
       }
 
-      // Only pay for the admin-count query when the change could remove an
-      // active admin. `count()` includes the target (an active admin in that
-      // case), so subtract one to get the number of OTHER active admins.
-      let otherActiveAdminCount = 0;
-      if (updateMayRemoveAdmin(target, update)) {
-        const [row] = await app.db
-          .select({ n: count() })
-          .from(users)
-          .where(and(eq(users.role, "admin"), eq(users.isActive, true)));
-        otherActiveAdminCount = Math.max(0, Number(row?.n ?? 0) - 1);
-      }
+      const removesAdmin = updateMayRemoveAdmin(target, update);
+      const removesOwner = updateMayRemoveOwner(target, update);
+
+      // One round-trip for both tier counts (each already excludes the target).
+      // Only pay for it when a removal is in play; otherwise the invariants
+      // don't consult the counts.
+      const counts =
+        removesAdmin || removesOwner
+          ? await countOtherActiveTiers(app.db, targetId)
+          : { owners: 0, admins: 0 };
 
       const guard = checkUserUpdateGuards({
         actorId: req.auth.id,
+        actorRole: req.auth.role,
         target,
         update,
-        otherActiveAdminCount,
+        otherActiveAdminCount: counts.admins,
+        otherActiveOwnerCount: counts.owners,
       });
       if (!guard.ok) {
         return reply.code(guard.status).send({ error: guard.error });
       }
 
-      // Apply the change. When it would remove an active admin, enforce the
-      // last-admin invariant ATOMICALLY in the UPDATE's WHERE clause — the
-      // count-based guard above is only a fast path. The row updates only if
-      // another active admin still exists, closing the read-then-write race
-      // where two concurrent demotions both pass the count check and leave
-      // zero admins.
-      const removesAdmin = updateMayRemoveAdmin(target, update);
+      // Apply the change. When it would remove an active admin-capable user or
+      // the last owner, enforce those invariants ATOMICALLY in the UPDATE's
+      // WHERE clause — the count-based guard above is only a fast path. The row
+      // updates only if another active admin (resp. owner) still exists,
+      // closing the read-then-write race where two concurrent demotions both
+      // pass the count check and leave zero.
+      const conds = [eq(users.id, targetId)];
+      if (removesAdmin) {
+        conds.push(
+          sql`EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role IN ('admin','owner') AND other.is_active = true AND other.id <> ${targetId})`,
+        );
+      }
+      if (removesOwner) {
+        conds.push(
+          sql`EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role = 'owner' AND other.is_active = true AND other.id <> ${targetId})`,
+        );
+      }
       const result = await app.db
         .update(users)
         .set({ ...update, updatedAt: new Date() })
-        .where(
-          removesAdmin
-            ? and(
-                eq(users.id, targetId),
-                sql`EXISTS (SELECT 1 FROM ${users} AS other WHERE other.role = 'admin' AND other.is_active = true AND other.id <> ${targetId})`,
-              )
-            : eq(users.id, targetId),
-        )
+        .where(conds.length === 1 ? conds[0] : and(...conds))
         .returning(safeUserCols);
 
       if (result.length === 0) {
-        // Plain path: the row vanished (concurrent delete) → 404.
-        // Removes-admin path: the EXISTS guard failed — a concurrent change
-        // removed the last other admin between our check and write — so this
-        // would have left zero admins → 409.
-        return reply
-          .code(removesAdmin ? 409 : 404)
-          .send({ error: removesAdmin ? "last_admin" : "not_found" });
+        // The UPDATE matched no row: either the target vanished (concurrent
+        // delete → 404) or an EXISTS invariant guard failed because a
+        // concurrent change removed the last other owner / admin between our
+        // check and write (→ 409). Check existence first so a delete reports
+        // 404 (not a misleading last_*), then disambiguate with fresh counts.
+        const [stillExists] = await app.db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.id, targetId))
+          .limit(1);
+        if (!stillExists) {
+          return reply.code(404).send({ error: "not_found" });
+        }
+        const fresh = await countOtherActiveTiers(app.db, targetId);
+        if (removesOwner && fresh.owners === 0) {
+          return reply.code(409).send({ error: "last_owner" });
+        }
+        if (removesAdmin && fresh.admins === 0) {
+          return reply.code(409).send({ error: "last_admin" });
+        }
+        return reply.code(404).send({ error: "not_found" });
       }
 
       const updated = result[0]!;

@@ -1,4 +1,5 @@
 import { eq, users } from "@furan/db";
+import { userRoleSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -14,7 +15,7 @@ export const loginResponse = z.object({
   user: z.object({
     id: z.string().uuid(),
     email: z.string().email(),
-    role: z.enum(["admin", "editor", "guest"]),
+    role: userRoleSchema,
   }),
 });
 

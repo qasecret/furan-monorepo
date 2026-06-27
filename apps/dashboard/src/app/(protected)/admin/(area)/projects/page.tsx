@@ -5,7 +5,7 @@ import { CreateProjectDialog } from "@/app/(protected)/projects/_components/crea
 import { EmptyProjectsCta } from "@/app/(protected)/projects/_components/empty-projects-cta";
 import { Card } from "@/components/ui/card";
 import { apiGet } from "@/lib/api-client";
-import { getViewerRole } from "@/lib/get-viewer";
+import { getViewerRole, isAtLeastAdmin } from "@/lib/get-viewer";
 
 export const metadata: Metadata = { title: "Projects" };
 
@@ -18,7 +18,7 @@ interface Project {
 }
 
 export default async function AdminProjectsPage() {
-  if ((await getViewerRole()) !== "admin") return null;
+  if (!isAtLeastAdmin(await getViewerRole())) return null;
 
   const projectsRes = await apiGet<Project[]>("/projects");
   if (projectsRes.status === 401 || projectsRes.status === 403) {
