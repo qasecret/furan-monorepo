@@ -189,6 +189,7 @@ open class FuranClient(
                     runId = runId,
                     status = status,
                     checkpointCount = completed.checkpointCount,
+                    checkpoints = completed.checkpoints,
                 )
             }
             lastStatus = status

@@ -4,9 +4,10 @@ import io.furan.sdk.dto.RunResponse
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.RunStatus
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import kotlin.time.Duration.Companion.seconds
 
 class FuranClientCompleteAwaitTest {
@@ -44,7 +45,7 @@ class FuranClientCompleteAwaitTest {
     }
 
     @Test
-    fun `completeAndAwaitRun polls past running until a terminal status`() = runBlocking {
+    fun `completeAndAwaitRun polls past running until a terminal status`() = runTest {
         val config = testConfig()
 
         // POST complete returns RUNNING (non-terminal) → triggers polling
@@ -84,7 +85,7 @@ class FuranClientCompleteAwaitTest {
 
     @Test
     fun `completeAndAwaitRun returns immediately when completeRun returns a terminal status`() =
-        runBlocking {
+        runTest {
             val config = testConfig()
             val completeResult =
                 RunResult(runId = "r2", status = RunStatus.PASSED, checkpointCount = 1)
@@ -105,7 +106,7 @@ class FuranClientCompleteAwaitTest {
         }
 
     @Test
-    fun `completeAndAwaitRun returns immediately when completeRun returns NEW`() = runBlocking {
+    fun `completeAndAwaitRun returns immediately when completeRun returns NEW`() = runTest {
         val config = testConfig()
         val completeResult = RunResult(runId = "r3", status = RunStatus.NEW, checkpointCount = 0)
         val client = StubClient(
@@ -130,7 +131,9 @@ class FuranClientCompleteAwaitTest {
             val completeResult =
                 RunResult(runId = "r4", status = RunStatus.RUNNING, checkpointCount = 2)
 
-            // All polls return RUNNING — never terminal
+            // All polls return RUNNING — never terminal.
+            // timeout = 1.1s so only one real ~1s delay fires before the wall-clock
+            // check trips; the 20-entry queue is never exhausted.
             val getResponses = ArrayDeque(
                 (1..20).map {
                     RunResponse(
@@ -148,15 +151,45 @@ class FuranClientCompleteAwaitTest {
                 getRunResponses = getResponses,
             )
             try {
-                val ex = assertThrows<FuranTimeoutException> {
-                    runBlocking {
-                        client.completeAndAwaitRun("r4", timeout = 2.seconds)
-                    }
-                }
-                assertEquals("r4", ex.runId)
+                val ex = runCatching {
+                    client.completeAndAwaitRun("r4", timeout = 1.1.seconds)
+                }.exceptionOrNull()
+                assertInstanceOf(FuranTimeoutException::class.java, ex)
+                assertEquals("r4", (ex as FuranTimeoutException).runId)
                 assertEquals(RunStatus.RUNNING, ex.lastStatus)
             } finally {
                 client.close()
             }
         }
+
+    @Test
+    fun `completeAndAwaitRun returns NEW when poll returns NEW before terminal`() = runTest {
+        val config = testConfig()
+        // completeRun returns RUNNING (non-terminal) → triggers polling
+        val completeResult = RunResult(runId = "r5", status = RunStatus.RUNNING, checkpointCount = 2)
+        // Poll once: RUNNING, then NEW — should return immediately with NEW
+        val getResponses = ArrayDeque(
+            listOf(
+                RunResponse(id = "r5", projectId = "proj", buildId = "b1", status = RunStatus.RUNNING),
+                RunResponse(id = "r5", projectId = "proj", buildId = "b1", status = RunStatus.NEW),
+            ),
+        )
+
+        val client = StubClient(
+            config = config,
+            completeResponses = ArrayDeque(listOf(completeResult)),
+            getRunResponses = getResponses,
+        )
+        try {
+            val result = client.completeAndAwaitRun("r5", timeout = 10.seconds)
+            assertEquals(RunStatus.NEW, result.status)
+            assertEquals("r5", result.runId)
+            // checkpointCount propagated from completeRun (fix #1)
+            assertEquals(2, result.checkpointCount)
+            assertEquals(1, client.completeCalls)
+            assertEquals(2, client.getRunCalls)
+        } finally {
+            client.close()
+        }
+    }
 }
