@@ -1,8 +1,10 @@
 package io.furan.sdk.junit5
 
+import io.furan.sdk.FailOnDiff
 import io.furan.sdk.FuranClient
 import io.furan.sdk.FuranConfig
 import io.furan.sdk.FuranConfigException
+import io.furan.sdk.FuranSuiteException
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 import org.junit.jupiter.api.extension.AfterAllCallback
@@ -146,8 +148,11 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         // Close the client (drains the batch + posts telemetry) if it
         // was lazily created. Config is just a data class — no close.
         val store = context.getStore(NAMESPACE)
-        val client = store.get(CLIENT_KEY, FuranClient::class.java)
-        client?.close()
+        store.get(CLIENT_KEY, FuranClient::class.java)?.close()
+        val config = store.get(CONFIG_KEY, FuranConfig::class.java)
+        if (config?.failOnDiff == FailOnDiff.AfterAll) {
+            suiteFailure(getSuiteResult(context))?.let { throw it }
+        }
     }
 
     companion object {
@@ -221,6 +226,11 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
             if (list == null) return SuiteResult(emptyList())
             synchronized(list) { return SuiteResult(list.toList()) }
         }
+
+        /** AfterAll decision: an exception to throw if the suite has failures, else null. */
+        @JvmStatic
+        fun suiteFailure(suite: SuiteResult): FuranSuiteException? =
+            if (suite.hasFailures) FuranSuiteException(suite) else null
 
         /**
          * Store key under which a `io.furan.sdk.selenium.Furan` instance
