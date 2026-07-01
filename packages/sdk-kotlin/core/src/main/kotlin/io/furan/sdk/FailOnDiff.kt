@@ -13,8 +13,8 @@ package io.furan.sdk
  *  - [AfterAll]: `close()` never throws (runs are collected silently). After all
  *    tests finish, the [io.furan.sdk.junit5.FuranExtension]'s `afterAll` hook
  *    inspects the aggregated [io.furan.sdk.dto.SuiteResult] and throws a single
- *    [FuranSuiteException] if any run ended in a failure state — mirroring
- *    Applitools' `runner.getAllTestResults(throwEx = true)` pattern.
+ *    [FuranSuiteException] if any run ended in a failure state — the
+ *    suite-level fail-on-diff pattern.
  *
  * Configured via [FuranConfig.failOnDiff] or the `FURAN_FAIL_ON_DIFF`
  * environment variable.

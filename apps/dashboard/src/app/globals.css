@@ -76,7 +76,7 @@ html,
 body {
   /* Light mode: pure white canvas (was zinc-50). The off-white shifts to
    * the sidebar + top bar so the main content area reads as the brightest
-   * surface — matches the pixelproof reference where the neon brand pops
+   * surface — so the neon brand pops
    * against a clean white field instead of a recessed grey canvas. */
   background-color: #ffffff;
   color: #18181b; /* zinc-900 */

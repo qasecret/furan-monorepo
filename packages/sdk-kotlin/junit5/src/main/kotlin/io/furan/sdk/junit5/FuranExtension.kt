@@ -57,8 +57,8 @@ import org.junit.jupiter.api.extension.ParameterResolver
  *    cached in the test class's `ExtensionContext.Store`.
  *  - `FuranClient` is constructed lazily on first injection and
  *    `close()`-ed by [afterAll] when the test class finishes.
- *    Sharing one client across `@Test` methods is the legacy Java
- *    SDK's pattern + matches the API contract: one build per test
+ *    Sharing one client across `@Test` methods matches the API
+ *    contract: one build per test
  *    class, lazy run creation per snapshot call.
  *  - If a `io.furan.sdk.selenium.Furan` instance is stored in the
  *    `ExtensionContext.Store` under the key [FURAN_KEY] before
@@ -198,7 +198,7 @@ class FuranExtension : ParameterResolver, AfterAllCallback, BeforeEachCallback, 
         /**
          * Tier 1.5 — aggregate every [RunResult] captured by the
          * extension over the lifetime of this test class into a single
-         * [SuiteResult] (mirrors Applitools' `runner.getAllTestResults`).
+         * [SuiteResult] (aggregated suite results).
          *
          * Returns an empty SuiteResult when no runs have been recorded
          * yet — e.g. when the test class hasn't started, or every @Test

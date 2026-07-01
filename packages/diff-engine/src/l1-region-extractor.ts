@@ -57,7 +57,7 @@ const DEFAULTS: Required<ExtractOptions> = {
   // the larger tileSize: same absolute floor as 4×32 tiles.
   minClusterTiles: 3,
   // Top 12 by magnitude. A handful of meaningful changed areas reads as a
-  // clean Applitools-style region list; the long tail is visible on the
+  // clean region list; the long tail is visible on the
   // canvas overlay anyway.
   maxRegions: 12,
 };

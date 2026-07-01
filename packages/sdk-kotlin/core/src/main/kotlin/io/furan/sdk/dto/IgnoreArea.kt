@@ -6,9 +6,9 @@ import kotlinx.serialization.Serializable
  * Per-test ignore region. Carried on [CreateRunRequest] so SDK
  * consumers can declare ignore regions at run-create time and the
  * diff worker picks them up on the first diff job — no separate
- * `setIgnoreAreas` round-trip plus diff-worker re-enqueue.
+ * round-trip plus diff-worker re-enqueue.
  *
- * Mirrors the legacy Java SDK's `IgnoreAreas` shape verbatim except
+ * The `IgnoreAreas` wire shape, verbatim except
  * for the optional `viewport` field, which lets multi-viewport runs
  * apply the right mask per screenshot. Coordinates are in image-pixel
  * space matching the screenshot dimensions; the diff worker re-applies

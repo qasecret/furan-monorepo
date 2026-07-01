@@ -7,7 +7,7 @@ import {
 
 import type { BBox, DiffRegion, Severity } from "./regionTypes";
 
-/** Applitools-style pink shading for changed pixels. */
+/** Pink shading for changed pixels. */
 const PINK = 0xff4f9a;
 
 /** Severity → dot color (reused from DiffOverlayLayer's palette). */

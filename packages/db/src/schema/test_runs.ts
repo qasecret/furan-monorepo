@@ -57,7 +57,7 @@ export const testRuns = pgTable(
     // `parent_pr` tier of `resolveBaseline` (a run with no baseline on its
     // own branch inherits from the parent). Null = no parent supplied →
     // parent tier skipped (backfill-safe). Distinct from `baselineBranchName`
-    // (Applitools' explicit baseline override, currently unused).
+    // (explicit baseline override, currently unused).
     parentBranchName: text("parent_branch_name"),
     baselineBranchName: text("baseline_branch_name"),
     tempIgnoreAreas: text("temp_ignore_areas"),

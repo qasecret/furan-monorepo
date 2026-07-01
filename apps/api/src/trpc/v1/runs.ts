@@ -52,7 +52,7 @@ type IgnoreRegion = {
 /**
  * Shape of a single ignore-region element. Extracted to a module-level
  * const so `setIgnoreAreas` (replace mode) and `addIgnoreAreas` (append
- * mode) share the same validation rules — Applitools-aligned kinds, regex
+ * mode) share the same validation rules — the accepted kinds, regex
  * pattern requirement for dynamic-text, thresholdOverride only on strict.
  *
  * Caller-facing units stay in image-pixel space (matching screenshot
@@ -67,7 +67,7 @@ const ignoreRegionElementSchema = z
     viewport: z.string().min(1).max(32),
     paddingPx: z.number().int().min(0).max(32).default(0),
     /**
-     * Match mode (Applitools-aligned):
+     * Match mode:
      * - `ignore`: skip the region entirely (masked out of the L1 pixel diff).
      * - `dynamic-text`: mask in L1 only when OCR'd text matches `pattern`.
      * - `strict`: don't mask; region is informational. When
@@ -145,7 +145,7 @@ const listInput = z.object({
   branch: z.string().min(1).max(255).optional(),
   /**
    * Multi-select filter on `test_runs.status`. Each element is narrowed to
-   * the typed `runStatusSchema` enum (the seven Applitools-aligned values)
+   * the typed `runStatusSchema` enum (the seven run-status values)
    * so the boundary rejects unknown values up front rather than silently
    * returning an empty page. Spec §3.5: reviewers can combine e.g.
    * "Unresolved + Failed" simultaneously.
@@ -1244,7 +1244,7 @@ export const runsRouter = t.router({
     }),
 
   /**
-   * Applitools-style "Override Status" — sets the run's status without
+   * An "Override Status" action — sets the run's status without
    * touching `merge` or `baselines`. This is the differentiator from
    * approve/reject: same status outcome (passed/failed), no baseline
    * side effect.

@@ -11,7 +11,7 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.capture.RegionResolver")
  * Resolve a [Region] carrying a [Region.selector] to its current bbox via
  * the SPI. A selector-less region passes through unchanged. A selector that
  * matches nothing (null element) or fails to read its rect (stale) falls
- * back to the region's declared geometry — Eyes-tolerant behavior.
+ * back to the region's declared geometry — tolerant behavior.
  */
 internal fun resolveRegion(driver: SpecDriver, region: Region): Region {
     val css = region.selector ?: return region
@@ -34,7 +34,7 @@ internal fun resolveRegion(driver: SpecDriver, region: Region): Region {
             // A matched-but-unrendered element (display:none, detached, or
             // otherwise zero-area) reports a degenerate rect. Treat it like a
             // miss and keep the caller's declared geometry rather than
-            // collapsing the region to 0x0 — preserves the Eyes-tolerant
+            // collapsing the region to 0x0 — preserves the tolerant
             // fallback and avoids a zero-area crop downstream (PngCrop rejects
             // width/height <= 0).
             log.warn(

@@ -1,8 +1,7 @@
 import { z } from "zod";
 
 /**
- * K/V properties attached to a build. Mirrors Applitools'
- * `Configuration.addProperty(key, value)`. Constrained at the boundary:
+ * K/V properties attached to a build. Constrained at the boundary:
  * 1–20 keys, key 1–64 chars matching /^[a-zA-Z0-9_.-]+$/, value ≤ 256 chars.
  */
 export const buildPropertiesSchema = z

@@ -9,16 +9,16 @@ data class FuranConfig(
     val buildId: String? = null,
     val branchName: String = "main",
     /**
-     * Parent branch in the branch hierarchy (Applitools `setParentBranchName`
-     * analog). Sent on `POST /runs` so the server's baseline resolution can
+     * Parent branch in the branch hierarchy (the parent-branch hint).
+     * Sent on `POST /runs` so the server's baseline resolution can
      * fall back to the parent branch's baseline when this branch has none.
      * From `FURAN_PARENT_BRANCH`. Null = no parent (the parent_pr fallback
      * tier is skipped).
      */
     val parentBranchName: String? = null,
-    /** Applitools BATCH_NAME parallel. Populated from FURAN_BUILD_NAME. */
+    /** Human-readable build/batch name. Populated from FURAN_BUILD_NAME. */
     val name: String? = null,
-    /** Applitools `addProperty` parallel. Populated from FURAN_BUILD_PROPERTIES. */
+    /** Free-form K/V build properties. Populated from FURAN_BUILD_PROPERTIES. */
     val properties: Map<String, String> = emptyMap(),
     val viewports: List<Viewport> = listOf(Viewport(1280, 720)),
     val batchSize: Int = 16,
@@ -27,7 +27,7 @@ data class FuranConfig(
     val caCertPath: String? = null,
     /**
      * Controls `FuranClient.snapshotAndAwait()` behavior on failure
-     * terminals. When `false` (default — matches the Java SDK), the
+     * terminals. When `false` (default), the
      * client throws [io.furan.sdk.FuranAssertionException] on
      * `UNRESOLVED`/`FAILED`/`ABORTED`. When `true`, the client returns
      * the [io.furan.sdk.dto.SnapshotResult] and the caller asserts
@@ -63,7 +63,7 @@ data class FuranConfig(
      */
     val failOnDiff: FailOnDiff = FailOnDiff.None,
     /**
-     * Applitools `saveNewTests` analog. When true, a first-run/no-baseline
+     * First-run auto-approve. When true, a first-run/no-baseline
      * `new` checkpoint is auto-approved client-side (seeds the baseline) and
      * reported PASSED. Default false (native Furan = manual baseline). The
      * Loupe facade defaults this true. From FURAN_SAVE_NEW_TESTS.
@@ -75,17 +75,17 @@ data class FuranConfig(
      * which close/approve semantics are applied). Do not branch on this value
      * until a superseding ADR activates it.
      */
-    val compatibility: CompatibilityMode = CompatibilityMode.APPLITOOLS,
+    val compatibility: CompatibilityMode = CompatibilityMode.LEGACY,
     /**
-     * Operating-system label for the captured environment (Applitools host-OS
-     * analog), e.g. "Windows", "macOS", "Linux". Part of the baseline identity
+     * Operating-system label for the captured environment, e.g.
+     * "Windows", "macOS", "Linux". Part of the baseline identity
      * (the `test_variations` environment tuple), so distinct OS values keep
      * distinct baselines. From `FURAN_OS`. Null (default) leaves it to the
      * adapter's captured OS, if any — preserving prior behavior when unset.
      */
     val os: String? = null,
     /**
-     * Device label for the captured environment (Applitools device analog),
+     * Device label for the captured environment,
      * e.g. "iPhone 15", "Pixel 8". Part of the baseline identity; mainly for
      * Appium/mobile. From `FURAN_DEVICE`. Null (default) = unset.
      */

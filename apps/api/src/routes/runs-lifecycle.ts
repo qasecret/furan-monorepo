@@ -67,7 +67,7 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return reply.code(400).send({ error: "invalid_id" });
 
-      // Contract (post eyes-compat fix): /complete stamps the run as
+      // Contract (post compat-layer fix): /complete stamps the run as
       // *closed by the SDK* but does NOT decide the diff verdict — the
       // diff pipeline owns `test_runs.status`. Earlier drafts computed a
       // rollup status here and wrote it, but that rollup never returns

@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 /**
  * A rectangular region in viewport-CSS pixels.
  *
- * Optionally anchored to a CSS [selector] (Eyes-parity Tier 1.2). When
+ * Optionally anchored to a CSS [selector] (Tier 1.2). When
  * [selector] is non-null, the Selenium adapter resolves it via
  * `driver.findElement(By.cssSelector(selector))` at capture time; the
  * `x`/`y`/`width`/`height` then act as a fallback geometry when the

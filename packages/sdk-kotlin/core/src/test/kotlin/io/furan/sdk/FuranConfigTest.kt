@@ -32,7 +32,7 @@ class FuranConfigTest {
         )
         // ADR-055: absent → null (backfill-safe; parent_pr tier skipped).
         assertNull(FuranConfig.fromEnv(base).parentBranchName)
-        // Present → captured (Applitools `setParentBranchName` analog).
+        // Present → captured (the parent-branch hint).
         assertEquals(
             "develop",
             FuranConfig.fromEnv(base + ("FURAN_PARENT_BRANCH" to "develop")).parentBranchName,

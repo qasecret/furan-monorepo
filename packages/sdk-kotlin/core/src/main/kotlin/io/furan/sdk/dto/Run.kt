@@ -7,9 +7,8 @@ import kotlinx.serialization.Serializable
  * columns in `packages/db/src/schema/test_runs.ts`.
  *
  * `diffTolerance` + `ignoreAreas` are per-run overrides the diff worker
- * applies on the first diff job — no separate `setIgnoreAreas` /
- * `setDiffThresholdOverride` round-trip needed. Matches the legacy
- * Java SDK's `TestRunRequest` shape (`diffTollerancePercent` +
+ * applies on the first diff job, inline — no separate round-trip
+ * needed. The run-request wire shape (`diffTollerancePercent` +
  * `ignoreAreas`).
  */
 @Serializable

@@ -43,8 +43,8 @@ export const testVariations = pgTable(
     projectIdx: index("test_variations_project_id_idx").on(t.projectId),
     // ADR-054: the environment tuple IS the baseline identity. NULLS NOT
     // DISTINCT so a null os/device/browser/viewport/branch counts as one
-    // distinct value, never a wildcard — matching Applitools' complete
-    // environment key. `resolveOrCreateVariation` upserts on this index.
+    // distinct value, never a wildcard — matching the complete
+    // environment key semantics. `resolveOrCreateVariation` upserts on this index.
     identityUnique: unique("test_variations_identity_unique")
       .on(
         t.projectId,

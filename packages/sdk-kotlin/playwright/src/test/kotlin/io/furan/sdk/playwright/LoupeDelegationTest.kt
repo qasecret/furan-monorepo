@@ -10,10 +10,10 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 /**
- * Unit tests for the Playwright [Loupe] Applitools-compat facade.
+ * Unit tests for the Playwright [Loupe] compat facade.
  *
  * All assertions are pure (no network calls):
- *   - `saveNewTests` default is true (Eyes-parity)
+ *   - `saveNewTests` default is true
  *   - The facade exposes the expected lifecycle methods
  *   - check-before-open propagates the engine's guard (delegation confirmed)
  */

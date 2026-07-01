@@ -157,7 +157,7 @@ open class FuranClient(
     }
 
     /**
-     * ADR-038 / Eyes-compat P1: complete the run *and* poll until a terminal
+     * ADR-038: complete the run *and* poll until a terminal
      * status is reached, then return the true verdict as a [RunResult].
      *
      * [completeRun] fires `POST /runs/:runId/complete`, which rolls up the

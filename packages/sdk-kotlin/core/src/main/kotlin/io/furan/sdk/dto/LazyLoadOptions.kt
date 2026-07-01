@@ -1,8 +1,7 @@
 package io.furan.sdk.dto
 
 /**
- * Eyes-parity per-checkpoint lazy-load options. Mirrors
- * `eyes.check(name, { lazyLoad: { scrollLength, waitingTime, maxAmountToScroll } })`.
+ * Per-checkpoint lazy-load options.
  *
  * When non-null on [CheckpointOptions], the Selenium adapter
  * programmatically scrolls the page in fixed-step increments — each
@@ -10,7 +9,7 @@ package io.furan.sdk.dto
  * virtualized lists, infinite-scroll feeds) has time to render — then
  * scrolls back to the top before capturing.
  *
- * Defaults match Applitools' published defaults (300px / 200ms / 15000px),
+ * Defaults are 300px / 200ms / 15000px,
  * which cover the common "blog post with below-the-fold images" case.
  * Tune [maxAmountToScroll] up for tall pages; set [waitingTimeMs] higher
  * for network-bound lazy loaders.

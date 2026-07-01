@@ -114,7 +114,7 @@ async function seedAuthedRunNoCheckpoints(h: TestApp): Promise<SeededRun> {
 /**
  * Seeds a `running` run WITH `checkpointN` screenshots but NO diff_regions —
  * the exact state of an SDK run whose async diff jobs haven't finished. The
- * post eyes-compat /complete contract must NOT finalize this: status stays
+ * post compat-layer /complete contract must NOT finalize this: status stays
  * `running` (the diff-worker owns the verdict), only completedAt is stamped.
  */
 async function seedAuthedRunWithCheckpoints(
@@ -196,7 +196,7 @@ d("POST /runs/:id/complete + /abort", () => {
   });
 
   test("complete with checkpoints but no diff regions does NOT finalize — stays running", async () => {
-    // Eyes-compat fix: /complete must leave the verdict to the diff
+    // Compat-layer fix: /complete must leave the verdict to the diff
     // pipeline. A multi-checkpoint run with no diff_regions yet (jobs
     // still in flight) must come back `running`, NOT a premature `passed`.
     const { runId, headers } = await seedAuthedRunWithCheckpoints(h, 2);

@@ -2,8 +2,7 @@ package io.furan.sdk.dto
 
 /**
  * Aggregate result for a JUnit5 suite (or any ordered collection of
- * Furan runs). Mirrors Applitools' `runner.getAllTestResults()` shape:
- * one row per test, with derived counts + a printable summary.
+ * Furan runs): one row per test, with derived counts + a printable summary.
  *
  * Construct directly with the list of [runs], or — when running inside
  * a `@FuranTest`-annotated JUnit5 class — read from the extension via

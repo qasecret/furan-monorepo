@@ -237,7 +237,7 @@ class FuranImages(val config: FuranConfig) {
             }
         }
 
-        /** Eyes-parity `runner.getAllTestResults()` — wrap completed runs for CI reporting. */
+        /** `runner.getAllTestResults()` — wrap completed runs for CI reporting. */
         @JvmStatic
         fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
     }

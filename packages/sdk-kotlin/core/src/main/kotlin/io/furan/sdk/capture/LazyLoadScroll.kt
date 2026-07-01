@@ -12,7 +12,7 @@ import kotlinx.coroutines.delay
  *   - the cumulative scroll equals or exceeds [LazyLoadOptions.maxAmountToScroll].
  *
  * After the loop, restores `window.scrollY` to 0 so the screenshot frames
- * the top of the page (matches Eyes' behavior — the lazy-load pass is for
+ * the top of the page (the lazy-load pass is for
  * triggering content rendering, not for changing what gets captured).
  *
  * A thrown JS error during scroll propagates so the test sees the failure

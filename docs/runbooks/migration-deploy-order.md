@@ -127,5 +127,5 @@ For 0008 specifically, the symptom of a botched deploy order is:
 - Migration: [`packages/db/migrations/0008_run_status_enum.sql`](../../packages/db/migrations/0008_run_status_enum.sql)
 - Spec: [`furan-design/specs/2026-05-19-run-status-enum-design.md`](../../furan-design/specs/2026-05-19-run-status-enum-design.md) (gitignored design dir)
 - Plan: [`furan-design/plans/2026-05-19-run-status-enum.md`](../../furan-design/plans/2026-05-19-run-status-enum.md) (gitignored design dir)
-- PR #47: `feat: Applitools-aligned 7-status run lifecycle`
+- PR #47: `feat: 7-status run lifecycle`
 - Related runbooks: [`restore-from-backup.md`](restore-from-backup.md) for snapshot procedure details.

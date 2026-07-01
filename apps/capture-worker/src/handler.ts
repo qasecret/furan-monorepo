@@ -205,8 +205,8 @@ async function handleCaptureJobInner(
   }
 
   // Per spec §3.2: a capture run that completed without producing any
-  // screenshots (e.g. SDK opened a run via `eyes.open` but never called
-  // `eyes.check`, or every viewport short-circuited) is `empty` —
+  // screenshots (e.g. SDK opened a run but never submitted a checkpoint,
+  // or every viewport short-circuited) is `empty` —
   // distinct from `aborted` (worker crashed) and `running` (still in
   // flight). Mark the run terminal here so the diff-worker never picks
   // up a check-less run.

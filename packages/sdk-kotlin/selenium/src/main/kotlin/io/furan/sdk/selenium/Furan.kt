@@ -104,7 +104,7 @@ class Furan(
         }
 
         /**
-         * Tier 1.5 (Eyes-parity `runner.getAllTestResults`): wrap a
+         * Tier 1.5 (`runner.getAllTestResults`): wrap a
          * collection of completed [RunResult]s in a [SuiteResult] for
          * uniform CI reporting (derived counts, pass/fail summary, etc).
          *

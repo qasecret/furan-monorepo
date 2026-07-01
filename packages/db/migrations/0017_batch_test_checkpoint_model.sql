@@ -1,5 +1,5 @@
 -- 0017_batch_test_checkpoint_model.sql
--- Hard-cutover migration for the Applitools-parity batch→test→checkpoint
+-- Hard-cutover migration for the batch→test→checkpoint
 -- model (ADR-038).
 --
 -- Wipes:    test_runs, screenshots, diff_regions (schema becomes incompatible).

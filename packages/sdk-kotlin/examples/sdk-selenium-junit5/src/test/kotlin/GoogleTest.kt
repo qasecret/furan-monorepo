@@ -7,7 +7,7 @@ import org.openqa.selenium.chrome.ChromeDriver
 import org.openqa.selenium.chrome.ChromeOptions
 
 /**
- * Demonstrates the Applitools model: ONE test ("GoogleTest") that owns
+ * Demonstrates the test model: ONE test ("GoogleTest") that owns
  * MULTIPLE checkpoints (screens). `loupe.open(app, testName)` starts the test;
  * each `loupe.check(<screen name>)` captures one checkpoint within it. The
  * Builds list shows the test name ("GoogleTest"); the batch detail lists its

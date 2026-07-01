@@ -1,5 +1,5 @@
 -- 0018_screenshots_ignore_displacements.sql
--- Tier 1.4: per-checkpoint `ignoreDisplacements` flag (Eyes parity).
+-- Tier 1.4: per-checkpoint `ignoreDisplacements` flag.
 -- When true, the diff engine suppresses regions originating from
 -- diff-dom relocateGroup ops — DOM-level "this element moved without
 -- changing." Pixel-level (L1) displacement detection is a separate

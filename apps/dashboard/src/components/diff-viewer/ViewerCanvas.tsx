@@ -499,7 +499,7 @@ export function ViewerCanvas({
       // The user-facing "what changed" signal is the bounded yellow
       // rectangles produced by `mountDiffOverlayLayer` below — those
       // come from the L1 pixel-cluster regions (engine.ts wiring,
-      // `source: "l1_pixel"`) and read as Applitools-style highlights
+      // `source: "l1_pixel"`) and read as diff highlights
       // on the candidate. The stipple sits underneath as fine detail.
       if (overlaySprite) overlaySprite.alpha = 0.6;
       // Fit using the candidate's natural size (falling back to baseline,

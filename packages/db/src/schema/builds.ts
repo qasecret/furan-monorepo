@@ -24,13 +24,13 @@ export const builds = pgTable(
     branchName: text("branch_name"),
     status: text("status"),
     /**
-     * Human-readable batch name (Applitools BATCH_NAME parallel). Distinct from
+     * Human-readable build display name. Distinct from
      * `ciBuildId`. Populated by the SDK from `FURAN_BUILD_NAME`. Display fallback
      * chain: name → "#{number}" → first 12 chars of ciBuildId → "(unnamed)".
      */
     name: text("name"),
     /**
-     * Free-form K/V tags on a build (Applitools `addProperty` parallel). Enforced
+     * Free-form K/V tags on a build. Enforced
      * at the Zod boundary, not via CHECK: ≤ 20 keys; keys 1–64 chars matching
      * /^[a-zA-Z0-9_.-]+$/; values ≤ 256 chars; values strings only. GIN-indexed
      * for `@>` containment filters from the dashboard.

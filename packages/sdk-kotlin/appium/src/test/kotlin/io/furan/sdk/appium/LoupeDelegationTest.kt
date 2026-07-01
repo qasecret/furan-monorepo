@@ -10,10 +10,10 @@ import org.mockito.kotlin.whenever
 import org.openqa.selenium.Capabilities
 
 /**
- * Unit tests for the Appium [Loupe] Applitools-compat facade.
+ * Unit tests for the Appium [Loupe] compat facade.
  *
  * All assertions are pure (no network / device calls):
- *   - `saveNewTests` default is true (Eyes-parity)
+ *   - `saveNewTests` default is true
  *   - The facade exposes the expected lifecycle methods
  *   - check-before-open propagates the engine's guard (delegation confirmed)
  */

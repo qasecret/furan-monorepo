@@ -24,7 +24,7 @@ const SLIDER_MAX_PCT = 5;
 const SLIDER_STEP_PCT = 0.01;
 
 /**
- * Quick-pick presets. Picked from the most common Applitools / Percy
+ * Quick-pick presets. Picked from the most common industry
  * sensitivity presets we hear about. Renders as 4 small chips inside
  * the dropdown so reviewers don't have to scrub a slider to a tenth-of-a-
  * percent target.

@@ -967,7 +967,7 @@ async function handleDiffJobInner(
       });
     }
 
-    // Tier 2.5 (Eyes-parity): when the checkpoint opted into
+    // Tier 2.5: when the checkpoint opted into
     // accessibility validation (cs.accessibilityLevel set), run
     // axe-core against the captured DOM HTML and append the
     // violations to the result regions before classification +

@@ -8,8 +8,8 @@ import org.junit.jupiter.api.extension.ExtendWith
  * parameters and have them auto-resolved.
  *
  * Equivalent to writing `@ExtendWith(FuranExtension::class)`
- * directly — the meta-annotation form is the canonical legacy
- * Java SDK pattern.
+ * directly — the meta-annotation form is the canonical
+ * annotation pattern.
  *
  * ```kotlin
  * @FuranTest

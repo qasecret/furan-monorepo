@@ -114,7 +114,7 @@ function StatCard({
 
 /**
  * Three at-a-glance summary cards atop the INFO tab (modelled on the
- * Applitools step panel): pixel-diff %, region count, worst severity.
+ * step panel): pixel-diff %, region count, worst severity.
  */
 function StatCards({
   pixelDiffPercent,
