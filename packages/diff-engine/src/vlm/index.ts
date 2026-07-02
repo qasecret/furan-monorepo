@@ -21,28 +21,9 @@ export { anthropicProvider } from "./anthropic.js";
 /** Hard ceiling on a single VLM provider call. Ollama/Gemini/Anthropic can
  *  stall (cold model load, quota backpressure, network partition); without a
  *  timeout one hung request blocks the whole diff worker and the queue backs
- *  up unbounded. On timeout we fall back to the L1 verdict like any other
- *  provider failure. */
+ *  up unbounded. On timeout we ABORT the request (so it isn't orphaned) and
+ *  fall back to the L1 verdict like any other provider failure. */
 const VLM_TIMEOUT_MS = 60_000;
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${ms}ms`)),
-      ms,
-    );
-    p.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      },
-    );
-  });
-}
 
 export interface RunVlmOptions {
   provider: VlmProvider;
@@ -94,6 +75,20 @@ export async function runVlm(
     };
   }
 
+  // Shared L1-fallback fields for every non-success return below (the L1 pixel
+  // verdict the VLM layer degrades to). Success overrides `passed`.
+  const fallback = {
+    passed: l1.diffPercent <= options.diffThreshold * 100,
+    diffPercent: l1.diffPercent,
+    pixelMismatchCount: l1.pixelMismatchCount,
+    diffImageBytes: l1.diffImageBytes,
+  };
+
+  // Bound the provider call AND cancel it on timeout via an AbortController the
+  // provider forwards to its HTTP client — so a hung request is aborted, not
+  // left running after we've already returned the L1 fallback.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VLM_TIMEOUT_MS);
   try {
     const baselineBytes = new Uint8Array(baseline);
     const candidateBytes = new Uint8Array(candidate);
@@ -102,14 +97,10 @@ export async function runVlm(
         ? new Uint8Array(l1.diffImageBytes)
         : candidateBytes;
 
-    const response = await withTimeout(
-      options.provider.generate(options.config, [
-        baselineBytes,
-        candidateBytes,
-        diffBytes,
-      ]),
-      VLM_TIMEOUT_MS,
-      "vlm_generate",
+    const response = await options.provider.generate(
+      options.config,
+      [baselineBytes, candidateBytes, diffBytes],
+      { signal: controller.signal },
     );
 
     const content = options.config.useThinking
@@ -118,10 +109,7 @@ export async function runVlm(
 
     if (!content) {
       return {
-        passed: l1.diffPercent <= options.diffThreshold * 100,
-        diffPercent: l1.diffPercent,
-        pixelMismatchCount: l1.pixelMismatchCount,
-        diffImageBytes: l1.diffImageBytes,
+        ...fallback,
         vlmDescription: "VLM returned empty response",
         vlmError: { reason: "empty", message: "VLM returned empty response" },
       };
@@ -134,10 +122,7 @@ export async function runVlm(
       parsedJson = JSON.parse(content);
     } catch {
       return {
-        passed: l1.diffPercent <= options.diffThreshold * 100,
-        diffPercent: l1.diffPercent,
-        pixelMismatchCount: l1.pixelMismatchCount,
-        diffImageBytes: l1.diffImageBytes,
+        ...fallback,
         vlmDescription: `VLM parse error: ${content}`,
         vlmError: { reason: "parse_error", message: "VLM returned non-JSON" },
       };
@@ -145,10 +130,7 @@ export async function runVlm(
     const parsed = vlmResultSchema.safeParse(parsedJson);
     if (!parsed.success) {
       return {
-        passed: l1.diffPercent <= options.diffThreshold * 100,
-        diffPercent: l1.diffPercent,
-        pixelMismatchCount: l1.pixelMismatchCount,
-        diffImageBytes: l1.diffImageBytes,
+        ...fallback,
         vlmDescription: `VLM parse error: ${content}`,
         vlmError: {
           reason: "parse_error",
@@ -158,21 +140,22 @@ export async function runVlm(
     }
 
     return {
+      ...fallback,
       passed: parsed.data.identical,
-      diffPercent: l1.diffPercent,
-      pixelMismatchCount: l1.pixelMismatchCount,
-      diffImageBytes: l1.diffImageBytes,
       vlmDescription: parsed.data.description,
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = controller.signal.aborted
+      ? `VLM call timed out after ${VLM_TIMEOUT_MS}ms`
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return {
-      passed: l1.diffPercent <= options.diffThreshold * 100,
-      diffPercent: l1.diffPercent,
-      pixelMismatchCount: l1.pixelMismatchCount,
-      diffImageBytes: l1.diffImageBytes,
+      ...fallback,
       vlmDescription: `VLM failed: ${msg}`,
       vlmError: { reason: "call_failed", message: msg },
     };
+  } finally {
+    clearTimeout(timer);
   }
 }

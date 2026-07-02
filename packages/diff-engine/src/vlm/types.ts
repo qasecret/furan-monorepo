@@ -18,10 +18,18 @@ export interface VlmProviderResponse {
   thinking?: string | undefined;
 }
 
+export interface VlmGenerateOptions {
+  /** Abort signal so a caller-side timeout can cancel the in-flight request
+   *  rather than orphaning it (see runVlm). Optional — providers that can't
+   *  honor it degrade to best-effort. */
+  signal?: AbortSignal;
+}
+
 export interface VlmProvider {
   generate(
     config: VlmProviderConfig,
     images: Uint8Array[],
+    opts?: VlmGenerateOptions,
   ): Promise<VlmProviderResponse>;
 }
 

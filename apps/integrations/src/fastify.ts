@@ -66,13 +66,20 @@ export async function buildFastify(
           ? err.statusCode
           : 500;
       req.log.error({ err, reqId: req.id, url: req.url }, "request_error");
+      // Canonical ApiErrorEnvelope { code, message, statusCode } — same shape
+      // the api service emits via sendError, so error responses are uniform
+      // across services. 5xx is scrubbed; 4xx keeps the thrown code + message.
       if (status >= 500) {
-        return reply.code(status).send({ error: "internal_error" });
+        return reply.code(status).send({
+          code: "internal_error",
+          message: "Internal error",
+          statusCode: status,
+        });
       }
       return reply.code(status).send({
-        statusCode: status,
-        error: err.name || "Error",
+        code: err.code || err.name || "error",
         message: err.message,
+        statusCode: status,
       });
     },
   );
