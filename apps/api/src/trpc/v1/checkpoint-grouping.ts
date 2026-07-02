@@ -282,13 +282,26 @@ export async function approveCheckpointInTx(
     })
     .where(eq(testVariations.id, s.testVariationId));
 
-  await tx.insert(baselines).values({
-    baselineName: s.imageKey ?? run.name ?? "auto",
-    testVariationId: s.testVariationId,
-    testRunId: run.id,
-    userId,
-    ...(run.branchName ? { branchName: run.branchName } : {}),
-  });
+  // Upsert on (variation, run) so re-approving a checkpoint doesn't violate the
+  // baselines_variation_run_unique constraint / append a duplicate row.
+  await tx
+    .insert(baselines)
+    .values({
+      baselineName: s.imageKey ?? run.name ?? "auto",
+      testVariationId: s.testVariationId,
+      testRunId: run.id,
+      userId,
+      ...(run.branchName ? { branchName: run.branchName } : {}),
+    })
+    .onConflictDoUpdate({
+      target: [baselines.testVariationId, baselines.testRunId],
+      set: {
+        baselineName: s.imageKey ?? run.name ?? "auto",
+        userId,
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+        updatedAt: new Date(),
+      },
+    });
 
   await tx
     .update(testRuns)

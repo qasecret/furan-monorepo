@@ -1,6 +1,7 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { resolveBaseline } from "./baseline.js";
+import { recordBaseline, resolveBaseline } from "./baseline.js";
 import { createDb, type DB } from "./client.js";
 import {
   baselines,
@@ -158,6 +159,31 @@ describe.runIf(RUN_INTEGRATION)("resolveBaseline (integration)", () => {
       },
     );
     expect(result).toBeNull();
+  });
+
+  it("recordBaseline upserts on (variation, run) — a retry does not duplicate", async () => {
+    // Two records for the same (variation, run) — a diff-worker retry, or an
+    // approve after an auto-seed — must leave exactly one baseline row.
+    await recordBaseline(db, {
+      testVariationId: variationId,
+      testRunId: runId,
+      imageKey: "key-1",
+      branchName: "feature/x",
+    });
+    await recordBaseline(db, {
+      testVariationId: variationId,
+      testRunId: runId,
+      imageKey: "key-1",
+      userId,
+      branchName: "feature/x",
+    });
+    const rows = await db
+      .select({ id: baselines.id, userId: baselines.userId })
+      .from(baselines)
+      .where(eq(baselines.testRunId, runId));
+    expect(rows).toHaveLength(1);
+    // The second (approve) call's userId won via DO UPDATE.
+    expect(rows[0]!.userId).toBe(userId);
   });
 
   it("honors depthCap=0 — parent_pr path skipped", async () => {
