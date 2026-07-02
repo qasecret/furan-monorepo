@@ -19,6 +19,12 @@ export const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Max concurrent capture jobs per worker process. Each job drives a
+  // Playwright page (CPU + hundreds of MB RSS), so an unbounded value lets a
+  // burst of enqueued captures OOM the worker. Default 4 matches the historical
+  // hardcoded value; tune to the host's RAM / CPU. Mirrors the injectable
+  // concurrency the webhook worker already exposes.
+  CAPTURE_CONCURRENCY: z.coerce.number().int().min(1).default(4),
 });
 
 export type Env = z.infer<typeof envSchema>;
