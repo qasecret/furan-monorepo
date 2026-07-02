@@ -144,6 +144,41 @@ export class ApiClient {
     return body;
   }
 
+  /**
+   * Call a tRPC mutation. Furan's tRPC uses RAW input (no superjson transformer)
+   * and accepts the non-batch form: POST /trpc/<procedure> with the input as the
+   * JSON body → `{ result: { data } }`.
+   */
+  async trpcMutate<T>(
+    auth: string,
+    procedure: string,
+    input: unknown,
+  ): Promise<T> {
+    const { body } = await this.request<{ result: { data: T } }>(
+      "POST",
+      `/trpc/${procedure}`,
+      { auth, body: input },
+    );
+    return body.result.data;
+  }
+
+  /** Set per-project diff config (engine, auto-approve, thresholds, retention). */
+  async setProjectConfig(
+    admin: string,
+    projectId: string,
+    cfg: {
+      imageComparison?: "odiff" | "pixelmatch" | "looks_same" | "vlm";
+      autoApproveFeature?: boolean;
+      diffThreshold?: number;
+      retentionDays?: number;
+    },
+  ): Promise<Project> {
+    return this.trpcMutate<Project>(admin, "projects.update", {
+      projectId,
+      ...cfg,
+    });
+  }
+
   async addMember(
     admin: string,
     projectId: string,
