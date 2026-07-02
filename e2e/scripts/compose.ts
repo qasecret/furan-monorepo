@@ -14,7 +14,14 @@ const COMPOSE_FILES = [
   "infra/docker/compose.yml",
   "-f",
   "infra/docker/compose.local-all.yml",
+  // Isolate the e2e stack on 3010/3011 so it coexists with a dev `pnpm dev`.
+  "-f",
+  "e2e/scripts/compose.e2e-ports.yml",
 ];
+
+/** Host URLs the e2e stack is reachable at (see compose.e2e-ports.yml). */
+export const API_URL = "http://localhost:3010";
+export const DASH_URL = "http://localhost:3011";
 
 export type StorageMode = "s3" | "hdd";
 

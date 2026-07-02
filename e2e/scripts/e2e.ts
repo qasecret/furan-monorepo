@@ -2,8 +2,22 @@ import { execa } from "execa";
 
 import { seedAll } from "../src/seed/seed.js";
 
-import { down, logs, up, ROOT, type StorageMode } from "./compose.js";
+import {
+  API_URL,
+  DASH_URL,
+  down,
+  logs,
+  up,
+  ROOT,
+  type StorageMode,
+} from "./compose.js";
 import { waitHealthy } from "./wait-health.js";
+
+// Point the test client + Playwright at the isolated e2e host ports (3010/3011)
+// before any of them read the env. Downstream (wait-health, tests,
+// playwright.config) all default to these envs.
+process.env.E2E_API_URL = API_URL;
+process.env.E2E_DASH_URL = DASH_URL;
 
 const args = process.argv.slice(2);
 const has = (flag: string): boolean => args.includes(flag);
