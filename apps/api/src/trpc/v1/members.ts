@@ -91,6 +91,8 @@ export const membersRouter = t.router({
         throw new TRPCError({ code: "CONFLICT", message: "already_a_member" });
       }
 
+      // New membership → invalidate the cached set so it's visible next request.
+      await ctx.req.server.memberProjectsCache?.del(targetUser.id);
       return { added: true };
     }),
 
@@ -115,6 +117,9 @@ export const membersRouter = t.router({
             eq(projectMembers.userId, input.userId),
           ),
         );
+      // Invalidate the member-project cache so revoked access takes effect on
+      // the target's next request rather than after the 30s TTL (ADR-058).
+      await ctx.req.server.memberProjectsCache?.del(input.userId);
       return { removed: true };
     }),
 
@@ -228,6 +233,8 @@ export const membersRouter = t.router({
         }
         throw err;
       }
+      // Membership set changed → drop the cached member-project set (ADR-058).
+      await ctx.req.server.memberProjectsCache?.del(input.userId);
       return { ok: true };
     }),
 });
