@@ -2,6 +2,7 @@ import { and, asc, eq, projectMembers, users } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { emitAudit } from "../../lib/emit-audit.js";
 import { isOwner } from "../../lib/roles.js";
 import type { Context } from "../context.js";
 import { requireAdmin } from "../middlewares/admin.js";
@@ -93,6 +94,17 @@ export const membersRouter = t.router({
 
       // New membership → invalidate the cached set so it's visible next request.
       await ctx.req.server.memberProjectsCache?.del(targetUser.id);
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "member.add",
+          targetType: "project",
+          targetId: input.projectId,
+          metadata: { userId: targetUser.id, email: input.email },
+        },
+        ctx.req.log,
+      );
       return { added: true };
     }),
 
@@ -120,6 +132,17 @@ export const membersRouter = t.router({
       // Invalidate the member-project cache so revoked access takes effect on
       // the target's next request rather than after the 30s TTL (ADR-058).
       await ctx.req.server.memberProjectsCache?.del(input.userId);
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "member.remove",
+          targetType: "project",
+          targetId: input.projectId,
+          metadata: { userId: input.userId },
+        },
+        ctx.req.log,
+      );
       return { removed: true };
     }),
 
@@ -235,6 +258,20 @@ export const membersRouter = t.router({
       }
       // Membership set changed → drop the cached member-project set (ADR-058).
       await ctx.req.server.memberProjectsCache?.del(input.userId);
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "member.set_projects",
+          targetType: "user",
+          targetId: input.userId,
+          metadata: {
+            projectIds: input.projectIds,
+            defaultProjectId: input.defaultProjectId,
+          },
+        },
+        ctx.req.log,
+      );
       return { ok: true };
     }),
 });

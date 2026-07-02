@@ -22,6 +22,7 @@ import {
 } from "@furan/shared-types";
 import { z } from "zod";
 
+import { emitAudit } from "../../lib/emit-audit.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -410,7 +411,7 @@ export const inboxRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return approveRun(ctx, input.runId);
+      return approveRun({ ...ctx, log: ctx.req.log }, input.runId);
     }),
 
   /**
@@ -493,6 +494,23 @@ export const inboxRouter = t.router({
           data: { id: buildId },
         });
       }
+
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.reject_cluster",
+          targetType: "project",
+          targetId: input.projectId,
+          metadata: {
+            signature: input.signature,
+            rejected: targetRunIds.length,
+            buildCount: distinctBuildIds.length,
+            capped,
+          },
+        },
+        ctx.req.log,
+      );
 
       return {
         rejected: targetRunIds.length,
