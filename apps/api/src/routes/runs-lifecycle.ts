@@ -214,12 +214,13 @@ export async function registerRunLifecycleRoutes(
       if (!req.auth) return sendError(reply, 401, "unauthenticated");
       const authUserId = req.auth.id;
       try {
-        const out = await withRequestScope(app, req, (db) =>
+        const out = await withRequestScope(app, req, (db, onCommit) =>
           approveRun(
             {
               db,
               broadcaster: app.broadcaster,
               user: { id: authUserId },
+              onCommit,
             },
             params.data.id,
           ),

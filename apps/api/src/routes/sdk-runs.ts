@@ -258,7 +258,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
    */
   async function persistScreenshot(
     req: FastifyRequest,
-    run: typeof testRuns.$inferSelect,
+    runId: string,
     inputs: {
       pngBytes: Buffer;
       domHtml: string | null;
@@ -306,7 +306,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
 
     logger.info(
       {
-        runId: run.id,
+        runId,
         name: snapName,
         viewport,
         browser,
@@ -330,7 +330,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       if (elementMapRaw.length > MAX_ELEMENT_MAP_BYTES) {
         logger.warn(
           {
-            runId: run.id,
+            runId,
             imageKey: hashedImageKey,
             bytes: elementMapRaw.length,
           },
@@ -352,7 +352,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           const outcome =
             err instanceof SyntaxError ? "invalid_json" : "storage_error";
           logger.warn(
-            { runId: run.id, imageKey: hashedImageKey, err },
+            { runId, imageKey: hashedImageKey, err },
             "element_map_dropped",
           );
           recordElementMapOutcome(app.telemetry.metrics, outcome);
@@ -364,6 +364,18 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     // pooled DB connection during object I/O). Only the DB writes are scoped
     // (ADR-058); the diff enqueue defers to post-commit via onCommit.
     return withRequestScope(app, req, async (db, onCommit) => {
+      // Fetch the run inside the SAME scope as the writes (one transaction, one
+      // snapshot). `null` → the run vanished (the requireProjectMember gate
+      // already resolved it, so this only trips on a concurrent delete); the
+      // caller maps that to 404.
+      const runRows = await db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, runId))
+        .limit(1);
+      const run = runRows[0];
+      if (!run) return null;
+
       // ADR-038: resolve-or-create the test variation by checkpoint identity.
       const variation = await resolveOrCreateVariation(db, {
         projectId: run.projectId,
@@ -682,18 +694,6 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       }
       const { runId } = parsedParams.data;
 
-      const run = await withRequestScope(app, req, async (db) => {
-        const runRows = await db
-          .select()
-          .from(testRuns)
-          .where(eq(testRuns.id, runId))
-          .limit(1);
-        return runRows[0] ?? null;
-      });
-      if (!run) {
-        return sendError(reply, 404, "run_not_found");
-      }
-
       // Drain multipart parts. Field order is unconstrained — SDK sends both
       // file parts (pngBytes, optional domHtml) and string fields (name,
       // viewport, browser, os, device, matchLevel) in a single iteration.
@@ -757,7 +757,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         return sendError(reply, 400, "pngBytes_required");
       }
 
-      const result = await persistScreenshot(req, run, {
+      const result = await persistScreenshot(req, runId, {
         pngBytes,
         domHtml,
         elementMapRaw,
@@ -771,6 +771,9 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         accessibilityLevel,
         accessibilityVersion,
       });
+      if (!result) {
+        return sendError(reply, 404, "run_not_found");
+      }
       return reply.code(200).send(result);
     },
   );
@@ -821,18 +824,6 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       }
       const body = parsedBody.data;
 
-      const run = await withRequestScope(app, req, async (db) => {
-        const runRows = await db
-          .select()
-          .from(testRuns)
-          .where(eq(testRuns.id, runId))
-          .limit(1);
-        return runRows[0] ?? null;
-      });
-      if (!run) {
-        return sendError(reply, 404, "run_not_found");
-      }
-
       // Decode base64. Node's Buffer.from with "base64" is lenient — it
       // accepts both standard and URL-safe alphabets and silently drops
       // whitespace, so we don't need a separate normalization pass. The
@@ -859,7 +850,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       const domHtml = body.domHtml ?? null;
       const elementMapRaw = body.elementMapJson ?? null;
 
-      const result = await persistScreenshot(req, run, {
+      const result = await persistScreenshot(req, runId, {
         pngBytes,
         domHtml,
         elementMapRaw,
@@ -868,6 +859,9 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         browser,
         ignoreDisplacements: body.ignoreDisplacements ?? false,
       });
+      if (!result) {
+        return sendError(reply, 404, "run_not_found");
+      }
       return reply.code(200).send(result);
     },
   );

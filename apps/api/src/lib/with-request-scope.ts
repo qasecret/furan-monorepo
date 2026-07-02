@@ -21,6 +21,18 @@ import { createDeferredSink } from "./deferred-sink.js";
  * transaction commits, so a worker can't observe the job before the rows it
  * references are visible. Deferred effects run only if `fn` resolves; if it
  * throws, the transaction rolls back and nothing is enqueued.
+ *
+ * INVARIANTS for `fn`:
+ * - Do NOT call `reply.send()` (or `sendError`, which sends) for a SUCCESS
+ *   response inside `fn`: that flushes the HTTP response before the transaction
+ *   commits, so a client read-after-write can miss its own write. Instead set
+ *   `reply.code(x)` and RETURN the body — Fastify sends it after the handler
+ *   resolves (post-commit). Error early-returns via `sendError` are tolerated
+ *   only because they occur BEFORE any write in the scope.
+ * - Rollback happens only on a THROW. A returned value (including a
+ *   `sendError` reply) COMMITS the transaction. So if you ever add a write
+ *   before an error path, `throw` instead of `return sendError(...)` so the
+ *   partial write rolls back.
  */
 export async function withRequestScope<T>(
   app: FastifyInstance,

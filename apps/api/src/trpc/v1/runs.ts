@@ -215,6 +215,14 @@ export async function approveRun(
     db: import("@furan/db").DB;
     broadcaster: import("../../lib/broadcast.js").Broadcaster;
     user: { id: string };
+    /**
+     * When the caller runs inside a request-scoped transaction (ADR-058), the
+     * inner `ctx.db.transaction()` below becomes a savepoint, so this helper's
+     * "broadcast after commit" would otherwise fire before the OUTER commit.
+     * Passing `onCommit` defers the broadcasts until after that commit; absent
+     * (a non-scoped caller), they run inline post-(inner-)commit as before.
+     */
+    onCommit?: (effect: () => unknown) => void;
   },
   runId: string,
   /**
@@ -299,17 +307,23 @@ export async function approveRun(
     return run;
   });
 
-  // Broadcaster calls after transaction commit — consumers see committed state.
-  await ctx.broadcaster.publishProjectEvent(run.projectId, {
-    event: "testRun_updated",
-    data: { id: run.id },
-  });
-  if (run.buildId) {
+  // Broadcaster calls after commit — consumers refetch committed state. When
+  // the caller is request-scoped these defer to after the OUTER commit (see
+  // the onCommit note above); otherwise they run inline now.
+  const broadcast = async (): Promise<void> => {
     await ctx.broadcaster.publishProjectEvent(run.projectId, {
-      event: "build_updated",
-      data: { id: run.buildId },
+      event: "testRun_updated",
+      data: { id: run.id },
     });
-  }
+    if (run.buildId) {
+      await ctx.broadcaster.publishProjectEvent(run.projectId, {
+        event: "build_updated",
+        data: { id: run.buildId },
+      });
+    }
+  };
+  if (ctx.onCommit) ctx.onCommit(broadcast);
+  else await broadcast();
 
   return { runId: run.id, approved: true };
 }
