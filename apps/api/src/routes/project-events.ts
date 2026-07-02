@@ -5,9 +5,9 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import {
-  decConnections,
-  incConnections,
   recordFlushed,
+  releaseConnection,
+  tryAcquireConnection,
 } from "../lib/broadcast-metrics.js";
 import type { ProjectEventName } from "../lib/broadcast.js";
 import { sendError } from "../lib/errors.js";
@@ -138,6 +138,18 @@ export async function registerProjectEventsRoute(
         return sendError(reply, 404, "not_found");
       }
 
+      // DoS backstop: refuse the stream (before hijacking, so a normal 503
+      // still sends) when this instance is already at the concurrent-SSE cap.
+      if (
+        !tryAcquireConnection(
+          app.telemetry.metrics,
+          app.env.SSE_MAX_CONNECTIONS,
+        )
+      ) {
+        req.log.warn({ projectId: id }, "project_sse_capacity_rejected");
+        return sendError(reply, 503, "sse_capacity_exceeded");
+      }
+
       reply.hijack();
 
       // Same CORS allowlist mirror as `run-events.ts` — SSE bypasses the
@@ -167,7 +179,7 @@ export async function registerProjectEventsRoute(
         reply.raw.flushHeaders();
       }
       req.raw.socket?.setTimeout?.(0);
-      incConnections(app.telemetry.metrics);
+      // Slot already reserved by tryAcquireConnection above.
 
       // Per-connection state: 9 buffers + 9 debouncers, keyed by event name.
       // 6 legacy names + 3 ADR-038 checkpoint-lifecycle names.
@@ -238,7 +250,7 @@ export async function registerProjectEventsRoute(
         await subscriber.subscribe(channel);
       } catch (err) {
         req.log.error({ err, channel }, "project_sse_subscribe_failed");
-        decConnections(app.telemetry.metrics);
+        releaseConnection(app.telemetry.metrics);
         reply.raw.end();
         await subscriber.quit().catch(() => undefined);
         return;
@@ -267,7 +279,7 @@ export async function registerProjectEventsRoute(
           /* ignore */
         }
         await subscriber.quit().catch(() => undefined);
-        decConnections(app.telemetry.metrics);
+        releaseConnection(app.telemetry.metrics);
       };
 
       req.raw.on("close", () => void cleanup());

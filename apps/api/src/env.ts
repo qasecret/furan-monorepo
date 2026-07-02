@@ -62,6 +62,18 @@ export const envSchema = z.object({
   // self-host setup), so cross-origin POSTs with JSON bodies trigger a
   // preflight that 404s without an explicit CORS plugin.
   FURAN_DASHBOARD_ORIGIN: z.string().min(1).default("http://localhost:3001"),
+
+  /**
+   * DoS backstop: the maximum number of concurrent SSE streams a single API
+   * instance will hold open across BOTH event endpoints
+   * (`/api/v1/runs/:id/events` + `/api/v1/projects/:id/events`). Each open
+   * stream pins a socket + a dedicated Redis subscriber connection, so an
+   * unbounded fan-out lets an attacker exhaust file descriptors / Redis
+   * clients. When the live count is at the cap, new stream requests are
+   * rejected with 503 before the socket is hijacked. Generous default so it
+   * never trips a legitimate deployment; lower it behind a small proxy.
+   */
+  SSE_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(10000),
 });
 
 export type Env = z.infer<typeof envSchema>;
