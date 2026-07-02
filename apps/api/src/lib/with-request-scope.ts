@@ -10,6 +10,15 @@ import { createDeferredSink } from "./deferred-sink.js";
  * Pass the yielded `db` to every project-scoped query — and to any helper — in
  * the handler, instead of `app.db`.
  *
+ * ENFORCEMENT (issue #347): a new project-scoped route that forgets to wrap its
+ * DB work here is caught by the RLS CI run — `.github/workflows/ci.yml` runs the
+ * full api suite with `TEST_RLS=1`, connecting the app as the non-owner
+ * `furan_app` role. An un-scoped query then runs with no identity and
+ * fail-closes (empty results / 404), failing that route's test. This runtime
+ * check is deliberately preferred over a lint rule, which would false-positive
+ * on routes that use `requireProjectMember` but do no handler-body DB work
+ * (e.g. the SSE `run-events` route).
+ *
  * This mirrors the tRPC `scopeToUser` middleware for the REST surface. RLS is
  * still OFF, so today this only means the handler's DB work runs inside one
  * transaction (behavior-preserving). Project-scoped routes are always

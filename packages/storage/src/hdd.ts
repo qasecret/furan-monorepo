@@ -1,7 +1,7 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { HeadResult, Storage } from "./types.js";
+import type { HeadResult, Storage, StorageObject } from "./types.js";
 
 export interface HddConfig {
   /**
@@ -110,6 +110,33 @@ export function createHddStorage(config: HddConfig): Storage {
       // `force: true` keeps the missing-key case silent, matching S3's
       // DeleteObject which is idempotent.
       await rm(filePath, { force: true });
+    },
+    async list(prefix) {
+      // Recursively walk the root; the object key is the path relative to
+      // root (with `/` separators, matching how keys are written).
+      const out: StorageObject[] = [];
+      const walk = async (dir: string): Promise<void> => {
+        let entries;
+        try {
+          entries = await readdir(dir, { withFileTypes: true });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw err;
+        }
+        for (const entry of entries) {
+          const abs = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(abs);
+          } else if (entry.isFile()) {
+            const key = path.relative(root, abs).split(path.sep).join("/");
+            if (prefix && !key.startsWith(prefix)) continue;
+            const st = await stat(abs);
+            out.push({ key, size: st.size, lastModified: st.mtime });
+          }
+        }
+      };
+      await walk(root);
+      return out;
     },
   };
 }
