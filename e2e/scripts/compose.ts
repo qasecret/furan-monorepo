@@ -23,6 +23,13 @@ const COMPOSE_FILES = [
 export const API_URL = "http://localhost:3010";
 export const DASH_URL = "http://localhost:3011";
 
+/** Bootstrap admin seeded on first boot (via FURAN_BOOTSTRAP_ADMIN_* below).
+ *  Shared with the seeder so the two never drift. */
+export const BOOTSTRAP_EMAIL = "e2e-admin@furan.test";
+export const BOOTSTRAP_PASSWORD = "e2e-admin-password-1234";
+/** Password given to every seeded role principal (owner/admin/editor/guest). */
+export const USER_PASSWORD = "e2e-user-password-1234";
+
 export type StorageMode = "s3" | "hdd";
 
 /**
@@ -38,8 +45,8 @@ export function writeEnv(mode: StorageMode): string {
       ? "STORAGE_KIND=s3\nCOMPOSE_PROFILES=s3\n"
       : "STORAGE_KIND=hdd\nCOMPOSE_PROFILES=hdd\nHDD_ROOT=/var/lib/furan/storage\n";
   const extra = [
-    "FURAN_BOOTSTRAP_ADMIN_EMAIL=e2e-admin@furan.test",
-    "FURAN_BOOTSTRAP_ADMIN_PASSWORD=e2e-admin-password-1234",
+    `FURAN_BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_EMAIL}`,
+    `FURAN_BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_PASSWORD}`,
     "",
   ].join("\n");
   const path = join(tmpdir(), `furan-e2e-${mode}.env`);
