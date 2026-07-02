@@ -2,6 +2,8 @@ import { dashboardTelemetryEvents } from "@furan/db";
 import { dashboardTelemetryRecordInput } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 
+import { sendError } from "../lib/errors.js";
+
 export async function registerDashboardTelemetryRoutes(
   app: FastifyInstance,
 ): Promise<void> {
@@ -11,7 +13,13 @@ export async function registerDashboardTelemetryRoutes(
     async (req, reply) => {
       const parsed = dashboardTelemetryRecordInput.safeParse(req.body);
       if (!parsed.success) {
-        return reply.status(400).send({ error: parsed.error.flatten() });
+        return sendError(
+          reply,
+          400,
+          "invalid_body",
+          undefined,
+          parsed.error.flatten(),
+        );
       }
 
       try {

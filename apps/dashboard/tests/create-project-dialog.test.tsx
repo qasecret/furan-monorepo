@@ -144,7 +144,7 @@ describe("CreateProjectDialog", () => {
   test("409 surfaces an inline name-field error", async () => {
     setupFetch(
       () =>
-        new Response(JSON.stringify({ error: "project_name_taken" }), {
+        new Response(JSON.stringify({ code: "project_name_taken" }), {
           status: 409,
           headers: { "Content-Type": "application/json" },
         }),
@@ -164,7 +164,7 @@ describe("CreateProjectDialog", () => {
   test("403 surfaces an admin-only toast", async () => {
     setupFetch(
       () =>
-        new Response(JSON.stringify({ error: "forbidden" }), {
+        new Response(JSON.stringify({ code: "forbidden" }), {
           status: 403,
           headers: { "Content-Type": "application/json" },
         }),
@@ -183,7 +183,7 @@ describe("CreateProjectDialog", () => {
   test("5xx surfaces a generic toast", async () => {
     setupFetch(
       () =>
-        new Response(JSON.stringify({ error: "boom" }), {
+        new Response(JSON.stringify({ code: "boom" }), {
           status: 500,
           headers: { "Content-Type": "application/json" },
         }),

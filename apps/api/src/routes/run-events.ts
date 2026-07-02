@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import { sendError } from "../lib/errors.js";
 
 export const paramsSchema = z.object({ id: z.string().uuid() });
 
@@ -34,7 +35,7 @@ export async function registerRunEventsRoute(
     async (req, reply) => {
       const parsed = paramsSchema.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const { id } = parsed.data;
 

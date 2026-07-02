@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 
 import type {
   GeminiVlmConfig,
+  VlmGenerateOptions,
   VlmProvider,
   VlmProviderConfig,
   VlmProviderResponse,
@@ -11,6 +12,7 @@ export const geminiProvider: VlmProvider = {
   async generate(
     config: VlmProviderConfig,
     images: Uint8Array[],
+    opts?: VlmGenerateOptions,
   ): Promise<VlmProviderResponse> {
     const cfg = config as GeminiVlmConfig;
     if (!cfg.apiKey) throw new Error("Gemini API key is required");
@@ -29,6 +31,7 @@ export const geminiProvider: VlmProvider = {
       contents: [{ text: cfg.prompt }, ...imageParts],
       config: {
         temperature: cfg.temperature,
+        ...(opts?.signal ? { abortSignal: opts.signal } : {}),
         responseMimeType: "application/json" as const,
         responseJsonSchema: {
           type: "object" as const,

@@ -15,6 +15,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import { sendError } from "../lib/errors.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 
 import { tryLegacyCreateRunSynthesis } from "./sdk-runs-back-compat.js";
@@ -499,9 +500,13 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       if (!parsed.success) {
         const synthesized = await tryLegacyCreateRunSynthesis(app, req);
         if (synthesized) return reply.code(201).send(synthesized);
-        return reply
-          .code(400)
-          .send({ error: "invalid_body", details: parsed.error.flatten() });
+        return sendError(
+          reply,
+          400,
+          "invalid_body",
+          undefined,
+          parsed.error.flatten(),
+        );
       }
       const input = parsed.data;
 
@@ -512,7 +517,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(builds.id, input.buildId))
         .limit(1);
       if (!buildRow[0] || buildRow[0].projectId !== input.projectId) {
-        return reply.code(400).send({ error: "invalid_build" });
+        return sendError(reply, 400, "invalid_build");
       }
 
       const [row] = await app.db
@@ -532,7 +537,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         });
 
       if (!row) {
-        return reply.code(500).send({ error: "run_insert_failed" });
+        return sendError(reply, 500, "run_insert_failed");
       }
 
       // Project SSE broadcast.
@@ -593,7 +598,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const params = req.params as { runId?: string };
       if (!params.runId) {
-        return reply.code(400).send({ error: "invalid_run_id" });
+        return sendError(reply, 400, "invalid_run_id");
       }
       const rows = await app.db
         .select()
@@ -602,7 +607,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         .limit(1);
       const row = rows[0];
       if (!row) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       // Derive autoApproved the same way the tRPC procedure does
       // (apps/api/src/trpc/v1/runs.ts:308–318). One PK-indexed lookup
@@ -646,7 +651,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const parsedParams = screenshotsParams.safeParse(req.params);
       if (!parsedParams.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const { runId } = parsedParams.data;
 
@@ -657,7 +662,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         .limit(1);
       const run = runRows[0];
       if (!run) {
-        return reply.code(404).send({ error: "run_not_found" });
+        return sendError(reply, 404, "run_not_found");
       }
 
       // Drain multipart parts. Field order is unconstrained — SDK sends both
@@ -682,7 +687,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           if (part.type === "file") {
             const buf = await part.toBuffer();
             if (buf.length > MAX_SCREENSHOT_BYTES) {
-              return reply.code(413).send({ error: "payload_too_large" });
+              return sendError(reply, 413, "payload_too_large");
             }
             if (part.fieldname === "pngBytes") {
               pngBytes = buf;
@@ -716,11 +721,11 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         }
       } catch (err) {
         req.log.warn({ err }, "multipart_parse_failed");
-        return reply.code(400).send({ error: "invalid_multipart" });
+        return sendError(reply, 400, "invalid_multipart");
       }
 
       if (!pngBytes) {
-        return reply.code(400).send({ error: "pngBytes_required" });
+        return sendError(reply, 400, "pngBytes_required");
       }
 
       const result = await persistScreenshot(
@@ -781,13 +786,13 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const parsedParams = screenshotsParams.safeParse(req.params);
       if (!parsedParams.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const { runId } = parsedParams.data;
 
       const parsedBody = uploadScreenshotJsonBody.safeParse(req.body);
       if (!parsedBody.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const body = parsedBody.data;
 
@@ -798,7 +803,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         .limit(1);
       const run = runRows[0];
       if (!run) {
-        return reply.code(404).send({ error: "run_not_found" });
+        return sendError(reply, 404, "run_not_found");
       }
 
       // Decode base64. Node's Buffer.from with "base64" is lenient — it
@@ -812,13 +817,13 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         pngBytes = Buffer.from(body.pngBase64, "base64");
       } catch (err) {
         req.log.warn({ err, runId }, "base64_decode_failed");
-        return reply.code(400).send({ error: "invalid_base64" });
+        return sendError(reply, 400, "invalid_base64");
       }
       if (pngBytes.length === 0) {
-        return reply.code(400).send({ error: "pngBase64_empty" });
+        return sendError(reply, 400, "pngBase64_empty");
       }
       if (pngBytes.length > MAX_SCREENSHOT_BYTES) {
-        return reply.code(413).send({ error: "payload_too_large" });
+        return sendError(reply, 413, "payload_too_large");
       }
 
       const snapName = body.name ?? "snapshot";

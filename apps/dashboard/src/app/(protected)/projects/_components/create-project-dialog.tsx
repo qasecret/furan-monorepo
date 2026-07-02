@@ -99,9 +99,9 @@ export function CreateProjectDialog({
     }
     if (!res.ok) {
       const payload = (await res.json().catch(() => ({}))) as {
-        error?: string;
+        code?: string;
       };
-      toast.error(payload?.error ?? "Failed to create project");
+      toast.error(payload?.code ?? "Failed to create project");
       return;
     }
     const project = (await res.json()) as { id: string };

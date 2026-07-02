@@ -2,28 +2,32 @@ import { Ollama } from "ollama";
 
 import type {
   OllamaVlmConfig,
+  VlmGenerateOptions,
   VlmProvider,
   VlmProviderConfig,
   VlmProviderResponse,
 } from "./types.js";
 
-let cachedClient: Ollama | null = null;
-let cachedHost: string | undefined;
-
-function getClient(baseUrl?: string): Ollama {
-  if (cachedClient && cachedHost === baseUrl) return cachedClient;
-  cachedClient = new Ollama({ host: baseUrl ?? "http://localhost:11434" });
-  cachedHost = baseUrl;
-  return cachedClient;
-}
-
 export const ollamaProvider: VlmProvider = {
   async generate(
     config: VlmProviderConfig,
     images: Uint8Array[],
+    opts?: VlmGenerateOptions,
   ): Promise<VlmProviderResponse> {
     const cfg = config as OllamaVlmConfig;
-    const client = getClient(cfg.baseUrl);
+    // A fresh client per call (not cached): ollama-js only exposes a
+    // client-level abort(), so a per-call instance keeps the caller's timeout
+    // from cancelling other concurrent ollama requests.
+    const client = new Ollama({
+      host: cfg.baseUrl ?? "http://localhost:11434",
+    });
+    if (opts?.signal) {
+      if (opts.signal.aborted) client.abort();
+      else
+        opts.signal.addEventListener("abort", () => client.abort(), {
+          once: true,
+        });
+    }
 
     const jsonSchema = {
       type: "object" as const,

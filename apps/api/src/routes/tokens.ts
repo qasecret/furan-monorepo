@@ -2,6 +2,8 @@ import { and, eq, tokens } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { emitAudit } from "../lib/emit-audit.js";
+import { sendError } from "../lib/errors.js";
 import { generateRawToken } from "../lib/token.js";
 
 export const createBody = z.object({ label: z.string().min(1).max(80) });
@@ -32,7 +34,7 @@ export async function registerTokensRoutes(
     { preHandler: app.authenticate },
     async (req, reply) => {
       if (!req.auth) {
-        return reply.code(401).send({ error: "unauthenticated" });
+        return sendError(reply, 401, "unauthenticated");
       }
       return app.db
         .select({
@@ -51,11 +53,11 @@ export async function registerTokensRoutes(
     { preHandler: app.authenticate },
     async (req, reply) => {
       if (!req.auth) {
-        return reply.code(401).send({ error: "unauthenticated" });
+        return sendError(reply, 401, "unauthenticated");
       }
       const parsed = createBody.safeParse(req.body);
       if (!parsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const { raw, hash } = generateRawToken();
       const [row] = await app.db
@@ -66,6 +68,19 @@ export async function registerTokensRoutes(
           label: tokens.label,
           createdAt: tokens.createdAt,
         });
+      // PATs are long-lived credentials for CI/SDK — mint/revoke belongs in the
+      // audit trail (never the raw token or its hash, only id + label).
+      await emitAudit(
+        app.db,
+        {
+          actorId: req.auth.id,
+          action: "token.created",
+          targetType: "token",
+          targetId: row?.id ?? null,
+          metadata: { label: parsed.data.label },
+        },
+        req.log,
+      );
       return reply.code(201).send({ ...row, token: raw });
     },
   );
@@ -75,11 +90,11 @@ export async function registerTokensRoutes(
     { preHandler: app.authenticate },
     async (req, reply) => {
       if (!req.auth) {
-        return reply.code(401).send({ error: "unauthenticated" });
+        return sendError(reply, 401, "unauthenticated");
       }
       const parsed = paramsId.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const result = await app.db
         .delete(tokens)
@@ -88,8 +103,18 @@ export async function registerTokensRoutes(
         )
         .returning({ id: tokens.id });
       if (result.length === 0) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
+      await emitAudit(
+        app.db,
+        {
+          actorId: req.auth.id,
+          action: "token.deleted",
+          targetType: "token",
+          targetId: parsed.data.id,
+        },
+        req.log,
+      );
       return reply.code(204).send();
     },
   );

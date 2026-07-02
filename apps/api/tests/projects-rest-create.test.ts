@@ -70,7 +70,7 @@ d("POST /projects — error mapping (F7)", () => {
 
     const second = await create(s.adminJwt, "Dup");
     expect(second.statusCode).toBe(409);
-    expect(second.json()).toEqual({ error: "project_name_taken" });
+    expect(second.json()).toMatchObject({ code: "project_name_taken" });
   });
 
   test("a non-unique insert failure is surfaced (500), not masked as 409", async () => {
@@ -85,6 +85,6 @@ d("POST /projects — error mapping (F7)", () => {
 
     expect(res.statusCode).not.toBe(409);
     expect(res.statusCode).toBe(500);
-    expect(res.json()).not.toEqual({ error: "project_name_taken" });
+    expect(res.json()).not.toMatchObject({ code: "project_name_taken" });
   });
 });

@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { sendError } from "../lib/errors.js";
 import { roleRank } from "../lib/roles.js";
 import type { UserRole } from "../plugins/auth.js";
 
@@ -12,10 +13,10 @@ export function requireRole(...roles: UserRole[]) {
   const threshold = Math.min(...roles.map(roleRank));
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!req.auth) {
-      return reply.code(401).send({ error: "unauthenticated" });
+      return sendError(reply, 401, "unauthenticated");
     }
     if (roleRank(req.auth.role) < threshold) {
-      return reply.code(403).send({ error: "forbidden" });
+      return sendError(reply, 403, "forbidden");
     }
   };
 }

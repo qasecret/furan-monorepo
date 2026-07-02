@@ -3,6 +3,7 @@ import type { UserRole } from "@furan/shared-types";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
+import { sendError } from "../lib/errors.js";
 import { loadActiveUserByPat } from "../lib/load-active-user.js";
 import { resolveAuthUser } from "../lib/resolve-auth-user.js";
 import { isPatFormat } from "../lib/token.js";
@@ -49,13 +50,13 @@ export default fp(async (app) => {
       const legacy = bearer ? null : extractLegacyApiKey(req);
       const raw = bearer ?? legacy;
       if (!raw) {
-        return reply.code(401).send({ error: "missing_credentials" });
+        return sendError(reply, 401, "missing_credentials");
       }
 
       if (isPatFormat(raw)) {
         const pat = await loadActiveUserByPat(app.db, raw);
         if (!pat) {
-          return reply.code(401).send({ error: "invalid_token" });
+          return sendError(reply, 401, "invalid_token");
         }
         req.auth = { id: pat.id, role: pat.role };
         await touchTokenLastUsed(app.db, pat.tokenId);
@@ -65,7 +66,7 @@ export default fp(async (app) => {
       // legacy apiKey header carrying a NON-PAT value is invalid
       // (JWTs go through Bearer).
       if (legacy && !bearer) {
-        return reply.code(401).send({ error: "invalid_token_format" });
+        return sendError(reply, 401, "invalid_token_format");
       }
 
       let payload: { sub: string };
@@ -77,7 +78,7 @@ export default fp(async (app) => {
         // ignored — the live role comes from loadActiveUser below.
         payload = app.jwt.verify(raw) as { sub: string };
       } catch {
-        return reply.code(401).send({ error: "invalid_jwt" });
+        return sendError(reply, 401, "invalid_jwt");
       }
 
       // Reflect LIVE role/active state (cache → DB), not the up-to-7-day token
@@ -88,11 +89,11 @@ export default fp(async (app) => {
         payload.sub,
       );
       if (!fresh) {
-        return reply.code(401).send({ error: "invalid_jwt" }); // missing/bad
+        return sendError(reply, 401, "invalid_jwt"); // missing/bad
       }
       if (!fresh.isActive) {
         // valid token, but the account is disabled — distinct from a bad token
-        return reply.code(403).send({ error: "account_inactive" });
+        return sendError(reply, 403, "account_inactive");
       }
       req.auth = { id: payload.sub, role: fresh.role };
     },

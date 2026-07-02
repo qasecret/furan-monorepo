@@ -939,6 +939,23 @@ async function handleDiffJobInner(
         durationMs: { l1: performance.now() - t0 },
       };
       vlmDescription = vlmResult.vlmDescription;
+      if (vlmResult.vlmError) {
+        // The VLM layer fell back to the L1 verdict — surface it as a metric
+        // + warn so a provider outage is alertable, not just buried in the
+        // persisted description.
+        deps.metrics?.vlmFailures
+          .labels({ reason: vlmResult.vlmError.reason })
+          .inc();
+        logger.warn(
+          {
+            runId: data.runId,
+            projectId: data.projectId,
+            reason: vlmResult.vlmError.reason,
+            detail: vlmResult.vlmError.message,
+          },
+          "vlm_fallback_to_l1",
+        );
+      }
     } else {
       result = await runDiff({
         baseline: {

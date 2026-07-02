@@ -306,7 +306,7 @@ d("builds REST — find-or-create + properties", () => {
       payload: { ciBuildId: "leak-probe" },
     });
     expect(res.statusCode).toBe(404);
-    expect(res.json()).toEqual({ error: "project_not_found" });
+    expect(res.json()).toMatchObject({ code: "project_not_found" });
     // Critical: the body must NOT contain any DB-internal info.
     const bodyText = res.body;
     expect(bodyText).not.toContain("insert into");

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import type {
   AnthropicVlmConfig,
+  VlmGenerateOptions,
   VlmProvider,
   VlmProviderConfig,
   VlmProviderResponse,
@@ -11,6 +12,7 @@ export const anthropicProvider: VlmProvider = {
   async generate(
     config: VlmProviderConfig,
     images: Uint8Array[],
+    opts?: VlmGenerateOptions,
   ): Promise<VlmProviderResponse> {
     const cfg = config as AnthropicVlmConfig;
     if (!cfg.apiKey) throw new Error("Anthropic API key is required");
@@ -26,20 +28,23 @@ export const anthropicProvider: VlmProvider = {
       },
     }));
 
-    const response = await client.messages.create({
-      model: cfg.model,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: [
-            ...imageContent,
-            { type: "text" as const, text: cfg.prompt },
-          ],
-        },
-      ],
-      temperature: cfg.temperature,
-    });
+    const response = await client.messages.create(
+      {
+        model: cfg.model,
+        max_tokens: 1024,
+        messages: [
+          {
+            role: "user",
+            content: [
+              ...imageContent,
+              { type: "text" as const, text: cfg.prompt },
+            ],
+          },
+        ],
+        temperature: cfg.temperature,
+      },
+      opts?.signal ? { signal: opts.signal } : undefined,
+    );
 
     const textBlock = response.content.find((b) => b.type === "text");
     const thinkingBlock = response.content.find((b) => b.type === "thinking");

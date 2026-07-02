@@ -6,6 +6,16 @@ on:
     branches: [main]
 
 jobs:
+  # Fast, dependency-free guard: the five furan service images in
+  # infra/docker/compose.yml must all pin the SAME tag, so a chore(compose)
+  # release PR can't ship a partially-bumped (drifted) stack. Runs in parallel
+  # with the heavy job below.
+  compose-image-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-compose-image-tags.mjs
+
   lint-typecheck-test:
     runs-on: ubuntu-latest
     services:

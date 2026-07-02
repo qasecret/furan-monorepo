@@ -2902,18 +2902,19 @@ d("tRPC runs router", () => {
           .where(eq(testRuns.id, runId));
         expect(r.status).toBe("unresolved");
       }
+      // seedCheckpoint also seeds a system baseline (userId NULL) per run, so a
+      // run has >1 baseline row after approval — assert a member-authored one
+      // exists rather than depending on (unordered) row position.
       const bl = await h.db
         .select()
         .from(baselines)
         .where(eq(baselines.testRunId, m1.run.id));
-      expect(bl.length).toBeGreaterThan(0);
-      expect(bl[0].userId).toBe(s.memberId);
+      expect(bl.some((b) => b.userId === s.memberId)).toBe(true);
       const seedBl = await h.db
         .select()
         .from(baselines)
         .where(eq(baselines.testRunId, seedCp.run.id));
-      expect(seedBl.length).toBeGreaterThan(0);
-      expect(seedBl[0].userId).toBe(s.memberId);
+      expect(seedBl.some((b) => b.userId === s.memberId)).toBe(true);
     });
 
     test("returns approved:0 for a NULL-signature seed (no group)", async () => {
@@ -3005,11 +3006,15 @@ d("tRPC runs router", () => {
         .from(testRuns)
         .where(eq(testRuns.id, a.run.id));
       expect(r.status).toBe("unresolved");
+      // The approve's baseline insert must have rolled back. The system
+      // baseline seedCheckpoint wrote (userId NULL, outside the tx) legitimately
+      // remains — so assert no MEMBER-authored baseline was persisted rather
+      // than a bare count of zero.
       const blRows = await h.db
         .select()
         .from(baselines)
         .where(eq(baselines.testRunId, a.run.id));
-      expect(blRows.length).toBe(0);
+      expect(blRows.filter((b) => b.userId === s.memberId).length).toBe(0);
     });
 
     test("rejects a non-member with FORBIDDEN", async () => {

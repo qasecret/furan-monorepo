@@ -74,8 +74,8 @@ export function CreateUserDialog({ onCreated }: CreateUserDialogProps) {
       return;
     }
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      toast.error(body?.error ?? "Failed to create user");
+      const body = (await res.json().catch(() => ({}))) as { code?: string };
+      toast.error(body?.code ?? "Failed to create user");
       return;
     }
     toast.success("User created");

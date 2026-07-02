@@ -8,6 +8,7 @@ import {
   mergeBranchBaselinesImpl,
   SameBranchError,
 } from "../lib/branch-merge.js";
+import { sendError } from "../lib/errors.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
 
 export const mergeBody = z.object({
@@ -45,7 +46,7 @@ export async function registerProjectsRoutes(
 ): Promise<void> {
   app.get("/projects", { preHandler: app.authenticate }, async (req, reply) => {
     if (!req.auth) {
-      return reply.code(401).send({ error: "unauthenticated" });
+      return sendError(reply, 401, "unauthenticated");
     }
     if (req.auth.role === "guest") return [];
     if (isAtLeastAdmin(req.auth.role)) {
@@ -75,7 +76,7 @@ export async function registerProjectsRoutes(
     async (req, reply) => {
       const parsed = createBody.safeParse(req.body);
       if (!parsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const creatorId = req.auth!.id;
       try {
@@ -112,7 +113,7 @@ export async function registerProjectsRoutes(
         const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
         if (outerCode === "23505" || causeCode === "23505") {
           req.log.warn({ err }, "project_create_conflict");
-          return reply.code(409).send({ error: "project_name_taken" });
+          return sendError(reply, 409, "project_name_taken");
         }
         req.log.error({ err }, "project_create_failed");
         throw err;
@@ -131,7 +132,7 @@ export async function registerProjectsRoutes(
     async (req, reply) => {
       const parsed = paramsId.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const rows = await app.db
         .select()
@@ -139,7 +140,7 @@ export async function registerProjectsRoutes(
         .where(eq(projects.id, parsed.data.id))
         .limit(1);
       if (!rows[0]) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       return rows[0];
     },
@@ -170,11 +171,11 @@ export async function registerProjectsRoutes(
     async (req, reply) => {
       const params = paramsId.safeParse(req.params);
       if (!params.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const body = mergeBody.safeParse(req.body);
       if (!body.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       try {
         const result = await mergeBranchBaselinesImpl(
@@ -195,7 +196,7 @@ export async function registerProjectsRoutes(
         return reply.code(200).send(result);
       } catch (err) {
         if (err instanceof SameBranchError) {
-          return reply.code(400).send({ error: "same_branch" });
+          return sendError(reply, 400, "same_branch");
         }
         throw err;
       }

@@ -1,5 +1,7 @@
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import { type DB } from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
 import {
@@ -16,6 +18,7 @@ import Fastify, {
 
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
+import { sendError } from "./lib/errors.js";
 import { loadActiveUserByPat } from "./lib/load-active-user.js";
 import { resolveAuthUser } from "./lib/resolve-auth-user.js";
 import { isPatFormat } from "./lib/token.js";
@@ -75,6 +78,11 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
     bodyLimit: 50 * 1024 * 1024,
+    // Bound the time allowed to *receive* a full request (headers + body) so a
+    // slow-loris client can't hold a connection open forever. This governs
+    // request receipt, NOT handler/response duration, so the long-lived SSE
+    // endpoints (/api/v1/**/events) keep streaming unaffected.
+    requestTimeout: 120_000,
     // tRPC's httpBatchLink encodes the batched procedure list into the URL
     // PATH (e.g. /trpc/a.b,c.d,e.f). Fastify caps a single route param at
     // `maxParamLength` (default 100) and 404s "Route ... not found" past it —
@@ -106,16 +114,44 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
           ? err.statusCode
           : 500;
       req.log.error({ err, reqId: req.id, url: req.url }, "request_error");
+      // Emit the canonical ApiErrorEnvelope. 5xx is scrubbed to a generic
+      // code/message (never leak SQL / stack frames); 4xx keeps the thrown
+      // error's code + message so validation detail still reaches the client.
       if (status >= 500) {
-        return reply.code(status).send({ error: "internal_error" });
+        return sendError(reply, status, "internal_error", "Internal error");
       }
-      return reply.code(status).send({
-        statusCode: status,
-        error: err.name || "Error",
-        message: err.message,
-      });
+      return sendError(
+        reply,
+        status,
+        err.code || err.name || "error",
+        err.message,
+      );
     },
   );
+
+  // Baseline security headers (nosniff, frameguard, referrer-policy, HSTS,
+  // etc.). CSP is disabled: this service is a JSON API, and the one HTML
+  // surface — the Scalar API-reference docs page — loads assets a strict
+  // default CSP would block. The high-value headers above still apply.
+  await app.register(helmet, { contentSecurityPolicy: false });
+
+  // Rate limiting in opt-in mode (`global: false`): SDK uploads and tRPC
+  // batches are intentionally NOT throttled here — only routes that set
+  // `config.rateLimit` are (currently /auth/login, as a brute-force /
+  // credential-stuffing brake). The default store is in-memory (per instance);
+  // a multi-instance deployment should pass a Redis store + enable trustProxy
+  // so the client IP is the real caller, not the reverse proxy.
+  await app.register(rateLimit, {
+    global: false,
+    // Keep the 429 body in the canonical ApiErrorEnvelope shape.
+    errorResponseBuilder: (_req, context) => ({
+      code: "rate_limited",
+      message: `Rate limit exceeded, retry after ${Math.ceil(
+        context.ttl / 1000,
+      )}s`,
+      statusCode: 429,
+    }),
+  });
 
   // CORS must be registered before routes so the preflight handler is wired
   // for every path (the dashboard is a different origin from the api in the
