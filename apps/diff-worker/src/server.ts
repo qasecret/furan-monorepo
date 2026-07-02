@@ -4,10 +4,12 @@ import {
   createRedisConnection,
   createRetentionQueue,
   createWorker,
+  isTerminalFailure,
 } from "@furan/queue";
 import { createStorage } from "@furan/storage";
 import {
   bootstrapTelemetry,
+  Counter,
   installProcessErrorHandlers,
   logStartupFatal,
 } from "@furan/telemetry";
@@ -55,6 +57,34 @@ async function main(): Promise<void> {
       redis,
       metrics: diffMetrics,
     });
+  });
+
+  // Dead-letter signal: a diff that exhausts its retries leaves a run stuck
+  // without a verdict. Surface terminal failures as a metric + error log for
+  // alerting; transient (will-retry) failures stay at warn.
+  const deadLettered = new Counter({
+    name: "furan_diff_jobs_dead_lettered_total",
+    help: "Diff jobs that exhausted all retries (permanently failed)",
+    registers: [telemetry.metrics],
+  });
+  worker.on("failed", (job, err) => {
+    if (isTerminalFailure(job)) {
+      deadLettered.inc();
+      telemetry.logger.error(
+        {
+          err,
+          jobId: job?.id,
+          projectId: job?.data?.projectId,
+          attemptsMade: job?.attemptsMade,
+        },
+        "diff_job_dead_lettered",
+      );
+    } else {
+      telemetry.logger.warn(
+        { err, jobId: job?.id, attemptsMade: job?.attemptsMade },
+        "diff_job_failed_will_retry",
+      );
+    }
   });
 
   const retentionWorker = createWorker(

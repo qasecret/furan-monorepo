@@ -1,6 +1,7 @@
 import {
   Queue,
   Worker,
+  type Job,
   type JobsOptions,
   type Processor,
   type WorkerOptions,
@@ -56,4 +57,22 @@ export function createRetentionQueue(): Queue<JobMap["retention"]> {
   return createQueue("retention");
 }
 
+/**
+ * True when a `failed` event is the job's LAST attempt — i.e. it has now
+ * exhausted its retry budget and BullMQ will not re-run it (a "dead letter").
+ * The `failed` event fires on every attempt; workers use this to distinguish a
+ * transient failure that will retry from a terminal one worth alerting on.
+ *
+ * `attemptsMade` is the count INCLUDING the attempt that just failed, so the
+ * job is terminal once it reaches the configured `attempts` (falling back to
+ * the queue default, then 1 if a job somehow carries no options).
+ */
+export function isTerminalFailure(job: Job | undefined): boolean {
+  if (!job) return true; // no job handle → can't retry → treat as terminal
+  const attempts =
+    job.opts?.attempts ?? (DEFAULT_JOB_OPTIONS.attempts as number) ?? 1;
+  return (job.attemptsMade ?? 0) >= attempts;
+}
+
 export { Queue, Worker } from "bullmq";
+export type { Job } from "bullmq";
