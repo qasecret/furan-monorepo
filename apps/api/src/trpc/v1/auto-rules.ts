@@ -13,6 +13,7 @@ import { createAutoRuleInput, updateAutoRuleInput } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { emitAudit } from "../../lib/emit-audit.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -107,6 +108,17 @@ export const autoRulesRouter = t.router({
           updatedBy: ctx.user!.id,
         })
         .returning();
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user!.id,
+          action: "auto_rule.create",
+          targetType: "auto_rule",
+          targetId: rows[0]?.id ?? null,
+          metadata: { projectId: input.projectId, label: input.label },
+        },
+        ctx.req.log,
+      );
       return rows[0];
     }),
 
@@ -153,6 +165,17 @@ export const autoRulesRouter = t.router({
           message: "RULE_VERSION_MISMATCH",
         });
       }
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user!.id,
+          action: "auto_rule.update",
+          targetType: "auto_rule",
+          targetId: id,
+          metadata: { projectId: rows[0]?.projectId },
+        },
+        ctx.req.log,
+      );
       return rows[0];
     }),
 
@@ -169,6 +192,16 @@ export const autoRulesRouter = t.router({
       if (rows.length === 0) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user!.id,
+          action: "auto_rule.delete",
+          targetType: "auto_rule",
+          targetId: input.id,
+        },
+        ctx.req.log,
+      );
       return { deleted: true };
     }),
 
@@ -190,6 +223,17 @@ export const autoRulesRouter = t.router({
       if (rows.length === 0) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user!.id,
+          action: "auto_rule.toggle",
+          targetType: "auto_rule",
+          targetId: input.id,
+          metadata: { enabled: input.enabled, projectId: rows[0]?.projectId },
+        },
+        ctx.req.log,
+      );
       return rows[0];
     }),
 

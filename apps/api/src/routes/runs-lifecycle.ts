@@ -221,6 +221,7 @@ export async function registerRunLifecycleRoutes(
               broadcaster: app.broadcaster,
               user: { id: authUserId },
               onCommit,
+              log: req.log,
             },
             params.data.id,
           ),

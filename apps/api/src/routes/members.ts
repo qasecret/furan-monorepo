@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
+import { emitAudit } from "../lib/emit-audit.js";
 import { sendError } from "../lib/errors.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
@@ -67,6 +68,17 @@ export async function registerMembersRoutes(
           }
           // Invalidate the added user's cached member-project set (ADR-058).
           await app.memberProjectsCache?.del(bodyParsed.data.userId);
+          await emitAudit(
+            db,
+            {
+              actorId: req.auth?.id ?? null,
+              action: "member.add",
+              targetType: "project",
+              targetId: paramsParsed.data.id,
+              metadata: { userId: bodyParsed.data.userId },
+            },
+            req.log,
+          );
           // Set status + RETURN the row so Fastify sends it AFTER the scope
           // commits (a client that lists members right after must see it).
           reply.code(201);
@@ -108,6 +120,17 @@ export async function registerMembersRoutes(
       }
       // Revoked access → drop the cached set so it takes effect next request.
       await app.memberProjectsCache?.del(parsed.data.userId);
+      await emitAudit(
+        app.db,
+        {
+          actorId: req.auth?.id ?? null,
+          action: "member.remove",
+          targetType: "project",
+          targetId: parsed.data.id,
+          metadata: { userId: parsed.data.userId },
+        },
+        req.log,
+      );
       return reply.code(204).send();
     },
   );

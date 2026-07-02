@@ -26,6 +26,7 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { emitAudit } from "../../lib/emit-audit.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -223,6 +224,8 @@ export async function approveRun(
      * (a non-scoped caller), they run inline post-(inner-)commit as before.
      */
     onCommit?: (effect: () => unknown) => void;
+    /** Best-effort audit sink; omit to skip the audit write (e.g. tests). */
+    log?: { error: (obj: object, msg: string) => void };
   },
   runId: string,
   /**
@@ -324,6 +327,23 @@ export async function approveRun(
   };
   if (ctx.onCommit) ctx.onCommit(broadcast);
   else await broadcast();
+
+  // Audit the baseline-affecting approval (best-effort; ADR-058: on the
+  // request-scoped db so it commits with the outer tx). Skipped when no log
+  // sink is threaded through (unit callers that don't exercise audit).
+  if (ctx.log) {
+    await emitAudit(
+      ctx.db,
+      {
+        actorId: ctx.user.id,
+        action: "run.approve",
+        targetType: "run",
+        targetId: run.id,
+        metadata: { projectId: run.projectId, buildId: run.buildId },
+      },
+      ctx.log,
+    );
+  }
 
   return { runId: run.id, approved: true };
 }
@@ -988,7 +1008,11 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return approveRun(ctx, input.runId, input.ignoreAreas);
+      return approveRun(
+        { ...ctx, log: ctx.req.log },
+        input.runId,
+        input.ignoreAreas,
+      );
     }),
 
   /**
@@ -1261,6 +1285,18 @@ export const runsRouter = t.router({
           data: { id: run.buildId },
         });
       }
+
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.reject",
+          targetType: "run",
+          targetId: run.id,
+          metadata: { projectId: run.projectId, buildId: run.buildId },
+        },
+        ctx.req.log,
+      );
 
       return { runId: run.id, approved: false };
     }),
