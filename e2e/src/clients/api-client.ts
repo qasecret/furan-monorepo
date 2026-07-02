@@ -172,6 +172,86 @@ export class ApiClient {
     });
     return body;
   }
+
+  // ---- SDK flow (build → run → screenshot → complete → poll) --------------
+
+  async createBuild(
+    auth: string,
+    projectId: string,
+    input: { branchName?: string; name?: string } = {},
+  ): Promise<{ id: string }> {
+    const { body } = await this.request<{ id: string }>(
+      "POST",
+      `/projects/${projectId}/builds`,
+      { auth, body: input },
+    );
+    return body;
+  }
+
+  async createRun(
+    auth: string,
+    input: {
+      projectId: string;
+      buildId: string;
+      name: string;
+      branchName: string;
+      parentBranchName?: string;
+    },
+  ): Promise<{ runId: string; status: string; name: string }> {
+    const { body } = await this.request<{
+      runId: string;
+      status: string;
+      name: string;
+    }>("POST", "/runs", { auth, body: input });
+    return body;
+  }
+
+  /** Upload one checkpoint screenshot via the base64 JSON variant (no multipart). */
+  async uploadScreenshotBase64(
+    auth: string,
+    runId: string,
+    input: {
+      pngBase64: string;
+      name: string;
+      viewport: string;
+      browser: string;
+      domHtml?: string;
+      elementMapJson?: string;
+      ignoreDisplacements?: boolean;
+    },
+  ): Promise<{
+    screenshotId: string;
+    checkpointId: string;
+    testVariationId: string;
+  }> {
+    const { body } = await this.request<{
+      screenshotId: string;
+      checkpointId: string;
+      testVariationId: string;
+    }>("POST", `/runs/${runId}/screenshots/base64`, { auth, body: input });
+    return body;
+  }
+
+  async completeRun(auth: string, runId: string): Promise<void> {
+    await this.request("POST", `/runs/${runId}/complete`, { auth });
+  }
+
+  /** Approve a run → promotes its screenshot to the variation's baseline. */
+  async approveRun(auth: string, runId: string): Promise<void> {
+    await this.request("POST", `/runs/${runId}/approve`, { auth });
+  }
+
+  async getRun(
+    auth: string,
+    runId: string,
+  ): Promise<{ id: string; status: string; autoApproved?: boolean }> {
+    const { body } = await this.request<{
+      id: string;
+      status: string;
+      autoApproved?: boolean;
+    }>("GET", `/runs/${runId}`, { auth });
+    return body;
+  }
 }
 
 function safeJson(text: string): unknown {
