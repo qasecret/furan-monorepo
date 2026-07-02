@@ -65,6 +65,8 @@ export async function registerMembersRoutes(
           if (!row) {
             return sendError(reply, 409, "already_member");
           }
+          // Invalidate the added user's cached member-project set (ADR-058).
+          await app.memberProjectsCache?.del(bodyParsed.data.userId);
           // Set status + RETURN the row so Fastify sends it AFTER the scope
           // commits (a client that lists members right after must see it).
           reply.code(201);
@@ -104,6 +106,8 @@ export async function registerMembersRoutes(
       if (!removed) {
         return sendError(reply, 404, "not_found");
       }
+      // Revoked access → drop the cached set so it takes effect next request.
+      await app.memberProjectsCache?.del(parsed.data.userId);
       return reply.code(204).send();
     },
   );
