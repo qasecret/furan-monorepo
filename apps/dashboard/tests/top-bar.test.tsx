@@ -28,26 +28,29 @@ vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
 }));
 
 import { TopBar } from "@/app/(protected)/_components/top-bar";
-import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { useSidebarStore } from "@/app/(protected)/_components/use-sidebar-store";
 
 const props = { email: "me@x.io", initial: "M", role: "admin" } as const;
 
 beforeEach(() => {
-  usePaletteStore.setState({ open: false });
+  useSidebarStore.setState({ collapsed: false, open: false });
 });
 
 afterEach(() => {
   cleanup();
-  usePaletteStore.setState({ open: false });
+  useSidebarStore.setState({ collapsed: false, open: false });
 });
 
 describe("TopBar", () => {
-  test("clicking the search button opens the cmdk palette", () => {
+  // #308 replaced the top-bar palette-search button with the desktop
+  // collapse/expand toggle (the palette is now reachable only via the global
+  // Cmd/Ctrl+K handler). This asserts the toggle is wired to the sidebar store.
+  test("clicking the collapse toggle flips the sidebar collapsed state", () => {
     render(<TopBar {...props} />);
-    expect(usePaletteStore.getState().open).toBe(false);
+    expect(useSidebarStore.getState().collapsed).toBe(false);
 
-    fireEvent.click(screen.getByTestId("top-bar-search"));
-    expect(usePaletteStore.getState().open).toBe(true);
+    fireEvent.click(screen.getByTestId("sidebar-collapse-toggle"));
+    expect(useSidebarStore.getState().collapsed).toBe(true);
   });
 
   test("notification bell is disabled stub", () => {

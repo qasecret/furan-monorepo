@@ -9,11 +9,14 @@ import { useSidebarStore } from "./use-sidebar-store";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
- * App-shell top bar, beside the navigation Sidebar. The "search input" is a
- * button that opens the cmdk palette — the palette is the search.
+ * App-shell top bar, beside the navigation Sidebar.
  *
- * The left cluster contains: mobile sidebar toggle → ProjectSelector → palette
- * search. The right cluster: HelpButton → ThemeToggle → bell → AccountMenu.
+ * Left cluster: mobile drawer toggle → desktop sidebar collapse/expand toggle
+ * → ProjectSelector. Right cluster: ThemeToggle → bell → AccountMenu.
+ *
+ * The command-palette search button + tour HelpButton were removed in #308
+ * when the collapse toggle took their slot; the palette is now reached via the
+ * global Cmd/Ctrl+K handler.
  *
  * The bell renders disabled for v1.0; a real notification feed lands in
  * a later phase (see plan-roadmap §7.1).

@@ -5,6 +5,19 @@
  * that jsdom does not implement. Stubbing them at module-init is cheaper
  * than mocking the slider primitive itself.
  */
+import { afterEach } from "vitest";
+
+// Radix overlays (Dialog / DropdownMenu / Popover / Select) lock the page by
+// setting `pointer-events: none` on <body> while open, restoring it on close
+// via a React effect cleanup. When a test unmounts an *open* overlay that
+// restore can be skipped, leaving <body> inert. Because the suite runs in a
+// single fork (see vitest.config), the leaked style then makes
+// @testing-library/user-event refuse the NEXT test's clicks with "element has
+// pointer-events: none" (the check walks up to <body>). Reset it after every
+// test so an overlay test can't poison unrelated ones.
+afterEach(() => {
+  document.body.style.pointerEvents = "";
+});
 
 class ResizeObserverStub implements ResizeObserver {
   observe(): void {
