@@ -213,6 +213,21 @@ export class ApiClient {
     });
   }
 
+  /** Cross-branch baseline merge → synthetic build + fan-out of runs on toBranch. */
+  async mergeBranches(
+    auth: string,
+    projectId: string,
+    fromBranch: string,
+    toBranch: string,
+  ): Promise<{ buildId: string; runCount: number }> {
+    const { body } = await this.request<{ buildId: string; runCount: number }>(
+      "POST",
+      `/projects/${projectId}/merge`,
+      { auth, body: { fromBranch, toBranch } },
+    );
+    return body;
+  }
+
   async listProjects(admin: string): Promise<Project[]> {
     const { body } = await this.request<Project[]>("GET", "/projects", {
       auth: admin,
