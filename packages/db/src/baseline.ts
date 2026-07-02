@@ -91,13 +91,29 @@ export async function recordBaseline(
     userId?: string | null;
   },
 ): Promise<void> {
-  await writer.insert(baselines).values({
-    baselineName: params.imageKey ?? params.runName ?? "auto",
-    testVariationId: params.testVariationId,
-    testRunId: params.testRunId,
-    ...(params.userId ? { userId: params.userId } : {}),
-    ...(params.branchName ? { branchName: params.branchName } : {}),
-  });
+  // Upsert on (test_variation_id, test_run_id): recording a baseline for the
+  // same run twice — a diff-worker retry, or an approve after an auto-seed —
+  // updates that one row instead of appending a duplicate. The key is the RUN
+  // (not the variation), so distinct runs keep distinct baseline rows, which
+  // the `autoApproved`-per-run check and the latest-wins resolver both rely on.
+  await writer
+    .insert(baselines)
+    .values({
+      baselineName: params.imageKey ?? params.runName ?? "auto",
+      testVariationId: params.testVariationId,
+      testRunId: params.testRunId,
+      ...(params.userId ? { userId: params.userId } : {}),
+      ...(params.branchName ? { branchName: params.branchName } : {}),
+    })
+    .onConflictDoUpdate({
+      target: [baselines.testVariationId, baselines.testRunId],
+      set: {
+        baselineName: params.imageKey ?? params.runName ?? "auto",
+        userId: params.userId ?? null,
+        ...(params.branchName ? { branchName: params.branchName } : {}),
+        updatedAt: new Date(),
+      },
+    });
   await writer
     .update(testVariations)
     .set({ baselineName: params.imageKey, updatedAt: new Date() })

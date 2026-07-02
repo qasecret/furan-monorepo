@@ -1464,6 +1464,17 @@ async function handleDiffJobInner(
   let insertedRegionIds: string[] = [];
 
   await withProjectScope(deps.db, data.projectId, async (tx) => {
+    // Idempotency: clear this run's prior diff artifacts before re-deriving
+    // them, so a BullMQ retry (attempts:3) OR a re-enqueued diff (e.g. after
+    // setIgnoreAreas / addIgnoreAreas / setDiffThresholdOverride) REPLACES the
+    // regions instead of appending — otherwise the diff viewer overlays each
+    // region twice and inbox grouping skews. auto_rule_applications reference
+    // these regions, so delete them first (by run) to avoid a dangling FK.
+    await tx
+      .delete(autoRuleApplications)
+      .where(eq(autoRuleApplications.testRunId, data.runId));
+    await tx.delete(diffRegions).where(eq(diffRegions.runId, data.runId));
+
     await tx
       .update(testRuns)
       .set({
