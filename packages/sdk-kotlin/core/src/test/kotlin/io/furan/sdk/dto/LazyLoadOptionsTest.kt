@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 class LazyLoadOptionsTest {
 
     @Test
-    fun `defaults match Applitools published values`() {
+    fun `has sensible defaults`() {
         val o = LazyLoadOptions()
         assertEquals(300, o.scrollLength)
         assertEquals(200L, o.waitingTimeMs)

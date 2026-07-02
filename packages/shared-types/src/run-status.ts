@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Run lifecycle statuses — the seven Applitools-aligned values that
+ * Run lifecycle statuses — the seven standard values that
  * `test_runs.status` accepts post-migration `0008_run_status_enum`.
  *
  * Source of truth on the DB side is `packages/db/src/schema/enums.ts`

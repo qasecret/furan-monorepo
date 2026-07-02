@@ -40,7 +40,7 @@ abstract class FuranException(message: String, cause: Throwable? = null) :
  * status ([io.furan.sdk.dto.RunStatus.UNRESOLVED] /
  * [io.furan.sdk.dto.RunStatus.FAILED] /
  * [io.furan.sdk.dto.RunStatus.ABORTED]) AND
- * [FuranConfig.softAssert] is false (the default — matches the Java SDK).
+ * [FuranConfig.softAssert] is false (the default).
  *
  * The caller can still inspect the underlying [result] via the field —
  * useful when the test author wants to log the diff URL even after a
@@ -67,8 +67,8 @@ class FuranAssertionException(val result: SnapshotResult) :
  * against yet. The first run of each test must become the baseline
  * before later runs can diff against it. Resolve it one of three ways:
  *  - Approve the run in the dashboard ("Save as baseline").
- *  - Set the project's `autoApproveFeature=true` for Applitools-style
- *    auto-seed (the first run silently becomes the baseline).
+ *  - Set the project's `autoApproveFeature=true` for automatic
+ *    first-run baseline seeding (the first run silently becomes the baseline).
  *  - Set `FURAN_SOFT_ASSERT=true` ([FuranConfig.softAssert]) to receive
  *    the `NEW` result instead of throwing, and handle it in test code.
  *

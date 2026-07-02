@@ -42,7 +42,7 @@ function colorFor(sev: string): number {
  *      0.2 fill, 2px stroke alpha 0.9).
  *   2. Selection active, this region IS selected → emphasize with brighter
  *      fill (0.45) + thicker stroke (4px) + a faint outer halo border for
- *      VRT-style pop.
+ *      UI testing-style pop.
  *   3. Selection active, this region is NOT selected → dimmed (0.05 fill,
  *      1px stroke alpha 0.4) so the eye lands on the selected one.
  */

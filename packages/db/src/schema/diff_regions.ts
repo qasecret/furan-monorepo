@@ -30,7 +30,7 @@ export const diffRegions = pgTable(
     // see each other's diff regions because the previous unique key
     // was just (run_id, viewport). Nullable so legacy rows from pre-
     // v1.1.20 runs survive; the diff viewer treats null as "show on
-    // every checkpoint" (Applitools-style fallback).
+    // every checkpoint" (fallback).
     screenshotId: uuid("screenshot_id").references(() => screenshots.id, {
       onDelete: "cascade",
     }),

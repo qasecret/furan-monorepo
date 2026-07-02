@@ -138,7 +138,7 @@ Branch-protection rules can require `furan/baselines` to pass before merge.
 > the SDK throws `FuranNoBaselineException` and the job fails until you approve
 > that run in the dashboard ("Save as baseline"). To make first runs green in CI
 > without manual approval, either flip the project's `autoApproveFeature=true`
-> (Applitools-style auto-seed) or set `FURAN_SOFT_ASSERT=true` and assert in test
+> (auto-seed) or set `FURAN_SOFT_ASSERT=true` and assert in test
 > code.
 
 ## 6. Troubleshooting

@@ -1,6 +1,6 @@
 # Furan
 
-**Self-hostable visual regression testing for small teams.** Capture screenshots from your CI, compare them against an approved baseline, and review the diff in a polished dashboard — all on infrastructure you control. No SaaS account, no per-screenshot pricing, no telemetry phone-home.
+**Self-hostable UI testing for small teams.** Capture screenshots from your CI, compare them against an approved baseline, and review the diff in a polished dashboard — all on infrastructure you control. No SaaS account, no per-screenshot pricing, no telemetry phone-home.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/qasecret/furan-monorepo?label=release)](https://github.com/qasecret/furan-monorepo/releases/latest)

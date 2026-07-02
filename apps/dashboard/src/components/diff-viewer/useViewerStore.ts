@@ -6,7 +6,7 @@ import type { ElementBbox } from "./useElementMap";
 export type ViewerMode = "side-by-side" | "overlay" | "difference";
 
 /**
- * Region match modes, Applitools-aligned. See
+ * Region match modes. See
  * `furan-design/specs/2026-05-23-region-modes-design.md` for the engine
  * routing per mode + the v1-vs-deferred breakdown.
  */
@@ -320,7 +320,7 @@ export const useViewerStore = create<State>((set) => ({
   panY: 0,
   focusBbox: null,
   hideDisplacement: false,
-  // On by default so the Applitools-style pink diff shading is prominent the
+  // On by default so the pink diff shading is prominent the
   // moment a diff opens (matches the reference's active "Highlight diffs").
   highlightActive: true,
 

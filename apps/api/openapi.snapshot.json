@@ -444,6 +444,7 @@
                         },
                         "role": {
                           "enum": [
+                            "owner",
                             "admin",
                             "editor",
                             "guest"
@@ -2068,6 +2069,7 @@
                       },
                       "role": {
                         "enum": [
+                          "owner",
                           "admin",
                           "editor",
                           "guest"
@@ -2166,6 +2168,7 @@
                   "role": {
                     "default": "editor",
                     "enum": [
+                      "owner",
                       "admin",
                       "editor",
                       "guest"
@@ -2219,6 +2222,7 @@
                     },
                     "role": {
                       "enum": [
+                        "owner",
                         "admin",
                         "editor",
                         "guest"
@@ -2336,6 +2340,7 @@
                     },
                     "role": {
                       "enum": [
+                        "owner",
                         "admin",
                         "editor",
                         "guest"
@@ -2425,6 +2430,7 @@
                   },
                   "role": {
                     "enum": [
+                      "owner",
                       "admin",
                       "editor",
                       "guest"
@@ -2472,6 +2478,7 @@
                     },
                     "role": {
                       "enum": [
+                        "owner",
                         "admin",
                         "editor",
                         "guest"

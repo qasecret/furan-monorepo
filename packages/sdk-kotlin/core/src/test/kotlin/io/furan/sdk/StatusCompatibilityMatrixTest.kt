@@ -9,12 +9,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Compatibility contract: Eyes Compatibility Level v1 (Applitools Eyes SDK 5.x).
- * Maps each Furan run_status to its Applitools meaning + passing verdict.
+ * Run-status compatibility contract.
+ * Maps each Furan run_status to its passing verdict.
  *
  * Note: the close()-level verdicts — empty=pass+warn, new=manual-fail-unless-saveNewTests,
  * unresolved/failed/aborted=fail — are covered behaviourally in FuranCaptureCloseTest +
- * SaveNewTestsTest; this file pins the status→Eyes-accessor mapping.
+ * SaveNewTestsTest; this file pins the status→accessor mapping.
  */
 class StatusCompatibilityMatrixTest {
     private fun view(s: RunStatus) = LoupeTestResults(RunResult("r", s, 1))

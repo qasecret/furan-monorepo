@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Unit tests for the [Loupe] Applitools-compat facade.
+ * Unit tests for the [Loupe] compat facade.
  *
  * All assertions are pure (no network / browser calls):
- *   - `saveNewTests` default is true (Eyes-parity)
+ *   - `saveNewTests` default is true
  *   - The facade exposes the expected lifecycle methods
  *   - snapshot-before-open propagates the engine's guard (delegation confirmed)
  */

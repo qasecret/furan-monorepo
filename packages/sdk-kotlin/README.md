@@ -236,7 +236,7 @@ Three ways to handle it:
 - **Approve in the dashboard** ("Save as baseline") — review the capture, then
   subsequent runs diff against it. The normal flow.
 - **`autoApproveFeature=true`** (per-project, in project settings) — the first
-  run auto-becomes the baseline with no manual step (Applitools-style).
+  run auto-becomes the baseline with no manual step.
 - **`FURAN_SOFT_ASSERT=true`** — `snapshotAndAwait` returns the `new` result
   instead of throwing, so you can tolerate first runs in CI and assert yourself.
 
@@ -404,12 +404,12 @@ The extension caches one `FuranConfig` per test class and shares it across `@Tes
 
 ## Examples
 
-| Example                                                                            | Description                                                                           |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [`examples/sdk-selenium-junit5`](examples/sdk-selenium-junit5/)                    | Standalone Gradle project — copy-paste-runnable JUnit 5 + Selenium + ChromeDriver.   |
-| [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/)                | Standalone Gradle project — copy-paste-runnable JUnit 5 + Playwright-Java. Gated by `FURAN_API_URL`. |
+| Example                                                                            | Description                                                                                                              |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [`examples/sdk-selenium-junit5`](examples/sdk-selenium-junit5/)                    | Standalone Gradle project — copy-paste-runnable JUnit 5 + Selenium + ChromeDriver.                                       |
+| [`examples/sdk-playwright-junit5`](examples/sdk-playwright-junit5/)                | Standalone Gradle project — copy-paste-runnable JUnit 5 + Playwright-Java. Gated by `FURAN_API_URL`.                     |
 | [`examples/sdk-appium-junit5`](examples/sdk-appium-junit5/)                        | Standalone Gradle project — JUnit 5 + Appium (native mobile). Gated by `FURAN_API_URL`; needs an Appium server + device. |
-| [`docs/integrations/github-actions.md`](../../docs/integrations/github-actions.md) | GitHub Actions workflow with PR comments + branch baselines.                         |
+| [`docs/integrations/github-actions.md`](../../docs/integrations/github-actions.md) | GitHub Actions workflow with PR comments + branch baselines.                                                             |
 
 ## Versioning
 

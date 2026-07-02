@@ -26,8 +26,7 @@ class IgnoreAreaTest {
         val area = IgnoreArea(x = 0, y = 0, width = 10, height = 10)
         val json = Json.encodeToString(IgnoreArea.serializer(), area)
         // null viewport must not appear on the wire — keeps the server
-        // schema's optional field validator happy + matches the
-        // Java SDK's behavior.
+        // schema's optional field validator happy.
         assertEquals(false, json.contains("viewport"))
     }
 

@@ -31,8 +31,8 @@ export const createRunBody = z.object({
   buildId: z.string().uuid(),
   name: z.string().min(1).max(255),
   branchName: z.string().min(1).max(255),
-  // ADR-055: optional parent branch (Applitools `setParentBranchName`
-  // analog). Feeds the `parent_pr` tier of baseline resolution. Omitted
+  // ADR-055: optional parent-branch hint. Feeds the `parent_pr` tier
+  // of baseline resolution. Omitted
   // when the SDK has no parent configured.
   parentBranchName: z.string().min(1).max(255).optional(),
 });
@@ -89,12 +89,12 @@ export const screenshotFields = z.object({
       content: [],
       accessibility: [],
     }),
-  // Tier 1.4 (Eyes parity): when true, the diff engine runs an L1
+  // Tier 1.4: when true, the diff engine runs an L1
   // pre-alignment pass that detects + corrects a global pixel shift
   // before comparing, so a moved-but-unchanged page isn't flagged as a
   // diff. (The former L2 relocateGroup half was removed in ADR-047.)
   ignoreDisplacements: z.boolean().default(false),
-  // Tier 2.5 (Eyes parity): per-checkpoint accessibility settings.
+  // Tier 2.5: per-checkpoint accessibility settings.
   // When set, the diff-worker runs axe-core against the captured
   // DOM and surfaces WCAG violations as diff_regions with
   // source='axe', category='accessibility'.

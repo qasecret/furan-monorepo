@@ -20,7 +20,7 @@ export interface RunDiffInput {
   candidate: { image: Buffer };
   config: ProjectDiffConfig;
   /**
-   * Eyes-parity `ignoreDisplacements`: when true, the L1 pre-alignment
+   * `ignoreDisplacements`: when true, the L1 pre-alignment
    * pass detects + corrects a global pixel shift before running the
    * engine, so a moved-but-unchanged page doesn't light up as a diff.
    * Defaults to false. (The former L2 `relocateGroup` half was removed

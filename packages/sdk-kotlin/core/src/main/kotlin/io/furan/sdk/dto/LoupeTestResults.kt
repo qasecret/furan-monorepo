@@ -1,7 +1,7 @@
 package io.furan.sdk.dto
 
 /**
- * Applitools `TestResults`-shaped read-only VIEW over the canonical
+ * A read-only VIEW over the canonical
  * [RunResult]. No parallel model — accessors derive from the wrapped run.
  *
  * Pass-gate guidance:

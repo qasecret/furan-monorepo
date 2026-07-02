@@ -38,7 +38,7 @@ describe.runIf(RUN_INTEGRATION)("0008_run_status_enum migration", () => {
     await close();
   });
 
-  it("declares the seven Applitools-aligned labels in order", async () => {
+  it("declares the seven standard labels in order", async () => {
     const rows = await db.execute<{ enumlabel: string }>(sql`
         SELECT enumlabel FROM pg_enum
         WHERE enumtypid = 'run_status'::regtype

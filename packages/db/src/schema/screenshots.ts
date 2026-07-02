@@ -40,13 +40,13 @@ export const screenshots = pgTable(
     floatingRegions: jsonb("floating_regions"),
     contentRegions: jsonb("content_regions"),
     accessibilityRegions: jsonb("accessibility_regions"),
-    // Tier 1.4 (Eyes parity): when true, the diff engine drops L2
+    // Tier 1.4: when true, the diff engine drops L2
     // relocateGroup regions for this checkpoint. Pixel-level (L1)
     // displacement detection is a separate engine pass.
     ignoreDisplacements: boolean("ignore_displacements")
       .notNull()
       .default(false),
-    // Tier 2.5 (Eyes parity): when set, the diff-worker runs axe-core
+    // Tier 2.5: when set, the diff-worker runs axe-core
     // against the captured DOM snapshot and surfaces WCAG violations
     // as diff_regions with source='axe', category='accessibility'.
     // NULL = no accessibility check requested.

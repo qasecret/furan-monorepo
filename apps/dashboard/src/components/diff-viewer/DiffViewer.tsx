@@ -702,7 +702,7 @@ export function DiffViewer({
                     candidateDims={candidateDims}
                   />
                 </div>
-                {/* Large side step-arrows (reference Applitools): navigate
+                {/* Large side step-arrows: navigate
                     between checkpoints; disabled at the ends. */}
                 {headerNav && headerNav.total > 1 && (
                   <>

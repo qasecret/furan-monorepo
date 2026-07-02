@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import type { DiffRegion, Severity } from "./types.js";
 
 /**
- * Tier 2.5 (Eyes-parity `accessibilitySettings`): run axe-core against
+ * Tier 2.5 (`accessibilitySettings`): run axe-core against
  * the captured DOM HTML and translate violations into [DiffRegion]
  * rows with `source = 'axe'`, `category = 'accessibility'`.
  *

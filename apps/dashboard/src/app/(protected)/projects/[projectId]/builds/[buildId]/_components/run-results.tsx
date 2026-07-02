@@ -101,7 +101,7 @@ interface EnvGroup {
 
 /**
  * Groups a run's checkpoints by environment (os · browser · viewport). This is
- * the Applitools "one result row per environment" model: a test executed across
+ * a "one result row per environment" model: a test executed across
  * N environments produces N result rows, each carrying the checkpoints (steps)
  * captured in that environment. Furan stores environment per checkpoint
  * (ADR-038), so the grouping happens client-side here. Insertion order is

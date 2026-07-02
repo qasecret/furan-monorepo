@@ -13,7 +13,7 @@ private val log = LoggerFactory.getLogger("io.furan.sdk.capture.PngCrop")
  * Crop a PNG to the given [region]. Coordinates are in image pixels.
  *
  * Clamps an out-of-bounds region to the image dimensions and logs a warning
- * (matches Applitools Eyes' tolerant behavior — a region that slightly
+ * (tolerant behavior — a region that slightly
  * exceeds the viewport on a smaller screen still produces a valid crop).
  *
  * Throws [IllegalArgumentException] if the region is fully outside the

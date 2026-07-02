@@ -10,7 +10,7 @@ import io.furan.sdk.dto.CheckpointSubmission
 import io.furan.sdk.dto.LoupeTestResults
 
 /**
- * Loupe — Furan's Applitools Eyes-compatible facade for the Appium adapter
+ * Loupe — Furan's compat facade for the Appium adapter
  * (compat contract — feature-conservative).
  * THIN wrapper: MUST NOT implement capture/diff/poll/approve/aggregate logic;
  * all behavior delegates to [FuranCapture]. Native innovation lives in [FuranAppium].
@@ -31,7 +31,7 @@ class Loupe(
     /**
      * Opens a test run named by [testName] alone. A test is a single named
      * thing that owns its checkpoints, so the row shows just the test name —
-     * not an "app / test" path. [appName] is accepted for Applitools
+     * not an "app / test" path. [appName] is accepted for
      * source-compatibility; Furan models the application grouping as the
      * project, and the baseline identity is per-checkpoint (independent of the
      * run name), so [appName] is informational and does not change identity.

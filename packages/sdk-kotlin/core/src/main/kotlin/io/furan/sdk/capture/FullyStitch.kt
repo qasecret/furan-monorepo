@@ -19,8 +19,8 @@ internal const val FULLY_WARN_MEGAPIXELS: Long = 50_000_000
 internal const val FULLY_HARD_CAP_MEGAPIXELS: Long = 200_000_000
 
 /**
- * Per-tile settle delay before capture (matches the empirical 50ms wait
- * Eyes uses between scroll and screenshot — gives the browser time to
+ * Per-tile settle delay before capture (an empirical 50ms wait between
+ * scroll and screenshot — gives the browser time to
  * paint after scroll without burning measurable budget).
  */
 internal const val FULLY_TILE_SETTLE_MS: Long = 50

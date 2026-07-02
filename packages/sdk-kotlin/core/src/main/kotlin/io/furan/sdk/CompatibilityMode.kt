@@ -1,7 +1,7 @@
 package io.furan.sdk
 
 /**
- * Applitools compatibility level for the Loupe facade. APPLITOOLS mirrors
- * Eyes SDK 5.x semantics. STRICT is reserved for future divergence gating.
+ * Compatibility level for the Loupe facade. LEGACY mirrors
+ * old behaviors (e.g. implicitly waiting for tests to finish).
  */
-enum class CompatibilityMode { APPLITOOLS, STRICT }
+enum class CompatibilityMode { LEGACY, STRICT }

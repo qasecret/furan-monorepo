@@ -87,23 +87,23 @@ function CodeCard() {
           <span className={c.pl}>{")\n\n"}</span>
           <span className={c.cm}>{"// PricingTest.kt\n"}</span>
           <span className={c.kw}>{"val"}</span>
-          <span className={c.pl}>{" eyes = "}</span>
-          <span className={c.fn}>{"FuranEyes"}</span>
-          <span className={c.pl}>{"()\n"}</span>
-          <span className={c.pl}>{"eyes."}</span>
+          <span className={c.pl}>{" loupe = "}</span>
+          <span className={c.fn}>{"Loupe"}</span>
+          <span className={c.pl}>{"(config, driver)\n"}</span>
+          <span className={c.pl}>{"loupe."}</span>
           <span className={c.fn}>{"open"}</span>
-          <span className={c.pl}>{"(driver, "}</span>
+          <span className={c.pl}>{"("}</span>
           <span className={c.str}>{'"Web"'}</span>
           <span className={c.pl}>{", "}</span>
           <span className={c.str}>{'"Pricing page"'}</span>
           <span className={c.pl}>{")\n"}</span>
-          <span className={c.pl}>{"eyes."}</span>
-          <span className={c.fn}>{"checkWindow"}</span>
+          <span className={c.pl}>{"loupe."}</span>
+          <span className={c.fn}>{"check"}</span>
           <span className={c.pl}>{"("}</span>
           <span className={c.str}>{'"Pricing — full page"'}</span>
           <span className={c.pl}>{")  "}</span>
           <span className={c.cm}>{"// pixel + VLM + a11y\n"}</span>
-          <span className={c.pl}>{"eyes."}</span>
+          <span className={c.pl}>{"loupe."}</span>
           <span className={c.fn}>{"close"}</span>
           <span className={c.pl}>{"()"}</span>
         </code>

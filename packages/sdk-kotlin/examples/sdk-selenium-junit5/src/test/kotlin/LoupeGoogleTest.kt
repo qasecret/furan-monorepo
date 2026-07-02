@@ -6,7 +6,7 @@ import org.openqa.selenium.chrome.ChromeDriver
 import org.openqa.selenium.chrome.ChromeOptions
 
 /**
- * Applitools-shaped test (open → check → close) using the Furan Loupe compat
+ * An open → check → close test using the Furan Loupe compat
  * facade. saveNewTests defaults true for Loupe, so the first run seeds the
  * baseline and passes; later runs diff against it. With FURAN_FAIL_ON_DIFF=AfterEach
  * a diff makes close() throw. Skipped unless FURAN_API_URL is set.

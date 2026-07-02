@@ -194,8 +194,8 @@ export async function registerBuildsRoutes(
         app.db,
         paramsParsed.data.id,
         async (tx) => {
-          // Path A: no ciBuildId → unconditional insert (matches Applitools
-          // "no BATCH_ID → new batch" semantics).
+          // Path A: no ciBuildId → unconditional insert (no build id
+          // supplied always starts a new batch).
           if (!ciBuildId) {
             const [created] = await tx
               .insert(builds)

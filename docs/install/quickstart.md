@@ -10,7 +10,7 @@
 
 ## What is Furan?
 
-Furan is an Apache-2.0, self-hostable visual regression testing platform aimed at
+Furan is an Apache-2.0, self-hostable UI testing platform aimed at
 small teams. Your CI (via the Kotlin SDK or the REST API) captures screenshots
 of your app under test and uploads them to a Furan server, which compares them
 against an approved baseline and surfaces a pixel-accurate diff in the dashboard

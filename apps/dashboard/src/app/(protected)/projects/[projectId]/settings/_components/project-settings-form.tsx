@@ -852,10 +852,10 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                         </Select>
                         <FormDescription>
                           Pixel comparison backend. Odiff is the default;
-                          Pixelmatch matches the jest-image-snapshot / Percy
-                          world; Looks-Same is perceptual and
-                          antialiasing-tolerant; VLM uses an AI vision model for
-                          semantic diff analysis.
+                          Pixelmatch is a widely-used exact-pixel comparator;
+                          Looks-Same is perceptual and antialiasing-tolerant;
+                          VLM uses an AI vision model for semantic diff
+                          analysis.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

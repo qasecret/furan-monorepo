@@ -4,7 +4,7 @@ import io.furan.sdk.dto.LoupeTestResults
 import io.furan.sdk.dto.RunResult
 import io.furan.sdk.dto.SuiteResult
 
-/** Applitools `runner.getAllTestResults()` analog over [SuiteResult]. */
+/** Suite-result aggregator over [SuiteResult]. */
 class LoupeRunner {
     private val runs = mutableListOf<RunResult>()
 

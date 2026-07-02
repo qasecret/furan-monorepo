@@ -166,7 +166,7 @@ internal constructor(
             println("[furan-sdk] WARN: Visual test completed without checkpoints (run $rid).")
             return@runBlocking result
         }
-        // Phase 3: Eyes saveNewTests — approve a no-baseline `new` run as a
+        // Phase 3: saveNewTests — approve a no-baseline `new` run as a
         // DISTINCT step, then re-fetch. A failed approve propagates (we do NOT
         // report passed), keeping the lifecycle deterministic.
         // runId is kept non-null until ALL server interactions complete so a
@@ -235,7 +235,7 @@ internal constructor(
     }
 
     companion object {
-        /** Eyes-parity runner.getAllTestResults() — wrap completed RunResults for uniform CI reporting. */
+        /** runner.getAllTestResults() — wrap completed RunResults for uniform CI reporting. */
         @JvmStatic
         fun aggregateResults(runs: List<RunResult>): SuiteResult = SuiteResult(runs)
     }

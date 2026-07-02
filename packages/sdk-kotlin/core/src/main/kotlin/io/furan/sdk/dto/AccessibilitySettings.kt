@@ -4,13 +4,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Tier 2.5 (Eyes-parity `accessibilitySettings`): when set on
+ * Tier 2.5 (`accessibilitySettings`): when set on
  * [CheckpointOptions], the diff-worker runs axe-core against the
  * captured DOM snapshot and surfaces WCAG violations as additional
  * `diff_regions` rows with `source = 'axe'`, `category = 'accessibility'`.
  *
- * Mirrors Applitools `eyes.check(name, { accessibilitySettings: {
- * level: 'AA' | 'AAA', guidelinesVersion: 'WCAG_2_0' | 'WCAG_2_1' } })`.
+ * Accepts a WCAG conformance `level` ('AA' | 'AAA') and a
+ * `guidelinesVersion` ('WCAG_2_0' | 'WCAG_2_1').
  *
  * Requires that DOM capture is enabled (`sendDom != false`, default true)
  * — axe-core needs a DOM tree to run against. A checkpoint with

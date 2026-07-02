@@ -59,7 +59,7 @@ export function formatBatchDateTime(
 
 /**
  * Duration as HH:MM:SS — e.g. 6 seconds → "00:00:06" — for the diff-viewer
- * execution panel (mirrors the Applitools/Pixelproof step "Batch duration").
+ * execution panel (a "Batch duration" summary).
  * Nullish / NaN / negative inputs clamp to "00:00:00".
  */
 export function formatDuration(ms: number | null | undefined): string {

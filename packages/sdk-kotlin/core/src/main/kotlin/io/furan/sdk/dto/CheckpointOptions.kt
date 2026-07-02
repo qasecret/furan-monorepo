@@ -17,8 +17,7 @@ data class CheckpointOptions(
     val contentRegions: List<Region> = emptyList(),
     val accessibilityRegions: List<AccessibilityRegion> = emptyList(),
     /**
-     * Capture only a sub-rectangle of the viewport (mirrors Applitools
-     * `eyes.check(name, { region })`). When null the full viewport is
+     * Capture only a sub-rectangle of the viewport. When null the full viewport is
      * captured. The crop happens client-side before upload; the api +
      * diff engine see only the cropped bytes, so the baseline established
      * the first time you snapshot a region is the cropped image.
@@ -30,8 +29,7 @@ data class CheckpointOptions(
     val region: Region? = null,
     /**
      * Inline JavaScript to execute on the page immediately before the
-     * screenshot is captured (Eyes-parity Tier 1.3, mirrors
-     * `eyes.check(name, { hooks: { beforeCaptureScreenshot } })`).
+     * screenshot is captured (Tier 1.3).
      *
      * Common use cases: hiding a modal that animates in over the page,
      * pausing a video, freezing CSS animations, scrolling to top, or
@@ -47,8 +45,7 @@ data class CheckpointOptions(
     val beforeCaptureScreenshot: String? = null,
     /**
      * Milliseconds to pause after [beforeCaptureScreenshot] (if any) and
-     * before the screenshot is captured (Eyes-parity, mirrors
-     * `eyes.check(name, { waitBeforeCapture })`). Defaults to 0.
+     * before the screenshot is captured. Defaults to 0.
      *
      * Use this when you've triggered a state change (e.g. clicked a
      * button that fires a CSS transition) and want the transition to
@@ -58,12 +55,12 @@ data class CheckpointOptions(
      */
     val waitBeforeCaptureMs: Long = 0,
     /**
-     * Eyes-parity Tier 2.3 stability budget: when > 0, the SDK
+     * Tier 2.3 stability budget: when > 0, the SDK
      * captures repeatedly with a short interval between samples and
      * exits as soon as two consecutive captures have identical bytes
      * (page is stable) OR the cumulative wait exceeds this value.
      *
-     * Mirrors Applitools `setMatchTimeout` / `matchTimeout` semantics
+     * A stability-timeout budget
      * from the user's perspective ("wait up to N ms for the page to
      * stabilize before snapshotting"), implemented client-side because
      * Furan's diff pipeline is asynchronous — the captured bytes are
@@ -84,7 +81,7 @@ data class CheckpointOptions(
      */
     val matchTimeoutMs: Long = 0,
     /**
-     * Eyes-parity Tier 2.1: lazy-load handling. When non-null, the
+     * Tier 2.1: lazy-load handling. When non-null, the
      * Selenium adapter scrolls the page in fixed-step increments before
      * capture (with a pause between steps) so lazy-loaded content has
      * time to render. The SDK restores the scroll position to the top
@@ -98,8 +95,7 @@ data class CheckpointOptions(
     val lazyLoad: LazyLoadOptions? = null,
     /**
      * When true, the diff engine runs an L1 pixel-displacement
-     * pre-alignment pass for this checkpoint (Eyes-parity Tier 1.4,
-     * mirrors `eyes.check(name, { ignoreDisplacements: true })`).
+     * pre-alignment pass for this checkpoint (Tier 1.4).
      *
      * Use this when test content predictably shifts position between
      * runs (e.g. a new banner inserted above the page body). The pass
@@ -115,12 +111,12 @@ data class CheckpointOptions(
      */
     val ignoreDisplacements: Boolean = false,
     /**
-     * Eyes-parity Tier 2.4: when true, the SDK auto-appends a
+     * Tier 2.4: when true, the SDK auto-appends a
      * selector-anchored ignore region targeting the focused text
      * input — `input:focus, textarea:focus, [contenteditable]:focus` —
      * so a blinking caret doesn't flag as a diff.
      *
-     * Mirrors Applitools `setIgnoreCaret` from the user's
+     * An ignore-caret toggle from the user's
      * perspective. Furan's implementation is selector-based and
      * masks the entire focused input (not just the caret pixels).
      * For inputs where the rest of the content also varies (e.g.
@@ -128,14 +124,14 @@ data class CheckpointOptions(
      * explicit `ignoreRegions = listOf(Region.bySelector(".my-input"))`
      * targeting only the input you want masked.
      *
-     * True sub-pixel caret detection (the Eyes engine-side
+     * True sub-pixel caret detection (an engine-side
      * approach) is a future engine pass; for now this knob covers
      * the common case where a focused input is the source of
      * caret-noise diffs.
      */
     val ignoreCaret: Boolean = false,
     /**
-     * Eyes-parity Tier 2.5: when set, the diff-worker runs axe-core
+     * Tier 2.5: when set, the diff-worker runs axe-core
      * against the captured DOM snapshot and surfaces WCAG violations
      * as `diff_regions` with `source = 'axe'`,
      * `category = 'accessibility'`. See [AccessibilitySettings] for
@@ -147,8 +143,8 @@ data class CheckpointOptions(
      */
     val accessibilitySettings: AccessibilitySettings? = null,
     /**
-     * Eyes-parity Tier 2.2: when false, the SDK skips DOM capture
-     * entirely (mirrors Applitools `setSendDom(false)`). Default is
+     * Tier 2.2: when false, the SDK skips DOM capture
+     * entirely. Default is
      * true — DOM upload powers the accessibility (axe) pass
      * ([accessibilitySettings]): the diff-worker runs axe-core against
      * the uploaded DOM and localizes each violation via the element
@@ -184,11 +180,10 @@ data class CheckpointOptions(
      */
     val elementMapJson: String? = null,
     /**
-     * Eyes-parity Tier 3: when true, the SDK captures the full
+     * Tier 3: when true, the SDK captures the full
      * scrollable document by scrolling the page in viewport-sized
      * tiles, capturing each via Selenium `getScreenshotAs`, and
-     * composing them into one PNG before upload (mirrors
-     * `Target.window().fully()`).
+     * composing them into one PNG before upload (full-page capture).
      *
      * Cross-browser via JS-scroll. Chromium-only CDP fast path is a
      * future opt-in.
@@ -227,7 +222,7 @@ data class CheckpointOptions(
      * `listOf("header", "footer", "[role=banner]",
      *         "[role=contentinfo]", ".fixed-top", ".fixed-bottom")`.
      *
-     * Defaults to `emptyList()` (no hiding, matches Eyes' opt-in
+     * Defaults to `emptyList()` (no hiding, an opt-in
      * default). Adding a selector that matches a non-fixed element
      * will change the screenshot — only add selectors for elements
      * you intentionally want hidden during capture.

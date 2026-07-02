@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class LoupeTestResultsTest {
-    @Test fun `maps RunResult status to Applitools accessors`() {
+    @Test fun `maps RunResult status to accessors`() {
         val passed = LoupeTestResults(RunResult("r1", RunStatus.PASSED, 2))
         assertTrue(passed.isPassed); assertFalse(passed.isDifferent); assertFalse(passed.isNew)
         assertEquals("r1", passed.runId); assertEquals(2, passed.checkpointCount)
