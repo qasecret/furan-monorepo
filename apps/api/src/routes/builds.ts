@@ -159,6 +159,10 @@ export async function registerBuildsRoutes(
         app.authenticate,
         requireProjectMember("write", { from: { params: "id" } }),
       ],
+      // Each build fans out into test_runs + diff-job enqueues; cap the rate so
+      // a runaway CI loop or compromised token can't flood the diff queue.
+      // 60/min is 1/s — comfortably above any real CI cadence.
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
     },
     async (req, reply) => {
       if (!req.auth) {
