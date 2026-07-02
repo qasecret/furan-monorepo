@@ -1,4 +1,4 @@
-import { and, eq, projectMembers } from "@furan/db";
+import { and, type DB, eq, projectMembers, withPrivilegedScope } from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { sendError } from "../lib/errors.js";
@@ -9,10 +9,18 @@ export type Action = "read" | "write";
 export type ScopeSource =
   | { params: string }
   | { body: string }
-  | { resolver: (req: FastifyRequest) => Promise<string | null> };
+  // Resolvers receive a PRIVILEGED (RLS-bypass) db handle: they resolve a
+  // project id from a project-scoped row (ADR-058), and the gate is the
+  // authorization boundary, so it can't be subject to the RLS it enforces.
+  | { resolver: (req: FastifyRequest, db: DB) => Promise<string | null> };
 
 export interface ScopeOpts {
   from: ScopeSource;
+}
+
+interface Denial {
+  code: 400 | 403;
+  message: string;
 }
 
 export function requireProjectMember(action: Action, opts: ScopeOpts) {
@@ -24,29 +32,43 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
     if (req.auth.role === "guest") {
       return sendError(reply, 403, "forbidden", undefined, { reason: "guest" });
     }
+    const auth = req.auth;
 
-    const projectId = await resolveProjectId(req, opts.from);
-    if (!projectId) {
-      return sendError(reply, 400, "missing_project_scope");
-    }
+    // The projectId lookup + the membership check are the authorization
+    // boundary — run them PRIVILEGED (RLS bypass) so RLS can't hide the row the
+    // gate needs to see. `withPrivilegedScope` opens its own transaction on the
+    // pool (the handler's own scope, if any, runs separately afterwards), so
+    // the owner GUC never leaks into business queries.
+    const denial = await withPrivilegedScope(
+      req.server.db,
+      async (db): Promise<Denial | null> => {
+        const projectId = await resolveProjectId(req, opts.from, db);
+        if (!projectId) {
+          return { code: 400, message: "missing_project_scope" };
+        }
+        const rows = await db
+          .select({ id: projectMembers.id })
+          .from(projectMembers)
+          .where(
+            and(
+              eq(projectMembers.userId, auth.id),
+              eq(projectMembers.projectId, projectId),
+            ),
+          )
+          .limit(1);
+        if (rows.length === 0) {
+          req.log.info(
+            { action, projectId, userId: auth.id },
+            "rbac_denied_not_member",
+          );
+          return { code: 403, message: "not_a_project_member" };
+        }
+        return null;
+      },
+    );
 
-    const rows = await req.server.db
-      .select({ id: projectMembers.id })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.userId, req.auth.id),
-          eq(projectMembers.projectId, projectId),
-        ),
-      )
-      .limit(1);
-
-    if (rows.length === 0) {
-      req.log.info(
-        { action, projectId, userId: req.auth.id },
-        "rbac_denied_not_member",
-      );
-      return sendError(reply, 403, "not_a_project_member");
+    if (denial) {
+      return sendError(reply, denial.code, denial.message);
     }
   };
 }
@@ -54,6 +76,7 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
 async function resolveProjectId(
   req: FastifyRequest,
   src: ScopeSource,
+  db: DB,
 ): Promise<string | null> {
   if ("params" in src) {
     const value = (req.params as Record<string, unknown> | null | undefined)?.[
@@ -67,5 +90,5 @@ async function resolveProjectId(
     ];
     return typeof value === "string" ? value : null;
   }
-  return src.resolver(req);
+  return src.resolver(req, db);
 }

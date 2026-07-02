@@ -1,4 +1,4 @@
-import { and, eq, projectMembers } from "@furan/db";
+import { and, eq, projectMembers, withElevatedRole } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
 import { isAtLeastAdmin } from "../../lib/roles.js";
@@ -28,24 +28,39 @@ export function projectMember<TInput>(
     if (ctx.user.role === "guest") {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
+    const user = ctx.user;
 
-    const projectId = await opts.from.resolver({
-      input: input as TInput,
-      ctx,
-    });
-    if (!projectId) throw new TRPCError({ code: "NOT_FOUND" });
+    // The projectId lookup + membership check are the authorization boundary —
+    // they must read rows RLS would hide, so run them with the role ELEVATED to
+    // owner (RLS bypass) IN PLACE on the procedure's own scoped transaction
+    // (ctx.db). Elevating in place — rather than a second privileged connection
+    // — avoids each gated request holding two pooled connections at once
+    // (ADR-058). The elevation is restored before the procedure body runs, so
+    // resolvers reading `ctx.db` here are privileged; business queries are not.
+    const outcome = await withElevatedRole(
+      ctx.db,
+      async (): Promise<"ok" | "not_found" | "forbidden"> => {
+        const projectId = await opts.from.resolver({
+          input: input as TInput,
+          ctx,
+        });
+        if (!projectId) return "not_found";
+        const rows = await ctx.db
+          .select({ id: projectMembers.id })
+          .from(projectMembers)
+          .where(
+            and(
+              eq(projectMembers.userId, user.id),
+              eq(projectMembers.projectId, projectId),
+            ),
+          )
+          .limit(1);
+        return rows.length > 0 ? "ok" : "forbidden";
+      },
+    );
 
-    const rows = await ctx.db
-      .select({ id: projectMembers.id })
-      .from(projectMembers)
-      .where(
-        and(
-          eq(projectMembers.userId, ctx.user.id),
-          eq(projectMembers.projectId, projectId),
-        ),
-      )
-      .limit(1);
-    if (rows.length === 0) throw new TRPCError({ code: "FORBIDDEN" });
+    if (outcome === "not_found") throw new TRPCError({ code: "NOT_FOUND" });
+    if (outcome === "forbidden") throw new TRPCError({ code: "FORBIDDEN" });
 
     return next();
   });

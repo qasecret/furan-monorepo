@@ -29,12 +29,12 @@ async function checkpointCountForRun(db: DB, runId: string): Promise<number> {
  * will return 400 in that case (missing_project_scope).
  */
 async function resolveRunProjectId(
-  app: FastifyInstance,
+  db: DB,
   runId: string,
 ): Promise<string | null> {
   const parsed = runIdParam.safeParse({ id: runId });
   if (!parsed.success) return null;
-  const rows = await app.db
+  const rows = await db
     .select({ projectId: testRuns.projectId })
     .from(testRuns)
     .where(eq(testRuns.id, parsed.data.id))
@@ -53,10 +53,10 @@ export async function registerRunLifecycleRoutes(
         app.authenticate,
         requireProjectMember("write", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const params = req.params as Record<string, unknown>;
               const id = typeof params.id === "string" ? params.id : "";
-              return resolveRunProjectId(app, id);
+              return resolveRunProjectId(db, id);
             },
           },
         }),
@@ -158,10 +158,10 @@ export async function registerRunLifecycleRoutes(
         app.authenticate,
         requireProjectMember("write", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const params = req.params as Record<string, unknown>;
               const id = typeof params.id === "string" ? params.id : "";
-              return resolveRunProjectId(app, id);
+              return resolveRunProjectId(db, id);
             },
           },
         }),
@@ -199,10 +199,10 @@ export async function registerRunLifecycleRoutes(
         app.authenticate,
         requireProjectMember("write", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const params = req.params as Record<string, unknown>;
               const id = typeof params.id === "string" ? params.id : "";
-              return resolveRunProjectId(app, id);
+              return resolveRunProjectId(db, id);
             },
           },
         }),

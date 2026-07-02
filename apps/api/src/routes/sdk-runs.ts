@@ -618,10 +618,10 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         app.authenticate,
         requireProjectMember("read", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const params = req.params as { runId?: string };
               if (!params.runId) return null;
-              const rows = await app.db
+              const rows = await db
                 .select({ projectId: testRuns.projectId })
                 .from(testRuns)
                 .where(eq(testRuns.id, params.runId))
@@ -673,10 +673,10 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         app.authenticate,
         requireProjectMember("write", {
           from: {
-            resolver: async (req: FastifyRequest) => {
+            resolver: async (req: FastifyRequest, db) => {
               const parsed = screenshotsParams.safeParse(req.params);
               if (!parsed.success) return null;
-              const row = await app.db
+              const row = await db
                 .select({ projectId: testRuns.projectId })
                 .from(testRuns)
                 .where(eq(testRuns.id, parsed.data.runId))
@@ -797,10 +797,10 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         app.authenticate,
         requireProjectMember("write", {
           from: {
-            resolver: async (req: FastifyRequest) => {
+            resolver: async (req: FastifyRequest, db) => {
               const parsed = screenshotsParams.safeParse(req.params);
               if (!parsed.success) return null;
-              const row = await app.db
+              const row = await db
                 .select({ projectId: testRuns.projectId })
                 .from(testRuns)
                 .where(eq(testRuns.id, parsed.data.runId))
