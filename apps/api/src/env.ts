@@ -8,6 +8,14 @@ export const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
 
   DATABASE_URL: z.string().min(1),
+  /**
+   * ADR-058: optional connection string for the non-owner `furan_app` role the
+   * API connects as, so Postgres RLS applies to its queries. When unset the API
+   * uses DATABASE_URL (the owner role, which BYPASSES RLS) — safe, but the RLS
+   * backstop is then inactive for the API. Workers/CLIs/migrations always use
+   * DATABASE_URL. Opt in only after granting `furan_app` LOGIN + a password.
+   */
+  DATABASE_URL_APP: z.string().min(1).optional(),
   REDIS_URL: z.string().default("redis://localhost:6379"),
 
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be ≥32 chars (fail-closed)"),

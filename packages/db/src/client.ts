@@ -17,8 +17,12 @@ const CONNECT_TIMEOUT_SEC = 10;
  * Single connection-pool factory. Apps call this once at startup.
  * Reads `DATABASE_URL` via @furan/config — fails closed if unset.
  */
-export function createDb(): { db: DB; close: () => Promise<void> } {
-  const url = getSecret("DATABASE_URL");
+export function createDb(opts?: {
+  /** Override the connection string (ADR-058: the API passes the `furan_app`
+   *  URL so RLS applies). Defaults to the `DATABASE_URL` secret. */
+  url?: string;
+}): { db: DB; close: () => Promise<void> } {
+  const url = opts?.url ?? getSecret("DATABASE_URL");
   const queryClient = postgres(url, {
     max: 10,
     connect_timeout: CONNECT_TIMEOUT_SEC,
