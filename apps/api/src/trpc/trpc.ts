@@ -1,6 +1,8 @@
 import { withUserScope } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
+import { createDeferredSink } from "../lib/deferred-sink.js";
+
 import type { Context } from "./context.js";
 
 export const t = initTRPC.context<Context>().create();
@@ -22,12 +24,23 @@ export const t = initTRPC.context<Context>().create();
  * covered too. Nested `ctx.db.transaction(...)` inside a procedure becomes a
  * savepoint on the outer transaction (supported by postgres.js).
  */
-const scopeToUser = t.middleware(({ ctx, next }) => {
-  if (!ctx.user) return next();
+const scopeToUser = t.middleware(async ({ ctx, next }) => {
+  // The sink lives in the middleware closure (not on the Context), so
+  // `ctx.onCommit` is the only surface a procedure sees — it can't reach or
+  // mutate the underlying effect list. Injected in both branches so the ctx
+  // shape (and its inferred type) is consistent for every procedure.
+  const sink = createDeferredSink();
+  const scopedCtx = { ...ctx, onCommit: sink.onCommit };
+  if (!ctx.user) return next({ ctx: scopedCtx });
   const { id, role } = ctx.user;
-  return withUserScope(ctx.db, { userId: id, role }, (tx) =>
-    next({ ctx: { ...ctx, db: tx } }),
+  const result = await withUserScope(ctx.db, { userId: id, role }, (tx) =>
+    next({ ctx: { ...scopedCtx, db: tx } }),
   );
+  // Drain post-commit effects (diff enqueues) only when the procedure
+  // succeeded — on error the transaction is rolled back / committed empty, so
+  // enqueuing a job for rows that aren't there would be wrong.
+  if (result.ok) await sink.drain();
+  return result;
 });
 
 /**

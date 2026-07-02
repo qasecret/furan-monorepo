@@ -10,6 +10,7 @@ import {
 } from "../lib/branch-merge.js";
 import { sendError } from "../lib/errors.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 
 export const mergeBody = z.object({
   fromBranch: z.string().min(1).max(255),
@@ -49,25 +50,28 @@ export async function registerProjectsRoutes(
       return sendError(reply, 401, "unauthenticated");
     }
     if (req.auth.role === "guest") return [];
-    if (isAtLeastAdmin(req.auth.role)) {
-      return app.db.select().from(projects).orderBy(asc(projects.name));
-    }
-    // editor — only member-of projects
-    const memberRows = await app.db
-      .select({ projectId: projectMembers.projectId })
-      .from(projectMembers)
-      .where(eq(projectMembers.userId, req.auth.id));
-    if (memberRows.length === 0) return [];
-    return app.db
-      .select()
-      .from(projects)
-      .where(
-        inArray(
-          projects.id,
-          memberRows.map((r) => r.projectId),
-        ),
-      )
-      .orderBy(asc(projects.name));
+    const auth = req.auth;
+    return withRequestScope(app, req, async (db) => {
+      if (isAtLeastAdmin(auth.role)) {
+        return db.select().from(projects).orderBy(asc(projects.name));
+      }
+      // editor — only member-of projects
+      const memberRows = await db
+        .select({ projectId: projectMembers.projectId })
+        .from(projectMembers)
+        .where(eq(projectMembers.userId, auth.id));
+      if (memberRows.length === 0) return [];
+      return db
+        .select()
+        .from(projects)
+        .where(
+          inArray(
+            projects.id,
+            memberRows.map((r) => r.projectId),
+          ),
+        )
+        .orderBy(asc(projects.name));
+    });
   });
 
   app.post(
@@ -79,45 +83,33 @@ export async function registerProjectsRoutes(
         return sendError(reply, 400, "invalid_body");
       }
       const creatorId = req.auth!.id;
-      try {
-        const row = await app.db.transaction(async (tx) => {
-          const inserted = await tx
-            .insert(projects)
-            .values(parsed.data)
-            .returning();
-          const created = inserted[0];
-          if (!created) {
-            throw new Error("project insert returned no rows");
-          }
-          // Auto-add the creator as a project member with write access.
-          // Admins already bypass the membership gate everywhere, but the
-          // row materializes their relationship for: (a) the project's
-          // member list under /admin/projects/:id/members, (b) the future
-          // RLS flip (ADR-022) where admin-bypass is on a separate axis,
-          // (c) less-than-admin co-creators in environments that drop a
-          // user to editor post-bootstrap.
-          await tx
-            .insert(projectMembers)
-            .values({ projectId: created.id, userId: creatorId })
-            .onConflictDoNothing();
-          return created;
-        });
-        return reply.code(201).send(row);
-      } catch (err) {
-        // Only a Postgres unique violation (23505) on projects.name is a
-        // real "name taken". postgres-js surfaces the code on the error;
-        // drizzle-orm >=0.40 wraps the original PostgresError as `cause`
-        // (same detection as members.ts). Any other failure — schema drift,
-        // FK, etc. — must surface as a real error, not be masked as a 409.
-        const outerCode = (err as { code?: string })?.code;
-        const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
-        if (outerCode === "23505" || causeCode === "23505") {
-          req.log.warn({ err }, "project_create_conflict");
+      // The scope transaction IS the atomic unit (project + member insert).
+      // `ON CONFLICT DO NOTHING RETURNING` on projects.name gives a clean 409
+      // without catching a failed INSERT (which would poison the transaction);
+      // any other failure surfaces as a real 500.
+      return withRequestScope(app, req, async (db) => {
+        const inserted = await db
+          .insert(projects)
+          .values(parsed.data)
+          .onConflictDoNothing()
+          .returning();
+        const created = inserted[0];
+        if (!created) {
+          req.log.warn({ name: parsed.data.name }, "project_create_conflict");
           return sendError(reply, 409, "project_name_taken");
         }
-        req.log.error({ err }, "project_create_failed");
-        throw err;
-      }
+        // Auto-add the creator as a project member with write access.
+        // Admins already bypass the membership gate everywhere, but the row
+        // materializes their relationship for: (a) the project's member list
+        // under /admin/projects/:id/members, (b) the RLS flip (ADR-058) where
+        // admin-bypass is on a separate axis, (c) less-than-admin co-creators
+        // in environments that drop a user to editor post-bootstrap.
+        await db
+          .insert(projectMembers)
+          .values({ projectId: created.id, userId: creatorId })
+          .onConflictDoNothing();
+        return reply.code(201).send(created);
+      });
     },
   );
 
@@ -134,15 +126,22 @@ export async function registerProjectsRoutes(
       if (!parsed.success) {
         return sendError(reply, 404, "not_found");
       }
-      const rows = await app.db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, parsed.data.id))
-        .limit(1);
-      if (!rows[0]) {
-        return sendError(reply, 404, "not_found");
-      }
-      return rows[0];
+      return withRequestScope(
+        app,
+        req,
+        async (db) => {
+          const rows = await db
+            .select()
+            .from(projects)
+            .where(eq(projects.id, parsed.data.id))
+            .limit(1);
+          if (!rows[0]) {
+            return sendError(reply, 404, "not_found");
+          }
+          return rows[0];
+        },
+        parsed.data.id,
+      );
     },
   );
 
@@ -178,20 +177,27 @@ export async function registerProjectsRoutes(
         return sendError(reply, 400, "invalid_body");
       }
       try {
-        const result = await mergeBranchBaselinesImpl(
-          {
-            projectId: params.data.id,
-            fromBranch: body.data.fromBranch,
-            toBranch: body.data.toBranch,
-          },
-          {
-            db: app.db,
-            diffQueue: app.diffQueue,
-            telemetry: app.telemetry,
-            broadcaster: app.broadcaster,
-            userId: req.auth?.id ?? null,
-            log: req.log,
-          },
+        const result = await withRequestScope(
+          app,
+          req,
+          (db, onCommit) =>
+            mergeBranchBaselinesImpl(
+              {
+                projectId: params.data.id,
+                fromBranch: body.data.fromBranch,
+                toBranch: body.data.toBranch,
+              },
+              {
+                db,
+                diffQueue: app.diffQueue,
+                telemetry: app.telemetry,
+                broadcaster: app.broadcaster,
+                userId: req.auth?.id ?? null,
+                log: req.log,
+                onCommit,
+              },
+            ),
+          params.data.id,
         );
         return reply.code(200).send(result);
       } catch (err) {

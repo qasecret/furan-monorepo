@@ -679,10 +679,12 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, firstShot[0].testVariationId));
       }
 
-      await ctx.diffQueue.add("diff", {
-        runId: run.id,
-        projectId: run.projectId,
-      });
+      ctx.onCommit(() =>
+        ctx.diffQueue.add("diff", {
+          runId: run.id,
+          projectId: run.projectId,
+        }),
+      );
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
         event: "testRun_updated",
@@ -746,10 +748,12 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, input.runId));
 
-      await ctx.diffQueue.add("diff", {
-        runId: run.id,
-        projectId: run.projectId,
-      });
+      ctx.onCommit(() =>
+        ctx.diffQueue.add("diff", {
+          runId: run.id,
+          projectId: run.projectId,
+        }),
+      );
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
         event: "testRun_updated",
@@ -854,10 +858,12 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      await ctx.diffQueue.add("diff", {
-        runId: run.id,
-        projectId: run.projectId,
-      });
+      ctx.onCommit(() =>
+        ctx.diffQueue.add("diff", {
+          runId: run.id,
+          projectId: run.projectId,
+        }),
+      );
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
         event: "testRun_updated",
@@ -926,10 +932,12 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, input.runId));
 
-      await ctx.diffQueue.add("diff", {
-        runId: run.id,
-        projectId: run.projectId,
-      });
+      ctx.onCommit(() =>
+        ctx.diffQueue.add("diff", {
+          runId: run.id,
+          projectId: run.projectId,
+        }),
+      );
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
         event: "testRun_updated",
