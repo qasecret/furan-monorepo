@@ -234,33 +234,39 @@ describe("admin user CRUD", () => {
     );
   });
 
-  test("PATCH /users/:id - cannot demote the last active admin", async () => {
-    // The editor holds a (stale) admin token and tries to demote the only real
-    // admin. Actor != target so the self-guard doesn't apply; the DB-count
-    // invariant must still reject it.
+  // Post-RBAC-hardening, auth resolves the LIVE DB role rather than trusting the
+  // JWT claim, so a forged/stale token claiming role:"admin" for an editor no
+  // longer passes the admin gate — it's rejected 403 before any mutation. This
+  // is why the previous "last admin" integration scenario (an editor wielding a
+  // stale admin token to demote the sole real admin) is unreachable via
+  // legitimate auth: any caller who DID pass the admin gate would be counted in
+  // otherActiveAdminCount, so the target is never the last one. The last-admin
+  // integrity invariant itself is covered by the pure-function unit tests in
+  // users-admin-guards.test.ts and enforced atomically in the UPDATE WHERE.
+  test("PATCH /users/:id - a forged admin JWT for an editor is rejected (live role wins)", async () => {
     const editorId = await findUserId("editor");
-    const staleAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
+    const forgedAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
     const res = await h.app.inject({
       method: "PATCH",
       url: `/users/${adminId}`,
-      headers: { authorization: `Bearer ${staleAdminJwt}` },
+      headers: { authorization: `Bearer ${forgedAdminJwt}` },
       payload: { role: "editor" },
     });
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as { code: string }).code).toBe("last_admin");
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { code: string }).code).toBe("forbidden");
   });
 
-  test("PATCH /users/:id - cannot deactivate the last active admin", async () => {
+  test("PATCH /users/:id - a forged admin JWT cannot deactivate an admin (live role wins)", async () => {
     const editorId = await findUserId("editor");
-    const staleAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
+    const forgedAdminJwt = h.app.jwt.sign({ sub: editorId, role: "admin" });
     const res = await h.app.inject({
       method: "PATCH",
       url: `/users/${adminId}`,
-      headers: { authorization: `Bearer ${staleAdminJwt}` },
+      headers: { authorization: `Bearer ${forgedAdminJwt}` },
       payload: { isActive: false },
     });
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as { code: string }).code).toBe("last_admin");
+    expect(res.statusCode).toBe(403);
+    expect((res.json() as { code: string }).code).toBe("forbidden");
   });
 
   test("PATCH /users/:id - can demote an admin when another admin remains", async () => {
