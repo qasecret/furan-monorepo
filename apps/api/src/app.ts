@@ -20,6 +20,7 @@ import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
 import { sendError } from "./lib/errors.js";
 import { loadActiveUserByPat } from "./lib/load-active-user.js";
+import type { MemberProjectsCache } from "./lib/member-projects-cache.js";
 import { resolveAuthUser } from "./lib/resolve-auth-user.js";
 import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
@@ -51,6 +52,8 @@ export interface AppDeps {
   broadcaster: Broadcaster;
   /** Optional cache for the per-request JWT user lookup. Absent → direct DB read. */
   cache?: UserAuthCache;
+  /** Optional cache for a user's member-project set (storage-proxy hot path). */
+  memberProjectsCache?: MemberProjectsCache;
 }
 
 declare module "fastify" {
@@ -61,6 +64,7 @@ declare module "fastify" {
     diffQueue: DiffQueueProducer;
     broadcaster: Broadcaster;
     cache: UserAuthCache | null;
+    memberProjectsCache: MemberProjectsCache | null;
   }
 }
 
@@ -98,6 +102,7 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate("diffQueue", deps.diffQueue);
   app.decorate("broadcaster", deps.broadcaster);
   app.decorate("cache", deps.cache ?? null);
+  app.decorate("memberProjectsCache", deps.memberProjectsCache ?? null);
 
   // Generic 5xx body so internal failures don't leak SQL, query params, or
   // stack frames to the client. Fastify's default error handler returns

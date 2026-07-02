@@ -11,6 +11,7 @@ import { vi, type Mock } from "vitest";
 import { createApp } from "../src/app.js";
 import { envSchema, type Env } from "../src/env.js";
 import type { Broadcaster } from "../src/lib/broadcast.js";
+import type { MemberProjectsCache } from "../src/lib/member-projects-cache.js";
 import type { DiffQueueProducer } from "../src/trpc/context.js";
 
 export interface TestApp {
@@ -154,6 +155,8 @@ export interface CreateTestAppOpts {
    * path end-to-end.
    */
   broadcaster?: Broadcaster;
+  /** Inject a member-project cache (storage-proxy hot path). Absent → null. */
+  memberProjectsCache?: MemberProjectsCache;
 }
 
 export async function createTestApp(
@@ -222,7 +225,16 @@ export async function createTestApp(
     opts.broadcaster ??
     ({ publishProjectEvent: broadcasterPublish } as Broadcaster);
 
-  const app = await createApp({ db, telemetry, env, diffQueue, broadcaster });
+  const app = await createApp({
+    db,
+    telemetry,
+    env,
+    diffQueue,
+    broadcaster,
+    ...(opts.memberProjectsCache
+      ? { memberProjectsCache: opts.memberProjectsCache }
+      : {}),
+  });
   if (!opts.skipReady) {
     await app.ready();
   }
