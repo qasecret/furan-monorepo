@@ -44,7 +44,7 @@ const CACHE_HEADER = "public, max-age=300, immutable";
 export async function registerStorageProxyRoute(
   app: FastifyInstance,
 ): Promise<void> {
-  const storage = createStorage();
+  const storage = createStorage(app.telemetry.metrics);
 
   app.get(
     "/api/v1/storage/:key",

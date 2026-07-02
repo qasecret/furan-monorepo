@@ -34,7 +34,7 @@ export async function registerHealthRoutes(
     return redis;
   };
   const getStorage = (): Storage => {
-    if (!storage) storage = createStorage();
+    if (!storage) storage = createStorage(app.telemetry.metrics);
     return storage;
   };
 

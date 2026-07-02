@@ -1,7 +1,9 @@
 import { getEnv } from "@furan/config";
+import type { Registry } from "prom-client";
 import { z } from "zod";
 
 import { createHddStorage } from "./hdd.js";
+import { instrumentStorage } from "./metrics.js";
 import { createS3Storage } from "./s3.js";
 import type { Storage } from "./types.js";
 
@@ -78,19 +80,25 @@ const storageEnv = z
  * Reads `STORAGE_KIND` and returns the matching Storage backend.
  * Validation happens up-front via the zod schema so a misconfigured
  * install fails fast at boot instead of on the first object write.
+ *
+ * Pass a telemetry `Registry` to wrap the backend with operation-error
+ * metrics (`furan_storage_operation_errors_total`). It's optional so CLIs and
+ * tests that lack a registry keep working uninstrumented.
  */
-export function createStorage(): Storage {
+export function createStorage(registry?: Registry): Storage {
   const env = getEnv(storageEnv);
   if (env.STORAGE_KIND === "hdd") {
-    return createHddStorage({ root: env.HDD_ROOT! });
+    const hdd = createHddStorage({ root: env.HDD_ROOT! });
+    return registry ? instrumentStorage(hdd, registry, "hdd") : hdd;
   }
   // STORAGE_KIND=s3 — superRefine already guaranteed the S3 fields are
   // set, so the non-null assertions are safe and keep the call site clean.
-  return createS3Storage({
+  const s3 = createS3Storage({
     endpoint: env.S3_ENDPOINT!,
     bucket: env.S3_BUCKET!,
     accessKey: env.S3_ACCESS_KEY!,
     secretKey: env.S3_SECRET_KEY!,
     region: env.S3_REGION,
   });
+  return registry ? instrumentStorage(s3, registry, "s3") : s3;
 }
