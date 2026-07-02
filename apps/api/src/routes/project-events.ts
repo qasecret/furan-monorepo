@@ -11,6 +11,7 @@ import {
 } from "../lib/broadcast-metrics.js";
 import type { ProjectEventName } from "../lib/broadcast.js";
 import { sendError } from "../lib/errors.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 
 /**
  * Tiny debounce with leading + maxWait semantics — same shape as
@@ -117,13 +118,23 @@ export async function registerProjectEventsRoute(
       const { id } = parsed.data;
 
       // Defense-in-depth: requireProjectMember catches non-members, but a
-      // deleted project shouldn't 200 here.
-      const projectRows = await app.db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.id, id))
-        .limit(1);
-      if (!projectRows[0]) {
+      // deleted project shouldn't 200 here. Only this existence check is
+      // scoped (ADR-058) — the long-lived SSE stream below must NOT hold a
+      // transaction open.
+      const exists = await withRequestScope(
+        app,
+        req,
+        async (db) => {
+          const projectRows = await db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(eq(projects.id, id))
+            .limit(1);
+          return projectRows.length > 0;
+        },
+        id,
+      );
+      if (!exists) {
         return sendError(reply, 404, "not_found");
       }
 

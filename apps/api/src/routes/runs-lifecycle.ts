@@ -1,10 +1,11 @@
-import { eq, screenshots, testRuns } from "@furan/db";
+import { type DB, eq, screenshots, testRuns } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 import { approveRun } from "../trpc/v1/runs.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
@@ -12,13 +13,10 @@ const runIdParam = z.object({ id: z.string().uuid() });
 /**
  * Counts the run's persisted checkpoints (one screenshots row per
  * checkpoint). Used by /complete to decide `empty` vs leave-to-pipeline,
- * and to stamp `checkpointCount`.
+ * and to stamp `checkpointCount`. Takes the caller's scoped `db` handle.
  */
-async function checkpointCountForRun(
-  app: FastifyInstance,
-  runId: string,
-): Promise<number> {
-  const rows = await app.db
+async function checkpointCountForRun(db: DB, runId: string): Promise<number> {
+  const rows = await db
     .select({ id: screenshots.id })
     .from(screenshots)
     .where(eq(screenshots.runId, runId));
@@ -92,54 +90,62 @@ export async function registerRunLifecycleRoutes(
       // refreshes the row from the worker's `run.completed` /
       // `run.checkpoint_diffed` SSE — so leaving the verdict to the
       // pipeline is safe.
-      const checkpointCount = await checkpointCountForRun(app, params.data.id);
+      return withRequestScope(app, req, async (db, onCommit) => {
+        const checkpointCount = await checkpointCountForRun(db, params.data.id);
 
-      let status: string;
-      if (checkpointCount === 0) {
-        await app.db
-          .update(testRuns)
-          .set({
-            status: "empty",
-            checkpointCount,
-            completedAt: new Date(),
-          })
-          .where(eq(testRuns.id, params.data.id));
-        status = "empty";
-      } else {
-        // Stamp completion only — the diff pipeline owns `status`.
-        await app.db
-          .update(testRuns)
-          .set({
-            checkpointCount,
-            completedAt: new Date(),
-          })
-          .where(eq(testRuns.id, params.data.id));
-        // Re-read the live status so the payload + reply reflect reality
-        // (running until diffs settle), never a premature rollup.
-        const rows = await app.db
-          .select({ status: testRuns.status })
-          .from(testRuns)
-          .where(eq(testRuns.id, params.data.id))
-          .limit(1);
-        status = rows[0]?.status ?? "running";
-      }
+        let status: string;
+        if (checkpointCount === 0) {
+          await db
+            .update(testRuns)
+            .set({
+              status: "empty",
+              checkpointCount,
+              completedAt: new Date(),
+            })
+            .where(eq(testRuns.id, params.data.id));
+          status = "empty";
+        } else {
+          // Stamp completion only — the diff pipeline owns `status`.
+          await db
+            .update(testRuns)
+            .set({
+              checkpointCount,
+              completedAt: new Date(),
+            })
+            .where(eq(testRuns.id, params.data.id));
+          // Re-read the live status so the payload + reply reflect reality
+          // (running until diffs settle), never a premature rollup.
+          const rows = await db
+            .select({ status: testRuns.status })
+            .from(testRuns)
+            .where(eq(testRuns.id, params.data.id))
+            .limit(1);
+          status = rows[0]?.status ?? "running";
+        }
 
-      // Preserve the existing `run.completed` broadcast (the dashboard +
-      // integrations listen for it), but its payload status now reflects
-      // the actual current status rather than a premature rollup.
-      await app.broadcaster.publishRunEvent?.({
-        type: "run.completed",
-        runId: params.data.id,
-        payload: {
+        // Preserve the existing `run.completed` broadcast (the dashboard +
+        // integrations listen for it), but its payload status now reflects
+        // the actual current status rather than a premature rollup. Deferred
+        // to post-commit so listeners refetch against the committed row.
+        onCommit(() =>
+          app.broadcaster.publishRunEvent?.({
+            type: "run.completed",
+            runId: params.data.id,
+            payload: {
+              status,
+              checkpointCount,
+            },
+          }),
+        );
+
+        // Set status + RETURN the body so Fastify sends it AFTER the scope
+        // commits (an SDK completeAndAwait → getRun poll must not race commit).
+        reply.code(200);
+        return {
+          runId: params.data.id,
           status,
           checkpointCount,
-        },
-      });
-
-      return reply.code(200).send({
-        runId: params.data.id,
-        status,
-        checkpointCount,
+        };
       });
     },
   );
@@ -165,18 +171,23 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return sendError(reply, 400, "invalid_id");
 
-      await app.db
-        .update(testRuns)
-        .set({ status: "aborted", completedAt: new Date() })
-        .where(eq(testRuns.id, params.data.id));
+      return withRequestScope(app, req, async (db, onCommit) => {
+        await db
+          .update(testRuns)
+          .set({ status: "aborted", completedAt: new Date() })
+          .where(eq(testRuns.id, params.data.id));
 
-      await app.broadcaster.publishRunEvent?.({
-        type: "run.completed",
-        runId: params.data.id,
-        payload: { status: "aborted" },
+        onCommit(() =>
+          app.broadcaster.publishRunEvent?.({
+            type: "run.completed",
+            runId: params.data.id,
+            payload: { status: "aborted" },
+          }),
+        );
+
+        reply.code(200);
+        return { runId: params.data.id, status: "aborted" };
       });
-
-      return reply.code(200).send({ runId: params.data.id, status: "aborted" });
     },
   );
 
@@ -201,14 +212,17 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return sendError(reply, 400, "invalid_id");
       if (!req.auth) return sendError(reply, 401, "unauthenticated");
+      const authUserId = req.auth.id;
       try {
-        const out = await approveRun(
-          {
-            db: app.db,
-            broadcaster: app.broadcaster,
-            user: { id: req.auth.id },
-          },
-          params.data.id,
+        const out = await withRequestScope(app, req, (db) =>
+          approveRun(
+            {
+              db,
+              broadcaster: app.broadcaster,
+              user: { id: authUserId },
+            },
+            params.data.id,
+          ),
         );
         return reply.code(200).send(out);
       } catch (err) {

@@ -108,7 +108,10 @@ export async function registerProjectsRoutes(
           .insert(projectMembers)
           .values({ projectId: created.id, userId: creatorId })
           .onConflictDoNothing();
-        return reply.code(201).send(created);
+        // Set status + RETURN the row so Fastify sends it AFTER the scope
+        // commits (a client that reads the project right after must see it).
+        reply.code(201);
+        return created;
       });
     },
   );
