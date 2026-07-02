@@ -65,7 +65,10 @@ export async function registerMembersRoutes(
           if (!row) {
             return sendError(reply, 409, "already_member");
           }
-          return reply.code(201).send(row);
+          // Set status + RETURN the row so Fastify sends it AFTER the scope
+          // commits (a client that lists members right after must see it).
+          reply.code(201);
+          return row;
         },
         paramsParsed.data.id,
       );
@@ -80,7 +83,7 @@ export async function registerMembersRoutes(
       if (!parsed.success) {
         return sendError(reply, 404, "not_found");
       }
-      return withRequestScope(
+      const removed = await withRequestScope(
         app,
         req,
         async (db) => {
@@ -93,13 +96,15 @@ export async function registerMembersRoutes(
               ),
             )
             .returning({ id: projectMembers.id });
-          if (result.length === 0) {
-            return sendError(reply, 404, "not_found");
-          }
-          return reply.code(204).send();
+          return result.length > 0;
         },
         parsed.data.id,
       );
+      // Send AFTER the scope commits so a follow-up read reflects the delete.
+      if (!removed) {
+        return sendError(reply, 404, "not_found");
+      }
+      return reply.code(204).send();
     },
   );
 }

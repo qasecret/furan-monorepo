@@ -15,6 +15,7 @@ import { z } from "zod";
 import { sendError } from "../lib/errors.js";
 import type { MemberProjectsCache } from "../lib/member-projects-cache.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 import type { AuthedUser } from "../plugins/auth.js";
 
 /**
@@ -57,15 +58,15 @@ export async function registerStorageProxyRoute(
 
       // Project-scope: non-admins may only read keys owned by a project they
       // belong to. 404 (not 403) to avoid confirming existence cross-tenant.
-      if (
-        !req.auth ||
-        !(await callerCanAccessKey(
-          app.db,
-          req.auth,
-          key,
-          app.memberProjectsCache,
-        ))
-      ) {
+      // Only the DB access-check is scoped (ADR-058); the S3 fetch below stays
+      // outside the transaction so a slow object read never holds a DB conn.
+      const auth = req.auth;
+      const allowed =
+        auth != null &&
+        (await withRequestScope(app, req, (db) =>
+          callerCanAccessKey(db, auth, key, app.memberProjectsCache),
+        ));
+      if (!allowed) {
         return sendError(reply, 404, "not_found");
       }
 

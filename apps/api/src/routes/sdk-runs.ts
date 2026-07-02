@@ -17,6 +17,7 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 
 import { tryLegacyCreateRunSynthesis } from "./sdk-runs-back-compat.js";
 
@@ -256,7 +257,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
    * test_variation and the screenshot.
    */
   async function persistScreenshot(
-    run: typeof testRuns.$inferSelect,
+    req: FastifyRequest,
+    runId: string,
     inputs: {
       pngBytes: Buffer;
       domHtml: string | null;
@@ -278,8 +280,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       accessibilityLevel?: string | null;
       accessibilityVersion?: string | null;
     },
-    logger: FastifyRequest["log"],
   ) {
+    const logger = req.log;
     const {
       pngBytes,
       domHtml,
@@ -304,7 +306,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
 
     logger.info(
       {
-        runId: run.id,
+        runId,
         name: snapName,
         viewport,
         browser,
@@ -328,7 +330,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       if (elementMapRaw.length > MAX_ELEMENT_MAP_BYTES) {
         logger.warn(
           {
-            runId: run.id,
+            runId,
             imageKey: hashedImageKey,
             bytes: elementMapRaw.length,
           },
@@ -350,7 +352,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
           const outcome =
             err instanceof SyntaxError ? "invalid_json" : "storage_error";
           logger.warn(
-            { runId: run.id, imageKey: hashedImageKey, err },
+            { runId, imageKey: hashedImageKey, err },
             "element_map_dropped",
           );
           recordElementMapOutcome(app.telemetry.metrics, outcome);
@@ -358,69 +360,142 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    // ADR-038: resolve-or-create the test variation by checkpoint identity.
-    const variation = await resolveOrCreateVariation(app.db, {
-      projectId: run.projectId,
-      branchName: run.branchName ?? "",
-      name: snapName,
-      viewport,
-      browser,
-      os,
-      device,
-    });
-
-    const screenshotValues = {
-      runId: run.id,
-      projectId: run.projectId,
-      testVariationId: variation.id,
-      name: snapName,
-      viewport,
-      browser,
-      os: os ?? undefined,
-      device: device ?? undefined,
-      matchLevel,
-      imageKey: hashedImageKey,
-      domKey: domKey ?? undefined,
-      elementMapKey: elementMapKey ?? undefined,
-      ignoreRegions: regions.ignore.length ? regions.ignore : undefined,
-      layoutRegions: regions.layout.length ? regions.layout : undefined,
-      floatingRegions: regions.floating.length ? regions.floating : undefined,
-      contentRegions: regions.content.length ? regions.content : undefined,
-      accessibilityRegions: regions.accessibility.length
-        ? regions.accessibility
-        : undefined,
-      ignoreDisplacements,
-      accessibilityLevel: accessibilityLevel ?? undefined,
-      accessibilityVersion: accessibilityVersion ?? undefined,
-    };
-    const [screenshot] = await app.db
-      .insert(screenshots)
-      .values(screenshotValues)
-      .onConflictDoNothing({
-        target: [screenshots.runId, screenshots.name, screenshots.viewport],
-      })
-      .returning({ id: screenshots.id });
-
-    if (!screenshot) {
-      // Duplicate (runId, name, viewport) — return the existing row.
-      const [existing] = await app.db
-        .select({
-          id: screenshots.id,
-          testVariationId: screenshots.testVariationId,
-        })
-        .from(screenshots)
-        .where(
-          and(
-            eq(screenshots.runId, run.id),
-            eq(screenshots.name, snapName),
-            eq(screenshots.viewport, viewport),
-          ),
-        )
+    // S3 puts above are intentionally OUTSIDE the transaction (don't hold a
+    // pooled DB connection during object I/O). Only the DB writes are scoped
+    // (ADR-058); the diff enqueue defers to post-commit via onCommit.
+    return withRequestScope(app, req, async (db, onCommit) => {
+      // Fetch the run inside the SAME scope as the writes (one transaction, one
+      // snapshot). `null` → the run vanished (the requireProjectMember gate
+      // already resolved it, so this only trips on a concurrent delete); the
+      // caller maps that to 404.
+      const runRows = await db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, runId))
         .limit(1);
+      const run = runRows[0];
+      if (!run) return null;
+
+      // ADR-038: resolve-or-create the test variation by checkpoint identity.
+      const variation = await resolveOrCreateVariation(db, {
+        projectId: run.projectId,
+        branchName: run.branchName ?? "",
+        name: snapName,
+        viewport,
+        browser,
+        os,
+        device,
+      });
+
+      const screenshotValues = {
+        runId: run.id,
+        projectId: run.projectId,
+        testVariationId: variation.id,
+        name: snapName,
+        viewport,
+        browser,
+        os: os ?? undefined,
+        device: device ?? undefined,
+        matchLevel,
+        imageKey: hashedImageKey,
+        domKey: domKey ?? undefined,
+        elementMapKey: elementMapKey ?? undefined,
+        ignoreRegions: regions.ignore.length ? regions.ignore : undefined,
+        layoutRegions: regions.layout.length ? regions.layout : undefined,
+        floatingRegions: regions.floating.length ? regions.floating : undefined,
+        contentRegions: regions.content.length ? regions.content : undefined,
+        accessibilityRegions: regions.accessibility.length
+          ? regions.accessibility
+          : undefined,
+        ignoreDisplacements,
+        accessibilityLevel: accessibilityLevel ?? undefined,
+        accessibilityVersion: accessibilityVersion ?? undefined,
+      };
+      const [screenshot] = await db
+        .insert(screenshots)
+        .values(screenshotValues)
+        .onConflictDoNothing({
+          target: [screenshots.runId, screenshots.name, screenshots.viewport],
+        })
+        .returning({ id: screenshots.id });
+
+      if (!screenshot) {
+        // Duplicate (runId, name, viewport) — return the existing row.
+        const [existing] = await db
+          .select({
+            id: screenshots.id,
+            testVariationId: screenshots.testVariationId,
+          })
+          .from(screenshots)
+          .where(
+            and(
+              eq(screenshots.runId, run.id),
+              eq(screenshots.name, snapName),
+              eq(screenshots.viewport, viewport),
+            ),
+          )
+          .limit(1);
+        return {
+          screenshotId: existing!.id,
+          checkpointId: existing!.id,
+          testVariationId: existing!.testVariationId,
+          imageKey: hashedImageKey,
+          domKey,
+          viewport,
+          browser,
+          runId: run.id,
+          projectId: run.projectId,
+          createdAt: null as Date | null,
+        };
+      }
+
+      // Increment checkpoint counter on the run.
+      await db
+        .update(testRuns)
+        .set({ checkpointCount: sql`${testRuns.checkpointCount} + 1` })
+        .where(eq(testRuns.id, run.id));
+
+      // Best-effort diff enqueue — deferred to post-commit so the worker
+      // never picks up the job before the screenshot/run rows are visible.
+      onCommit(async () => {
+        try {
+          await app.diffQueue.add("diff", {
+            runId: run.id,
+            projectId: run.projectId,
+            // ADR-055: forward the run's parent branch (when set) so the
+            // diff-worker's resolveBaseline can fire the parent_pr tier.
+            // Omitted when null to keep the wire minimal.
+            ...(run.parentBranchName
+              ? { parentPrBaseBranch: run.parentBranchName }
+              : {}),
+          });
+        } catch (err) {
+          logger.warn(
+            { err, runId: run.id, projectId: run.projectId },
+            "sdk_upload_diff_enqueue_failed",
+          );
+        }
+      });
+
+      // ADR-038: notify the dashboard's diff-viewer SSE channel so open pages
+      // can refresh live when a new checkpoint arrives. Deferred post-commit.
+      onCommit(() =>
+        app.broadcaster.publishRunEvent?.({
+          type: "run.checkpoint_added",
+          runId: run.id,
+          payload: {
+            checkpointId: screenshot.id,
+            name: snapName,
+            viewport,
+          },
+        }),
+      );
+
       return {
-        screenshotId: existing!.id,
-        checkpointId: existing!.id,
-        testVariationId: existing!.testVariationId,
+        screenshotId: screenshot.id,
+        checkpointId: screenshot.id,
+        testVariationId: variation.id,
+        // Keep legacy fields in the response so existing tests still pass
         imageKey: hashedImageKey,
         domKey,
         viewport,
@@ -429,59 +504,7 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         projectId: run.projectId,
         createdAt: null as Date | null,
       };
-    }
-
-    // Increment checkpoint counter on the run.
-    await app.db
-      .update(testRuns)
-      .set({ checkpointCount: sql`${testRuns.checkpointCount} + 1` })
-      .where(eq(testRuns.id, run.id));
-
-    // Best-effort diff enqueue.
-    try {
-      await app.diffQueue.add("diff", {
-        runId: run.id,
-        projectId: run.projectId,
-        // ADR-055: forward the run's parent branch (when set) so the
-        // diff-worker's resolveBaseline can fire the parent_pr tier. Omitted
-        // when null to keep the wire minimal.
-        ...(run.parentBranchName
-          ? { parentPrBaseBranch: run.parentBranchName }
-          : {}),
-      });
-    } catch (err) {
-      logger.warn(
-        { err, runId: run.id, projectId: run.projectId },
-        "sdk_upload_diff_enqueue_failed",
-      );
-    }
-
-    // ADR-038: notify the dashboard's diff-viewer SSE channel so open pages
-    // can refresh live when a new checkpoint arrives. Best-effort — same
-    // failure semantics as the diff enqueue above.
-    await app.broadcaster.publishRunEvent?.({
-      type: "run.checkpoint_added",
-      runId: run.id,
-      payload: {
-        checkpointId: screenshot.id,
-        name: snapName,
-        viewport,
-      },
     });
-
-    return {
-      screenshotId: screenshot.id,
-      checkpointId: screenshot.id,
-      testVariationId: variation.id,
-      // Keep legacy fields in the response so existing tests still pass
-      imageKey: hashedImageKey,
-      domKey,
-      viewport,
-      browser,
-      runId: run.id,
-      projectId: run.projectId,
-      createdAt: null as Date | null,
-    };
   }
 
   // ---------------------------------------------------------------------------
@@ -510,49 +533,63 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       }
       const input = parsed.data;
 
-      // FK guard: build must exist + belong to the requested project.
-      const buildRow = await app.db
-        .select({ id: builds.id, projectId: builds.projectId })
-        .from(builds)
-        .where(eq(builds.id, input.buildId))
-        .limit(1);
-      if (!buildRow[0] || buildRow[0].projectId !== input.projectId) {
-        return sendError(reply, 400, "invalid_build");
-      }
+      return withRequestScope(
+        app,
+        req,
+        async (db, onCommit) => {
+          // FK guard: build must exist + belong to the requested project.
+          const buildRow = await db
+            .select({ id: builds.id, projectId: builds.projectId })
+            .from(builds)
+            .where(eq(builds.id, input.buildId))
+            .limit(1);
+          if (!buildRow[0] || buildRow[0].projectId !== input.projectId) {
+            return sendError(reply, 400, "invalid_build");
+          }
 
-      const [row] = await app.db
-        .insert(testRuns)
-        .values({
-          projectId: input.projectId,
-          buildId: input.buildId,
-          name: input.name,
-          branchName: input.branchName,
-          parentBranchName: input.parentBranchName ?? null,
-          status: "running",
-        })
-        .returning({
-          id: testRuns.id,
-          status: testRuns.status,
-          name: testRuns.name,
-        });
+          const [row] = await db
+            .insert(testRuns)
+            .values({
+              projectId: input.projectId,
+              buildId: input.buildId,
+              name: input.name,
+              branchName: input.branchName,
+              parentBranchName: input.parentBranchName ?? null,
+              status: "running",
+            })
+            .returning({
+              id: testRuns.id,
+              status: testRuns.status,
+              name: testRuns.name,
+            });
 
-      if (!row) {
-        return sendError(reply, 500, "run_insert_failed");
-      }
+          if (!row) {
+            return sendError(reply, 500, "run_insert_failed");
+          }
 
-      // Project SSE broadcast.
-      await app.broadcaster.publishProjectEvent(input.projectId, {
-        event: "testRun_created",
-        data: { id: row.id },
-      });
-      await app.broadcaster.publishProjectEvent(input.projectId, {
-        event: "build_updated",
-        data: { id: input.buildId },
-      });
+          // Project SSE broadcast — deferred post-commit so a listener refetch
+          // sees the committed run + build rows.
+          onCommit(() =>
+            app.broadcaster.publishProjectEvent(input.projectId, {
+              event: "testRun_created",
+              data: { id: row.id },
+            }),
+          );
+          onCommit(() =>
+            app.broadcaster.publishProjectEvent(input.projectId, {
+              event: "build_updated",
+              data: { id: input.buildId },
+            }),
+          );
 
-      return reply
-        .code(201)
-        .send({ runId: row.id, status: row.status, name: row.name });
+          // Set status + RETURN the body (don't reply.send() here): Fastify
+          // sends it after the handler resolves, i.e. AFTER the scope commits,
+          // so an SDK create→read never races the commit.
+          reply.code(201);
+          return { runId: row.id, status: row.status, name: row.name };
+        },
+        input.projectId,
+      );
     },
   );
 
@@ -600,27 +637,29 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       if (!params.runId) {
         return sendError(reply, 400, "invalid_run_id");
       }
-      const rows = await app.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, params.runId))
-        .limit(1);
-      const row = rows[0];
-      if (!row) {
-        return sendError(reply, 404, "not_found");
-      }
-      // Derive autoApproved the same way the tRPC procedure does
-      // (apps/api/src/trpc/v1/runs.ts:308–318). One PK-indexed lookup
-      // on the baselines table.
-      const autoApprovedRows = await app.db
-        .select({ id: baselines.id })
-        .from(baselines)
-        .where(
-          and(eq(baselines.testRunId, params.runId), isNull(baselines.userId)),
-        )
-        .limit(1);
-      const autoApproved = autoApprovedRows.length > 0;
-      return reply.code(200).send({ ...row, autoApproved });
+      const runId = params.runId;
+      return withRequestScope(app, req, async (db) => {
+        const rows = await db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, runId))
+          .limit(1);
+        const row = rows[0];
+        if (!row) {
+          return sendError(reply, 404, "not_found");
+        }
+        // Derive autoApproved the same way the tRPC procedure does
+        // (apps/api/src/trpc/v1/runs.ts:308–318). One PK-indexed lookup
+        // on the baselines table.
+        const autoApprovedRows = await db
+          .select({ id: baselines.id })
+          .from(baselines)
+          .where(and(eq(baselines.testRunId, runId), isNull(baselines.userId)))
+          .limit(1);
+        const autoApproved = autoApprovedRows.length > 0;
+        reply.code(200);
+        return { ...row, autoApproved };
+      });
     },
   );
 
@@ -654,16 +693,6 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         return sendError(reply, 404, "not_found");
       }
       const { runId } = parsedParams.data;
-
-      const runRows = await app.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, runId))
-        .limit(1);
-      const run = runRows[0];
-      if (!run) {
-        return sendError(reply, 404, "run_not_found");
-      }
 
       // Drain multipart parts. Field order is unconstrained — SDK sends both
       // file parts (pngBytes, optional domHtml) and string fields (name,
@@ -728,24 +757,23 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         return sendError(reply, 400, "pngBytes_required");
       }
 
-      const result = await persistScreenshot(
-        run,
-        {
-          pngBytes,
-          domHtml,
-          elementMapRaw,
-          snapName,
-          viewport,
-          browser,
-          os,
-          device,
-          matchLevel,
-          ignoreDisplacements,
-          accessibilityLevel,
-          accessibilityVersion,
-        },
-        req.log,
-      );
+      const result = await persistScreenshot(req, runId, {
+        pngBytes,
+        domHtml,
+        elementMapRaw,
+        snapName,
+        viewport,
+        browser,
+        os,
+        device,
+        matchLevel,
+        ignoreDisplacements,
+        accessibilityLevel,
+        accessibilityVersion,
+      });
+      if (!result) {
+        return sendError(reply, 404, "run_not_found");
+      }
       return reply.code(200).send(result);
     },
   );
@@ -796,16 +824,6 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       }
       const body = parsedBody.data;
 
-      const runRows = await app.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, runId))
-        .limit(1);
-      const run = runRows[0];
-      if (!run) {
-        return sendError(reply, 404, "run_not_found");
-      }
-
       // Decode base64. Node's Buffer.from with "base64" is lenient — it
       // accepts both standard and URL-safe alphabets and silently drops
       // whitespace, so we don't need a separate normalization pass. The
@@ -832,19 +850,18 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       const domHtml = body.domHtml ?? null;
       const elementMapRaw = body.elementMapJson ?? null;
 
-      const result = await persistScreenshot(
-        run,
-        {
-          pngBytes,
-          domHtml,
-          elementMapRaw,
-          snapName,
-          viewport,
-          browser,
-          ignoreDisplacements: body.ignoreDisplacements ?? false,
-        },
-        req.log,
-      );
+      const result = await persistScreenshot(req, runId, {
+        pngBytes,
+        domHtml,
+        elementMapRaw,
+        snapName,
+        viewport,
+        browser,
+        ignoreDisplacements: body.ignoreDisplacements ?? false,
+      });
+      if (!result) {
+        return sendError(reply, 404, "run_not_found");
+      }
       return reply.code(200).send(result);
     },
   );
