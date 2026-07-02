@@ -21,8 +21,8 @@ export const baselinesRouter = t.router({
     .use(
       projectMember<{ testVariationId: string; limit: number }>("read", {
         from: {
-          resolver: async ({ input, ctx }) => {
-            const rows = await ctx.db
+          resolver: async ({ input, db }) => {
+            const rows = await db
               .select({ projectId: testVariations.projectId })
               .from(testVariations)
               .where(eq(testVariations.id, input.testVariationId))

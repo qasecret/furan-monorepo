@@ -18,10 +18,10 @@ export async function registerRunEventsRoute(
         app.authenticate,
         requireProjectMember("read", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const parsed = paramsSchema.safeParse(req.params);
               if (!parsed.success) return null;
-              const row = await app.db
+              const row = await db
                 .select({ projectId: testRuns.projectId })
                 .from(testRuns)
                 .where(eq(testRuns.id, parsed.data.id))
