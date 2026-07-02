@@ -3,6 +3,7 @@ import { userRoleSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { recordAuthFailure } from "../lib/auth-metrics.js";
 import { sendError } from "../lib/errors.js";
 import { verifyPassword } from "../lib/password.js";
 
@@ -46,10 +47,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         .limit(1);
       const user = rows[0];
       if (!user || !user.isActive) {
+        recordAuthFailure(app.telemetry.metrics, "invalid_credentials");
         return sendError(reply, 401, "invalid_credentials");
       }
       const ok = await verifyPassword(password, user.hashedPassword);
       if (!ok) {
+        recordAuthFailure(app.telemetry.metrics, "invalid_credentials");
         return sendError(reply, 401, "invalid_credentials");
       }
 
