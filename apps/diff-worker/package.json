@@ -12,7 +12,8 @@
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "cli:retention": "tsx src/cli/retention.ts"
+    "cli:retention": "tsx src/cli/retention.ts",
+    "cli:reconcile-storage": "tsx src/cli/reconcile-storage.ts"
   },
   "dependencies": {
     "@furan/config": "workspace:*",

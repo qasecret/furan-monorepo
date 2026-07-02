@@ -5,7 +5,7 @@ import { createHddStorage } from "./hdd.js";
 import { createS3Storage } from "./s3.js";
 import type { Storage } from "./types.js";
 
-export type { HeadResult, Storage } from "./types.js";
+export type { HeadResult, Storage, StorageObject } from "./types.js";
 
 /**
  * `STORAGE_KIND` selects the backend at boot. Defaults to `s3` to

@@ -3,6 +3,12 @@ export interface HeadResult {
   contentType?: string;
 }
 
+export interface StorageObject {
+  key: string;
+  size: number;
+  lastModified: Date;
+}
+
 /**
  * Storage backend interface — same shape for both S3 and on-disk (HDD)
  * implementations. Consumers only care about keys + bytes; the factory
@@ -33,4 +39,10 @@ export interface Storage {
   get(key: string): Promise<Uint8Array>;
   head(key: string): Promise<HeadResult | null>;
   delete(key: string): Promise<void>;
+  /**
+   * Enumerate stored objects (optionally under `prefix`). Used by the
+   * orphan-reconcile sweep to find objects no DB row references. Paginated
+   * internally; returns the full set.
+   */
+  list(prefix?: string): Promise<StorageObject[]>;
 }

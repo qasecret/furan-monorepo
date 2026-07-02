@@ -2,12 +2,13 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 
-import type { HeadResult, Storage } from "./types.js";
+import type { HeadResult, Storage, StorageObject } from "./types.js";
 
 export interface S3Config {
   endpoint: string;
@@ -91,6 +92,29 @@ export function createS3Storage(config: S3Config): Storage {
       await client.send(
         new DeleteObjectCommand({ Bucket: config.bucket, Key: key }),
       );
+    },
+    async list(prefix) {
+      const out: StorageObject[] = [];
+      let token: string | undefined;
+      do {
+        const r = await client.send(
+          new ListObjectsV2Command({
+            Bucket: config.bucket,
+            ...(prefix ? { Prefix: prefix } : {}),
+            ...(token ? { ContinuationToken: token } : {}),
+          }),
+        );
+        for (const o of r.Contents ?? []) {
+          if (o.Key === undefined) continue;
+          out.push({
+            key: o.Key,
+            size: o.Size ?? 0,
+            lastModified: o.LastModified ?? new Date(0),
+          });
+        }
+        token = r.IsTruncated ? r.NextContinuationToken : undefined;
+      } while (token);
+      return out;
     },
   };
 }
