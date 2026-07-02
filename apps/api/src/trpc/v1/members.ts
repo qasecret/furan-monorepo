@@ -168,7 +168,11 @@ export const membersRouter = t.router({
     .input(
       z.object({
         userId: z.string().uuid(),
-        projectIds: z.array(z.string().uuid()),
+        // Cap the set so a single admin request can't open a huge insert
+        // transaction. 200 matches the codebase's other bulk caps
+        // (BULK_CAP / GROUP_APPROVE_CAP) and is far above any real
+        // per-user project count.
+        projectIds: z.array(z.string().uuid()).max(200),
         defaultProjectId: z.string().uuid().nullable(),
       }),
     )

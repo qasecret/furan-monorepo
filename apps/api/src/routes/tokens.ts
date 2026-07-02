@@ -50,7 +50,13 @@ export async function registerTokensRoutes(
 
   app.post(
     "/account/tokens",
-    { preHandler: app.authenticate },
+    {
+      preHandler: app.authenticate,
+      // PAT minting is rare in normal use; cap the burst so a compromised
+      // session can't mass-mint tokens. Opt-in per-route (same pattern as
+      // /auth/login) since the rate-limit plugin is registered global:false.
+      config: { rateLimit: { max: 10, timeWindow: "1 hour" } },
+    },
     async (req, reply) => {
       if (!req.auth) {
         return sendError(reply, 401, "unauthenticated");
