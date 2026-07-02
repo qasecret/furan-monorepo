@@ -225,6 +225,13 @@
       "when": 1782491333896,
       "tag": "0031_handy_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1782991025666,
+      "tag": "0032_rls_functions_and_app_role",
+      "breakpoints": true
     }
   ]
 }

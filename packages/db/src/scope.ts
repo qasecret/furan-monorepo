@@ -81,6 +81,24 @@ export async function withUserScope<T>(
   });
 }
 
+/**
+ * Runs `fn` with the RLS-bypass identity (`app.user_role = 'owner'`, no user),
+ * inside a transaction. For internal AUTHORIZATION reads that must see rows
+ * regardless of the caller's own membership — chiefly the
+ * `requireProjectMember` gate + its route resolvers, which resolve a project id
+ * and check membership and so cannot be subject to the RLS they enforce
+ * (ADR-058, finding #4). The policies treat `owner` as a bypass
+ * (`app_is_admin()`), so once RLS is on these reads see everything. RLS is not
+ * enabled yet, so this is a no-op marker today. Do NOT use for business
+ * queries — only the ACL gate.
+ */
+export async function withPrivilegedScope<T>(
+  db: DB,
+  fn: (tx: DB) => Promise<T>,
+): Promise<T> {
+  return withUserScope(db, { userId: "", role: "owner" }, fn);
+}
+
 /** Reads the current scoped user_id; returns null when no identity is set. */
 export async function currentUserId(db: DB): Promise<string | null> {
   const rows = await db.execute<{ current_setting: string | null }>(
