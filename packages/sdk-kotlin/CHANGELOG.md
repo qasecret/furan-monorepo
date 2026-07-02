@@ -2,52 +2,46 @@
 
 ## [4.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.0.0...sdk/v4.1.0) (2026-06-27)
 
-
 ### Features
 
-* **sdk:** Applitools Eyes compatibility layer ([#315](https://github.com/qasecret/furan-monorepo/issues/315)) ([ccadab5](https://github.com/qasecret/furan-monorepo/commit/ccadab556cbf40a215f9623c74df0b0896e3ceed))
+- **sdk:** compatibility layer ([#315](https://github.com/qasecret/furan-monorepo/issues/315)) ([ccadab5](https://github.com/qasecret/furan-monorepo/commit/ccadab556cbf40a215f9623c74df0b0896e3ceed))
 
 ## [4.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.3.0...sdk/v4.0.0) (2026-06-24)
 
-
 ### Bug Fixes
 
-* **sdk:** release 4.0.0 — ship the v2-runtime removal + SDK_VERSION fix ([#298](https://github.com/qasecret/furan-monorepo/issues/298)) ([7793ea5](https://github.com/qasecret/furan-monorepo/commit/7793ea5d7ec6c066d45a1f755a46b6680a59067e))
+- **sdk:** release 4.0.0 — ship the v2-runtime removal + SDK_VERSION fix ([#298](https://github.com/qasecret/furan-monorepo/issues/298)) ([7793ea5](https://github.com/qasecret/furan-monorepo/commit/7793ea5d7ec6c066d45a1f755a46b6680a59067e))
 
 ## [3.3.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.1...sdk/v3.3.0) (2026-06-24)
 
-
 ### Features
 
-* **sdk:** add furan-appium adapter for native mobile (Phase 3) ([#295](https://github.com/qasecret/furan-monorepo/issues/295)) ([555a365](https://github.com/qasecret/furan-monorepo/commit/555a3654018c986948b4e1c62fcecaea69f6e759))
-* **sdk:** add furan-playwright adapter on the shared capture SPI (Phase 2) ([#294](https://github.com/qasecret/furan-monorepo/issues/294)) ([ef4c10c](https://github.com/qasecret/furan-monorepo/commit/ef4c10c823f8c86b39f48f95ac744b196a7753fc))
-* **sdk:** driverless raw-image checkpoint API (FuranImages) ([#292](https://github.com/qasecret/furan-monorepo/issues/292)) ([79a9b01](https://github.com/qasecret/furan-monorepo/commit/79a9b019be5b49b532403d3556c470ef1e0aafd0))
-* **sdk:** throw actionable FuranNoBaselineException on a no-baseline first run (ADR-036) ([#288](https://github.com/qasecret/furan-monorepo/issues/288)) ([dff148d](https://github.com/qasecret/furan-monorepo/commit/dff148dc424dbb9971bc3d2f688a3cb77abda914))
-* **sdk:** wire parent-branch baseline inheritance end-to-end (FURAN_PARENT_BRANCH, ADR-055) ([#286](https://github.com/qasecret/furan-monorepo/issues/286)) ([265fe7d](https://github.com/qasecret/furan-monorepo/commit/265fe7dcf3998485e83ff8474be9565bf94887c9))
+- **sdk:** add furan-appium adapter for native mobile (Phase 3) ([#295](https://github.com/qasecret/furan-monorepo/issues/295)) ([555a365](https://github.com/qasecret/furan-monorepo/commit/555a3654018c986948b4e1c62fcecaea69f6e759))
+- **sdk:** add furan-playwright adapter on the shared capture SPI (Phase 2) ([#294](https://github.com/qasecret/furan-monorepo/issues/294)) ([ef4c10c](https://github.com/qasecret/furan-monorepo/commit/ef4c10c823f8c86b39f48f95ac744b196a7753fc))
+- **sdk:** driverless raw-image checkpoint API (FuranImages) ([#292](https://github.com/qasecret/furan-monorepo/issues/292)) ([79a9b01](https://github.com/qasecret/furan-monorepo/commit/79a9b019be5b49b532403d3556c470ef1e0aafd0))
+- **sdk:** throw actionable FuranNoBaselineException on a no-baseline first run (ADR-036) ([#288](https://github.com/qasecret/furan-monorepo/issues/288)) ([dff148d](https://github.com/qasecret/furan-monorepo/commit/dff148dc424dbb9971bc3d2f688a3cb77abda914))
+- **sdk:** wire parent-branch baseline inheritance end-to-end (FURAN_PARENT_BRANCH, ADR-055) ([#286](https://github.com/qasecret/furan-monorepo/issues/286)) ([265fe7d](https://github.com/qasecret/furan-monorepo/commit/265fe7dcf3998485e83ff8474be9565bf94887c9))
 
 ## [3.2.1](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.2.0...sdk/v3.2.1) (2026-06-21)
 
-
 ### Bug Fixes
 
-* address code review findings across dashboard and SDK example ([#250](https://github.com/qasecret/furan-monorepo/issues/250)) ([46f6b67](https://github.com/qasecret/furan-monorepo/commit/46f6b67e98b1acb4484ca2a3e2db79cd3bd84ee5))
+- address code review findings across dashboard and SDK example ([#250](https://github.com/qasecret/furan-monorepo/issues/250)) ([46f6b67](https://github.com/qasecret/furan-monorepo/commit/46f6b67e98b1acb4484ca2a3e2db79cd3bd84ee5))
 
 ## [3.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.1.0...sdk/v3.2.0) (2026-05-30)
 
-
 ### Features
 
-* **sdk-kotlin:** full-page stitching (Eyes parity Tier 3) ([#218](https://github.com/qasecret/furan-monorepo/issues/218)) ([3e4ba9b](https://github.com/qasecret/furan-monorepo/commit/3e4ba9b9c71e1e7bc07eab55cb4ba1e81ed29cca))
+- **sdk-kotlin:** full-page stitching (Tier 3) ([#218](https://github.com/qasecret/furan-monorepo/issues/218)) ([3e4ba9b](https://github.com/qasecret/furan-monorepo/commit/3e4ba9b9c71e1e7bc07eab55cb4ba1e81ed29cca))
 
 ## [3.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v3.0.0...sdk/v3.1.0) (2026-05-30)
 
-
 ### Features
 
-* **sdk-kotlin:** ignoreCaret selector-mask (Eyes parity Tier 2.4) ([#214](https://github.com/qasecret/furan-monorepo/issues/214)) ([dad8795](https://github.com/qasecret/furan-monorepo/commit/dad8795f5ac440645005740f6b9599a0ca00ebde))
-* **sdk-kotlin:** matchTimeoutMs stability poll (Eyes parity Tier 2.3) ([#213](https://github.com/qasecret/furan-monorepo/issues/213)) ([ee18649](https://github.com/qasecret/furan-monorepo/commit/ee186492a0c1166972187b3bd3172f88d9ae9876))
-* **sdk-kotlin:** sendDom opt-out (Eyes parity Tier 2.2) ([#212](https://github.com/qasecret/furan-monorepo/issues/212)) ([80adc4b](https://github.com/qasecret/furan-monorepo/commit/80adc4b40156a1399972235ec7c475b989219b06))
-* **sdk,db,api,diff-engine,diff-worker:** accessibility validation (Tier 2.5) ([#215](https://github.com/qasecret/furan-monorepo/issues/215)) ([efad14b](https://github.com/qasecret/furan-monorepo/commit/efad14b76776a149b7d52c418aa073d058f5e48d))
+- **sdk-kotlin:** ignoreCaret selector-mask (Tier 2.4) ([#214](https://github.com/qasecret/furan-monorepo/issues/214)) ([dad8795](https://github.com/qasecret/furan-monorepo/commit/dad8795f5ac440645005740f6b9599a0ca00ebde))
+- **sdk-kotlin:** matchTimeoutMs stability poll (Tier 2.3) ([#213](https://github.com/qasecret/furan-monorepo/issues/213)) ([ee18649](https://github.com/qasecret/furan-monorepo/commit/ee186492a0c1166972187b3bd3172f88d9ae9876))
+- **sdk-kotlin:** sendDom opt-out (Tier 2.2) ([#212](https://github.com/qasecret/furan-monorepo/issues/212)) ([80adc4b](https://github.com/qasecret/furan-monorepo/commit/80adc4b40156a1399972235ec7c475b989219b06))
+- **sdk,db,api,diff-engine,diff-worker:** accessibility validation (Tier 2.5) ([#215](https://github.com/qasecret/furan-monorepo/issues/215)) ([efad14b](https://github.com/qasecret/furan-monorepo/commit/efad14b76776a149b7d52c418aa073d058f5e48d))
 
 ## [3.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.2.0...sdk/v3.0.0) (2026-05-30)
 
@@ -65,20 +59,20 @@
 - **sdk-kotlin:** application.yml/yaml config source + FuranConfig.fromYaml() bridge ([#158](https://github.com/qasecret/furan-monorepo/issues/158)) ([ab68fb0](https://github.com/qasecret/furan-monorepo/commit/ab68fb09c9a701957a279ee7f0e1451041ba15b0))
 - **sdk-kotlin:** auto-discover classpath application.yml + FuranConfig.fromClasspath() ([#178](https://github.com/qasecret/furan-monorepo/issues/178)) ([b15b745](https://github.com/qasecret/furan-monorepo/commit/b15b745f4737469ab4620bcce65c7b1baf82fa77))
 - **sdk-kotlin:** Bootstrap + Runtime spine (Phase 2 of SDK v2 spec) ([#138](https://github.com/qasecret/furan-monorepo/issues/138)) ([a85dd1f](https://github.com/qasecret/furan-monorepo/commit/a85dd1fd29967f72b51c0b836aad21e6ed28a49b))
-- **sdk-kotlin:** CSS-selector-anchored regions (Eyes parity Tier 1.2) ([#205](https://github.com/qasecret/furan-monorepo/issues/205)) ([a517453](https://github.com/qasecret/furan-monorepo/commit/a517453f280f64ecc7678dc050c0f3990d548600))
+- **sdk-kotlin:** CSS-selector-anchored regions (Tier 1.2) ([#205](https://github.com/qasecret/furan-monorepo/issues/205)) ([a517453](https://github.com/qasecret/furan-monorepo/commit/a517453f280f64ecc7678dc050c0f3990d548600))
 - **sdk-kotlin:** EndpointResolver chain (Phase 3 of SDK v2 spec) ([#139](https://github.com/qasecret/furan-monorepo/issues/139)) ([ade0f7b](https://github.com/qasecret/furan-monorepo/commit/ade0f7b14f9cb9eb2e74d60cd1f3368615970b44))
 - **sdk-kotlin:** example tests for ignore regions + v2 runtime spine ([#149](https://github.com/qasecret/furan-monorepo/issues/149)) ([d99d9bd](https://github.com/qasecret/furan-monorepo/commit/d99d9bd8c62d2de7b81157d35ae85d69ca4c7f67))
 - **sdk-kotlin:** furan-junit5 module with @FuranTest extension ([#133](https://github.com/qasecret/furan-monorepo/issues/133)) ([c18dd8e](https://github.com/qasecret/furan-monorepo/commit/c18dd8ed1aea3d3a13f29b7cf73595c4c4322b30))
 - **sdk-kotlin:** FuranException hierarchy expansion + transport wrapping ([#132](https://github.com/qasecret/furan-monorepo/issues/132)) ([e624e15](https://github.com/qasecret/furan-monorepo/commit/e624e1538399296806056a5b6f8e5ba45900285f))
 - **sdk-kotlin:** HttpTransport SPI (Phase 3.5 of SDK v2 spec — abstraction layer only) ([#145](https://github.com/qasecret/furan-monorepo/issues/145)) ([80bd3e3](https://github.com/qasecret/furan-monorepo/commit/80bd3e3198ee393c97f568e4f44acba1bdaf194a))
 - **sdk-kotlin:** layered ConfigSource subsystem (Phase 1 of SDK v2 spec) ([#136](https://github.com/qasecret/furan-monorepo/issues/136)) ([980cded](https://github.com/qasecret/furan-monorepo/commit/980cded40e40c6595a92ce599006ed26c4d0a11e))
-- **sdk-kotlin:** lazy-load scroll-and-wait loop (Eyes parity Tier 2.1) ([#210](https://github.com/qasecret/furan-monorepo/issues/210)) ([88f7e88](https://github.com/qasecret/furan-monorepo/commit/88f7e88f2158a82fe8276227bda3adda0db1fede))
-- **sdk-kotlin:** per-checkpoint region crop (Eyes parity Tier 1.1) ([#203](https://github.com/qasecret/furan-monorepo/issues/203)) ([4e69cb7](https://github.com/qasecret/furan-monorepo/commit/4e69cb7592ae6465d607406cc128f49829c1e18d))
+- **sdk-kotlin:** lazy-load scroll-and-wait loop (Tier 2.1) ([#210](https://github.com/qasecret/furan-monorepo/issues/210)) ([88f7e88](https://github.com/qasecret/furan-monorepo/commit/88f7e88f2158a82fe8276227bda3adda0db1fede))
+- **sdk-kotlin:** per-checkpoint region crop (Tier 1.1) ([#203](https://github.com/qasecret/furan-monorepo/issues/203)) ([4e69cb7](https://github.com/qasecret/furan-monorepo/commit/4e69cb7592ae6465d607406cc128f49829c1e18d))
 - **sdk-kotlin:** Plugin + Capability Registry (Phase 4 of SDK v2 spec) ([#140](https://github.com/qasecret/furan-monorepo/issues/140)) ([ac768a5](https://github.com/qasecret/furan-monorepo/commit/ac768a52d0605be7b8fd4755288ef1286be2cc77))
-- **sdk-kotlin:** pre-capture JS hook + wait (Eyes parity Tier 1.3) ([#206](https://github.com/qasecret/furan-monorepo/issues/206)) ([136db35](https://github.com/qasecret/furan-monorepo/commit/136db35448ea4c064b0ddbb6c57ced1c6fbb1041))
+- **sdk-kotlin:** pre-capture JS hook + wait (Tier 1.3) ([#206](https://github.com/qasecret/furan-monorepo/issues/206)) ([136db35](https://github.com/qasecret/furan-monorepo/commit/136db35448ea4c064b0ddbb6c57ced1c6fbb1041))
 - **sdk-kotlin:** release-please auto-bump + auto-publish to Maven Central ([#13](https://github.com/qasecret/furan-monorepo/issues/13)) ([e6cbbf1](https://github.com/qasecret/furan-monorepo/commit/e6cbbf17080f89f1b0e17d0e9a6f593ea72790f3))
 - **sdk-kotlin:** RuntimeDiagnostics snapshot (Phase 6 of SDK v2 spec) ([#142](https://github.com/qasecret/furan-monorepo/issues/142)) ([fea1d2d](https://github.com/qasecret/furan-monorepo/commit/fea1d2d184fa609bf05afd58692ec57835bf92d2))
-- **sdk-kotlin:** SuiteResult + Furan.aggregateResults (Eyes parity Tier 1.5) ([#209](https://github.com/qasecret/furan-monorepo/issues/209)) ([e83f368](https://github.com/qasecret/furan-monorepo/commit/e83f368667d1e33bb30ab356b3206187f07810e7))
+- **sdk-kotlin:** SuiteResult + Furan.aggregateResults (Tier 1.5) ([#209](https://github.com/qasecret/furan-monorepo/issues/209)) ([e83f368](https://github.com/qasecret/furan-monorepo/commit/e83f368667d1e33bb30ab356b3206187f07810e7))
 - **sdk-kotlin:** switch to vanniktech publish plugin + rename to io.github.qasecret:furan-{core,selenium} ([#11](https://github.com/qasecret/furan-monorepo/issues/11)) ([0481d55](https://github.com/qasecret/furan-monorepo/commit/0481d552192ad136af7ca688807eda411f045765))
 - **sdk-kotlin:** typed RunStatus, SnapshotResult, snapshotAndAwait ([#128](https://github.com/qasecret/furan-monorepo/issues/128)) ([c140249](https://github.com/qasecret/furan-monorepo/commit/c1402499fcbcdd77625ae10261f3f941d4c94f52))
 - **sdk-kotlin:** Weighted/Canary/TenantAffinity resolvers (Phase 7 partial of SDK v2 spec) ([#144](https://github.com/qasecret/furan-monorepo/issues/144)) ([3b2326c](https://github.com/qasecret/furan-monorepo/commit/3b2326c818885343510d131b580194fb6e34f9f9))
@@ -96,15 +90,15 @@
 
 ### Features
 
-- **sdk-kotlin:** SuiteResult + Furan.aggregateResults (Eyes parity Tier 1.5) ([#209](https://github.com/qasecret/furan-monorepo/issues/209)) ([e83f368](https://github.com/qasecret/furan-monorepo/commit/e83f368667d1e33bb30ab356b3206187f07810e7))
+- **sdk-kotlin:** SuiteResult + Furan.aggregateResults (Tier 1.5) ([#209](https://github.com/qasecret/furan-monorepo/issues/209)) ([e83f368](https://github.com/qasecret/furan-monorepo/commit/e83f368667d1e33bb30ab356b3206187f07810e7))
 
 ## [2.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v2.0.0...sdk/v2.1.0) (2026-05-30)
 
 ### Features
 
-- **sdk-kotlin:** CSS-selector-anchored regions (Eyes parity Tier 1.2) ([#205](https://github.com/qasecret/furan-monorepo/issues/205)) ([a517453](https://github.com/qasecret/furan-monorepo/commit/a517453f280f64ecc7678dc050c0f3990d548600))
-- **sdk-kotlin:** per-checkpoint region crop (Eyes parity Tier 1.1) ([#203](https://github.com/qasecret/furan-monorepo/issues/203)) ([4e69cb7](https://github.com/qasecret/furan-monorepo/commit/4e69cb7592ae6465d607406cc128f49829c1e18d))
-- **sdk-kotlin:** pre-capture JS hook + wait (Eyes parity Tier 1.3) ([#206](https://github.com/qasecret/furan-monorepo/issues/206)) ([136db35](https://github.com/qasecret/furan-monorepo/commit/136db35448ea4c064b0ddbb6c57ced1c6fbb1041))
+- **sdk-kotlin:** CSS-selector-anchored regions (Tier 1.2) ([#205](https://github.com/qasecret/furan-monorepo/issues/205)) ([a517453](https://github.com/qasecret/furan-monorepo/commit/a517453f280f64ecc7678dc050c0f3990d548600))
+- **sdk-kotlin:** per-checkpoint region crop (Tier 1.1) ([#203](https://github.com/qasecret/furan-monorepo/issues/203)) ([4e69cb7](https://github.com/qasecret/furan-monorepo/commit/4e69cb7592ae6465d607406cc128f49829c1e18d))
+- **sdk-kotlin:** pre-capture JS hook + wait (Tier 1.3) ([#206](https://github.com/qasecret/furan-monorepo/issues/206)) ([136db35](https://github.com/qasecret/furan-monorepo/commit/136db35448ea4c064b0ddbb6c57ced1c6fbb1041))
 
 ## [2.0.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v1.0.1...sdk/v2.0.0) (2026-05-29)
 
