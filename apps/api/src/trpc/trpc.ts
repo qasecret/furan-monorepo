@@ -1,6 +1,8 @@
 import { withUserScope } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
+import { createDeferredSink } from "../lib/deferred-sink.js";
+
 import type { Context } from "./context.js";
 
 export const t = initTRPC.context<Context>().create();
@@ -23,18 +25,21 @@ export const t = initTRPC.context<Context>().create();
  * savepoint on the outer transaction (supported by postgres.js).
  */
 const scopeToUser = t.middleware(async ({ ctx, next }) => {
-  if (!ctx.user) return next();
+  // The sink lives in the middleware closure (not on the Context), so
+  // `ctx.onCommit` is the only surface a procedure sees — it can't reach or
+  // mutate the underlying effect list. Injected in both branches so the ctx
+  // shape (and its inferred type) is consistent for every procedure.
+  const sink = createDeferredSink();
+  const scopedCtx = { ...ctx, onCommit: sink.onCommit };
+  if (!ctx.user) return next({ ctx: scopedCtx });
   const { id, role } = ctx.user;
   const result = await withUserScope(ctx.db, { userId: id, role }, (tx) =>
-    next({ ctx: { ...ctx, db: tx } }),
+    next({ ctx: { ...scopedCtx, db: tx } }),
   );
-  // Drain post-commit side effects (diff enqueues) only when the procedure
-  // succeeded — on error the transaction rolled back, so enqueuing a job for
-  // rows that no longer exist would be wrong. `ctx._deferred` is the same array
-  // the procedure pushed to via `ctx.onCommit` (the `next` ctx spreads it).
-  if (result.ok) {
-    for (const fn of ctx._deferred) await fn();
-  }
+  // Drain post-commit effects (diff enqueues) only when the procedure
+  // succeeded — on error the transaction is rolled back / committed empty, so
+  // enqueuing a job for rows that aren't there would be wrong.
+  if (result.ok) await sink.drain();
   return result;
 });
 

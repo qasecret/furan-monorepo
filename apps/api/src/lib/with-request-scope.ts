@@ -1,6 +1,8 @@
 import { withUserScope, type DB } from "@furan/db";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
+import { createDeferredSink } from "./deferred-sink.js";
+
 /**
  * Runs `fn` inside a per-request user-scoped transaction (ADR-058), pinning
  * `app.user_id` / `app.user_role` (+ an optional project marker) so Postgres
@@ -20,26 +22,24 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
  * references are visible. Deferred effects run only if `fn` resolves; if it
  * throws, the transaction rolls back and nothing is enqueued.
  */
-export function withRequestScope<T>(
+export async function withRequestScope<T>(
   app: FastifyInstance,
   req: FastifyRequest,
   fn: (db: DB, onCommit: (effect: () => unknown) => void) => Promise<T>,
   projectId?: string,
 ): Promise<T> {
-  const deferred: Array<() => unknown> = [];
-  const onCommit = (effect: () => unknown): void => {
-    deferred.push(effect);
-  };
-  return withUserScope(
+  const sink = createDeferredSink();
+  const result = await withUserScope(
     app.db,
     {
       userId: req.auth?.id ?? "",
       role: req.auth?.role ?? "guest",
       ...(projectId ? { projectId } : {}),
     },
-    (db) => fn(db, onCommit),
-  ).then(async (result) => {
-    for (const effect of deferred) await effect();
-    return result;
-  });
+    (db) => fn(db, sink.onCommit),
+  );
+  // Reached only if the scoped work resolved (a throw skips this and nothing
+  // is enqueued), so effects fire exactly once, post-commit.
+  await sink.drain();
+  return result;
 }

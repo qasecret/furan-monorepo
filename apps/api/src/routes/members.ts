@@ -1,4 +1,4 @@
-import { and, eq, projectMembers } from "@furan/db";
+import { and, eq, projectMembers, users } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -43,6 +43,17 @@ export async function registerMembersRoutes(
         app,
         req,
         async (db) => {
+          // Verify the target user exists first so a bad userId is a clean 404
+          // rather than a raw FK-violation 500 (onConflictDoNothing only
+          // swallows the unique conflict, not the FK).
+          const [target] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.id, bodyParsed.data.userId))
+            .limit(1);
+          if (!target) {
+            return sendError(reply, 404, "user_not_found");
+          }
           const [row] = await db
             .insert(projectMembers)
             .values({
