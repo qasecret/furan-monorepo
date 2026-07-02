@@ -39,7 +39,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7",
-    "recharts": "^2.13.0",
+    "recharts": "^3.9.1",
     "sonner": "^1",
     "tailwind-merge": "^2.5.5",
     "tinykeys": "^3.0.0",
