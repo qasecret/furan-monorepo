@@ -78,27 +78,99 @@ export function bootstrapTelemetry(opts: BootstrapOptions): Telemetry {
   };
 }
 
+export interface ProcessErrorHandlerOptions {
+  /** Test-injection seam for the process exit — defaults to `process.exit`. */
+  exit?: (code: number) => void;
+}
+
+/**
+ * Flush the logger's (possibly async) destination, then exit. Bounded by a
+ * short timer so a stuck/async transport can never keep the dying process
+ * alive — with the default sync stdout destination the fatal line is already
+ * written and `flush`'s callback fires promptly, so exit is effectively
+ * immediate; the timer only matters for a remote/OTLP pino transport.
+ */
+function flushThenExit(
+  logger: Logger,
+  code: number,
+  exitFn: (code: number) => void,
+): void {
+  let exited = false;
+  const exit = (): void => {
+    if (exited) return;
+    exited = true;
+    exitFn(code);
+  };
+  const timer = setTimeout(exit, 500);
+  timer.unref();
+  try {
+    logger.flush(exit);
+  } catch {
+    exit();
+  }
+}
+
+/**
+ * Build the `unhandledRejection` / `uncaughtException` handlers without
+ * registering them on `process`. Exposed so the behavior is unit-testable
+ * (the process-global handlers can't be exercised without killing the test
+ * runner); {@link installProcessErrorHandlers} is the wiring you call in a
+ * service.
+ */
+export function makeProcessErrorHandlers(
+  logger: Logger,
+  opts: ProcessErrorHandlerOptions = {},
+): {
+  onUnhandledRejection: (reason: unknown) => void;
+  onUncaughtException: (err: unknown) => void;
+} {
+  const exitFn = opts.exit ?? ((code: number) => process.exit(code));
+  return {
+    // A stray unhandledRejection is usually a fire-and-forget best-effort
+    // write (telemetry / broadcast / audit) that rejected — NOT a reason to
+    // kill the whole worker and abandon in-flight jobs, which then requeue and
+    // turn one transient error into repeated lost work. Log it and keep
+    // serving; this deliberately overrides Node's default crash-on-unhandled-
+    // rejection. A genuinely fatal bug will still surface as an
+    // uncaughtException (below) or a failed health check.
+    onUnhandledRejection: (reason) => {
+      logger.error({ err: reason }, "unhandled_rejection");
+    },
+    // An uncaughtException means an error reached the event loop with no
+    // handler — process state is genuinely undefined. Log fatal, flush so the
+    // line isn't lost on an async destination, then exit non-zero so the
+    // orchestrator restarts a cleanly-dead process rather than nursing a
+    // wedged one.
+    onUncaughtException: (err) => {
+      logger.fatal({ err }, "uncaught_exception");
+      flushThenExit(logger, 1, exitFn);
+    },
+  };
+}
+
 /**
  * Register last-resort process-level crash guards. Without these, an
  * `unhandledRejection` (e.g. a fire-and-forget promise that rejects) or an
  * `uncaughtException` either crashes the process with an unstructured stack on
  * stderr — invisible to log aggregation — or, on older Node defaults, is
  * swallowed and leaves the service in an undefined state. We log the error
- * through the structured logger (so it carries service/version and is
- * redacted + parseable) and exit non-zero so the orchestrator restarts a
- * cleanly-dead process rather than nursing a wedged one.
+ * through the structured logger (so it carries service/version and is redacted
+ * + parseable). `uncaughtException` exits non-zero (state is undefined);
+ * `unhandledRejection` is logged and tolerated (see {@link
+ * makeProcessErrorHandlers}).
  *
  * Call once per service, right after {@link bootstrapTelemetry}.
  */
-export function installProcessErrorHandlers(logger: Logger): void {
-  process.on("unhandledRejection", (reason) => {
-    logger.fatal({ err: reason }, "unhandled_rejection");
-    process.exit(1);
-  });
-  process.on("uncaughtException", (err) => {
-    logger.fatal({ err }, "uncaught_exception");
-    process.exit(1);
-  });
+export function installProcessErrorHandlers(
+  logger: Logger,
+  opts: ProcessErrorHandlerOptions = {},
+): void {
+  const { onUnhandledRejection, onUncaughtException } = makeProcessErrorHandlers(
+    logger,
+    opts,
+  );
+  process.on("unhandledRejection", onUnhandledRejection);
+  process.on("uncaughtException", onUncaughtException);
 }
 
 /**

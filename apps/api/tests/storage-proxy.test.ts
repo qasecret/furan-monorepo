@@ -4,9 +4,26 @@ import { builds, projectMembers, projects, testRuns, users } from "@furan/db";
 import { createStorage, objectKey } from "@furan/storage";
 import { describe, expect, test } from "vitest";
 
+import type { MemberProjectsCache } from "../src/lib/member-projects-cache.js";
 import { hashPassword } from "../src/lib/password.js";
 
 import { createTestApp } from "./helpers.js";
+
+/** In-memory {@link MemberProjectsCache} for exercising the hot-path cache. */
+function fakeCache(): MemberProjectsCache {
+  const store = new Map<string, string[]>();
+  return {
+    get: (userId) => Promise.resolve(store.get(userId) ?? null),
+    set: (userId, projectIds) => {
+      store.set(userId, projectIds);
+      return Promise.resolve();
+    },
+    del: (userId) => {
+      store.delete(userId);
+      return Promise.resolve();
+    },
+  };
+}
 
 const skip =
   !process.env.DATABASE_URL ||
@@ -204,6 +221,89 @@ d("GET /api/v1/storage/:key", () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers["content-type"]).toMatch(/application\/json/);
       expect(res.body).toBe(payload);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("uses the member-projects cache: hit authorizes without a membership row", async () => {
+    const h = await createTestApp({ memberProjectsCache: fakeCache() });
+    try {
+      const storage = createStorage();
+      const key = objectKey(TINY_PNG);
+      await storage.put(key, TINY_PNG, "image/png");
+
+      // Project + key attribution exist, but the caller has NO project_members
+      // row — authorization must come from the pre-seeded cache entry.
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ name: `sp-${randomUUID()}` })
+        .returning();
+      const editor = await seedUser(h, "editor");
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: proj!.id })
+        .returning();
+      await h.db.insert(testRuns).values({
+        buildId: build!.id,
+        projectId: proj!.id,
+        name: "t",
+        diffName: key,
+      });
+
+      const cache = h.app.memberProjectsCache!;
+      await cache.set(editor.id, [proj!.id]);
+
+      const token = h.app.jwt.sign({ sub: editor.id, role: "editor" });
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("populates the member-projects cache on a miss", async () => {
+    const cache = fakeCache();
+    const h = await createTestApp({ memberProjectsCache: cache });
+    try {
+      const storage = createStorage();
+      const key = objectKey(TINY_PNG);
+      await storage.put(key, TINY_PNG, "image/png");
+
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ name: `sp-${randomUUID()}` })
+        .returning();
+      const editor = await seedUser(h, "editor");
+      await h.db
+        .insert(projectMembers)
+        .values({ userId: editor.id, projectId: proj!.id });
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: proj!.id })
+        .returning();
+      await h.db.insert(testRuns).values({
+        buildId: build!.id,
+        projectId: proj!.id,
+        name: "t",
+        diffName: key,
+      });
+
+      expect(await cache.get(editor.id)).toBeNull(); // cold
+
+      const token = h.app.jwt.sign({ sub: editor.id, role: "editor" });
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      // The DB membership read populated the cache with the resolved set.
+      expect(await cache.get(editor.id)).toEqual([proj!.id]);
     } finally {
       await h.close();
     }

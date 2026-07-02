@@ -11,6 +11,7 @@ import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
 import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { createBroadcaster } from "./lib/broadcast.js";
+import { createRedisMemberProjectsCache } from "./lib/member-projects-cache.js";
 import { createRedisUserAuthCache } from "./lib/user-auth-cache.js";
 
 async function main(): Promise<void> {
@@ -34,6 +35,9 @@ async function main(): Promise<void> {
   // commands; separate from the broadcaster's publisher connection).
   const cacheRedis = createRedisConnection();
   const cache = createRedisUserAuthCache(cacheRedis);
+  // Shares the cache connection — separate key namespace (member-project sets
+  // for the storage-proxy hot path).
+  const memberProjectsCache = createRedisMemberProjectsCache(cacheRedis);
 
   const app = await createApp({
     db,
@@ -42,6 +46,7 @@ async function main(): Promise<void> {
     diffQueue,
     broadcaster,
     cache,
+    memberProjectsCache,
   });
 
   // First-admin bootstrap. Runs at most once (no-op when users exist).
