@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createDb, type DB } from "@furan/db";
+import { createDb, type DB, sql } from "@furan/db";
 import { bootstrapTelemetry, type Telemetry } from "@furan/telemetry";
 import type { FastifyInstance } from "fastify";
 import { vi, type Mock } from "vitest";
@@ -36,6 +36,20 @@ export interface TestApp {
 const DEFAULT_DATABASE_URL =
   "postgresql://furan:devpw@localhost:5433/furan_dev";
 const DEFAULT_JWT_SECRET = "test_jwt_secret_at_least_32_chars_long_for_tests"; // gitleaks:allow
+
+// ADR-058 / issue #351: test-only password for the RLS `furan_app` role. Only
+// used when TEST_RLS=1; migration 0032 creates the role NOLOGIN, so we grant it
+// LOGIN once per process here. Not a real credential.
+const FURAN_APP_TEST_PASSWORD = "furan_app_test"; // gitleaks:allow
+let furanAppLoginGranted = false;
+async function ensureFuranAppLogin(owner: DB): Promise<void> {
+  if (furanAppLoginGranted) return;
+  // Password is the FURAN_APP_TEST_PASSWORD literal (kept in sync with the URL).
+  await owner.execute(
+    sql`ALTER ROLE furan_app WITH LOGIN PASSWORD 'furan_app_test'`,
+  );
+  furanAppLoginGranted = true;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPOSE_ENV_CANDIDATES = [
@@ -210,7 +224,25 @@ export async function createTestApp(
     service: "api-test",
     version: "test",
   });
+  // Owner connection — used by tests for seeding + assertions (bypasses RLS).
   const { db, close: closeDb } = createDb();
+
+  // ADR-058: with TEST_RLS=1 the APP-under-test connects as the non-owner
+  // `furan_app` role (SUBJECT to RLS), while the test's `db` stays the owner
+  // (so seeding/asserts aren't fail-closed). This exercises the whole suite
+  // under RLS to prove correctly-scoped code is unaffected (issue #351).
+  let appDb = db;
+  let closeAppDb: () => Promise<void> = async () => {};
+  if (process.env.TEST_RLS === "1") {
+    await ensureFuranAppLogin(db);
+    const appUrl = (process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL).replace(
+      /\/\/[^/@]+@/,
+      `//furan_app:${FURAN_APP_TEST_PASSWORD}@`,
+    );
+    const a = createDb({ url: appUrl });
+    appDb = a.db;
+    closeAppDb = a.close;
+  }
 
   const diffQueueAdd = vi
     .fn<DiffQueueProducer["add"]>()
@@ -226,7 +258,7 @@ export async function createTestApp(
     ({ publishProjectEvent: broadcasterPublish } as Broadcaster);
 
   const app = await createApp({
-    db,
+    db: appDb,
     telemetry,
     env,
     diffQueue,
@@ -247,6 +279,7 @@ export async function createTestApp(
     broadcasterPublish,
     close: async () => {
       await app.close();
+      await closeAppDb();
       await closeDb();
       await telemetry.shutdown();
     },

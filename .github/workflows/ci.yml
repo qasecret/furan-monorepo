@@ -95,5 +95,15 @@ jobs:
         # cleanup (api tests truncate `test_runs` / `projects` while worker tests are
         # mid-handler). Serialize the test stage. Lint + typecheck stay parallel above.
         run: pnpm turbo run test --filter=...[origin/main] --concurrency=1
+      - name: API suite under RLS (ADR-058 — app connects as furan_app)
+        # Re-run the api suite with the app-under-test on the non-owner
+        # `furan_app` role (subject to RLS) while seeds/asserts stay on the
+        # owner. Proves correctly-scoped code is unaffected once RLS is enabled
+        # (issue #351). Migrations 0032/0033 already applied above; the helper
+        # grants furan_app LOGIN. Runs regardless of turbo affected-filter so
+        # the backstop is always exercised.
+        env:
+          TEST_RLS: "1"
+        run: pnpm --filter @furan/api test
       - name: Turbo affected build
         run: pnpm turbo run build --filter=...[origin/main]

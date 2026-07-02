@@ -6,6 +6,7 @@ import {
   projectMembers,
   screenshots,
   testRuns,
+  withPrivilegedScope,
   type DB,
 } from "@furan/db";
 import { createStorage } from "@furan/storage";
@@ -15,7 +16,6 @@ import { z } from "zod";
 import { sendError } from "../lib/errors.js";
 import type { MemberProjectsCache } from "../lib/member-projects-cache.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
-import { withRequestScope } from "../lib/with-request-scope.js";
 import type { AuthedUser } from "../plugins/auth.js";
 
 /**
@@ -58,12 +58,15 @@ export async function registerStorageProxyRoute(
 
       // Project-scope: non-admins may only read keys owned by a project they
       // belong to. 404 (not 403) to avoid confirming existence cross-tenant.
-      // Only the DB access-check is scoped (ADR-058); the S3 fetch below stays
+      // This IS the authorization boundary, so — like the requireProjectMember
+      // gate — it runs PRIVILEGED (RLS bypass): callerCanAccessKey decides
+      // access from the caller's membership set + key ownership, and must not be
+      // subject to the RLS it enforces (ADR-058). The S3 fetch below stays
       // outside the transaction so a slow object read never holds a DB conn.
       const auth = req.auth;
       const allowed =
         auth != null &&
-        (await withRequestScope(app, req, (db) =>
+        (await withPrivilegedScope(app.db, (db) =>
           callerCanAccessKey(db, auth, key, app.memberProjectsCache),
         ));
       if (!allowed) {
