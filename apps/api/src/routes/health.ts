@@ -1,4 +1,4 @@
-import { sql } from "@furan/db";
+import { projects } from "@furan/db";
 import { createRedisConnection } from "@furan/queue";
 import { createStorage, type Storage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
@@ -53,7 +53,16 @@ export async function registerHealthRoutes(
     const checks: Record<string, string> = {};
 
     try {
-      await withTimeout(app.db.execute(sql`SELECT 1`), PROBE_TIMEOUT_MS);
+      // Read a real, hot table rather than `SELECT 1`. Drizzle emits an
+      // explicit column list from the schema, so if the running image expects
+      // a column a migration dropped/renamed (the image↔migration drift the
+      // deploy runbook warns about), this errors and readiness fails — instead
+      // of passing a trivial connectivity check and 500ing on the first real
+      // request. LIMIT 1 keeps it O(1).
+      await withTimeout(
+        app.db.select().from(projects).limit(1),
+        PROBE_TIMEOUT_MS,
+      );
       checks.postgres = "ok";
     } catch (err) {
       checks.postgres = err instanceof Error ? err.message : "fail";

@@ -1,18 +1,32 @@
+import {
+  and,
+  eq,
+  inArray,
+  or,
+  projectMembers,
+  screenshots,
+  testRuns,
+  type DB,
+} from "@furan/db";
 import { createStorage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { sendError } from "../lib/errors.js";
+import { isAtLeastAdmin } from "../lib/roles.js";
+import type { AuthedUser } from "../plugins/auth.js";
 
 /**
- * GET /api/v1/storage/:key — authenticated proxy for storage bytes.
+ * GET /api/v1/storage/:key — project-scoped proxy for storage bytes.
  *
- * v1.0 simplification (`non_authoritative_v1_simplification`): the route
- * checks `app.authenticate` (any user) rather than `requireProjectMember`.
- * Full project-scoped enforcement would require a reverse index
- * (key → run → project) we do not maintain. Defense-in-depth: storage
- * keys are sha256 hex of content — unguessable. Acceptable for small-team
- * v1.0; upgrade in Phase 3 if cross-project leakage becomes a concern.
+ * Authorization: admins/owners see everything; any other caller may only
+ * fetch a key that belongs to a project they're a member of. A key is
+ * attributed to a project via the DB rows that reference it —
+ * `screenshots.{image,dom,element_map}_key` and `test_runs.{image,diff}_name`
+ * (all carry `project_id`). A key the caller can't prove ownership of returns
+ * 404 (not 403) so the endpoint never confirms the existence of another
+ * tenant's content. (Content-addressed sha256 keys are unguessable, but that
+ * was defense-by-obscurity — this closes the actual cross-tenant read.)
  */
 export const paramsSchema = z.object({
   key: z
@@ -40,6 +54,12 @@ export async function registerStorageProxyRoute(
       }
       const { key } = parsed.data;
 
+      // Project-scope: non-admins may only read keys owned by a project they
+      // belong to. 404 (not 403) to avoid confirming existence cross-tenant.
+      if (!req.auth || !(await callerCanAccessKey(app.db, req.auth, key))) {
+        return sendError(reply, 404, "not_found");
+      }
+
       try {
         const bytes = await storage.get(key);
         if (!bytes || bytes.byteLength === 0) {
@@ -55,6 +75,55 @@ export async function registerStorageProxyRoute(
       }
     },
   );
+}
+
+/**
+ * True if `auth` may read the storage `key`. Admins/owners bypass. Otherwise
+ * the key must be referenced by a `screenshots` or `test_runs` row in one of
+ * the caller's member projects. Two small indexed lookups; short-circuits on
+ * the first hit.
+ */
+async function callerCanAccessKey(
+  db: DB,
+  auth: AuthedUser,
+  key: string,
+): Promise<boolean> {
+  if (isAtLeastAdmin(auth.role)) return true;
+
+  const memberRows = await db
+    .select({ projectId: projectMembers.projectId })
+    .from(projectMembers)
+    .where(eq(projectMembers.userId, auth.id));
+  const projectIds = memberRows.map((r) => r.projectId);
+  if (projectIds.length === 0) return false;
+
+  const ss = await db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        inArray(screenshots.projectId, projectIds),
+        or(
+          eq(screenshots.imageKey, key),
+          eq(screenshots.domKey, key),
+          eq(screenshots.elementMapKey, key),
+        ),
+      ),
+    )
+    .limit(1);
+  if (ss.length > 0) return true;
+
+  const tr = await db
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(
+      and(
+        inArray(testRuns.projectId, projectIds),
+        or(eq(testRuns.imageName, key), eq(testRuns.diffName, key)),
+      ),
+    )
+    .limit(1);
+  return tr.length > 0;
 }
 
 /**

@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
+
+import { builds, projectMembers, projects, testRuns, users } from "@furan/db";
 import { createStorage, objectKey } from "@furan/storage";
 import { describe, expect, test } from "vitest";
+
+import { hashPassword } from "../src/lib/password.js";
 
 import { createTestApp } from "./helpers.js";
 
@@ -17,16 +22,39 @@ const TINY_PNG = Buffer.from(
   "base64",
 );
 
+// Seed a real user (auth resolves the LIVE user from the DB, so a JWT for a
+// non-existent id is rejected — every authenticated case needs a real row).
+// Unique email per call so repeated local runs against the shared dev DB
+// don't collide on the users.email unique constraint.
+async function seedUser(
+  h: Awaited<ReturnType<typeof createTestApp>>,
+  role: "admin" | "editor",
+) {
+  const [u] = await h.db
+    .insert(users)
+    .values({
+      email: `sp-${role}-${randomUUID()}@t.example`,
+      hashedPassword: await hashPassword("pw-not-checked-here"),
+      firstName: "SP",
+      lastName: role,
+      role,
+      isActive: true,
+    })
+    .returning();
+  if (!u) throw new Error("user not seeded");
+  return u;
+}
+
 d("GET /api/v1/storage/:key", () => {
-  test("returns the bytes + image/png content-type for an authenticated user", async () => {
+  test("serves the bytes + image/png content-type for an admin", async () => {
     const h = await createTestApp();
     try {
       const storage = createStorage();
       const key = objectKey(TINY_PNG);
       await storage.put(key, TINY_PNG, "image/png");
 
-      const userId = "00000000-0000-0000-0000-000000000099";
-      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const admin = await seedUser(h, "admin");
+      const token = h.app.jwt.sign({ sub: admin.id, role: "admin" });
 
       const res = await h.app.inject({
         method: "GET",
@@ -43,11 +71,75 @@ d("GET /api/v1/storage/:key", () => {
     }
   });
 
+  test("serves a key owned by a project the caller is a member of", async () => {
+    const h = await createTestApp();
+    try {
+      const storage = createStorage();
+      const key = objectKey(TINY_PNG);
+      await storage.put(key, TINY_PNG, "image/png");
+
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ name: `sp-${randomUUID()}` })
+        .returning();
+      const editor = await seedUser(h, "editor");
+      await h.db
+        .insert(projectMembers)
+        .values({ userId: editor.id, projectId: proj!.id });
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: proj!.id })
+        .returning();
+      // Attribute the key to the project via a test_runs.diff_name row.
+      await h.db.insert(testRuns).values({
+        buildId: build!.id,
+        projectId: proj!.id,
+        name: "t",
+        diffName: key,
+      });
+
+      const token = h.app.jwt.sign({ sub: editor.id, role: "editor" });
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(Buffer.from(res.rawPayload).equals(TINY_PNG)).toBe(true);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("404 for a non-member even when the bytes exist (cross-tenant)", async () => {
+    const h = await createTestApp();
+    try {
+      const storage = createStorage();
+      const key = objectKey(TINY_PNG);
+      await storage.put(key, TINY_PNG, "image/png");
+
+      // An editor with no project membership must NOT be able to read a key
+      // owned by another tenant, even though the bytes are present in storage.
+      const outsider = await seedUser(h, "editor");
+      const token = h.app.jwt.sign({ sub: outsider.id, role: "editor" });
+
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      await h.close();
+    }
+  });
+
   test("returns 404 for a nonexistent key", async () => {
     const h = await createTestApp();
     try {
-      const userId = "00000000-0000-0000-0000-000000000099";
-      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const admin = await seedUser(h, "admin");
+      const token = h.app.jwt.sign({ sub: admin.id, role: "admin" });
       const fakeKey = "0".repeat(64);
 
       const res = await h.app.inject({
@@ -77,8 +169,8 @@ d("GET /api/v1/storage/:key", () => {
   test("returns 404 for a malformed (non-sha256) key", async () => {
     const h = await createTestApp();
     try {
-      const userId = "00000000-0000-0000-0000-000000000099";
-      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const admin = await seedUser(h, "admin");
+      const token = h.app.jwt.sign({ sub: admin.id, role: "admin" });
       const res = await h.app.inject({
         method: "GET",
         url: `/api/v1/storage/not-a-real-key`,
@@ -100,8 +192,8 @@ d("GET /api/v1/storage/:key", () => {
       const payload = '{"v":1,"elements":{},"capturedAt":0}';
       await storage.put(key, Buffer.from(payload), "application/json");
 
-      const userId = "00000000-0000-0000-0000-000000000099";
-      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const admin = await seedUser(h, "admin");
+      const token = h.app.jwt.sign({ sub: admin.id, role: "admin" });
 
       const res = await h.app.inject({
         method: "GET",
@@ -120,8 +212,8 @@ d("GET /api/v1/storage/:key", () => {
   test("rejects keys with non-`.elements.json` suffixes as 404", async () => {
     const h = await createTestApp();
     try {
-      const userId = "00000000-0000-0000-0000-000000000099";
-      const token = h.app.jwt.sign({ sub: userId, role: "editor" });
+      const admin = await seedUser(h, "admin");
+      const token = h.app.jwt.sign({ sub: admin.id, role: "admin" });
       const key = "a".repeat(64) + ".bogus";
       const res = await h.app.inject({
         method: "GET",

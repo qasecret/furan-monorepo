@@ -1,0 +1,59 @@
+# Dependency update automation. Previously CVE remediation was manual via
+# `pnpm.overrides` in the root package.json, which drifts silently. Dependabot
+# opens grouped PRs on a weekly cadence across every ecosystem in the repo.
+#
+# Grouping keeps PR volume sane: patch/minor bumps land as one PR per ecosystem;
+# majors come through individually so their breaking changes get real review.
+version: 2
+updates:
+  # Node / pnpm workspace (root lockfile covers every app + package).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Kotlin SDK (Gradle).
+  - package-ecosystem: "gradle"
+    directory: "/packages/sdk-kotlin"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # GitHub Actions used by the CI / release workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(ci)"
+
+  # Base images referenced by the compose stack / Dockerfiles.
+  - package-ecosystem: "docker"
+    directory: "/infra/docker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
