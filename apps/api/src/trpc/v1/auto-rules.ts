@@ -16,7 +16,7 @@ import { z } from "zod";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 type ProjectIdInput = z.infer<typeof projectIdInput>;
@@ -51,7 +51,7 @@ function projectIdFromRuleId<TInput extends { id: string }>() {
 }
 
 export const autoRulesRouter = t.router({
-  list: t.procedure
+  list: publicProcedure
     .input(projectIdInput)
     .use(authed)
     .use(projectMember<ProjectIdInput>("read", fromProjectId))
@@ -68,7 +68,7 @@ export const autoRulesRouter = t.router({
         .orderBy(desc(autoRules.createdAt));
     }),
 
-  get: t.procedure
+  get: publicProcedure
     .input(z.object({ id: z.string().uuid() }))
     .use(authed)
     .use(projectMember<{ id: string }>("read", projectIdFromRuleId()))
@@ -84,7 +84,7 @@ export const autoRulesRouter = t.router({
       return rows[0];
     }),
 
-  create: t.procedure
+  create: publicProcedure
     .input(createAutoRuleInput)
     .use(authed)
     .use(
@@ -110,7 +110,7 @@ export const autoRulesRouter = t.router({
       return rows[0];
     }),
 
-  update: t.procedure
+  update: publicProcedure
     .input(updateAutoRuleInput)
     .use(authed)
     .use(
@@ -156,7 +156,7 @@ export const autoRulesRouter = t.router({
       return rows[0];
     }),
 
-  delete: t.procedure
+  delete: publicProcedure
     .input(z.object({ id: z.string().uuid() }))
     .use(authed)
     .use(projectMember<{ id: string }>("write", projectIdFromRuleId()))
@@ -172,7 +172,7 @@ export const autoRulesRouter = t.router({
       return { deleted: true };
     }),
 
-  toggle: t.procedure
+  toggle: publicProcedure
     .input(z.object({ id: z.string().uuid(), enabled: z.boolean() }))
     .use(authed)
     .use(projectMember<{ id: string }>("write", projectIdFromRuleId()))
@@ -193,7 +193,7 @@ export const autoRulesRouter = t.router({
       return rows[0];
     }),
 
-  applications: t.procedure
+  applications: publicProcedure
     .input(
       z.object({
         ruleId: z.string().uuid(),

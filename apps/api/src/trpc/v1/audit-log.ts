@@ -2,7 +2,7 @@ import { and, auditLog, desc, eq, lt, users } from "@furan/db";
 import { z } from "zod";
 
 import { requireAdmin } from "../middlewares/admin.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 export const auditLogRouter = t.router({
   /**
@@ -10,7 +10,7 @@ export const auditLogRouter = t.router({
    * by actor / action / target. The actor email is LEFT-JOINed (null if the
    * actor was since deleted — audit_log keeps actor_id FK-free on purpose).
    */
-  list: t.procedure
+  list: publicProcedure
     .input(
       z.object({
         limit: z.number().int().min(1).max(100).default(50),

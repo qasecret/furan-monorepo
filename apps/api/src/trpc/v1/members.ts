@@ -7,7 +7,7 @@ import type { Context } from "../context.js";
 import { requireAdmin } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 type ProjectIdInput = z.infer<typeof projectIdInput>;
@@ -18,7 +18,7 @@ export const membersRouter = t.router({
    * render email + role without a second roundtrip. Authorization mirrors
    * other read procedures: admin bypass, else project_members lookup.
    */
-  list: t.procedure
+  list: publicProcedure
     .input(projectIdInput)
     .use(authed)
     .use(
@@ -49,7 +49,7 @@ export const membersRouter = t.router({
    * role, then insert `(project_id, user_id)`. Duplicate inserts surface as
    * Postgres `23505` (unique violation) → CONFLICT.
    */
-  add: t.procedure
+  add: publicProcedure
     .input(
       z.object({
         projectId: z.string().uuid(),
@@ -78,24 +78,17 @@ export const membersRouter = t.router({
         });
       }
 
-      try {
-        await ctx.db.insert(projectMembers).values({
-          projectId: input.projectId,
-          userId: targetUser.id,
-        });
-      } catch (err) {
-        // postgres-js surfaces unique violations as `code: "23505"`.
-        // drizzle-orm >=0.40 wraps the original PostgresError as `cause`,
-        // so check both the outer error and its cause.
-        const outerCode = (err as { code?: string })?.code;
-        const causeCode = (err as { cause?: { code?: string } })?.cause?.code;
-        if (outerCode === "23505" || causeCode === "23505") {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: "already_a_member",
-          });
-        }
-        throw err;
+      // `ON CONFLICT DO NOTHING RETURNING` instead of catch-the-unique-
+      // violation: catching a failed INSERT would poison the surrounding
+      // per-request transaction (ADR-058 scoping), and this is also race-free.
+      // An empty result means the (project_id, user_id) row already existed.
+      const inserted = await ctx.db
+        .insert(projectMembers)
+        .values({ projectId: input.projectId, userId: targetUser.id })
+        .onConflictDoNothing()
+        .returning({ id: projectMembers.id });
+      if (inserted.length === 0) {
+        throw new TRPCError({ code: "CONFLICT", message: "already_a_member" });
       }
 
       return { added: true };
@@ -104,7 +97,7 @@ export const membersRouter = t.router({
   /**
    * Admin-only: idempotent delete of `(project_id, user_id)`.
    */
-  remove: t.procedure
+  remove: publicProcedure
     .input(
       z.object({
         projectId: z.string().uuid(),
@@ -126,7 +119,7 @@ export const membersRouter = t.router({
     }),
 
   /** Admin-only: the project ids a user belongs to (for the assignment panel). */
-  listUserProjects: t.procedure
+  listUserProjects: publicProcedure
     .input(z.object({ userId: z.string().uuid() }))
     .use(authed)
     .use(requireAdmin)
@@ -143,7 +136,7 @@ export const membersRouter = t.router({
    * and set their default landing project. `defaultProjectId` must be one of
    * `projectIds` (or null). Atomic.
    */
-  setUserProjects: t.procedure
+  setUserProjects: publicProcedure
     .input(
       z.object({
         userId: z.string().uuid(),
