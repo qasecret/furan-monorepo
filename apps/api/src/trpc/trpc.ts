@@ -22,12 +22,20 @@ export const t = initTRPC.context<Context>().create();
  * covered too. Nested `ctx.db.transaction(...)` inside a procedure becomes a
  * savepoint on the outer transaction (supported by postgres.js).
  */
-const scopeToUser = t.middleware(({ ctx, next }) => {
+const scopeToUser = t.middleware(async ({ ctx, next }) => {
   if (!ctx.user) return next();
   const { id, role } = ctx.user;
-  return withUserScope(ctx.db, { userId: id, role }, (tx) =>
+  const result = await withUserScope(ctx.db, { userId: id, role }, (tx) =>
     next({ ctx: { ...ctx, db: tx } }),
   );
+  // Drain post-commit side effects (diff enqueues) only when the procedure
+  // succeeded — on error the transaction rolled back, so enqueuing a job for
+  // rows that no longer exist would be wrong. `ctx._deferred` is the same array
+  // the procedure pushed to via `ctx.onCommit` (the `next` ctx spreads it).
+  if (result.ok) {
+    for (const fn of ctx._deferred) await fn();
+  }
+  return result;
 });
 
 /**

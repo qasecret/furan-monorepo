@@ -39,6 +39,12 @@ export interface BuildContextDeps {
  * tRPC enters its middleware chain (spec §7 P2-R6).
  */
 export function buildContext(req: FastifyRequest, deps: BuildContextDeps) {
+  // Side effects registered via `onCommit` run AFTER the request's scoped
+  // transaction commits (drained by the `scopeToUser` middleware). Use it for
+  // diff-job enqueues that reference just-written rows so a worker can't
+  // observe the job before the rows are visible (ADR-058). Broadcasts don't
+  // need it — they only nudge clients to refetch (a fresh committed read).
+  const deferred: Array<() => unknown> = [];
   return {
     user: req.auth ?? null,
     db: deps.db,
@@ -46,6 +52,11 @@ export function buildContext(req: FastifyRequest, deps: BuildContextDeps) {
     diffQueue: deps.diffQueue,
     broadcaster: deps.broadcaster,
     req,
+    onCommit: (fn: () => unknown): void => {
+      deferred.push(fn);
+    },
+    /** @internal drained post-commit by `scopeToUser`. */
+    _deferred: deferred,
   };
 }
 

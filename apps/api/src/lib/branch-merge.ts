@@ -58,6 +58,10 @@ export interface BranchMergeDeps {
   /** Caller user id — stamped on the synthetic build as `userId`. */
   userId: string | null;
   log: FastifyBaseLogger;
+  /** When set (caller runs inside a scoped transaction, ADR-058), diff-job
+   *  enqueues register here to fire AFTER commit instead of inline, so a worker
+   *  can't pick up the job before the run/screenshot rows are visible. */
+  onCommit?: (effect: () => unknown) => void;
 }
 
 export interface BranchMergeResult {
@@ -261,15 +265,19 @@ export async function mergeBranchBaselinesImpl(
 
     // Best-effort enqueue — a queue blip should not fail an otherwise
     // successful synthetic run. Bytes are persisted, the reviewer can
-    // manually re-trigger via setIgnoreAreas (which re-enqueues).
-    try {
-      await deps.diffQueue.add("diff", { runId: run.id, projectId });
-    } catch (err) {
-      deps.log.warn(
-        { err, runId: run.id, projectId },
-        "merge_diff_enqueue_failed",
-      );
-    }
+    // manually re-trigger via setIgnoreAreas (which re-enqueues). Deferred to
+    // after-commit when the caller is transaction-scoped (onCommit) so the
+    // worker never sees the job before the run/screenshot rows.
+    const runId = run.id;
+    const enqueueDiff = async (): Promise<void> => {
+      try {
+        await deps.diffQueue.add("diff", { runId, projectId });
+      } catch (err) {
+        deps.log.warn({ err, runId, projectId }, "merge_diff_enqueue_failed");
+      }
+    };
+    if (deps.onCommit) deps.onCommit(enqueueDiff);
+    else await enqueueDiff();
 
     enqueued.push({ variationId: source.variationId, runId: run.id });
     recordBranchMergeOutcome(deps.telemetry.metrics, "enqueued");

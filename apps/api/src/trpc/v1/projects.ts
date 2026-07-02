@@ -156,6 +156,7 @@ export const projectsRouter = t.router({
           broadcaster: ctx.broadcaster,
           userId: ctx.user?.id ?? null,
           log: ctx.req.log,
+          onCommit: ctx.onCommit,
         });
       } catch (err) {
         if (err instanceof SameBranchError) {
