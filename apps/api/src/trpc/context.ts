@@ -42,12 +42,6 @@ export function buildContext(req: FastifyRequest, deps: BuildContextDeps) {
   return {
     user: req.auth ?? null,
     db: deps.db,
-    // Unscoped pool handle. `scopeToUser` swaps `db` to the request-scoped
-    // transaction, but the `projectMember` gate needs a SEPARATE connection to
-    // run its authorization reads privileged (RLS bypass) — a nested privileged
-    // scope inside the scoped tx would leak `SET LOCAL` into business queries
-    // (ADR-058). `rawDb` stays the pool for exactly that.
-    rawDb: deps.db,
     telemetry: deps.telemetry,
     diffQueue: deps.diffQueue,
     broadcaster: deps.broadcaster,

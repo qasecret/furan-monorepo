@@ -398,8 +398,8 @@ export const inboxRouter = t.router({
     .use(
       projectMember<{ runId: string }>("write", {
         from: {
-          resolver: async ({ input, db }) => {
-            const rows = await db
+          resolver: async ({ input, ctx }) => {
+            const rows = await ctx.db
               .select({ projectId: testRuns.projectId })
               .from(testRuns)
               .where(eq(testRuns.id, input.runId))
@@ -518,8 +518,8 @@ export const inboxRouter = t.router({
     .use(
       projectMember<{ runId: string; reason?: string | null }>("write", {
         from: {
-          resolver: async ({ input, db }) => {
-            const rows = await db
+          resolver: async ({ input, ctx }) => {
+            const rows = await ctx.db
               .select({ projectId: testRuns.projectId })
               .from(testRuns)
               .where(eq(testRuns.id, input.runId))

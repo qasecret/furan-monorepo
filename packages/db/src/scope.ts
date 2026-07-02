@@ -99,6 +99,41 @@ export async function withPrivilegedScope<T>(
   return withUserScope(db, { userId: "", role: "owner" }, fn);
 }
 
+/**
+ * Temporarily elevates the CURRENT open transaction to the RLS-bypass role
+ * (`app.user_role = 'owner'`) for the duration of `fn`, then restores the prior
+ * role — all on the SAME connection, so no second pooled connection is checked
+ * out. Use this (not {@link withPrivilegedScope}) for an authorization read
+ * that runs INSIDE an already-scoped request transaction (e.g. the tRPC
+ * `projectMember` gate inside `scopeToUser`'s tx): a separate privileged
+ * connection would make each gated request hold two pooled connections at once
+ * and can exhaust the pool under load.
+ *
+ * `tx` MUST be an open transaction (`SET LOCAL` is transaction-scoped). The
+ * restore runs in a `finally`; if a query in `fn` aborted the transaction the
+ * restore no-ops (the whole unit fails anyway), so its error is swallowed.
+ */
+export async function withElevatedRole<T>(
+  tx: DB,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const rows = await tx.execute<{ role: string | null }>(
+    sql`SELECT current_setting('app.user_role', true) AS role`,
+  );
+  const prev = rows[0]?.role ?? "";
+  await tx.execute(sql`SELECT set_config('app.user_role', 'owner', true)`);
+  try {
+    return await fn();
+  } finally {
+    try {
+      await tx.execute(sql`SELECT set_config('app.user_role', ${prev}, true)`);
+    } catch {
+      // The transaction was aborted by a failing query in `fn`; the request
+      // fails anyway, so there is no live role to restore.
+    }
+  }
+}
+
 /** Reads the current scoped user_id; returns null when no identity is set. */
 export async function currentUserId(db: DB): Promise<string | null> {
   const rows = await db.execute<{ current_setting: string | null }>(

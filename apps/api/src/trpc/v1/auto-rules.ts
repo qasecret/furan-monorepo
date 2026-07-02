@@ -2,7 +2,6 @@ import {
   and,
   autoRuleApplications,
   autoRules,
-  type DB,
   desc,
   eq,
   isNull,
@@ -39,15 +38,8 @@ const fromProjectId = {
 function projectIdFromRuleId<TInput extends { id: string }>() {
   return {
     from: {
-      resolver: async ({
-        input,
-        db,
-      }: {
-        input: TInput;
-        ctx: Context;
-        db: DB;
-      }) => {
-        const rows = await db
+      resolver: async ({ input, ctx }: { input: TInput; ctx: Context }) => {
+        const rows = await ctx.db
           .select({ projectId: autoRules.projectId })
           .from(autoRules)
           .where(and(eq(autoRules.id, input.id), isNull(autoRules.deletedAt)))
@@ -218,13 +210,12 @@ export const autoRulesRouter = t.router({
         from: {
           resolver: async ({
             input,
-            db,
+            ctx,
           }: {
             input: { ruleId: string };
             ctx: Context;
-            db: DB;
           }) => {
-            const rows = await db
+            const rows = await ctx.db
               .select({ projectId: autoRules.projectId })
               .from(autoRules)
               .where(

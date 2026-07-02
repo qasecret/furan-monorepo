@@ -1,10 +1,4 @@
-import {
-  and,
-  type DB,
-  eq,
-  projectMembers,
-  withPrivilegedScope,
-} from "@furan/db";
+import { and, eq, projectMembers, withElevatedRole } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
 import { isAtLeastAdmin } from "../../lib/roles.js";
@@ -15,15 +9,7 @@ export type Action = "read" | "write";
 
 export interface ProjectMemberOpts<TInput> {
   from: {
-    // Resolvers receive a PRIVILEGED (RLS-bypass) `db`: they resolve a project
-    // id from a project-scoped row, and the gate is the authorization boundary,
-    // so it can't be subject to the RLS it enforces (ADR-058). Resolvers that
-    // read the DB must use this `db`, not `ctx.db`.
-    resolver: (args: {
-      input: TInput;
-      ctx: Context;
-      db: DB;
-    }) => Promise<string | null>;
+    resolver: (args: { input: TInput; ctx: Context }) => Promise<string | null>;
   };
 }
 
@@ -45,19 +31,21 @@ export function projectMember<TInput>(
     const user = ctx.user;
 
     // The projectId lookup + membership check are the authorization boundary —
-    // run them PRIVILEGED (RLS bypass) on the UNSCOPED pool (`ctx.rawDb`), so
-    // RLS can't hide the row the gate needs and the owner GUC never leaks into
-    // the procedure's scoped transaction.
-    const outcome = await withPrivilegedScope(
-      ctx.rawDb,
-      async (db): Promise<"ok" | "not_found" | "forbidden"> => {
+    // they must read rows RLS would hide, so run them with the role ELEVATED to
+    // owner (RLS bypass) IN PLACE on the procedure's own scoped transaction
+    // (ctx.db). Elevating in place — rather than a second privileged connection
+    // — avoids each gated request holding two pooled connections at once
+    // (ADR-058). The elevation is restored before the procedure body runs, so
+    // resolvers reading `ctx.db` here are privileged; business queries are not.
+    const outcome = await withElevatedRole(
+      ctx.db,
+      async (): Promise<"ok" | "not_found" | "forbidden"> => {
         const projectId = await opts.from.resolver({
           input: input as TInput,
           ctx,
-          db,
         });
         if (!projectId) return "not_found";
-        const rows = await db
+        const rows = await ctx.db
           .select({ id: projectMembers.id })
           .from(projectMembers)
           .where(
