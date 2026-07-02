@@ -29,7 +29,7 @@ import { z } from "zod";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 import {
   approveCheckpointInTx,
@@ -356,7 +356,7 @@ export const runsRouter = t.router({
    * the last item from the previous page; we fetch `limit + 1` rows and use
    * the extra row to decide whether `nextCursor` should be set.
    */
-  list: t.procedure
+  list: publicProcedure
     .input(listInput)
     .use(authed)
     .use(
@@ -416,7 +416,7 @@ export const runsRouter = t.router({
       return { items, nextCursor };
     }),
 
-  getById: t.procedure
+  getById: publicProcedure
     .input(runIdInput)
     .use(authed)
     .use(
@@ -592,7 +592,7 @@ export const runsRouter = t.router({
       };
     }),
 
-  setComment: t.procedure
+  setComment: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -628,7 +628,7 @@ export const runsRouter = t.router({
    * Regions carry a `viewport` tag so multi-viewport runs apply the right
    * mask to the right screenshot — see ADR-031 §Decision 3.
    */
-  setIgnoreAreas: t.procedure
+  setIgnoreAreas: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -705,7 +705,7 @@ export const runsRouter = t.router({
    *
    * Re-enqueues a diff job so the worker re-evaluates with the new masks.
    */
-  setTempIgnoreAreas: t.procedure
+  setTempIgnoreAreas: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -784,7 +784,7 @@ export const runsRouter = t.router({
    * re-runs with the merged ignore set. SSE consumers can watch
    * `diff.completed` to know the new result has landed.
    */
-  addIgnoreAreas: t.procedure
+  addIgnoreAreas: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -884,7 +884,7 @@ export const runsRouter = t.router({
    * so SSE consumers can watch `run.completed` to know the new result has
    * landed.
    */
-  setDiffThresholdOverride: t.procedure
+  setDiffThresholdOverride: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -943,7 +943,7 @@ export const runsRouter = t.router({
       };
     }),
 
-  approve: t.procedure
+  approve: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -989,7 +989,7 @@ export const runsRouter = t.router({
    * row inserted, status unchanged), which matches the existing single
    * `approve` behavior.
    */
-  bulkApproveByVariation: t.procedure
+  bulkApproveByVariation: publicProcedure
     .input(runIdInput)
     .use(authed)
     .use(
@@ -1098,7 +1098,7 @@ export const runsRouter = t.router({
    * so "Approve all" can't silently leave later-page runs unreviewed, and a
    * mid-flight failure rolls the whole batch back instead of half-approving.
    */
-  bulkApproveByBuild: t.procedure
+  bulkApproveByBuild: publicProcedure
     .input(z.object({ buildId: z.string().uuid() }))
     .use(authed)
     .use(
@@ -1194,7 +1194,7 @@ export const runsRouter = t.router({
       };
     }),
 
-  reject: t.procedure
+  reject: publicProcedure
     .input(runIdInput)
     .use(authed)
     .use(
@@ -1256,7 +1256,7 @@ export const runsRouter = t.router({
    * `diff_regions`: if any row exists for this run with non-trivial
    * severity, the run becomes `unresolved`; else `passed`.
    */
-  overrideStatus: t.procedure
+  overrideStatus: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -1331,7 +1331,7 @@ export const runsRouter = t.router({
   // ADR-038: per-checkpoint approval + checkpoint listing
   // ---------------------------------------------------------------------------
 
-  approveCheckpoint: t.procedure
+  approveCheckpoint: publicProcedure
     .input(
       z.object({
         runId: z.string().uuid(),
@@ -1400,7 +1400,7 @@ export const runsRouter = t.router({
       return { checkpointId: input.checkpointId };
     }),
 
-  approveAllCheckpoints: t.procedure
+  approveAllCheckpoints: publicProcedure
     .input(z.object({ runId: z.string().uuid() }))
     .use(authed)
     .use(
@@ -1451,7 +1451,7 @@ export const runsRouter = t.router({
       return { approved: rows.length };
     }),
 
-  listCheckpoints: t.procedure
+  listCheckpoints: publicProcedure
     .input(z.object({ runId: z.string().uuid() }))
     .use(authed)
     .use(
@@ -1525,7 +1525,7 @@ export const runsRouter = t.router({
    * those carry no structural fingerprint, so no group can be formed.
    * Returns an empty result in that case rather than throwing.
    */
-  getCheckpointGroup: t.procedure
+  getCheckpointGroup: publicProcedure
     .input(
       z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
     )
@@ -1594,7 +1594,7 @@ export const runsRouter = t.router({
       };
     }),
 
-  approveCheckpointGroup: t.procedure
+  approveCheckpointGroup: publicProcedure
     .input(
       z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
     )
@@ -1698,7 +1698,7 @@ export const runsRouter = t.router({
       };
     }),
 
-  rejectCheckpointGroup: t.procedure
+  rejectCheckpointGroup: publicProcedure
     .input(
       z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
     )

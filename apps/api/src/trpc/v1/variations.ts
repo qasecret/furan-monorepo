@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const getInput = z.object({
   projectId: z.string().uuid(),
@@ -55,7 +55,7 @@ export const variationsRouter = t.router({
    * search would miss the common case ("payment" matching
    * "checkout-payment-step").
    */
-  list: t.procedure
+  list: publicProcedure
     .input(listInput)
     .use(authed)
     .use(
@@ -102,7 +102,7 @@ export const variationsRouter = t.router({
    * of project A cannot probe variation ids in project B. Combined with the
    * projectMember middleware, the procedure is project-tenant-safe.
    */
-  get: t.procedure
+  get: publicProcedure
     .input(getInput)
     .use(authed)
     .use(
@@ -146,7 +146,7 @@ export const variationsRouter = t.router({
    * project, the projectId guard prevents leakage. The projectMember
    * middleware blocks the call before the query runs.
    */
-  history: t.procedure
+  history: publicProcedure
     .input(historyInput)
     .use(authed)
     .use(
