@@ -31,7 +31,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [
-    { name: "s3-full", testIgnore: /tests\/storage\// },
+    // Everything except HDD-specific tests, against the S3/MinIO deployment.
+    { name: "s3-full", grepInvert: /@hdd-smoke/ },
+    // Only @hdd-smoke-tagged tests, against a separate HDD deployment.
     { name: "hdd-smoke", grep: /@hdd-smoke/ },
   ],
 });

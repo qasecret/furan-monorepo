@@ -1,0 +1,71 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { expect, test, type APIRequestContext } from "@playwright/test";
+
+import { ApiClient } from "../../src/clients/api-client.js";
+import { capture } from "../../src/clients/virtual-sdk.js";
+import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { loadSeed, principal } from "../../src/seed/load-seed.js";
+
+const API = process.env.E2E_API_URL ?? "http://localhost:3010";
+
+const BASELINE_PNG = fileURLToPath(
+  new URL("../../src/fixtures/baseline.png", import.meta.url),
+);
+
+/** Screenshots are content-addressed: storage key = sha256(pngBytes) hex. */
+function objectKey(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Capture a baseline, then fetch the stored PNG back through the authenticated
+ * storage proxy (`GET /api/v1/storage/:key`) and assert the bytes round-trip.
+ * Shared by the S3 and HDD backends — the only difference is which deployment
+ * it runs against.
+ */
+async function assertScreenshotRoundTrip(
+  request: APIRequestContext,
+): Promise<void> {
+  const api = new ApiClient(API);
+  const seed = loadSeed();
+  const admin = seed.bootstrapAdminJwt;
+  const pat = principal(seed, "owner").pat;
+
+  const project = await api.createProject(admin, {
+    name: `e2e-storage-${Date.now()}`,
+  });
+  await capture(api, {
+    pat,
+    projectId: project.id,
+    branchName: "main",
+    checkpointName: "home",
+    fixture: "baseline",
+  });
+
+  const bytes = readFileSync(BASELINE_PNG);
+  const key = objectKey(bytes);
+  const res = await request.get(`${API}/api/v1/storage/${key}`, {
+    headers: { authorization: `Bearer ${admin}` },
+  });
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("image");
+  const served = await res.body();
+  expect(served.equals(bytes)).toBe(true);
+}
+
+test("S3: uploaded screenshot is served back through the proxy", async ({
+  request,
+}, testInfo) => {
+  testInfo.annotations.push(...coverAnnotations(["storage.s3_roundtrip"]));
+  await assertScreenshotRoundTrip(request);
+});
+
+test("HDD: uploaded screenshot is served back through the proxy @hdd-smoke", async ({
+  request,
+}, testInfo) => {
+  testInfo.annotations.push(...coverAnnotations(["storage.hdd_roundtrip"]));
+  await assertScreenshotRoundTrip(request);
+});
