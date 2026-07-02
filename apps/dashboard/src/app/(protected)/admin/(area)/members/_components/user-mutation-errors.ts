@@ -10,10 +10,10 @@ export const USER_MUTATION_ERROR: Record<string, string> = {
   owner_protected: "Only an owner can change or deactivate another owner.",
 };
 
-/** Read the `{ error }` code from a failed API response (empty string if none). */
+/** Read the `{ code }` from a failed API response (empty string if none). */
 export async function readApiErrorCode(res: Response): Promise<string> {
   try {
-    return ((await res.json()) as { error?: string }).error ?? "";
+    return ((await res.json()) as { code?: string }).code ?? "";
   } catch {
     // non-JSON body — caller falls back to a generic message
     return "";

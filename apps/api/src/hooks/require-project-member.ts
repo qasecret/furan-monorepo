@@ -1,6 +1,7 @@
 import { and, eq, projectMembers } from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { sendError } from "../lib/errors.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
 
 export type Action = "read" | "write";
@@ -17,16 +18,16 @@ export interface ScopeOpts {
 export function requireProjectMember(action: Action, opts: ScopeOpts) {
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!req.auth) {
-      return reply.code(401).send({ error: "unauthenticated" });
+      return sendError(reply, 401, "unauthenticated");
     }
     if (isAtLeastAdmin(req.auth.role)) return; // admin/owner bypass per arch-backend.md §4.3
     if (req.auth.role === "guest") {
-      return reply.code(403).send({ error: "forbidden", reason: "guest" });
+      return sendError(reply, 403, "forbidden", undefined, { reason: "guest" });
     }
 
     const projectId = await resolveProjectId(req, opts.from);
     if (!projectId) {
-      return reply.code(400).send({ error: "missing_project_scope" });
+      return sendError(reply, 400, "missing_project_scope");
     }
 
     const rows = await req.server.db
@@ -45,7 +46,7 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
         { action, projectId, userId: req.auth.id },
         "rbac_denied_not_member",
       );
-      return reply.code(403).send({ error: "not_a_project_member" });
+      return sendError(reply, 403, "not_a_project_member");
     }
   };
 }

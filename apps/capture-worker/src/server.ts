@@ -33,7 +33,12 @@ async function main(): Promise<void> {
       { jobId: job.id, projectId: job.data.projectId },
       "capture_job_received",
     );
-    return handleCaptureJob(job.data, telemetry.logger, { db, storage, redis });
+    return handleCaptureJob(job.data, telemetry.logger, {
+      db,
+      storage,
+      redis,
+      blockPrivateIps: env.CAPTURE_BLOCK_PRIVATE_IPS,
+    });
   });
 
   const health = startHealthServer({

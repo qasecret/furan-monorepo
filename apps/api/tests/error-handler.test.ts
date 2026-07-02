@@ -32,7 +32,11 @@ describe("global error handler — 5xx body never leaks internals", () => {
       url: "/__test/throw-secret",
     });
     expect(res.statusCode).toBe(500);
-    expect(res.json()).toEqual({ error: "internal_error" });
+    expect(res.json()).toEqual({
+      code: "internal_error",
+      message: "Internal error",
+      statusCode: 500,
+    });
     const body = res.body;
     expect(body).not.toContain("super-secret-pw");
     expect(body).not.toContain("insert into");

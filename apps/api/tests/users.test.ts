@@ -195,7 +195,7 @@ describe("admin user CRUD", () => {
       payload: { isActive: false },
     });
     expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: string }).error).toBe("cannot_disable_self");
+    expect((res.json() as { code: string }).code).toBe("cannot_disable_self");
   });
 
   test("PATCH /users/:id (admin) - unknown id -> 404", async () => {
@@ -229,7 +229,7 @@ describe("admin user CRUD", () => {
       payload: { role: "editor" },
     });
     expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: string }).error).toBe(
+    expect((res.json() as { code: string }).code).toBe(
       "cannot_change_own_role",
     );
   });
@@ -247,7 +247,7 @@ describe("admin user CRUD", () => {
       payload: { role: "editor" },
     });
     expect(res.statusCode).toBe(409);
-    expect((res.json() as { error: string }).error).toBe("last_admin");
+    expect((res.json() as { code: string }).code).toBe("last_admin");
   });
 
   test("PATCH /users/:id - cannot deactivate the last active admin", async () => {
@@ -260,7 +260,7 @@ describe("admin user CRUD", () => {
       payload: { isActive: false },
     });
     expect(res.statusCode).toBe(409);
-    expect((res.json() as { error: string }).error).toBe("last_admin");
+    expect((res.json() as { code: string }).code).toBe("last_admin");
   });
 
   test("PATCH /users/:id - can demote an admin when another admin remains", async () => {

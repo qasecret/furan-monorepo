@@ -211,6 +211,6 @@ d("POST /runs/:id/approve", () => {
     });
     // approveRun throws TRPCError BAD_REQUEST for illegal status → 409 Conflict
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toEqual({ error: "approve_failed" });
+    expect(res.json()).toMatchObject({ code: "approve_failed" });
   });
 });

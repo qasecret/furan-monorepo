@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import { sendError } from "../lib/errors.js";
 import { approveRun } from "../trpc/v1/runs.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
@@ -65,7 +66,7 @@ export async function registerRunLifecycleRoutes(
     },
     async (req, reply) => {
       const params = runIdParam.safeParse(req.params);
-      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      if (!params.success) return sendError(reply, 400, "invalid_id");
 
       // Contract (post compat-layer fix): /complete stamps the run as
       // *closed by the SDK* but does NOT decide the diff verdict — the
@@ -162,7 +163,7 @@ export async function registerRunLifecycleRoutes(
     },
     async (req, reply) => {
       const params = runIdParam.safeParse(req.params);
-      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
+      if (!params.success) return sendError(reply, 400, "invalid_id");
 
       await app.db
         .update(testRuns)
@@ -198,8 +199,8 @@ export async function registerRunLifecycleRoutes(
     },
     async (req, reply) => {
       const params = runIdParam.safeParse(req.params);
-      if (!params.success) return reply.code(400).send({ error: "invalid_id" });
-      if (!req.auth) return reply.code(401).send({ error: "unauthenticated" });
+      if (!params.success) return sendError(reply, 400, "invalid_id");
+      if (!req.auth) return sendError(reply, 401, "unauthenticated");
       try {
         const out = await approveRun(
           {
@@ -214,21 +215,21 @@ export async function registerRunLifecycleRoutes(
         if (err instanceof TRPCError) {
           switch (err.code) {
             case "NOT_FOUND":
-              return reply.code(404).send({ error: "not_found" });
+              return sendError(reply, 404, "not_found");
             case "BAD_REQUEST":
               // Run is in a non-approvable state → 409 Conflict
-              return reply.code(409).send({ error: "approve_failed" });
+              return sendError(reply, 409, "approve_failed");
             case "FORBIDDEN":
-              return reply.code(403).send({ error: "forbidden" });
+              return sendError(reply, 403, "forbidden");
             case "UNAUTHORIZED":
-              return reply.code(401).send({ error: "unauthorized" });
+              return sendError(reply, 401, "unauthorized");
             default:
               req.log.error({ err }, "rest_approve_unexpected_trpc_error");
-              return reply.code(500).send({ error: "internal_error" });
+              return sendError(reply, 500, "internal_error");
           }
         }
         req.log.error({ err }, "rest_approve_failed");
-        return reply.code(500).send({ error: "internal_error" });
+        return sendError(reply, 500, "internal_error");
       }
     },
   );

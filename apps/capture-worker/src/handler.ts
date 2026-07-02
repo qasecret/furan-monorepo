@@ -14,6 +14,7 @@ import type { Redis } from "ioredis";
 import sharp from "sharp";
 
 import { getBrowser } from "./playwright.js";
+import { assertSafeCaptureUrl } from "./url-guard.js";
 
 type Logger = Telemetry["logger"];
 
@@ -21,6 +22,9 @@ export interface HandlerDeps {
   db: DB;
   storage: Storage;
   redis: Redis;
+  /** SSRF guard: also reject loopback/RFC-1918/ULA targets (default false —
+   *  internal-app capture is a legitimate self-host use case). */
+  blockPrivateIps?: boolean;
 }
 
 const DEFAULT_VIEWPORT: Viewport = { width: 1280, height: 720 };
@@ -101,6 +105,15 @@ async function handleCaptureJobInner(
   const viewports: Viewport[] = data.viewports
     ? data.viewports
     : [data.viewport ?? DEFAULT_VIEWPORT];
+
+  // SSRF guard: vet the target before pointing a real browser at it. Same URL
+  // across viewports, so check once up front. Throws SsrfBlockedError, which
+  // the outer handler turns into an `aborted` run.
+  await assertSafeCaptureUrl(data.url, {
+    ...(deps.blockPrivateIps !== undefined
+      ? { blockPrivate: deps.blockPrivateIps }
+      : {}),
+  });
 
   const browser = await getBrowser(data.browser);
   const imageKeys: string[] = [];

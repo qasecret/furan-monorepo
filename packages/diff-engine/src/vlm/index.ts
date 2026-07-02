@@ -58,6 +58,19 @@ export interface VlmDiffResult {
   pixelMismatchCount: number;
   diffImageBytes: Buffer;
   vlmDescription?: string;
+  /**
+   * Set when the VLM layer did NOT produce a usable verdict and the result
+   * fell back to the L1 pixel decision. The engine stays metrics-agnostic, so
+   * it only *reports* the failure here — the diff-worker turns this into a
+   * Prometheus counter + warn log so a provider outage (quota, timeout,
+   * unreachable Ollama) is alertable instead of silently buried in the
+   * description string. `reason` is a bounded category (safe as a metric
+   * label); `message` is free-form for logs.
+   */
+  vlmError?: {
+    reason: "empty" | "parse_error" | "call_failed";
+    message: string;
+  };
 }
 
 export async function runVlm(
@@ -110,10 +123,26 @@ export async function runVlm(
         pixelMismatchCount: l1.pixelMismatchCount,
         diffImageBytes: l1.diffImageBytes,
         vlmDescription: "VLM returned empty response",
+        vlmError: { reason: "empty", message: "VLM returned empty response" },
       };
     }
 
-    const parsed = vlmResultSchema.safeParse(JSON.parse(content));
+    // Guard JSON.parse — a provider can return non-JSON prose; treat that as a
+    // parse failure (fall back to L1) rather than throwing.
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(content);
+    } catch {
+      return {
+        passed: l1.diffPercent <= options.diffThreshold * 100,
+        diffPercent: l1.diffPercent,
+        pixelMismatchCount: l1.pixelMismatchCount,
+        diffImageBytes: l1.diffImageBytes,
+        vlmDescription: `VLM parse error: ${content}`,
+        vlmError: { reason: "parse_error", message: "VLM returned non-JSON" },
+      };
+    }
+    const parsed = vlmResultSchema.safeParse(parsedJson);
     if (!parsed.success) {
       return {
         passed: l1.diffPercent <= options.diffThreshold * 100,
@@ -121,6 +150,10 @@ export async function runVlm(
         pixelMismatchCount: l1.pixelMismatchCount,
         diffImageBytes: l1.diffImageBytes,
         vlmDescription: `VLM parse error: ${content}`,
+        vlmError: {
+          reason: "parse_error",
+          message: "VLM response failed schema validation",
+        },
       };
     }
 
@@ -139,6 +172,7 @@ export async function runVlm(
       pixelMismatchCount: l1.pixelMismatchCount,
       diffImageBytes: l1.diffImageBytes,
       vlmDescription: `VLM failed: ${msg}`,
+      vlmError: { reason: "call_failed", message: msg },
     };
   }
 }

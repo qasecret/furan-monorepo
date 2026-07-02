@@ -10,6 +10,7 @@ import {
   recordFlushed,
 } from "../lib/broadcast-metrics.js";
 import type { ProjectEventName } from "../lib/broadcast.js";
+import { sendError } from "../lib/errors.js";
 
 /**
  * Tiny debounce with leading + maxWait semantics — same shape as
@@ -111,7 +112,7 @@ export async function registerProjectEventsRoute(
     async (req, reply) => {
       const parsed = paramsSchema.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const { id } = parsed.data;
 
@@ -123,7 +124,7 @@ export async function registerProjectEventsRoute(
         .where(eq(projects.id, id))
         .limit(1);
       if (!projectRows[0]) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
 
       reply.hijack();

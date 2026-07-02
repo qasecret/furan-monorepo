@@ -93,8 +93,8 @@ export function CreateTokenDialog({
       },
     );
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      toast.error(body?.error ?? "Failed to create token");
+      const body = (await res.json().catch(() => ({}))) as { code?: string };
+      toast.error(body?.code ?? "Failed to create token");
       return;
     }
     const data = (await res.json()) as { token?: string };

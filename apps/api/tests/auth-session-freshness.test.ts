@@ -84,7 +84,7 @@ describe("JWT session freshness", () => {
     });
     // Valid token, disabled account → distinct from a bad/missing token (401).
     expect(res.statusCode).toBe(403);
-    expect((res.json() as { error: string }).error).toBe("account_inactive");
+    expect((res.json() as { code: string }).code).toBe("account_inactive");
   });
 
   test("a deleted user's token is rejected (401)", async () => {

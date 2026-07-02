@@ -2,6 +2,8 @@ import { createStorage } from "@furan/storage";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { sendError } from "../lib/errors.js";
+
 /**
  * GET /api/v1/storage/:key — authenticated proxy for storage bytes.
  *
@@ -34,14 +36,14 @@ export async function registerStorageProxyRoute(
     async (req, reply) => {
       const parsed = paramsSchema.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const { key } = parsed.data;
 
       try {
         const bytes = await storage.get(key);
         if (!bytes || bytes.byteLength === 0) {
-          return reply.code(404).send({ error: "not_found" });
+          return sendError(reply, 404, "not_found");
         }
         const ct = sniffContentType(bytes);
         reply.header("Content-Type", ct);
@@ -49,7 +51,7 @@ export async function registerStorageProxyRoute(
         return reply.send(Buffer.from(bytes));
       } catch (err) {
         app.log.error({ err, key }, "storage_proxy_error");
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
     },
   );

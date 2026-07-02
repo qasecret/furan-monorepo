@@ -3,6 +3,7 @@ import { userRoleSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { sendError } from "../lib/errors.js";
 import { verifyPassword } from "../lib/password.js";
 
 export const loginBody = z.object({
@@ -34,7 +35,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       if (!parsed.success) {
         // Don't echo the Zod field/constraint map back on the unauthenticated
         // login endpoint — it needlessly reveals the expected schema shape.
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const { email, password } = parsed.data;
 
@@ -45,11 +46,11 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         .limit(1);
       const user = rows[0];
       if (!user || !user.isActive) {
-        return reply.code(401).send({ error: "invalid_credentials" });
+        return sendError(reply, 401, "invalid_credentials");
       }
       const ok = await verifyPassword(password, user.hashedPassword);
       if (!ok) {
-        return reply.code(401).send({ error: "invalid_credentials" });
+        return sendError(reply, 401, "invalid_credentials");
       }
 
       const token = await reply.jwtSign({ sub: user.id, role: user.role });

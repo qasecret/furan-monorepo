@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
+import { sendError } from "../lib/errors.js";
 
 export const addBody = z.object({ userId: z.string().uuid() });
 
@@ -28,11 +29,11 @@ export async function registerMembersRoutes(
     async (req, reply) => {
       const paramsParsed = paramsAdd.safeParse(req.params);
       if (!paramsParsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const bodyParsed = addBody.safeParse(req.body);
       if (!bodyParsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       try {
         const [row] = await app.db
@@ -45,7 +46,7 @@ export async function registerMembersRoutes(
         return reply.code(201).send(row);
       } catch (err) {
         req.log.warn({ err }, "member_add_failed");
-        return reply.code(409).send({ error: "already_member" });
+        return sendError(reply, 409, "already_member");
       }
     },
   );
@@ -56,7 +57,7 @@ export async function registerMembersRoutes(
     async (req, reply) => {
       const parsed = paramsRemove.safeParse(req.params);
       if (!parsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const result = await app.db
         .delete(projectMembers)
@@ -68,7 +69,7 @@ export async function registerMembersRoutes(
         )
         .returning({ id: projectMembers.id });
       if (result.length === 0) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       return reply.code(204).send();
     },

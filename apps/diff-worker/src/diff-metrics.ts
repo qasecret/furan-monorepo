@@ -88,6 +88,15 @@ export interface DiffMetrics {
    * selector rules can't apply).
    */
   rulesSelectorResolution: Counter<"outcome">;
+  /**
+   * VLM layer failures where the semantic verdict fell back to the L1 pixel
+   * decision. Without this a provider outage (quota, request timeout,
+   * unreachable Ollama, malformed response) is invisible — the error only
+   * lands in `test_runs.vlm_description`. Alert on a rising rate. Reasons
+   * (bounded, from the engine's VlmDiffResult.vlmError): `empty`,
+   * `parse_error`, `call_failed`.
+   */
+  vlmFailures: Counter<"reason">;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -156,6 +165,12 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
       name: "furan_diff_rules_selector_resolution_total",
       help: "Outcome of resolving an auto-rule CSS selector to element-map bboxes",
       labelNames: ["outcome"],
+      registers: [registry],
+    }),
+    vlmFailures: new Counter({
+      name: "furan_diff_vlm_failures_total",
+      help: "VLM layer failures that fell back to the L1 verdict, by reason",
+      labelNames: ["reason"],
       registers: [registry],
     }),
   };

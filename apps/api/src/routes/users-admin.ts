@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { requireRole } from "../hooks/require-role.js";
 import { emitAudit } from "../lib/emit-audit.js";
+import { sendError } from "../lib/errors.js";
 import { hashPassword } from "../lib/password.js";
 
 import {
@@ -97,7 +98,7 @@ export async function registerUsersAdminRoutes(
     async (req, reply) => {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) {
-        return reply.code(400).send({ error: "invalid_query" });
+        return sendError(reply, 400, "invalid_query");
       }
       const { limit, offset, q } = parsed.data;
       const trimmed = q?.trim();
@@ -120,7 +121,7 @@ export async function registerUsersAdminRoutes(
     async (req, reply) => {
       const parsed = createBody.safeParse(req.body);
       if (!parsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const hashedPassword = await hashPassword(parsed.data.password);
       try {
@@ -149,7 +150,7 @@ export async function registerUsersAdminRoutes(
         return reply.code(201).send(row);
       } catch (err) {
         req.log.warn({ err }, "user_create_failed");
-        return reply.code(409).send({ error: "email_taken" });
+        return sendError(reply, 409, "email_taken");
       }
     },
   );
@@ -159,15 +160,15 @@ export async function registerUsersAdminRoutes(
     { preHandler: [app.authenticate, requireRole("admin")] },
     async (req, reply) => {
       if (!req.auth) {
-        return reply.code(401).send({ error: "unauthenticated" });
+        return sendError(reply, 401, "unauthenticated");
       }
       const paramsParsed = paramsId.safeParse(req.params);
       if (!paramsParsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const bodyParsed = updateBody.safeParse(req.body);
       if (!bodyParsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
 
       const targetId = paramsParsed.data.id;
@@ -185,7 +186,7 @@ export async function registerUsersAdminRoutes(
         .where(eq(users.id, targetId))
         .limit(1);
       if (!target) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
 
       const removesAdmin = updateMayRemoveAdmin(target, update);
@@ -208,7 +209,7 @@ export async function registerUsersAdminRoutes(
         otherActiveOwnerCount: counts.owners,
       });
       if (!guard.ok) {
-        return reply.code(guard.status).send({ error: guard.error });
+        return sendError(reply, guard.status, guard.error);
       }
 
       // Apply the change. When it would remove an active admin-capable user or
@@ -246,16 +247,16 @@ export async function registerUsersAdminRoutes(
           .where(eq(users.id, targetId))
           .limit(1);
         if (!stillExists) {
-          return reply.code(404).send({ error: "not_found" });
+          return sendError(reply, 404, "not_found");
         }
         const fresh = await countOtherActiveTiers(app.db, targetId);
         if (removesOwner && fresh.owners === 0) {
-          return reply.code(409).send({ error: "last_owner" });
+          return sendError(reply, 409, "last_owner");
         }
         if (removesAdmin && fresh.admins === 0) {
-          return reply.code(409).send({ error: "last_admin" });
+          return sendError(reply, 409, "last_admin");
         }
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
 
       const updated = result[0]!;

@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { recordBuildCreate } from "../lib/builds-metrics.js";
+import { sendError } from "../lib/errors.js";
 
 export const createBody = z.object({
   ciBuildId: z.string().min(1).max(200).optional(),
@@ -106,15 +107,15 @@ export async function registerBuildsRoutes(
     async (req, reply) => {
       const paramsParsed = paramsId.safeParse(req.params);
       if (!paramsParsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const queryParsed = querySchema.safeParse(req.query);
       if (!queryParsed.success) {
-        return reply.code(400).send({ error: "invalid_query" });
+        return sendError(reply, 400, "invalid_query");
       }
       const propertyMap = parsePropertyFilter(queryParsed.data.property);
       if (propertyMap === null) {
-        return reply.code(400).send({ error: "invalid_property_filter" });
+        return sendError(reply, 400, "invalid_property_filter");
       }
 
       const conditions = [eq(builds.projectId, paramsParsed.data.id)];
@@ -161,15 +162,15 @@ export async function registerBuildsRoutes(
     },
     async (req, reply) => {
       if (!req.auth) {
-        return reply.code(401).send({ error: "unauthenticated" });
+        return sendError(reply, 401, "unauthenticated");
       }
       const paramsParsed = paramsId.safeParse(req.params);
       if (!paramsParsed.success) {
-        return reply.code(404).send({ error: "not_found" });
+        return sendError(reply, 404, "not_found");
       }
       const bodyParsed = createBody.safeParse(req.body);
       if (!bodyParsed.success) {
-        return reply.code(400).send({ error: "invalid_body" });
+        return sendError(reply, 400, "invalid_body");
       }
       const { ciBuildId, number, branchName, name, properties } =
         bodyParsed.data;
@@ -186,7 +187,7 @@ export async function registerBuildsRoutes(
         .where(eq(projects.id, paramsParsed.data.id))
         .limit(1);
       if (!projectRow[0]) {
-        return reply.code(404).send({ error: "project_not_found" });
+        return sendError(reply, 404, "project_not_found");
       }
 
       const start = process.hrtime.bigint();
