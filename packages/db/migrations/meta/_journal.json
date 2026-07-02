@@ -232,6 +232,13 @@
       "when": 1782991025666,
       "tag": "0032_rls_functions_and_app_role",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1782994808578,
+      "tag": "0033_rls_enable_policies",
+      "breakpoints": true
     }
   ]
 }
