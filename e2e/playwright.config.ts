@@ -14,6 +14,7 @@ const DASH = process.env.E2E_DASH_URL ?? "http://localhost:3001";
  */
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./scripts/global-setup.ts",
   timeout: 120_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

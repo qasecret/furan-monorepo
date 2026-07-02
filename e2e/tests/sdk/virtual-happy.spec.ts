@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-import { BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD } from "../../scripts/compose.js";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { loadSeed, principal } from "../../src/seed/load-seed.js";
 
 const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
@@ -24,9 +24,9 @@ test.describe.serial("sdk: virtual-SDK happy path", () => {
   let baselineRunId = "";
 
   test.beforeAll(async () => {
-    const boot = await api.loginJwt(BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD);
-    admin = boot.token;
-    pat = await api.mintPat(admin, "e2e-virtual-happy");
+    const seed = loadSeed();
+    admin = seed.bootstrapAdminJwt;
+    pat = principal(seed, "owner").pat; // owner bypasses membership → can capture anywhere
     const project = await api.createProject(admin, {
       name: `e2e-virtual-happy-${Date.now()}`,
     });

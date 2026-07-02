@@ -76,6 +76,25 @@ export class ApiClient {
     return { status: res.status, body: body as T };
   }
 
+  /** Like `request` but never throws on a 4xx/5xx — returns the status + body
+   *  so a test can assert a gate outcome (403/409/...) directly. */
+  async probe(
+    method: string,
+    path: string,
+    opts: { auth?: string; body?: unknown } = {},
+  ): Promise<{ status: number; body: unknown }> {
+    const headers: Record<string, string> = {};
+    if (opts.body !== undefined) headers["content-type"] = "application/json";
+    if (opts.auth) headers["authorization"] = `Bearer ${opts.auth}`;
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers,
+      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+    });
+    const text = await res.text();
+    return { status: res.status, body: text ? safeJson(text) : null };
+  }
+
   // ---- auth ---------------------------------------------------------------
 
   async loginJwt(email: string, password: string): Promise<LoginResult> {
