@@ -258,7 +258,15 @@ async function tryAutoApproveByPastBaselines(
         );
         return true;
       }
-    } catch {
+    } catch (err) {
+      // A past-baseline comparison failing (e.g. its image is missing from
+      // storage) shouldn't abort auto-approve — skip that baseline. But log
+      // it: a silent skip could otherwise hide systemic storage/compare
+      // failures behind a run that just "didn't auto-approve".
+      logger.warn(
+        { err, variationId, baselineRunId: bl.testRunId },
+        "auto_approve_baseline_compare_failed",
+      );
       continue;
     }
   }
