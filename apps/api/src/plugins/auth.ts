@@ -3,6 +3,7 @@ import type { UserRole } from "@furan/shared-types";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
+import { recordAuthFailure } from "../lib/auth-metrics.js";
 import { sendError } from "../lib/errors.js";
 import { loadActiveUserByPat } from "../lib/load-active-user.js";
 import { resolveAuthUser } from "../lib/resolve-auth-user.js";
@@ -50,12 +51,14 @@ export default fp(async (app) => {
       const legacy = bearer ? null : extractLegacyApiKey(req);
       const raw = bearer ?? legacy;
       if (!raw) {
+        recordAuthFailure(app.telemetry.metrics, "missing_credentials");
         return sendError(reply, 401, "missing_credentials");
       }
 
       if (isPatFormat(raw)) {
         const pat = await loadActiveUserByPat(app.db, raw);
         if (!pat) {
+          recordAuthFailure(app.telemetry.metrics, "invalid_pat");
           return sendError(reply, 401, "invalid_token");
         }
         req.auth = { id: pat.id, role: pat.role };
@@ -66,6 +69,7 @@ export default fp(async (app) => {
       // legacy apiKey header carrying a NON-PAT value is invalid
       // (JWTs go through Bearer).
       if (legacy && !bearer) {
+        recordAuthFailure(app.telemetry.metrics, "invalid_token_format");
         return sendError(reply, 401, "invalid_token_format");
       }
 
@@ -78,6 +82,7 @@ export default fp(async (app) => {
         // ignored — the live role comes from loadActiveUser below.
         payload = app.jwt.verify(raw) as { sub: string };
       } catch {
+        recordAuthFailure(app.telemetry.metrics, "invalid_jwt");
         return sendError(reply, 401, "invalid_jwt");
       }
 
@@ -89,10 +94,12 @@ export default fp(async (app) => {
         payload.sub,
       );
       if (!fresh) {
+        recordAuthFailure(app.telemetry.metrics, "invalid_jwt");
         return sendError(reply, 401, "invalid_jwt"); // missing/bad
       }
       if (!fresh.isActive) {
         // valid token, but the account is disabled — distinct from a bad token
+        recordAuthFailure(app.telemetry.metrics, "account_inactive");
         return sendError(reply, 403, "account_inactive");
       }
       req.auth = { id: payload.sub, role: fresh.role };
