@@ -1,10 +1,15 @@
 import { Writable } from "node:stream";
 
-import { describe, expect, test } from "vitest";
+import { trace } from "@opentelemetry/api";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { bootstrapTelemetry, makeProcessErrorHandlers } from "./index.js";
 
 describe("bootstrapTelemetry", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test("returns logger + metrics + shutdown handle", () => {
     const t = bootstrapTelemetry({ service: "test-svc", version: "0.0.1" });
     expect(t.logger).toBeDefined();
@@ -77,6 +82,82 @@ describe("bootstrapTelemetry", () => {
   test("no SDK starts when otlpEndpoint is undefined", async () => {
     const t = bootstrapTelemetry({ service: "test-svc", version: "0.0.5" });
     await expect(t.shutdown()).resolves.toBeUndefined();
+  });
+
+  test("log line carries no trace fields when no span is active", async () => {
+    const captured: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        captured.push(chunk.toString());
+        cb();
+      },
+    });
+    const t = bootstrapTelemetry({
+      service: "test-svc",
+      version: "0.0.6",
+      destination: stream,
+    });
+    t.logger.info("no span here");
+    await new Promise((r) => setTimeout(r, 20));
+    const parsed = JSON.parse(captured[0]!);
+    expect(parsed.trace_id).toBeUndefined();
+    expect(parsed.span_id).toBeUndefined();
+  });
+
+  test("log line carries trace_id/span_id when a span is active", async () => {
+    const captured: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        captured.push(chunk.toString());
+        cb();
+      },
+    });
+    const t = bootstrapTelemetry({
+      service: "test-svc",
+      version: "0.0.7",
+      destination: stream,
+    });
+
+    const traceId = "0af7651916cd43dd8448eb211c80319c";
+    const spanId = "b7ad6b7169203331";
+    // Stub the active span rather than rely on a registered context manager
+    // (none is installed without a started SDK, so context.with wouldn't
+    // propagate). This still exercises the real pino → mixin → getActiveSpan path.
+    vi.spyOn(trace, "getActiveSpan").mockReturnValue(
+      trace.wrapSpanContext({ traceId, spanId, traceFlags: 1 }),
+    );
+    t.logger.info("inside span");
+
+    await new Promise((r) => setTimeout(r, 20));
+    const parsed = JSON.parse(captured[0]!);
+    expect(parsed.trace_id).toBe(traceId);
+    expect(parsed.span_id).toBe(spanId);
+  });
+
+  test("all-zero (never-sampled) trace id is not stamped onto logs", async () => {
+    const captured: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, cb) {
+        captured.push(chunk.toString());
+        cb();
+      },
+    });
+    const t = bootstrapTelemetry({
+      service: "test-svc",
+      version: "0.0.8",
+      destination: stream,
+    });
+    vi.spyOn(trace, "getActiveSpan").mockReturnValue(
+      trace.wrapSpanContext({
+        traceId: "00000000000000000000000000000000",
+        spanId: "0000000000000000",
+        traceFlags: 0,
+      }),
+    );
+    t.logger.info("invalid span ctx");
+    await new Promise((r) => setTimeout(r, 20));
+    const parsed = JSON.parse(captured[0]!);
+    expect(parsed.trace_id).toBeUndefined();
   });
 });
 

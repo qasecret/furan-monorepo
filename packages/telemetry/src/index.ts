@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 
+import { trace } from "@opentelemetry/api";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
@@ -41,6 +42,21 @@ const REDACT_PATHS = [
   "*.token",
 ];
 
+/**
+ * pino `mixin` that injects the active span's ids for trace↔log correlation.
+ * Returns an empty object when no span is recording (tracing disabled, or
+ * outside any span), so it is a zero-cost no-op in the default no-OTLP setup.
+ */
+function traceContextMixin(): Record<string, string> {
+  const span = trace.getActiveSpan();
+  if (!span) return {};
+  const ctx = span.spanContext();
+  // A never-sampled / invalid context carries an all-zero trace id — skip it
+  // rather than stamping a meaningless "00000000..." onto the log.
+  if (!ctx.traceId || /^0+$/.test(ctx.traceId)) return {};
+  return { trace_id: ctx.traceId, span_id: ctx.spanId };
+}
+
 export function bootstrapTelemetry(opts: BootstrapOptions): Telemetry {
   const logger = pino(
     {
@@ -48,6 +64,12 @@ export function bootstrapTelemetry(opts: BootstrapOptions): Telemetry {
       level: process.env.LOG_LEVEL ?? "info",
       redact: { paths: REDACT_PATHS, censor: "[REDACTED]" },
       base: { service: opts.service, version: opts.version },
+      // Trace↔log correlation: when a request/job runs inside an active OTel
+      // span (only when OTLP tracing is enabled below), stamp its trace/span
+      // ids onto every log line so a log can be pivoted to its trace. A no-op
+      // — returns {} — when no span is active, so it costs nothing when
+      // tracing is off (the default).
+      mixin: traceContextMixin,
     },
     opts.destination ?? process.stdout,
   );
