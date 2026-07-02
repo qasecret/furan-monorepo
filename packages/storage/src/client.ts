@@ -21,6 +21,8 @@ export type { HeadResult, Storage, StorageObject } from "./types.js";
  *
  * Spec: furan-design/specs/2026-05-24-hdd-storage-backend-design.md
  */
+const S3_SECRET_PLACEHOLDERS = new Set(["devpw_must_be_long"]);
+
 const storageEnv = z
   .object({
     STORAGE_KIND: z.enum(["s3", "hdd"]).default("s3"),
@@ -48,6 +50,18 @@ const storageEnv = z
             message: `${k} is required when STORAGE_KIND=s3`,
           });
         }
+      }
+      // Fail closed on the shipped `.env.example` placeholder — booting S3
+      // with it produces cryptic `SignatureDoesNotMatch` 500s at first write
+      // instead of a clear "you forgot to set a real secret" at startup.
+      // Mirrors the bootstrap-admin placeholder rejection in the api env schema.
+      if (val.S3_SECRET_KEY && S3_SECRET_PLACEHOLDERS.has(val.S3_SECRET_KEY)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["S3_SECRET_KEY"],
+          message:
+            "S3_SECRET_KEY is still the .env.example placeholder — set the real object-storage secret",
+        });
       }
     } else if (val.STORAGE_KIND === "hdd") {
       if (!val.HDD_ROOT) {
