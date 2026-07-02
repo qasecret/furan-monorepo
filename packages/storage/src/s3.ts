@@ -34,6 +34,13 @@ export function createS3Storage(config: S3Config): Storage {
       secretAccessKey: config.secretKey,
     },
     forcePathStyle: true,
+    // Without explicit timeouts a slow/partitioned MinIO or S3 endpoint makes
+    // uploads and reads hang indefinitely, blocking capture and diff jobs. The
+    // SDK builds a NodeHttpHandler from this object form (no extra dependency).
+    requestHandler: {
+      connectionTimeout: 5_000,
+      requestTimeout: 30_000,
+    },
   });
 
   return {

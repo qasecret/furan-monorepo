@@ -1,7 +1,11 @@
 import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
 import { createQueue, createRedisConnection } from "@furan/queue";
-import { bootstrapTelemetry } from "@furan/telemetry";
+import {
+  bootstrapTelemetry,
+  installProcessErrorHandlers,
+  logStartupFatal,
+} from "@furan/telemetry";
 import type { App } from "octokit";
 
 import { envSchema } from "./env.js";
@@ -21,6 +25,7 @@ async function main(): Promise<void> {
       ? { otlpEndpoint: env.OTLP_ENDPOINT }
       : {}),
   });
+  installProcessErrorHandlers(telemetry.logger);
 
   // Primary connection — reserved for future request-path work (rate-limit
   // counters, idempotency keys for outbound deliveries in T9, etc.).
@@ -122,6 +127,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-  console.error(err);
+  logStartupFatal("integrations", err);
   process.exit(1);
 });

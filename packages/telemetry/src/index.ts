@@ -77,3 +77,42 @@ export function bootstrapTelemetry(opts: BootstrapOptions): Telemetry {
     },
   };
 }
+
+/**
+ * Register last-resort process-level crash guards. Without these, an
+ * `unhandledRejection` (e.g. a fire-and-forget promise that rejects) or an
+ * `uncaughtException` either crashes the process with an unstructured stack on
+ * stderr — invisible to log aggregation — or, on older Node defaults, is
+ * swallowed and leaves the service in an undefined state. We log the error
+ * through the structured logger (so it carries service/version and is
+ * redacted + parseable) and exit non-zero so the orchestrator restarts a
+ * cleanly-dead process rather than nursing a wedged one.
+ *
+ * Call once per service, right after {@link bootstrapTelemetry}.
+ */
+export function installProcessErrorHandlers(logger: Logger): void {
+  process.on("unhandledRejection", (reason) => {
+    logger.fatal({ err: reason }, "unhandled_rejection");
+    process.exit(1);
+  });
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ err }, "uncaught_exception");
+    process.exit(1);
+  });
+}
+
+/**
+ * Structured last-ditch logger for a failure during startup, *before*
+ * {@link bootstrapTelemetry} has produced a logger (e.g. `getEnv` throws on a
+ * bad env, or telemetry bootstrap itself fails). Emits a single JSON line so
+ * log aggregation still captures it, then the caller exits non-zero.
+ */
+export function logStartupFatal(service: string, err: unknown): void {
+  const payload = {
+    level: "fatal",
+    service,
+    msg: "startup_failed",
+    err: err instanceof Error ? (err.stack ?? err.message) : String(err),
+  };
+  process.stderr.write(`${JSON.stringify(payload)}\n`);
+}

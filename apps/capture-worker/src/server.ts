@@ -2,7 +2,11 @@ import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
 import { createRedisConnection, createWorker } from "@furan/queue";
 import { createStorage } from "@furan/storage";
-import { bootstrapTelemetry } from "@furan/telemetry";
+import {
+  bootstrapTelemetry,
+  installProcessErrorHandlers,
+  logStartupFatal,
+} from "@furan/telemetry";
 
 import { envSchema } from "./env.js";
 import { handleCaptureJob } from "./handler.js";
@@ -18,6 +22,7 @@ async function main(): Promise<void> {
       ? { otlpEndpoint: env.OTLP_ENDPOINT }
       : {}),
   });
+  installProcessErrorHandlers(telemetry.logger);
 
   const { db, close: closeDb } = createDb();
   const storage = createStorage();
@@ -54,6 +59,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-  console.error(err);
+  logStartupFatal("capture-worker", err);
   process.exit(1);
 });

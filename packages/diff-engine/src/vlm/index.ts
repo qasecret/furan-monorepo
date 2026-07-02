@@ -18,6 +18,32 @@ export { ollamaProvider } from "./ollama.js";
 export { geminiProvider } from "./gemini.js";
 export { anthropicProvider } from "./anthropic.js";
 
+/** Hard ceiling on a single VLM provider call. Ollama/Gemini/Anthropic can
+ *  stall (cold model load, quota backpressure, network partition); without a
+ *  timeout one hung request blocks the whole diff worker and the queue backs
+ *  up unbounded. On timeout we fall back to the L1 verdict like any other
+ *  provider failure. */
+const VLM_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
 export interface RunVlmOptions {
   provider: VlmProvider;
   config: VlmProviderConfig;
@@ -63,11 +89,15 @@ export async function runVlm(
         ? new Uint8Array(l1.diffImageBytes)
         : candidateBytes;
 
-    const response = await options.provider.generate(options.config, [
-      baselineBytes,
-      candidateBytes,
-      diffBytes,
-    ]);
+    const response = await withTimeout(
+      options.provider.generate(options.config, [
+        baselineBytes,
+        candidateBytes,
+        diffBytes,
+      ]),
+      VLM_TIMEOUT_MS,
+      "vlm_generate",
+    );
 
     const content = options.config.useThinking
       ? (response.thinking ?? response.content)

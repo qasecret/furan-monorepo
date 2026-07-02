@@ -1,7 +1,11 @@
 import { getEnv } from "@furan/config";
 import { createDb } from "@furan/db";
 import { createQueue, createRedisConnection } from "@furan/queue";
-import { bootstrapTelemetry } from "@furan/telemetry";
+import {
+  bootstrapTelemetry,
+  installProcessErrorHandlers,
+  logStartupFatal,
+} from "@furan/telemetry";
 
 import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
@@ -18,6 +22,7 @@ async function main(): Promise<void> {
       ? { otlpEndpoint: env.OTLP_ENDPOINT }
       : {}),
   });
+  installProcessErrorHandlers(telemetry.logger);
   const { db, close } = createDb();
   const diffQueue = createQueue("diff");
   // Dedicated Redis publisher connection for project-channel broadcasts.
@@ -64,4 +69,7 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+void main().catch((err) => {
+  logStartupFatal("api", err);
+  process.exit(1);
+});

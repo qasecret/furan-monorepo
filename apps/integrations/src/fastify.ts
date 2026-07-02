@@ -1,5 +1,11 @@
 import type { Telemetry } from "@furan/telemetry";
-import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import Fastify, {
+  type FastifyBaseLogger,
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import type { App } from "octokit";
 
 import type { Env } from "./env.js";
@@ -41,10 +47,35 @@ export async function buildFastify(
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
+    // Bound request receipt (slow-loris protection). No SSE here, but keep
+    // the ceiling consistent with the api service.
+    requestTimeout: 120_000,
   });
 
   app.decorate("env", deps.env);
   app.decorate("telemetry", deps.telemetry);
+
+  // Mirror the api's generic-5xx error handler so an unhandled throw in a
+  // webhook handler doesn't leak stack frames / internal detail to the caller,
+  // and every error lands in the structured log with its reqId. 4xx pass
+  // through so validation messages still reach the client.
+  app.setErrorHandler(
+    (err: FastifyError, req: FastifyRequest, reply: FastifyReply) => {
+      const status =
+        err.statusCode && err.statusCode >= 400 && err.statusCode < 600
+          ? err.statusCode
+          : 500;
+      req.log.error({ err, reqId: req.id, url: req.url }, "request_error");
+      if (status >= 500) {
+        return reply.code(status).send({ error: "internal_error" });
+      }
+      return reply.code(status).send({
+        statusCode: status,
+        error: err.name || "Error",
+        message: err.message,
+      });
+    },
+  );
 
   const githubApp = deps.githubApp;
 

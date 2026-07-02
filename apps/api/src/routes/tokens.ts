@@ -2,6 +2,7 @@ import { and, eq, tokens } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { emitAudit } from "../lib/emit-audit.js";
 import { generateRawToken } from "../lib/token.js";
 
 export const createBody = z.object({ label: z.string().min(1).max(80) });
@@ -66,6 +67,19 @@ export async function registerTokensRoutes(
           label: tokens.label,
           createdAt: tokens.createdAt,
         });
+      // PATs are long-lived credentials for CI/SDK — mint/revoke belongs in the
+      // audit trail (never the raw token or its hash, only id + label).
+      await emitAudit(
+        app.db,
+        {
+          actorId: req.auth.id,
+          action: "token.created",
+          targetType: "token",
+          targetId: row?.id ?? null,
+          metadata: { label: parsed.data.label },
+        },
+        req.log,
+      );
       return reply.code(201).send({ ...row, token: raw });
     },
   );
@@ -90,6 +104,16 @@ export async function registerTokensRoutes(
       if (result.length === 0) {
         return reply.code(404).send({ error: "not_found" });
       }
+      await emitAudit(
+        app.db,
+        {
+          actorId: req.auth.id,
+          action: "token.deleted",
+          targetType: "token",
+          targetId: parsed.data.id,
+        },
+        req.log,
+      );
       return reply.code(204).send();
     },
   );
