@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   installProcessErrorHandlers(telemetry.logger);
 
   const { db, close: closeDb } = createDb();
-  const storage = createStorage();
+  const storage = createStorage(telemetry.metrics);
   const redis = createRedisConnection();
   const retentionMetrics = createRetentionMetrics(telemetry.metrics);
   const diffMetrics = createDiffMetrics(telemetry.metrics);

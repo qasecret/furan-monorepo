@@ -243,7 +243,8 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
   // require S3 credentials in environments that don't exercise this route.
   let storageSingleton: ReturnType<typeof createStorage> | null = null;
   const storage = (): ReturnType<typeof createStorage> => {
-    if (!storageSingleton) storageSingleton = createStorage();
+    if (!storageSingleton)
+      storageSingleton = createStorage(app.telemetry.metrics);
     return storageSingleton;
   };
 
