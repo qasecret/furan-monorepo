@@ -1,5 +1,5 @@
 import { getEnv } from "@furan/config";
-import { createDb } from "@furan/db";
+import { createDb, projects } from "@furan/db";
 import {
   createRedisConnection,
   createWorker,
@@ -17,6 +17,18 @@ import { envSchema } from "./env.js";
 import { handleCaptureJob } from "./handler.js";
 import { startHealthServer } from "./health.js";
 import { closeAllBrowsers } from "./playwright.js";
+
+/** Bound a readiness dependency check so a hung Redis/Postgres can't hang the
+ *  probe. Mirrors the `withTimeout` in the api's health route. */
+const PROBE_TIMEOUT_MS = 1000;
+function probe<T>(p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("probe_timeout")), PROBE_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -81,7 +93,24 @@ async function main(): Promise<void> {
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
-    ready: async () => worker.isRunning(),
+    // Deep readiness: a worker that can't reach Redis (its job source) or
+    // Postgres would report ready while silently failing every dequeue. Probe
+    // both under a short timeout; any failure → not_ready so an orchestrator
+    // stops routing to / restarts this pod. Never throws (the health handler
+    // awaits this) — a failed probe resolves to false.
+    ready: async () => {
+      if (!worker.isRunning()) return false;
+      try {
+        await Promise.all([
+          probe(redis.ping()),
+          probe(db.select().from(projects).limit(1)),
+        ]);
+        return true;
+      } catch (err) {
+        telemetry.logger.warn({ err }, "readyz_dependency_probe_failed");
+        return false;
+      }
+    },
   });
 
   const shutdown = async (signal: string): Promise<void> => {

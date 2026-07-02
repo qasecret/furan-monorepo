@@ -1,5 +1,5 @@
 import { getEnv } from "@furan/config";
-import { createDb } from "@furan/db";
+import { createDb, projects } from "@furan/db";
 import {
   createRedisConnection,
   createRetentionQueue,
@@ -28,6 +28,18 @@ import { sweepStaleRuns } from "./sweeper.js";
  *  outside business hours for both NA and EU while leaving wide breathing
  *  room before the next workday begins anywhere. */
 const RETENTION_CRON = "0 3 * * *";
+
+/** Bound a readiness dependency check so a hung Redis/Postgres can't hang the
+ *  probe. Mirrors the `withTimeout` in the api's health route. */
+const PROBE_TIMEOUT_MS = 1000;
+function probe<T>(p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("probe_timeout")), PROBE_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -135,7 +147,22 @@ async function main(): Promise<void> {
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
-    ready: async () => worker.isRunning() && retentionWorker.isRunning(),
+    // Deep readiness: both workers running AND the shared deps (Redis job
+    // source + Postgres) reachable under a short timeout. Any failure →
+    // not_ready. Never throws (the health handler awaits this).
+    ready: async () => {
+      if (!worker.isRunning() || !retentionWorker.isRunning()) return false;
+      try {
+        await Promise.all([
+          probe(redis.ping()),
+          probe(db.select().from(projects).limit(1)),
+        ]);
+        return true;
+      } catch (err) {
+        telemetry.logger.warn({ err }, "readyz_dependency_probe_failed");
+        return false;
+      }
+    },
   });
 
   const shutdown = async (signal: string): Promise<void> => {

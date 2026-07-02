@@ -1,5 +1,5 @@
 import { getEnv } from "@furan/config";
-import { createDb } from "@furan/db";
+import { createDb, projects } from "@furan/db";
 import { createQueue, createRedisConnection } from "@furan/queue";
 import {
   bootstrapTelemetry,
@@ -15,6 +15,18 @@ import { registerWebhookHandlers } from "./github/webhook-handlers.js";
 import { startHealthServer } from "./health.js";
 import { startRunEventsSubscriber } from "./run-events/subscriber.js";
 import { createDlqCounter, startWebhookWorker } from "./webhooks/index.js";
+
+/** Bound a readiness dependency check so a hung Redis/Postgres can't hang the
+ *  probe. Mirrors the `withTimeout` in the api's health route. */
+const PROBE_TIMEOUT_MS = 1000;
+function probe<T>(p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("probe_timeout")), PROBE_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -78,9 +90,22 @@ async function main(): Promise<void> {
   const health = startHealthServer({
     port: env.HEALTH_PORT,
     telemetry,
-    // T7: always-ready. T8/T9 should swap in a real probe (Redis ping,
-    // GitHub App JWT mint check, etc.).
-    ready: async () => true,
+    // Deep readiness: ping the primary Redis (same instance the pub/sub
+    // subscriber and webhook queue depend on — the subscriber's own
+    // connection is in subscribe mode and can't answer PING) + Postgres,
+    // under a short timeout. Any failure → not_ready. Never throws.
+    ready: async () => {
+      try {
+        await Promise.all([
+          probe(redis.ping()),
+          probe(db.select().from(projects).limit(1)),
+        ]);
+        return true;
+      } catch (err) {
+        telemetry.logger.warn({ err }, "readyz_dependency_probe_failed");
+        return false;
+      }
+    },
   });
 
   const runEvents = startRunEventsSubscriber({
