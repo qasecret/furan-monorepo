@@ -119,6 +119,15 @@ COMPOSE_PROFILES=s3          # REQUIRED — gates MinIO + minio-init (PR #117)
 
 ## 3. Deploy
 
+> **Shortcut — `./deploy.sh`.** The repo-root [`deploy.sh`](../../deploy.sh)
+> automates §2–§4 as one command: it generates `.env` with fresh secrets,
+> enforces the §0 lockstep rule (refusing a released deploy when the checkout's
+> migrations are ahead of the pinned image tag), brings the stack up in order,
+> health-waits, and runs the §4f drift canary. Use `./deploy.sh --mode
+> from-head` to build images from the current checkout (always in lockstep),
+> `--storage hdd` for the filesystem backend, and `./deploy.sh --help` for the
+> rest. The manual steps below remain the reference for what it does.
+
 > **Project name matters.** Compose derives the project name from the compose
 > file's directory (`docker`). Run with `-p docker` (or from `infra/docker/`)
 > so you replace the existing stack instead of forking a second one. Use
