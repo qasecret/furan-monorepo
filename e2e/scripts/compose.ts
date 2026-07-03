@@ -38,7 +38,13 @@ export type StorageMode = "s3" | "hdd";
  * .env carries; the bootstrap admin is set so the api seeds it on first boot.
  */
 export function writeEnv(mode: StorageMode): string {
-  const base = readFileSync(join(ROOT, "infra/docker/.env"), "utf8");
+  // Strip any STORAGE_KIND / COMPOSE_PROFILES the base .env sets so the overlay
+  // is the single authoritative value (rather than a duplicate key that only
+  // works by docker-compose's last-wins parsing).
+  const base = readFileSync(join(ROOT, "infra/docker/.env"), "utf8")
+    .split("\n")
+    .filter((l) => !/^\s*(STORAGE_KIND|COMPOSE_PROFILES)=/.test(l))
+    .join("\n");
   const overlay =
     mode === "s3"
       ? "STORAGE_KIND=s3\nCOMPOSE_PROFILES=s3\n"

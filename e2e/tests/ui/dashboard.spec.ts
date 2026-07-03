@@ -70,7 +70,9 @@ test.describe.serial("ui: dashboard surfaces", () => {
 
   test("builds list renders the batches view", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["ui.builds_list"]));
-    // /builds redirects to the latest build's batches/review view.
+    // /builds redirects to the latest build's batches/review view. NOTE: the
+    // "Recent batch runs" copy is a smoke signal — a role/testid locator would
+    // resist copy churn, but the batches table exposes no stable testid today.
     await page.goto(`/projects/${projectId}/builds`);
     await expect(page.getByText("Recent batch runs").first()).toBeVisible({
       timeout: 15_000,

@@ -45,6 +45,9 @@ test.describe.serial("rbac", () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(200);
     expect(res.status).toBeLessThan(300);
+    // A build was actually created (not a silently-swallowed no-op) — assert the
+    // returned build carries an id, so the member-write path is really exercised.
+    expect(res.body).toMatchObject({ id: expect.any(String) });
   });
 
   test("JWT and PAT both authenticate", async ({}, testInfo) => {
