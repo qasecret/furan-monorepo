@@ -1,8 +1,8 @@
-import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { DB } from "./client.js";
 import { baselines, testVariations } from "./schema/index.js";
+import { variationIdentityWhere } from "./variation-identity.js";
 
 export type BaselineSource = "this_branch" | "parent_pr" | "default_branch";
 
@@ -63,9 +63,9 @@ export async function resolveBaseline(
       baselineVariationId: testVariationId,
     };
 
-  // The cross-branch tiers key off the candidate's branch-agnostic identity, so
-  // load it once. A nullable identity column (viewport/browser/os/device) must
-  // match with IS NULL, never `= NULL`, to mirror the NULLS-NOT-DISTINCT unique.
+  // The cross-branch tiers key off the candidate's branch-agnostic identity
+  // (ADR-054), so load it once. `variationIdentityWhere` handles the null-safe
+  // (NULLS-NOT-DISTINCT) column matching.
   const identity = await db.query.testVariations.findFirst({
     where: eq(testVariations.id, testVariationId),
     columns: {
@@ -76,9 +76,6 @@ export async function resolveBaseline(
       device: true,
     },
   });
-
-  const nullable = (col: AnyPgColumn, val: string | null): SQL =>
-    val === null ? isNull(col) : eq(col, val);
 
   /**
    * Most recent baseline of the sibling variation on `targetBranch`, plus the
@@ -92,12 +89,8 @@ export async function resolveBaseline(
     const sibling = await db.query.testVariations.findFirst({
       where: and(
         eq(testVariations.projectId, projectId),
-        eq(testVariations.name, identity.name),
         eq(testVariations.branchName, targetBranch),
-        nullable(testVariations.viewport, identity.viewport),
-        nullable(testVariations.browser, identity.browser),
-        nullable(testVariations.os, identity.os),
-        nullable(testVariations.device, identity.device),
+        variationIdentityWhere(identity),
       ),
       columns: { id: true },
     });
