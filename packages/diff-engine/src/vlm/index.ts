@@ -54,6 +54,23 @@ export interface VlmDiffResult {
   };
 }
 
+/**
+ * Extract a JSON object from an LLM response. Current models (Claude, Gemini,
+ * …) routinely wrap the requested JSON in a ```json fenced block or add a prose
+ * preamble despite the prompt asking for a bare object, so `JSON.parse` on the
+ * raw content throws. Strip a surrounding markdown fence, then fall back to the
+ * outermost `{ … }` span, before parsing.
+ */
+export function extractJsonObject(raw: string): string {
+  let s = raw.trim();
+  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) s = fenced[1].trim();
+  const first = s.indexOf("{");
+  const last = s.lastIndexOf("}");
+  if (first !== -1 && last > first) s = s.slice(first, last + 1);
+  return s;
+}
+
 export async function runVlm(
   baseline: Buffer,
   candidate: Buffer,
@@ -116,10 +133,12 @@ export async function runVlm(
     }
 
     // Guard JSON.parse — a provider can return non-JSON prose; treat that as a
-    // parse failure (fall back to L1) rather than throwing.
+    // parse failure (fall back to L1) rather than throwing. `extractJsonObject`
+    // first unwraps markdown-fenced / prose-preambled JSON that current models
+    // emit by default, so a well-formed-but-fenced object still parses.
     let parsedJson: unknown;
     try {
-      parsedJson = JSON.parse(content);
+      parsedJson = JSON.parse(extractJsonObject(content));
     } catch {
       return {
         ...fallback,
