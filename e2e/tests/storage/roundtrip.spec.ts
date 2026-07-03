@@ -8,7 +8,7 @@ import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
-import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import { ownerCreds } from "../../src/seed/load-seed.js";
 
 
 const BASELINE_PNG = fileURLToPath(
@@ -30,9 +30,7 @@ async function assertScreenshotRoundTrip(
   request: APIRequestContext,
 ): Promise<void> {
   const api = new ApiClient(API);
-  const seed = loadSeed();
-  const admin = seed.bootstrapAdminJwt;
-  const pat = principal(seed, "owner").pat;
+  const { admin, pat } = ownerCreds();
 
   const project = await api.createProject(admin, {
     name: `e2e-storage-${Date.now()}`,

@@ -4,7 +4,7 @@ import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
-import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import { ownerCreds } from "../../src/seed/load-seed.js";
 
 
 test.describe("branch: baseline fallback + merge", () => {
@@ -13,9 +13,7 @@ test.describe("branch: baseline fallback + merge", () => {
   let pat = "";
 
   test.beforeAll(() => {
-    const seed = loadSeed();
-    admin = seed.bootstrapAdminJwt;
-    pat = principal(seed, "owner").pat;
+    ({ admin, pat } = ownerCreds());
   });
 
   // DEFERRED (live-discovery): an identical capture on a fresh feature branch

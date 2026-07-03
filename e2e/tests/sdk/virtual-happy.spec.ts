@@ -4,7 +4,7 @@ import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
-import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import { ownerCreds } from "../../src/seed/load-seed.js";
 
 
 /**
@@ -24,9 +24,7 @@ test.describe.serial("sdk: virtual-SDK happy path", () => {
   let baselineRunId = "";
 
   test.beforeAll(async () => {
-    const seed = loadSeed();
-    admin = seed.bootstrapAdminJwt;
-    pat = principal(seed, "owner").pat; // owner bypasses membership → can capture anywhere
+    ({ admin, pat } = ownerCreds()); // owner PAT bypasses membership → captures anywhere
     const project = await api.createProject(admin, {
       name: `e2e-virtual-happy-${Date.now()}`,
     });

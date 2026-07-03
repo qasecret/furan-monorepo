@@ -3,8 +3,8 @@ import { expect, test } from "@playwright/test";
 import { ApiClient, type Role } from "../../src/clients/api-client.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
-import { loadSeed } from "../../src/seed/load-seed.js";
-import type { SeededPrincipal } from "../../src/seed/seed.js";
+import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import type { SeededPrincipal, SeedResult } from "../../src/seed/seed.js";
 
 
 /**
@@ -15,18 +15,13 @@ import type { SeededPrincipal } from "../../src/seed/seed.js";
 test.describe.serial("rbac", () => {
   const api = new ApiClient(API);
   let admin = "";
-  let principals: SeededPrincipal[] = [];
+  let seed: SeedResult;
   let alphaId = "";
-  const byRole = (r: Role): SeededPrincipal => {
-    const p = principals.find((x) => x.role === r);
-    if (!p) throw new Error(`no seeded ${r} principal`);
-    return p;
-  };
+  const byRole = (r: Role): SeededPrincipal => principal(seed, r);
 
   test.beforeAll(() => {
-    const seed = loadSeed();
+    seed = loadSeed();
     admin = seed.bootstrapAdminJwt;
-    principals = seed.principals;
     const alpha = seed.projects.find((p) => p.name === "alpha");
     if (!alpha) throw new Error("alpha project not seeded");
     alphaId = alpha.id;

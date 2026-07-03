@@ -4,7 +4,7 @@ import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
 import { API_URL as API } from "../../src/env.js";
-import { loadSeed, principal } from "../../src/seed/load-seed.js";
+import { ownerCreds } from "../../src/seed/load-seed.js";
 
 
 const ENGINES = [
@@ -24,9 +24,7 @@ test.describe("diff: L1 engines", () => {
   let pat = "";
 
   test.beforeAll(() => {
-    const seed = loadSeed();
-    admin = seed.bootstrapAdminJwt;
-    pat = principal(seed, "owner").pat;
+    ({ admin, pat } = ownerCreds());
   });
 
   for (const { engine, cap } of ENGINES) {

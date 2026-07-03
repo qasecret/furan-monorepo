@@ -44,6 +44,8 @@ interface RequestOpts {
   body?: unknown;
   /** Accept a non-2xx without throwing (e.g. probing an RBAC 403). */
   expect?: number;
+  /** Never throw on any status — return {status, body} (backs `probe`). */
+  noThrow?: boolean;
 }
 
 export class ApiClient {
@@ -66,33 +68,26 @@ export class ApiClient {
     });
     const text = await res.text();
     const body: unknown = text ? safeJson(text) : null;
-    if (opts.expect !== undefined) {
-      if (res.status !== opts.expect) {
+    if (!opts.noThrow) {
+      if (opts.expect !== undefined) {
+        if (res.status !== opts.expect) {
+          throw new ApiError(res.status, method, path, body);
+        }
+      } else if (res.status < 200 || res.status >= 300) {
         throw new ApiError(res.status, method, path, body);
       }
-    } else if (res.status < 200 || res.status >= 300) {
-      throw new ApiError(res.status, method, path, body);
     }
     return { status: res.status, body: body as T };
   }
 
-  /** Like `request` but never throws on a 4xx/5xx — returns the status + body
-   *  so a test can assert a gate outcome (403/409/...) directly. */
+  /** Like `request` but never throws on any status — returns {status, body} so a
+   *  test can assert a gate outcome (403/409/...) directly. */
   async probe(
     method: string,
     path: string,
     opts: { auth?: string; body?: unknown } = {},
   ): Promise<{ status: number; body: unknown }> {
-    const headers: Record<string, string> = {};
-    if (opts.body !== undefined) headers["content-type"] = "application/json";
-    if (opts.auth) headers["authorization"] = `Bearer ${opts.auth}`;
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-    });
-    const text = await res.text();
-    return { status: res.status, body: text ? safeJson(text) : null };
+    return this.request<unknown>(method, path, { ...opts, noThrow: true });
   }
 
   // ---- auth ---------------------------------------------------------------

@@ -29,8 +29,20 @@ export function principal(seed: SeedResult, role: Role): SeededPrincipal {
   return p;
 }
 
-export function projectId(seed: SeedResult, name: string): string {
-  const p = seed.projects.find((x) => x.name === name);
-  if (!p) throw new Error(`no seeded project ${name}`);
-  return p.id;
+/**
+ * The credentials most capture specs need: the bootstrap admin JWT (for admin
+ * mutations) + the owner PAT (bypasses project membership, so it can capture on
+ * any project). Call from a `beforeAll` (after globalSetup has seeded).
+ */
+export function ownerCreds(): {
+  admin: string;
+  pat: string;
+  seed: SeedResult;
+} {
+  const seed = loadSeed();
+  return {
+    admin: seed.bootstrapAdminJwt,
+    pat: principal(seed, "owner").pat,
+    seed,
+  };
 }
