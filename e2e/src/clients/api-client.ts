@@ -296,6 +296,63 @@ export class ApiClient {
     return body;
   }
 
+  /**
+   * Upload a checkpoint screenshot via the MULTIPART endpoint, which (unlike the
+   * base64 variant) accepts `matchLevel`, `domHtml`, and the axe a11y opts.
+   */
+  async uploadScreenshotMultipart(
+    auth: string,
+    runId: string,
+    input: {
+      png: Buffer;
+      name: string;
+      viewport: string;
+      browser: string;
+      matchLevel?: string;
+      domHtml?: string;
+      elementMapJson?: string;
+      accessibilityLevel?: string;
+      accessibilityVersion?: string;
+    },
+  ): Promise<{
+    screenshotId: string;
+    checkpointId: string;
+    testVariationId: string;
+  }> {
+    const form = new FormData();
+    form.append(
+      "pngBytes",
+      new Blob([input.png], { type: "image/png" }),
+      "screenshot.png",
+    );
+    form.append("name", input.name);
+    form.append("viewport", input.viewport);
+    form.append("browser", input.browser);
+    if (input.matchLevel) form.append("matchLevel", input.matchLevel);
+    if (input.domHtml) form.append("domHtml", input.domHtml);
+    if (input.elementMapJson) form.append("elementMapJson", input.elementMapJson);
+    if (input.accessibilityLevel)
+      form.append("accessibilityLevel", input.accessibilityLevel);
+    if (input.accessibilityVersion)
+      form.append("accessibilityVersion", input.accessibilityVersion);
+
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/screenshots`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${auth}` },
+      body: form,
+    });
+    const text = await res.text();
+    const body: unknown = text ? safeJson(text) : null;
+    if (res.status < 200 || res.status >= 300) {
+      throw new ApiError(res.status, "POST", `/runs/${runId}/screenshots`, body);
+    }
+    return body as {
+      screenshotId: string;
+      checkpointId: string;
+      testVariationId: string;
+    };
+  }
+
   async completeRun(auth: string, runId: string): Promise<void> {
     await this.request("POST", `/runs/${runId}/complete`, { auth });
   }
@@ -303,6 +360,26 @@ export class ApiClient {
   /** Approve a run → promotes its screenshot to the variation's baseline. */
   async approveRun(auth: string, runId: string): Promise<void> {
     await this.request("POST", `/runs/${runId}/approve`, { auth });
+  }
+
+  /**
+   * Approve a run AND persist reviewer-drawn ignore regions onto the variation
+   * (ADR-036), so future runs mask those boxes. Uses the tRPC runs.approve (the
+   * REST wrapper doesn't forward ignoreAreas).
+   */
+  async approveRunWithIgnore(
+    auth: string,
+    runId: string,
+    ignoreAreas: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      viewport: string;
+      mode: "ignore" | "dynamic-text" | "strict";
+    }[],
+  ): Promise<void> {
+    await this.trpcMutate(auth, "runs.approve", { runId, ignoreAreas });
   }
 
   async getRun(
