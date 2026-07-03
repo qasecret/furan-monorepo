@@ -27,9 +27,9 @@ All capture logic lives in `furan-core` behind a driver-agnostic `SpecDriver` SP
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-selenium:4.1.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-selenium:4.2.0") // x-release-please-version
     // Optional — for @FuranTest annotation:
-    testImplementation("io.github.qasecret:furan-junit5:4.1.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-junit5:4.2.0") // x-release-please-version
 }
 ```
 
@@ -39,7 +39,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-selenium</artifactId>
-    <version>4.1.0</version> <!-- x-release-please-version -->
+    <version>4.2.0</version> <!-- x-release-please-version -->
     <scope>test</scope>
 </dependency>
 ```
@@ -51,7 +51,7 @@ Maven:
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-playwright:4.1.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-playwright:4.2.0") // x-release-please-version
     testImplementation("com.microsoft.playwright:playwright:1.49.0")
 }
 ```
@@ -62,7 +62,7 @@ Maven:
 <dependency>
     <groupId>io.github.qasecret</groupId>
     <artifactId>furan-playwright</artifactId>
-    <version>4.1.0</version> <!-- x-release-please-version -->
+    <version>4.2.0</version> <!-- x-release-please-version -->
     <scope>test</scope>
 </dependency>
 <dependency>
@@ -80,7 +80,7 @@ Maven:
 repositories { mavenCentral() }
 
 dependencies {
-    testImplementation("io.github.qasecret:furan-appium:4.1.0") // x-release-please-version
+    testImplementation("io.github.qasecret:furan-appium:4.2.0") // x-release-please-version
     testImplementation("io.appium:java-client:9.5.0")
 }
 ```

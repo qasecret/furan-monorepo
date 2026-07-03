@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.1.0...sdk/v4.2.0) (2026-07-03)
+
+
+### Features
+
+* **sdk:** browser detection, settable OS/device, Eyes→Loupe rename ([#317](https://github.com/qasecret/furan-monorepo/issues/317)) ([5641683](https://github.com/qasecret/furan-monorepo/commit/564168343e8f870b0cf54016a94bec7da0c826a9))
+
 ## [4.1.0](https://github.com/qasecret/furan-monorepo/compare/sdk/v4.0.0...sdk/v4.1.0) (2026-06-27)
 
 ### Features
