@@ -16,14 +16,14 @@ test.describe("branch: baseline fallback + merge", () => {
     ({ admin, pat } = ownerCreds());
   });
 
-  // DEFERRED (live-discovery): an identical capture on a fresh feature branch
-  // (parentBranchName=main) returned "new", not "passed" — neither the parent_pr
-  // tier nor the default_branch tier resolved main's approved baseline. The
-  // diff-worker resolves fallback from the DIFF JOB's `parentPrBaseBranch`
-  // (handler.ts:425), so the open question is whether the SDK run's
-  // `parentBranchName` is wired through to the enqueued diff job, plus the exact
-  // cross-branch status semantics. Needs investigation before this can assert.
-  test.skip("parent-PR fallback resolves the parent branch's baseline", async ({}, testInfo) => {
+  // ADR-054 folds the branch into the test_variation identity, so a feature
+  // branch's variation has a DIFFERENT id than main's. resolveBaseline's
+  // parent_pr / default_branch tiers now resolve the sibling variation on the
+  // target branch by branch-agnostic identity (name/viewport/browser/os/device)
+  // and take ITS baseline — previously they queried the candidate's own
+  // branch-specific id against another branch and never matched, mislabelling
+  // this identical capture as "new".
+  test("parent-PR fallback resolves the parent branch's baseline", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["branch.parent_fallback"]));
     const project = await api.createProject(admin, {
       name: `e2e-parent-fallback-${Date.now()}`,

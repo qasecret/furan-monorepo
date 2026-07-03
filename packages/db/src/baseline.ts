@@ -1,4 +1,5 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import type { DB } from "./client.js";
 import { baselines, testVariations } from "./schema/index.js";
@@ -19,6 +20,16 @@ export interface GitRefs {
  *   3. default_branch — most recent baseline on the repo default branch
  *
  * Returns null when no baseline exists in any tier.
+ *
+ * ADR-054 folds the branch into the `test_variations` identity, so the SAME
+ * checkpoint on a feature branch and on `main` are DISTINCT variation rows with
+ * distinct ids. The parent_pr / default_branch tiers (ADR-055) must therefore
+ * resolve the *sibling* variation on the target branch — the row sharing the
+ * candidate's branch-agnostic environment identity (name/viewport/browser/os/
+ * device) — and take ITS baseline. Querying the candidate's own branch-specific
+ * `testVariationId` against another branch never matches (the parent's baseline
+ * lives under the parent's variation id), which silently broke cross-branch
+ * fallback and mislabelled identical feature-branch captures as "new".
  */
 export async function resolveBaseline(
   db: DB,
@@ -27,7 +38,7 @@ export async function resolveBaseline(
   testVariationId: string,
   refs: GitRefs,
 ): Promise<{ baselineId: string; source: BaselineSource } | null> {
-  // 1. this_branch
+  // 1. this_branch — the candidate's own (branch-specific) variation.
   const onBranch = await db.query.baselines.findFirst({
     where: and(
       eq(baselines.testVariationId, testVariationId),
@@ -37,28 +48,58 @@ export async function resolveBaseline(
   });
   if (onBranch) return { baselineId: onBranch.id, source: "this_branch" };
 
+  // The cross-branch tiers key off the candidate's branch-agnostic identity, so
+  // load it once. A nullable identity column (viewport/browser/os/device) must
+  // match with IS NULL, never `= NULL`, to mirror the NULLS-NOT-DISTINCT unique.
+  const identity = await db.query.testVariations.findFirst({
+    where: eq(testVariations.id, testVariationId),
+    columns: {
+      name: true,
+      viewport: true,
+      browser: true,
+      os: true,
+      device: true,
+    },
+  });
+
+  const nullable = (col: AnyPgColumn, val: string | null): SQL =>
+    val === null ? isNull(col) : eq(col, val);
+
+  /** Most recent baseline of the sibling variation on `targetBranch`, if any. */
+  const baselineOnBranch = async (
+    targetBranch: string,
+  ): Promise<string | null> => {
+    if (!identity) return null;
+    const sibling = await db.query.testVariations.findFirst({
+      where: and(
+        eq(testVariations.projectId, projectId),
+        eq(testVariations.name, identity.name),
+        eq(testVariations.branchName, targetBranch),
+        nullable(testVariations.viewport, identity.viewport),
+        nullable(testVariations.browser, identity.browser),
+        nullable(testVariations.os, identity.os),
+        nullable(testVariations.device, identity.device),
+      ),
+      columns: { id: true },
+    });
+    if (!sibling) return null;
+    const b = await db.query.baselines.findFirst({
+      where: eq(baselines.testVariationId, sibling.id),
+      orderBy: [desc(baselines.createdAt)],
+    });
+    return b?.id ?? null;
+  };
+
   // 2. parent_pr (depth-cap; v1.0: one hop)
   const cap = refs.depthCap ?? 10;
   if (refs.parentPrBaseBranch && cap > 0) {
-    const onParent = await db.query.baselines.findFirst({
-      where: and(
-        eq(baselines.testVariationId, testVariationId),
-        eq(baselines.branchName, refs.parentPrBaseBranch),
-      ),
-      orderBy: [desc(baselines.createdAt)],
-    });
-    if (onParent) return { baselineId: onParent.id, source: "parent_pr" };
+    const parentId = await baselineOnBranch(refs.parentPrBaseBranch);
+    if (parentId) return { baselineId: parentId, source: "parent_pr" };
   }
 
   // 3. default_branch
-  const onDefault = await db.query.baselines.findFirst({
-    where: and(
-      eq(baselines.testVariationId, testVariationId),
-      eq(baselines.branchName, refs.defaultBranch),
-    ),
-    orderBy: [desc(baselines.createdAt)],
-  });
-  if (onDefault) return { baselineId: onDefault.id, source: "default_branch" };
+  const defaultId = await baselineOnBranch(refs.defaultBranch);
+  if (defaultId) return { baselineId: defaultId, source: "default_branch" };
 
   return null;
 }
