@@ -122,11 +122,6 @@ export async function deriveCheckpointStatuses(
       branchName: testRuns.branchName,
       projectId: testRuns.projectId,
       status: testRuns.status,
-      // Authoritative "a baseline was resolved for this run" signal, written by
-      // the diff-worker for every tier — including the parent_pr/default_branch
-      // tiers whose baseline lives under a SIBLING variation (ADR-054), which
-      // the candidate-variation-scoped `baselines` lookup below cannot see.
-      baselineSource: testRuns.baselineSource,
     })
     .from(testRuns)
     .where(inArray(testRuns.id, runIds));
@@ -164,19 +159,118 @@ export async function deriveCheckpointStatuses(
       set.add(b.branchName);
     }
   }
+  // Cross-branch (default_branch tier): ADR-054 makes each variation
+  // branch-specific, so a checkpoint's default-branch baseline lives under a
+  // DISTINCT same-identity SIBLING variation — invisible to the
+  // candidate-scoped `baselines` lookup above. Resolve, per candidate, whether
+  // a sibling on the project's default branch has a baseline. This is
+  // per-variation (name+viewport+browser+os+device), so a run spanning several
+  // viewports keeps precise per-checkpoint granularity — a genuinely-new
+  // viewport isn't masked by a baselined sibling one. (parent_pr is still
+  // omitted — the badge has no PR base context.)
+  const variationIdentity = new Map<
+    string,
+    {
+      projectId: string;
+      name: string;
+      viewport: string | null;
+      browser: string | null;
+      os: string | null;
+      device: string | null;
+    }
+  >();
+  if (variationIds.length > 0) {
+    const rows = await db
+      .select({
+        id: testVariations.id,
+        projectId: testVariations.projectId,
+        name: testVariations.name,
+        viewport: testVariations.viewport,
+        browser: testVariations.browser,
+        os: testVariations.os,
+        device: testVariations.device,
+      })
+      .from(testVariations)
+      .where(inArray(testVariations.id, variationIds));
+    for (const v of rows) variationIdentity.set(v.id, v);
+  }
+  const identityKey = (v: {
+    projectId: string;
+    name: string;
+    viewport: string | null;
+    browser: string | null;
+    os: string | null;
+    device: string | null;
+  }): string =>
+    JSON.stringify([v.projectId, v.name, v.viewport, v.browser, v.os, v.device]);
+
+  // Identity keys whose default-branch sibling variation has a baseline.
+  const baselinedDefaultSiblings = new Set<string>();
+  const defaultBranches = [...new Set(projectDefault.values())];
+  const candidateNames = [
+    ...new Set([...variationIdentity.values()].map((v) => v.name)),
+  ];
+  if (defaultBranches.length > 0 && candidateNames.length > 0) {
+    const siblingRows = await db
+      .select({
+        id: testVariations.id,
+        projectId: testVariations.projectId,
+        name: testVariations.name,
+        viewport: testVariations.viewport,
+        browser: testVariations.browser,
+        os: testVariations.os,
+        device: testVariations.device,
+        branchName: testVariations.branchName,
+      })
+      .from(testVariations)
+      .where(
+        and(
+          inArray(testVariations.projectId, projectIds),
+          inArray(testVariations.name, candidateNames),
+          inArray(testVariations.branchName, defaultBranches),
+        ),
+      );
+    if (siblingRows.length > 0) {
+      const siblingBaselined = new Set(
+        (
+          await db
+            .select({ testVariationId: baselines.testVariationId })
+            .from(baselines)
+            .where(
+              inArray(
+                baselines.testVariationId,
+                siblingRows.map((s) => s.id),
+              ),
+            )
+        ).map((r) => r.testVariationId),
+      );
+      for (const s of siblingRows) {
+        // Only siblings that are actually ON their project's default branch and
+        // carry a baseline count as default-branch coverage.
+        if (
+          s.branchName === projectDefault.get(s.projectId) &&
+          siblingBaselined.has(s.id)
+        ) {
+          baselinedDefaultSiblings.add(identityKey(s));
+        }
+      }
+    }
+  }
+
   const hasBaseline = (c: CheckpointStatusInput): boolean => {
-    // Cross-branch resolutions (parent_pr / default_branch) baseline against a
-    // SIBLING variation on the target branch (ADR-054), so the candidate-scoped
-    // `baselines` lookup below misses them. The diff-worker records the tier it
-    // actually resolved on the run, so trust that first — otherwise a run that
-    // diffed against a parent/default baseline would mis-render as "new".
-    if (runMeta.get(c.runId)?.baselineSource) return true;
-    const branches = baselineBranches.get(c.testVariationId);
-    if (!branches || branches.size === 0) return false;
     const meta = runMeta.get(c.runId);
-    if (meta?.branchName && branches.has(meta.branchName)) return true;
+    const branches = baselineBranches.get(c.testVariationId);
+    // this_branch: the candidate's own variation has a baseline on its branch.
+    if (branches && meta?.branchName && branches.has(meta.branchName))
+      return true;
+    // default_branch: a same-identity sibling variation on the default branch
+    // has a baseline (the cross-branch case the candidate-scoped lookup misses).
+    const ident = variationIdentity.get(c.testVariationId);
+    if (ident && baselinedDefaultSiblings.has(identityKey(ident))) return true;
+    // Legacy: a candidate variation tagged directly with a default-branch
+    // baseline row (pre-ADR-054 shared-variation data).
     const def = meta ? projectDefault.get(meta.projectId) : undefined;
-    return def !== undefined && branches.has(def);
+    return !!branches && def !== undefined && branches.has(def);
   };
 
   const unresolvedRows = await db
