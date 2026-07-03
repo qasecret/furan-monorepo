@@ -111,6 +111,29 @@ services:
     entrypoint: ["sh", "/migrate.sh"]
     restart: "no"
 
+  # ----- One-shot HDD volume initializer (hdd mode only) ----------------
+  # A freshly-created Docker volume is owned by root (0:0), but the app
+  # containers run as non-root users — and NOT the same one: api and
+  # diff-worker run as the distroless `nonroot` user (uid 65532), while
+  # capture-worker runs as its own `furan` system user (a distinct,
+  # build-assigned uid). All three read/write the shared `furan_hdd_data`
+  # volume (capture-worker + api write screenshots, diff-worker reads/prunes),
+  # so on a fresh volume the first write fails with EACCES → 500 on upload,
+  # 404 on read. Because the writers span two different uids we cannot chown
+  # to a single owner; instead this one-shot opens the storage root to
+  # world read/write. The volume holds only content-addressed screenshot /
+  # DOM blobs (no secrets) on a single-tenant self-hosted install, so 0777
+  # is an acceptable trade for multi-uid access. Gated to `hdd` mode — S3
+  # installs never touch the volume. Idempotent: re-chmodding on every `up`
+  # is a no-op once ownership is correct.
+  hdd-init:
+    image: alpine:3.20
+    profiles: ["hdd"]
+    volumes:
+      - furan_hdd_data:/var/lib/furan/storage
+    entrypoint: ["sh", "-c", "chmod 0777 /var/lib/furan/storage"]
+    restart: "no"
+
   # ----- App services ---------------------------------------------------
   # All five pull pre-built images from Docker Hub. To use the GHCR mirror
   # instead, swap `docker.io/` for `ghcr.io/` (you'll need a GH PAT with
@@ -132,6 +155,11 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` lets the api start
+      # under S3 mode where hdd-init is not in the running set.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     ports: ["3000:3000"]
     environment:
       NODE_ENV: production
@@ -178,6 +206,10 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` for S3 mode.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -205,6 +237,10 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` for S3 mode.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}

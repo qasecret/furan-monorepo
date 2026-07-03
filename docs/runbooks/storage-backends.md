@@ -42,6 +42,26 @@ The `@furan/storage` factory (`packages/storage/src/client.ts`) reads
 `createHddStorage`. Unused env fields are ignored — you can leave the S3
 credentials in `.env` even when running HDD mode.
 
+### Volume permissions (`hdd-init`)
+
+A freshly-created Docker volume is owned by `root` (`drwxr-xr-x 0:0`), but the
+app containers write as **non-root** users — and not the same one: `api` and
+`diff-worker` run as the distroless `nonroot` user (uid `65532`), while
+`capture-worker` runs as its own `furan` system user (a distinct,
+build-assigned uid). All three share `furan_hdd_data`. Without intervention the
+first screenshot write fails with `EACCES` (surfacing as **500 on upload, 404
+on read**), and the failure is buried in an error chain.
+
+The `hdd` compose profile therefore includes a one-shot **`hdd-init`** service
+that `chmod 0777 /var/lib/furan/storage` before the apps boot; `api`,
+`capture-worker`, and `diff-worker` `depends_on` it
+(`condition: service_completed_successfully`, `required: false` so S3 mode is
+unaffected). Because the writers span two uids, opening the directory is the
+robust fix — a single `chown` can only satisfy one of them. The volume holds
+only content-addressed screenshot / DOM blobs (no secrets), so world-writable
+is an acceptable trade on a single-tenant self-hosted install. The step is
+idempotent, so it re-runs harmlessly on every `up`.
+
 ## 3. Switch an install from S3 to HDD
 
 1. Schedule downtime — there is no live-migration of bytes between
