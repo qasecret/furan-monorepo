@@ -70,7 +70,11 @@ RUN pnpm --filter @furan/api... build \
 #####################################################################
 # Stage 3: runtime — distroless                                      #
 #####################################################################
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+# debian13 (trixie) base: debian12 (bookworm) carries libssl3 CVEs the
+# Trivy release gate blocks (e.g. CVE-2026-45447, openssl PKCS7_verify
+# UAF). trixie ships the patched openssl; distroless has no shell/apt so
+# in-image patching isn't possible — bumping the base is the fix.
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
