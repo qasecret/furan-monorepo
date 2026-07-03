@@ -2,9 +2,12 @@ name: build-images
 
 # Per-app container build matrix. On PRs we build-only (no push, no scan)
 # to catch broken Dockerfiles cheaply. On push to main + tag pushes we
-# push to GHCR **and Docker Hub** (dual-publish for installer convenience),
-# run a Trivy CVE scan, sign with cosign (keyless OIDC), and emit a SPDX
-# SBOM as a workflow artifact.
+# build, run a Trivy CVE scan, and ONLY THEN push to GHCR **and Docker
+# Hub** (dual-publish for installer convenience), sign with cosign
+# (keyless OIDC), and emit a SPDX SBOM as a workflow artifact. The scan
+# precedes the push so a CVE failure can never leak an image (previously
+# push came first, so a failed scan still published the vulnerable,
+# unsigned image and clobbered `:latest`).
 #
 # Image naming (both registries):
 #   <registry>/qasecret/furan-<app>:<sha>      always (on push)
@@ -66,19 +69,50 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
-        id: build
+      # SCAN BEFORE PUSH. Build amd64 and `load` it into the runner's
+      # docker so Trivy can scan the EXACT image before anything is
+      # published. This ordering is the whole point of the gate: the
+      # previous "build+push then scan" published the image first, so a
+      # CVE failure still leaked the vulnerable (and unsigned, since
+      # cosign ran after the scan) image to the registry and clobbered
+      # `:latest`. OS-package CVEs (openssl, etc.) are arch-independent,
+      # so the amd64 image is representative for the CVE gate. This step
+      # also doubles as the PR Dockerfile-builds check.
+      - name: Build (amd64) for scan
         uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
-          # Multi-arch: amd64 native + arm64 via QEMU. Per-PR runs
-          # build amd64 only (push=false anyway) to keep PR CI fast;
-          # arm64 only kicks in on main/tag/dispatch when we actually
-          # publish, so PR feedback time stays close to the prior
-          # single-arch build duration.
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64
+          load: true
+          tags: furan-scan/${{ matrix.app }}:scan
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
+
+      # exit-code=1 fails the job on FIXED CRITICAL/HIGH before the push
+      # step below ever runs; ignore-unfixed avoids blocking on CVEs with
+      # no upstream patch. A failure here leaves the registry untouched.
+      - name: Trivy scan (gate — before push)
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: furan-scan/${{ matrix.app }}:scan
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Only reached when the scan passed. Multi-arch build + push; the
+      # amd64 layers are a cache hit from the scan build above, so only
+      # arm64 is built fresh here.
+      - name: Build and push (multi-arch)
+        id: build
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
           tags: |
             ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
             docker.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
@@ -88,20 +122,6 @@ jobs:
             ${{ startsWith(github.ref, 'refs/tags/v') && format('docker.io/qasecret/furan-{0}:latest', matrix.app) || '' }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,scope=${{ matrix.app }},mode=max
-
-      # CVE scan only runs on push/workflow_dispatch (PRs already need
-      # approval to merge). exit-code=1 fails the job on CRITICAL/HIGH;
-      # ignore-unfixed avoids CVEs without an upstream patch (otherwise
-      # base-image CVEs would block every release until Debian rolls a
-      # new point release).
-      - name: Trivy scan
-        if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          ignore-unfixed: true
 
       - name: Install cosign
         if: github.event_name != 'pull_request'
