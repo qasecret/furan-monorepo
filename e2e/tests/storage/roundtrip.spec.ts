@@ -61,13 +61,14 @@ test("S3: uploaded screenshot is served back through the proxy", async ({
   await assertScreenshotRoundTrip(request);
 });
 
-// DEFERRED (product bug the suite caught, task_67225ce5): HDD-mode Docker
-// deploys can't WRITE screenshots — the furan_hdd_data volume is root-owned
-// (drwxr-xr-x 0:0) but the apps run as the distroless nonroot user (uid 65532),
-// so persistScreenshot's fs.writeFile throws EACCES → 500 (and reads 404). The
-// compose hdd profile needs a chown init step. Un-skip once fixed to prove the
-// HDD backend round-trips end to end.
-test.skip("HDD: uploaded screenshot is served back through the proxy @hdd-smoke", async ({
+// HDD-mode round-trip. The furan_hdd_data volume is created root-owned
+// (drwxr-xr-x 0:0) but the apps write as non-root users spanning two uids
+// (api/diff-worker as distroless `nonroot`; capture-worker as its own `furan`
+// user), so a fresh volume previously failed every write with EACCES → 500 on
+// upload, 404 on read. The compose `hdd-init` one-shot now opens the storage
+// root (chmod 0777) before the apps boot; this proves the HDD backend
+// round-trips end to end.
+test("HDD: uploaded screenshot is served back through the proxy @hdd-smoke", async ({
   request,
 }, testInfo) => {
   testInfo.annotations.push(...coverAnnotations(["storage.hdd_roundtrip"]));
