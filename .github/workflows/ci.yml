@@ -102,8 +102,20 @@ jobs:
         # (issue #351). Migrations 0032/0033 already applied above; the helper
         # grants furan_app LOGIN. Runs regardless of turbo affected-filter so
         # the backstop is always exercised.
+        #
+        # This step invokes vitest directly (NOT via turbo) to force a re-run
+        # under TEST_RLS regardless of the turbo cache — which means turbo's
+        # `test -> ^build` dependency never fires here. On a PR that changes no
+        # workspace package (docs / CI / compose-only), the affected-filtered
+        # build+test stages above build nothing, so the api's deps
+        # (@furan/telemetry, @furan/db, …) have no dist/ and every suite fails
+        # at "Failed to resolve entry for package". Build the api's dependency
+        # graph first (turbo-cached, so ~free when the affected build already
+        # ran) to make this step self-sufficient.
         env:
           TEST_RLS: "1"
-        run: pnpm --filter @furan/api test
+        run: |
+          pnpm turbo run build --filter=@furan/api
+          pnpm --filter @furan/api test
       - name: Turbo affected build
         run: pnpm turbo run build --filter=...[origin/main]
