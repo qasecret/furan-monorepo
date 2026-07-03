@@ -50,9 +50,15 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
 /**
- * Poll `GET /runs/:id` until the status leaves the non-terminal set AND stays
- * stable across two reads (so a premature rollup that the diff-worker then
- * overwrites isn't mistaken for the verdict), or until `timeoutMs`.
+ * Poll `GET /runs/:id` until the diff-worker settles the run's status, or until
+ * `timeoutMs`.
+ *
+ * The FIRST non-in-progress status read IS the verdict — no stability heuristic
+ * needed — because the server no longer emits a premature rollup: `/complete`
+ * on a run with checkpoints leaves `status` as `running` and lets the diff
+ * pipeline own the terminal value (new/passed/unresolved/aborted/failed). See
+ * apps/api/src/routes/runs-lifecycle.ts (the `>=1 checkpoint` branch). So we
+ * simply wait out the in-progress states and return the first terminal one.
  */
 export async function pollRunStatus(
   api: ApiClient,
@@ -61,25 +67,14 @@ export async function pollRunStatus(
   timeoutMs = 45_000,
 ): Promise<{ status: string; autoApproved: boolean }> {
   const deadline = Date.now() + timeoutMs;
-  // Give the diff-worker a moment to pick up the job before first read.
-  await sleep(1_500);
   let last = "";
-  let stableSince = 0;
   while (Date.now() < deadline) {
     const run = await api.getRun(pat, runId);
-    const s = run.status;
-    if (!NON_TERMINAL.has(s)) {
-      if (s === last) {
-        // stable for two consecutive reads → accept
-        if (stableSince && Date.now() - stableSince >= 1_200) {
-          return { status: s, autoApproved: run.autoApproved ?? false };
-        }
-      } else {
-        stableSince = Date.now();
-      }
+    last = run.status;
+    if (!NON_TERMINAL.has(last)) {
+      return { status: last, autoApproved: run.autoApproved ?? false };
     }
-    last = s;
-    await sleep(1_200);
+    await sleep(1_000);
   }
   throw new Error(`run ${runId} did not settle within ${timeoutMs}ms (last=${last})`);
 }
