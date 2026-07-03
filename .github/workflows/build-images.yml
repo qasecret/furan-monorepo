@@ -130,9 +130,18 @@ jobs:
       # Keyless signing via the workflow's OIDC token — no long-lived keys
       # in the repo. The transparency log entry on rekor.sigstore.dev pins
       # the signature to this workflow run.
+      #
+      # Sign the immutable DIGEST this run just built+pushed, NOT the mutable
+      # `:sha` tag. When two runs share a commit (a tag push and its
+      # merge-to-main push both fire here) they each build a different digest
+      # and both move the `:sha` tag; signing `:sha` then races and can attach
+      # the signature to the other run's digest, leaving the tag a user pulls
+      # (e.g. :v1.1.26) unsigned. `steps.build.outputs.digest` is the exact
+      # manifest this run pushed, so the version/latest tags — which point at
+      # this digest — are always covered.
       - name: Sign image (cosign keyless)
         if: github.event_name != 'pull_request'
-        run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
+        run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
 
       # upload-release-assets: false stops anchore/sbom-action from trying
       # to attach the SBOM to the GitHub Release on tag pushes — that path
@@ -142,7 +151,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
+          image: ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom-${{ matrix.app }}.spdx.json
           upload-release-assets: false
