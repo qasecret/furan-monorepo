@@ -122,6 +122,11 @@ export async function deriveCheckpointStatuses(
       branchName: testRuns.branchName,
       projectId: testRuns.projectId,
       status: testRuns.status,
+      // Authoritative "a baseline was resolved for this run" signal, written by
+      // the diff-worker for every tier — including the parent_pr/default_branch
+      // tiers whose baseline lives under a SIBLING variation (ADR-054), which
+      // the candidate-variation-scoped `baselines` lookup below cannot see.
+      baselineSource: testRuns.baselineSource,
     })
     .from(testRuns)
     .where(inArray(testRuns.id, runIds));
@@ -160,6 +165,12 @@ export async function deriveCheckpointStatuses(
     }
   }
   const hasBaseline = (c: CheckpointStatusInput): boolean => {
+    // Cross-branch resolutions (parent_pr / default_branch) baseline against a
+    // SIBLING variation on the target branch (ADR-054), so the candidate-scoped
+    // `baselines` lookup below misses them. The diff-worker records the tier it
+    // actually resolved on the run, so trust that first — otherwise a run that
+    // diffed against a parent/default baseline would mis-render as "new".
+    if (runMeta.get(c.runId)?.baselineSource) return true;
     const branches = baselineBranches.get(c.testVariationId);
     if (!branches || branches.size === 0) return false;
     const meta = runMeta.get(c.runId);

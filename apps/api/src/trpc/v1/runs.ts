@@ -564,18 +564,23 @@ export const runsRouter = t.router({
               .limit(1);
             const baselineRunId = baselineRows[0]?.testRunId;
             if (baselineRunId) {
-              // Match the baseline screenshot to the candidate by
-              // variation, not by "first row in the baseline run". A
-              // baseline run with multiple checkpoints would otherwise
-              // hand back the wrong image when the candidate isn't
-              // index 0 of the baseline run either.
+              // Match the baseline screenshot to the RESOLVED baseline
+              // variation, not the candidate's. For a cross-branch
+              // (parent_pr / default_branch) resolution the baseline lives
+              // under the sibling variation on the target branch (ADR-054),
+              // so its screenshots are indexed under `baselineVariationId`,
+              // not the candidate's `shot.testVariationId` — keying off the
+              // latter would find nothing and blank the baseline image.
               const blShots = await ctx.db
                 .select()
                 .from(screenshots)
                 .where(
                   and(
                     eq(screenshots.runId, baselineRunId),
-                    eq(screenshots.testVariationId, shot.testVariationId),
+                    eq(
+                      screenshots.testVariationId,
+                      resolution.baselineVariationId,
+                    ),
                   ),
                 )
                 .limit(1);

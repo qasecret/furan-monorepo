@@ -30,6 +30,12 @@ export interface GitRefs {
  * `testVariationId` against another branch never matches (the parent's baseline
  * lives under the parent's variation id), which silently broke cross-branch
  * fallback and mislabelled identical feature-branch captures as "new".
+ *
+ * `baselineVariationId` is the variation the resolved baseline actually lives
+ * under — the candidate's own id for `this_branch`, or the sibling's id for the
+ * cross-branch tiers. Callers that fetch the baseline's screenshot MUST key off
+ * this, not the candidate's `testVariationId` (which, for a cross-branch match,
+ * indexes nothing in the baseline run).
  */
 export async function resolveBaseline(
   db: DB,
@@ -37,7 +43,11 @@ export async function resolveBaseline(
   branchName: string,
   testVariationId: string,
   refs: GitRefs,
-): Promise<{ baselineId: string; source: BaselineSource } | null> {
+): Promise<{
+  baselineId: string;
+  source: BaselineSource;
+  baselineVariationId: string;
+} | null> {
   // 1. this_branch — the candidate's own (branch-specific) variation.
   const onBranch = await db.query.baselines.findFirst({
     where: and(
@@ -46,7 +56,12 @@ export async function resolveBaseline(
     ),
     orderBy: [desc(baselines.createdAt)],
   });
-  if (onBranch) return { baselineId: onBranch.id, source: "this_branch" };
+  if (onBranch)
+    return {
+      baselineId: onBranch.id,
+      source: "this_branch",
+      baselineVariationId: testVariationId,
+    };
 
   // The cross-branch tiers key off the candidate's branch-agnostic identity, so
   // load it once. A nullable identity column (viewport/browser/os/device) must
@@ -65,10 +80,14 @@ export async function resolveBaseline(
   const nullable = (col: AnyPgColumn, val: string | null): SQL =>
     val === null ? isNull(col) : eq(col, val);
 
-  /** Most recent baseline of the sibling variation on `targetBranch`, if any. */
+  /**
+   * Most recent baseline of the sibling variation on `targetBranch`, plus the
+   * sibling variation's id (so the caller can locate the baseline screenshot,
+   * which is indexed under the sibling — not the candidate — variation).
+   */
   const baselineOnBranch = async (
     targetBranch: string,
-  ): Promise<string | null> => {
+  ): Promise<{ baselineId: string; variationId: string } | null> => {
     if (!identity) return null;
     const sibling = await db.query.testVariations.findFirst({
       where: and(
@@ -87,19 +106,29 @@ export async function resolveBaseline(
       where: eq(baselines.testVariationId, sibling.id),
       orderBy: [desc(baselines.createdAt)],
     });
-    return b?.id ?? null;
+    return b ? { baselineId: b.id, variationId: sibling.id } : null;
   };
 
   // 2. parent_pr (depth-cap; v1.0: one hop)
   const cap = refs.depthCap ?? 10;
   if (refs.parentPrBaseBranch && cap > 0) {
-    const parentId = await baselineOnBranch(refs.parentPrBaseBranch);
-    if (parentId) return { baselineId: parentId, source: "parent_pr" };
+    const parent = await baselineOnBranch(refs.parentPrBaseBranch);
+    if (parent)
+      return {
+        baselineId: parent.baselineId,
+        source: "parent_pr",
+        baselineVariationId: parent.variationId,
+      };
   }
 
   // 3. default_branch
-  const defaultId = await baselineOnBranch(refs.defaultBranch);
-  if (defaultId) return { baselineId: defaultId, source: "default_branch" };
+  const onDefault = await baselineOnBranch(refs.defaultBranch);
+  if (onDefault)
+    return {
+      baselineId: onDefault.baselineId,
+      source: "default_branch",
+      baselineVariationId: onDefault.variationId,
+    };
 
   return null;
 }

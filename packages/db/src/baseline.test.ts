@@ -121,6 +121,8 @@ describe.runIf(RUN_INTEGRATION)("resolveBaseline (integration)", () => {
       },
     );
     expect(result?.source).toBe("this_branch");
+    // this_branch resolves under the candidate's own variation.
+    expect(result?.baselineVariationId).toBe(variationId);
   });
 
   it("falls back to parent_pr when this_branch has none but parent does", async () => {
@@ -145,6 +147,9 @@ describe.runIf(RUN_INTEGRATION)("resolveBaseline (integration)", () => {
     );
     expect(result?.source).toBe("parent_pr");
     expect(result?.baselineId).toBeTruthy();
+    // The resolved baseline lives under the SIBLING (develop) variation, not
+    // the candidate's — callers fetch the baseline screenshot by this id.
+    expect(result?.baselineVariationId).toBe(developVariationId);
   });
 
   it("falls back to default_branch when neither this_branch nor parent has one", async () => {
@@ -167,6 +172,7 @@ describe.runIf(RUN_INTEGRATION)("resolveBaseline (integration)", () => {
     );
     expect(result?.source).toBe("default_branch");
     expect(result?.baselineId).toBeTruthy();
+    expect(result?.baselineVariationId).toBe(mainVariationId);
   });
 
   it("returns null when no baselines exist anywhere", async () => {
