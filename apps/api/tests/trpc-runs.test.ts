@@ -332,6 +332,28 @@ d("tRPC runs router", () => {
       .set({ parentBranchName: "develop" })
       .where(eq(testRuns.id, s.runId));
 
+    // ADR-054: the develop baseline lives under a DISTINCT sibling variation on
+    // develop that shares the candidate's branch-agnostic identity — NOT the
+    // candidate's own feature/x variation. resolveBaseline's parent_pr tier
+    // resolves that sibling by identity, then takes its baseline.
+    const [candidateVar] = await h.db
+      .select()
+      .from(testVariations)
+      .where(eq(testVariations.id, s.variationId));
+    const [devVar] = await h.db
+      .insert(testVariations)
+      .values({
+        name: candidateVar!.name,
+        projectId: s.projectId,
+        branchName: "develop",
+        viewport: candidateVar!.viewport,
+        browser: candidateVar!.browser,
+        os: candidateVar!.os,
+        device: candidateVar!.device,
+        baselineName: "older",
+      })
+      .returning();
+
     const [olderRun] = await h.db
       .insert(testRuns)
       .values({
@@ -346,34 +368,38 @@ d("tRPC runs router", () => {
     await h.db.insert(screenshots).values({
       runId: olderRun.id,
       projectId: s.projectId,
-      testVariationId: s.variationId,
-      name: "older",
+      testVariationId: devVar!.id,
+      name: candidateVar!.name,
       imageKey: "d".repeat(64),
-      viewport: "1280x720",
-      browser: "chromium",
+      viewport: candidateVar!.viewport ?? "1280x720",
+      browser: candidateVar!.browser ?? "chromium",
     });
 
     await h.db.insert(baselines).values({
       baselineName: "older",
-      testVariationId: s.variationId,
+      testVariationId: devVar!.id,
       testRunId: olderRun.id,
       branchName: "develop",
     });
 
-    // Link the current run to the same variation so getById resolves it.
+    // Link the current run to the candidate variation so getById resolves it.
     await h.db.insert(screenshots).values({
       runId: s.runId,
       projectId: s.projectId,
       testVariationId: s.variationId,
       name: "current",
       imageKey: "c".repeat(64),
-      viewport: "1280x720",
-      browser: "chromium",
+      viewport: candidateVar!.viewport ?? "1280x720",
+      browser: candidateVar!.browser ?? "chromium",
     });
 
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
     expect(data.baselineSource).toBe("parent_pr");
+    // The baseline screenshot must resolve under the SIBLING (develop)
+    // variation the baseline actually lives on — keying off the candidate's
+    // own variation would find nothing and blank the baseline image.
+    expect(data.baselineScreenshot?.imageKey).toBe("d".repeat(64));
   });
 
   test("getById: returns variationIgnoreAreas from the run's variation", async () => {
