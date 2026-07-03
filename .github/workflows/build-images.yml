@@ -29,6 +29,19 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# A release commit is both merged to main AND tagged, so `push: branches`
+# and `push: tags` fire this workflow TWICE for the same commit — a wasteful
+# double build/scan/push of all five images. Group both runs by commit SHA
+# and let the TAG run win: it publishes :v<x.y.z> + :latest and (per the
+# digest-signing fix) is the authoritative release build. cancel-in-progress
+# is true ONLY for tag runs, so a tag push cancels the in-flight redundant
+# main-push build; a main push never cancels a running tag build. Non-tagged
+# main pushes and PRs have unique SHAs, so they get their own group and are
+# unaffected (a PR's :sha build for the main-images overlay still runs).
+concurrency:
+  group: build-images-${{ github.sha }}
+  cancel-in-progress: ${{ github.ref_type == 'tag' }}
+
 jobs:
   build:
     strategy:
