@@ -9,7 +9,9 @@ import {
   sql,
   testRuns,
   testVariations,
+  variationIdentityKey,
   type DB,
+  type VariationIdentity,
 } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
@@ -194,15 +196,11 @@ export async function deriveCheckpointStatuses(
       .where(inArray(testVariations.id, variationIds));
     for (const v of rows) variationIdentity.set(v.id, v);
   }
-  const identityKey = (v: {
-    projectId: string;
-    name: string;
-    viewport: string | null;
-    browser: string | null;
-    os: string | null;
-    device: string | null;
-  }): string =>
-    JSON.stringify([v.projectId, v.name, v.viewport, v.browser, v.os, v.device]);
+  // Project-scoped identity key: the shared `variationIdentityKey` (branch-
+  // agnostic, cross-branch canonical) plus `projectId` so siblings never match
+  // across projects.
+  const scopedKey = (v: { projectId: string } & VariationIdentity): string =>
+    `${v.projectId}::${variationIdentityKey(v)}`;
 
   // Identity keys whose default-branch sibling variation has a baseline.
   const baselinedDefaultSiblings = new Set<string>();
@@ -251,7 +249,7 @@ export async function deriveCheckpointStatuses(
           s.branchName === projectDefault.get(s.projectId) &&
           siblingBaselined.has(s.id)
         ) {
-          baselinedDefaultSiblings.add(identityKey(s));
+          baselinedDefaultSiblings.add(scopedKey(s));
         }
       }
     }
@@ -266,7 +264,7 @@ export async function deriveCheckpointStatuses(
     // default_branch: a same-identity sibling variation on the default branch
     // has a baseline (the cross-branch case the candidate-scoped lookup misses).
     const ident = variationIdentity.get(c.testVariationId);
-    if (ident && baselinedDefaultSiblings.has(identityKey(ident))) return true;
+    if (ident && baselinedDefaultSiblings.has(scopedKey(ident))) return true;
     // Legacy: a candidate variation tagged directly with a default-branch
     // baseline row (pre-ADR-054 shared-variation data).
     const def = meta ? projectDefault.get(meta.projectId) : undefined;

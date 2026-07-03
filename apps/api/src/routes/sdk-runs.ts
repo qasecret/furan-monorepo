@@ -163,6 +163,10 @@ export async function resolveOrCreateVariation(
   },
 ): Promise<{ id: string }> {
   const { projectId, branchName, name, viewport, browser, os, device } = params;
+  // The conflict target IS the ADR-054 identity (project + branch + the
+  // branch-agnostic `VariationIdentity` columns in @furan/db). If it gains a
+  // column, update it here, in the `test_variations_identity_unique` index, and
+  // in `VariationIdentity` (which the cross-branch sibling-matchers key off).
   const [row] = await db
     .insert(testVariations)
     .values({ projectId, branchName, name, viewport, browser, os, device })
