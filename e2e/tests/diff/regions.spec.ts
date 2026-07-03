@@ -8,6 +8,14 @@ import { ownerCreds } from "../../src/seed/load-seed.js";
 
 const api = new ApiClient(API);
 
+// Element-map + DOM mapping the fixture square to #square (see auto-rules spec).
+const SQUARE_MAP = JSON.stringify({
+  v: 1,
+  elements: { "#square": { x: 50, y: 50, width: 100, height: 100 } },
+  capturedAt: 1,
+});
+const SQUARE_DOM = `<!doctype html><html lang="en"><head><title>t</title></head><body><div id="square"></div></body></html>`;
+
 /**
  * An ignore region drawn over the changed area (persisted onto the variation at
  * approve time, ADR-036) must mask that box, so an otherwise-failing changed
@@ -47,13 +55,10 @@ test("diff: an ignore region suppresses a masked-area change", async ({}, testIn
   expect(changed.status).toBe("passed");
 });
 
-// DEFERRED (needs an element-map): under the image-first pipeline (ADR-047),
-// `configForMatchLevel` returns the base engine config UNCHANGED — matchLevel no
-// longer routes the L1 pixel diff. Layout suppression is element-map-based
-// (ADR-053): it needs a selector→bbox sidecar mapping the changed element, which
-// bbox-only fixtures don't provide. Un-skip once the virtual-SDK emits an
-// element map for the fixture.
-test.skip("diff: Layout match-level tolerates a content-only change", async ({}, testInfo) => {
+// Layout suppression is element-map-based (ADR-053; matchLevel no longer routes
+// the L1 diff per configForMatchLevel). With the #square element mapped + the
+// DOM present, a Layout-level capture suppresses the content-only recolor.
+test("diff: Layout match-level tolerates a content-only change", async ({}, testInfo) => {
   testInfo.annotations.push(...coverAnnotations(["diff.layout_match"]));
   const { admin, pat } = ownerCreds();
 
@@ -67,12 +72,13 @@ test.skip("diff: Layout match-level tolerates a content-only change", async ({},
     checkpointName: "home",
     fixture: "baseline",
     matchLevel: "Layout",
+    elementMapJson: SQUARE_MAP,
+    domHtml: SQUARE_DOM,
   });
   await api.approveRun(admin, base.runId);
 
   // `changed` recolors the square but keeps its position/size — a content-only
-  // change that the Layout match level ignores → passed. (Strict would fail;
-  // the engines spec already covers that.)
+  // change the Layout level suppresses for the mapped element → passed.
   const changed = await capture(api, {
     pat,
     projectId: project.id,
@@ -80,6 +86,8 @@ test.skip("diff: Layout match-level tolerates a content-only change", async ({},
     checkpointName: "home",
     fixture: "changed",
     matchLevel: "Layout",
+    elementMapJson: SQUARE_MAP,
+    domHtml: SQUARE_DOM,
   });
   expect(changed.status).toBe("passed");
 });

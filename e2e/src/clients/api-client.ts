@@ -176,6 +176,24 @@ export class ApiClient {
     return body.result.data;
   }
 
+  /** Create a project auto-rule (selector matcher). Returns the created row. */
+  async createAutoRule(
+    auth: string,
+    input: {
+      projectId: string;
+      label: string;
+      match: { type: "selector"; value: string };
+      action: "auto_approve" | "flag";
+      conditions?: { maxDiff?: number } | null;
+    },
+  ): Promise<{ id: string; enabled: boolean }> {
+    return this.trpcMutate<{ id: string; enabled: boolean }>(
+      auth,
+      "autoRules.create",
+      { conditions: null, ...input },
+    );
+  }
+
   /** Set per-project diff config (engine, auto-approve, thresholds, retention). */
   async setProjectConfig(
     admin: string,
