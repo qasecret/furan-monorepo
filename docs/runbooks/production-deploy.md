@@ -197,10 +197,11 @@ docker compose -p docker ... down -v --remove-orphans
 | `migrate` exited non-zero                                                 | partial prior migration                                                                       | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)    |
 | api won't boot, `JWT_SECRET must be ≥32 chars`                            | short/missing secret                                                                          | `openssl rand -hex 32` into `.env`                                                            |
 | MinIO never starts / api can't reach S3                                   | `COMPOSE_PROFILES` unset                                                                      | add `COMPOSE_PROFILES=s3` to `.env`                                                           |
-| dashboard "Cannot connect to API"                                         | `NEXT_PUBLIC_API_URL` mismatch                                                                | baked at image build to `http://localhost:3000`; front both behind one origin in real deploys |
+| dashboard "Cannot connect to API" from a remote browser                   | dashboard's browser bundle bakes `NEXT_PUBLIC_API_URL=http://localhost:3000` at image build — remote browsers can't reach it, and a proxy can't rewrite a baked absolute URL | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with your public API URL + terminate TLS) |
 
 ## 7. References
 
+- [reverse-proxy-tls.md](reverse-proxy-tls.md) — expose the stack on a domain with HTTPS (the dashboard-URL constraint + a worked TLS proxy)
 - [install/quickstart.md](../install/quickstart.md) — dev (`pnpm dev`) path + first-capture walkthrough
 - [migration-deploy-order.md](migration-deploy-order.md) — schema-narrowing deploys
 - [storage-backends.md](storage-backends.md) — S3 vs HDD
