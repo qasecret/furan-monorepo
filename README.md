@@ -56,7 +56,7 @@ cd furan-monorepo
 cp .env.example .env
 ```
 
-Open `.env` in your editor and fill in three secrets. The example values are placeholders — your install **will not start** until you replace them.
+Open `.env` in your editor and replace **five** placeholder values — three secrets plus your first admin's login. The example ships them as `change-me…`, and the api **fails closed and refuses to boot** until every one is replaced.
 
 ```bash
 # Generate each value and paste it into the matching key in .env:
@@ -66,17 +66,24 @@ openssl rand -hex 32
 
 # POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — any high-entropy value
 openssl rand -base64 24
+
+# FURAN_BOOTSTRAP_ADMIN_PASSWORD — your first admin's password
+openssl rand -hex 24
 ```
 
-Required keys in `.env`:
+Required keys in `.env` (the api rejects the `change-me` placeholders for all of them):
 
-| Key                   | Purpose                                                |
-| --------------------- | ------------------------------------------------------ |
-| `JWT_SECRET`          | Signs dashboard session tokens. **Must be ≥32 chars.** |
-| `POSTGRES_PASSWORD`   | Database password — used by every backend service.     |
-| `MINIO_ROOT_PASSWORD` | Object-storage password for screenshot artifacts.      |
+| Key                            | Purpose                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| `JWT_SECRET`                   | Signs dashboard session tokens. **Must be ≥32 chars.**     |
+| `POSTGRES_PASSWORD`            | Database password — used by every backend service.         |
+| `MINIO_ROOT_PASSWORD`          | Object-storage password for screenshot artifacts.          |
+| `FURAN_BOOTSTRAP_ADMIN_EMAIL`  | Your first admin's login email — you sign in with this.    |
+| `FURAN_BOOTSTRAP_ADMIN_PASSWORD` | Your first admin's password (seeded on first boot).      |
 
-The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan_dev`, `MINIO_BUCKET=furan-dev` are safe to keep.
+The api seeds that admin automatically the first time it boots against an empty `users` table. The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan`, `MINIO_BUCKET=furan` are safe to keep.
+
+> **Deploying on a domain (not `localhost`)?** The published dashboard image bakes `http://localhost:3000` as the browser's API URL, so client-side features (the diff viewer, live updates) only work for a viewer on the Docker host. A real HTTPS deployment behind `furan.example.com` needs a reverse proxy **and** a dashboard rebuilt with your public API URL — see [`docs/runbooks/reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md). The steps below assume `localhost`.
 
 ### Step 2 — Start the full stack
 
@@ -87,6 +94,8 @@ docker compose --env-file .env -f infra/docker/compose.yml up -d
 `--env-file .env` is required because Compose's project directory defaults to the directory of the first `-f` file (`infra/docker/`), so it would otherwise miss the `.env` you just edited at the repo root.
 
 This pulls and starts seven services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
+
+> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 

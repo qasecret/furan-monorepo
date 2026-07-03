@@ -53,6 +53,15 @@ COPY packages/ packages/
 COPY apps/api/        apps/api/
 COPY apps/dashboard/  apps/dashboard/
 
+# The dashboard's BROWSER bundle inlines NEXT_PUBLIC_API_URL at build time
+# (Next bakes NEXT_PUBLIC_* into client JS — it cannot be changed at runtime).
+# Default keeps the localhost install working and CI's published image
+# byte-identical; override for a domain deploy so remote browsers hit your
+# public API URL, e.g. `--build-arg NEXT_PUBLIC_API_URL=https://furan.example.com`.
+# See docs/runbooks/reverse-proxy-tls.md.
+ARG NEXT_PUBLIC_API_URL=http://localhost:3000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
 # Build @furan/api first so dashboard's `import type { AppRouter }` from
 # @furan/api/trpc has the compiled .d.ts to consume, then Next build.
 RUN pnpm --filter @furan/api... build \
