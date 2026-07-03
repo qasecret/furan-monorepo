@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const DASH = process.env.E2E_DASH_URL ?? "http://localhost:3001";
+import { DASH_URL as DASH } from "./src/env.js";
 
 /**
  * Two projects:

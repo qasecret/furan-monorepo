@@ -3,9 +3,9 @@ import { expect, test } from "@playwright/test";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 const ENGINES = [
   { engine: "odiff", cap: "diff.engine.odiff" },
@@ -54,8 +54,9 @@ test.describe("diff: L1 engines", () => {
         checkpointName: "home",
         fixture: "changed",
       });
-      expect(changed.status).not.toBe("passed");
-      expect(["unresolved", "failed"]).toContain(changed.status);
+      // Specifically "unresolved" (a detected diff), NOT "failed" (a pipeline
+      // error) — so an engine crash can't masquerade as a detected change.
+      expect(changed.status).toBe("unresolved");
     });
   }
 });

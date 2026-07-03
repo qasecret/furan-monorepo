@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3000";
 
 test.describe("deploy: health", () => {
   test("GET /livez returns 200", async ({ request }, testInfo) => {

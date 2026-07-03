@@ -11,7 +11,7 @@ import { API_URL } from "./compose.js";
  * only re-seed (mint fresh PATs) when they don't — i.e. against a fresh DB.
  */
 export default async function globalSetup(): Promise<void> {
-  const api = new ApiClient(process.env.E2E_API_URL ?? API_URL);
+  const api = new ApiClient(API_URL);
 
   try {
     const seed = loadSeed();

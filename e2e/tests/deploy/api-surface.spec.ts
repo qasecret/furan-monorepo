@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 test.describe("deploy: api surface", () => {
   test("GET /openapi.json exposes the root REST routes", async ({

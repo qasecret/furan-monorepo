@@ -7,9 +7,9 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 const BASELINE_PNG = fileURLToPath(
   new URL("../../src/fixtures/baseline.png", import.meta.url),

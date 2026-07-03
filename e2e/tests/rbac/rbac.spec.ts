@@ -2,10 +2,10 @@ import { expect, test } from "@playwright/test";
 
 import { ApiClient, type Role } from "../../src/clients/api-client.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 import { loadSeed } from "../../src/seed/load-seed.js";
 import type { SeededPrincipal } from "../../src/seed/seed.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 /**
  * RBAC gates via the seeded owner/admin/editor/guest principals. `GET /users`

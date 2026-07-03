@@ -3,9 +3,9 @@ import { expect, test } from "@playwright/test";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 /**
  * The core SDK-trigger → diff-pipeline spine, driven by the virtual-SDK:
@@ -71,7 +71,8 @@ test.describe.serial("sdk: virtual-SDK happy path", () => {
       checkpointName: "home",
       fixture: "changed",
     });
-    expect(c.status).not.toBe("passed");
-    expect(["unresolved", "failed"]).toContain(c.status);
+    // Specifically "unresolved" (a detected diff), NOT "failed" (a pipeline
+    // error) — so a diff-worker crash can't masquerade as a detected change.
+    expect(c.status).toBe("unresolved");
   });
 });

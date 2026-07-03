@@ -10,9 +10,9 @@ import { BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD } from "../../scripts/compose.js";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
+import { API_URL as API } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
 
-const API = process.env.E2E_API_URL ?? "http://localhost:3010";
 
 /**
  * Dashboard surfaces driven in a real browser. One shared authenticated context

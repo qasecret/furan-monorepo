@@ -19,9 +19,8 @@ const COMPOSE_FILES = [
   "e2e/scripts/compose.e2e-ports.yml",
 ];
 
-/** Host URLs the e2e stack is reachable at (see compose.e2e-ports.yml). */
-export const API_URL = "http://localhost:3010";
-export const DASH_URL = "http://localhost:3011";
+/** Host URLs the e2e stack is reachable at — single source of truth in env.ts. */
+export { API_URL, DASH_URL } from "../src/env.js";
 
 /** Bootstrap admin seeded on first boot (via FURAN_BOOTSTRAP_ADMIN_* below).
  *  Shared with the seeder so the two never drift. */

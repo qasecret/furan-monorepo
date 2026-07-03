@@ -39,7 +39,7 @@ const ROLES: { role: Role; email: string; first: string; last: string }[] = [
 const SEED_FILE = fileURLToPath(new URL("../../.seed.json", import.meta.url));
 
 export async function seedAll(): Promise<SeedResult> {
-  const api = new ApiClient(process.env.E2E_API_URL ?? API_URL);
+  const api = new ApiClient(API_URL);
 
   const boot = await api.loginJwt(BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD);
   const admin = boot.token;

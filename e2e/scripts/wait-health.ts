@@ -1,4 +1,4 @@
-const API = process.env.E2E_API_URL ?? "http://localhost:3000";
+import { API_URL as API } from "../src/env.js";
 
 interface ReadyBody {
   checks?: Record<string, string>;
