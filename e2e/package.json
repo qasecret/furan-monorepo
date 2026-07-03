@@ -9,6 +9,7 @@
     "e2e:hdd": "tsx scripts/e2e.ts --storage=hdd --project=hdd-smoke",
     "e2e:up": "tsx scripts/e2e.ts --up-only",
     "e2e:down": "tsx scripts/e2e.ts --down-only",
+    "coverage": "tsx scripts/check-coverage.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0"
   },
