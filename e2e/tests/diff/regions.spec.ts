@@ -92,13 +92,15 @@ test("diff: Layout match-level tolerates a content-only change", async ({}, test
   expect(changed.status).toBe("passed");
 });
 
-// DEFERRED (region observability): the multipart a11y path works (domHtml +
-// accessibilityLevel/Version upload → the diff-worker runs axe over the DOM and
-// records source='axe' diff_regions), but there's no REST endpoint to READ a
-// run's regions — GET /runs/:id omits them and there's no /regions or
-// /checkpoints route. Asserting the axe regions surfaced needs the dashboard's
-// tRPC region query (+ the exact wire shape) and clear status semantics for an
-// a11y-only finding. Wire that read path, then un-skip.
+// DEFERRED (axe produced no regions): the read path DOES exist — the tRPC query
+// runs.getById returns diffRegions[] with a `source` field, so observing
+// source='axe' regions is straightforward. The blocker is upstream: a baseline
+// capture with domHtml + accessibilityLevel/Version yielded ZERO diff_regions
+// (verified via runs.getById). Open questions: does the axe pass run on a
+// first-baseline ("new") run or only when there's a diff; is the opt-in the
+// upload fields or a project/checkpoint accessibilitySettings; and does axe-core
+// under jsdom flag this DOM (some rules need computed styles jsdom lacks). Nail
+// the axe-emit path, then assert source='axe' via runs.getById + un-skip.
 test.skip("diff: axe a11y surfaces accessibility regions", async ({}, testInfo) => {
   testInfo.annotations.push(...coverAnnotations(["diff.axe_a11y"]));
   const { admin, pat } = ownerCreds();
