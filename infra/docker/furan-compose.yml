@@ -1,0 +1,312 @@
+# ==========================================================================
+# Furan — one-file quick-start deploy (ReportPortal-style).
+#
+#   curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+#   docker compose -f furan-compose.yml up -d
+#   open http://<host>:8080   → sign in as admin@furan.local / FuranAdmin123!
+#
+# No git clone, no .env, no secret generation. Everything below has a safe
+# inline default; override any of them by exporting the env var before `up`.
+#
+# ⚠️  SECURITY — READ BEFORE EXPOSING THIS TO A NETWORK ⚠️
+# This file ships DEFAULT credentials and a DEFAULT JWT secret for
+# zero-friction evaluation. Anyone who can reach the ports can log in as the
+# default admin and forge tokens. Before any real / internet-reachable use you
+# MUST override at least:
+#     FURAN_BOOTSTRAP_ADMIN_PASSWORD  JWT_SECRET  POSTGRES_PASSWORD  MINIO_ROOT_PASSWORD
+# To keep the defaults off the network entirely, bind to loopback:
+#     FURAN_BIND=127.0.0.1 docker compose -f furan-compose.yml up -d
+# For a hardened, secret-generating install use ./deploy.sh (needs a clone).
+#
+# NOTE (v1.1.28): browsers on a machine OTHER than the docker host cannot use
+# the UI — the v1.1.28 client bundle bakes http://localhost:3000. Same-host
+# browsers work fully. v1.1.29 removes this (single-origin /api via nginx).
+# ==========================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-furan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-furan_local_pg_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-furan}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-furan}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}
+        mc mb --ignore-existing local/${MINIO_BUCKET:-furan}
+        mc anonymous set download local/${MINIO_BUCKET:-furan} || true
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-furan}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
+      MINIO_BUCKET: ${MINIO_BUCKET:-furan}
+    restart: "no"
+
+  # ----- Self-contained migrations (no host bind-mount) -----------------
+  # The published api image already contains packages/db/migrations/*.sql.
+  # migrations-seed mounts the (version-named) `migrations` volume over that
+  # path; Docker copies the image's SQL into the empty volume on first mount.
+  # The api image is distroless (no sh/cp), so the container just runs `node
+  # --version` and exits — the copy happens at MOUNT time, not from a command.
+  # Because the volume `name:` is scoped by FURAN_VERSION, bumping the version
+  # yields a fresh empty volume → fresh migrations for the new image.
+  migrations-seed:
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.28}
+    entrypoint: ["/nodejs/bin/node", "--version"]
+    volumes:
+      - migrations:/app/packages/db/migrations
+    restart: "no"
+
+  # Applies the seeded SQL via psql, journaling into drizzle.__drizzle_migrations
+  # (same semantics as infra/docker/scripts/migrate.sh — inlined here so this
+  # file needs no external script).
+  migrate:
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations-seed:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-furan}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-furan_local_pg_pw}
+      PGDATABASE: ${POSTGRES_DB:-furan}
+    configs:
+      - source: migrate_sh
+        target: /migrate.sh
+    volumes:
+      - migrations:/migrations:ro
+    entrypoint: ["sh", "/migrate.sh"]
+    restart: "no"
+
+  api:
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.28}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${FURAN_BIND:-0.0.0.0}:3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-furan}:${POSTGRES_PASSWORD:-furan_local_pg_pw}@postgres:5432/${POSTGRES_DB:-furan}
+      REDIS_URL: redis://redis:6379
+      STORAGE_KIND: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-furan}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-furan}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
+      JWT_SECRET: ${JWT_SECRET:-furan_local_dev_jwt_secret_change_me_0123456789abcdef}
+      JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      FURAN_BOOTSTRAP_ADMIN_EMAIL: ${FURAN_BOOTSTRAP_ADMIN_EMAIL:-admin@furan.local}
+      FURAN_BOOTSTRAP_ADMIN_PASSWORD: ${FURAN_BOOTSTRAP_ADMIN_PASSWORD:-FuranAdmin123!}
+      # Browser loads the UI from the nginx origin (:8080); the api CORS
+      # allowlist must include it. Override for a non-localhost host.
+      FURAN_DASHBOARD_ORIGIN: ${FURAN_DASHBOARD_ORIGIN:-http://localhost:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+
+  capture-worker:
+    image: docker.io/qasecret/furan-capture-worker:${FURAN_VERSION:-v1.1.28}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-furan}:${POSTGRES_PASSWORD:-furan_local_pg_pw}@postgres:5432/${POSTGRES_DB:-furan}
+      REDIS_URL: redis://redis:6379
+      STORAGE_KIND: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-furan}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-furan}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+
+  diff-worker:
+    image: docker.io/qasecret/furan-diff-worker:${FURAN_VERSION:-v1.1.28}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-furan}:${POSTGRES_PASSWORD:-furan_local_pg_pw}@postgres:5432/${POSTGRES_DB:-furan}
+      REDIS_URL: redis://redis:6379
+      STORAGE_KIND: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${MINIO_BUCKET:-furan}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-furan}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-furan_local_minio_pw}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+
+  integrations:
+    image: docker.io/qasecret/furan-integrations:${FURAN_VERSION:-v1.1.28}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-furan}:${POSTGRES_PASSWORD:-furan_local_pg_pw}@postgres:5432/${POSTGRES_DB:-furan}
+      REDIS_URL: redis://redis:6379
+      INTEGRATIONS_PORT: 3400
+      HEALTH_PORT: 3300
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+
+  dashboard:
+    image: docker.io/qasecret/furan-dashboard:${FURAN_VERSION:-v1.1.28}
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      # Baked at build time (v1.1.28 = http://localhost:3000); runtime value
+      # is inert for the browser. SSR uses API_INTERNAL_URL below.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - dashboard
+    ports:
+      - "${FURAN_BIND:-0.0.0.0}:${FURAN_HTTP_PORT:-8080}:80"
+    configs:
+      - source: nginx_conf
+        target: /etc/nginx/conf.d/default.conf
+    restart: unless-stopped
+
+# NOTE: `$` is doubled to `$$` throughout these inline configs. Compose
+# interpolates $VAR / ${VAR} in `content:` too, so an un-escaped `$PSQL` (shell)
+# or `$host` (nginx) would be eaten to empty before the file is written. `$$`
+# survives as a literal `$`.
+configs:
+  migrate_sh:
+    content: |
+      #!/bin/sh
+      set -eu
+      PSQL="psql -v ON_ERROR_STOP=1"
+      echo "migrate: ensuring drizzle journal table"
+      $$PSQL -tAc "CREATE SCHEMA IF NOT EXISTS drizzle;" >/dev/null
+      $$PSQL -tAc "CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint);" >/dev/null
+      applied=0; skipped=0
+      for f in /migrations/*.sql; do
+        [ -e "$$f" ] || { echo "migrate: no .sql files at /migrations"; exit 1; }
+        name=$$(basename "$$f")
+        hash=$$(sha256sum "$$f" | awk '{print $$1}')
+        exists=$$($$PSQL -tAc "SELECT 1 FROM drizzle.__drizzle_migrations WHERE hash = '$$hash' LIMIT 1;")
+        if [ "$$exists" = "1" ]; then
+          echo "migrate: skip $$name"; skipped=$$((skipped + 1))
+        else
+          echo "migrate: apply $$name"; $$PSQL -f "$$f" >/dev/null
+          ts=$$(date +%s)000
+          $$PSQL -tAc "INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('$$hash', $$ts);" >/dev/null
+          applied=$$((applied + 1))
+        fi
+      done
+      echo "migrate: done (applied=$$applied skipped=$$skipped)"
+  nginx_conf:
+    content: |
+      server {
+        listen 80;
+        # Forward the ORIGINAL host:port ($http_host, not $host which drops the
+        # port). Next.js 15 Server Actions abort when the forwarded host does
+        # not match the browser Origin (e.g. host `localhost` vs origin
+        # `localhost:8080`) — a CSRF guard. Keeping the port makes them match.
+        # /api/* → api (used by the browser in v1.1.29; harmless now).
+        location /api/ {
+          proxy_pass http://api:3000/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_buffering off;
+          proxy_read_timeout 3600s;
+        }
+        # everything else → dashboard (Next.js, incl. Server Actions + ws).
+        location / {
+          proxy_pass http://dashboard:3001;
+          proxy_http_version 1.1;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-Host $$http_host;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_set_header Upgrade $$http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_buffering off;
+          proxy_read_timeout 3600s;
+        }
+      }
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  migrations:
+    # Version-scoped so a FURAN_VERSION bump seeds fresh migrations.
+    name: furan_migrations_${FURAN_VERSION:-v1.1.28}
