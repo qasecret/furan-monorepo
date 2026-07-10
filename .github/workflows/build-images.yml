@@ -175,3 +175,34 @@ jobs:
         with:
           name: sbom-${{ matrix.app }}
           path: sbom-${{ matrix.app }}.spdx.json
+
+      # ---- dashboard-only: single-origin (/api) image variant ----------------
+      # The one-file furan-compose.yml fronts everything with nginx on ONE
+      # origin, so its dashboard must bake NEXT_PUBLIC_API_URL=/api (relative)
+      # instead of http://localhost:3000. Published as a SEPARATE `-proxy` tag
+      # so the standard compose.yml / deploy.sh dashboard image is unchanged and
+      # existing installs never regress. Tag releases only. The Trivy gate above
+      # already vouched for the identical dashboard package surface (same
+      # Dockerfile + deps; only the baked client-JS string differs), so this
+      # reuses that clean bill rather than re-scanning.
+      - name: Build and push dashboard-proxy (/api, multi-arch)
+        id: build_proxy
+        if: matrix.app == 'dashboard' && startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+          tags: |
+            ghcr.io/qasecret/furan-dashboard:${{ github.ref_name }}-proxy
+            ghcr.io/qasecret/furan-dashboard:latest-proxy
+            docker.io/qasecret/furan-dashboard:${{ github.ref_name }}-proxy
+            docker.io/qasecret/furan-dashboard:latest-proxy
+          cache-from: type=gha,scope=dashboard
+
+      - name: Sign dashboard-proxy (cosign keyless)
+        if: matrix.app == 'dashboard' && startsWith(github.ref, 'refs/tags/v')
+        run: cosign sign --yes ghcr.io/qasecret/furan-dashboard@${{ steps.build_proxy.outputs.digest }}
