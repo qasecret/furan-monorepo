@@ -34,6 +34,20 @@ If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy,
 - **Container images** — multi-arch (amd64 / arm64), cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release.
 - **Apache 2.0** — no telemetry on the server, no feature gates, no upgrade pressure.
 
+## Fastest install (evaluation)
+
+One file, one command, no clone and no `.env` — like ReportPortal:
+
+```bash
+curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+docker compose -f furan-compose.yml up -d
+# open http://localhost:8080  →  sign in as  admin@furan.local / FuranAdmin123!
+```
+
+nginx serves the whole thing on `:8080`; migrations self-apply from the image. This ships **default credentials and a default JWT secret** for zero-friction evaluation — before anything network-reachable, override `FURAN_BOOTSTRAP_ADMIN_PASSWORD`, `JWT_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` (export them before `up`), or keep the defaults off the network with `FURAN_BIND=127.0.0.1`. For a hardened, secret-generating install use [`./deploy.sh`](deploy.sh) or the 10-minute walkthrough below.
+
+> On **v1.1.28** the dashboard UI works from the Docker host's own browser; full remote-browser access lands in v1.1.29 (single-origin `/api`). The API/SDK path works from anywhere today.
+
 ## Install in 10 minutes
 
 Time from a freshly-provisioned host to "logged into the dashboard": about 10 minutes. The walkthrough below is the **production-shaped** install (Docker Compose, all services from published images). For a from-source development setup see [`docs/install/quickstart.md`](docs/install/quickstart.md).
@@ -74,13 +88,13 @@ openssl rand -hex 24
 
 Required keys in `.env` (the api rejects the `change-me` placeholders for all of them):
 
-| Key                            | Purpose                                                     |
-| ------------------------------ | ---------------------------------------------------------- |
-| `JWT_SECRET`                   | Signs dashboard session tokens. **Must be ≥32 chars.**     |
-| `POSTGRES_PASSWORD`            | Database password — used by every backend service.         |
-| `MINIO_ROOT_PASSWORD`          | Object-storage password for screenshot artifacts.          |
-| `FURAN_BOOTSTRAP_ADMIN_EMAIL`  | Your first admin's login email — you sign in with this.    |
-| `FURAN_BOOTSTRAP_ADMIN_PASSWORD` | Your first admin's password (seeded on first boot).      |
+| Key                              | Purpose                                                 |
+| -------------------------------- | ------------------------------------------------------- |
+| `JWT_SECRET`                     | Signs dashboard session tokens. **Must be ≥32 chars.**  |
+| `POSTGRES_PASSWORD`              | Database password — used by every backend service.      |
+| `MINIO_ROOT_PASSWORD`            | Object-storage password for screenshot artifacts.       |
+| `FURAN_BOOTSTRAP_ADMIN_EMAIL`    | Your first admin's login email — you sign in with this. |
+| `FURAN_BOOTSTRAP_ADMIN_PASSWORD` | Your first admin's password (seeded on first boot).     |
 
 The api seeds that admin automatically the first time it boots against an empty `users` table. The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan`, `MINIO_BUCKET=furan` are safe to keep.
 
