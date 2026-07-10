@@ -8,10 +8,10 @@
 > `pnpm dev` host-process flow (see [`docs/install/quickstart.md`](../install/quickstart.md)
 > for that).
 
-> **Latest release: `v1.1.27`** — the five app images are pinned to it in
+> **Latest release: `v1.1.28`** — the five app images are pinned to it in
 > `infra/docker/compose.yml`, published to Docker Hub + GHCR, Trivy-scanned,
 > and cosign-signed (verify with the workflow identity
-> `build-images.yml@refs/tags/v1.1.27`). Deploy at this tag, or let
+> `build-images.yml@refs/tags/v1.1.28`). Deploy at this tag, or let
 > [`deploy.sh`](../../deploy.sh) handle the bring-up.
 
 This runbook was written/verified during the 2026-06-24 fresh-deploy QA walk.
@@ -28,7 +28,7 @@ same commit.** This is the single most important fact in this runbook.
 
 - **App services** (`api`, `dashboard`, `capture-worker`, `diff-worker`,
   `integrations`) run a **pinned, pre-built image tag** (currently
-  `qasecret/furan-api:v1.1.27`).
+  `qasecret/furan-api:v1.1.28`).
 - The **`migrate` one-shot** service bind-mounts
   `../../packages/db/migrations` — i.e. it applies **whatever migrations are
   in your local checkout**, not what shipped inside the image.
@@ -54,7 +54,7 @@ drifted tables — so the stack looked green while every project operation 500'd
 Pick **one** of these before `up -d`:
 
 1. **Deploy at a release tag** (recommended for end users): `git checkout
-v1.1.27` (the current release) so the migrations match the image pinned in
+v1.1.28` (the current release) so the migrations match the image pinned in
    that tagged `compose.yml`. This is exactly what an installer following the
    release gets. (Use whatever the latest `v1.1.x` tag is — `git tag -l 'v1.1.*'`.)
 2. **Pin the image to your checkout** (for deploying current `main` / a branch):
@@ -201,12 +201,12 @@ and check `docker logs docker-api-1` for a `column ... does not exist` error.
 > itself, not the `api` container (`ECONNREFUSED`). This is a property of the
 > published image, not a misconfiguration — see
 > [reverse-proxy-tls.md §0](reverse-proxy-tls.md#0-the-one-thing-that-makes-this-non-obvious).
-> **Fixed in the tree (2026-07-09):** server-side code now uses a runtime
-> `API_INTERNAL_URL` (defaulting to `http://api:3000`), so a **from-source**
-> deploy (`./deploy.sh --mode from-head`) or the **next released** dashboard image
-> logs in fine on plain `localhost`; published images **≤ v1.1.27 are still
-> affected**. For remote browsers you still need the domain rebuild (client-side
-> calls need a browser-reachable baked URL). If you only need the API/SDK path,
+> **Fixed in `v1.1.28`:** server-side code now uses a runtime `API_INTERNAL_URL`
+> (defaulting to `http://api:3000`), so a **v1.1.28+** deploy logs in fine on
+> plain `localhost`; published images **≤ v1.1.27 are still affected** (upgrade,
+> or build from source with `./deploy.sh --mode from-head`). For remote browsers
+> you still need the domain rebuild (client-side calls need a browser-reachable
+> baked URL). If you only need the API/SDK path,
 > the localhost deploy is complete as-is.
 
 ## 5. Teardown & backup

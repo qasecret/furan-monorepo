@@ -106,9 +106,9 @@ expected to exit after first run.
 > **Caveat 2 (dashboard UI):** on a plain `localhost` deploy of a **published
 > image ≤ v1.1.27** the dashboard renders but **UI login does not work** (the
 > server-side code targets a baked `localhost:3000` it can't reach from inside the
-> container). Fixed in the tree via a runtime `API_INTERNAL_URL`, so a
-> **from-source** deploy (`./deploy.sh --mode from-head`) or the next released
-> image logs in fine on `localhost`; for **remote** browsers, deploy behind a
+> container). Fixed in **`v1.1.28`** via a runtime `API_INTERNAL_URL`, so a
+> **v1.1.28+** deploy (or a from-source `./deploy.sh --mode from-head` build)
+> logs in fine on `localhost`; for **remote** browsers, deploy behind a
 > domain per [reverse-proxy-tls.md](../runbooks/reverse-proxy-tls.md). The
 > API/SDK path (§11) is fully functional regardless. This `pnpm dev` flow below
 > (the **development** path) logs in fine because everything runs on the host.
