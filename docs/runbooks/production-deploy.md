@@ -131,7 +131,7 @@ COMPOSE_PROFILES=s3          # REQUIRED — gates MinIO + minio-init (PR #117)
 > enforces the §0 lockstep rule (refusing a released deploy when the checkout's
 > migrations are ahead of the pinned image tag), brings the stack up in order,
 > health-waits, and runs the §4f drift canary. Use `./deploy.sh --mode
-> from-head` to build images from the current checkout (always in lockstep),
+from-head` to build images from the current checkout (always in lockstep),
 > `--storage hdd` for the filesystem backend, and `./deploy.sh --help` for the
 > rest. The manual steps below remain the reference for what it does.
 
@@ -190,6 +190,25 @@ curl -s -o /dev/null -w 'GET /projects -> %{http_code}\n' \
 Step **4f** is the lockstep canary. If it returns 500, re-read [§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep)
 and check `docker logs docker-api-1` for a `column ... does not exist` error.
 
+> **What §4 does and does not prove.** These checks confirm the **API plane** is
+> fully functional — which is the primary ingestion path (SDK / CI / PAT / curl,
+> per [install/quickstart.md §11](../install/quickstart.md#11-first-capture--first-diff)).
+> They do **not** exercise the dashboard **UI login**. On a plain `http://localhost`
+> deploy of the **published** images, the dashboard renders (`/login` → 200) but
+> **you cannot sign in through the browser**: login is a Next.js Server Action that
+> runs _inside_ the dashboard container and targets the build-time-baked
+> `http://localhost:3000`, which from inside that container is the dashboard
+> itself, not the `api` container (`ECONNREFUSED`). This is a property of the
+> published image, not a misconfiguration — see
+> [reverse-proxy-tls.md §0](reverse-proxy-tls.md#0-the-one-thing-that-makes-this-non-obvious).
+> **Fixed in the tree (2026-07-09):** server-side code now uses a runtime
+> `API_INTERNAL_URL` (defaulting to `http://api:3000`), so a **from-source**
+> deploy (`./deploy.sh --mode from-head`) or the **next released** dashboard image
+> logs in fine on plain `localhost`; published images **≤ v1.1.27 are still
+> affected**. For remote browsers you still need the domain rebuild (client-side
+> calls need a browser-reachable baked URL). If you only need the API/SDK path,
+> the localhost deploy is complete as-is.
+
 ## 5. Teardown & backup
 
 ```bash
@@ -207,13 +226,16 @@ docker compose -p docker ... down -v --remove-orphans
 
 ## 6. Troubleshooting
 
-| Symptom                                                                   | Cause                                                                                         | Fix                                                                                           |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `column "..." does not exist`, projects/runs 500 while `/readyz` is green | image ↔ migration drift ([§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep)) | pin image and migrations to the same commit                                                   |
-| `migrate` exited non-zero                                                 | partial prior migration                                                                       | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)    |
-| api won't boot, `JWT_SECRET must be ≥32 chars`                            | short/missing secret                                                                          | `openssl rand -hex 32` into `.env`                                                            |
-| MinIO never starts / api can't reach S3                                   | `COMPOSE_PROFILES` unset                                                                      | add `COMPOSE_PROFILES=s3` to `.env`                                                           |
-| dashboard "Cannot connect to API" from a remote browser                   | dashboard's browser bundle bakes `NEXT_PUBLIC_API_URL=http://localhost:3000` at image build — remote browsers can't reach it, and a proxy can't rewrite a baked absolute URL | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with your public API URL + terminate TLS) |
+| Symptom                                                                                                              | Cause                                                                                                                                                                                                                                                     | Fix                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `column "..." does not exist`, projects/runs 500 while `/readyz` is green                                            | image ↔ migration drift ([§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep))                                                                                                                                                             | pin image and migrations to the same commit                                                                                                                                                 |
+| `migrate` exited non-zero                                                                                            | partial prior migration                                                                                                                                                                                                                                   | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)                                                                                                  |
+| api won't boot, `JWT_SECRET must be ≥32 chars`                                                                       | short/missing secret                                                                                                                                                                                                                                      | `openssl rand -hex 32` into `.env`                                                                                                                                                          |
+| MinIO never starts / api can't reach S3                                                                              | `COMPOSE_PROFILES` unset                                                                                                                                                                                                                                  | add `COMPOSE_PROFILES=s3` to `.env`                                                                                                                                                         |
+| `compose up` aborts: `Ports are not available … bind: address already in use`                                        | a foreign process already holds `3000` (api) or `3001` (dashboard) — classically a leftover `pnpm dev` from a source-run session                                                                                                                          | free the port (`lsof -nP -iTCP:3001 -sTCP:LISTEN` to find the holder, stop it) or `./deploy.sh --down` a prior stack, then re-run. `deploy.sh` now names the port + holder on this failure. |
+| dashboard `/login` renders but signing in returns 500 (`ECONNREFUSED 127.0.0.1:3000` in `docker logs …-dashboard-1`) | published image bakes `NEXT_PUBLIC_API_URL=http://localhost:3000`; the login Server Action runs _inside_ the container, where `localhost:3000` is the dashboard, not the api — the runtime `NEXT_PUBLIC_API_URL` override is **inert** (baked at build)   | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with an origin reachable from both browser and container). The API/SDK/PAT path is unaffected.   |
+| dashboard "Cannot connect to API" from a **remote** browser                                                          | dashboard's browser bundle bakes `NEXT_PUBLIC_API_URL=http://localhost:3000` at image build — remote browsers can't reach it, and a proxy can't rewrite a baked absolute URL                                                                              | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with your public API URL + terminate TLS)                                                        |
+| logged-in with `--admin-email/--admin-password` but the dashboard/API rejects them (401)                             | when `infra/docker/.env` **already exists**, `deploy.sh` uses its `FURAN_BOOTSTRAP_ADMIN_*` values and **ignores** the `--admin-*` CLI flags (they only seed a _freshly generated_ `.env`); the admin is also only seeded when the `users` table is empty | use the creds in `infra/docker/.env`, or delete `.env` to regenerate with the flags, or reset via the CLI (`reset-password`)                                                                |
 
 ## 7. References
 

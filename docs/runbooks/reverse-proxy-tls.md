@@ -12,24 +12,57 @@
 
 ## 0. The one thing that makes this non-obvious
 
-The dashboard makes API calls from **two** places, and they resolve the API URL
-differently:
+The dashboard makes API calls from **two** places. Both resolve the API URL from
+the **same build-time-baked** `NEXT_PUBLIC_API_URL`, but they run in different
+network namespaces, so one baked value cannot satisfy both:
 
-| Caller | Reads `NEXT_PUBLIC_API_URL` … | Reachability |
-| ------ | ----------------------------- | ------------ |
-| **Browser** (client-side JS: diff viewer, live updates) | **baked at image build time** — Next inlines `NEXT_PUBLIC_*` into the client bundle; it **cannot** be changed at runtime | must be reachable **from the end user's browser** |
-| **SSR** (server-rendered pages, inside the container) | container env | must be reachable **from inside the Compose network** |
+| Caller                                                                                                              | Where the URL comes from                                                                                                                                                     | Reachability it needs                             |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Browser** (client-side JS: diff viewer, live SSE updates)                                                         | **baked at image build time** — Next inlines `NEXT_PUBLIC_*` into the client bundle                                                                                          | reachable **from the end user's browser**         |
+| **SSR / Server Actions** (login, the `home` resolver, every `(protected)` page, admin shell — inside the container) | **also baked at image build time** — Next inlines `NEXT_PUBLIC_*` into the **server** bundle too, so this reads the _same_ frozen literal, **not** the runtime container env | reachable **from inside the dashboard container** |
 
-The **published** dashboard image bakes `http://localhost:3000` as the browser
-URL (the default in [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts)).
-That is correct for a viewer sitting on the Docker host, but a **remote** user's
-browser will try to fetch `http://localhost:3000` — i.e. *their own* machine —
-and every client-side feature (the pixi diff viewer, live SSE updates) fails.
+> ⚠️ **Common misconception (and the reason UI login 500s):** setting
+> `NEXT_PUBLIC_API_URL` in the container `environment:` at runtime does **not**
+> change the SSR/Server-Action target. `NEXT_PUBLIC_*` is a _build-time_ contract
+> — Next replaces every `process.env.NEXT_PUBLIC_API_URL` reference (client **and**
+> server) with the literal baked at build. The runtime override in
+> `compose.yml`'s `dashboard.environment` is therefore **inert** for a published
+> image. Verified 2026-07-09: with `NEXT_PUBLIC_API_URL=http://api:3000` set in
+> the container env, the login Server Action still fetched `http://localhost:3000`
+> and got `ECONNREFUSED`.
 
-**No reverse proxy can fix this**: the URL is a hard-coded absolute string
-compiled into the JavaScript. To serve remote users you **must rebuild the
-dashboard image** with your public API URL baked in. That is the crux of this
-runbook; everything else is standard TLS plumbing.
+The **published** dashboard image bakes `http://localhost:3000`
+(the default in [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts)).
+Two consequences:
+
+- **Server-side is broken even on a same-host `localhost` deploy.** Inside the
+  dashboard container, `localhost:3000` is the _dashboard itself_, not the `api`
+  container — so login (a Server Action) and every server-rendered `(protected)`
+  page get `ECONNREFUSED`. The dashboard **renders** but you **cannot sign in
+  through the UI**. (The API, workers, and the SDK/PAT/curl ingestion path are
+  fully functional — see [production-deploy.md §4](production-deploy.md#4-verify).)
+- **Client-side is broken for remote browsers.** A remote user's browser fetches
+  `http://localhost:3000` — _their own_ machine — so the diff viewer and live
+  updates fail.
+
+**No reverse proxy or runtime env var can fix either**: the URL is a hard-coded
+absolute string compiled into the JavaScript. To get a **usable dashboard** you
+**must rebuild the dashboard image** with a public API URL that is reachable from
+**both** the browser and the container (a public domain hairpins through the
+proxy and satisfies both — Steps 2–4). That is the crux of this runbook;
+everything else is standard TLS plumbing.
+
+> **Fix landed in the tree (2026-07-09):** server-side callers now resolve a
+> separate runtime, non-`NEXT_PUBLIC_` `API_INTERNAL_URL` (`serverApiUrl()` in
+> [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts); wired in
+> `compose.yml` as `API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}`), so
+> a single image serves both the host browser (baked `localhost:3000`) and
+> in-container SSR (`http://api:3000`) — UI login works on a plain `localhost`
+> deploy. **This ships only in a rebuilt dashboard image**: published images
+> **≤ v1.1.27 are still affected**. To get the fix now, deploy from source
+> (`./deploy.sh --mode from-head`) or wait for the next released dashboard tag.
+> The domain rebuild below remains the path for **remote** browsers (client-side
+> calls still need a browser-reachable baked URL).
 
 ---
 
@@ -119,11 +152,18 @@ API URL to the public origins:
 # The API's browser-CORS allowlist — must include the dashboard origin.
 FURAN_DASHBOARD_ORIGIN=https://app.furan.example.com
 
-# SSR (server-side) API URL. Public URL is the always-correct choice (it
-# hairpins out through Caddy and back); an in-network http://api:3000 is a
-# valid optimization if you prefer to keep SSR traffic off the proxy.
+# Keep this ALIGNED with the value you baked in Step 2. Note it is only the
+# BAKED value (Step 2's --build-arg) that actually drives both the browser and
+# SSR — this runtime var is inert for a built image (see §0), and is set here
+# only so `.env` documents one consistent public API origin.
 NEXT_PUBLIC_API_URL=https://api.furan.example.com
 ```
+
+Because both callers use the baked URL, the public origin
+(`https://api.furan.example.com`) is the value that works everywhere: the
+browser reaches it directly, and the dashboard container's SSR hairpins out
+through Caddy and back in. This is why the domain deploy — unlike plain
+`localhost` — yields a fully working dashboard.
 
 Bring the stack up with the overlay appended to the §3 command from
 `production-deploy.md`:

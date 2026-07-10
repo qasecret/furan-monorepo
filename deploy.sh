@@ -218,21 +218,35 @@ ADMIN_PASSWORD="${FURAN_BOOTSTRAP_ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
 # 3. Lockstep guard (released mode) — the #1 production-deploy footgun
 # =============================================================================
 # The migrate one-shot applies THIS checkout's migrations. Released images are
-# pinned to a tag; if the checkout has advanced past that tag, the new schema
-# runs under old app code and every project query 500s while /readyz stays green.
+# pinned to a tag; if the checkout's MIGRATIONS have advanced past that tag, the
+# new schema runs under old app code and every project query 500s while /readyz
+# stays green.
+#
+# Being N commits ahead is NOT itself drift: released mode runs the pinned
+# image's app code, and the only thing the local checkout injects into the stack
+# is the migrate one-shot's migrations bind-mount. So the guard's real question
+# is narrower than "is HEAD ahead" — it's "did the MIGRATION FILES change vs the
+# pinned tag?". Docs/CI/compose commits landing after a release (the common case)
+# leave migrations untouched and are safe to deploy released.
 pinned_tag="$(grep -m1 -oE 'furan-api:v[0-9]+\.[0-9]+\.[0-9]+' "$COMPOSE_BASE" | cut -d: -f2 || true)"
 if [ "$MODE" = "released" ] && [ -n "$pinned_tag" ]; then
   head_desc="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo unknown)"
   if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$pinned_tag" >/dev/null 2>&1; then
     ahead="$(git -C "$REPO_ROOT" rev-list --count "$pinned_tag"..HEAD 2>/dev/null || echo 0)"
     if [ "$ahead" -gt 0 ]; then
-      warn "Checkout is $ahead commit(s) ahead of the pinned image tag $pinned_tag (HEAD: $head_desc)."
-      warn "Released images may be behind the local migrations -> project queries can 500 (image<->migration drift)."
-      if [ "$FORCE_LOCKSTEP" -ne 1 ]; then
-        die "Refusing released deploy out of lockstep. Use --mode from-head (build images from HEAD), \
+      mig_drift="$(git -C "$REPO_ROOT" diff --name-only "$pinned_tag"..HEAD -- packages/db/migrations 2>/dev/null || true)"
+      if [ -z "$mig_drift" ]; then
+        ok "checkout is $ahead commit(s) ahead of $pinned_tag but migrations are unchanged — in lockstep (HEAD: $head_desc)"
+      else
+        warn "Checkout is $ahead commit(s) ahead of the pinned image tag $pinned_tag (HEAD: $head_desc)."
+        warn "Migrations changed vs $pinned_tag -> the new schema would run under old ($pinned_tag) app code (image<->migration drift):"
+        printf '       %s\n' $mig_drift >&2
+        if [ "$FORCE_LOCKSTEP" -ne 1 ]; then
+          die "Refusing released deploy out of lockstep. Use --mode from-head (build images from HEAD), \
 check out tag $pinned_tag, or pass --force-lockstep to override."
+        fi
+        warn "--force-lockstep set: continuing despite migration drift."
       fi
-      warn "--force-lockstep set: continuing despite drift."
     else
       ok "checkout matches pinned image tag $pinned_tag"
     fi
@@ -270,7 +284,26 @@ fi
 # 5. Bring the stack up (compose enforces data-plane -> migrate -> apps order)
 # =============================================================================
 log "Starting stack (mode=$MODE, storage=$STORAGE, project=$PROJECT)"
-"${COMPOSE[@]}" up -d --remove-orphans || die "compose up failed"
+up_log="$(mktemp -t furan-up.XXXXXX)"
+if ! "${COMPOSE[@]}" up -d --remove-orphans 2>&1 | tee "$up_log"; then
+  # A foreign process on a published port (the classic case: a leftover
+  # `pnpm dev` api :$API_PORT / dashboard :$DASH_PORT from a source-run session)
+  # aborts `up` after partially starting the stack, with a raw daemon error.
+  # Name the port + holder and say what to do instead of leaving that mess.
+  if grep -qiE 'address already in use|ports are not available|bind:.*in use' "$up_log"; then
+    warn "A host port is already in use — compose could not bind a published port."
+    warn "Common cause: a leftover 'pnpm dev' api (:$API_PORT) or dashboard (:$DASH_PORT) from a source-run session."
+    for p in "$API_PORT" "$DASH_PORT"; do
+      holder="$(lsof -nP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | awk 'NR==2{print $1" (pid "$2")"}')"
+      [ -n "$holder" ] && warn "  port $p held by: $holder"
+    done
+    rm -f "$up_log"
+    die "Free the port(s) above (stop that process, or './deploy.sh --down' a prior stack), then re-run ./deploy.sh."
+  fi
+  rm -f "$up_log"
+  die "compose up failed (see output above)"
+fi
+rm -f "$up_log"
 
 # Confirm the one-shots exited cleanly before waiting on the apps.
 mig_cid="$("${COMPOSE[@]}" ps -aq migrate 2>/dev/null || true)"
