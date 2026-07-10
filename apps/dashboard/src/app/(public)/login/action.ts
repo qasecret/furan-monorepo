@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { JWT_COOKIE } from "@/lib/auth";
-import { browserEnv } from "@/lib/env";
+import { serverApiUrl } from "@/lib/env";
 
 const loginInput = z.object({
   email: z.string().email(),
@@ -43,7 +43,7 @@ export async function loginAction(
     return { error: "invalid_input", email: emailRaw };
   }
 
-  const res = await fetch(`${browserEnv.NEXT_PUBLIC_API_URL}/auth/login`, {
+  const res = await fetch(`${serverApiUrl()}/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(parsed.data),

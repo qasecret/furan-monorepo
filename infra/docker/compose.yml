@@ -286,12 +286,18 @@ services:
     ports: ["3001:3001"]
     environment:
       NODE_ENV: production
-      # Default to the in-network api hostname so the dashboard's Server
-      # Actions / SSR fetches resolve from inside the compose network. The
-      # browser bundle gets http://localhost:3000 baked at build time via
-      # zod's default in apps/dashboard/src/lib/env.ts, which is what the
-      # host browser needs to reach the host-port-mapped api container.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
+      # BROWSER bundle URL, baked at image BUILD time (Dockerfile --build-arg,
+      # default http://localhost:3000). Next inlines NEXT_PUBLIC_* into the
+      # bundles, so setting it here at runtime does NOT change the browser's
+      # target — it is kept only to feed a from-source build that reads it as a
+      # build arg. The host browser reaches the api via its host-mapped :3000.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      # SERVER-side (SSR / Server Actions like login) API URL, read at RUNTIME
+      # (non-NEXT_PUBLIC_, so NOT inlined). Points in-container server code at
+      # the api service — where localhost:3000 would resolve to the dashboard
+      # itself. This is what makes UI login work on a plain localhost deploy;
+      # see serverApiUrl() in apps/dashboard/src/lib/env.ts.
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}
     restart: unless-stopped
 
 volumes:
