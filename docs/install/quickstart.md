@@ -1,5 +1,18 @@
 # Furan — install quickstart (v1.1)
 
+> **Just want to try it?** Fastest path — one file, no clone, no `.env`:
+>
+> ```bash
+> curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+> docker compose -f furan-compose.yml up -d
+> # open http://localhost:8080 → admin@furan.local / FuranAdmin123!
+> ```
+>
+> Ships **evaluation-default credentials + JWT secret** — override
+> `FURAN_BOOTSTRAP_ADMIN_PASSWORD` / `JWT_SECRET` / `POSTGRES_PASSWORD` /
+> `MINIO_ROOT_PASSWORD` (or set `FURAN_BIND=127.0.0.1`) before any networked use.
+> The `pnpm dev` flow below is the **development** path for iterating on source.
+
 > **Deploying for real?** Use the Docker-Compose production path in
 > **[`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md)** —
 > `docker compose -f infra/docker/compose.yml up -d` boots the **full** stack

@@ -126,6 +126,13 @@ COMPOSE_PROFILES=s3          # REQUIRED — gates MinIO + minio-init (PR #117)
 
 ## 3. Deploy
 
+> **Throwaway evaluation?** Skip this runbook entirely and use the one-file
+> [`infra/docker/furan-compose.yml`](../../infra/docker/furan-compose.yml):
+> `curl` it and `docker compose -f furan-compose.yml up -d` — nginx on `:8080`,
+> **default credentials**, self-applying migrations, no `.env`. See the README
+> "Fastest install" section. Not for real installs (shared default secrets); for
+> those use `./deploy.sh` below.
+
 > **Shortcut — `./deploy.sh`.** The repo-root [`deploy.sh`](../../deploy.sh)
 > automates §2–§4 as one command: it generates `.env` with fresh secrets,
 > enforces the §0 lockstep rule (refusing a released deploy when the checkout's
