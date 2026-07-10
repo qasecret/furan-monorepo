@@ -18,9 +18,11 @@
 #     FURAN_BIND=127.0.0.1 docker compose -f furan-compose.yml up -d
 # For a hardened, secret-generating install use ./deploy.sh (needs a clone).
 #
-# NOTE (v1.1.28): browsers on a machine OTHER than the docker host cannot use
-# the UI — the v1.1.28 client bundle bakes http://localhost:3000. Same-host
-# browsers work fully. v1.1.29 removes this (single-origin /api via nginx).
+# SINGLE ORIGIN (v1.1.29+): nginx on :8080 is the ONLY exposed port and serves
+# both the UI and the API (/api/*), so the dashboard works from ANY browser —
+# not just the docker host. It uses the `furan-dashboard:<ver>-proxy` image,
+# whose client bundle bakes a relative /api base; nginx routes /api/* to the api
+# service. To reach it from another machine, browse http://<host>:8080.
 # ==========================================================================
 
 services:
@@ -93,7 +95,7 @@ services:
   # Because the volume `name:` is scoped by FURAN_VERSION, bumping the version
   # yields a fresh empty volume → fresh migrations for the new image.
   migrations-seed:
-    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.29}
     entrypoint: ["/nodejs/bin/node", "--version"]
     volumes:
       - migrations:/app/packages/db/migrations
@@ -123,7 +125,7 @@ services:
     restart: "no"
 
   api:
-    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-api:${FURAN_VERSION:-v1.1.29}
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,8 +135,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    ports:
-      - "${FURAN_BIND:-0.0.0.0}:3000:3000"
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-furan}:${POSTGRES_PASSWORD:-furan_local_pg_pw}@postgres:5432/${POSTGRES_DB:-furan}
@@ -155,7 +155,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: docker.io/qasecret/furan-capture-worker:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-capture-worker:${FURAN_VERSION:-v1.1.29}
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,7 +178,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: docker.io/qasecret/furan-diff-worker:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-diff-worker:${FURAN_VERSION:-v1.1.29}
     depends_on:
       postgres:
         condition: service_healthy
@@ -201,7 +201,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: docker.io/qasecret/furan-integrations:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-integrations:${FURAN_VERSION:-v1.1.29}
     depends_on:
       postgres:
         condition: service_healthy
@@ -219,14 +219,14 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: docker.io/qasecret/furan-dashboard:${FURAN_VERSION:-v1.1.28}
+    image: docker.io/qasecret/furan-dashboard:${FURAN_VERSION:-v1.1.29}-proxy
     depends_on:
       - api
     environment:
       NODE_ENV: production
-      # Baked at build time (v1.1.28 = http://localhost:3000); runtime value
-      # is inert for the browser. SSR uses API_INTERNAL_URL below.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      # The -proxy image bakes a RELATIVE /api base (single origin); this
+      # runtime value is inert for the browser. SSR uses API_INTERNAL_URL.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
       API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}
     restart: unless-stopped
 
@@ -309,4 +309,4 @@ volumes:
   minio_data:
   migrations:
     # Version-scoped so a FURAN_VERSION bump seeds fresh migrations.
-    name: furan_migrations_${FURAN_VERSION:-v1.1.28}
+    name: furan_migrations_${FURAN_VERSION:-v1.1.29}

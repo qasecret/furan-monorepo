@@ -46,7 +46,7 @@ docker compose -f furan-compose.yml up -d
 
 nginx serves the whole thing on `:8080`; migrations self-apply from the image. This ships **default credentials and a default JWT secret** for zero-friction evaluation — before anything network-reachable, override `FURAN_BOOTSTRAP_ADMIN_PASSWORD`, `JWT_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` (export them before `up`), or keep the defaults off the network with `FURAN_BIND=127.0.0.1`. For a hardened, secret-generating install use [`./deploy.sh`](deploy.sh) or the 10-minute walkthrough below.
 
-> On **v1.1.28** the dashboard UI works from the Docker host's own browser; full remote-browser access lands in v1.1.29 (single-origin `/api`). The API/SDK path works from anywhere today.
+> **v1.1.29+** is single-origin: nginx on `:8080` serves both the UI and the API, so the dashboard works from **any** browser (browse `http://<host>:8080`), not just the Docker host.
 
 ## Install in 10 minutes
 
