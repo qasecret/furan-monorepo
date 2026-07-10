@@ -147,7 +147,12 @@ ok "docker $(docker version -f '{{.Server.Version}}' 2>/dev/null || echo '?'), c
 # =============================================================================
 # 2. .env — generate on first run, validate on every run
 # =============================================================================
-gen_secret() { openssl rand -base64 "${1:-32}" | tr -d '\n'; }
+# URL-safe hex, NOT base64: POSTGRES_PASSWORD / MINIO_ROOT_PASSWORD are
+# interpolated raw into DATABASE_URL (postgresql://user:PW@host/db) and the S3
+# credentials, so a base64 '/' or '+' would corrupt the URL and crash the api
+# with "TypeError: Invalid URL". Hex keeps full entropy (N bytes) while staying
+# URL/shell-safe — matching the admin-password generator below.
+gen_secret() { openssl rand -hex "${1:-32}" | tr -d '\n'; }
 
 if [ ! -f "$ENV_FILE" ]; then
   log "No infra/docker/.env — generating from .env.example with fresh secrets"
