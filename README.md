@@ -34,6 +34,18 @@ If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy,
 - **Container images** — multi-arch (amd64 / arm64), cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release.
 - **Apache 2.0** — no telemetry on the server, no feature gates, no upgrade pressure.
 
+## See it in action
+
+A visual regression caught in review: a CI run's screenshot no longer matches the approved baseline, so Furan flags it, highlights the **exact changed regions** (here: a new badge, the price `$9 → $12`, and the CTA), and scores the severity. **Approve** to accept the new look as the baseline, or **Reject** to keep the old one.
+
+![Furan diff viewer — side-by-side baseline vs current with the changed regions highlighted and a 2.01% pixel-diff / 2-region / Minor-severity summary](docs/images/demo-03-diff.png)
+
+Each CI run lands in a review queue, grouped by status (unresolved changes vs. passing checkpoints):
+
+![Furan review queue — recent batch runs showing an unresolved build and a passed baseline, with a per-checkpoint results table](docs/images/demo-02-review.png)
+
+> Everything above runs on the [one-file install](#fastest-install-evaluation) below — sign in, push a screenshot from your CI or the SDK, and review the diff in the dashboard. _(Screenshots are from a live `furan-compose.yml` deploy; the sample app is a mock pricing page.)_
+
 ## Fastest install (evaluation)
 
 One file, one command, no clone and no `.env` — like ReportPortal:
