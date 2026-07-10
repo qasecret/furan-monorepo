@@ -52,17 +52,16 @@ absolute string compiled into the JavaScript. To get a **usable dashboard** you
 proxy and satisfies both — Steps 2–4). That is the crux of this runbook;
 everything else is standard TLS plumbing.
 
-> **Fix landed in the tree (2026-07-09):** server-side callers now resolve a
-> separate runtime, non-`NEXT_PUBLIC_` `API_INTERNAL_URL` (`serverApiUrl()` in
+> **Fixed in `v1.1.28`:** server-side callers now resolve a separate runtime,
+> non-`NEXT_PUBLIC_` `API_INTERNAL_URL` (`serverApiUrl()` in
 > [`apps/dashboard/src/lib/env.ts`](../../apps/dashboard/src/lib/env.ts); wired in
 > `compose.yml` as `API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}`), so
 > a single image serves both the host browser (baked `localhost:3000`) and
 > in-container SSR (`http://api:3000`) — UI login works on a plain `localhost`
-> deploy. **This ships only in a rebuilt dashboard image**: published images
-> **≤ v1.1.27 are still affected**. To get the fix now, deploy from source
-> (`./deploy.sh --mode from-head`) or wait for the next released dashboard tag.
-> The domain rebuild below remains the path for **remote** browsers (client-side
-> calls still need a browser-reachable baked URL).
+> deploy. Published images **≤ v1.1.27 are still affected**: upgrade to
+> **v1.1.28+**, or build from source (`./deploy.sh --mode from-head`). The domain
+> rebuild below remains the path for **remote** browsers (client-side calls still
+> need a browser-reachable baked URL).
 
 ---
 
