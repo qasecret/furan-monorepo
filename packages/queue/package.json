@@ -20,8 +20,8 @@
   },
   "dependencies": {
     "@furan/config": "workspace:*",
-    "bullmq": "^5.34.0",
-    "ioredis": "^5.4.1"
+    "bullmq": "^5.80.5",
+    "ioredis": "^5.11.1"
   },
   "devDependencies": {
     "@furan/eslint-config": "workspace:*",
