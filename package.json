@@ -19,10 +19,10 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "turbo": "^2.3.3",
+    "turbo": "^2.10.7",
     "typescript": "^5.7.2",
     "lefthook": "^1.10.0",
-    "prettier": "^3.4.2"
+    "prettier": "^3.9.6"
   },
   "pnpm": {
     "comment-overrides": "CVE remediation for transitive deps flagged by the Trivy gate (v1.1.24). Remove an entry once the dependency tree pulls the fix on its own.",
