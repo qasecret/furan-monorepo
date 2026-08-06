@@ -22,7 +22,7 @@
     "@furan/telemetry": "workspace:*",
     "@octokit/auth-app": "^7.1.4",
     "@octokit/webhooks": "^13.4.1",
-    "fastify": "^5.2.0",
+    "fastify": "^5.11.0",
     "ioredis": "^5.4.1",
     "octokit": "^4.0.3",
     "prom-client": "^15.1.3",
@@ -33,7 +33,7 @@
     "@furan/tsconfig": "workspace:*",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
