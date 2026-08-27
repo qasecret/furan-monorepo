@@ -25,12 +25,12 @@ jobs:
       contents: read
       id-token: write # reserved for future OIDC namespace verification
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Publish all furan-* artifacts to Maven Central
         # The vanniktech plugin reads ORG_GRADLE_PROJECT_* env vars by convention;
         # docs/runbooks/maven-central-publish.md documents the full secret list.
