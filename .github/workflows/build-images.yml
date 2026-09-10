@@ -55,7 +55,7 @@ jobs:
       # id-token: write is required for cosign keyless OIDC signing.
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # QEMU enables cross-arch builds. linux/arm64 layers are emulated on
       # the amd64 GitHub-hosted runner — slower than native, but spares
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload SBOM artifact
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.app }}
           path: sbom-${{ matrix.app }}.spdx.json
