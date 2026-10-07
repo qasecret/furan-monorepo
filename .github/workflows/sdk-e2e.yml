@@ -27,6 +27,11 @@ on:
       - "packages/sdk-kotlin/**"
       - ".github/workflows/sdk-e2e.yml"
 
+# Least privilege: both jobs only read the repo (upload-artifact and the
+# Gradle/pnpm caches authenticate with the runner's own token).
+permissions:
+  contents: read
+
 jobs:
   sdk-build-and-example-compile:
     runs-on: ubuntu-latest
@@ -179,6 +184,14 @@ jobs:
         # Pre-creating the build lets us pin a real ciBuildId (the github.sha)
         # and pass the resulting UUID into FURAN_BUILD_ID, so the SDK skips
         # createBuild entirely and goes straight to createRun with valid UUIDs.
+        #
+        # The branch name is PR-author controlled (github.head_ref), so it
+        # arrives via env: and the JSON body is built with `jq --arg` — never
+        # ${{ }}-interpolated into the script or hand-quoted into JSON, where a
+        # branch name containing quotes could inject shell or JSON.
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          CI_BUILD_ID: ${{ github.sha }}
         run: |
           pnpm --filter @furan/api cli:seed-admin --email ci@furan.local --password ci_password_for_test_only
           TOKEN=$(curl -fsS -X POST http://localhost:3000/auth/login \
@@ -211,16 +224,19 @@ jobs:
             -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
             -d "{\"0\":{\"projectId\":\"$PROJECT_ID\",\"autoApproveFeature\":true}}" \
             > /dev/null
-          BRANCH_NAME='${{ github.head_ref || github.ref_name }}'
+          BUILD_BODY=$(jq -nc --arg ciBuildId "$CI_BUILD_ID" --arg branchName "$BRANCH_NAME" \
+            '{ciBuildId: $ciBuildId, branchName: $branchName}')
           BUILD_ID=$(curl -fsS -X POST "http://localhost:3000/projects/$PROJECT_ID/builds" \
             -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-            -d "{\"ciBuildId\":\"${{ github.sha }}\",\"branchName\":\"$BRANCH_NAME\"}" | jq -r .id)
+            -d "$BUILD_BODY" | jq -r .id)
           if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
             echo "build create failed"; exit 1
           fi
-          echo "api_token=$API_TOKEN" >> "$GITHUB_OUTPUT"
-          echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
-          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          {
+            echo "api_token=$API_TOKEN"
+            echo "project_id=$PROJECT_ID"
+            echo "build_id=$BUILD_ID"
+          } >> "$GITHUB_OUTPUT"
       - name: Publish SDK locally
         working-directory: packages/sdk-kotlin
         run: ./gradlew :core:publishToMavenLocal :selenium:publishToMavenLocal :junit5:publishToMavenLocal :playwright:publishToMavenLocal :appium:publishToMavenLocal --no-daemon

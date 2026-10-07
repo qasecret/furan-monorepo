@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# Least privilege: every job here only reads the repo (actions/cache and
+# upload-artifact authenticate with the runner's own token, not GITHUB_TOKEN).
+permissions:
+  contents: read
+
 jobs:
   # Fast, dependency-free guard: the five furan service images in
   # infra/docker/compose.yml must all pin the SAME tag, so a chore(compose)
@@ -15,6 +20,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: node scripts/check-compose-image-tags.mjs
+
+  # Kotlin SDK unit tests. packages/sdk-kotlin is a Gradle build outside the
+  # pnpm/turbo graph, so the turbo steps below never touch it, and sdk-e2e.yml
+  # only compiles the examples + runs one live smoke test. Same toolchain as
+  # sdk-e2e.yml / publish.yml (publish.yml re-runs `check` before releasing).
+  sdk-kotlin-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: gradle check (core, selenium, junit5, playwright, appium)
+        working-directory: packages/sdk-kotlin
+        run: ./gradlew check --no-daemon
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: sdk-kotlin-test-reports
+          path: packages/sdk-kotlin/*/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
 
   lint-typecheck-test:
     runs-on: ubuntu-latest
@@ -87,14 +117,38 @@ jobs:
         # binaries need to land. --with-deps is a no-op on hosted runners but
         # documents intent.
         run: pnpm --filter @furan/capture-worker exec playwright install --with-deps chromium
+      - name: Resolve turbo affected base
+        # `--filter=...[<base>]` selects packages changed between <base> and
+        # HEAD (+ their dependents). On pull_request HEAD is the PR merge
+        # commit, so origin/main is the right base. On a push to main, though,
+        # HEAD *is* origin/main: `[origin/main]` matched nothing and every
+        # post-merge lint/typecheck/test/build ran on zero packages. For pushes
+        # diff against the pre-push tip (github.event.before — also covers
+        # multi-commit pushes); fall back to HEAD^1 (== before for a squash
+        # merge) when `before` is the all-zero SHA or absent from the clone
+        # (force-push). Values come in via env:, never ${{ }} inside run:.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" != "push" ]; then
+            base=origin/main
+          elif [ -n "$BEFORE_SHA" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]] \
+            && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            base="$BEFORE_SHA"
+          else
+            base="$(git rev-parse HEAD^1)"
+          fi
+          echo "turbo affected base: $base"
+          echo "AFFECTED_BASE=$base" >> "$GITHUB_ENV"
       - name: Turbo affected lint + typecheck
-        run: pnpm turbo run lint typecheck --filter=...[origin/main]
+        run: pnpm turbo run lint typecheck --filter="...[${AFFECTED_BASE}]"
       - name: Turbo affected test (serialized — workers + api share the same Postgres)
         # Integration tests across apps/api, apps/capture-worker, apps/diff-worker, packages/db
         # all hit the same compose Postgres. Parallel test runs across packages race on
         # cleanup (api tests truncate `test_runs` / `projects` while worker tests are
         # mid-handler). Serialize the test stage. Lint + typecheck stay parallel above.
-        run: pnpm turbo run test --filter=...[origin/main] --concurrency=1
+        run: pnpm turbo run test --filter="...[${AFFECTED_BASE}]" --concurrency=1
       - name: API suite under RLS (ADR-058 — app connects as furan_app)
         # Re-run the api suite with the app-under-test on the non-owner
         # `furan_app` role (subject to RLS) while seeds/asserts stay on the
@@ -118,4 +172,4 @@ jobs:
           pnpm turbo run build --filter=@furan/api
           pnpm --filter @furan/api test
       - name: Turbo affected build
-        run: pnpm turbo run build --filter=...[origin/main]
+        run: pnpm turbo run build --filter="...[${AFFECTED_BASE}]"
