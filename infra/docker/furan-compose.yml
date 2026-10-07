@@ -151,6 +151,16 @@ services:
       # Browser loads the UI from the nginx origin (:8080); the api CORS
       # allowlist must include it. Override for a non-localhost host.
       FURAN_DASHBOARD_ORIGIN: ${FURAN_DASHBOARD_ORIGIN:-http://localhost:8080}
+      # Real client IP (login throttle, logs). In THIS file the api port is
+      # never published: the api is reachable only via nginx (/api/) and the
+      # dashboard's server side (API_INTERNAL_URL) — each exactly one hop.
+      # nginx always appends the real peer as the right-most X-Forwarded-For
+      # entry (the dashboard relays that header unchanged), so trusting exactly
+      # one hop makes the api's client IP the nginx-observed peer, and a
+      # client-supplied X-Forwarded-For can't spoof it. Ignored by api versions
+      # that predate it. NEVER set this where the api port is published
+      # directly (compose.yml :3000) — any caller could then forge its IP.
+      TRUST_PROXY: "1"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     restart: unless-stopped
 
@@ -275,10 +285,20 @@ configs:
     content: |
       server {
         listen 80;
-        # Forward the ORIGINAL host:port ($http_host, not $host which drops the
-        # port). Next.js 15 Server Actions abort when the forwarded host does
+        # Forward the ORIGINAL host:port ($$http_host, not $$host which drops
+        # the port). Next.js 15 Server Actions abort when the forwarded host does
         # not match the browser Origin (e.g. host `localhost` vs origin
         # `localhost:8080`) — a CSRF guard. Keeping the port makes them match.
+        #
+        # Prometheus metrics stay OFF the public port: the api's GET /metrics is
+        # unauthenticated, and /api/ below would publish it as /api/metrics.
+        # `^~` beats the /api/ prefix, matching runs on the normalised URI
+        # (//, ./, ../ and %-escapes resolved first), and 404 (not 403) doesn't
+        # confirm the endpoint exists. Scrape it on the compose network
+        # instead: http://api:3000/metrics (internal, unaffected by this block).
+        location ^~ /api/metrics {
+          return 404;
+        }
         # /api/* → api (used by the browser in v1.1.29; harmless now).
         location /api/ {
           proxy_pass http://api:3000/;
@@ -295,6 +315,11 @@ configs:
           proxy_http_version 1.1;
           proxy_set_header Host $$http_host;
           proxy_set_header X-Forwarded-Host $$http_host;
+          # Append the real peer so the dashboard's server actions (login)
+          # see — and relay to the api — the client IP. Without it Next
+          # fills in nginx's own address, and a client-sent value passes
+          # through with no real peer at all.
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $$scheme;
           proxy_set_header Upgrade $$http_upgrade;
           proxy_set_header Connection "upgrade";

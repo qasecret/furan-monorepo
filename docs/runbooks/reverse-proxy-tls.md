@@ -133,6 +133,10 @@ app.furan.example.com {
     reverse_proxy dashboard:3001
 }
 api.furan.example.com {
+    # Prometheus metrics stay off the public origin (the api's GET /metrics is
+    # unauthenticated); scrape http://api:3000/metrics on the Compose network.
+    @metrics path /metrics*
+    respond @metrics 404
     reverse_proxy api:3000
 }
 ```
@@ -141,6 +145,14 @@ Point both DNS `A` records at the host, open `80`/`443`, and Caddy fetches certs
 on first request. (You no longer need to publish `3000`/`3001` to the host — the
 proxy reaches them over the Compose network. Drop those `ports:` mappings for a
 tighter surface.)
+
+> **Keep `/metrics` internal.** The api's Prometheus endpoint has no auth, so the
+> `@metrics` block above answers `404` for it on the public origin (Caddy's path
+> matcher is case-insensitive and matches the cleaned, unescaped path, so
+> `//metrics`, `/%6Detrics`, `/Metrics` are caught too). Point Prometheus at
+> `http://api:3000/metrics` from a container on the Compose network instead.
+> While `3000` stays published (the base `compose.yml` default), `/metrics` is
+> reachable on that port — another reason to drop the mapping.
 
 ## 4. Align the runtime env
 
