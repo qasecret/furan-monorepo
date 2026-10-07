@@ -82,6 +82,14 @@ d("GET /api/v1/storage/:key", () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers["content-type"]).toBe("image/png");
       expect(res.headers["cache-control"]).toContain("max-age=300");
+      // Authenticated, project-scoped bytes: browser-cacheable, but a shared
+      // cache (corporate proxy / CDN) must never store and re-serve them.
+      expect(res.headers["cache-control"]).toContain("private");
+      expect(res.headers["cache-control"]).not.toContain("public");
+      // The global lock-down CSP covers the bytes too (see security-headers.test).
+      expect(res.headers["content-security-policy"]).toContain(
+        "default-src 'none'",
+      );
       expect(Buffer.from(res.rawPayload).equals(TINY_PNG)).toBe(true);
     } finally {
       await h.close();

@@ -135,10 +135,23 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   );
 
   // Baseline security headers (nosniff, frameguard, referrer-policy, HSTS,
-  // etc.). CSP is disabled: this service is a JSON API, and the one HTML
-  // surface — the Scalar API-reference docs page — loads assets a strict
-  // default CSP would block. The high-value headers above still apply.
-  await app.register(helmet, { contentSecurityPolicy: false });
+  // etc.) plus a lock-down CSP on EVERY response: JSON, image bytes and SSE
+  // need no sources, and if a browser is ever coaxed into rendering a response
+  // as a document (a sniffed upload, a reflected error body) it can run,
+  // load, frame, submit and navigate nothing. The one HTML surface — the
+  // Scalar docs page — replaces this with its own route-scoped policy
+  // (openapi/docs-plugin.ts).
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+  });
 
   // Rate limiting in opt-in mode (`global: false`): SDK uploads and tRPC
   // batches are intentionally NOT throttled here — only routes that set
