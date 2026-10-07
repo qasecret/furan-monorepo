@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { type ViewerRole } from "@/lib/roles";
+import { isAtLeastAdmin, type ViewerRole } from "@/lib/roles";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -197,7 +197,11 @@ const ENGINE_KNOBS: Record<
  *    coerce at parse time.
  *  - `imageComparisonConfig` is treated as a JSON string. Empty is
  *    allowed (lets users clear the override) and otherwise the value
- *    must parse. Structured editing lands in v1.1+.
+ *    must be a JSON object (the API rejects anything else — ADR-060).
+ *  - `vlmApiKey` / `vlmClearApiKey` are form-only: the Visual-AI key is
+ *    write-only (the API never returns it), so a new key or a removal is
+ *    held here and folded into the config only at submit time — it never
+ *    appears in the JSON textarea.
  */
 const schema = z.object({
   name: z.string().min(1, "Required").max(120),
@@ -212,12 +216,14 @@ const schema = z.object({
   imageComparisonConfig: z.string().refine((s) => {
     if (s.trim() === "") return true;
     try {
-      JSON.parse(s);
-      return true;
+      const parsed: unknown = JSON.parse(s);
+      return !!parsed && typeof parsed === "object" && !Array.isArray(parsed);
     } catch {
       return false;
     }
-  }, "Must be valid JSON or empty"),
+  }, "Must be a JSON object or empty"),
+  vlmApiKey: z.string(),
+  vlmClearApiKey: z.boolean(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -237,6 +243,8 @@ const FIELD_SECTION: Record<string, SectionId> = {
   autoApproveFeature: "diff",
   imageComparison: "image",
   imageComparisonConfig: "image",
+  vlmApiKey: "image",
+  vlmClearApiKey: "image",
   maxBuildAllowed: "limits",
   maxBranchLifetime: "limits",
   retentionDays: "retention",
@@ -259,7 +267,6 @@ const VLM_DEFAULTS = {
   model: "gemma3:12b",
   prompt: "",
   temperature: 0.1,
-  apiKey: "",
 };
 
 type VlmConfig = {
@@ -267,17 +274,44 @@ type VlmConfig = {
   model: string;
   prompt: string;
   temperature: number;
-  apiKey: string;
+};
+
+/**
+ * Fold the form-only key fields into the config JSON at submit time
+ * (ADR-060). Untouched → config unchanged, so the API keeps the stored key;
+ * a new key → `apiKey: <key>`; Remove → `apiKey: ""` (explicit clear).
+ */
+function withApiKeyChange(
+  config: string,
+  change: { replaceWith: string; clear: boolean },
+): string {
+  if (!change.replaceWith && !change.clear) return config;
+  const obj: Record<string, unknown> =
+    config.trim() === "" ? {} : (JSON.parse(config) as Record<string, unknown>);
+  obj.apiKey = change.replaceWith || "";
+  return JSON.stringify(obj, null, 2);
+}
+
+/** Readable text for API error codes surfaced on save. */
+const SAVE_ERRORS: Record<string, string> = {
+  vlm_provider_settings_admin_only:
+    "Only admins can change the AI provider, its endpoint, or its API key.",
 };
 
 function EngineKnobsEditor({
   engine,
   form,
   disabled,
+  canEditProvider,
+  hasApiKey,
 }: {
   engine: "pixelmatch" | "looks_same" | "odiff" | "vlm";
   form: UseFormReturn<FormValues>;
   disabled: boolean;
+  /** Admin+ only: provider / baseUrl / API key (ADR-060). */
+  canEditProvider: boolean;
+  /** Whether the project already has a key stored (the value is never sent). */
+  hasApiKey: boolean;
 }) {
   const rawConfig = form.watch("imageComparisonConfig");
   const parsed = useMemo<Record<string, unknown>>(() => {
@@ -321,7 +355,14 @@ function EngineKnobsEditor({
       ...(typeof parsed.temperature === "number"
         ? { temperature: parsed.temperature }
         : {}),
-      ...(typeof parsed.apiKey === "string" ? { apiKey: parsed.apiKey } : {}),
+    };
+    const newApiKey = form.watch("vlmApiKey");
+    const clearApiKey = form.watch("vlmClearApiKey");
+    const setKeyField = (
+      name: "vlmApiKey" | "vlmClearApiKey",
+      value: string | boolean,
+    ): void => {
+      form.setValue(name, value as never, { shouldDirty: true });
     };
 
     return (
@@ -340,7 +381,7 @@ function EngineKnobsEditor({
             onValueChange={(v) => {
               if (v) writeKey("provider", v);
             }}
-            disabled={disabled}
+            disabled={disabled || !canEditProvider}
           >
             <SelectTrigger id="vlm-provider" data-testid="vlm-provider-select">
               <SelectValue />
@@ -355,6 +396,15 @@ function EngineKnobsEditor({
             VLM provider. Ollama runs locally; Gemini and Anthropic require an
             API key.
           </p>
+          {!canEditProvider && (
+            <p
+              className="text-xs text-zinc-600 dark:text-zinc-400"
+              data-testid="vlm-provider-admin-only-hint"
+            >
+              Only admins can change the provider, its endpoint, or its API key
+              — they decide where screenshots are sent.
+            </p>
+          )}
         </div>
 
         <div className="space-y-1">
@@ -375,18 +425,62 @@ function EngineKnobsEditor({
         {(vlm.provider === "gemini" || vlm.provider === "anthropic") && (
           <div className="space-y-1">
             <Label htmlFor="vlm-api-key">API Key</Label>
-            <Input
-              id="vlm-api-key"
-              type="password"
-              value={vlm.apiKey}
-              onChange={(e) => writeKey("apiKey", e.target.value)}
-              disabled={disabled}
-              placeholder="Enter API key…"
-              data-testid="vlm-api-key-input"
-            />
+            <p
+              className="text-xs text-zinc-600 dark:text-zinc-400"
+              data-testid="vlm-api-key-status"
+            >
+              {clearApiKey
+                ? "The key will be removed when you save."
+                : hasApiKey
+                  ? "A key is configured. It is never shown again."
+                  : "No key configured."}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                id="vlm-api-key"
+                type="password"
+                autoComplete="new-password"
+                value={newApiKey}
+                onChange={(e) => setKeyField("vlmApiKey", e.target.value)}
+                disabled={disabled || !canEditProvider || clearApiKey}
+                placeholder={
+                  hasApiKey
+                    ? "Enter a new key to replace it…"
+                    : "Paste the provider API key…"
+                }
+                data-testid="vlm-api-key-input"
+              />
+              {canEditProvider &&
+                hasApiKey &&
+                (clearApiKey ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="shrink-0 whitespace-nowrap"
+                    onClick={() => setKeyField("vlmClearApiKey", false)}
+                    data-testid="vlm-api-key-undo-remove"
+                  >
+                    Undo
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="shrink-0 whitespace-nowrap"
+                    disabled={disabled}
+                    onClick={() => {
+                      setKeyField("vlmApiKey", "");
+                      setKeyField("vlmClearApiKey", true);
+                    }}
+                    data-testid="vlm-api-key-remove"
+                  >
+                    Remove key
+                  </Button>
+                ))}
+            </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-500">
-              API key for the selected provider. Stored in the project config
-              JSON.
+              Write-only: saved keys are never displayed or sent back to the
+              browser. Leave blank to keep the current key.
             </p>
           </div>
         )}
@@ -584,6 +678,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
       maxBuildAllowed: 100,
       maxBranchLifetime: 30,
       imageComparisonConfig: "",
+      vlmApiKey: "",
+      vlmClearApiKey: false,
     },
   });
 
@@ -615,18 +711,24 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
         maxBuildAllowed: project.maxBuildAllowed ?? 100,
         maxBranchLifetime: project.maxBranchLifetime ?? 30,
         imageComparisonConfig: project.imageComparisonConfig ?? "",
+        vlmApiKey: "",
+        vlmClearApiKey: false,
       });
     }
   }, [project, form]);
 
   const update = trpc.projects.update.useMutation({
     onSuccess: async () => {
-      form.reset(form.getValues());
+      // Drop the just-saved key from form state; the refetch reports it
+      // via hasVlmApiKey.
+      form.reset({ ...form.getValues(), vlmApiKey: "", vlmClearApiKey: false });
       await utils.projects.getById.invalidate({ projectId });
       toast.success("Settings saved");
     },
     onError: (e: { message: string }) => {
-      toast.error(e.message || "Failed to save settings");
+      toast.error(
+        SAVE_ERRORS[e.message] ?? (e.message || "Failed to save settings"),
+      );
     },
   });
 
@@ -650,8 +752,19 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
     );
   }
 
-  const onSubmit = (values: FormValues): void => {
-    update.mutate({ projectId, ...values });
+  const onSubmit = ({
+    vlmApiKey,
+    vlmClearApiKey,
+    ...values
+  }: FormValues): void => {
+    update.mutate({
+      projectId,
+      ...values,
+      imageComparisonConfig: withApiKeyChange(values.imageComparisonConfig, {
+        replaceWith: vlmApiKey,
+        clear: vlmClearApiKey,
+      }),
+    });
   };
 
   const activeMeta = TABS.find((t) => t.id === activeTab)!;
@@ -865,6 +978,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                     engine={form.watch("imageComparison")}
                     form={form}
                     disabled={isGuest}
+                    canEditProvider={isAtLeastAdmin(userRole)}
+                    hasApiKey={project.hasVlmApiKey}
                   />
                   <FormField
                     control={form.control}
@@ -885,7 +1000,8 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                         <FormDescription>
                           The structured editor above writes here. Edit directly
                           to set custom keys the structured form doesn't expose,
-                          or leave blank for engine defaults.
+                          or leave blank for engine defaults. API keys never
+                          appear here — use the API Key field.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

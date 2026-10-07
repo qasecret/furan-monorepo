@@ -23,6 +23,7 @@ vi.mock("sonner", () => ({
 
 const updateMutate = vi.fn();
 const getByIdInvalidate = vi.fn();
+let updateOpts: { onError?: (e: { message: string }) => void } | undefined;
 
 const baseProject = {
   id: "33333333-3333-4333-8333-333333333333",
@@ -41,7 +42,7 @@ const baseProject = {
 };
 
 const getByIdReturn: {
-  data: typeof baseProject | undefined;
+  data: (typeof baseProject & { hasVlmApiKey?: boolean }) | undefined;
   isLoading: boolean;
   error: { message: string } | null;
 } = {
@@ -60,17 +61,20 @@ vi.mock("@/lib/trpc", () => ({
         useMutation: (opts?: {
           onSuccess?: () => void;
           onError?: (e: { message: string }) => void;
-        }) => ({
-          // Mirror tRPC: a successful mutate fires onSuccess. Keep
-          // updateMutate as the spy the "submit calls mutate" test asserts
-          // on, then invoke the form's onSuccess (toast + dirty reset).
-          mutate: (vars: unknown) => {
-            updateMutate(vars);
-            opts?.onSuccess?.();
-          },
-          isPending: false,
-          ...(opts ?? {}),
-        }),
+        }) => {
+          updateOpts = opts;
+          return {
+            // Mirror tRPC: a successful mutate fires onSuccess. Keep
+            // updateMutate as the spy the "submit calls mutate" test asserts
+            // on, then invoke the form's onSuccess (toast + dirty reset).
+            mutate: (vars: unknown) => {
+              updateMutate(vars);
+              opts?.onSuccess?.();
+            },
+            isPending: false,
+            ...(opts ?? {}),
+          };
+        },
       },
     },
     useUtils: () => ({
@@ -214,6 +218,145 @@ describe("ProjectSettingsForm", () => {
       expect(nameField.closest('[class*="hidden"]')).toBeNull();
     });
     // The invalid submit never reached the mutation.
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+});
+
+// ADR-060: the Visual-AI API key is write-only (the API never returns it;
+// `hasVlmApiKey` says whether one is set) and only admins may change the
+// provider / endpoint / key. The key must never appear in the JSON textarea.
+describe("ProjectSettingsForm — Visual-AI provider settings (ADR-060)", () => {
+  const vlmProject = {
+    ...baseProject,
+    imageComparison: "vlm" as unknown as "pixelmatch",
+    imageComparisonConfig: JSON.stringify(
+      { provider: "anthropic", model: "claude-x", temperature: 0.1 },
+      null,
+      2,
+    ),
+    hasVlmApiKey: true,
+  };
+
+  beforeEach(() => {
+    getByIdReturn.data = vlmProject;
+  });
+  afterEach(() => {
+    getByIdReturn.data = baseProject;
+  });
+
+  const sent = () =>
+    updateMutate.mock.calls.at(-1)![0] as Record<string, unknown> & {
+      imageComparisonConfig: string;
+    };
+  const sentConfig = () =>
+    JSON.parse(sent().imageComparisonConfig) as Record<string, unknown>;
+  const textarea = () =>
+    screen.getByTestId("image-config-textarea") as HTMLTextAreaElement;
+
+  test("admin: the key is never pre-filled; the panel says one is configured", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    const key = (await screen.findByTestId(
+      "vlm-api-key-input",
+    )) as HTMLInputElement;
+    expect(key.value).toBe("");
+    expect(key.placeholder).toMatch(/replace/i);
+    // Keep the browser from autofilling the user's login password here.
+    expect(key.getAttribute("autocomplete")).toBe("new-password");
+    expect(screen.getByTestId("vlm-api-key-status").textContent).toMatch(
+      /configured/i,
+    );
+  });
+
+  test("admin: a typed key is sent on save but never shown in the JSON textarea", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    const key = await screen.findByTestId("vlm-api-key-input");
+    fireEvent.change(key, { target: { value: "sk-typed-new-key" } });
+    expect(textarea().value).not.toContain("sk-typed-new-key");
+
+    fireEvent.click(screen.getByTestId("save-button"));
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(sentConfig().apiKey).toBe("sk-typed-new-key");
+    expect(sentConfig().provider).toBe("anthropic");
+    // Form-only fields never reach the API.
+    expect(sent()).not.toHaveProperty("vlmApiKey");
+    expect(sent()).not.toHaveProperty("vlmClearApiKey");
+  });
+
+  test("admin: saving without touching the key omits apiKey (the server keeps it)", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    const nameInput = await screen.findByTestId("name-input");
+    fireEvent.input(nameInput, { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(sentConfig()).not.toHaveProperty("apiKey");
+  });
+
+  test("admin: Remove key sends an explicit clear; Undo cancels it", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    fireEvent.click(await screen.findByTestId("vlm-api-key-remove"));
+    expect(screen.getByTestId("vlm-api-key-status").textContent).toMatch(
+      /removed when you save/i,
+    );
+    fireEvent.click(screen.getByTestId("vlm-api-key-undo-remove"));
+    expect(screen.getByTestId("vlm-api-key-status").textContent).toMatch(
+      /configured/i,
+    );
+
+    fireEvent.click(screen.getByTestId("vlm-api-key-remove"));
+    fireEvent.click(screen.getByTestId("save-button"));
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(sentConfig().apiKey).toBe("");
+  });
+
+  test("admin: no Remove button when no key is configured", async () => {
+    getByIdReturn.data = { ...vlmProject, hasVlmApiKey: false };
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    const key = (await screen.findByTestId(
+      "vlm-api-key-input",
+    )) as HTMLInputElement;
+    expect(key.placeholder).not.toMatch(/replace/i);
+    expect(screen.queryByTestId("vlm-api-key-remove")).toBeNull();
+    expect(screen.getByTestId("vlm-api-key-status").textContent).toMatch(
+      /no key/i,
+    );
+  });
+
+  test("editor: provider + key controls are disabled with an explanation; other VLM knobs stay editable", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
+    const provider = (await screen.findByTestId(
+      "vlm-provider-select",
+    )) as HTMLButtonElement;
+    expect(provider.disabled).toBe(true);
+    expect(
+      (screen.getByTestId("vlm-api-key-input") as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(screen.queryByTestId("vlm-api-key-remove")).toBeNull();
+    expect(
+      screen.getByTestId("vlm-provider-admin-only-hint").textContent,
+    ).toMatch(/only admins/i);
+    expect(
+      (screen.getByTestId("vlm-model-input") as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  test("shows the server's admin-only rejection as readable text", async () => {
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="editor" />);
+    await screen.findByTestId("vlm-provider-select");
+    updateOpts?.onError?.({ message: "vlm_provider_settings_admin_only" });
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringMatching(/only admins can change the ai provider/i),
+    );
+  });
+
+  test("rejects a JSON config that isn't an object before calling the API", async () => {
+    getByIdReturn.data = baseProject;
+    render(<ProjectSettingsForm projectId={PROJECT_ID} userRole="admin" />);
+    await screen.findByTestId("image-config-textarea");
+    fireEvent.change(textarea(), { target: { value: "[1, 2]" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+    expect(
+      await screen.findByText("Must be a JSON object or empty"),
+    ).toBeTruthy();
     expect(updateMutate).not.toHaveBeenCalled();
   });
 });
