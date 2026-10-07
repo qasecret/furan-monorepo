@@ -1,6 +1,15 @@
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+// Review-action spies: the keyboard shortcuts and the ApprovalBar buttons
+// must reach the server through the SAME mutation (see the hotkey parity
+// block at the bottom of this file).
+const reviewSpies = vi.hoisted(() => ({
+  approve: vi.fn(),
+  approveCheckpoint: vi.fn(),
+  reject: vi.fn(),
+}));
+
 // Tracks how many times a Pixi Application has been initialized. Module-level
 // so the regression test can read it without any reference to the mock class.
 let pixiInitCount = 0;
@@ -127,15 +136,27 @@ vi.mock("../src/lib/trpc", () => {
             error: null,
           }),
         },
-        approve: { useMutation: noopMutation },
-        reject: { useMutation: noopMutation },
+        approve: {
+          useMutation: () => ({
+            mutate: reviewSpies.approve,
+            isPending: false,
+          }),
+        },
+        reject: {
+          useMutation: () => ({ mutate: reviewSpies.reject, isPending: false }),
+        },
         overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: { useMutation: noopMutation },
         setTempIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
         bulkApproveByVariation: { useMutation: noopMutation },
-        approveCheckpoint: { useMutation: noopMutation },
+        approveCheckpoint: {
+          useMutation: () => ({
+            mutate: reviewSpies.approveCheckpoint,
+            isPending: false,
+          }),
+        },
         approveAllCheckpoints: { useMutation: noopMutation },
         // ADR-042: group-approval callout — data:undefined fires null-guard → renders nothing
         getCheckpointGroup: {
@@ -500,5 +521,122 @@ describe("DiffViewer", () => {
 
     // Layout region restored: counter back to "Diff 0 / 2"
     expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
+  });
+});
+
+// Regression: the A/R hotkeys used to call their own `runs.approve` /
+// `runs.reject` mutations — approving the WHOLE run, skipping the
+// review-legal status gate, dropping unsaved ignore regions, and firing
+// while the reviewer typed into a field. They must now go through the exact
+// action the ApprovalBar buttons use.
+describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
+  const RUN_ID = "00000000-0000-0000-0000-000000000000";
+  const press = (key: string) =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true }),
+      );
+    });
+
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [] };
+    reviewSpies.approve.mockReset();
+    reviewSpies.approveCheckpoint.mockReset();
+    reviewSpies.reject.mockReset();
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      draftIgnoreAreas: [],
+      markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
+      kindOverrides: new Map(),
+      selectedIgnoreId: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("A approves the selected checkpoint (approveCheckpoint), not the whole run", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    press("A");
+    expect(reviewSpies.approveCheckpoint).toHaveBeenCalledOnce();
+    expect(reviewSpies.approveCheckpoint).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
+    });
+    expect(reviewSpies.approve).not.toHaveBeenCalled();
+  });
+
+  test("A folds unsaved ignore regions into the approval, like the button", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    act(() => {
+      useViewerStore.setState({
+        draftIgnoreAreas: [
+          {
+            id: "draft-1",
+            x: 1,
+            y: 2,
+            width: 30,
+            height: 40,
+            viewport: "1280x720",
+            paddingPx: 0,
+            kind: "ignore",
+          },
+        ],
+      });
+    });
+    press("A");
+    expect(reviewSpies.approveCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: RUN_ID,
+        checkpointId: "cp-1",
+        ignoreAreas: expect.arrayContaining([
+          expect.objectContaining({ x: 1, y: 2, width: 30, height: 40 }),
+        ]),
+      }),
+    );
+  });
+
+  test.each(["running", "empty"] as const)(
+    "A and R do nothing while the run is %s (not reviewable — buttons are disabled)",
+    (status) => {
+      mockGetByIdData = { ...defaultMockData, status };
+      render(
+        <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+      );
+      press("A");
+      press("R");
+      expect(reviewSpies.approveCheckpoint).not.toHaveBeenCalled();
+      expect(reviewSpies.approve).not.toHaveBeenCalled();
+      expect(reviewSpies.reject).not.toHaveBeenCalled();
+    },
+  );
+
+  test("R rejects through the same mutation as the Reject button", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    press("R");
+    expect(reviewSpies.reject).toHaveBeenCalledOnce();
+    expect(reviewSpies.reject).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  test("typing 'a' into a text field does not approve", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    press("a");
+    press("A");
+    input.remove();
+    expect(reviewSpies.approveCheckpoint).not.toHaveBeenCalled();
+    expect(reviewSpies.approve).not.toHaveBeenCalled();
   });
 });
