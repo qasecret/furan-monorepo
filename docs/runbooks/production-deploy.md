@@ -14,8 +14,7 @@
 > `build-images.yml@refs/tags/v1.1.28`). Deploy at this tag, or let
 > [`deploy.sh`](../../deploy.sh) handle the bring-up.
 
-This runbook was written/verified during the 2026-06-24 fresh-deploy QA walk.
-See the companion [E2E verification report](e2e-verification-2026-06-24.md).
+This runbook was written and verified on a fresh host (2026-06-24).
 
 ---
 

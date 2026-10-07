@@ -275,8 +275,7 @@ reuse the same values on later runs so they diff against the same baseline. The
 for a variation there is no baseline, so the run is stored as a baseline
 **candidate** that a reviewer approves in the dashboard (ADR-036 — Furan does
 not auto-seed the first baseline by default; `autoApproveFeature` is off for new
-projects). See the [E2E verification report](../runbooks/e2e-verification-2026-06-24.md)
-for a full walkthrough of this loop.
+projects).
 
 <details><summary>Dev-only alternative: enqueue a capture job directly</summary>
 
