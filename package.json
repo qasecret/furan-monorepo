@@ -25,11 +25,12 @@
     "prettier": "^3.4.2"
   },
   "pnpm": {
-    "comment-overrides": "CVE remediation for transitive deps flagged by the Trivy gate (v1.1.24). Remove an entry once the dependency tree pulls the fix on its own.",
+    "comment-overrides": "CVE remediation for transitive deps flagged by the Trivy gate (v1.1.24) and pnpm audit (v1.1.30). Remove an entry once the dependency tree pulls the fix on its own. next>postcss: next 15.5.x pins postcss@8.4.31 exactly (GHSA advisories fixed in >=8.5.23).",
     "overrides": {
-      "@grpc/grpc-js": "^1.14.4",
+      "@grpc/grpc-js": "^1.14.5",
       "form-data": "^4.0.6",
-      "protobufjs": "^7.6.1",
+      "next>postcss": "^8.5.29",
+      "protobufjs": "^7.6.5",
       "ws": "^8.21.0"
     }
   }
