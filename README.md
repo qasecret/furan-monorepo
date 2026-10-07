@@ -130,7 +130,7 @@ Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 docker compose --env-file .env -f infra/docker/compose.yml ps
 ```
 
-Every long-running service should report `running (healthy)`. The `minio-init` and `migrate` containers will show `exited (0)` — that's intentional; they're one-shots (bucket creation and schema migration) that the app services wait on before starting.
+Every long-running service should report `running (healthy)`. The `minio-perms`, `minio-init` and `migrate` containers will show `exited (0)` — that's intentional; they're one-shots (MinIO volume ownership, bucket creation, and schema migration) that the app services wait on before starting.
 
 ### Step 3 — Sign in
 

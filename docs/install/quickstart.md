@@ -101,9 +101,9 @@ Wait ~15 seconds for healthchecks, then verify:
 docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml ps
 ```
 
-All four services (`postgres`, `redis`, `minio`, `minio-init`) should report
-healthy / exited-0. `minio-init` is a one-shot bucket creator and is
-expected to exit after first run.
+All five services (`postgres`, `redis`, `minio`, `minio-perms`, `minio-init`)
+should report healthy / exited-0. `minio-perms` (volume ownership) and
+`minio-init` (bucket creator) are one-shots and are expected to exit.
 
 > **Production-shaped install:** `compose.yml` boots the **full** stack (data
 > plane + the five app services) from pre-built images published to Docker Hub
