@@ -8,7 +8,7 @@ import { bootstrapTelemetry, type Telemetry } from "@furan/telemetry";
 import type { FastifyInstance } from "fastify";
 import { vi, type Mock } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp, type AppDeps } from "../src/app.js";
 import { envSchema, type Env } from "../src/env.js";
 import type { Broadcaster } from "../src/lib/broadcast.js";
 import type { MemberProjectsCache } from "../src/lib/member-projects-cache.js";
@@ -171,6 +171,8 @@ export interface CreateTestAppOpts {
   broadcaster?: Broadcaster;
   /** Inject a member-project cache (storage-proxy hot path). Absent → null. */
   memberProjectsCache?: MemberProjectsCache;
+  /** Shared rate-limit store (ADR-063). Absent → per-app in-memory store. */
+  rateLimitStore?: AppDeps["rateLimitStore"];
 }
 
 export async function createTestApp(
@@ -266,6 +268,7 @@ export async function createTestApp(
     ...(opts.memberProjectsCache
       ? { memberProjectsCache: opts.memberProjectsCache }
       : {}),
+    ...(opts.rateLimitStore ? { rateLimitStore: opts.rateLimitStore } : {}),
   });
   if (!opts.skipReady) {
     await app.ready();

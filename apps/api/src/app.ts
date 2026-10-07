@@ -3,6 +3,7 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import { type DB } from "@furan/db";
+import type { Redis } from "@furan/queue";
 import type { Telemetry } from "@furan/telemetry";
 import {
   fastifyTRPCPlugin,
@@ -24,6 +25,7 @@ import type { MemberProjectsCache } from "./lib/member-projects-cache.js";
 import { resolveAuthUser } from "./lib/resolve-auth-user.js";
 import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
+import { parseTrustProxy } from "./lib/trust-proxy.js";
 import type { UserAuthCache } from "./lib/user-auth-cache.js";
 import docsPlugin from "./openapi/docs-plugin.js";
 import authPlugin from "./plugins/auth.js";
@@ -54,6 +56,12 @@ export interface AppDeps {
   cache?: UserAuthCache;
   /** Optional cache for a user's member-project set (storage-proxy hot path). */
   memberProjectsCache?: MemberProjectsCache;
+  /**
+   * Optional shared store for rate-limit counters (ADR-063) so limits hold
+   * across api replicas. Absent → @fastify/rate-limit's per-instance
+   * in-memory store. `nameSpace` defaults to `furan:rl:`.
+   */
+  rateLimitStore?: { redis: Redis; nameSpace?: string };
 }
 
 declare module "fastify" {
@@ -94,6 +102,10 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     // request, which react-query then retries into a loop. 5000 is the tRPC
     // docs' recommended ceiling and leaves ample headroom.
     maxParamLength: 5000,
+    // ADR-063: which proxies may set X-Forwarded-For, i.e. what `req.ip` (and
+    // every per-IP rate limit) resolves to. Default false — XFF is ignored and
+    // req.ip is the socket peer. env.ts already rejected unparseable values.
+    trustProxy: parseTrustProxy(deps.env.TRUST_PROXY),
   });
 
   app.decorate("db", deps.db);
@@ -143,11 +155,21 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
   // Rate limiting in opt-in mode (`global: false`): SDK uploads and tRPC
   // batches are intentionally NOT throttled here — only routes that set
   // `config.rateLimit` are (currently /auth/login, as a brute-force /
-  // credential-stuffing brake). The default store is in-memory (per instance);
-  // a multi-instance deployment should pass a Redis store + enable trustProxy
-  // so the client IP is the real caller, not the reverse proxy.
+  // credential-stuffing brake, plus a per-account limit in routes/auth.ts).
+  // ADR-063: counters live in Redis when server.ts wires a store (shared by all
+  // replicas), else in memory; per-IP keys use req.ip, so they only see the
+  // real caller behind a proxy when TRUST_PROXY names that proxy.
   await app.register(rateLimit, {
     global: false,
+    ...(deps.rateLimitStore
+      ? {
+          redis: deps.rateLimitStore.redis,
+          nameSpace: deps.rateLimitStore.nameSpace ?? "furan:rl:",
+        }
+      : {}),
+    // Fail OPEN on a store error (Redis down): a Redis blip must not lock
+    // every user out of login. The outage is logged by rate-limit-redis.ts.
+    skipOnError: true,
     // Keep the 429 body in the canonical ApiErrorEnvelope shape.
     errorResponseBuilder: (_req, context) => ({
       code: "rate_limited",

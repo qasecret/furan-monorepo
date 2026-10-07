@@ -12,6 +12,8 @@ import { envSchema } from "./env.js";
 import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { createBroadcaster } from "./lib/broadcast.js";
 import { createRedisMemberProjectsCache } from "./lib/member-projects-cache.js";
+import { createRateLimitRedis } from "./lib/rate-limit-redis.js";
+import { parseTrustProxy } from "./lib/trust-proxy.js";
 import { createRedisUserAuthCache } from "./lib/user-auth-cache.js";
 
 async function main(): Promise<void> {
@@ -49,6 +51,19 @@ async function main(): Promise<void> {
   // Shares the cache connection — separate key namespace (member-project sets
   // for the storage-proxy hot path).
   const memberProjectsCache = createRedisMemberProjectsCache(cacheRedis);
+  // ADR-063: dedicated fail-fast connection for the shared rate-limit store
+  // (login throttling holds across replicas). NOT createRedisConnection():
+  // its BullMQ-style unbounded retries would hang logins during an outage.
+  const rateLimitRedis = createRateLimitRedis(telemetry.logger);
+
+  // ADR-063: TRUST_PROXY=true takes the left-most X-Forwarded-For entry —
+  // any client can forge it unless the api is only reachable via the proxy.
+  if (parseTrustProxy(env.TRUST_PROXY) === true) {
+    telemetry.logger.warn(
+      { trustProxy: true },
+      "trust_proxy_all_hops_xff_spoofable_unless_api_only_reachable_via_proxy",
+    );
+  }
 
   const app = await createApp({
     db,
@@ -58,6 +73,7 @@ async function main(): Promise<void> {
     broadcaster,
     cache,
     memberProjectsCache,
+    rateLimitStore: { redis: rateLimitRedis },
   });
 
   // First-admin bootstrap. Runs at most once (no-op when users exist).
@@ -70,6 +86,7 @@ async function main(): Promise<void> {
     await diffQueue.close();
     await broadcasterRedis.quit().catch(() => undefined);
     await cacheRedis.quit().catch(() => undefined);
+    await rateLimitRedis.quit().catch(() => undefined);
     await close();
     await telemetry.shutdown();
     process.exit(0);
