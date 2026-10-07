@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
@@ -11,6 +11,30 @@ const loginInput = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+// Only hex digits, `.`, `:`, `,`, spaces and `[`/`]` (bracketed IPv6) — i.e. a
+// plausible X-Forwarded-For list. Anything else (hostnames, header-injection
+// attempts, oversized values) is dropped rather than forwarded.
+const XFF_PATTERN = /^[0-9a-fA-F.:,[\] ]+$/;
+const XFF_MAX_LENGTH = 512;
+
+/**
+ * The browser's IP as seen by this hop, for the api's per-IP login limit.
+ * The dashboard is a transparent hop: Next's server fills `x-forwarded-for`
+ * from the socket address when the request carries none
+ * (`req.headers['x-forwarded-for'] ??= socket.remoteAddress` in
+ * next/dist/server/base-server.js), so behind nginx this is the client chain
+ * and on a direct hit it is the peer address. The api only honors it when the
+ * operator enables TRUST_PROXY, so forwarding it cannot let a client spoof its
+ * IP while trust is off.
+ */
+async function clientForwardedFor(): Promise<string | undefined> {
+  const xff = (await headers()).get("x-forwarded-for")?.trim();
+  if (!xff || xff.length > XFF_MAX_LENGTH || !XFF_PATTERN.test(xff)) {
+    return undefined;
+  }
+  return xff;
+}
 
 export interface LoginState {
   error?: string;
@@ -43,9 +67,13 @@ export async function loginAction(
     return { error: "invalid_input", email: emailRaw };
   }
 
+  const forwardedFor = await clientForwardedFor();
   const res = await fetch(`${serverApiUrl()}/auth/login`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}),
+    },
     body: JSON.stringify(parsed.data),
     cache: "no-store",
   });
