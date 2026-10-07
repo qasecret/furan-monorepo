@@ -10,9 +10,17 @@ import type { ReactNode } from "react";
  * share one theme source + storage key — no per-segment duplication, no flash
  * crossing the auth boundary.
  */
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({
+  children,
+  nonce,
+}: {
+  children: ReactNode;
+  /** CSP nonce for next-themes' inline anti-FOUC script (see lib/csp.ts). */
+  nonce?: string;
+}) {
   return (
     <NextThemesProvider
+      nonce={nonce}
       attribute="class"
       defaultTheme="dark"
       enableSystem={false}
