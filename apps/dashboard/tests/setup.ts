@@ -16,7 +16,8 @@ import { afterEach } from "vitest";
 // pointer-events: none" (the check walks up to <body>). Reset it after every
 // test so an overlay test can't poison unrelated ones.
 afterEach(() => {
-  document.body.style.pointerEvents = "";
+  // Guarded: `// @vitest-environment node` suites (token CSS tests) have no DOM.
+  if (typeof document !== "undefined") document.body.style.pointerEvents = "";
 });
 
 class ResizeObserverStub implements ResizeObserver {

@@ -1,0 +1,179 @@
+/*
+ * Semantic design tokens.
+ *
+ * Raw values live as CSS variables: light on :root, graphite dark on .dark
+ * (next-themes puts the class on <html>). `@theme inline` below maps them to
+ * Tailwind utilities, so a theme switch is only a variable swap and no `dark:`
+ * colour classes are needed. Every value is pinned by
+ * tests/tokens-contrast.test.ts; do not tweak one without the spec
+ * (furan-design/specs/2026-10-08-design-foundation-design.md section 3).
+ */
+
+:root {
+  /* Surfaces */
+  --canvas: #ffffff;
+  --sunken: #fafafa;
+  --raised: #ffffff;
+  --overlay: #ffffff;
+  --hover: #f4f4f5;
+
+  /* Edges */
+  --edge: #e4e4e7;
+  --edge-subtle: #f0f0f2;
+  --edge-strong: #d4d4d8;
+
+  /* Text */
+  --fg: #09090b;
+  --fg-secondary: #52525b;
+  --fg-muted: #6a6a73;
+
+  /* Brand: lime surfaces, darker lime for text on white, focus ring */
+  --brand: #a8ff53;
+  --brand-fg: #000000;
+  --brand-text: #3f6212;
+  /* Neon on white is 1.2:1, so brand buttons get a 1px inset edge in light. */
+  --brand-edge: rgb(77 124 15 / 0.45);
+  --ring: #4d7c0f;
+
+  /* Status: solid (dots, bars, series) and AA text shade */
+  --status-passed: #16a34a;
+  --status-passed-text: #166534;
+  --status-unresolved: #f59e0b;
+  --status-unresolved-text: #92400e;
+  --status-failed: #ef4444;
+  --status-failed-text: #b91c1c;
+  --status-running: #3b82f6;
+  --status-running-text: #1d4ed8;
+  --status-aborted: #eab308;
+  --status-aborted-text: #854d0e;
+  --status-neutral: #71717a;
+  --status-neutral-text: #52525b;
+
+  /* Elevation (per-theme, surfaced as shadow-raised / shadow-overlay) */
+  --elevation-raised: 0 1px 2px rgb(9 9 11 / 0.05), 0 0 0 1px var(--edge);
+  --elevation-overlay:
+    0 12px 32px -8px rgb(9 9 11 / 0.18), 0 0 0 1px var(--edge);
+}
+
+.dark {
+  --canvas: #0b0b0d;
+  --sunken: #08080a;
+  --raised: #131316;
+  --overlay: #1a1a1e;
+  --hover: #1d1d21;
+
+  --edge: #26262b;
+  --edge-subtle: #1b1b1f;
+  --edge-strong: #3a3a41;
+
+  --fg: #fafafa;
+  --fg-secondary: #a1a1aa;
+  --fg-muted: #8b8b94;
+
+  --brand: #a8ff53;
+  --brand-fg: #000000;
+  --brand-text: #a8ff53;
+  --brand-edge: transparent;
+  --ring: #a8ff53;
+
+  --status-passed: #22c55e;
+  --status-passed-text: #4ade80;
+  --status-unresolved: #f59e0b;
+  --status-unresolved-text: #fbbf24;
+  --status-failed: #ef4444;
+  --status-failed-text: #f87171;
+  --status-running: #3b82f6;
+  --status-running-text: #60a5fa;
+  --status-aborted: #eab308;
+  --status-aborted-text: #facc15;
+  --status-neutral: #a1a1aa;
+  --status-neutral-text: #d4d4d8;
+
+  --elevation-raised:
+    inset 0 1px 0 rgb(255 255 255 / 0.04), 0 0 0 1px var(--edge);
+  --elevation-overlay:
+    inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 0 1px var(--edge-strong),
+    0 16px 40px -8px rgb(0 0 0 / 0.6);
+}
+
+/* `inline` keeps utilities pointing at var(--token) instead of a copied value,
+ * so they follow the active theme. */
+@theme inline {
+  /* Surfaces */
+  --color-canvas: var(--canvas);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-hover: var(--hover);
+
+  /* Edges */
+  --color-edge: var(--edge);
+  --color-edge-subtle: var(--edge-subtle);
+  --color-edge-strong: var(--edge-strong);
+
+  /* Text */
+  --color-fg: var(--fg);
+  --color-fg-secondary: var(--fg-secondary);
+  --color-fg-muted: var(--fg-muted);
+
+  /* Brand (--brand-edge has no colour utility; it only feeds shadow-brand-edge) */
+  --color-brand: var(--brand);
+  --color-brand-fg: var(--brand-fg);
+  --color-brand-text: var(--brand-text);
+  --color-ring: var(--ring);
+
+  /* Status */
+  --color-status-passed: var(--status-passed);
+  --color-status-passed-text: var(--status-passed-text);
+  --color-status-unresolved: var(--status-unresolved);
+  --color-status-unresolved-text: var(--status-unresolved-text);
+  --color-status-failed: var(--status-failed);
+  --color-status-failed-text: var(--status-failed-text);
+  --color-status-running: var(--status-running);
+  --color-status-running-text: var(--status-running-text);
+  --color-status-aborted: var(--status-aborted);
+  --color-status-aborted-text: var(--status-aborted-text);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-neutral-text: var(--status-neutral-text);
+
+  /* shadcn aliases (kept permanently so vendored primitives theme correctly) */
+  --color-background: var(--canvas);
+  --color-foreground: var(--fg);
+  --color-card: var(--raised);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--overlay);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--brand);
+  --color-primary-foreground: var(--brand-fg);
+  --color-secondary: var(--hover);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--hover);
+  --color-muted-foreground: var(--fg-muted);
+  --color-accent: var(--hover);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--status-failed-text);
+  --color-border: var(--edge);
+  --color-input: var(--edge);
+
+  /* Elevation */
+  --shadow-raised: var(--elevation-raised);
+  --shadow-overlay: var(--elevation-overlay);
+  --shadow-brand-edge: inset 0 0 0 1px var(--brand-edge);
+
+  /* Overlay radius (controls rounded-md, cards rounded-lg, pills rounded-full) */
+  --radius-overlay: 10px;
+
+  /* Micro type step: table headers, badges, eyebrows */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+/* One focus treatment for every interactive element. */
+@utility focus-ring {
+  outline: none;
+
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
