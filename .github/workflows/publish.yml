@@ -31,6 +31,12 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
+      # Gate: a red SDK must never reach Maven Central (a published version
+      # can't be deleted). Runs the same `check` as ci.yml's sdk-kotlin-check,
+      # before — and without — the publishing secrets.
+      - name: gradle check (unit tests) before publishing
+        working-directory: packages/sdk-kotlin
+        run: ./gradlew check --no-daemon
       - name: Publish all furan-* artifacts to Maven Central
         # The vanniktech plugin reads ORG_GRADLE_PROJECT_* env vars by convention;
         # docs/runbooks/maven-central-publish.md documents the full secret list.
