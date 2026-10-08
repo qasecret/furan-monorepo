@@ -31,7 +31,7 @@ export function Table({
   );
   if (bare) return table;
   return (
-    <div className="overflow-hidden rounded-xl bg-raised shadow-raised">
+    <div className="overflow-hidden rounded-lg bg-raised shadow-raised">
       {table}
     </div>
   );

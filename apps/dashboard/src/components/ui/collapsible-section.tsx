@@ -30,7 +30,7 @@ export function CollapsibleSection({
 }: Props) {
   const bodyId = useId();
   return (
-    <div className={cn("rounded-xl bg-raised shadow-raised", className)}>
+    <div className={cn("rounded-lg bg-raised shadow-raised", className)}>
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
