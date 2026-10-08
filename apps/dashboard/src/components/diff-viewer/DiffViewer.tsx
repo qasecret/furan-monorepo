@@ -15,6 +15,7 @@ import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import type { DiffRegion } from "./layers/regionTypes";
+import { useReviewActions } from "./review-actions";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
 import { TestInfoSidebar } from "./TestInfoSidebar";
@@ -210,14 +211,19 @@ export function DiffViewer({
     { enabled: !!data?.buildId },
   );
 
-  // T11: keyboard-shortcut mutations. These are deliberately separate hook
-  // instances from the ones inside <ApprovalBar>; both invalidate the same
-  // runs.getById query on success, so the UI converges regardless of source.
-  const approveKb = trpc.runs.approve.useMutation({
-    onSuccess: () => void utils.runs.getById.invalidate({ runId }),
-  });
-  const rejectKb = trpc.runs.reject.useMutation({
-    onSuccess: () => void utils.runs.getById.invalidate({ runId }),
+  // `_first` is the placeholder before the checkpoint list resolves.
+  const activeCheckpointId =
+    selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
+
+  // One set of review actions shared by the <ApprovalBar> buttons and the
+  // A / R keyboard shortcuts, so a keypress always takes the button's path:
+  // per-checkpoint approve, the review-legal status gate, unsaved ignore
+  // regions folded in, toast + auto-advance to the next unresolved step.
+  const review = useReviewActions({
+    runId,
+    checkpointId: activeCheckpointId,
+    status: data?.status,
+    onResolved: advanceToNextUnresolved,
   });
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
@@ -463,8 +469,8 @@ export function DiffViewer({
     nextDiffHref: data?.nextRunId
       ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
       : null,
-    onApprove: () => approveKb.mutate({ runId }),
-    onReject: () => rejectKb.mutate({ runId }),
+    onApprove: review.approve,
+    onReject: review.reject,
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
@@ -610,14 +616,9 @@ export function DiffViewer({
           rightActions={
             <ApprovalBar
               runId={runId}
-              checkpointId={
-                selectedCheckpointId !== "_first"
-                  ? selectedCheckpointId
-                  : undefined
-              }
-              status={data?.status}
+              checkpointId={activeCheckpointId}
+              actions={review}
               diffRegions={regions}
-              onResolved={advanceToNextUnresolved}
               inline
               showStatus={false}
               checkpointCount={checkpointSummaries.length}
@@ -630,11 +631,7 @@ export function DiffViewer({
         <div id="diff-viewer-approval">
           <GroupApprovalCallout
             runId={runId}
-            checkpointId={
-              selectedCheckpointId !== "_first"
-                ? selectedCheckpointId
-                : undefined
-            }
+            checkpointId={activeCheckpointId}
           />
         </div>
         {isEmpty ? (

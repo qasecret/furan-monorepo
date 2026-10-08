@@ -5,8 +5,7 @@ import { recordPublished } from "./broadcast-metrics.js";
 
 /**
  * Broadcast event names emitted on the project SSE channel. The first six
- * are verbatim parity with the predecessor's Socket.io gateway
- * (`/Users/rabindrabiswal/Workspace/backend/src/shared/events/events.gateway.ts`).
+ * are verbatim parity with the predecessor backend's Socket.io events gateway.
  * Dashboard SDK consumers porting from the legacy backend's `SocketProvider`
  * listen for exactly those strings.
  *

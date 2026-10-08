@@ -489,6 +489,16 @@
               }
             },
             "description": "Invalid credentials or inactive user"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many attempts (`rate_limited`): per client IP 10/min, per account 10/15 min. See the `retry-after` header (seconds)."
           }
         },
         "summary": "Authenticate with email + password; returns a JWT",
@@ -574,6 +584,9 @@
                           "null"
                         ]
                       },
+                      "hasVlmApiKey": {
+                        "type": "boolean"
+                      },
                       "id": {
                         "format": "uuid",
                         "type": "string"
@@ -631,6 +644,7 @@
                       "maxBranchLifetime",
                       "autoApproveFeature",
                       "imageComparison",
+                      "hasVlmApiKey",
                       "retentionDays",
                       "diffThreshold",
                       "createdAt",
@@ -713,6 +727,9 @@
                         "null"
                       ]
                     },
+                    "hasVlmApiKey": {
+                      "type": "boolean"
+                    },
                     "id": {
                       "format": "uuid",
                       "type": "string"
@@ -770,6 +787,7 @@
                     "maxBranchLifetime",
                     "autoApproveFeature",
                     "imageComparison",
+                    "hasVlmApiKey",
                     "retentionDays",
                     "diffThreshold",
                     "createdAt",
@@ -869,6 +887,9 @@
                         "null"
                       ]
                     },
+                    "hasVlmApiKey": {
+                      "type": "boolean"
+                    },
                     "id": {
                       "format": "uuid",
                       "type": "string"
@@ -926,6 +947,7 @@
                     "maxBranchLifetime",
                     "autoApproveFeature",
                     "imageComparison",
+                    "hasVlmApiKey",
                     "retentionDays",
                     "diffThreshold",
                     "createdAt",

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/qasecret/furan-monorepo/security/advisories/new
+    about: Please report security problems privately, not as a public issue.
+  - name: Getting help
+    url: https://github.com/qasecret/furan-monorepo/blob/main/SUPPORT.md
+    about: Install docs, runbooks, and where to ask questions.

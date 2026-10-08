@@ -14,16 +14,33 @@ and how to switch.
 
 ## 1. Backend comparison
 
-| Property            | S3 (MinIO bundled)                                                                            | HDD (filesystem)                                                           |
-| ------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Compose services    | postgres, redis, minio, minio-init, api, capture-worker, diff-worker, integrations, dashboard | postgres, redis, api, capture-worker, diff-worker, integrations, dashboard |
-| RAM at idle         | ~100 MB extra for MinIO                                                                       | none                                                                       |
-| Disk usage          | `minio_data` volume                                                                           | `furan_hdd_data` volume                                                    |
-| Multi-host scale    | yes (point all apps at one MinIO or AWS bucket)                                               | no (single host only)                                                      |
-| Backup story        | MinIO mirror to off-host S3                                                                   | volume snapshot or rsync                                                   |
-| Object versioning   | yes (MinIO/S3 native)                                                                         | no                                                                         |
-| Network ops         | every read/write is a HTTP call                                                               | direct fs read/write                                                       |
-| Path-traversal risk | n/a (key-space is flat)                                                                       | guarded by `safeJoin` in `hdd.ts`                                          |
+| Property            | S3 (MinIO bundled)                                                                                                      | HDD (filesystem)                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Compose services    | postgres, redis, minio (+ one-shots minio-perms, minio-init), api, capture-worker, diff-worker, integrations, dashboard | postgres, redis, api, capture-worker, diff-worker, integrations, dashboard |
+| RAM at idle         | ~100 MB extra for MinIO                                                                                                 | none                                                                       |
+| Disk usage          | `minio_data` volume                                                                                                     | `furan_hdd_data` volume                                                    |
+| Multi-host scale    | yes (point all apps at one MinIO or AWS bucket)                                                                         | no (single host only)                                                      |
+| Backup story        | MinIO mirror to off-host S3                                                                                             | volume snapshot or rsync                                                   |
+| Object versioning   | yes (MinIO/S3 native)                                                                                                   | no                                                                         |
+| Network ops         | every read/write is a HTTP call                                                                                         | direct fs read/write                                                       |
+| Path-traversal risk | n/a (key-space is flat)                                                                                                 | guarded by `safeJoin` in `hdd.ts`                                          |
+
+### MinIO image (October 2026)
+
+MinIO no longer publishes `minio/minio` / `minio/mc` on Docker Hub (both
+repositories return 404) and `quay.io/minio` requires authentication, so
+fresh S3-mode installs could no longer pull the image. The bundled MinIO now
+runs **`cgr.dev/chainguard/minio:latest`** — Chainguard's build of the same
+MinIO server (same `server /data` arguments and `MINIO_ROOT_*` variables,
+with `mc` bundled). Chainguard's free tier publishes only `:latest`.
+
+That image runs as a **non-root** user (uid 65532), while the old image ran
+as root, so an existing `minio_data` volume is root-owned and the new server
+can't write to it. The **`minio-perms`** one-shot fixes this automatically:
+before `minio` starts it hands `/data` to uid 65532 (a recursive `chown` the
+first time — expect it to take a while on very large volumes — and a no-op
+on every later `up`). No manual step is needed to upgrade; existing objects
+are read by the newer server as-is.
 
 ## 2. How the toggle works
 

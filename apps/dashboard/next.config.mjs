@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { HSTS_HEADER, SECURITY_HEADERS } from "./security-headers.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Read the Kotlin SDK version from its source-of-truth file so the
@@ -29,6 +31,20 @@ const nextConfig = {
   outputFileTracingRoot: new URL("../../", import.meta.url).pathname,
   env: {
     NEXT_PUBLIC_FURAN_SDK_VERSION: sdkVersion,
+  },
+  // Don't advertise the framework (X-Powered-By: Next.js).
+  poweredByHeader: false,
+  // Static security headers on every response; CSP is per-request in
+  // src/middleware.ts. See security-headers.mjs.
+  async headers() {
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      {
+        source: "/:path*",
+        has: [{ type: "header", key: "x-forwarded-proto", value: "https" }],
+        headers: [HSTS_HEADER],
+      },
+    ];
   },
 };
 export default nextConfig;
