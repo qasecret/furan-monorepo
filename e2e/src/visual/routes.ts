@@ -12,6 +12,12 @@ export interface VisualRoute {
   name: string;
   path: string;
   enforceContrast: boolean;
+  /**
+   * Capture from a seeded editor session instead of the admin one: admins are
+   * redirected from these routes to their `/admin/*` counterparts, so the
+   * non-admin screen would otherwise never be captured.
+   */
+  as?: "editor";
 }
 
 const ADMIN_AREAS = [
@@ -30,7 +36,12 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
     { name: "login", path: "/login", enforceContrast: false },
     { name: "inbox", path: "/inbox", enforceContrast: false },
     { name: "analytics", path: "/analytics", enforceContrast: false },
-    { name: "account-tokens", path: "/account/tokens", enforceContrast: false },
+    {
+      name: "account-tokens",
+      path: "/account/tokens",
+      enforceContrast: false,
+      as: "editor",
+    },
     ...ADMIN_AREAS.map((x) => ({
       name: `admin-${x}`,
       path: `/admin/${x}`,
@@ -41,7 +52,12 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
       path: `/admin/projects/${f.projectId}/members`,
       enforceContrast: false,
     },
-    { name: "projects", path: "/projects", enforceContrast: false },
+    {
+      name: "projects",
+      path: "/projects",
+      enforceContrast: false,
+      as: "editor",
+    },
     { name: "project", path: P, enforceContrast: false },
     { name: "builds", path: `${P}/builds`, enforceContrast: false },
     { name: "build", path: `${P}/builds/${f.buildId}`, enforceContrast: false },

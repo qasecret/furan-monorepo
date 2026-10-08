@@ -9,12 +9,18 @@ import {
   type Browser,
   type BrowserContext,
   type Page,
+  type Response,
   type TestInfo,
 } from "@playwright/test";
 
-import { BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD } from "../../scripts/compose.js";
+import {
+  BOOTSTRAP_EMAIL,
+  BOOTSTRAP_PASSWORD,
+  USER_PASSWORD,
+} from "../../scripts/compose.js";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { API_URL as API } from "../../src/env.js";
+import { loadSeed, principal } from "../../src/seed/load-seed.js";
 import {
   ensureVisualFixture,
   type VisualFixture,
@@ -36,6 +42,9 @@ const THEMES = ["light", "dark"] as const;
 type Theme = (typeof THEMES)[number];
 
 const LABEL = process.env.VISUAL_LABEL ?? "local";
+/** Upload branch: stable across runs so a `before` baseline approved in Furan
+ *  is the one the `after` build diffs against (baselines are branch-scoped). */
+const UPLOAD_BRANCH = process.env.FURAN_VISUAL_BRANCH ?? "visual-sweep";
 const OUT_ROOT = process.env.VISUAL_OUT
   ? resolve(process.env.VISUAL_OUT)
   : fileURLToPath(new URL("../../visual-out/", import.meta.url));
@@ -100,10 +109,34 @@ async function steady(ctx: BrowserContext): Promise<void> {
 interface Contrast {
   theme: Theme;
   route: string;
-  /** Where the route actually landed (after redirects). */
-  url: string;
+  /** The path the sweep navigated to. */
+  path: string;
+  /** Where it actually landed, after redirects. */
+  landedPath: string;
   nodes: number;
   examples: string[];
+}
+
+/** A navigation the sweep made: where it went and the server's answer. */
+interface Visit {
+  path: string;
+  response: Response | null;
+}
+
+async function visit(p: Page, path: string): Promise<Visit> {
+  return { path, response: await p.goto(path) };
+}
+
+/** Log in through the dashboard's form, as tests/ui/dashboard.spec.ts does. */
+async function logIn(p: Page, email: string, password: string): Promise<void> {
+  await p.goto("/login");
+  await p.fill("#email", email);
+  await p.fill("#password", password);
+  await p.click('button[type="submit"]');
+  // Generous: a dashboard dev server may compile the login action first.
+  await p.waitForURL((url) => !url.pathname.startsWith("/login"), {
+    timeout: 60_000,
+  });
 }
 
 test.describe.serial("visual sweep @visual", () => {
@@ -115,8 +148,10 @@ test.describe.serial("visual sweep @visual", () => {
   const api = new ApiClient(API);
   let fixture: VisualFixture;
   let context: BrowserContext;
+  let editor: BrowserContext;
   let anon: BrowserContext;
   let page: Page;
+  let editorPage: Page;
   let anonPage: Page;
   const shots: { name: string; png: Buffer }[] = [];
   const contrast: Contrast[] = [];
@@ -127,14 +162,18 @@ test.describe.serial("visual sweep @visual", () => {
     context = await browser.newContext({ viewport: VIEWPORT });
     await steady(context);
     page = await context.newPage();
-    await page.goto("/login");
-    await page.fill("#email", BOOTSTRAP_EMAIL);
-    await page.fill("#password", BOOTSTRAP_PASSWORD);
-    await page.click('button[type="submit"]');
-    // Generous: a dashboard dev server may compile the login action first.
-    await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
-      timeout: 60_000,
-    });
+    await logIn(page, BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD);
+
+    // Admins are redirected off the non-admin routes (`as: "editor"`), so
+    // those are captured from a seeded editor's session.
+    editor = await browser.newContext({ viewport: VIEWPORT });
+    await steady(editor);
+    editorPage = await editor.newPage();
+    await logIn(
+      editorPage,
+      principal(loadSeed(), "editor").email,
+      USER_PASSWORD,
+    );
 
     anon = await browser.newContext({ viewport: VIEWPORT });
     await steady(anon);
@@ -154,13 +193,14 @@ test.describe.serial("visual sweep @visual", () => {
         apiUrl: FURAN_VISUAL_URL,
         pat: FURAN_VISUAL_PAT,
         projectId: FURAN_VISUAL_PROJECT_ID,
-        branch: LABEL,
+        branch: UPLOAD_BRANCH,
         buildName: `sweep-${LABEL}`,
         shots,
       });
       console.log(`[visual] uploaded ${shots.length} shots → build ${buildId}`);
     }
     await context?.close();
+    await editor?.close();
     await anon?.close();
   });
 
@@ -243,18 +283,34 @@ test.describe.serial("visual sweep @visual", () => {
     return prev;
   }
 
-  /** Settle, then screenshot, save, and run axe colour-contrast. */
+  /**
+   * Check the navigation, settle, then screenshot, save, and run axe
+   * colour-contrast. A 4xx/5xx answer fails the test (an error page must not
+   * pass as a screen); landing somewhere other than `v.path` is annotated
+   * (`landed-elsewhere`), not failed — several routes redirect by design.
+   */
   async function shoot(
     p: Page,
+    v: Visit,
     theme: Theme,
     name: string,
     enforceContrast: boolean,
     testInfo: TestInfo,
   ): Promise<void> {
+    // No response = a same-document navigation, which is fine.
+    const status = v.response?.status() ?? 200;
+    expect(status, `GET ${v.path} answered ${status}`).toBeLessThan(400);
     // Park the pointer in a corner: wherever an earlier click left it, it
     // would otherwise hover (and highlight) whatever this page puts there.
     await p.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1);
     await settle(p);
+    const landedPath = new URL(p.url()).pathname;
+    if (landedPath !== v.path) {
+      testInfo.annotations.push({
+        type: "landed-elsewhere",
+        description: `${v.path} → ${landedPath}`,
+      });
+    }
     const png = await stableScreenshot(p);
     const file = join(OUT, theme, `${name}.png`);
     mkdirSync(dirname(file), { recursive: true });
@@ -278,7 +334,8 @@ test.describe.serial("visual sweep @visual", () => {
     contrast.push({
       theme,
       route: name,
-      url: new URL(p.url()).pathname,
+      path: v.path,
+      landedPath,
       nodes: nodes.length,
       examples,
     });
@@ -296,13 +353,14 @@ test.describe.serial("visual sweep @visual", () => {
     test.describe(theme, () => {
       const disposers: { dispose(): Promise<void> }[] = [];
 
-      // Every document in both contexts starts with this theme stored, exactly
+      // Every document in every context starts with this theme stored, exactly
       // as if the user had picked it in the toggle. Disposed after the theme so
       // the next theme's script is the only one (init-script order is undefined).
       test.beforeAll(async () => {
         const content = `try { localStorage.setItem("furan-theme", ${JSON.stringify(theme)}); } catch {}`;
         disposers.push(
           await context.addInitScript({ content }),
+          await editor.addInitScript({ content }),
           await anon.addInitScript({ content }),
         );
       });
@@ -313,35 +371,40 @@ test.describe.serial("visual sweep @visual", () => {
       for (const name of STATIC_NAMES) {
         test(name, async ({}, testInfo) => {
           const route = staticRoutes(fixture).find((r) => r.name === name)!;
-          const p = PUBLIC_PATHS.has(route.path) ? anonPage : page;
-          await p.goto(route.path);
-          await shoot(p, theme, route.name, route.enforceContrast, testInfo);
+          const p = PUBLIC_PATHS.has(route.path)
+            ? anonPage
+            : route.as === "editor"
+              ? editorPage
+              : page;
+          const v = await visit(p, route.path);
+          await shoot(p, v, theme, route.name, route.enforceContrast, testInfo);
         });
       }
 
       for (const d of DISCOVERED) {
         test(d.name, async ({}, testInfo) => {
-          await page.goto(d.from(fixture));
+          let v = await visit(page, d.from(fixture));
           for (const hop of [...(d.via ?? []), d.href]) {
             await settle(page);
-            await page.goto(await firstLink(page, hop));
+            const href = await firstLink(page, hop);
+            v = await visit(page, new URL(href, page.url()).pathname);
           }
-          await shoot(page, theme, d.name, d.enforceContrast, testInfo);
+          await shoot(page, v, theme, d.name, d.enforceContrast, testInfo);
         });
       }
 
       test("state-cmdk", async ({}, testInfo) => {
-        await page.goto("/inbox");
+        const v = await visit(page, "/inbox");
         await settle(page);
         // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
         // `e.key === "k"`, and "Meta+K" would send key "K".
         await page.keyboard.press("ControlOrMeta+k");
         await expect(page.getByTestId("command-palette")).toBeVisible();
-        await shoot(page, theme, "state-cmdk", false, testInfo);
+        await shoot(page, v, theme, "state-cmdk", false, testInfo);
       });
 
       test("state-menu", async ({}, testInfo) => {
-        await page.goto("/inbox");
+        const v = await visit(page, "/inbox");
         await settle(page);
         const toggle = page.locator('[data-testid="theme-toggle"]');
         await toggle.click();
@@ -350,21 +413,20 @@ test.describe.serial("visual sweep @visual", () => {
         if ((await toggle.getAttribute("aria-haspopup")) === "menu") {
           await expect(page.getByRole("menu")).toBeVisible();
         }
-        await shoot(page, theme, "state-menu", false, testInfo);
+        await shoot(page, v, theme, "state-menu", false, testInfo);
       });
 
       test("state-dialog", async ({}, testInfo) => {
-        // Admins are redirected to /admin/api-keys, whose create button reads
-        // "Generate new key" — its test id still names the token dialog.
-        await page.goto("/account/tokens");
-        await settle(page);
-        await page
+        // The editor's own tokens page: admins are redirected to
+        // /admin/api-keys, which is not the screen this state is about.
+        const v = await visit(editorPage, "/account/tokens");
+        await settle(editorPage);
+        await editorPage
           .getByRole("button", { name: /token/i })
-          .or(page.getByTestId("create-token-button"))
           .first()
           .click();
-        await expect(page.getByRole("dialog")).toBeVisible();
-        await shoot(page, theme, "state-dialog", false, testInfo);
+        await expect(editorPage.getByRole("dialog")).toBeVisible();
+        await shoot(editorPage, v, theme, "state-dialog", false, testInfo);
       });
     });
   }

@@ -40,7 +40,10 @@ dialog open), and runs axe `color-contrast` on each. It is the before/after
 safety net for the design-foundation slice PRs: routes with
 `enforceContrast: true` in `src/visual/routes.ts` fail on any violation, the
 rest only report them as test annotations (also written to
-`visual-out/<label>/color-contrast.json`).
+`visual-out/<label>/color-contrast.json`). A route answering 4xx/5xx fails; a
+route that redirects elsewhere is annotated `landed-elsewhere`. Routes admins
+are redirected away from (`as: "editor"`: `/account/tokens`, `/projects`) are
+captured from the seeded editor's session.
 
 The dashboard runs as a **dev server** rather than the stack's dashboard image:
 the image bakes `localhost:3000` for client-side calls, so the diff viewer's
@@ -82,8 +85,12 @@ screenshot test passed.
 
 1. Set `FURAN_VISUAL_URL`, `FURAN_VISUAL_PAT` and `FURAN_VISUAL_PROJECT_ID` to
    point at any Furan instance other than this e2e stack; each run then
-   uploads its shots as build `sweep-<VISUAL_LABEL>` on branch `VISUAL_LABEL`.
-2. Approve the `before` build there to make it the baseline.
+   uploads its shots as build `sweep-<VISUAL_LABEL>` on branch
+   `FURAN_VISUAL_BRANCH` (default `visual-sweep`). Keep that branch the same
+   for `before` and `after`: baselines are per branch, so an `after` build on
+   another branch would show every screen as new instead of diffed.
+2. Approve every run in the `before` build there to make the shots the
+   baseline.
 3. The `after` build then shows each screen's diff in the diff viewer.
 
 ## Prerequisites

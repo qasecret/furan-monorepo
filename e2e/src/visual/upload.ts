@@ -6,6 +6,11 @@ import { ApiClient } from "../clients/api-client.js";
  * as the virtual SDK's `capture()`: one createBuild, then per shot createRun →
  * uploadScreenshotBase64 → completeRun. No polling — the diff pipeline settles
  * the runs on its own and the reviewer looks at them later.
+ *
+ * Every upload must use the SAME `branch` (the label only names the build):
+ * baselines are branch-scoped, so a `before` build approved on one branch is
+ * invisible to an `after` build on another, and every shot would come back
+ * "new" instead of diffed.
  */
 export async function uploadShots(o: {
   apiUrl: string;
