@@ -1,4 +1,10 @@
-import { and, type DB, eq, projectMembers, withPrivilegedScope } from "@furan/db";
+import {
+  and,
+  type DB,
+  eq,
+  projectMembers,
+  withPrivilegedScope,
+} from "@furan/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { sendError } from "../lib/errors.js";
@@ -28,7 +34,10 @@ export function requireProjectMember(action: Action, opts: ScopeOpts) {
     if (!req.auth) {
       return sendError(reply, 401, "unauthenticated");
     }
-    if (isAtLeastAdmin(req.auth.role)) return; // admin/owner bypass per arch-backend.md §4.3
+    // admin/owner bypass per arch-backend.md §4.3. Role-only on purpose (not
+    // `hasAdminSurface`): an admin's API token keeps it so SDK uploads work on
+    // projects the admin manages but isn't a member of (ADR-064 step A).
+    if (isAtLeastAdmin(req.auth.role)) return;
     if (req.auth.role === "guest") {
       return sendError(reply, 403, "forbidden", undefined, { reason: "guest" });
     }

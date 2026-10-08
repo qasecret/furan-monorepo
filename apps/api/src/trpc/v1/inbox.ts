@@ -24,6 +24,8 @@ import { z } from "zod";
 
 import { emitAudit } from "../../lib/emit-audit.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
+import type { AuthedUser } from "../../plugins/auth.js";
+import { assertAdminSurface } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -56,12 +58,15 @@ const NOT_REJECTED = sql`NOT EXISTS (SELECT 1 FROM ${runReviewerDecisions} WHERE
 /**
  * Return the set of project IDs the caller is allowed to see.
  * Admins see all projects; non-admins see only projects they are a member of.
+ * The all-projects view is an admin surface, so an admin's API token gets
+ * FORBIDDEN `session_required` instead (ADR-064 step A).
  */
 async function listMemberProjectIds(
   db: DB,
-  user: { id: string; role: string },
+  user: AuthedUser,
 ): Promise<string[]> {
   if (isAtLeastAdmin(user.role)) {
+    assertAdminSurface(user);
     const rows = await db.select({ id: projects.id }).from(projects);
     return rows.map((r) => r.id);
   }

@@ -8,9 +8,9 @@ import {
   mergeBranchBaselinesImpl,
   SameBranchError,
 } from "../lib/branch-merge.js";
-import { sendError } from "../lib/errors.js";
+import { sendError, sendSessionRequired } from "../lib/errors.js";
 import { toPublicProject } from "../lib/project-ai-config.js";
-import { isAtLeastAdmin } from "../lib/roles.js";
+import { hasAdminSurface, isAtLeastAdmin } from "../lib/roles.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 export const mergeBody = z.object({
@@ -54,8 +54,15 @@ export async function registerProjectsRoutes(
     }
     if (req.auth.role === "guest") return [];
     const auth = req.auth;
+    // Listing EVERY project is an admin surface → session-only (ADR-064):
+    // an admin's API token gets session_required rather than a silently
+    // narrower list. No SDK/CI flow lists projects with a token.
+    const listAll = hasAdminSurface(auth);
+    if (!listAll && isAtLeastAdmin(auth.role)) {
+      return sendSessionRequired(reply);
+    }
     return withRequestScope(app, req, async (db) => {
-      if (isAtLeastAdmin(auth.role)) {
+      if (listAll) {
         const rows = await db
           .select()
           .from(projects)

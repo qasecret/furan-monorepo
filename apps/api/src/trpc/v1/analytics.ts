@@ -1,8 +1,8 @@
 import { dashboardTelemetryEvents, sql, testRuns, users } from "@furan/db";
-import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
-import { isAtLeastAdmin } from "../../lib/roles.js";
+import type { AuthedUser } from "../../plugins/auth.js";
+import { assertAdminSurface } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
 import { publicProcedure, t } from "../trpc.js";
 
@@ -10,13 +10,11 @@ const windowInput = z.object({
   days: z.number().int().min(1).max(90).default(7),
 });
 
-// Common pattern: every procedure gates on admin role first.
-// (We don't have a generic adminOnly middleware factory; inline check
-// keeps this self-contained.)
-function requireAdmin(role: string | undefined) {
-  if (!isAtLeastAdmin(role)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Admin role required" });
-  }
+// Common pattern: every procedure gates on admin role first. Cross-project
+// analytics is an admin surface, so it is session-only too (an admin's API
+// token → FORBIDDEN `session_required`, ADR-064).
+function requireAdmin(user: AuthedUser) {
+  assertAdminSurface(user, "Admin role required");
 }
 
 export const analyticsRouter = t.router({
@@ -24,7 +22,7 @@ export const analyticsRouter = t.router({
     .input(windowInput)
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       const window = sql`(${input.days} || ' days')::interval`;
       const doubleWindow = sql`(${input.days * 2} || ' days')::interval`;
@@ -133,7 +131,7 @@ export const analyticsRouter = t.router({
     .input(windowInput)
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       const window = sql`(${input.days} || ' days')::interval`;
 
@@ -172,7 +170,7 @@ export const analyticsRouter = t.router({
     )
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       // Group all rows whose user has been deleted (FK is ON DELETE
       // SET NULL) under a single synthetic "(deleted user)" bucket so
@@ -215,7 +213,7 @@ export const analyticsRouter = t.router({
     )
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       const window = sql`(${input.days} || ' days')::interval`;
       const doubleWindow = sql`(${input.days * 2} || ' days')::interval`;
@@ -278,7 +276,7 @@ export const analyticsRouter = t.router({
     )
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       const window = sql`(${input.days} || ' days')::interval`;
 
@@ -321,7 +319,7 @@ export const analyticsRouter = t.router({
     )
     .use(authed)
     .query(async ({ ctx, input }) => {
-      requireAdmin(ctx.user?.role);
+      requireAdmin(ctx.user);
 
       const window = sql`(${input.days} || ' days')::interval`;
 

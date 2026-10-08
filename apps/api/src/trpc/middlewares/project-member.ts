@@ -24,6 +24,8 @@ export function projectMember<TInput>(
 ) {
   return t.middleware(async ({ ctx, input, next }) => {
     if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+    // Role-only on purpose (not `hasAdminSurface`): the membership bypass also
+    // applies to an admin's API token (ADR-064 step A; see the REST hook).
     if (isAtLeastAdmin(ctx.user.role)) return next();
     if (ctx.user.role === "guest") {
       throw new TRPCError({ code: "FORBIDDEN" });
