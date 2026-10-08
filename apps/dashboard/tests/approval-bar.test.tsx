@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the tRPC client. We stub the mutation hooks directly rather than
@@ -147,6 +148,20 @@ vi.mock("@/lib/trpc", () => ({
 }));
 
 import { ApprovalBar } from "../src/components/diff-viewer/ApprovalBar";
+import {
+  useReviewActions,
+  type UseReviewActionsArgs,
+} from "../src/components/diff-viewer/review-actions";
+
+// ApprovalBar renders the actions it's handed; wire them the way DiffViewer
+// does — one useReviewActions instance (which the hotkeys also share).
+function Bar(
+  props: UseReviewActionsArgs &
+    Omit<ComponentProps<typeof ApprovalBar>, "actions">,
+) {
+  const actions = useReviewActions(props);
+  return <ApprovalBar {...props} actions={actions} />;
+}
 
 const RUN_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -168,7 +183,7 @@ describe("ApprovalBar", () => {
   afterEach(() => cleanup());
 
   it("renders the status pill + core action buttons (no Comment button)", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     expect(screen.getByTestId("approval-bar-status")).toBeDefined();
     expect(screen.getByTestId("run-status-badge-unresolved")).toBeDefined();
     expect(screen.getByTestId("mark-as-bug-button")).toBeDefined();
@@ -180,7 +195,7 @@ describe("ApprovalBar", () => {
   });
 
   it("Approve click invokes the runs.approve mutation with the runId and invalidates the run query", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("approve-button"));
     expect(approveMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
@@ -204,7 +219,7 @@ describe("ApprovalBar", () => {
       ],
     });
     try {
-      render(<ApprovalBar runId={RUN_ID} status="new" />);
+      render(<Bar runId={RUN_ID} status="new" />);
       fireEvent.click(screen.getByTestId("approve-button"));
       expect(approveMutate).toHaveBeenCalledWith({
         runId: RUN_ID,
@@ -226,7 +241,7 @@ describe("ApprovalBar", () => {
   });
 
   it("Reject click invokes the runs.reject mutation with the runId", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("reject-button"));
     expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(invalidate).toHaveBeenCalledWith({ runId: RUN_ID });
@@ -236,7 +251,7 @@ describe("ApprovalBar", () => {
     const { useViewerStore } =
       await import("../src/components/diff-viewer/useViewerStore");
     useViewerStore.setState({ commentPanelOpen: false, commentPrefill: null });
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("mark-as-bug-button"));
     expect(rejectMutate).toHaveBeenCalledWith({ runId: RUN_ID });
     expect(useViewerStore.getState().commentPanelOpen).toBe(true);
@@ -244,26 +259,26 @@ describe("ApprovalBar", () => {
   });
 
   it("invalidates listCheckpoints (checkpoint rail) after approve", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("approve-button"));
     expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
   it("invalidates listCheckpoints (checkpoint rail) after reject", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     fireEvent.click(screen.getByTestId("reject-button"));
     expect(invalidateListCheckpoints).toHaveBeenCalledWith({ runId: RUN_ID });
   });
 
   it("wires onError on the approve mutation hook", () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     // The component must opt into onError so failed mutations surface as
     // visible error text rather than silent no-ops.
     expect(approveOnError).toBeTypeOf("function");
   });
 
   it("disables Approve / Reject when run is in a non-reviewable state (aborted), and hides the More menu", () => {
-    render(<ApprovalBar runId={RUN_ID} status="aborted" />);
+    render(<Bar runId={RUN_ID} status="aborted" />);
     const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
     const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
@@ -278,7 +293,7 @@ describe("ApprovalBar", () => {
   it.each([["running"], ["aborted"], ["empty"]] as const)(
     "disables review controls and hides More menu when status='%s'",
     (status) => {
-      render(<ApprovalBar runId={RUN_ID} status={status} />);
+      render(<Bar runId={RUN_ID} status={status} />);
       const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
       const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
       expect(approve.disabled).toBe(true);
@@ -291,7 +306,7 @@ describe("ApprovalBar", () => {
   it.each([["new"], ["passed"], ["unresolved"], ["failed"]] as const)(
     "enables review controls when status='%s'",
     (status) => {
-      render(<ApprovalBar runId={RUN_ID} status={status} />);
+      render(<Bar runId={RUN_ID} status={status} />);
       const approve = screen.getByTestId("approve-button") as HTMLButtonElement;
       const reject = screen.getByTestId("reject-button") as HTMLButtonElement;
       expect(approve.disabled).toBe(false);
@@ -316,7 +331,7 @@ describe("ApprovalBar", () => {
   };
 
   it("More menu 'Set Passed' calls overrideStatus with status=passed", async () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     await openMoreMenu();
     const item = await screen.findByTestId("override-set-passed");
     fireEvent.click(item);
@@ -327,7 +342,7 @@ describe("ApprovalBar", () => {
   });
 
   it("More menu 'Set Failed' calls overrideStatus with status=failed", async () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     await openMoreMenu();
     const item = await screen.findByTestId("override-set-failed");
     fireEvent.click(item);
@@ -338,7 +353,7 @@ describe("ApprovalBar", () => {
   });
 
   it("More menu 'Default (recompute)' calls overrideStatus with status=default", async () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     await openMoreMenu();
     const item = await screen.findByTestId("override-set-default");
     fireEvent.click(item);
@@ -349,7 +364,7 @@ describe("ApprovalBar", () => {
   });
 
   it("More ▾ → 'Approve all runs of this test' opens the confirm; Approve all fires the bulk mutation", async () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     await openMoreMenu();
     const item = await screen.findByTestId("approve-bulk-variation");
     fireEvent.click(item);
@@ -362,7 +377,7 @@ describe("ApprovalBar", () => {
   });
 
   it("More ▾ confirm Cancel dismisses without firing the mutation", async () => {
-    render(<ApprovalBar runId={RUN_ID} status="unresolved" />);
+    render(<Bar runId={RUN_ID} status="unresolved" />);
     await openMoreMenu();
     const item = await screen.findByTestId("approve-bulk-variation");
     fireEvent.click(item);
@@ -374,7 +389,7 @@ describe("ApprovalBar", () => {
   });
 
   it("hides the More menu when status is not reviewer-actionable", () => {
-    render(<ApprovalBar runId={RUN_ID} status="aborted" />);
+    render(<Bar runId={RUN_ID} status="aborted" />);
     expect(screen.queryByTestId("approval-more-menu")).toBeNull();
   });
 });
@@ -410,13 +425,13 @@ describe("ApprovalBar group-approval callout", () => {
 
   it("renders the callout when a checkpoint is selected and a group exists", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
-    render(<ApprovalBar runId="run-1" checkpointId="c0" />);
+    render(<Bar runId="run-1" checkpointId="c0" />);
     expect(screen.getByTestId("group-approval-callout")).toBeTruthy();
   });
 
   it("does not render the callout when no checkpoint is selected", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
-    render(<ApprovalBar runId="run-1" />);
+    render(<Bar runId="run-1" />);
     expect(screen.queryByTestId("group-approval-callout")).toBeNull();
   });
 });

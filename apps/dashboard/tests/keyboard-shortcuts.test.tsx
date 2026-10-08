@@ -11,6 +11,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
 import { useDiffViewerShortcuts } from "../src/components/diff-viewer/useDiffViewerShortcuts";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 
@@ -325,5 +326,212 @@ describe("useDiffViewerShortcuts", () => {
       ),
     );
     expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(0);
+  });
+});
+
+// Regression: single-key shortcuts used to fire while the reviewer was
+// typing — e.g. typing "a" into the PatternEditor regex approved the run,
+// "/" opened the palette mid-regex, Backspace deleted the selected region.
+// Every single-key binding must yield when another control owns the
+// keyboard: a text field, a select, or focus inside a menu / listbox / dialog.
+describe("useDiffViewerShortcuts — yields when another control owns the keyboard", () => {
+  const SINGLE_KEYS = [
+    "A",
+    "R",
+    "X",
+    "C",
+    "I",
+    "?",
+    "/",
+    "[",
+    "]",
+    "Delete",
+    "Backspace",
+    "Escape",
+    "D",
+    "O",
+    "H",
+    "n",
+    "p",
+    "ArrowLeft",
+    "ArrowRight",
+    "=",
+    "+",
+    "-",
+    "0",
+  ];
+
+  const callbacks = {
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
+    onHelpToggle: vi.fn(),
+    onNextDiff: vi.fn(),
+    onPrevDiff: vi.fn(),
+    onPrevStep: vi.fn(),
+    onNextStep: vi.fn(),
+  };
+
+  // A state in which every key above would visibly change something.
+  function armEveryShortcut() {
+    usePaletteStore.setState({ open: false });
+    useViewerStore.setState({
+      mode: "side-by-side",
+      viewport: "1280x720",
+      commentPanelOpen: false,
+      highlightActive: false,
+      zoom: 2,
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 1,
+          y: 1,
+          width: 10,
+          height: 10,
+          viewport: "1280x720",
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+      selectedIgnoreId: "d1",
+      selectedRegionId: "r1",
+    });
+  }
+
+  function snapshot() {
+    const s = useViewerStore.getState();
+    return {
+      mode: s.mode,
+      viewport: s.viewport,
+      commentPanelOpen: s.commentPanelOpen,
+      highlightActive: s.highlightActive,
+      zoom: s.zoom,
+      ignoreEditMode: s.ignoreEditMode,
+      drafts: s.draftIgnoreAreas.length,
+      selectedIgnoreId: s.selectedIgnoreId,
+      selectedRegionId: s.selectedRegionId,
+      paletteOpen: usePaletteStore.getState().open,
+    };
+  }
+
+  function mountHook() {
+    renderHook(() =>
+      useDiffViewerShortcuts({
+        viewports: ["1280x720", "375x812"],
+        nextDiffHref: "/next",
+        prevDiffHref: "/prev",
+        ...callbacks,
+      }),
+    );
+  }
+
+  function expectNothingFired(before: ReturnType<typeof snapshot>) {
+    for (const cb of Object.values(callbacks))
+      expect(cb).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(snapshot()).toEqual(before);
+  }
+
+  let focused: HTMLElement | null = null;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pushMock.mockReset();
+  });
+  afterEach(() => {
+    // Unmount hook trees first so tinykeys bindings don't accumulate.
+    cleanup();
+    focused?.closest("[data-owner]")?.remove();
+    focused = null;
+  });
+
+  function focusInto(html: string, selector: string) {
+    const host = document.createElement("div");
+    host.setAttribute("data-owner", "");
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    focused = host.querySelector<HTMLElement>(selector);
+    focused!.focus();
+    expect(document.activeElement).toBe(focused);
+  }
+
+  const OWNERS: Array<[string, string, string]> = [
+    ["a text input", `<input type="text" />`, "input"],
+    ["a search input", `<input type="search" />`, "input"],
+    ["a textarea", `<textarea></textarea>`, "textarea"],
+    ["a select", `<select><option>a</option></select>`, "select"],
+    [
+      "a contenteditable",
+      `<div contenteditable="true" tabindex="0"></div>`,
+      "[contenteditable]",
+    ],
+    [
+      "an open menu",
+      `<div role="menu"><div role="menuitem" tabindex="-1">Approve all</div></div>`,
+      "[role=menuitem]",
+    ],
+    [
+      "a listbox",
+      `<div role="listbox"><div role="option" tabindex="-1">x</div></div>`,
+      "[role=option]",
+    ],
+    ["a dialog", `<div role="dialog"><button>Cancel</button></div>`, "button"],
+    [
+      "an alertdialog",
+      `<div role="alertdialog"><button>Approve all</button></div>`,
+      "button",
+    ],
+  ];
+
+  for (const [label, html, selector] of OWNERS) {
+    it.each(SINGLE_KEYS)(`%s is ignored while focus is in ${label}`, (key) => {
+      armEveryShortcut();
+      mountHook();
+      focusInto(html, selector);
+      const before = snapshot();
+      act(() => press(key));
+      expectNothingFired(before);
+    });
+  }
+
+  it("still fires while focus sits on a non-text input (checkbox)", () => {
+    mountHook();
+    focusInto(`<input type="checkbox" />`, "input");
+    act(() => press("A"));
+    expect(callbacks.onApprove).toHaveBeenCalledOnce();
+  });
+
+  it("still fires while focus sits on an ordinary toolbar button", () => {
+    mountHook();
+    focusInto(`<button>Overlay</button>`, "button");
+    act(() => press("R"));
+    expect(callbacks.onReject).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a keydown another handler already consumed (defaultPrevented)", () => {
+    mountHook();
+    const ev = new KeyboardEvent("keydown", {
+      key: "A",
+      bubbles: true,
+      cancelable: true,
+    });
+    ev.preventDefault();
+    act(() => {
+      window.dispatchEvent(ev);
+    });
+    expect(callbacks.onApprove).not.toHaveBeenCalled();
+  });
+
+  it("ignores auto-repeat so holding A/R cannot fire approve/reject twice", () => {
+    mountHook();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "A", bubbles: true, repeat: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "R", bubbles: true, repeat: true }),
+      );
+    });
+    expect(callbacks.onApprove).not.toHaveBeenCalled();
+    expect(callbacks.onReject).not.toHaveBeenCalled();
   });
 });

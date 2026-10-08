@@ -574,6 +574,9 @@
                           "null"
                         ]
                       },
+                      "hasVlmApiKey": {
+                        "type": "boolean"
+                      },
                       "id": {
                         "format": "uuid",
                         "type": "string"
@@ -631,6 +634,7 @@
                       "maxBranchLifetime",
                       "autoApproveFeature",
                       "imageComparison",
+                      "hasVlmApiKey",
                       "retentionDays",
                       "diffThreshold",
                       "createdAt",
@@ -713,6 +717,9 @@
                         "null"
                       ]
                     },
+                    "hasVlmApiKey": {
+                      "type": "boolean"
+                    },
                     "id": {
                       "format": "uuid",
                       "type": "string"
@@ -770,6 +777,7 @@
                     "maxBranchLifetime",
                     "autoApproveFeature",
                     "imageComparison",
+                    "hasVlmApiKey",
                     "retentionDays",
                     "diffThreshold",
                     "createdAt",
@@ -869,6 +877,9 @@
                         "null"
                       ]
                     },
+                    "hasVlmApiKey": {
+                      "type": "boolean"
+                    },
                     "id": {
                       "format": "uuid",
                       "type": "string"
@@ -926,6 +937,7 @@
                     "maxBranchLifetime",
                     "autoApproveFeature",
                     "imageComparison",
+                    "hasVlmApiKey",
                     "retentionDays",
                     "diffThreshold",
                     "createdAt",
