@@ -1,0 +1,53 @@
+name: minio
+description: >-
+  Throwaway MinIO (S3) on localhost:9000 with one bucket, for integration
+  tests (composite action reused by ci.yml + sdk-e2e.yml).
+inputs:
+  bucket:
+    description: Bucket to create once the server is up.
+    required: true
+  root-user:
+    description: MinIO root user — also the S3 access key the tests use.
+    default: furan
+  root-password:
+    description: MinIO root password — also the S3 secret key the tests use.
+    default: minio_ci_pw_long_enough # gitleaks:allow
+runs:
+  using: composite
+  steps:
+    # Image: MinIO no longer publishes `minio/minio` / `minio/mc` on Docker
+    # Hub (both repos 404) and quay.io/minio now requires auth, so CI runs
+    # Chainguard's MinIO build — the same server binary, `server` args and
+    # MINIO_ROOT_* env, and it bundles `mc`, so one image covers both.
+    # Chainguard's free tier publishes only `:latest`.
+    #
+    # `services:` can't pass server args, so the container is started by
+    # hand. It's named `minio` because apps/api/tests/helpers.ts probes that
+    # name (`printenv MINIO_ROOT_*`, best-effort `mc mb`) — it reads back the
+    # same creds the job's S3_* env already carries, so it's a no-op here.
+    - shell: bash
+      env:
+        MINIO_ROOT_USER: ${{ inputs.root-user }}
+        MINIO_ROOT_PASSWORD: ${{ inputs.root-password }}
+        BUCKET: ${{ inputs.bucket }}
+      run: |
+        docker run -d --name minio \
+          -p 9000:9000 \
+          -e MINIO_ROOT_USER \
+          -e MINIO_ROOT_PASSWORD \
+          cgr.dev/chainguard/minio:latest server /data
+        for i in $(seq 1 30); do
+          if curl -fsS http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+            echo "minio ready"
+            break
+          fi
+          if [ "$i" -eq 30 ]; then
+            echo "::error::MinIO did not become ready within 60s"
+            docker logs minio
+            exit 1
+          fi
+          echo "waiting for minio... ($i/30)"
+          sleep 2
+        done
+        docker exec -e BUCKET minio sh -c \
+          'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "local/$BUCKET"'
