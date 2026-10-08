@@ -37,6 +37,7 @@ vi.mock("next/navigation", () => ({
 import { CreateTokenDialog } from "../src/app/(protected)/account/tokens/_components/create-token-dialog";
 import { DeleteTokenButton } from "../src/app/(protected)/account/tokens/_components/delete-token-button";
 import { TokensTable } from "../src/app/(protected)/account/tokens/_components/tokens-table";
+import { ApiKeysPanel } from "../src/app/(protected)/admin/(area)/api-keys/_components/api-keys-panel";
 
 type FetchCall = { url: string; init?: RequestInit };
 
@@ -115,6 +116,27 @@ describe("TokensTable", () => {
     setupFetch();
     render(<TokensTable initialTokens={[]} />);
     expect(screen.getByText(/no tokens yet/i)).toBeDefined();
+  });
+
+  // ADR-064 step A: a token is NOT the account — it can't manage tokens or
+  // reach admin features, so the page must not claim otherwise.
+  test("states what a token can and can't do", () => {
+    setupFetch();
+    const { container } = render(<TokensTable initialTokens={[]} />);
+    expect(container.textContent).toMatch(
+      /can't manage tokens or use admin features/i,
+    );
+    expect(container.textContent).not.toMatch(/same access as your account/i);
+  });
+});
+
+describe("ApiKeysPanel (admin)", () => {
+  test("states that keys can't manage keys or use admin features", () => {
+    setupFetch();
+    const { container } = render(<ApiKeysPanel initialTokens={[]} />);
+    expect(container.textContent).toMatch(
+      /can't manage keys or use admin features/i,
+    );
   });
 });
 

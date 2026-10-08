@@ -25,7 +25,9 @@ export function ApiKeysPanel({ initialTokens }: Props) {
           API Keys
         </h3>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Use these tokens to authenticate Furan from your CI or test runner.
+          Use these tokens to authenticate Furan from your CI or test runner. A
+          key works on the projects your account can access, but it can&apos;t
+          manage keys or use admin features — sign in for those.
         </p>
       </div>
       <div className="p-6">

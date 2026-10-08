@@ -84,8 +84,9 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
               Personal access tokens
             </h1>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Authenticate the Furan SDK or CI uploads. Each token grants the
-              same access as your account.
+              Authenticate the Furan SDK or CI uploads. A token works on the
+              projects your account can access, but it can&apos;t manage tokens
+              or use admin features — sign in for those.
             </p>
           </div>
           {tokens.length > 0 && (
