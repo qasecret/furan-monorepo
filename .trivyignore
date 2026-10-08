@@ -1,7 +1,7 @@
 # Upstream-pending CVEs in Debian 12.13 base image
 # (used by distroless nodejs22-debian12 + bookworm-slim runtime images).
 #
-# Per docs/runbooks/security-dry-run-v1.md §2: these CVEs have no patch
+# Reviewed in the v1.0 security dry-run: these CVEs have no patch
 # available in the current Debian 12.13 security feed. Debian Security
 # Tracker shows them as "pending upstream / next point release". They
 # cannot be remediated by Furan-side changes — only by rebuilding on

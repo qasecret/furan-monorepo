@@ -122,7 +122,7 @@ docker compose --env-file .env -f infra/docker/compose.yml up -d
 
 This pulls and starts eight long-running services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
 
-> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.27`) or use `--mode from-head`.
+> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.29`) or use `--mode from-head`.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 
@@ -241,14 +241,14 @@ The reference workflow runs your test suite, uploads diffs, posts a sticky PR co
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
 
 ```bash
-docker pull qasecret/furan-api:v1.1.27
-docker pull qasecret/furan-dashboard:v1.1.27
-docker pull qasecret/furan-capture-worker:v1.1.27
-docker pull qasecret/furan-diff-worker:v1.1.27
-docker pull qasecret/furan-integrations:v1.1.27
+docker pull qasecret/furan-api:v1.1.29
+docker pull qasecret/furan-dashboard:v1.1.29
+docker pull qasecret/furan-capture-worker:v1.1.29
+docker pull qasecret/furan-diff-worker:v1.1.29
+docker pull qasecret/furan-integrations:v1.1.29
 ```
 
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.27`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.27`), and ships with an SBOM artifact.
+GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.29`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.29`), and ships with an SBOM artifact.
 
 ## Common first-install problems
 
@@ -297,13 +297,11 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 - [`api-down.md`](docs/runbooks/api-down.md) — first-call triage decision tree
 - [`restore-from-backup.md`](docs/runbooks/restore-from-backup.md) — backup + restore lifecycle
 - [`migration-deploy-order.md`](docs/runbooks/migration-deploy-order.md) — schema-additive-first deploy ordering
-- [`alpha-install.md`](docs/runbooks/alpha-install.md) — structured-feedback template for new installers
 - [`maven-central-publish.md`](docs/runbooks/maven-central-publish.md) — Kotlin SDK release flow
-- [`security-dry-run-v1.md`](docs/runbooks/security-dry-run-v1.md) — v1.0 security posture sign-off
 
 ## Status and roadmap
 
-**v1.1.27 is the current release** (2026-07-04), published as cosign-signed, Trivy-scanned, multi-arch (amd64 / arm64) images. Beyond the v1.0 baseline, the v1.1 line adds the Playwright and Appium SDK adapters, the image-first VLM diff layer, an opt-in Postgres row-level-security tenant-isolation backstop, an audit log with an admin viewer, and a four-tier role hierarchy. Still onboarding early installers — if you'd like to be one, see [`docs/runbooks/alpha-install.md`](docs/runbooks/alpha-install.md).
+**v1.1.29 is the current release** (2026-07-10), published as cosign-signed, Trivy-scanned, multi-arch (amd64 / arm64) images. Beyond the v1.0 baseline, the v1.1 line adds the Playwright and Appium SDK adapters, the image-first Visual-AI (VLM) diff layer, an opt-in Postgres row-level-security tenant-isolation backstop, an audit log with an admin viewer, a four-tier role hierarchy, and a one-file, single-origin quick-start install. Feedback from early installers is very welcome — [open an issue](https://github.com/qasecret/furan-monorepo/issues).
 
 Not yet built (no schedule, will land when there's user signal):
 
@@ -311,7 +309,7 @@ Not yet built (no schedule, will land when there's user signal):
 - **More VCS integrations** — GitLab, Bitbucket, Azure DevOps. The GitHub App already ships.
 - **Enterprise identity** — SSO / SCIM / SAML and multi-organization tenancy. Furan is single-organization today; role-based access control and the audit log already ship.
 
-Design docs, ADRs, and forward planning live in the separate `furan-design` workspace (not part of this repo; maintained internally).
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the services, data flow, and key design decisions. Detailed design notes and decision records are maintained by the core team.
 
 ## License and governance
 
@@ -319,4 +317,4 @@ Design docs, ADRs, and forward planning live in the separate `furan-design` work
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure policy
 - [CONTRIBUTING.md](CONTRIBUTING.md) — DCO sign-off, setup, conventions
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1
-- [ARCHITECTURE.md](ARCHITECTURE.md) — high-level architecture pointer
+- [ARCHITECTURE.md](ARCHITECTURE.md) — services, data flow, and key design decisions
