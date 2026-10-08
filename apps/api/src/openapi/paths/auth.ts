@@ -26,6 +26,11 @@ export function registerAuthPaths(): void {
         description: "Invalid credentials or inactive user",
         content: { "application/json": { schema: errorResponseSchema } },
       },
+      429: {
+        description:
+          "Too many attempts (`rate_limited`): per client IP 10/min, per account 10/15 min. See the `retry-after` header (seconds).",
+        content: { "application/json": { schema: errorResponseSchema } },
+      },
     },
   });
 }

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { parseTrustProxy } from "./lib/trust-proxy.js";
+
 export const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -74,6 +76,29 @@ export const envSchema = z.object({
    * never trips a legitimate deployment; lower it behind a small proxy.
    */
   SSE_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(10000),
+
+  /**
+   * ADR-063: which reverse proxies the API trusts for `X-Forwarded-For` —
+   * i.e. what `req.ip` (and every per-IP rate limit) resolves to. Unset /
+   * `false` (default) ignores XFF; `1` trusts one proxy hop (the bundled
+   * nginx); `true` trusts every hop (spoofable unless the API is reachable
+   * only via the proxy); or a comma-separated IP / CIDR / `loopback` list.
+   * Kept as the raw string here; `parseTrustProxy` maps it for Fastify and
+   * this refinement fails boot on anything it can't parse.
+   */
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      try {
+        parseTrustProxy(value);
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: (err as Error).message,
+        });
+      }
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;
