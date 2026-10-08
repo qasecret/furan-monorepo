@@ -161,7 +161,8 @@ docker compose -p docker --env-file infra/docker/.env \
   up -d
 ```
 
-Boot order is enforced by `depends_on`: data plane → `minio-init` (bucket) →
+Boot order is enforced by `depends_on`: data plane (`minio-perms` → `minio`) →
+`minio-init` (bucket) →
 `migrate` (one-shot, `service_completed_successfully`) → app services. The
 api auto-seeds the bootstrap admin when the `users` table is empty.
 
@@ -170,7 +171,7 @@ api auto-seeds the bootstrap admin when the `users` table is empty.
 ```bash
 P="docker compose -p docker --env-file infra/docker/.env -f infra/docker/compose.yml -f infra/docker/compose.main-images.yml"
 
-# 4a. Every service up/healthy; migrate + minio-init exited 0.
+# 4a. Every service up/healthy; migrate + minio-perms + minio-init exited 0.
 $P ps -a
 
 # 4b. Migrations applied cleanly.
