@@ -15,10 +15,17 @@ import { touchTokenLastUsed } from "../lib/touch-token.js";
 // keep resolving `UserRole` unchanged.
 export type { UserRole };
 
-export interface AuthedUser {
-  id: string;
-  role: UserRole;
-}
+/**
+ * The authenticated caller. `via` records HOW the request authenticated —
+ * a session JWT (Bearer header / dashboard cookie) or a `furan_pat_*` API
+ * token (Bearer or the legacy `apiKey` header) — so gates can treat API
+ * tokens differently (ADR-064: tokens never manage tokens or reach admin
+ * surfaces). `tokenId` is the matched `tokens.id`, present only for a PAT.
+ */
+export type AuthedUser = { id: string; role: UserRole } & (
+  | { via: "jwt" }
+  | { via: "pat"; tokenId: string }
+);
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -61,7 +68,12 @@ export default fp(async (app) => {
           recordAuthFailure(app.telemetry.metrics, "invalid_pat");
           return sendError(reply, 401, "invalid_token");
         }
-        req.auth = { id: pat.id, role: pat.role };
+        req.auth = {
+          id: pat.id,
+          role: pat.role,
+          via: "pat",
+          tokenId: pat.tokenId,
+        };
         await touchTokenLastUsed(app.db, pat.tokenId);
         return;
       }
@@ -102,7 +114,7 @@ export default fp(async (app) => {
         recordAuthFailure(app.telemetry.metrics, "account_inactive");
         return sendError(reply, 403, "account_inactive");
       }
-      req.auth = { id: payload.sub, role: fresh.role };
+      req.auth = { id: payload.sub, role: fresh.role, via: "jwt" };
     },
   );
 });

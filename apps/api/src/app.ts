@@ -298,7 +298,12 @@ async function softAuthenticate(
   if (isPatFormat(raw)) {
     const pat = await loadActiveUserByPat(app.db, raw);
     if (pat) {
-      req.auth = { id: pat.id, role: pat.role };
+      req.auth = {
+        id: pat.id,
+        role: pat.role,
+        via: "pat",
+        tokenId: pat.tokenId,
+      };
       await touchTokenLastUsed(app.db, pat.tokenId);
     }
     return;
@@ -324,5 +329,7 @@ async function softAuthenticate(
     payload.sub,
   );
   req.auth =
-    fresh && fresh.isActive ? { id: payload.sub, role: fresh.role } : null;
+    fresh && fresh.isActive
+      ? { id: payload.sub, role: fresh.role, via: "jwt" }
+      : null;
 }

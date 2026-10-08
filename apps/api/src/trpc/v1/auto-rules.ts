@@ -5,7 +5,6 @@ import {
   desc,
   eq,
   isNull,
-  lt,
   sql,
   testRuns,
 } from "@furan/db";
@@ -14,6 +13,11 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { emitAudit } from "../../lib/emit-audit.js";
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../../lib/keyset-cursor.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -242,10 +246,11 @@ export const autoRulesRouter = t.router({
       z.object({
         ruleId: z.string().uuid(),
         limit: z.number().int().min(1).max(100).default(50),
-        // Keyset cursor: the `appliedAt` (ISO timestamp) of the last item from
-        // the previous page. Ordering is desc(appliedAt), so the next page is
-        // everything strictly older than the cursor.
-        cursor: z.string().datetime().nullish(),
+        // Opaque keyset cursor: the previous page's `nextCursor` — its last
+        // item's full-µs `appliedAt` + id (lib/keyset-cursor.ts). Ordering is
+        // (appliedAt, id) DESC, so the next page is everything strictly
+        // before that pair.
+        cursor: z.string().nullish(),
       }),
     )
     .use(authed)
@@ -276,9 +281,10 @@ export const autoRulesRouter = t.router({
     )
     .query(async ({ input, ctx }) => {
       const conditions = [eq(autoRuleApplications.ruleId, input.ruleId)];
-      if (input.cursor) {
+      const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
+      if (cursor) {
         conditions.push(
-          lt(autoRuleApplications.appliedAt, new Date(input.cursor)),
+          sql`(${autoRuleApplications.appliedAt}, ${autoRuleApplications.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
         );
       }
       const rows = await ctx.db
@@ -292,19 +298,26 @@ export const autoRulesRouter = t.router({
           appliedAt: autoRuleApplications.appliedAt,
           runStatus: testRuns.status,
           runBranch: testRuns.branchName,
+          cursorAt: cursorTimestamp(autoRuleApplications.appliedAt),
         })
         .from(autoRuleApplications)
         .innerJoin(testRuns, eq(autoRuleApplications.testRunId, testRuns.id))
         .where(and(...conditions))
-        .orderBy(desc(autoRuleApplications.appliedAt))
+        .orderBy(
+          desc(autoRuleApplications.appliedAt),
+          desc(autoRuleApplications.id),
+        )
         .limit(input.limit + 1);
 
       const hasMore = rows.length > input.limit;
-      const items = hasMore ? rows.slice(0, input.limit) : rows;
-      const last = items[items.length - 1];
+      const page = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = page[page.length - 1];
       return {
-        items,
-        nextCursor: hasMore && last ? last.appliedAt.toISOString() : null,
+        items: page.map(({ cursorAt: _cursorAt, ...r }) => r),
+        nextCursor:
+          hasMore && last
+            ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.id })
+            : null,
       };
     }),
 });

@@ -145,9 +145,10 @@ const KEY_OWNERSHIP_PROBES: KeyOwnershipProbe[] = [
 ];
 
 /**
- * True if `auth` may read the storage `key`. Admins/owners bypass. Otherwise
- * the key must be referenced by a row (see {@link KEY_OWNERSHIP_PROBES}) in one
- * of the caller's member projects. The member-project set is cached per user
+ * True if `auth` may read the storage `key`. Admins/owners bypass — by role
+ * only, so an admin's API token keeps it like the other membership gates
+ * (ADR-064 step A). Otherwise the key must be referenced by a row (see
+ * {@link KEY_OWNERSHIP_PROBES}) in one of the caller's member projects. The member-project set is cached per user
  * (short TTL) since the diff viewer fetches many keys per page and the set is
  * stable between membership changes.
  */

@@ -14,8 +14,8 @@ import {
   providerSettingsChanged,
   toPublicProject,
 } from "../../lib/project-ai-config.js";
-import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { Context } from "../context.js";
+import { assertAdminSurface } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -170,14 +170,10 @@ export const projectsRouter = t.router({
           current.imageComparisonConfig,
           updates.imageComparisonConfig,
         );
-        if (
-          providerSettingsChanged(current.imageComparisonConfig, next) &&
-          !isAtLeastAdmin(ctx.user!.role)
-        ) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "vlm_provider_settings_admin_only",
-          });
+        // ADR-060 provider settings are an admin surface, so session-only
+        // too (ADR-064): an admin's API token gets `session_required`.
+        if (providerSettingsChanged(current.imageComparisonConfig, next)) {
+          assertAdminSurface(ctx.user!, "vlm_provider_settings_admin_only");
         }
         updates.imageComparisonConfig = next;
       }
