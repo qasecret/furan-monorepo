@@ -39,7 +39,11 @@ export const paramsSchema = z.object({
     ),
 });
 
-const CACHE_HEADER = "public, max-age=300, immutable";
+// `private`: these bytes are authenticated + project-scoped, so only the
+// requesting browser may cache them — never a shared cache (corporate proxy,
+// CDN) that could re-serve them to another user. Keys are content-addressed,
+// so `immutable` is safe and the browser still skips revalidation.
+const CACHE_HEADER = "private, max-age=300, immutable";
 
 export async function registerStorageProxyRoute(
   app: FastifyInstance,
