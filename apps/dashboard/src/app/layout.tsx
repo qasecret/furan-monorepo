@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 
 import { ThemeProvider } from "@/components/ui/theme-provider";
@@ -32,7 +33,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  // Per-request CSP nonce from src/middleware.ts. Reading headers() also makes
+  // every page render dynamically — required, since a prerendered page would
+  // carry no (or a stale) nonce and the CSP would block its scripts.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
       lang="en"
@@ -45,13 +54,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           (.reveal) only hide content when they can actually un-hide it. No-JS
           visitors and non-rendering crawlers never get the class, so the
           landing renders fully visible for them instead of blank.
+          suppressHydrationWarning: browsers hide a script's nonce attribute
+          after load (it reads back as ""), which React's dev hydration check
+          would otherwise report as an attribute mismatch.
         */}
         <script
+          nonce={nonce}
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: "document.documentElement.classList.add('reveal-on')",
           }}
         />
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider nonce={nonce}>{children}</ThemeProvider>
       </body>
     </html>
   );
