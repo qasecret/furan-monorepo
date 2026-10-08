@@ -9,7 +9,6 @@ import {
   ilike,
   inArray,
   isNull,
-  lt,
   projects,
   recordBaseline,
   resolveBaseline,
@@ -27,6 +26,11 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { emitAudit } from "../../lib/emit-audit.js";
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../../lib/keyset-cursor.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -140,7 +144,8 @@ type IgnoreRegionElement = z.infer<typeof ignoreRegionElementSchema>;
 
 const listInput = z.object({
   projectId: z.string().uuid(),
-  cursor: z.string().datetime().optional(),
+  /** Opaque keyset cursor: the previous page's `nextCursor`. */
+  cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).default(25),
   /** Exact-match filter on `test_runs.branch_name`. */
   branch: z.string().min(1).max(255).optional(),
@@ -386,9 +391,9 @@ function runListBaseConditions(input: {
 export const runsRouter = t.router({
   /**
    * Cursor-paginated run listing for the dashboard index page (T9).
-   * Order: `desc(created_at)`. Cursor is the `created_at` (ISO string) of
-   * the last item from the previous page; we fetch `limit + 1` rows and use
-   * the extra row to decide whether `nextCursor` should be set.
+   * Order: `created_at DESC, id DESC`. The opaque cursor is the last item's
+   * full-µs `created_at` + id (lib/keyset-cursor.ts); we fetch `limit + 1`
+   * rows and use the extra row to decide whether `nextCursor` should be set.
    */
   list: publicProcedure
     .input(listInput)
@@ -406,8 +411,11 @@ export const runsRouter = t.router({
       // Phase 5 adds sub-query filters there. Shared base conditions keep
       // `list` consistent with any future filter expansions.
       const conditions = runListBaseConditions(input);
-      if (input.cursor) {
-        conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));
+      const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
+      if (cursor) {
+        conditions.push(
+          sql`(${testRuns.createdAt}, ${testRuns.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
+        );
       }
       // Empty array == no filter, identical to undefined — keeps the
       // dashboard's "all checkboxes off" state simple and avoids an
@@ -424,11 +432,12 @@ export const runsRouter = t.router({
           buildCiBuildId: builds.ciBuildId,
           buildBranchName: builds.branchName,
           buildCreatedAt: builds.createdAt,
+          cursorAt: cursorTimestamp(testRuns.createdAt),
         })
         .from(testRuns)
         .leftJoin(builds, eq(testRuns.buildId, builds.id))
         .where(and(...conditions))
-        .orderBy(desc(testRuns.createdAt))
+        .orderBy(desc(testRuns.createdAt), desc(testRuns.id))
         .limit(input.limit + 1);
 
       const hasMore = rows.length > input.limit;
@@ -446,7 +455,9 @@ export const runsRouter = t.router({
       }));
       const last = page[page.length - 1];
       const nextCursor =
-        hasMore && last ? last.run.createdAt.toISOString() : null;
+        hasMore && last
+          ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.run.id })
+          : null;
       return { items, nextCursor };
     }),
 

@@ -6,6 +6,11 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { recordBuildCreate } from "../lib/builds-metrics.js";
 import { sendError } from "../lib/errors.js";
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../lib/keyset-cursor.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 export const createBody = z.object({
@@ -69,23 +74,6 @@ function parsePropertyFilter(raw: string[]): Record<string, string> | null {
   return out;
 }
 
-function decodeCursor(raw: string): { createdAt: Date; id: string } | null {
-  try {
-    const json = Buffer.from(raw, "base64url").toString("utf8");
-    const parsed = JSON.parse(json) as { createdAt: string; id: string };
-    return { createdAt: new Date(parsed.createdAt), id: parsed.id };
-  } catch {
-    return null;
-  }
-}
-
-function encodeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(
-    JSON.stringify({ createdAt: createdAt.toISOString(), id }),
-    "utf8",
-  ).toString("base64url");
-}
-
 export async function registerBuildsRoutes(
   app: FastifyInstance,
 ): Promise<void> {
@@ -121,10 +109,10 @@ export async function registerBuildsRoutes(
         );
       }
       if (queryParsed.data.cursor) {
-        const c = decodeCursor(queryParsed.data.cursor);
+        const c = decodeKeysetCursor(queryParsed.data.cursor);
         if (c) {
           conditions.push(
-            sql`(${builds.createdAt}, ${builds.id}) < (${c.createdAt}, ${c.id})`,
+            sql`(${builds.createdAt}, ${builds.id}) < (${c.createdAt}::timestamptz, ${c.id}::uuid)`,
           );
         }
       }
@@ -134,18 +122,26 @@ export async function registerBuildsRoutes(
         req,
         async (db) => {
           const rows = await db
-            .select()
+            .select({
+              build: builds,
+              cursorAt: cursorTimestamp(builds.createdAt),
+            })
             .from(builds)
             .where(and(...conditions))
             .orderBy(desc(builds.createdAt), desc(builds.id))
             .limit(queryParsed.data.limit + 1);
 
           const hasMore = rows.length > queryParsed.data.limit;
-          const items = hasMore ? rows.slice(0, queryParsed.data.limit) : rows;
-          const last = items[items.length - 1];
+          const page = hasMore ? rows.slice(0, queryParsed.data.limit) : rows;
+          const last = page[page.length - 1];
           const nextCursor =
-            hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
-          return { items, nextCursor };
+            hasMore && last
+              ? encodeKeysetCursor({
+                  createdAt: last.cursorAt,
+                  id: last.build.id,
+                })
+              : null;
+          return { items: page.map((r) => r.build), nextCursor };
         },
         paramsParsed.data.id,
       );

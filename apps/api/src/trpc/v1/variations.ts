@@ -5,7 +5,6 @@ import {
   eq,
   ilike,
   inArray,
-  lt,
   screenshots,
   sql,
   testRuns,
@@ -14,6 +13,11 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../../lib/keyset-cursor.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -27,7 +31,8 @@ type GetInput = z.infer<typeof getInput>;
 const historyInput = z.object({
   projectId: z.string().uuid(),
   variationId: z.string().uuid(),
-  cursor: z.string().datetime().optional(),
+  /** Opaque keyset cursor: the previous page's `nextCursor`. */
+  cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).default(25),
 });
 type HistoryInput = z.infer<typeof historyInput>;
@@ -35,7 +40,8 @@ type HistoryInput = z.infer<typeof historyInput>;
 const listInput = z.object({
   projectId: z.string().uuid(),
   search: z.string().max(120).optional(),
-  cursor: z.string().datetime().optional(),
+  /** Opaque keyset cursor: the previous page's `nextCursor`. */
+  cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).default(25),
 });
 type ListInput = z.infer<typeof listInput>;
@@ -46,8 +52,8 @@ export const variationsRouter = t.router({
    *
    * Feeds the project-level /variations index page so reviewers can
    * browse every test checkpoint the SDK has registered, search by
-   * name, and drill into the per-variation history. The createdAt
-   * cursor mirrors `runs.list`.
+   * name, and drill into the per-variation history. The `(createdAt, id)`
+   * keyset cursor mirrors `runs.list`.
    *
    * `search`, when present, ILIKE-matches the variation name on the
    * fly. The substring filter is intentional — variation names land
@@ -68,8 +74,11 @@ export const variationsRouter = t.router({
       if (input.search && input.search.trim().length > 0) {
         conditions.push(ilike(testVariations.name, `%${input.search.trim()}%`));
       }
-      if (input.cursor) {
-        conditions.push(lt(testVariations.createdAt, new Date(input.cursor)));
+      const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
+      if (cursor) {
+        conditions.push(
+          sql`(${testVariations.createdAt}, ${testVariations.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
+        );
       }
       const rows = await ctx.db
         .select({
@@ -82,15 +91,20 @@ export const variationsRouter = t.router({
           device: testVariations.device,
           baselineName: testVariations.baselineName,
           createdAt: testVariations.createdAt,
+          cursorAt: cursorTimestamp(testVariations.createdAt),
         })
         .from(testVariations)
         .where(and(...conditions))
-        .orderBy(desc(testVariations.createdAt))
+        .orderBy(desc(testVariations.createdAt), desc(testVariations.id))
         .limit(input.limit + 1);
       const hasMore = rows.length > input.limit;
-      const items = hasMore ? rows.slice(0, input.limit) : rows;
-      const last = items[items.length - 1];
-      const nextCursor = hasMore && last ? last.createdAt.toISOString() : null;
+      const page = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = page[page.length - 1];
+      const nextCursor =
+        hasMore && last
+          ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.id })
+          : null;
+      const items = page.map(({ cursorAt: _cursorAt, ...r }) => r);
       return { items, nextCursor };
     }),
 
@@ -138,8 +152,9 @@ export const variationsRouter = t.router({
 
   /**
    * Cursor-paginated runs for one variation, newest-first. Mirrors
-   * `runs.list` (limit + 1, ISO createdAt cursor). LEFT JOINs `builds` so
-   * the table can render `#{buildNumber}` without a second query per row.
+   * `runs.list` (limit + 1, `(createdAt, id)` keyset cursor). LEFT JOINs
+   * `builds` so the table can render `#{buildNumber}` without a second
+   * query per row.
    *
    * Cross-tenant safety: WHERE already filters on projectId AND
    * testVariationId; even if a caller passes a variationId from another
@@ -172,8 +187,11 @@ export const variationsRouter = t.router({
         eq(testRuns.projectId, input.projectId),
         inArray(testRuns.id, runIdList),
       ];
-      if (input.cursor) {
-        conditions.push(lt(testRuns.createdAt, new Date(input.cursor)));
+      const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
+      if (cursor) {
+        conditions.push(
+          sql`(${testRuns.createdAt}, ${testRuns.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
+        );
       }
 
       const rows = await ctx.db
@@ -188,17 +206,22 @@ export const variationsRouter = t.router({
           buildId: testRuns.buildId,
           buildNumber: builds.number,
           createdAt: testRuns.createdAt,
+          cursorAt: cursorTimestamp(testRuns.createdAt),
         })
         .from(testRuns)
         .leftJoin(builds, eq(builds.id, testRuns.buildId))
         .where(and(...conditions))
-        .orderBy(desc(testRuns.createdAt))
+        .orderBy(desc(testRuns.createdAt), desc(testRuns.id))
         .limit(input.limit + 1);
 
       const hasMore = rows.length > input.limit;
-      const items = hasMore ? rows.slice(0, input.limit) : rows;
-      const last = items[items.length - 1];
-      const nextCursor = hasMore && last ? last.createdAt.toISOString() : null;
+      const page = hasMore ? rows.slice(0, input.limit) : rows;
+      const last = page[page.length - 1];
+      const nextCursor =
+        hasMore && last
+          ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.id })
+          : null;
+      const items = page.map(({ cursorAt: _cursorAt, ...r }) => r);
       return { items, nextCursor };
     }),
 });

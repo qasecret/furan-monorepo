@@ -6,6 +6,11 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../../lib/keyset-cursor.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -31,31 +36,6 @@ type BuildIdInput = z.infer<typeof buildIdInput>;
 
 const getByIdInput = z.object({ buildId: z.string().uuid() });
 type GetByIdInput = z.infer<typeof getByIdInput>;
-
-interface CursorPayload {
-  createdAt: string;
-  id: string;
-}
-
-function decodeCursor(raw: string): CursorPayload | null {
-  try {
-    return JSON.parse(
-      Buffer.from(raw, "base64url").toString("utf8"),
-    ) as CursorPayload;
-  } catch {
-    return null;
-  }
-}
-
-function encodeCursor(createdAt: Date | string, id: string): string {
-  // `created_at` arrives as a string from the raw SQL projection, not a Date —
-  // coerce before formatting so cursor pagination (limit reached → hasMore)
-  // doesn't throw `createdAt.toISOString is not a function`.
-  return Buffer.from(
-    JSON.stringify({ createdAt: new Date(createdAt).toISOString(), id }),
-    "utf8",
-  ).toString("base64url");
-}
 
 /**
  * SQL CASE expression — keep this string in sync with spec §3.2 precedence:
@@ -93,7 +73,9 @@ export const buildsRouter = t.router({
           ? JSON.stringify(input.properties)
           : null;
 
-      const cursorPayload = input.cursor ? decodeCursor(input.cursor) : null;
+      const cursorPayload = input.cursor
+        ? decodeKeysetCursor(input.cursor)
+        : null;
 
       // CTE-based aggregate over test_runs grouped by build_id.
       const rows = await ctx.db.execute<{
@@ -119,6 +101,7 @@ export const buildsRouter = t.router({
         empty_count: number;
         test_name: string | null;
         aggregate_status: string;
+        cursor_at: string;
       }>(sql`
         WITH run_agg AS (
           SELECT
@@ -142,6 +125,7 @@ export const buildsRouter = t.router({
           b.id, b.ci_build_id, b.number, b.branch_name, b.status, b.name,
           b.properties, b.project_id, b.user_id, b.is_running, b.environment,
           b.created_at, b.updated_at,
+          ${cursorTimestamp(sql`b.created_at`)} AS cursor_at,
           coalesce(r.run_count, 0)         AS run_count,
           coalesce(r.running_count, 0)     AS running_count,
           coalesce(r.unresolved_count, 0)  AS unresolved_count,
@@ -191,9 +175,11 @@ export const buildsRouter = t.router({
         emptyCount: Number(r.empty_count),
         aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       }));
-      const last = items[items.length - 1];
+      const last = sliced[sliced.length - 1];
       const nextCursor =
-        hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
+        hasMore && last
+          ? encodeKeysetCursor({ createdAt: last.cursor_at, id: last.id })
+          : null;
       return { items, nextCursor };
     }),
 
