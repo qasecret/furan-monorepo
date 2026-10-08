@@ -33,6 +33,10 @@ const skip =
   !process.env.S3_ENDPOINT;
 const desc = skip ? describe.skip : describe;
 
+// Mirrors the `projects.image_comparison_config` column default.
+const DEFAULT_CFG =
+  '{"threshold":0.1,"ignoreAntialiasing":true,"allowDiffDimensions":false}';
+
 const mockLogger = {
   info: vi.fn(),
   warn: vi.fn(),
@@ -56,10 +60,14 @@ const mockLogger = {
  * every engine must produce a non-zero `diffPercent` and a non-empty
  * diff overlay. Identical-input parity is unit-tested separately.
  *
- * Setup is shared across the three engines (one user, one build, one
- * variation, one baseline run + screenshot + baselines pointer row).
- * Each engine gets its own project + candidate run + candidate
- * screenshot. The candidate screenshot's `image_key` is the same
+ * Setup is shared across the three engines (one user, one project, one
+ * build, one variation, one baseline run + screenshot + baselines pointer
+ * row). Each engine re-points the project's `imageComparison` at itself and
+ * gets its own candidate run + candidate screenshot — all in the SAME
+ * project as the variation + baseline, because `resolveBaseline`'s
+ * default-branch fallback is project-scoped (T1): a run filed under another
+ * project correctly resolves no baseline and lands as `new`.
+ * The candidate screenshot's `image_key` is the same
  * content-addressed hash across all three engines (same fixture), so
  * each iteration deletes the prior iteration's screenshot row before
  * inserting its own — global UNIQUE on `screenshots.image_key`.
@@ -72,6 +80,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
 
   let buildId: string;
   let variationId: string;
+  let projectId: string;
   const candidateProjectIds: string[] = [];
 
   // Same content-addressed keys for every iteration — derived from fixture bytes.
@@ -98,9 +107,8 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       })
       .returning();
 
-    // Use a temporary placeholder project just to anchor build + variation +
-    // baseline-run rows. The baseline-run is shared across all engine
-    // scenarios; per-engine candidate runs live under their own projects.
+    // One project anchors build + variation + baseline-run rows AND every
+    // per-engine candidate run (baseline resolution is project-scoped).
     const [seedProject] = await db
       .insert(projects)
       .values({
@@ -110,6 +118,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       })
       .returning();
     candidateProjectIds.push(seedProject.id);
+    projectId = seedProject.id;
 
     const [b] = await db
       .insert(builds)
@@ -201,25 +210,18 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
   it.each(engines)(
     "diffs candidate against baseline using engine=%s",
     async (engine) => {
-      const uniq = `${Date.now()}-${engine}`;
-
-      // Per-engine project carrying the imageComparison setting under test.
-      const [p] = await db
-        .insert(projects)
-        .values({
-          name: `dw-engines-${uniq}`,
-          mainBranchName: "main",
-          diffThreshold: 0.001,
-          imageComparison: engine,
-        })
-        .returning();
-      candidateProjectIds.push(p.id);
+      // Point the shared project at the engine under test (and restore the
+      // default engine config in case an earlier scenario changed it).
+      await db
+        .update(projects)
+        .set({ imageComparison: engine, imageComparisonConfig: DEFAULT_CFG })
+        .where(eq(projects.id, projectId));
 
       const [candidateRun] = await db
         .insert(testRuns)
         .values({
           name: `candidate-${engine}`,
-          projectId: p.id,
+          projectId,
           testVariationId: variationId,
           buildId,
           branchName: "feature/x",
@@ -235,7 +237,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
 
       await db.insert(screenshots).values({
         runId: candidateRun.id,
-        projectId: p.id,
+        projectId,
         testVariationId: variationId,
         name: "checkpoint-1",
         imageKey: candidateImageKey,
@@ -244,15 +246,11 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         browser: "chromium",
       });
 
-      // The handler also needs the baseline-screenshot row to exist for
-      // the resolveBaseline lookup. The shared baseline-screenshot is on
-      // the seed project's baseline run — but baselines.test_run_id points
-      // there, and resolveBaseline uses the variation + branch lookup, not
-      // the project id of the baseline. Confirm by running the handler.
-
+      // No baseline exists on `feature/x`, so resolveBaseline falls back to
+      // the project's default branch (`main`) and finds the shared baseline.
       const job: DiffJob = {
         runId: candidateRun.id,
-        projectId: p.id,
+        projectId,
       };
 
       await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -273,26 +271,21 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
   );
 
   it("falls back to engine defaults when imageComparisonConfig is malformed", async () => {
-    const uniq = `${Date.now()}-malformed`;
-    const [p] = await db
-      .insert(projects)
-      .values({
-        name: `dw-engines-${uniq}`,
-        mainBranchName: "main",
-        diffThreshold: 0.001,
+    await db
+      .update(projects)
+      .set({
         imageComparison: "pixelmatch",
         // Not valid JSON — parseEngineConfig should warn-log + fall back
         // to DEFAULT_ENGINE_CONFIG.
         imageComparisonConfig: "{not valid json",
       })
-      .returning();
-    candidateProjectIds.push(p.id);
+      .where(eq(projects.id, projectId));
 
     const [candidateRun] = await db
       .insert(testRuns)
       .values({
         name: "candidate-malformed",
-        projectId: p.id,
+        projectId,
         testVariationId: variationId,
         buildId,
         branchName: "feature/malformed",
@@ -306,7 +299,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
 
     await db.insert(screenshots).values({
       runId: candidateRun.id,
-      projectId: p.id,
+      projectId,
       testVariationId: variationId,
       name: "checkpoint-1",
       imageKey: candidateImageKey,
@@ -317,7 +310,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
 
     const job: DiffJob = {
       runId: candidateRun.id,
-      projectId: p.id,
+      projectId,
     };
 
     await handleDiffJob(job, mockLogger, { db, storage, redis });
@@ -350,6 +343,7 @@ descLayout(
 
     let buildId: string;
     let variationId: string;
+    let projectId: string;
     let baselineImageKey: string;
     let candidateImageKey: string;
     let candidateDomKey: string;
@@ -382,6 +376,9 @@ descLayout(
         })
         .returning();
       cleanupProjectIds.push(seedProject.id);
+      // The candidate run lives here too — baseline resolution is
+      // project-scoped (T1).
+      projectId = seedProject.id;
 
       const [b] = await db
         .insert(builds)
@@ -463,21 +460,11 @@ descLayout(
     it("Layout checkpoint runs image diff (ranTiers=['l1']) and produces no source:l2 regions", async () => {
       const uniq = `${Date.now()}-layout`;
 
-      const [p] = await db
-        .insert(projects)
-        .values({
-          name: `dw-layout-${uniq}`,
-          mainBranchName: "main",
-          diffThreshold: 0.001,
-        })
-        .returning();
-      cleanupProjectIds.push(p.id);
-
       const [candidateRun] = await db
         .insert(testRuns)
         .values({
           name: `candidate-layout-${uniq}`,
-          projectId: p.id,
+          projectId,
           testVariationId: variationId,
           buildId,
           branchName: "feature/layout",
@@ -493,7 +480,7 @@ descLayout(
       // must route this through runDiff (image compare), not runL2 (DOM-only).
       await db.insert(screenshots).values({
         runId: candidateRun.id,
-        projectId: p.id,
+        projectId,
         testVariationId: variationId,
         name: "checkpoint-layout",
         imageKey: candidateImageKey,
@@ -511,7 +498,7 @@ descLayout(
 
       const job: DiffJob = {
         runId: candidateRun.id,
-        projectId: p.id,
+        projectId,
       };
       await handleDiffJob(job, mockLogger, { db, storage, redis });
 
