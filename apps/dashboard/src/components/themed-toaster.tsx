@@ -18,17 +18,15 @@ const TOASTER_STYLE = {
   "--border-radius": "10px",
 } as React.CSSProperties;
 
-// Sonner hardcodes the toast shadow in its sheet; an inline style wins.
-const TOAST_OPTIONS = {
-  style: { boxShadow: "var(--elevation-overlay)" },
-} as const;
-
 /**
  * Sonner toaster that follows the app theme. `resolvedTheme` is undefined
- * before mount, so it falls back to dark (the default theme) to avoid a
- * light flash. Normal toasts take the overlay tokens so they match menus and
- * dialogs in both themes; `richColors` success / error / warning / info toasts
- * deliberately keep sonner's status colours.
+ * before mount, so it falls back to dark (avoiding a light flash) until the
+ * theme resolves; the default theme is `system`, i.e. the OS scheme. Normal
+ * toasts take the overlay tokens
+ * so they match menus and dialogs in both themes; `richColors` success /
+ * error / warning / info toasts deliberately keep sonner's status colours.
+ * The toast elevation and its keyboard focus ring are unlayered rules in
+ * app/globals.css: an inline box-shadow here would hide the focus ring.
  */
 export function ThemedToaster(): React.JSX.Element {
   const { resolvedTheme } = useTheme();
@@ -38,7 +36,6 @@ export function ThemedToaster(): React.JSX.Element {
       position="bottom-right"
       theme={resolvedTheme === "light" ? "light" : "dark"}
       style={TOASTER_STYLE}
-      toastOptions={TOAST_OPTIONS}
     />
   );
 }

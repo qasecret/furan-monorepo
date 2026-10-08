@@ -1,6 +1,10 @@
 // Renders the REAL sonner <Toaster> (only next-themes is mocked): the point of
 // this component is how sonner's own CSS variables / inline styles land in the
 // DOM, which a mocked Toaster cannot show.
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -11,6 +15,46 @@ vi.mock("next-themes", () => ({
 }));
 
 import { ThemedToaster } from "../src/components/themed-toaster";
+
+const globalsCss = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../src/app/globals.css",
+  ),
+  "utf8",
+);
+
+/**
+ * `selector -> body` for every rule at the TOP level of a stylesheet, i.e.
+ * outside any `@layer` / `@media` block. Sonner's sheet is unlayered, so only
+ * an unlayered rule can override it; a rule nested in `@layer` would lose.
+ */
+function topLevelRules(source: string): Map<string, string> {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = new Map<string, string>();
+  let depth = 0;
+  let start = 0;
+  let selector = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") {
+      if (depth === 0) {
+        selector = text.slice(start, i).trim();
+        start = i + 1;
+      }
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        rules.set(selector, text.slice(start, i).trim().replace(/\s+/g, " "));
+        start = i + 1;
+      }
+    } else if (c === ";" && depth === 0) {
+      start = i + 1; // a top-level statement such as @import
+    }
+  }
+  return rules;
+}
 
 beforeEach(() => {
   resolvedTheme = undefined;
@@ -71,10 +115,24 @@ describe("ThemedToaster", () => {
     expect(toaster.style.getPropertyValue("--border-radius")).toBe("10px");
   });
 
-  test("gives each toast the overlay elevation as an inline box-shadow", async () => {
+  // An inline box-shadow would beat sonner's own `:focus-visible` ring and
+  // leave a keyboard-focused toast with no focus indicator; the elevation and
+  // the ring live in globals.css instead (next test).
+  test("sets no inline box-shadow on the toast", async () => {
     resolvedTheme = "dark";
     const { toastEl } = await showToast("shadow toast");
-    expect(toastEl.style.boxShadow).toBe("var(--elevation-overlay)");
+    expect(toastEl.style.boxShadow).toBe("");
+  });
+
+  // jsdom doesn't cascade stylesheets, so pin the rule text instead.
+  test("globals.css gives toasts the overlay elevation and a focus ring, unlayered", () => {
+    const rules = topLevelRules(globalsCss);
+    expect(rules.get('[data-sonner-toast][data-styled="true"]')).toBe(
+      "box-shadow: var(--elevation-overlay);",
+    );
+    expect(
+      rules.get('[data-sonner-toast][data-styled="true"]:focus-visible'),
+    ).toBe("box-shadow: var(--elevation-overlay), 0 0 0 2px var(--ring);");
   });
 
   test("keeps richColors and the bottom-right position", async () => {

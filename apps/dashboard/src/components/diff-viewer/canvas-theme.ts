@@ -4,7 +4,7 @@
  * pushed into each live renderer when the theme changes.
  */
 
-/** Used when `--sunken` is unavailable (SSR, tests, a non-hex token value). */
+/** Used when `--sunken` is unset or not a 6-digit hex (e.g. under jsdom). */
 export const FALLBACK_CANVAS_BG = 0xf3f4f6;
 
 const HEX6 = /^#([0-9a-f]{6})$/i;
@@ -15,7 +15,11 @@ export function cssHexToPixi(value: string): number | null {
   return match ? parseInt(match[1]!, 16) : null;
 }
 
-/** Resolve the current `--sunken` token to a pixi colour number. */
+/**
+ * Resolve the current `--sunken` token to a pixi colour number. Browser-only:
+ * it reads `document` (and computed style), so call it from an effect, never
+ * during server rendering.
+ */
 export function readCanvasBackground(root?: HTMLElement): number {
   const el = root ?? document.documentElement;
   const raw = getComputedStyle(el).getPropertyValue("--sunken");

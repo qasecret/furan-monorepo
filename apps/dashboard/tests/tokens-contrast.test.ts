@@ -13,6 +13,10 @@ import { describe, expect, test } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const css = readFileSync(path.join(HERE, "../src/app/tokens.css"), "utf8");
+const globalsCss = readFileSync(
+  path.join(HERE, "../src/app/globals.css"),
+  "utf8",
+);
 
 const LIGHT = {
   canvas: "#ffffff",
@@ -224,6 +228,16 @@ describe("design tokens", () => {
         `fg-muted track on ${s}`,
       ).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  // globals.css `::selection`: brand-text on a 30% brand wash over the canvas.
+  test.each(THEMES)("%s: selected text >= 4.5:1", (theme) => {
+    expect(globalsCss).toMatch(
+      /::selection\s*\{\s*background:\s*rgb\(168 255 83 \/ 0\.3\);\s*color:\s*var\(--brand-text\);\s*\}/,
+    );
+    const t = parsed[theme];
+    const wash = mix(t.brand!, t.canvas!, 0.3);
+    expect(contrast(t["brand-text"]!, wash)).toBeGreaterThanOrEqual(4.5);
   });
 
   test("@theme inline maps every token to a --color-* utility", () => {

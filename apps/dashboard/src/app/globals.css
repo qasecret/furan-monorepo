@@ -38,9 +38,24 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Lime wash, readable text: brand-text is the AA lime shade on light surfaces
+ * and the brand itself in dark. */
 ::selection {
   background: rgb(168 255 83 / 0.3);
-  color: var(--color-brand);
+  color: var(--brand-text);
+}
+
+/* Sonner toasts (components/themed-toaster.tsx). Sonner's sheet is unlayered
+ * and wraps its selectors in :where(), so these rules must stay UNLAYERED (no
+ * @layer) to apply, and are set here rather than inline: an inline box-shadow
+ * would also override the :focus-visible ring and hide keyboard focus. */
+[data-sonner-toast][data-styled="true"] {
+  box-shadow: var(--elevation-overlay);
+}
+[data-sonner-toast][data-styled="true"]:focus-visible {
+  box-shadow:
+    var(--elevation-overlay),
+    0 0 0 2px var(--ring);
 }
 
 /* Honor system motion preference. Resets animation + transition durations
