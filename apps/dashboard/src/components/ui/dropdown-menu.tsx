@@ -18,7 +18,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 min-w-[8rem] overflow-hidden rounded-md border border-zinc-200 bg-white p-1 text-zinc-800 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 data-[state=open]:[animation:var(--animate-popover-in)] data-[state=closed]:[animation:var(--animate-popover-out)] [transform-origin:var(--radix-dropdown-menu-content-transform-origin)]",
+        "z-50 min-w-[8rem] overflow-hidden rounded-overlay bg-overlay p-1 text-fg shadow-overlay data-[state=open]:[animation:var(--animate-popover-in)] data-[state=closed]:[animation:var(--animate-popover-out)] [transform-origin:var(--radix-dropdown-menu-content-transform-origin)]",
         className,
       )}
       {...props}
@@ -34,7 +34,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-zinc-700 outline-none transition-colors duration-150 data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-hover data-[highlighted]:text-fg",
       className,
     )}
     {...props}
@@ -58,13 +58,13 @@ const DropdownMenuCheckboxItem = React.forwardRef<
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-zinc-700 outline-none transition-colors duration-150 data-[highlighted]:bg-zinc-100 data-[highlighted]:text-zinc-950 dark:text-zinc-300 dark:data-[highlighted]:bg-zinc-900 dark:data-[highlighted]:text-white",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-hover data-[highlighted]:text-fg",
       className,
     )}
     checked={checked}
     {...props}
   >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-brand">
+    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-brand-text">
       <DropdownMenuPrimitive.ItemIndicator>
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -123,7 +123,7 @@ const DropdownMenuSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-zinc-200 dark:bg-zinc-800", className)}
+    className={cn("-mx-1 my-1 h-px bg-edge", className)}
     {...props}
   />
 ));
@@ -135,10 +135,7 @@ const DropdownMenuLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Label
     ref={ref}
-    className={cn(
-      "px-2 py-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400",
-      className,
-    )}
+    className={cn("px-2 py-1.5 text-xs font-medium text-fg-muted", className)}
     {...props}
   />
 ));
