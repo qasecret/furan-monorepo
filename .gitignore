@@ -12,6 +12,8 @@ build/
 # Test / coverage
 coverage/
 .nyc_output/
+# …but not the e2e suite's coverage *source* (capability manifest + reporter).
+!e2e/src/coverage/
 
 # Environment — never commit
 .env
