@@ -9,6 +9,7 @@ import {
   projects,
   runReviewerDecisions,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
@@ -982,6 +983,92 @@ d("trpc inbox.list", () => {
       ...page3.items.map((i) => i.runId),
     ];
     expect(new Set(allReturnedIds).size).toBe(7);
+  });
+
+  test("paginates runs created within the same millisecond without skipping any", async () => {
+    await wipe();
+
+    const [user] = await h.db
+      .insert(users)
+      .values({
+        email: "inbox-same-ms@t.example",
+        hashedPassword: await hashPassword("x"),
+        firstName: "Sa",
+        lastName: "Me",
+        role: "editor",
+        isActive: true,
+      })
+      .returning();
+    if (!user) throw new Error("user not seeded");
+    const jwt = h.app.jwt.sign({ sub: user.id, role: "editor" });
+
+    const [project] = await h.db
+      .insert(projects)
+      .values({ name: "inbox-project-same-ms" })
+      .returning();
+    if (!project) throw new Error("project not seeded");
+    await h.db
+      .insert(projectMembers)
+      .values({ userId: user.id, projectId: project.id });
+
+    const [build] = await h.db
+      .insert(builds)
+      .values({ projectId: project.id, branchName: "main" })
+      .returning();
+    if (!build) throw new Error("build not seeded");
+
+    // created_at is microsecond-precision; a JS Date is not. Six runs share
+    // the millisecond .123 at different µs (two share one exact instant, one
+    // sits on the ms boundary), bracketed by a run in the next and previous
+    // ms. Ids are chosen so id order disagrees with time order.
+    const id = (n: number) =>
+      `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const seeds: { id: string; at: string }[] = [
+      { id: id(7), at: "2026-01-01T00:00:00.124100Z" },
+      { id: id(1), at: "2026-01-01T00:00:00.123900Z" },
+      { id: id(5), at: "2026-01-01T00:00:00.123700Z" },
+      { id: id(4), at: "2026-01-01T00:00:00.123500Z" },
+      { id: id(3), at: "2026-01-01T00:00:00.123500Z" },
+      { id: id(6), at: "2026-01-01T00:00:00.123300Z" },
+      { id: id(2), at: "2026-01-01T00:00:00.123000Z" },
+      { id: id(8), at: "2026-01-01T00:00:00.122999Z" },
+    ];
+    for (const s of seeds) {
+      await h.db.insert(testRuns).values({
+        id: s.id,
+        projectId: project.id,
+        buildId: build.id,
+        name: `same-ms-${s.id.slice(-1)}`,
+        branchName: "main",
+        status: "unresolved",
+        createdAt: sql`${s.at}::timestamptz`,
+      });
+    }
+    // Newest first, id DESC on an exact tie.
+    const expected = seeds.map((s) => s.id);
+
+    const caller = makeClient(jwt);
+    for (const limit of [1, 2, 3]) {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const page: Awaited<ReturnType<typeof caller.inbox.list.query>> =
+          await caller.inbox.list.query({
+            status: "unresolved",
+            window: "all",
+            limit,
+            cursor,
+          });
+        expect(page.items.length).toBeGreaterThan(0);
+        expect(page.items.length).toBeLessThanOrEqual(limit);
+        seen.push(...page.items.map((i) => i.runId));
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor && pages <= seeds.length);
+      expect(seen, `limit=${limit}`).toEqual(expected);
+      expect(pages, `limit=${limit}`).toBe(Math.ceil(seeds.length / limit));
+    }
   });
 });
 

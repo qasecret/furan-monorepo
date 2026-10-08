@@ -23,6 +23,11 @@ import {
 import { z } from "zod";
 
 import { emitAudit } from "../../lib/emit-audit.js";
+import {
+  cursorTimestamp,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from "../../lib/keyset-cursor.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -269,17 +274,13 @@ export const inboxRouter = t.router({
       }
 
       // 5. Cursor: decode the opaque cursor string back to a (createdAt, id)
-      //    pair for keyset pagination.
+      //    pair for keyset pagination. createdAt is the full-µs text from
+      //    `cursorTimestamp`, so it compares exactly against created_at.
+      //    Malformed cursor — ignore and start from the top.
       let cursorFilter = sql`true`;
-      if (input.cursor) {
-        try {
-          const { createdAt, id } = JSON.parse(
-            Buffer.from(input.cursor, "base64url").toString("utf8"),
-          ) as { createdAt: string; id: string };
-          cursorFilter = sql`(${testRuns.createdAt}, ${testRuns.id}) < (${createdAt}::timestamptz, ${id}::uuid)`;
-        } catch {
-          // Malformed cursor — ignore and start from the top.
-        }
+      const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
+      if (cursor) {
+        cursorFilter = sql`(${testRuns.createdAt}, ${testRuns.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`;
       }
 
       // 6. Execute the query.
@@ -296,6 +297,7 @@ export const inboxRouter = t.router({
           status: testRuns.status,
           createdAt: testRuns.createdAt,
           thumbnailUrl: testRuns.thumbnailUrl,
+          cursorAt: cursorTimestamp(testRuns.createdAt),
         })
         .from(testRuns)
         .innerJoin(projects, eq(projects.id, testRuns.projectId))
@@ -321,6 +323,7 @@ export const inboxRouter = t.router({
         status: RunStatus;
         createdAt: Date;
         thumbnailUrl: string | null;
+        cursorAt: string;
       }[];
 
       // 7. Derive nextCursor from the last item if there are more results.
@@ -329,15 +332,10 @@ export const inboxRouter = t.router({
 
       const lastRow = hasMore ? pageRows[pageRows.length - 1] : null;
       const nextCursor = lastRow
-        ? Buffer.from(
-            JSON.stringify({
-              createdAt: lastRow.createdAt.toISOString(),
-              id: lastRow.runId,
-            }),
-          ).toString("base64url")
+        ? encodeKeysetCursor({ createdAt: lastRow.cursorAt, id: lastRow.runId })
         : null;
 
-      const items = pageRows.map((r) => ({
+      const items = pageRows.map(({ cursorAt: _cursorAt, ...r }) => ({
         ...r,
         createdAt: r.createdAt.toISOString(),
       }));

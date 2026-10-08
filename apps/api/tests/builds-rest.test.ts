@@ -4,6 +4,7 @@ import {
   projectMembers,
   projects,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
@@ -312,5 +313,60 @@ d("builds REST — find-or-create + properties", () => {
     expect(bodyText).not.toContain("insert into");
     expect(bodyText).not.toContain("builds_project_id_projects_id_fk");
     expect(bodyText).not.toContain(ghostProjectId);
+  });
+
+  test("GET paginates builds created within the same millisecond without skipping any", async () => {
+    // created_at is microsecond-precision; a JS Date is not. Six builds share
+    // the millisecond .123 at different µs (two share one exact instant, one
+    // sits on the ms boundary), bracketed by a build in the next and previous
+    // ms. Ids are chosen so id order disagrees with time order.
+    const id = (n: number) =>
+      `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const seeds: { id: string; at: string }[] = [
+      { id: id(7), at: "2026-01-01T00:00:00.124100Z" },
+      { id: id(1), at: "2026-01-01T00:00:00.123900Z" },
+      { id: id(5), at: "2026-01-01T00:00:00.123700Z" },
+      { id: id(4), at: "2026-01-01T00:00:00.123500Z" },
+      { id: id(3), at: "2026-01-01T00:00:00.123500Z" },
+      { id: id(6), at: "2026-01-01T00:00:00.123300Z" },
+      { id: id(2), at: "2026-01-01T00:00:00.123000Z" },
+      { id: id(8), at: "2026-01-01T00:00:00.122999Z" },
+    ];
+    for (const b of seeds) {
+      await h.db.insert(builds).values({
+        id: b.id,
+        projectId: s.projectId,
+        createdAt: sql`${b.at}::timestamptz`,
+      });
+    }
+    // Newest first, id DESC on an exact tie.
+    const expected = seeds.map((b) => b.id);
+
+    for (const limit of [1, 2, 3]) {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const qs = new URLSearchParams({ limit: String(limit) });
+        if (cursor) qs.set("cursor", cursor);
+        const res = await h.app.inject({
+          method: "GET",
+          url: `${url(s.projectId)}?${qs.toString()}`,
+          headers: { authorization: `Bearer ${s.editorJwt}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as {
+          items: { id: string }[];
+          nextCursor: string | null;
+        };
+        expect(body.items.length).toBeGreaterThan(0);
+        expect(body.items.length).toBeLessThanOrEqual(limit);
+        seen.push(...body.items.map((i) => i.id));
+        cursor = body.nextCursor;
+        pages++;
+      } while (cursor && pages <= seeds.length);
+      expect(seen, `limit=${limit}`).toEqual(expected);
+      expect(pages, `limit=${limit}`).toBe(Math.ceil(seeds.length / limit));
+    }
   });
 });
