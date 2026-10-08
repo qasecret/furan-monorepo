@@ -7,7 +7,10 @@
   "files": [
     "base.js",
     "node.js",
-    "no-raw-drizzle.js"
+    "no-raw-drizzle.js",
+    "no-raw-palette.js",
+    "tailwind-classes.js",
+    "tailwind-classes.d.ts"
   ],
   "scripts": {
     "test": "vitest run"
