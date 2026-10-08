@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { requireAdmin } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 /**
  * Admin-only router for the `/admin/installations` UI (D6(f)).
@@ -21,7 +21,7 @@ export const installationsRouter = t.router({
    * order is stable) alongside every project (sorted by name so the row's
    * project picker has a predictable ordering).
    */
-  list: t.procedure
+  list: publicProcedure
     .use(authed)
     .use(requireAdmin)
     .query(async ({ ctx }) => {
@@ -48,7 +48,7 @@ export const installationsRouter = t.router({
    * explicitly look up the row first so a typo'd UUID surfaces as
    * NOT_FOUND with a useful message instead of a silent no-op.
    */
-  update: t.procedure
+  update: publicProcedure
     .input(
       z.object({
         id: z.string().uuid(),

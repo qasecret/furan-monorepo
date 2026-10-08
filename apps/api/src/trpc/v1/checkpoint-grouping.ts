@@ -9,7 +9,9 @@ import {
   sql,
   testRuns,
   testVariations,
+  variationIdentityKey,
   type DB,
+  type VariationIdentity,
 } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
@@ -159,13 +161,114 @@ export async function deriveCheckpointStatuses(
       set.add(b.branchName);
     }
   }
+  // Cross-branch (default_branch tier): ADR-054 makes each variation
+  // branch-specific, so a checkpoint's default-branch baseline lives under a
+  // DISTINCT same-identity SIBLING variation — invisible to the
+  // candidate-scoped `baselines` lookup above. Resolve, per candidate, whether
+  // a sibling on the project's default branch has a baseline. This is
+  // per-variation (name+viewport+browser+os+device), so a run spanning several
+  // viewports keeps precise per-checkpoint granularity — a genuinely-new
+  // viewport isn't masked by a baselined sibling one. (parent_pr is still
+  // omitted — the badge has no PR base context.)
+  const variationIdentity = new Map<
+    string,
+    {
+      projectId: string;
+      name: string;
+      viewport: string | null;
+      browser: string | null;
+      os: string | null;
+      device: string | null;
+    }
+  >();
+  if (variationIds.length > 0) {
+    const rows = await db
+      .select({
+        id: testVariations.id,
+        projectId: testVariations.projectId,
+        name: testVariations.name,
+        viewport: testVariations.viewport,
+        browser: testVariations.browser,
+        os: testVariations.os,
+        device: testVariations.device,
+      })
+      .from(testVariations)
+      .where(inArray(testVariations.id, variationIds));
+    for (const v of rows) variationIdentity.set(v.id, v);
+  }
+  // Project-scoped identity key: the shared `variationIdentityKey` (branch-
+  // agnostic, cross-branch canonical) plus `projectId` so siblings never match
+  // across projects.
+  const scopedKey = (v: { projectId: string } & VariationIdentity): string =>
+    `${v.projectId}::${variationIdentityKey(v)}`;
+
+  // Identity keys whose default-branch sibling variation has a baseline.
+  const baselinedDefaultSiblings = new Set<string>();
+  const defaultBranches = [...new Set(projectDefault.values())];
+  const candidateNames = [
+    ...new Set([...variationIdentity.values()].map((v) => v.name)),
+  ];
+  if (defaultBranches.length > 0 && candidateNames.length > 0) {
+    const siblingRows = await db
+      .select({
+        id: testVariations.id,
+        projectId: testVariations.projectId,
+        name: testVariations.name,
+        viewport: testVariations.viewport,
+        browser: testVariations.browser,
+        os: testVariations.os,
+        device: testVariations.device,
+        branchName: testVariations.branchName,
+      })
+      .from(testVariations)
+      .where(
+        and(
+          inArray(testVariations.projectId, projectIds),
+          inArray(testVariations.name, candidateNames),
+          inArray(testVariations.branchName, defaultBranches),
+        ),
+      );
+    if (siblingRows.length > 0) {
+      const siblingBaselined = new Set(
+        (
+          await db
+            .select({ testVariationId: baselines.testVariationId })
+            .from(baselines)
+            .where(
+              inArray(
+                baselines.testVariationId,
+                siblingRows.map((s) => s.id),
+              ),
+            )
+        ).map((r) => r.testVariationId),
+      );
+      for (const s of siblingRows) {
+        // Only siblings that are actually ON their project's default branch and
+        // carry a baseline count as default-branch coverage.
+        if (
+          s.branchName === projectDefault.get(s.projectId) &&
+          siblingBaselined.has(s.id)
+        ) {
+          baselinedDefaultSiblings.add(scopedKey(s));
+        }
+      }
+    }
+  }
+
   const hasBaseline = (c: CheckpointStatusInput): boolean => {
-    const branches = baselineBranches.get(c.testVariationId);
-    if (!branches || branches.size === 0) return false;
     const meta = runMeta.get(c.runId);
-    if (meta?.branchName && branches.has(meta.branchName)) return true;
+    const branches = baselineBranches.get(c.testVariationId);
+    // this_branch: the candidate's own variation has a baseline on its branch.
+    if (branches && meta?.branchName && branches.has(meta.branchName))
+      return true;
+    // default_branch: a same-identity sibling variation on the default branch
+    // has a baseline (the cross-branch case the candidate-scoped lookup misses).
+    const ident = variationIdentity.get(c.testVariationId);
+    if (ident && baselinedDefaultSiblings.has(scopedKey(ident))) return true;
+    // Legacy: a candidate variation tagged directly with a default-branch
+    // baseline row (pre-ADR-054 shared-variation data).
     const def = meta ? projectDefault.get(meta.projectId) : undefined;
-    return def !== undefined && branches.has(def);
+    return !!branches && def !== undefined && branches.has(def);
   };
 
   const unresolvedRows = await db
@@ -282,13 +385,26 @@ export async function approveCheckpointInTx(
     })
     .where(eq(testVariations.id, s.testVariationId));
 
-  await tx.insert(baselines).values({
-    baselineName: s.imageKey ?? run.name ?? "auto",
-    testVariationId: s.testVariationId,
-    testRunId: run.id,
-    userId,
-    ...(run.branchName ? { branchName: run.branchName } : {}),
-  });
+  // Upsert on (variation, run) so re-approving a checkpoint doesn't violate the
+  // baselines_variation_run_unique constraint / append a duplicate row.
+  await tx
+    .insert(baselines)
+    .values({
+      baselineName: s.imageKey ?? run.name ?? "auto",
+      testVariationId: s.testVariationId,
+      testRunId: run.id,
+      userId,
+      ...(run.branchName ? { branchName: run.branchName } : {}),
+    })
+    .onConflictDoUpdate({
+      target: [baselines.testVariationId, baselines.testRunId],
+      set: {
+        baselineName: s.imageKey ?? run.name ?? "auto",
+        userId,
+        ...(run.branchName ? { branchName: run.branchName } : {}),
+        updatedAt: new Date(),
+      },
+    });
 
   await tx
     .update(testRuns)

@@ -13,7 +13,10 @@ describe("@furan/storage", () => {
     process.env.S3_ENDPOINT ??= "http://localhost:9000";
     process.env.S3_BUCKET ??= "furan-dev";
     process.env.S3_ACCESS_KEY ??= "furan";
-    process.env.S3_SECRET_KEY ??= "devpw_must_be_long";
+    // NB: the real MinIO secret must be exported for this integration test to
+    // pass; this fallback only keeps createStorage() from rejecting an unset
+    // secret (it is not the .env.example placeholder, which is now fail-closed).
+    process.env.S3_SECRET_KEY ??= "dev-object-storage-secret";
     storage = createStorage();
   });
 

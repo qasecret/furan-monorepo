@@ -6,6 +6,7 @@ import {
   projectMembers,
   screenshots,
   testRuns,
+  withPrivilegedScope,
   type DB,
 } from "@furan/db";
 import { createStorage } from "@furan/storage";
@@ -13,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { sendError } from "../lib/errors.js";
+import type { MemberProjectsCache } from "../lib/member-projects-cache.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
 import type { AuthedUser } from "../plugins/auth.js";
 
@@ -42,7 +44,7 @@ const CACHE_HEADER = "public, max-age=300, immutable";
 export async function registerStorageProxyRoute(
   app: FastifyInstance,
 ): Promise<void> {
-  const storage = createStorage();
+  const storage = createStorage(app.telemetry.metrics);
 
   app.get(
     "/api/v1/storage/:key",
@@ -56,7 +58,18 @@ export async function registerStorageProxyRoute(
 
       // Project-scope: non-admins may only read keys owned by a project they
       // belong to. 404 (not 403) to avoid confirming existence cross-tenant.
-      if (!req.auth || !(await callerCanAccessKey(app.db, req.auth, key))) {
+      // This IS the authorization boundary, so — like the requireProjectMember
+      // gate — it runs PRIVILEGED (RLS bypass): callerCanAccessKey decides
+      // access from the caller's membership set + key ownership, and must not be
+      // subject to the RLS it enforces (ADR-058). The S3 fetch below stays
+      // outside the transaction so a slow object read never holds a DB conn.
+      const auth = req.auth;
+      const allowed =
+        auth != null &&
+        (await withPrivilegedScope(app.db, (db) =>
+          callerCanAccessKey(db, auth, key, app.memberProjectsCache),
+        ));
+      if (!allowed) {
         return sendError(reply, 404, "not_found");
       }
 
@@ -78,52 +91,101 @@ export async function registerStorageProxyRoute(
 }
 
 /**
+ * Every place a storage key can be attributed to a project. This is the SINGLE
+ * source of truth for key→project ownership: each probe returns true iff `key`
+ * is referenced by a row in one of `projectIds`. The check is fail-closed —
+ * a key attributed to no project is denied (404) — so when a new feature adds
+ * a key-bearing column or table, it MUST be registered here, otherwise the
+ * proxy will 404 that artifact for legitimate members. Probes run in order and
+ * short-circuit on the first hit.
+ */
+type KeyOwnershipProbe = (
+  db: DB,
+  projectIds: string[],
+  key: string,
+) => Promise<boolean>;
+
+const KEY_OWNERSHIP_PROBES: KeyOwnershipProbe[] = [
+  // screenshots.{image,dom,element_map}_key
+  async (db, projectIds, key) => {
+    const rows = await db
+      .select({ id: screenshots.id })
+      .from(screenshots)
+      .where(
+        and(
+          inArray(screenshots.projectId, projectIds),
+          or(
+            eq(screenshots.imageKey, key),
+            eq(screenshots.domKey, key),
+            eq(screenshots.elementMapKey, key),
+          ),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  },
+  // test_runs.{image,diff}_name
+  async (db, projectIds, key) => {
+    const rows = await db
+      .select({ id: testRuns.id })
+      .from(testRuns)
+      .where(
+        and(
+          inArray(testRuns.projectId, projectIds),
+          or(eq(testRuns.imageName, key), eq(testRuns.diffName, key)),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  },
+];
+
+/**
  * True if `auth` may read the storage `key`. Admins/owners bypass. Otherwise
- * the key must be referenced by a `screenshots` or `test_runs` row in one of
- * the caller's member projects. Two small indexed lookups; short-circuits on
- * the first hit.
+ * the key must be referenced by a row (see {@link KEY_OWNERSHIP_PROBES}) in one
+ * of the caller's member projects. The member-project set is cached per user
+ * (short TTL) since the diff viewer fetches many keys per page and the set is
+ * stable between membership changes.
  */
 async function callerCanAccessKey(
   db: DB,
   auth: AuthedUser,
   key: string,
+  cache: MemberProjectsCache | null,
 ): Promise<boolean> {
   if (isAtLeastAdmin(auth.role)) return true;
+
+  const projectIds = await memberProjectIds(db, auth.id, cache);
+  if (projectIds.length === 0) return false;
+
+  for (const probe of KEY_OWNERSHIP_PROBES) {
+    if (await probe(db, projectIds, key)) return true;
+  }
+  return false;
+}
+
+/**
+ * The project ids `userId` belongs to, served from cache when present (the
+ * storage-proxy hot path). Cache hits skip the `project_members` lookup; a
+ * miss reads the DB and populates the cache. Both hits and empty sets are
+ * cached so a repeated fetch by a non-member is also cheap.
+ */
+async function memberProjectIds(
+  db: DB,
+  userId: string,
+  cache: MemberProjectsCache | null,
+): Promise<string[]> {
+  const cached = cache ? await cache.get(userId) : null;
+  if (cached) return cached;
 
   const memberRows = await db
     .select({ projectId: projectMembers.projectId })
     .from(projectMembers)
-    .where(eq(projectMembers.userId, auth.id));
+    .where(eq(projectMembers.userId, userId));
   const projectIds = memberRows.map((r) => r.projectId);
-  if (projectIds.length === 0) return false;
 
-  const ss = await db
-    .select({ id: screenshots.id })
-    .from(screenshots)
-    .where(
-      and(
-        inArray(screenshots.projectId, projectIds),
-        or(
-          eq(screenshots.imageKey, key),
-          eq(screenshots.domKey, key),
-          eq(screenshots.elementMapKey, key),
-        ),
-      ),
-    )
-    .limit(1);
-  if (ss.length > 0) return true;
-
-  const tr = await db
-    .select({ id: testRuns.id })
-    .from(testRuns)
-    .where(
-      and(
-        inArray(testRuns.projectId, projectIds),
-        or(eq(testRuns.imageName, key), eq(testRuns.diffName, key)),
-      ),
-    )
-    .limit(1);
-  return tr.length > 0;
+  if (cache) await cache.set(userId, projectIds);
+  return projectIds;
 }
 
 /**

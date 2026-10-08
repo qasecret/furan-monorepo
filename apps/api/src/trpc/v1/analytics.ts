@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const windowInput = z.object({
   days: z.number().int().min(1).max(90).default(7),
@@ -20,7 +20,7 @@ function requireAdmin(role: string | undefined) {
 }
 
 export const analyticsRouter = t.router({
-  summary: t.procedure
+  summary: publicProcedure
     .input(windowInput)
     .use(authed)
     .query(async ({ ctx, input }) => {
@@ -129,7 +129,7 @@ export const analyticsRouter = t.router({
       };
     }),
 
-  actionsByDay: t.procedure
+  actionsByDay: publicProcedure
     .input(windowInput)
     .use(authed)
     .query(async ({ ctx, input }) => {
@@ -163,7 +163,7 @@ export const analyticsRouter = t.router({
       return { items };
     }),
 
-  topReviewers: t.procedure
+  topReviewers: publicProcedure
     .input(
       z.object({
         days: z.number().int().min(1).max(90).default(7),
@@ -206,7 +206,7 @@ export const analyticsRouter = t.router({
       return { items };
     }),
 
-  testResultsSummary: t.procedure
+  testResultsSummary: publicProcedure
     .input(
       z.object({
         days: z.number().int().min(1).max(90).default(7),
@@ -269,7 +269,7 @@ export const analyticsRouter = t.router({
       };
     }),
 
-  runsByDay: t.procedure
+  runsByDay: publicProcedure
     .input(
       z.object({
         days: z.number().int().min(1).max(90).default(7),
@@ -311,7 +311,7 @@ export const analyticsRouter = t.router({
       return { items };
     }),
 
-  topFragileTests: t.procedure
+  topFragileTests: publicProcedure
     .input(
       z.object({
         days: z.number().int().min(1).max(90).default(7),

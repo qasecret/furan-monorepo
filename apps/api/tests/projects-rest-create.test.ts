@@ -73,18 +73,24 @@ d("POST /projects — error mapping (F7)", () => {
     expect(second.json()).toMatchObject({ code: "project_name_taken" });
   });
 
-  test("a non-unique insert failure is surfaced (500), not masked as 409", async () => {
-    // Force a DB error that is NOT a unique violation (23502 = not_null).
-    // The catch block must not report this as "project_name_taken".
-    const notNull = Object.assign(new Error("null value in column"), {
-      code: "23502",
-    });
-    vi.spyOn(h.db, "transaction").mockRejectedValueOnce(notNull);
+  // Skipped under TEST_RLS=1: this mocks `h.db.transaction`, but with RLS the
+  // app-under-test uses a separate `furan_app` connection, so the mock on the
+  // owner handle never fires. It validates error mapping, not RLS.
+  test.skipIf(process.env.TEST_RLS === "1")(
+    "a non-unique insert failure is surfaced (500), not masked as 409",
+    async () => {
+      // Force a DB error that is NOT a unique violation (23502 = not_null).
+      // The catch block must not report this as "project_name_taken".
+      const notNull = Object.assign(new Error("null value in column"), {
+        code: "23502",
+      });
+      vi.spyOn(h.db, "transaction").mockRejectedValueOnce(notNull);
 
-    const res = await create(s.adminJwt, "Whatever");
+      const res = await create(s.adminJwt, "Whatever");
 
-    expect(res.statusCode).not.toBe(409);
-    expect(res.statusCode).toBe(500);
-    expect(res.json()).not.toMatchObject({ code: "project_name_taken" });
-  });
+      expect(res.statusCode).not.toBe(409);
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).not.toMatchObject({ code: "project_name_taken" });
+    },
+  );
 });

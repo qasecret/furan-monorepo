@@ -1,4 +1,11 @@
-import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  index,
+  unique,
+} from "drizzle-orm/pg-core";
 
 import { environmentEnum } from "./enums.js";
 import { testRuns } from "./test_runs.js";
@@ -33,5 +40,11 @@ export const baselines = pgTable(
       t.testVariationId,
     ),
     runIdx: index("baselines_test_run_id_idx").on(t.testRunId),
+    // One baseline per (variation, run): makes recordBaseline's upsert
+    // idempotent so a diff-worker retry / re-approve can't append duplicates.
+    variationRunUnique: unique("baselines_variation_run_unique").on(
+      t.testVariationId,
+      t.testRunId,
+    ),
   }),
 );

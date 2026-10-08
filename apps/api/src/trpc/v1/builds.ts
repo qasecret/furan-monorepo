@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 type ProjectIdInput = z.infer<typeof projectIdInput>;
@@ -77,7 +77,7 @@ export const buildsRouter = t.router({
    * Cursor-paginated listing for the Builds tab. Joins child runs as a CTE
    * to compute the aggregate status + counts in one query.
    */
-  list: t.procedure
+  list: publicProcedure
     .input(listInput)
     .use(authed)
     .use(
@@ -202,7 +202,7 @@ export const buildsRouter = t.router({
    * that `list` returns. Uses a resolve-then-gate auth pattern (mirrors
    * `runs.getById`) because the input is a bare `buildId` with no `projectId`.
    */
-  getById: t.procedure
+  getById: publicProcedure
     .input(getByIdInput)
     .use(authed)
     .use(
@@ -328,7 +328,7 @@ export const buildsRouter = t.router({
       };
     }),
 
-  get: t.procedure
+  get: publicProcedure
     .input(buildIdInput)
     .use(authed)
     .use(
@@ -357,7 +357,7 @@ export const buildsRouter = t.router({
    * filter-chip autocomplete on the Builds tab. Capped in the app layer to
    * avoid pathological UIs on projects with many distinct property values.
    */
-  listProperties: t.procedure
+  listProperties: publicProcedure
     .input(projectIdInput)
     .use(authed)
     .use(

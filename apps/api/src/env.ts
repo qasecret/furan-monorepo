@@ -8,6 +8,14 @@ export const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
 
   DATABASE_URL: z.string().min(1),
+  /**
+   * ADR-058: optional connection string for the non-owner `furan_app` role the
+   * API connects as, so Postgres RLS applies to its queries. When unset the API
+   * uses DATABASE_URL (the owner role, which BYPASSES RLS) — safe, but the RLS
+   * backstop is then inactive for the API. Workers/CLIs/migrations always use
+   * DATABASE_URL. Opt in only after granting `furan_app` LOGIN + a password.
+   */
+  DATABASE_URL_APP: z.string().min(1).optional(),
   REDIS_URL: z.string().default("redis://localhost:6379"),
 
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be ≥32 chars (fail-closed)"),
@@ -54,6 +62,18 @@ export const envSchema = z.object({
   // self-host setup), so cross-origin POSTs with JSON bodies trigger a
   // preflight that 404s without an explicit CORS plugin.
   FURAN_DASHBOARD_ORIGIN: z.string().min(1).default("http://localhost:3001"),
+
+  /**
+   * DoS backstop: the maximum number of concurrent SSE streams a single API
+   * instance will hold open across BOTH event endpoints
+   * (`/api/v1/runs/:id/events` + `/api/v1/projects/:id/events`). Each open
+   * stream pins a socket + a dedicated Redis subscriber connection, so an
+   * unbounded fan-out lets an attacker exhaust file descriptors / Redis
+   * clients. When the live count is at the cap, new stream requests are
+   * rejected with 503 before the socket is hijacked. Generous default so it
+   * never trips a legitimate deployment; lower it behind a small proxy.
+   */
+  SSE_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(10000),
 });
 
 export type Env = z.infer<typeof envSchema>;

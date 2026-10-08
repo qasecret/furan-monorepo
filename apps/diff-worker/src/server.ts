@@ -1,13 +1,15 @@
 import { getEnv } from "@furan/config";
-import { createDb } from "@furan/db";
+import { createDb, projects } from "@furan/db";
 import {
   createRedisConnection,
   createRetentionQueue,
   createWorker,
+  isTerminalFailure,
 } from "@furan/queue";
 import { createStorage } from "@furan/storage";
 import {
   bootstrapTelemetry,
+  Counter,
   installProcessErrorHandlers,
   logStartupFatal,
 } from "@furan/telemetry";
@@ -27,6 +29,18 @@ import { sweepStaleRuns } from "./sweeper.js";
  *  room before the next workday begins anywhere. */
 const RETENTION_CRON = "0 3 * * *";
 
+/** Bound a readiness dependency check so a hung Redis/Postgres can't hang the
+ *  probe. Mirrors the `withTimeout` in the api's health route. */
+const PROBE_TIMEOUT_MS = 1000;
+function probe<T>(p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("probe_timeout")), PROBE_TIMEOUT_MS),
+    ),
+  ]);
+}
+
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
   const telemetry = bootstrapTelemetry({
@@ -39,7 +53,7 @@ async function main(): Promise<void> {
   installProcessErrorHandlers(telemetry.logger);
 
   const { db, close: closeDb } = createDb();
-  const storage = createStorage();
+  const storage = createStorage(telemetry.metrics);
   const redis = createRedisConnection();
   const retentionMetrics = createRetentionMetrics(telemetry.metrics);
   const diffMetrics = createDiffMetrics(telemetry.metrics);
@@ -55,6 +69,34 @@ async function main(): Promise<void> {
       redis,
       metrics: diffMetrics,
     });
+  });
+
+  // Dead-letter signal: a diff that exhausts its retries leaves a run stuck
+  // without a verdict. Surface terminal failures as a metric + error log for
+  // alerting; transient (will-retry) failures stay at warn.
+  const deadLettered = new Counter({
+    name: "furan_diff_jobs_dead_lettered_total",
+    help: "Diff jobs that exhausted all retries (permanently failed)",
+    registers: [telemetry.metrics],
+  });
+  worker.on("failed", (job, err) => {
+    if (isTerminalFailure(job)) {
+      deadLettered.inc();
+      telemetry.logger.error(
+        {
+          err,
+          jobId: job?.id,
+          projectId: job?.data?.projectId,
+          attemptsMade: job?.attemptsMade,
+        },
+        "diff_job_dead_lettered",
+      );
+    } else {
+      telemetry.logger.warn(
+        { err, jobId: job?.id, attemptsMade: job?.attemptsMade },
+        "diff_job_failed_will_retry",
+      );
+    }
   });
 
   const retentionWorker = createWorker(
@@ -105,7 +147,22 @@ async function main(): Promise<void> {
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
-    ready: async () => worker.isRunning() && retentionWorker.isRunning(),
+    // Deep readiness: both workers running AND the shared deps (Redis job
+    // source + Postgres) reachable under a short timeout. Any failure →
+    // not_ready. Never throws (the health handler awaits this).
+    ready: async () => {
+      if (!worker.isRunning() || !retentionWorker.isRunning()) return false;
+      try {
+        await Promise.all([
+          probe(redis.ping()),
+          probe(db.select().from(projects).limit(1)),
+        ]);
+        return true;
+      } catch (err) {
+        telemetry.logger.warn({ err }, "readyz_dependency_probe_failed");
+        return false;
+      }
+    },
   });
 
   const shutdown = async (signal: string): Promise<void> => {

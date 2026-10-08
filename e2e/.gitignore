@@ -1,0 +1,6 @@
+playwright-report/
+test-results/
+e2e-coverage.md
+e2e-coverage.json
+.seed.json
+.env.e2e

@@ -4,6 +4,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import {
+  releaseConnection,
+  tryAcquireConnection,
+} from "../lib/broadcast-metrics.js";
 import { sendError } from "../lib/errors.js";
 
 export const paramsSchema = z.object({ id: z.string().uuid() });
@@ -18,10 +22,10 @@ export async function registerRunEventsRoute(
         app.authenticate,
         requireProjectMember("read", {
           from: {
-            resolver: async (req) => {
+            resolver: async (req, db) => {
               const parsed = paramsSchema.safeParse(req.params);
               if (!parsed.success) return null;
-              const row = await app.db
+              const row = await db
                 .select({ projectId: testRuns.projectId })
                 .from(testRuns)
                 .where(eq(testRuns.id, parsed.data.id))
@@ -38,6 +42,19 @@ export async function registerRunEventsRoute(
         return sendError(reply, 404, "not_found");
       }
       const { id } = parsed.data;
+
+      // DoS backstop: refuse the stream (before hijacking, so a normal 503
+      // still sends) when this instance is already at the concurrent-SSE cap.
+      // Shared counter across both event endpoints (project + run).
+      if (
+        !tryAcquireConnection(
+          app.telemetry.metrics,
+          app.env.SSE_MAX_CONNECTIONS,
+        )
+      ) {
+        req.log.warn({ runId: id }, "run_sse_capacity_rejected");
+        return sendError(reply, 503, "sse_capacity_exceeded");
+      }
 
       // Take ownership of the raw socket — Fastify will not touch it.
       reply.hijack();
@@ -90,6 +107,7 @@ export async function registerRunEventsRoute(
         await subscriber.subscribe(channel);
       } catch (err) {
         req.log.error({ err, channel }, "sse_subscribe_failed");
+        releaseConnection(app.telemetry.metrics);
         reply.raw.end();
         await subscriber.quit().catch(() => undefined);
         return;
@@ -99,7 +117,10 @@ export async function registerRunEventsRoute(
         reply.raw.write(":\n\n");
       }, 15_000);
 
+      let cleanedUp = false;
       const cleanup = async (): Promise<void> => {
+        if (cleanedUp) return;
+        cleanedUp = true;
         clearInterval(keepalive);
         subscriber.off("message", onMessage);
         try {
@@ -108,11 +129,11 @@ export async function registerRunEventsRoute(
           /* ignore */
         }
         await subscriber.quit().catch(() => undefined);
+        releaseConnection(app.telemetry.metrics);
       };
 
-      req.raw.on("close", () => {
-        void cleanup();
-      });
+      req.raw.on("close", () => void cleanup());
+      req.raw.on("aborted", () => void cleanup());
     },
   );
 }

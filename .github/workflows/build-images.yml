@@ -2,9 +2,12 @@ name: build-images
 
 # Per-app container build matrix. On PRs we build-only (no push, no scan)
 # to catch broken Dockerfiles cheaply. On push to main + tag pushes we
-# push to GHCR **and Docker Hub** (dual-publish for installer convenience),
-# run a Trivy CVE scan, sign with cosign (keyless OIDC), and emit a SPDX
-# SBOM as a workflow artifact.
+# build, run a Trivy CVE scan, and ONLY THEN push to GHCR **and Docker
+# Hub** (dual-publish for installer convenience), sign with cosign
+# (keyless OIDC), and emit a SPDX SBOM as a workflow artifact. The scan
+# precedes the push so a CVE failure can never leak an image (previously
+# push came first, so a failed scan still published the vulnerable,
+# unsigned image and clobbered `:latest`).
 #
 # Image naming (both registries):
 #   <registry>/qasecret/furan-<app>:<sha>      always (on push)
@@ -25,6 +28,19 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+
+# A release commit is both merged to main AND tagged, so `push: branches`
+# and `push: tags` fire this workflow TWICE for the same commit — a wasteful
+# double build/scan/push of all five images. Group both runs by commit SHA
+# and let the TAG run win: it publishes :v<x.y.z> + :latest and (per the
+# digest-signing fix) is the authoritative release build. cancel-in-progress
+# is true ONLY for tag runs, so a tag push cancels the in-flight redundant
+# main-push build; a main push never cancels a running tag build. Non-tagged
+# main pushes and PRs have unique SHAs, so they get their own group and are
+# unaffected (a PR's :sha build for the main-images overlay still runs).
+concurrency:
+  group: build-images-${{ github.sha }}
+  cancel-in-progress: ${{ github.ref_type == 'tag' }}
 
 jobs:
   build:
@@ -66,19 +82,50 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
-        id: build
+      # SCAN BEFORE PUSH. Build amd64 and `load` it into the runner's
+      # docker so Trivy can scan the EXACT image before anything is
+      # published. This ordering is the whole point of the gate: the
+      # previous "build+push then scan" published the image first, so a
+      # CVE failure still leaked the vulnerable (and unsigned, since
+      # cosign ran after the scan) image to the registry and clobbered
+      # `:latest`. OS-package CVEs (openssl, etc.) are arch-independent,
+      # so the amd64 image is representative for the CVE gate. This step
+      # also doubles as the PR Dockerfile-builds check.
+      - name: Build (amd64) for scan
         uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
-          # Multi-arch: amd64 native + arm64 via QEMU. Per-PR runs
-          # build amd64 only (push=false anyway) to keep PR CI fast;
-          # arm64 only kicks in on main/tag/dispatch when we actually
-          # publish, so PR feedback time stays close to the prior
-          # single-arch build duration.
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64
+          load: true
+          tags: furan-scan/${{ matrix.app }}:scan
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
+
+      # exit-code=1 fails the job on FIXED CRITICAL/HIGH before the push
+      # step below ever runs; ignore-unfixed avoids blocking on CVEs with
+      # no upstream patch. A failure here leaves the registry untouched.
+      - name: Trivy scan (gate — before push)
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: furan-scan/${{ matrix.app }}:scan
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Only reached when the scan passed. Multi-arch build + push; the
+      # amd64 layers are a cache hit from the scan build above, so only
+      # arm64 is built fresh here.
+      - name: Build and push (multi-arch)
+        id: build
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
           tags: |
             ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
             docker.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
@@ -89,20 +136,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,scope=${{ matrix.app }},mode=max
 
-      # CVE scan only runs on push/workflow_dispatch (PRs already need
-      # approval to merge). exit-code=1 fails the job on CRITICAL/HIGH;
-      # ignore-unfixed avoids CVEs without an upstream patch (otherwise
-      # base-image CVEs would block every release until Debian rolls a
-      # new point release).
-      - name: Trivy scan
-        if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          ignore-unfixed: true
-
       - name: Install cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3
@@ -110,9 +143,18 @@ jobs:
       # Keyless signing via the workflow's OIDC token — no long-lived keys
       # in the repo. The transparency log entry on rekor.sigstore.dev pins
       # the signature to this workflow run.
+      #
+      # Sign the immutable DIGEST this run just built+pushed, NOT the mutable
+      # `:sha` tag. When two runs share a commit (a tag push and its
+      # merge-to-main push both fire here) they each build a different digest
+      # and both move the `:sha` tag; signing `:sha` then races and can attach
+      # the signature to the other run's digest, leaving the tag a user pulls
+      # (e.g. :v1.1.26) unsigned. `steps.build.outputs.digest` is the exact
+      # manifest this run pushed, so the version/latest tags — which point at
+      # this digest — are always covered.
       - name: Sign image (cosign keyless)
         if: github.event_name != 'pull_request'
-        run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
+        run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
 
       # upload-release-assets: false stops anchore/sbom-action from trying
       # to attach the SBOM to the GitHub Release on tag pushes — that path
@@ -122,7 +164,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/qasecret/furan-${{ matrix.app }}:${{ github.sha }}
+          image: ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom-${{ matrix.app }}.spdx.json
           upload-release-assets: false
@@ -133,3 +175,34 @@ jobs:
         with:
           name: sbom-${{ matrix.app }}
           path: sbom-${{ matrix.app }}.spdx.json
+
+      # ---- dashboard-only: single-origin (/api) image variant ----------------
+      # The one-file furan-compose.yml fronts everything with nginx on ONE
+      # origin, so its dashboard must bake NEXT_PUBLIC_API_URL=/api (relative)
+      # instead of http://localhost:3000. Published as a SEPARATE `-proxy` tag
+      # so the standard compose.yml / deploy.sh dashboard image is unchanged and
+      # existing installs never regress. Tag releases only. The Trivy gate above
+      # already vouched for the identical dashboard package surface (same
+      # Dockerfile + deps; only the baked client-JS string differs), so this
+      # reuses that clean bill rather than re-scanning.
+      - name: Build and push dashboard-proxy (/api, multi-arch)
+        id: build_proxy
+        if: matrix.app == 'dashboard' && startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+          tags: |
+            ghcr.io/qasecret/furan-dashboard:${{ github.ref_name }}-proxy
+            ghcr.io/qasecret/furan-dashboard:latest-proxy
+            docker.io/qasecret/furan-dashboard:${{ github.ref_name }}-proxy
+            docker.io/qasecret/furan-dashboard:latest-proxy
+          cache-from: type=gha,scope=dashboard
+
+      - name: Sign dashboard-proxy (cosign keyless)
+        if: matrix.app == 'dashboard' && startsWith(github.ref, 'refs/tags/v')
+        run: cosign sign --yes ghcr.io/qasecret/furan-dashboard@${{ steps.build_proxy.outputs.digest }}

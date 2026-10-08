@@ -67,6 +67,15 @@ describe("createStorage() env routing", () => {
     expect(() => createStorage()).toThrow(/S3_/);
   });
 
+  test("STORAGE_KIND=s3 rejects the .env.example placeholder secret (fail closed)", () => {
+    process.env.STORAGE_KIND = "s3";
+    process.env.S3_ENDPOINT = "http://localhost:9000";
+    process.env.S3_BUCKET = "furan-test";
+    process.env.S3_ACCESS_KEY = "x";
+    process.env.S3_SECRET_KEY = "devpw_must_be_long";
+    expect(() => createStorage()).toThrow(/placeholder/);
+  });
+
   test("STORAGE_KIND=hdd + HDD_ROOT works and round-trips via the real filesystem", async () => {
     process.env.STORAGE_KIND = "hdd";
     process.env.HDD_ROOT = root;

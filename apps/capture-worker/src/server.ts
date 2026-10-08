@@ -1,9 +1,14 @@
 import { getEnv } from "@furan/config";
-import { createDb } from "@furan/db";
-import { createRedisConnection, createWorker } from "@furan/queue";
+import { createDb, projects } from "@furan/db";
+import {
+  createRedisConnection,
+  createWorker,
+  isTerminalFailure,
+} from "@furan/queue";
 import { createStorage } from "@furan/storage";
 import {
   bootstrapTelemetry,
+  Counter,
   installProcessErrorHandlers,
   logStartupFatal,
 } from "@furan/telemetry";
@@ -12,6 +17,18 @@ import { envSchema } from "./env.js";
 import { handleCaptureJob } from "./handler.js";
 import { startHealthServer } from "./health.js";
 import { closeAllBrowsers } from "./playwright.js";
+
+/** Bound a readiness dependency check so a hung Redis/Postgres can't hang the
+ *  probe. Mirrors the `withTimeout` in the api's health route. */
+const PROBE_TIMEOUT_MS = 1000;
+function probe<T>(p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error("probe_timeout")), PROBE_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 async function main(): Promise<void> {
   const env = getEnv(envSchema);
@@ -25,26 +42,75 @@ async function main(): Promise<void> {
   installProcessErrorHandlers(telemetry.logger);
 
   const { db, close: closeDb } = createDb();
-  const storage = createStorage();
+  const storage = createStorage(telemetry.metrics);
   const redis = createRedisConnection();
 
-  const worker = createWorker("capture", async (job) => {
-    telemetry.logger.info(
-      { jobId: job.id, projectId: job.data.projectId },
-      "capture_job_received",
-    );
-    return handleCaptureJob(job.data, telemetry.logger, {
-      db,
-      storage,
-      redis,
-      blockPrivateIps: env.CAPTURE_BLOCK_PRIVATE_IPS,
-    });
+  const worker = createWorker(
+    "capture",
+    async (job) => {
+      telemetry.logger.info(
+        { jobId: job.id, projectId: job.data.projectId },
+        "capture_job_received",
+      );
+      return handleCaptureJob(job.data, telemetry.logger, {
+        db,
+        storage,
+        redis,
+        blockPrivateIps: env.CAPTURE_BLOCK_PRIVATE_IPS,
+      });
+    },
+    { concurrency: env.CAPTURE_CONCURRENCY },
+  );
+
+  // Dead-letter signal: a capture that exhausts its retries drops a run's
+  // screenshot silently. Surface terminal failures as a metric + error log so
+  // an operator alert can fire; transient (will-retry) failures stay at warn.
+  const deadLettered = new Counter({
+    name: "furan_capture_jobs_dead_lettered_total",
+    help: "Capture jobs that exhausted all retries (permanently failed)",
+    registers: [telemetry.metrics],
+  });
+  worker.on("failed", (job, err) => {
+    if (isTerminalFailure(job)) {
+      deadLettered.inc();
+      telemetry.logger.error(
+        {
+          err,
+          jobId: job?.id,
+          projectId: job?.data?.projectId,
+          attemptsMade: job?.attemptsMade,
+        },
+        "capture_job_dead_lettered",
+      );
+    } else {
+      telemetry.logger.warn(
+        { err, jobId: job?.id, attemptsMade: job?.attemptsMade },
+        "capture_job_failed_will_retry",
+      );
+    }
   });
 
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
-    ready: async () => worker.isRunning(),
+    // Deep readiness: a worker that can't reach Redis (its job source) or
+    // Postgres would report ready while silently failing every dequeue. Probe
+    // both under a short timeout; any failure → not_ready so an orchestrator
+    // stops routing to / restarts this pod. Never throws (the health handler
+    // awaits this) — a failed probe resolves to false.
+    ready: async () => {
+      if (!worker.isRunning()) return false;
+      try {
+        await Promise.all([
+          probe(redis.ping()),
+          probe(db.select().from(projects).limit(1)),
+        ]);
+        return true;
+      } catch (err) {
+        telemetry.logger.warn({ err }, "readyz_dependency_probe_failed");
+        return false;
+      }
+    },
   });
 
   const shutdown = async (signal: string): Promise<void> => {

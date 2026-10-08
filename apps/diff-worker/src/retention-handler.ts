@@ -16,7 +16,16 @@ import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import { Counter, Histogram, type Registry } from "prom-client";
 
+import {
+  gatherReferencedKeys,
+  reconcileOrphans,
+} from "./orphan-reconcile.js";
+
 type Logger = Telemetry["logger"];
+
+/** Only reclaim orphans older than this in the nightly reconcile backstop —
+ *  the safety window for the write-object-then-commit-row upload path. */
+const RECONCILE_MIN_AGE_HOURS = 24;
 
 /** Conservative TTL for the per-project Redis lock; the nightly job at
  *  3am UTC typically finishes in seconds, but slow MinIO sweeps on a
@@ -255,6 +264,31 @@ export async function handleRetentionJob(
           "retention_lock_release_failed",
         );
       }
+    }
+  }
+
+  // Backstop (audit #3): the per-project sweep above only reclaims image_key,
+  // so dom_key / element_map_key (and test_runs image/diff names) of deleted
+  // runs are orphaned by the cascade. On the FULL nightly sweep, run the global
+  // orphan reconcile — which covers every key-bearing column — to reclaim them.
+  // Best-effort + gated on the implicit sweep so a targeted retention run
+  // doesn't trigger a whole-bucket scan.
+  if (!data.projectIds?.length) {
+    try {
+      const referenced = await gatherReferencedKeys(deps.db);
+      const res = await reconcileOrphans(deps.storage, referenced, {
+        olderThanHours: RECONCILE_MIN_AGE_HOURS,
+      });
+      logger.info(
+        {
+          scanned: res.scanned,
+          referenced: referenced.size,
+          deleted: res.deleted,
+        },
+        "retention_orphan_reconcile",
+      );
+    } catch (err) {
+      logger.warn({ err }, "retention_orphan_reconcile_failed");
     }
   }
 }

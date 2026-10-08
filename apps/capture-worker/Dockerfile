@@ -91,6 +91,24 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+# Patch base-image CVEs the Trivy release gate blocks (both fixed upstream):
+#   - libssl3t64: openssl PKCS7_verify() Heap-UAF (CVE-2026-45447) — apt
+#     pulls noble's patched point release.
+#   - the Playwright base's bundled GLOBAL npm ships a vulnerable sigstore
+#     (CVE-2026-48815, npm's provenance dep). The runtime entrypoint is
+#     `node apps/capture-worker/dist/server.js` — npm/npx are never invoked
+#     — so remove the global npm/corepack tooling rather than ship a dormant
+#     HIGH CVE. `npm root -g` locates it regardless of the base's node layout.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends --only-upgrade libssl3t64; \
+    rm -rf /var/lib/apt/lists/*; \
+    npm_root="$(npm root -g 2>/dev/null || echo /usr/lib/node_modules)"; \
+    rm -rf "$npm_root/npm" "$npm_root/corepack"; \
+    for b in npm npx corepack; do \
+      p="$(command -v "$b" 2>/dev/null || true)"; [ -n "$p" ] && rm -f "$p" || true; \
+    done
+
 # Non-root runtime user. The mcr.microsoft.com/playwright image runs as
 # root by default; create a least-privileged user and chown the app tree.
 RUN groupadd -r furan && useradd -r -g furan -d /app furan

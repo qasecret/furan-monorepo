@@ -1,12 +1,4 @@
-import {
-  and,
-  builds,
-  desc,
-  eq,
-  projects,
-  sql,
-  withProjectScope,
-} from "@furan/db";
+import { and, builds, desc, eq, projects, sql } from "@furan/db";
 import { buildPropertiesSchema } from "@furan/shared-types";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -14,6 +6,7 @@ import { z } from "zod";
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { recordBuildCreate } from "../lib/builds-metrics.js";
 import { sendError } from "../lib/errors.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 
 export const createBody = z.object({
   ciBuildId: z.string().min(1).max(200).optional(),
@@ -136,19 +129,26 @@ export async function registerBuildsRoutes(
         }
       }
 
-      const rows = await app.db
-        .select()
-        .from(builds)
-        .where(and(...conditions))
-        .orderBy(desc(builds.createdAt), desc(builds.id))
-        .limit(queryParsed.data.limit + 1);
+      return withRequestScope(
+        app,
+        req,
+        async (db) => {
+          const rows = await db
+            .select()
+            .from(builds)
+            .where(and(...conditions))
+            .orderBy(desc(builds.createdAt), desc(builds.id))
+            .limit(queryParsed.data.limit + 1);
 
-      const hasMore = rows.length > queryParsed.data.limit;
-      const items = hasMore ? rows.slice(0, queryParsed.data.limit) : rows;
-      const last = items[items.length - 1];
-      const nextCursor =
-        hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
-      return { items, nextCursor };
+          const hasMore = rows.length > queryParsed.data.limit;
+          const items = hasMore ? rows.slice(0, queryParsed.data.limit) : rows;
+          const last = items[items.length - 1];
+          const nextCursor =
+            hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
+          return { items, nextCursor };
+        },
+        paramsParsed.data.id,
+      );
     },
   );
 
@@ -159,6 +159,10 @@ export async function registerBuildsRoutes(
         app.authenticate,
         requireProjectMember("write", { from: { params: "id" } }),
       ],
+      // Each build fans out into test_runs + diff-job enqueues; cap the rate so
+      // a runaway CI loop or compromised token can't flood the diff queue.
+      // 60/min is 1/s — comfortably above any real CI cadence.
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
     },
     async (req, reply) => {
       if (!req.auth) {
@@ -175,30 +179,31 @@ export async function registerBuildsRoutes(
       const { ciBuildId, number, branchName, name, properties } =
         bodyParsed.data;
 
-      // Existence check: requireProjectMember admin-bypasses for the auth
-      // role, so a stale/wrong projectId from a client (e.g. the SDK
-      // pointing at a deleted project, common in dev after a test wipe)
-      // would otherwise flow straight into the insert and trip a FK
-      // violation that surfaces as an opaque 500. Return a structured 404
-      // instead so the SDK can surface "no such project" upstream.
-      const projectRow = await app.db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.id, paramsParsed.data.id))
-        .limit(1);
-      if (!projectRow[0]) {
-        return sendError(reply, 404, "project_not_found");
-      }
+      return withRequestScope(
+        app,
+        req,
+        async (db, onCommit) => {
+          // Existence check: requireProjectMember admin-bypasses for the auth
+          // role, so a stale/wrong projectId from a client (e.g. the SDK
+          // pointing at a deleted project, common in dev after a test wipe)
+          // would otherwise flow straight into the insert and trip a FK
+          // violation that surfaces as an opaque 500. Return a structured 404
+          // instead so the SDK can surface "no such project" upstream.
+          const projectRow = await db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(eq(projects.id, paramsParsed.data.id))
+            .limit(1);
+          if (!projectRow[0]) {
+            return sendError(reply, 404, "project_not_found");
+          }
 
-      const start = process.hrtime.bigint();
-      const result = await withProjectScope(
-        app.db,
-        paramsParsed.data.id,
-        async (tx) => {
-          // Path A: no ciBuildId → unconditional insert (no build id
-          // supplied always starts a new batch).
+          const start = process.hrtime.bigint();
+          let result: { row: Record<string, unknown>; inserted: boolean };
+          // Path A: no ciBuildId → unconditional insert (no build id supplied
+          // always starts a new batch).
           if (!ciBuildId) {
-            const [created] = await tx
+            const [created] = await db
               .insert(builds)
               .values({
                 projectId: paramsParsed.data.id,
@@ -214,95 +219,105 @@ export async function registerBuildsRoutes(
             if (!created) {
               throw new Error("insert returned no row");
             }
-            return { row: created, inserted: true };
+            result = { row: created, inserted: true };
+          } else {
+            // Path B: ciBuildId present → find-or-create via onConflictDoUpdate
+            // against the partial UNIQUE index. `xmax = 0` distinguishes the
+            // INSERT path (insert) from the UPDATE path (reattach).
+            const rows = await db
+              .insert(builds)
+              .values({
+                projectId: paramsParsed.data.id,
+                userId: req.auth!.id,
+                isRunning: true,
+                ciBuildId,
+                number,
+                branchName,
+                name,
+                properties: properties ?? {},
+              })
+              .onConflictDoUpdate({
+                target: [builds.projectId, builds.ciBuildId],
+                targetWhere: sql`${builds.ciBuildId} IS NOT NULL`,
+                set: {
+                  name: sql`coalesce(${builds.name}, excluded.name)`,
+                  number: sql`coalesce(${builds.number}, excluded.number)`,
+                  branchName: sql`coalesce(${builds.branchName}, excluded.branch_name)`,
+                  properties: sql`${builds.properties} || excluded.properties`,
+                  updatedAt: sql`now()`,
+                },
+              })
+              .returning({
+                id: builds.id,
+                ciBuildId: builds.ciBuildId,
+                number: builds.number,
+                branchName: builds.branchName,
+                status: builds.status,
+                name: builds.name,
+                properties: builds.properties,
+                projectId: builds.projectId,
+                userId: builds.userId,
+                isRunning: builds.isRunning,
+                environment: builds.environment,
+                createdAt: builds.createdAt,
+                updatedAt: builds.updatedAt,
+                inserted: sql<boolean>`(xmax = 0)`,
+              });
+            const row = rows[0];
+            if (!row) {
+              throw new Error("onConflictDoUpdate returned no row");
+            }
+            result = { row, inserted: row.inserted };
           }
 
-          // Path B: ciBuildId present → find-or-create via onConflictDoUpdate
-          // against the partial UNIQUE index. `xmax = 0` distinguishes the
-          // INSERT path (insert) from the UPDATE path (reattach).
-          const rows = await tx
-            .insert(builds)
-            .values({
-              projectId: paramsParsed.data.id,
-              userId: req.auth!.id,
-              isRunning: true,
-              ciBuildId,
-              number,
-              branchName,
-              name,
-              properties: properties ?? {},
-            })
-            .onConflictDoUpdate({
-              target: [builds.projectId, builds.ciBuildId],
-              targetWhere: sql`${builds.ciBuildId} IS NOT NULL`,
-              set: {
-                name: sql`coalesce(${builds.name}, excluded.name)`,
-                number: sql`coalesce(${builds.number}, excluded.number)`,
-                branchName: sql`coalesce(${builds.branchName}, excluded.branch_name)`,
-                properties: sql`${builds.properties} || excluded.properties`,
-                updatedAt: sql`now()`,
-              },
-            })
-            .returning({
-              id: builds.id,
-              ciBuildId: builds.ciBuildId,
-              number: builds.number,
-              branchName: builds.branchName,
-              status: builds.status,
-              name: builds.name,
-              properties: builds.properties,
-              projectId: builds.projectId,
-              userId: builds.userId,
-              isRunning: builds.isRunning,
-              environment: builds.environment,
-              createdAt: builds.createdAt,
-              updatedAt: builds.updatedAt,
-              inserted: sql<boolean>`(xmax = 0)`,
-            });
-          const row = rows[0];
-          if (!row) {
-            throw new Error("onConflictDoUpdate returned no row");
-          }
-          return { row, inserted: row.inserted };
+          const row = result.row;
+          const durationMs =
+            Number(process.hrtime.bigint() - start) / 1_000_000;
+          recordBuildCreate(app.telemetry.metrics, {
+            outcome: result.inserted ? "created" : "reattached",
+            durationMs,
+            propertiesCount: Object.keys(
+              (row.properties as Record<string, unknown>) ?? {},
+            ).length,
+          });
+
+          req.log.info(
+            {
+              buildId: row.id,
+              ciBuildId: row.ciBuildId,
+              outcome: result.inserted ? "created" : "reattached",
+              durationMs,
+            },
+            "builds.create",
+          );
+
+          // Strip the `inserted` sentinel from the response body when present
+          // (Path B). Path A returns a plain insert without the sentinel.
+          const body =
+            "inserted" in row
+              ? (({ inserted: _drop, ...rest }) => rest)(
+                  row as typeof row & { inserted: boolean },
+                )
+              : row;
+
+          // Project SSE broadcast — `build_created` on path A or onConflict-
+          // INSERT path B, `build_updated` on onConflict-UPDATE (reattach).
+          // Best-effort; deferred to post-commit so a consumer refetch sees
+          // the new build row.
+          onCommit(() =>
+            app.broadcaster.publishProjectEvent(paramsParsed.data.id, {
+              event: result.inserted ? "build_created" : "build_updated",
+              data: result.inserted ? body : { id: row.id },
+            }),
+          );
+
+          // Set status + RETURN the body so Fastify sends it AFTER the scope
+          // commits (SDK create-build → create-run must not race the commit).
+          reply.code(result.inserted ? 201 : 200);
+          return body;
         },
+        paramsParsed.data.id,
       );
-
-      const row = result.row;
-      const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
-      recordBuildCreate(app.telemetry.metrics, {
-        outcome: result.inserted ? "created" : "reattached",
-        durationMs,
-        propertiesCount: Object.keys(row.properties ?? {}).length,
-      });
-
-      req.log.info(
-        {
-          buildId: row.id,
-          ciBuildId: row.ciBuildId,
-          outcome: result.inserted ? "created" : "reattached",
-          durationMs,
-        },
-        "builds.create",
-      );
-
-      // Strip the `inserted` sentinel from the response body when present
-      // (Path B). Path A returns a plain insert without the sentinel.
-      const body =
-        "inserted" in row
-          ? (({ inserted: _drop, ...rest }) => rest)(
-              row as typeof row & { inserted: boolean },
-            )
-          : row;
-
-      // Project SSE broadcast — `build_created` on path A or onConflict-
-      // INSERT path B, `build_updated` on onConflict-UPDATE (reattach).
-      // Best-effort, never fails the response.
-      await app.broadcaster.publishProjectEvent(paramsParsed.data.id, {
-        event: result.inserted ? "build_created" : "build_updated",
-        data: result.inserted ? body : { id: row.id },
-      });
-
-      return reply.code(result.inserted ? 201 : 200).send(body);
     },
   );
 }

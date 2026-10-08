@@ -25,6 +25,7 @@ import {
 import { hashPassword } from "../src/lib/password.js";
 import {
   approveCheckpointInTx,
+  deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
 } from "../src/trpc/v1/checkpoint-grouping.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
@@ -332,6 +333,28 @@ d("tRPC runs router", () => {
       .set({ parentBranchName: "develop" })
       .where(eq(testRuns.id, s.runId));
 
+    // ADR-054: the develop baseline lives under a DISTINCT sibling variation on
+    // develop that shares the candidate's branch-agnostic identity — NOT the
+    // candidate's own feature/x variation. resolveBaseline's parent_pr tier
+    // resolves that sibling by identity, then takes its baseline.
+    const [candidateVar] = await h.db
+      .select()
+      .from(testVariations)
+      .where(eq(testVariations.id, s.variationId));
+    const [devVar] = await h.db
+      .insert(testVariations)
+      .values({
+        name: candidateVar!.name,
+        projectId: s.projectId,
+        branchName: "develop",
+        viewport: candidateVar!.viewport,
+        browser: candidateVar!.browser,
+        os: candidateVar!.os,
+        device: candidateVar!.device,
+        baselineName: "older",
+      })
+      .returning();
+
     const [olderRun] = await h.db
       .insert(testRuns)
       .values({
@@ -346,34 +369,41 @@ d("tRPC runs router", () => {
     await h.db.insert(screenshots).values({
       runId: olderRun.id,
       projectId: s.projectId,
-      testVariationId: s.variationId,
-      name: "older",
+      testVariationId: devVar!.id,
+      name: candidateVar!.name,
       imageKey: "d".repeat(64),
-      viewport: "1280x720",
-      browser: "chromium",
+      viewport: candidateVar!.viewport ?? "1280x720",
+      browser: candidateVar!.browser ?? "chromium",
     });
 
     await h.db.insert(baselines).values({
       baselineName: "older",
-      testVariationId: s.variationId,
+      testVariationId: devVar!.id,
       testRunId: olderRun.id,
       branchName: "develop",
     });
 
-    // Link the current run to the same variation so getById resolves it.
+    // Link the current run to the candidate variation so getById resolves it.
     await h.db.insert(screenshots).values({
       runId: s.runId,
       projectId: s.projectId,
       testVariationId: s.variationId,
       name: "current",
       imageKey: "c".repeat(64),
-      viewport: "1280x720",
-      browser: "chromium",
+      viewport: candidateVar!.viewport ?? "1280x720",
+      browser: candidateVar!.browser ?? "chromium",
     });
 
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
     expect(data.baselineSource).toBe("parent_pr");
+    // The baseline screenshot must resolve under the SIBLING (develop)
+    // variation the baseline actually lives on — keying off the candidate's
+    // own variation would find nothing and blank the baseline image.
+    expect(data.baselineScreenshot?.imageKey).toBe("d".repeat(64));
+    // Control: the served screenshot is the sibling's, not the candidate's —
+    // guards against an accidental match that happened to return an image.
+    expect(data.baselineScreenshot?.testVariationId).toBe(devVar!.id);
   });
 
   test("getById: returns variationIgnoreAreas from the run's variation", async () => {
@@ -3196,6 +3226,133 @@ d("tRPC runs router", () => {
         .mutate({ runId: cp.run.id, checkpointId: cp.shot.id })
         .catch((e) => e);
       expect(err?.data?.code).toBe("FORBIDDEN");
+    });
+  });
+
+  describe("deriveCheckpointStatuses: cross-branch (default-branch sibling)", () => {
+    // ADR-054 makes each variation branch-specific, so a feature checkpoint's
+    // default-branch baseline lives under a DISTINCT same-identity SIBLING
+    // variation. deriveCheckpointStatuses must resolve that sibling PER
+    // VARIATION — a run spanning several viewports must keep per-checkpoint
+    // granularity so a genuinely-new viewport isn't masked by a baselined one.
+    test("sibling-baselined viewport is 'unresolved'; a new-viewport sibling stays 'new'", async () => {
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ name: `xbranch-${Date.now()}`, mainBranchName: "main" })
+        .returning();
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: proj!.id, isRunning: false })
+        .returning();
+
+      // MAIN (default-branch) sibling variation home@1280 WITH a baseline.
+      const [mainVar] = await h.db
+        .insert(testVariations)
+        .values({
+          name: "home",
+          projectId: proj!.id,
+          branchName: "main",
+          viewport: "1280x720",
+          browser: "chromium",
+        })
+        .returning();
+      const [mainRun] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId: build!.id,
+          projectId: proj!.id,
+          status: "passed",
+          branchName: "main",
+          name: "home",
+        })
+        .returning();
+      await h.db.insert(baselines).values({
+        baselineName: "b",
+        testVariationId: mainVar!.id,
+        testRunId: mainRun!.id,
+        branchName: "main",
+      });
+
+      // FEATURE run, two branch-specific candidate variations, NEITHER with a
+      // baseline of its own. home@1280 has a baselined main sibling + a diff
+      // region; home@375 has NO main sibling (genuinely new viewport).
+      const mkFeatVar = async (viewport: string) =>
+        (
+          await h.db
+            .insert(testVariations)
+            .values({
+              name: "home",
+              projectId: proj!.id,
+              branchName: "feature",
+              viewport,
+              browser: "chromium",
+            })
+            .returning()
+        )[0]!;
+      const featVar1280 = await mkFeatVar("1280x720");
+      const featVar375 = await mkFeatVar("375x812");
+      const [featRun] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId: build!.id,
+          projectId: proj!.id,
+          status: "unresolved",
+          branchName: "feature",
+          name: "home",
+          // The diff-worker records this per-run; the fix must NOT rely on it
+          // (it's set even though home@375 has no baseline) — asserting home@375
+          // stays "new" proves per-variation resolution, not the run-level flag.
+          baselineSource: "default_branch",
+        })
+        .returning();
+      const mkShot = async (variationId: string, viewport: string, key: string) =>
+        (
+          await h.db
+            .insert(screenshots)
+            .values({
+              runId: featRun!.id,
+              projectId: proj!.id,
+              testVariationId: variationId,
+              name: "home",
+              viewport,
+              browser: "chromium",
+              imageKey: key.repeat(64),
+            })
+            .returning()
+        )[0]!;
+      const shot1280 = await mkShot(featVar1280.id, "1280x720", "a");
+      const shot375 = await mkShot(featVar375.id, "375x812", "c");
+      await h.db.insert(diffRegions).values({
+        runId: featRun!.id,
+        projectId: proj!.id,
+        screenshotId: shot1280.id,
+        severity: "high",
+        category: "layout",
+        source: "l2_dom",
+        description: "diff",
+        bbox: { x: 0, y: 0, width: 10, height: 10 },
+      });
+
+      const statuses = await deriveCheckpointStatuses(h.db, [
+        {
+          id: shot1280.id,
+          runId: featRun!.id,
+          viewport: "1280x720",
+          testVariationId: featVar1280.id,
+        },
+        {
+          id: shot375.id,
+          runId: featRun!.id,
+          viewport: "375x812",
+          testVariationId: featVar375.id,
+        },
+      ]);
+
+      // #372 fix: default sibling baselined + diff region → unresolved (was "new").
+      expect(statuses.get(shot1280.id)).toBe("unresolved");
+      // Regression guard: no default sibling baseline → genuinely new, and NOT
+      // masked by the run's other (baselined) viewport.
+      expect(statuses.get(shot375.id)).toBe("new");
     });
   });
 });

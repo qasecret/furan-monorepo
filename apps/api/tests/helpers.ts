@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createDb, type DB } from "@furan/db";
+import { createDb, type DB, sql } from "@furan/db";
 import { bootstrapTelemetry, type Telemetry } from "@furan/telemetry";
 import type { FastifyInstance } from "fastify";
 import { vi, type Mock } from "vitest";
@@ -11,6 +11,7 @@ import { vi, type Mock } from "vitest";
 import { createApp } from "../src/app.js";
 import { envSchema, type Env } from "../src/env.js";
 import type { Broadcaster } from "../src/lib/broadcast.js";
+import type { MemberProjectsCache } from "../src/lib/member-projects-cache.js";
 import type { DiffQueueProducer } from "../src/trpc/context.js";
 
 export interface TestApp {
@@ -35,6 +36,20 @@ export interface TestApp {
 const DEFAULT_DATABASE_URL =
   "postgresql://furan:devpw@localhost:5433/furan_dev";
 const DEFAULT_JWT_SECRET = "test_jwt_secret_at_least_32_chars_long_for_tests"; // gitleaks:allow
+
+// ADR-058 / issue #351: test-only password for the RLS `furan_app` role. Only
+// used when TEST_RLS=1; migration 0032 creates the role NOLOGIN, so we grant it
+// LOGIN once per process here. Not a real credential.
+const FURAN_APP_TEST_PASSWORD = "furan_app_test"; // gitleaks:allow
+let furanAppLoginGranted = false;
+async function ensureFuranAppLogin(owner: DB): Promise<void> {
+  if (furanAppLoginGranted) return;
+  // Password is the FURAN_APP_TEST_PASSWORD literal (kept in sync with the URL).
+  await owner.execute(
+    sql`ALTER ROLE furan_app WITH LOGIN PASSWORD 'furan_app_test'`,
+  );
+  furanAppLoginGranted = true;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPOSE_ENV_CANDIDATES = [
@@ -154,6 +169,8 @@ export interface CreateTestAppOpts {
    * path end-to-end.
    */
   broadcaster?: Broadcaster;
+  /** Inject a member-project cache (storage-proxy hot path). Absent → null. */
+  memberProjectsCache?: MemberProjectsCache;
 }
 
 export async function createTestApp(
@@ -207,7 +224,25 @@ export async function createTestApp(
     service: "api-test",
     version: "test",
   });
+  // Owner connection — used by tests for seeding + assertions (bypasses RLS).
   const { db, close: closeDb } = createDb();
+
+  // ADR-058: with TEST_RLS=1 the APP-under-test connects as the non-owner
+  // `furan_app` role (SUBJECT to RLS), while the test's `db` stays the owner
+  // (so seeding/asserts aren't fail-closed). This exercises the whole suite
+  // under RLS to prove correctly-scoped code is unaffected (issue #351).
+  let appDb = db;
+  let closeAppDb: () => Promise<void> = async () => {};
+  if (process.env.TEST_RLS === "1") {
+    await ensureFuranAppLogin(db);
+    const appUrl = (process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL).replace(
+      /\/\/[^/@]+@/,
+      `//furan_app:${FURAN_APP_TEST_PASSWORD}@`,
+    );
+    const a = createDb({ url: appUrl });
+    appDb = a.db;
+    closeAppDb = a.close;
+  }
 
   const diffQueueAdd = vi
     .fn<DiffQueueProducer["add"]>()
@@ -222,7 +257,16 @@ export async function createTestApp(
     opts.broadcaster ??
     ({ publishProjectEvent: broadcasterPublish } as Broadcaster);
 
-  const app = await createApp({ db, telemetry, env, diffQueue, broadcaster });
+  const app = await createApp({
+    db: appDb,
+    telemetry,
+    env,
+    diffQueue,
+    broadcaster,
+    ...(opts.memberProjectsCache
+      ? { memberProjectsCache: opts.memberProjectsCache }
+      : {}),
+  });
   if (!opts.skipReady) {
     await app.ready();
   }
@@ -235,6 +279,7 @@ export async function createTestApp(
     broadcasterPublish,
     close: async () => {
       await app.close();
+      await closeAppDb();
       await closeDb();
       await telemetry.shutdown();
     },

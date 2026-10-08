@@ -8,6 +8,12 @@
 > `pnpm dev` host-process flow (see [`docs/install/quickstart.md`](../install/quickstart.md)
 > for that).
 
+> **Latest release: `v1.1.28`** — the five app images are pinned to it in
+> `infra/docker/compose.yml`, published to Docker Hub + GHCR, Trivy-scanned,
+> and cosign-signed (verify with the workflow identity
+> `build-images.yml@refs/tags/v1.1.28`). Deploy at this tag, or let
+> [`deploy.sh`](../../deploy.sh) handle the bring-up.
+
 This runbook was written/verified during the 2026-06-24 fresh-deploy QA walk.
 See the companion [E2E verification report](e2e-verification-2026-06-24.md).
 
@@ -21,8 +27,8 @@ same commit.** This is the single most important fact in this runbook.
 `compose.yml` is two things glued together:
 
 - **App services** (`api`, `dashboard`, `capture-worker`, `diff-worker`,
-  `integrations`) run a **pinned, pre-built image tag** (e.g.
-  `qasecret/furan-api:v1.1.22`).
+  `integrations`) run a **pinned, pre-built image tag** (currently
+  `qasecret/furan-api:v1.1.28`).
 - The **`migrate` one-shot** service bind-mounts
   `../../packages/db/migrations` — i.e. it applies **whatever migrations are
   in your local checkout**, not what shipped inside the image.
@@ -48,8 +54,9 @@ drifted tables — so the stack looked green while every project operation 500'd
 Pick **one** of these before `up -d`:
 
 1. **Deploy at a release tag** (recommended for end users): `git checkout
-v1.1.x` so the migrations match the image pinned in that tagged
-   `compose.yml`. This is exactly what an installer following the release gets.
+v1.1.28` (the current release) so the migrations match the image pinned in
+   that tagged `compose.yml`. This is exactly what an installer following the
+   release gets. (Use whatever the latest `v1.1.x` tag is — `git tag -l 'v1.1.*'`.)
 2. **Pin the image to your checkout** (for deploying current `main` / a branch):
    override the five image tags to a published build of the **same commit** as
    your migrations. The repo publishes commit-SHA-tagged images for `main`. Save
@@ -119,6 +126,22 @@ COMPOSE_PROFILES=s3          # REQUIRED — gates MinIO + minio-init (PR #117)
 
 ## 3. Deploy
 
+> **Throwaway evaluation?** Skip this runbook entirely and use the one-file
+> [`infra/docker/furan-compose.yml`](../../infra/docker/furan-compose.yml):
+> `curl` it and `docker compose -f furan-compose.yml up -d` — nginx on `:8080`,
+> **default credentials**, self-applying migrations, no `.env`. See the README
+> "Fastest install" section. Not for real installs (shared default secrets); for
+> those use `./deploy.sh` below.
+
+> **Shortcut — `./deploy.sh`.** The repo-root [`deploy.sh`](../../deploy.sh)
+> automates §2–§4 as one command: it generates `.env` with fresh secrets,
+> enforces the §0 lockstep rule (refusing a released deploy when the checkout's
+> migrations are ahead of the pinned image tag), brings the stack up in order,
+> health-waits, and runs the §4f drift canary. Use `./deploy.sh --mode
+from-head` to build images from the current checkout (always in lockstep),
+> `--storage hdd` for the filesystem backend, and `./deploy.sh --help` for the
+> rest. The manual steps below remain the reference for what it does.
+
 > **Project name matters.** Compose derives the project name from the compose
 > file's directory (`docker`). Run with `-p docker` (or from `infra/docker/`)
 > so you replace the existing stack instead of forking a second one. Use
@@ -174,6 +197,25 @@ curl -s -o /dev/null -w 'GET /projects -> %{http_code}\n' \
 Step **4f** is the lockstep canary. If it returns 500, re-read [§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep)
 and check `docker logs docker-api-1` for a `column ... does not exist` error.
 
+> **What §4 does and does not prove.** These checks confirm the **API plane** is
+> fully functional — which is the primary ingestion path (SDK / CI / PAT / curl,
+> per [install/quickstart.md §11](../install/quickstart.md#11-first-capture--first-diff)).
+> They do **not** exercise the dashboard **UI login**. On a plain `http://localhost`
+> deploy of the **published** images, the dashboard renders (`/login` → 200) but
+> **you cannot sign in through the browser**: login is a Next.js Server Action that
+> runs _inside_ the dashboard container and targets the build-time-baked
+> `http://localhost:3000`, which from inside that container is the dashboard
+> itself, not the `api` container (`ECONNREFUSED`). This is a property of the
+> published image, not a misconfiguration — see
+> [reverse-proxy-tls.md §0](reverse-proxy-tls.md#0-the-one-thing-that-makes-this-non-obvious).
+> **Fixed in `v1.1.28`:** server-side code now uses a runtime `API_INTERNAL_URL`
+> (defaulting to `http://api:3000`), so a **v1.1.28+** deploy logs in fine on
+> plain `localhost`; published images **≤ v1.1.27 are still affected** (upgrade,
+> or build from source with `./deploy.sh --mode from-head`). For remote browsers
+> you still need the domain rebuild (client-side calls need a browser-reachable
+> baked URL). If you only need the API/SDK path,
+> the localhost deploy is complete as-is.
+
 ## 5. Teardown & backup
 
 ```bash
@@ -191,16 +233,20 @@ docker compose -p docker ... down -v --remove-orphans
 
 ## 6. Troubleshooting
 
-| Symptom                                                                   | Cause                                                                                         | Fix                                                                                           |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `column "..." does not exist`, projects/runs 500 while `/readyz` is green | image ↔ migration drift ([§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep)) | pin image and migrations to the same commit                                                   |
-| `migrate` exited non-zero                                                 | partial prior migration                                                                       | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)    |
-| api won't boot, `JWT_SECRET must be ≥32 chars`                            | short/missing secret                                                                          | `openssl rand -hex 32` into `.env`                                                            |
-| MinIO never starts / api can't reach S3                                   | `COMPOSE_PROFILES` unset                                                                      | add `COMPOSE_PROFILES=s3` to `.env`                                                           |
-| dashboard "Cannot connect to API"                                         | `NEXT_PUBLIC_API_URL` mismatch                                                                | baked at image build to `http://localhost:3000`; front both behind one origin in real deploys |
+| Symptom                                                                                                              | Cause                                                                                                                                                                                                                                                     | Fix                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `column "..." does not exist`, projects/runs 500 while `/readyz` is green                                            | image ↔ migration drift ([§0](#0-the-one-rule-that-bites-everyone-image--migration-lockstep))                                                                                                                                                             | pin image and migrations to the same commit                                                                                                                                                 |
+| `migrate` exited non-zero                                                                                            | partial prior migration                                                                                                                                                                                                                                   | `docker logs docker-migrate-1`; see [migration-deploy-order.md](migration-deploy-order.md)                                                                                                  |
+| api won't boot, `JWT_SECRET must be ≥32 chars`                                                                       | short/missing secret                                                                                                                                                                                                                                      | `openssl rand -hex 32` into `.env`                                                                                                                                                          |
+| MinIO never starts / api can't reach S3                                                                              | `COMPOSE_PROFILES` unset                                                                                                                                                                                                                                  | add `COMPOSE_PROFILES=s3` to `.env`                                                                                                                                                         |
+| `compose up` aborts: `Ports are not available … bind: address already in use`                                        | a foreign process already holds `3000` (api) or `3001` (dashboard) — classically a leftover `pnpm dev` from a source-run session                                                                                                                          | free the port (`lsof -nP -iTCP:3001 -sTCP:LISTEN` to find the holder, stop it) or `./deploy.sh --down` a prior stack, then re-run. `deploy.sh` now names the port + holder on this failure. |
+| dashboard `/login` renders but signing in returns 500 (`ECONNREFUSED 127.0.0.1:3000` in `docker logs …-dashboard-1`) | published image bakes `NEXT_PUBLIC_API_URL=http://localhost:3000`; the login Server Action runs _inside_ the container, where `localhost:3000` is the dashboard, not the api — the runtime `NEXT_PUBLIC_API_URL` override is **inert** (baked at build)   | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with an origin reachable from both browser and container). The API/SDK/PAT path is unaffected.   |
+| dashboard "Cannot connect to API" from a **remote** browser                                                          | dashboard's browser bundle bakes `NEXT_PUBLIC_API_URL=http://localhost:3000` at image build — remote browsers can't reach it, and a proxy can't rewrite a baked absolute URL                                                                              | deploy on a domain per [reverse-proxy-tls.md](reverse-proxy-tls.md) (rebuild the dashboard with your public API URL + terminate TLS)                                                        |
+| logged-in with `--admin-email/--admin-password` but the dashboard/API rejects them (401)                             | when `infra/docker/.env` **already exists**, `deploy.sh` uses its `FURAN_BOOTSTRAP_ADMIN_*` values and **ignores** the `--admin-*` CLI flags (they only seed a _freshly generated_ `.env`); the admin is also only seeded when the `users` table is empty | use the creds in `infra/docker/.env`, or delete `.env` to regenerate with the flags, or reset via the CLI (`reset-password`)                                                                |
 
 ## 7. References
 
+- [reverse-proxy-tls.md](reverse-proxy-tls.md) — expose the stack on a domain with HTTPS (the dashboard-URL constraint + a worked TLS proxy)
 - [install/quickstart.md](../install/quickstart.md) — dev (`pnpm dev`) path + first-capture walkthrough
 - [migration-deploy-order.md](migration-deploy-order.md) — schema-narrowing deploys
 - [storage-backends.md](storage-backends.md) — S3 vs HDD

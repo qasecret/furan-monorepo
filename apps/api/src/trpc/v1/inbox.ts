@@ -22,10 +22,11 @@ import {
 } from "@furan/shared-types";
 import { z } from "zod";
 
+import { emitAudit } from "../../lib/emit-audit.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 import { GROUP_APPROVE_CAP } from "./checkpoint-grouping.js";
 import { approveRun } from "./runs.js";
@@ -81,7 +82,7 @@ export const inboxRouter = t.router({
    *
    * Spec: furan-design/specs/inbox-phase1-backend
    */
-  list: t.procedure
+  list: publicProcedure
     .input(inboxListInput)
     .use(authed)
     .output(inboxListOutput)
@@ -350,7 +351,7 @@ export const inboxRouter = t.router({
    *
    * Used by the sidebar badge to show the number of open items.
    */
-  count: t.procedure
+  count: publicProcedure
     .input(inboxCountInput)
     .use(authed)
     .output(z.object({ total: z.number().int() }))
@@ -392,7 +393,7 @@ export const inboxRouter = t.router({
    * supply the runId — consistent with how the inbox list surfaces items
    * without requiring the caller to track projectId separately.
    */
-  approve: t.procedure
+  approve: publicProcedure
     .input(z.object({ runId: z.string().uuid() }))
     .use(authed)
     .use(
@@ -410,7 +411,7 @@ export const inboxRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return approveRun(ctx, input.runId);
+      return approveRun({ ...ctx, log: ctx.req.log }, input.runId);
     }),
 
   /**
@@ -429,7 +430,7 @@ export const inboxRouter = t.router({
    * Cross-PROJECT is NOT crossed: `eq(testRuns.projectId, input.projectId)`
    * guarantees isolation. Cross-BUILD IS reached: no build filter.
    */
-  rejectCluster: t.procedure
+  rejectCluster: publicProcedure
     .input(inboxRejectClusterInput)
     .use(authed)
     .use(
@@ -494,6 +495,23 @@ export const inboxRouter = t.router({
         });
       }
 
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.reject_cluster",
+          targetType: "project",
+          targetId: input.projectId,
+          metadata: {
+            signature: input.signature,
+            rejected: targetRunIds.length,
+            buildCount: distinctBuildIds.length,
+            capped,
+          },
+        },
+        ctx.req.log,
+      );
+
       return {
         rejected: targetRunIds.length,
         runCount: targetRunIds.length,
@@ -512,7 +530,7 @@ export const inboxRouter = t.router({
    * is a reviewer's marker only; status changes are driven by the approval/baseline
    * acceptance path or external CI signals.
    */
-  reject: t.procedure
+  reject: publicProcedure
     .input(inboxRejectInput)
     .use(authed)
     .use(

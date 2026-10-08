@@ -9,7 +9,7 @@ import {
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 type ProjectIdInput = z.infer<typeof projectIdInput>;
@@ -41,7 +41,7 @@ export const projectsRouter = t.router({
    * The action label is kept for parity with the REST hook so a future
    * per-role split is a single-site change.
    */
-  getById: t.procedure
+  getById: publicProcedure
     .input(projectIdInput)
     .use(authed)
     .use(
@@ -71,7 +71,7 @@ export const projectsRouter = t.router({
    * Authorization: admin-bypass OR project_members row (see note above
    * about `projectMember("write")` semantics).
    */
-  update: t.procedure
+  update: publicProcedure
     .input(updateInput)
     .use(authed)
     .use(
@@ -121,7 +121,7 @@ export const projectsRouter = t.router({
    *
    * Spec: furan-design/specs/2026-05-24-cross-branch-baseline-merge-design.md
    */
-  mergeBranchBaselines: t.procedure
+  mergeBranchBaselines: publicProcedure
     .input(
       z
         .object({
@@ -156,6 +156,7 @@ export const projectsRouter = t.router({
           broadcaster: ctx.broadcaster,
           userId: ctx.user?.id ?? null,
           log: ctx.req.log,
+          onCommit: ctx.onCommit,
         });
       } catch (err) {
         if (err instanceof SameBranchError) {
@@ -174,7 +175,7 @@ export const projectsRouter = t.router({
    * Uses MAX(createdAt) ordering rather than alphabetical because reviewers
    * almost always want to merge their most-recent feature branch first.
    */
-  listBranches: t.procedure
+  listBranches: publicProcedure
     .input(projectIdInput)
     .use(authed)
     .use(

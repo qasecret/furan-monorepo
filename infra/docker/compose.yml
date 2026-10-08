@@ -111,13 +111,36 @@ services:
     entrypoint: ["sh", "/migrate.sh"]
     restart: "no"
 
+  # ----- One-shot HDD volume initializer (hdd mode only) ----------------
+  # A freshly-created Docker volume is owned by root (0:0), but the app
+  # containers run as non-root users — and NOT the same one: api and
+  # diff-worker run as the distroless `nonroot` user (uid 65532), while
+  # capture-worker runs as its own `furan` system user (a distinct,
+  # build-assigned uid). All three read/write the shared `furan_hdd_data`
+  # volume (capture-worker + api write screenshots, diff-worker reads/prunes),
+  # so on a fresh volume the first write fails with EACCES → 500 on upload,
+  # 404 on read. Because the writers span two different uids we cannot chown
+  # to a single owner; instead this one-shot opens the storage root to
+  # world read/write. The volume holds only content-addressed screenshot /
+  # DOM blobs (no secrets) on a single-tenant self-hosted install, so 0777
+  # is an acceptable trade for multi-uid access. Gated to `hdd` mode — S3
+  # installs never touch the volume. Idempotent: re-chmodding on every `up`
+  # is a no-op once ownership is correct.
+  hdd-init:
+    image: alpine:3.20
+    profiles: ["hdd"]
+    volumes:
+      - furan_hdd_data:/var/lib/furan/storage
+    entrypoint: ["sh", "-c", "chmod 0777 /var/lib/furan/storage"]
+    restart: "no"
+
   # ----- App services ---------------------------------------------------
   # All five pull pre-built images from Docker Hub. To use the GHCR mirror
   # instead, swap `docker.io/` for `ghcr.io/` (you'll need a GH PAT with
   # read:packages scope if the GHCR packages are private). Use
   # `compose.dev.yml` to expose host ports.
   api:
-    image: docker.io/qasecret/furan-api:v1.1.24
+    image: docker.io/qasecret/furan-api:v1.1.29
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,6 +155,11 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` lets the api start
+      # under S3 mode where hdd-init is not in the running set.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     ports: ["3000:3000"]
     environment:
       NODE_ENV: production
@@ -167,7 +195,7 @@ services:
     restart: unless-stopped
 
   capture-worker:
-    image: docker.io/qasecret/furan-capture-worker:v1.1.24
+    image: docker.io/qasecret/furan-capture-worker:v1.1.29
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,6 +206,10 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` for S3 mode.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -194,7 +226,7 @@ services:
     restart: unless-stopped
 
   diff-worker:
-    image: docker.io/qasecret/furan-diff-worker:v1.1.24
+    image: docker.io/qasecret/furan-diff-worker:v1.1.29
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,6 +237,10 @@ services:
         required: false
       migrate:
         condition: service_completed_successfully
+      # HDD mode only (profile-gated); `required: false` for S3 mode.
+      hdd-init:
+        condition: service_completed_successfully
+        required: false
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -221,7 +257,7 @@ services:
     restart: unless-stopped
 
   integrations:
-    image: docker.io/qasecret/furan-integrations:v1.1.24
+    image: docker.io/qasecret/furan-integrations:v1.1.29
     depends_on:
       postgres:
         condition: service_healthy
@@ -244,18 +280,24 @@ services:
     restart: unless-stopped
 
   dashboard:
-    image: docker.io/qasecret/furan-dashboard:v1.1.24
+    image: docker.io/qasecret/furan-dashboard:v1.1.29
     depends_on:
       - api
     ports: ["3001:3001"]
     environment:
       NODE_ENV: production
-      # Default to the in-network api hostname so the dashboard's Server
-      # Actions / SSR fetches resolve from inside the compose network. The
-      # browser bundle gets http://localhost:3000 baked at build time via
-      # zod's default in apps/dashboard/src/lib/env.ts, which is what the
-      # host browser needs to reach the host-port-mapped api container.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3000}
+      # BROWSER bundle URL, baked at image BUILD time (Dockerfile --build-arg,
+      # default http://localhost:3000). Next inlines NEXT_PUBLIC_* into the
+      # bundles, so setting it here at runtime does NOT change the browser's
+      # target — it is kept only to feed a from-source build that reads it as a
+      # build arg. The host browser reaches the api via its host-mapped :3000.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      # SERVER-side (SSR / Server Actions like login) API URL, read at RUNTIME
+      # (non-NEXT_PUBLIC_, so NOT inlined). Points in-container server code at
+      # the api service — where localhost:3000 would resolve to the dashboard
+      # itself. This is what makes UI login work on a plain localhost deploy;
+      # see serverApiUrl() in apps/dashboard/src/lib/env.ts.
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3000}
     restart: unless-stopped
 
 volumes:

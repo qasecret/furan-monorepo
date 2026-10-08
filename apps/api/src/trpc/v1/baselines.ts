@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
-import { t } from "../trpc.js";
+import { publicProcedure, t } from "../trpc.js";
 
 const listInput = z.object({
   testVariationId: z.string().uuid(),
@@ -11,7 +11,7 @@ const listInput = z.object({
 });
 
 export const baselinesRouter = t.router({
-  listForVariation: t.procedure
+  listForVariation: publicProcedure
     .input(listInput)
     .use(authed)
     // Resolve the projectId via the variation so we can reuse the

@@ -117,4 +117,21 @@ describe("@furan/storage HDD backend", () => {
       storage.instance.get("nonexistent-file.bin"),
     ).rejects.toThrow();
   });
+
+  test("list() enumerates keys recursively with `/` separators + prefix filter", async () => {
+    const s = storage.instance;
+    await s.put("aa11", Buffer.from([1]));
+    await s.put("nested/deep/bb22", Buffer.from([2, 2]));
+    const all = await s.list();
+    const keys = all.map((o) => o.key);
+    expect(keys).toContain("aa11");
+    // Recursed into subdirs, key is the root-relative path with `/`.
+    expect(keys).toContain("nested/deep/bb22");
+    // Sizes + a real lastModified come back.
+    expect(all.find((o) => o.key === "nested/deep/bb22")?.size).toBe(2);
+    expect(all.every((o) => o.lastModified instanceof Date)).toBe(true);
+    // Prefix filter.
+    const nested = await s.list("nested/");
+    expect(nested.map((o) => o.key)).toEqual(["nested/deep/bb22"]);
+  });
 });

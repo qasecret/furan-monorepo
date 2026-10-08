@@ -4,6 +4,15 @@ interface RegisteredMetrics {
   published: Counter<"event">;
   flushed: Counter<"event">;
   connections: Gauge;
+  rejected: Counter;
+  /**
+   * Authoritative live-stream count backing the DoS cap. Mirrored by the
+   * `connections` Gauge for scraping, but kept as a plain integer so the
+   * cap check reads a scalar directly (a Gauge only exposes its value via a
+   * structured `.get()` snapshot). Node's single thread makes the
+   * read-then-increment in `tryAcquireConnection` atomic.
+   */
+  live: number;
 }
 
 const metricsByRegistry = new WeakMap<Registry, RegisteredMetrics>();
@@ -29,8 +38,19 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
     help: "Currently-open project SSE connections",
     registers: [registry],
   });
+  const rejected = new Counter({
+    name: "furan_sse_connections_rejected_total",
+    help: "SSE stream requests rejected because the concurrent-connection cap was reached",
+    registers: [registry],
+  });
 
-  const out: RegisteredMetrics = { published, flushed, connections };
+  const out: RegisteredMetrics = {
+    published,
+    flushed,
+    connections,
+    rejected,
+    live: 0,
+  };
   metricsByRegistry.set(registry, out);
   return out;
 }
@@ -45,9 +65,30 @@ export function recordFlushed(
 ): void {
   getOrRegister(registry).flushed.inc({ event }, count);
 }
-export function incConnections(registry: Registry): void {
-  getOrRegister(registry).connections.inc();
+/**
+ * Reserve a live-SSE-connection slot if the instance is under `max`. Returns
+ * `true` (and increments the live count + Gauge) when a slot was taken, or
+ * `false` (and increments the rejected counter) when the cap is already
+ * reached. Callers MUST pair every `true` with exactly one
+ * `releaseConnection` in their teardown. Reject BEFORE hijacking the socket
+ * so the caller can still send a normal 503.
+ */
+export function tryAcquireConnection(registry: Registry, max: number): boolean {
+  const m = getOrRegister(registry);
+  if (m.live >= max) {
+    m.rejected.inc();
+    return false;
+  }
+  m.live += 1;
+  m.connections.inc();
+  return true;
 }
-export function decConnections(registry: Registry): void {
-  getOrRegister(registry).connections.dec();
+export function releaseConnection(registry: Registry): void {
+  const m = getOrRegister(registry);
+  // Guard against a double-release driving the count negative (e.g. both
+  // "close" and "aborted" firing) — callers also guard with a `cleanedUp`
+  // flag, this is belt-and-braces.
+  if (m.live <= 0) return;
+  m.live -= 1;
+  m.connections.dec();
 }

@@ -11,7 +11,7 @@ import { AdminTabs } from "@/app/(protected)/admin/(area)/_components/admin-tabs
 afterEach(cleanup);
 
 describe("AdminTabs", () => {
-  test("renders Members + Projects + API Keys + Installations tabs with hrefs", () => {
+  test("renders all admin tabs with their hrefs", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     expect(
@@ -24,11 +24,17 @@ describe("AdminTabs", () => {
       screen.getByRole("link", { name: /API Keys/ }).getAttribute("href"),
     ).toBe("/admin/api-keys");
     expect(
+      screen.getByRole("link", { name: /Auto Rules/ }).getAttribute("href"),
+    ).toBe("/admin/auto-rules");
+    expect(
       screen.getByRole("link", { name: /Installations/ }).getAttribute("href"),
     ).toBe("/admin/installations");
+    expect(
+      screen.getByRole("link", { name: /Audit Log/ }).getAttribute("href"),
+    ).toBe("/admin/audit-log");
   });
 
-  test("orders tabs: Members, Projects, API Keys, Installations", () => {
+  test("orders tabs: Members, Projects, API Keys, Auto Rules, Installations, Audit Log", () => {
     mockPath = "/admin/members";
     render(<AdminTabs />);
     const labels = screen
@@ -38,7 +44,9 @@ describe("AdminTabs", () => {
       "Members",
       "Projects",
       "API Keys",
+      "Auto Rules",
       "Installations",
+      "Audit Log",
     ]);
   });
 

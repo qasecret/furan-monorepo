@@ -1,7 +1,7 @@
 import { PNG } from "pngjs";
 import { describe, it, expect, vi } from "vitest";
 
-import { runVlm } from "../src/vlm/index.js";
+import { extractJsonObject, runVlm } from "../src/vlm/index.js";
 import type { VlmProvider, VlmProviderResponse } from "../src/vlm/types.js";
 
 function solidPng(
@@ -75,5 +75,42 @@ describe("runVlm", () => {
     });
     expect(result.vlmDescription).toBeUndefined();
     expect(mockProvider.generate).not.toHaveBeenCalled();
+  });
+
+  it("parses a markdown-fenced JSON response (current LLMs wrap it)", async () => {
+    // Claude/Gemini routinely emit ```json … ``` despite the prompt. The raw
+    // JSON.parse used to reject this as parse_error and fall back to L1.
+    const fencedProvider: VlmProvider = {
+      generate: vi.fn(
+        async (): Promise<VlmProviderResponse> => ({
+          content:
+            '```json\n{ "identical": false, "description": "blue to red shift" }\n```',
+        }),
+      ),
+    };
+    const result = await runVlm(baseline, candidate, {
+      provider: fencedProvider,
+      config: { provider: "ollama", model: "t", prompt: "t", temperature: 0 },
+      engineConfig: {
+        threshold: 0.1,
+        ignoreAntialiasing: true,
+        allowDiffDimensions: false,
+      },
+      diffThreshold: 0,
+    });
+    expect(result.vlmError).toBeUndefined();
+    expect(result.vlmDescription).toBe("blue to red shift");
+    expect(result.passed).toBe(false);
+  });
+});
+
+describe("extractJsonObject", () => {
+  it("unwraps fenced, prose-preambled, and bare JSON", () => {
+    expect(extractJsonObject('```json\n{"a":1}\n```')).toBe('{"a":1}');
+    expect(extractJsonObject("```\n{\"a\":1}\n```")).toBe('{"a":1}');
+    expect(extractJsonObject('Here is the result:\n{"a":1}\nDone.')).toBe(
+      '{"a":1}',
+    );
+    expect(extractJsonObject('{"a":1}')).toBe('{"a":1}');
   });
 });

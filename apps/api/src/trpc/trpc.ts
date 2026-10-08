@@ -1,5 +1,51 @@
+import { withUserScope } from "@furan/db";
 import { initTRPC } from "@trpc/server";
+
+import { createDeferredSink } from "../lib/deferred-sink.js";
 
 import type { Context } from "./context.js";
 
 export const t = initTRPC.context<Context>().create();
+
+/**
+ * Runs each procedure inside a user-scoped transaction (ADR-058): pins
+ * `app.user_id` / `app.user_role` via `withUserScope` and swaps `ctx.db` for
+ * the transaction handle for the procedure's duration, so Postgres RLS can
+ * enforce tenant isolation from the DB layer.
+ *
+ * Unauthenticated procedures (no `ctx.user`) run WITHOUT a scope/transaction:
+ * they don't read project-scoped data, and once RLS is enabled they fail-closed
+ * to zero project rows — which is correct. RLS is still OFF today, so this is a
+ * behavior-preserving change: queries simply run inside a transaction now (a
+ * per-procedure atomic unit), which is why every existing tRPC test still holds.
+ *
+ * Downstream middlewares (`authed`, `projectMember`, `requireAdmin`) run AFTER
+ * this and inherit the scoped `ctx.db`, so their own membership lookups are
+ * covered too. Nested `ctx.db.transaction(...)` inside a procedure becomes a
+ * savepoint on the outer transaction (supported by postgres.js).
+ */
+const scopeToUser = t.middleware(async ({ ctx, next }) => {
+  // The sink lives in the middleware closure (not on the Context), so
+  // `ctx.onCommit` is the only surface a procedure sees — it can't reach or
+  // mutate the underlying effect list. Injected in both branches so the ctx
+  // shape (and its inferred type) is consistent for every procedure.
+  const sink = createDeferredSink();
+  const scopedCtx = { ...ctx, onCommit: sink.onCommit };
+  if (!ctx.user) return next({ ctx: scopedCtx });
+  const { id, role } = ctx.user;
+  const result = await withUserScope(ctx.db, { userId: id, role }, (tx) =>
+    next({ ctx: { ...scopedCtx, db: tx } }),
+  );
+  // Drain post-commit effects (diff enqueues) only when the procedure
+  // succeeded — on error the transaction is rolled back / committed empty, so
+  // enqueuing a job for rows that aren't there would be wrong.
+  if (result.ok) await sink.drain();
+  return result;
+});
+
+/**
+ * Base procedure every router builds from. Applies {@link scopeToUser} first so
+ * the RLS identity is set before any auth/membership middleware or resolver
+ * runs. Compose auth on top as before (`publicProcedure.use(authed)` etc.).
+ */
+export const publicProcedure = t.procedure.use(scopeToUser);

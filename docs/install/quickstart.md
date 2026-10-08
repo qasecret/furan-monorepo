@@ -1,5 +1,18 @@
 # Furan — install quickstart (v1.1)
 
+> **Just want to try it?** Fastest path — one file, no clone, no `.env`:
+>
+> ```bash
+> curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+> docker compose -f furan-compose.yml up -d
+> # open http://localhost:8080 → admin@furan.local / FuranAdmin123!
+> ```
+>
+> Ships **evaluation-default credentials + JWT secret** — override
+> `FURAN_BOOTSTRAP_ADMIN_PASSWORD` / `JWT_SECRET` / `POSTGRES_PASSWORD` /
+> `MINIO_ROOT_PASSWORD` (or set `FURAN_BIND=127.0.0.1`) before any networked use.
+> The `pnpm dev` flow below is the **development** path for iterating on source.
+
 > **Deploying for real?** Use the Docker-Compose production path in
 > **[`docs/runbooks/production-deploy.md`](../runbooks/production-deploy.md)** —
 > `docker compose -f infra/docker/compose.yml up -d` boots the **full** stack
@@ -95,13 +108,23 @@ expected to exit after first run.
 > **Production-shaped install:** `compose.yml` boots the **full** stack (data
 > plane + the five app services) from pre-built images published to Docker Hub
 > (`docker.io/qasecret/furan-*:v1.1.x`, GHCR mirror at `ghcr.io/qasecret/furan-*`;
-> cosign-signed, SBOM-attached). Run `docker compose -f infra/docker/compose.yml
-up -d` (no `-f compose.dev.yml`) and skip the rest of this quickstart's `pnpm`
-> sections. **Caveat:** deploy from a checkout at the matching release tag — the
-> `migrate` service applies your local migrations, which must agree with the
-> pinned image. See the [production-deploy runbook §0](../runbooks/production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep)
-> for the lockstep rule. The host-process `pnpm dev` flow below is the
-> **development** path.
+> cosign-signed, SBOM-attached). The smoothest path is the one-command
+> [`./deploy.sh`](../../deploy.sh) — it generates `.env`, enforces the lockstep
+> rule, brings the stack up in order, health-waits, and runs the drift canary.
+> Otherwise run `docker compose -f infra/docker/compose.yml up -d` (no
+> `-f compose.dev.yml`) and skip the rest of this quickstart's `pnpm` sections.
+> **Caveat 1 (lockstep):** deploy from a checkout at the matching release tag —
+> the `migrate` service applies your local migrations, which must agree with the
+> pinned image. See the [production-deploy runbook §0](../runbooks/production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep).
+> **Caveat 2 (dashboard UI):** on a plain `localhost` deploy of a **published
+> image ≤ v1.1.27** the dashboard renders but **UI login does not work** (the
+> server-side code targets a baked `localhost:3000` it can't reach from inside the
+> container). Fixed in **`v1.1.28`** via a runtime `API_INTERNAL_URL`, so a
+> **v1.1.28+** deploy (or a from-source `./deploy.sh --mode from-head` build)
+> logs in fine on `localhost`; for **remote** browsers, deploy behind a
+> domain per [reverse-proxy-tls.md](../runbooks/reverse-proxy-tls.md). The
+> API/SDK path (§11) is fully functional regardless. This `pnpm dev` flow below
+> (the **development** path) logs in fine because everything runs on the host.
 
 ## 4. Install dependencies + apply migrations
 

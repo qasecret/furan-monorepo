@@ -1,0 +1,81 @@
+# Heavyweight full-stack E2E: builds the 5 app images from HEAD, boots a Docker
+# compose deployment, and drives it via Playwright + the virtual-SDK
+# (@furan/e2e). Deliberately NOT on push / pull_request — it would tax every PR
+# and needs a full compose stack. Run it on demand (workflow_dispatch) or
+# nightly. Emits a capability-coverage matrix + Playwright report as artifacts.
+name: e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # ~06:00 UTC nightly
+
+# Never run more than one heavy E2E job at a time.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      # Node 22 + pnpm 9.15.0 + install (shared composite action).
+      - uses: ./.github/actions/setup
+
+      - name: Install Playwright chromium
+        run: pnpm --filter @furan/e2e exec playwright install --with-deps chromium
+
+      # infra/docker/.env is gitignored (local dev secret) — synthesize an
+      # ephemeral one with RUNTIME-RANDOM secrets so nothing sensitive is
+      # committed and gitleaks has nothing to flag. The stack is torn down with
+      # its volumes at the end of the run.
+      - name: Synthesize ephemeral compose env
+        run: |
+          JWT_SECRET=$(openssl rand -hex 24)
+          POSTGRES_PASSWORD=$(openssl rand -hex 12)
+          MINIO_ROOT_PASSWORD=$(openssl rand -hex 12)
+          cat > infra/docker/.env <<EOF
+          POSTGRES_USER=furan
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          POSTGRES_DB=furan
+          MINIO_ROOT_USER=furan
+          MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+          MINIO_BUCKET=furan
+          JWT_SECRET=${JWT_SECRET}
+          JWT_EXPIRY=7d
+          LOG_LEVEL=info
+          COMPOSE_PROFILES=s3
+          FURAN_DASHBOARD_ORIGIN=http://localhost:3011
+          EOF
+
+      - name: Build :local images from HEAD
+        run: |
+          for app in api capture-worker diff-worker integrations dashboard; do
+            DOCKER_BUILDKIT=1 docker build -f "apps/$app/Dockerfile" \
+              -t "qasecret/furan-$app:local" . || exit 1
+          done
+
+      # Orchestrator: compose up (S3) → wait health → seed → playwright → down.
+      - name: Run E2E (S3 stack)
+        run: pnpm --filter @furan/e2e e2e:s3
+
+      # Fails the job only on a REGRESSED (previously-covered) capability;
+      # not-yet-implemented + config-gated capabilities are reported, not fatal.
+      - name: Coverage gate
+        if: always()
+        run: pnpm --filter @furan/e2e coverage
+
+      - name: Upload coverage matrix + report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            e2e/e2e-coverage.md
+            e2e/e2e-coverage.json
+            e2e/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore

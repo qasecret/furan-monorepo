@@ -15,9 +15,9 @@ Furan fits if **all** of the following are true:
 - Your team is **2–20 people** running a web app that ships often enough that visual regressions hurt.
 - You want a **self-hosted** tool — either for data-residency reasons or to avoid per-snapshot SaaS billing.
 - You already use **GitHub** for code review (GitLab / Bitbucket / Azure DevOps adapters are deferred to a later release).
-- Your test framework is **Selenium + JUnit 5** in Kotlin / Java — or you're willing to drive Furan's REST API directly.
+- Your tests run on **JUnit 5 (Kotlin / Java)** with **Selenium, Playwright, or Appium** — or you're willing to drive Furan's REST API directly.
 
-If you're an enterprise needing SSO / SCIM / audit log / multi-tenancy, Furan is not there yet. See [Status and roadmap](#status-and-roadmap).
+If you're an enterprise needing SSO / SCIM / SAML or multi-organization tenancy, Furan is not there yet. See [Status and roadmap](#status-and-roadmap).
 
 ## What you get
 
@@ -27,11 +27,38 @@ If you're an enterprise needing SSO / SCIM / audit log / multi-tenancy, Furan is
 - **Dynamic text regions** — regex-anchored ignore regions with OCR (tesseract.js); the region is only masked when the extracted text matches your pattern, so real layout changes underneath dynamic dates / order numbers still surface as diffs.
 - **Branch-aware baselines** — feature branch → PR base → default branch fallback chain with atomic promotion when a PR merges. Feature work doesn't pollute `main`'s baselines.
 - **GitHub App** — sticky PR comments, `furan/baselines` status check, auto-promote on merge.
-- **Kotlin SDK** — `io.github.qasecret:furan-selenium` on Maven Central, drop-in for any JUnit 5 + Selenium suite.
+- **JVM SDK family** — `furan-selenium`, `furan-playwright`, and `furan-appium` on Maven Central (`4.2.0`), each a drop-in for a JUnit 5 suite on that driver over a shared capture core, plus a `furan-junit5` `@FuranTest` annotation.
+- **Access control & audit** — four-tier role hierarchy (owner ⊇ admin ⊇ editor ⊇ guest) enforced per request, an admin audit-log viewer, and an opt-in Postgres row-level-security backstop for tenant isolation.
 - **OpenAPI 3.1 spec** — `GET /openapi.json`. **Interactive docs** at `GET /docs` (Scalar).
 - **Operations** — per-project retention TTL, nightly Postgres backup sidecar, restore + api-down runbooks.
-- **Container images** — cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release.
+- **Container images** — multi-arch (amd64 / arm64), cosign-signed (keyless OIDC), Trivy CRITICAL/HIGH scanned, SBOM per release.
 - **Apache 2.0** — no telemetry on the server, no feature gates, no upgrade pressure.
+
+## See it in action
+
+A visual regression caught in review: a CI run's screenshot no longer matches the approved baseline, so Furan flags it, highlights the **exact changed regions** (here: a new badge, the price `$9 → $12`, and the CTA), and scores the severity. **Approve** to accept the new look as the baseline, or **Reject** to keep the old one.
+
+![Furan diff viewer — side-by-side baseline vs current with the changed regions highlighted and a 2.01% pixel-diff / 2-region / Minor-severity summary](docs/images/demo-03-diff.png)
+
+Each CI run lands in a review queue, grouped by status (unresolved changes vs. passing checkpoints):
+
+![Furan review queue — recent batch runs showing an unresolved build and a passed baseline, with a per-checkpoint results table](docs/images/demo-02-review.png)
+
+> Everything above runs on the [one-file install](#fastest-install-evaluation) below — sign in, push a screenshot from your CI or the SDK, and review the diff in the dashboard. _(Screenshots are from a live `furan-compose.yml` deploy; the sample app is a mock pricing page.)_
+
+## Fastest install (evaluation)
+
+One file, one command, no clone and no `.env` — like ReportPortal:
+
+```bash
+curl -O https://raw.githubusercontent.com/qasecret/furan-monorepo/main/infra/docker/furan-compose.yml
+docker compose -f furan-compose.yml up -d
+# open http://localhost:8080  →  sign in as  admin@furan.local / FuranAdmin123!
+```
+
+nginx serves the whole thing on `:8080`; migrations self-apply from the image. This ships **default credentials and a default JWT secret** for zero-friction evaluation — before anything network-reachable, override `FURAN_BOOTSTRAP_ADMIN_PASSWORD`, `JWT_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` (export them before `up`), or keep the defaults off the network with `FURAN_BIND=127.0.0.1`. For a hardened, secret-generating install use [`./deploy.sh`](deploy.sh) or the 10-minute walkthrough below.
+
+> **v1.1.29+** is single-origin: nginx on `:8080` serves both the UI and the API, so the dashboard works from **any** browser (browse `http://<host>:8080`), not just the Docker host.
 
 ## Install in 10 minutes
 
@@ -56,7 +83,7 @@ cd furan-monorepo
 cp .env.example .env
 ```
 
-Open `.env` in your editor and fill in three secrets. The example values are placeholders — your install **will not start** until you replace them.
+Open `.env` in your editor and replace **five** placeholder values — three secrets plus your first admin's login. The example ships them as `change-me…`, and the api **fails closed and refuses to boot** until every one is replaced.
 
 ```bash
 # Generate each value and paste it into the matching key in .env:
@@ -66,17 +93,24 @@ openssl rand -hex 32
 
 # POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD — any high-entropy value
 openssl rand -base64 24
+
+# FURAN_BOOTSTRAP_ADMIN_PASSWORD — your first admin's password
+openssl rand -hex 24
 ```
 
-Required keys in `.env`:
+Required keys in `.env` (the api rejects the `change-me` placeholders for all of them):
 
-| Key                   | Purpose                                                |
-| --------------------- | ------------------------------------------------------ |
-| `JWT_SECRET`          | Signs dashboard session tokens. **Must be ≥32 chars.** |
-| `POSTGRES_PASSWORD`   | Database password — used by every backend service.     |
-| `MINIO_ROOT_PASSWORD` | Object-storage password for screenshot artifacts.      |
+| Key                              | Purpose                                                 |
+| -------------------------------- | ------------------------------------------------------- |
+| `JWT_SECRET`                     | Signs dashboard session tokens. **Must be ≥32 chars.**  |
+| `POSTGRES_PASSWORD`              | Database password — used by every backend service.      |
+| `MINIO_ROOT_PASSWORD`            | Object-storage password for screenshot artifacts.       |
+| `FURAN_BOOTSTRAP_ADMIN_EMAIL`    | Your first admin's login email — you sign in with this. |
+| `FURAN_BOOTSTRAP_ADMIN_PASSWORD` | Your first admin's password (seeded on first boot).     |
 
-The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan_dev`, `MINIO_BUCKET=furan-dev` are safe to keep.
+The api seeds that admin automatically the first time it boots against an empty `users` table. The defaults for `POSTGRES_USER=furan`, `POSTGRES_DB=furan`, `MINIO_BUCKET=furan` are safe to keep.
+
+> **Deploying on a domain (not `localhost`)?** The published dashboard image bakes `http://localhost:3000` as the browser's API URL, so client-side features (the diff viewer, live updates) only work for a viewer on the Docker host. A real HTTPS deployment behind `furan.example.com` needs a reverse proxy **and** a dashboard rebuilt with your public API URL — see [`docs/runbooks/reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md). The steps below assume `localhost`.
 
 ### Step 2 — Start the full stack
 
@@ -86,7 +120,9 @@ docker compose --env-file .env -f infra/docker/compose.yml up -d
 
 `--env-file .env` is required because Compose's project directory defaults to the directory of the first `-f` file (`infra/docker/`), so it would otherwise miss the `.env` you just edited at the repo root.
 
-This pulls and starts seven services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
+This pulls and starts eight long-running services: `postgres`, `redis`, `minio` (data plane) plus `api`, `dashboard`, `capture-worker`, `diff-worker`, `integrations` (app plane). All images are signed and SBOM-attested per release.
+
+> **Production operators:** pin a stable Compose project name (`-p furan`) so re-deploys and upgrades reconcile the same stack, keep `.env` wherever you run Compose from, and follow [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) — it covers the one thing that bites everyone (image ↔ migration lockstep), a post-deploy smoke that catches drift `/readyz` misses, and backup-before-teardown. The repo-root [`deploy.sh`](deploy.sh) automates the whole flow (secret bootstrap, ordered bring-up, health-wait, and the drift canary), with a lockstep guard that refuses a `released` deploy when your checkout's migrations are ahead of the pinned tag; deploy at a release tag (`git checkout v1.1.27`) or use `--mode from-head`.
 
 Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 
@@ -94,7 +130,7 @@ Wait ~30 seconds for healthchecks to settle, then verify everything is up:
 docker compose --env-file .env -f infra/docker/compose.yml ps
 ```
 
-Every service should report `running (healthy)`. The `minio-init` container will show `exited (0)` — that's intentional; it's a one-shot bucket creator.
+Every long-running service should report `running (healthy)`. The `minio-init` and `migrate` containers will show `exited (0)` — that's intentional; they're one-shots (bucket creation and schema migration) that the app services wait on before starting.
 
 ### Step 3 — Sign in
 
@@ -140,13 +176,13 @@ The CLI prompts for the new password and prints nothing on success.
 
 ## Send your first snapshot
 
-The fastest path is from a JUnit 5 + Selenium test using the Kotlin SDK. A copy-paste-runnable example lives at [`packages/sdk-kotlin/examples/sdk-selenium-junit5`](packages/sdk-kotlin/examples/sdk-selenium-junit5).
+The fastest path is from a JUnit 5 + Selenium test using the Kotlin SDK. Copy-paste-runnable examples live under [`packages/sdk-kotlin/examples`](packages/sdk-kotlin/examples) — one each for `sdk-selenium-junit5`, `sdk-playwright-junit5`, and `sdk-appium-junit5`.
 
-Add Furan as a test dependency:
+Add Furan as a test dependency (swap `furan-selenium` for `furan-playwright` or `furan-appium` to match your driver):
 
 ```kotlin
 // build.gradle.kts
-testImplementation("io.github.qasecret:furan-selenium:4.0.0")
+testImplementation("io.github.qasecret:furan-selenium:4.2.0")
 ```
 
 In your test:
@@ -184,8 +220,8 @@ Run the test. Furan will:
 
 1. Capture a PNG + per-element bbox map of the page.
 2. Upload to the API → enqueue capture + diff jobs.
-3. Compare against the project's baseline for this `(test name, browser, viewport)` tuple. The first run has no baseline, so it auto-creates one.
-4. Surface the run in the dashboard at `/projects/<projectId>` with status **New** (first ever) or **Unresolved** (diff awaiting review) on subsequent runs.
+3. Compare against the project's baseline for this `(test name, branch, browser, viewport, OS/device)` identity. The first run has no baseline yet, so it's recorded as **New** for you to approve as the baseline — Furan does **not** auto-seed a baseline by default (enable auto-seed per project if you'd rather the first capture become the baseline automatically).
+4. Surface the run in the dashboard at `/projects/<projectId>` with status **New** (no baseline yet) or, once a baseline exists, **Passed** / **Unresolved** (a diff awaiting review) on subsequent runs.
 
 Open the run, click into the diff viewer, and you're looking at your first Furan diff.
 
@@ -205,14 +241,14 @@ The reference workflow runs your test suite, uploads diffs, posts a sticky PR co
 If you'd rather wire Furan into your existing infrastructure (Kubernetes, Nomad, your own Compose stack) instead of using the bundled `infra/docker/compose.yml`:
 
 ```bash
-docker pull qasecret/furan-api:v1.0.8
-docker pull qasecret/furan-dashboard:v1.0.8
-docker pull qasecret/furan-capture-worker:v1.0.8
-docker pull qasecret/furan-diff-worker:v1.0.8
-docker pull qasecret/furan-integrations:v1.0.8
+docker pull qasecret/furan-api:v1.1.27
+docker pull qasecret/furan-dashboard:v1.1.27
+docker pull qasecret/furan-capture-worker:v1.1.27
+docker pull qasecret/furan-diff-worker:v1.1.27
+docker pull qasecret/furan-integrations:v1.1.27
 ```
 
-GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.0.8`. Every image is cosign-signed (keyless OIDC) and ships with an SBOM artifact.
+GHCR mirrors are published per release at `ghcr.io/qasecret/furan-*:v1.1.27`. Every image is multi-arch (amd64 / arm64), cosign-signed (keyless OIDC — verify against the workflow identity `build-images.yml@refs/tags/v1.1.27`), and ships with an SBOM artifact.
 
 ## Common first-install problems
 
@@ -241,8 +277,9 @@ furan-monorepo/
 ├── packages/
 │   ├── db/               Drizzle schema + migrations + scope helpers
 │   ├── diff-engine/      Image-first: pixel (odiff/pixelmatch/looks-same) + VLM + axe
-│   ├── sdk-kotlin/       Kotlin SDK (core + Selenium adapter)
-│   ├── storage/          S3 client wrapper (MinIO-compatible)
+│   ├── rules-engine/     Project auto-rules that auto-resolve known diffs
+│   ├── sdk-kotlin/       Kotlin/JVM SDK (core + selenium/playwright/appium adapters)
+│   ├── storage/          S3 (MinIO-compatible) + HDD storage backends
 │   ├── queue/            BullMQ wrappers
 │   ├── telemetry/        pino + OpenTelemetry + prom-client
 │   └── shared-types/     Zod schemas shared across apps
@@ -254,6 +291,9 @@ furan-monorepo/
 
 Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 
+- [`production-deploy.md`](docs/runbooks/production-deploy.md) — the full Compose install, incl. image ↔ migration lockstep
+- [`reverse-proxy-tls.md`](docs/runbooks/reverse-proxy-tls.md) — expose the stack on a domain with HTTPS
+- [`storage-backends.md`](docs/runbooks/storage-backends.md) — S3/MinIO vs HDD storage
 - [`api-down.md`](docs/runbooks/api-down.md) — first-call triage decision tree
 - [`restore-from-backup.md`](docs/runbooks/restore-from-backup.md) — backup + restore lifecycle
 - [`migration-deploy-order.md`](docs/runbooks/migration-deploy-order.md) — schema-additive-first deploy ordering
@@ -263,16 +303,15 @@ Operator one-pagers for common scenarios in [`docs/runbooks/`](docs/runbooks/):
 
 ## Status and roadmap
 
-**v1.0.8 is the current release** (released 2026-05-21). The v1.0 line is in feature-complete patch mode while we onboard the first external installers — if you'd like to be one, see [`docs/runbooks/alpha-install.md`](docs/runbooks/alpha-install.md).
+**v1.1.27 is the current release** (2026-07-04), published as cosign-signed, Trivy-scanned, multi-arch (amd64 / arm64) images. Beyond the v1.0 baseline, the v1.1 line adds the Playwright and Appium SDK adapters, the image-first VLM diff layer, an opt-in Postgres row-level-security tenant-isolation backstop, an audit log with an admin viewer, and a four-tier role hierarchy. Still onboarding early installers — if you'd like to be one, see [`docs/runbooks/alpha-install.md`](docs/runbooks/alpha-install.md).
 
-Deferred to v1.1+ (no schedule, will land when there's user signal):
+Not yet built (no schedule, will land when there's user signal):
 
-- **More SDKs** — Playwright, Cypress, TypeScript / JavaScript, Storybook
-- **More VCS integrations** — GitLab, Bitbucket, Azure DevOps
-- **Enterprise features** — multi-tenancy, SSO / SCIM / SAML, audit log, role-based access beyond the current 3 roles
-- **VLM / AI diff narration** — natural-language explanations of what changed
+- **Non-JVM SDKs** — TypeScript / JavaScript, Python, C#, plus Cypress / Storybook. The JVM adapters (Selenium, Playwright, Appium) already ship.
+- **More VCS integrations** — GitLab, Bitbucket, Azure DevOps. The GitHub App already ships.
+- **Enterprise identity** — SSO / SCIM / SAML and multi-organization tenancy. Furan is single-organization today; role-based access control and the audit log already ship.
 
-Design docs, ADRs, and the v1.1+ planning live in the separate `furan-design` workspace (not part of this repo; maintained internally).
+Design docs, ADRs, and forward planning live in the separate `furan-design` workspace (not part of this repo; maintained internally).
 
 ## License and governance
 

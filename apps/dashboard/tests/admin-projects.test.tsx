@@ -4,9 +4,15 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 vi.mock("@/lib/api-client", () => ({
   apiGet: vi.fn(async () => ({ status: 200, data: [] })),
 }));
-vi.mock("@/lib/get-viewer", () => ({
-  getViewerRole: vi.fn(async () => "admin"),
-}));
+// Keep the real role predicates (isAtLeastAdmin — the page's admin gate); only
+// stub the network-backed getViewerRole.
+vi.mock("@/lib/get-viewer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/get-viewer")>();
+  return {
+    ...actual,
+    getViewerRole: vi.fn(async () => "admin"),
+  };
+});
 // Stub the dialog + empty-state so the test doesn't pull in react-hook-form /
 // next/navigation; we only care about the grid + card links here.
 vi.mock("@/app/(protected)/projects/_components/create-project-dialog", () => ({

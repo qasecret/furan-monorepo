@@ -5,12 +5,13 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import {
-  decConnections,
-  incConnections,
   recordFlushed,
+  releaseConnection,
+  tryAcquireConnection,
 } from "../lib/broadcast-metrics.js";
 import type { ProjectEventName } from "../lib/broadcast.js";
 import { sendError } from "../lib/errors.js";
+import { withRequestScope } from "../lib/with-request-scope.js";
 
 /**
  * Tiny debounce with leading + maxWait semantics — same shape as
@@ -117,14 +118,36 @@ export async function registerProjectEventsRoute(
       const { id } = parsed.data;
 
       // Defense-in-depth: requireProjectMember catches non-members, but a
-      // deleted project shouldn't 200 here.
-      const projectRows = await app.db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.id, id))
-        .limit(1);
-      if (!projectRows[0]) {
+      // deleted project shouldn't 200 here. Only this existence check is
+      // scoped (ADR-058) — the long-lived SSE stream below must NOT hold a
+      // transaction open.
+      const exists = await withRequestScope(
+        app,
+        req,
+        async (db) => {
+          const projectRows = await db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(eq(projects.id, id))
+            .limit(1);
+          return projectRows.length > 0;
+        },
+        id,
+      );
+      if (!exists) {
         return sendError(reply, 404, "not_found");
+      }
+
+      // DoS backstop: refuse the stream (before hijacking, so a normal 503
+      // still sends) when this instance is already at the concurrent-SSE cap.
+      if (
+        !tryAcquireConnection(
+          app.telemetry.metrics,
+          app.env.SSE_MAX_CONNECTIONS,
+        )
+      ) {
+        req.log.warn({ projectId: id }, "project_sse_capacity_rejected");
+        return sendError(reply, 503, "sse_capacity_exceeded");
       }
 
       reply.hijack();
@@ -156,7 +179,7 @@ export async function registerProjectEventsRoute(
         reply.raw.flushHeaders();
       }
       req.raw.socket?.setTimeout?.(0);
-      incConnections(app.telemetry.metrics);
+      // Slot already reserved by tryAcquireConnection above.
 
       // Per-connection state: 9 buffers + 9 debouncers, keyed by event name.
       // 6 legacy names + 3 ADR-038 checkpoint-lifecycle names.
@@ -227,7 +250,7 @@ export async function registerProjectEventsRoute(
         await subscriber.subscribe(channel);
       } catch (err) {
         req.log.error({ err, channel }, "project_sse_subscribe_failed");
-        decConnections(app.telemetry.metrics);
+        releaseConnection(app.telemetry.metrics);
         reply.raw.end();
         await subscriber.quit().catch(() => undefined);
         return;
@@ -256,7 +279,7 @@ export async function registerProjectEventsRoute(
           /* ignore */
         }
         await subscriber.quit().catch(() => undefined);
-        decConnections(app.telemetry.metrics);
+        releaseConnection(app.telemetry.metrics);
       };
 
       req.raw.on("close", () => void cleanup());

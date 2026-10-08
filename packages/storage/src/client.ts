@@ -1,11 +1,13 @@
 import { getEnv } from "@furan/config";
+import type { Registry } from "prom-client";
 import { z } from "zod";
 
 import { createHddStorage } from "./hdd.js";
+import { instrumentStorage } from "./metrics.js";
 import { createS3Storage } from "./s3.js";
 import type { Storage } from "./types.js";
 
-export type { HeadResult, Storage } from "./types.js";
+export type { HeadResult, Storage, StorageObject } from "./types.js";
 
 /**
  * `STORAGE_KIND` selects the backend at boot. Defaults to `s3` to
@@ -21,6 +23,8 @@ export type { HeadResult, Storage } from "./types.js";
  *
  * Spec: furan-design/specs/2026-05-24-hdd-storage-backend-design.md
  */
+const S3_SECRET_PLACEHOLDERS = new Set(["devpw_must_be_long"]);
+
 const storageEnv = z
   .object({
     STORAGE_KIND: z.enum(["s3", "hdd"]).default("s3"),
@@ -49,6 +53,18 @@ const storageEnv = z
           });
         }
       }
+      // Fail closed on the shipped `.env.example` placeholder — booting S3
+      // with it produces cryptic `SignatureDoesNotMatch` 500s at first write
+      // instead of a clear "you forgot to set a real secret" at startup.
+      // Mirrors the bootstrap-admin placeholder rejection in the api env schema.
+      if (val.S3_SECRET_KEY && S3_SECRET_PLACEHOLDERS.has(val.S3_SECRET_KEY)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["S3_SECRET_KEY"],
+          message:
+            "S3_SECRET_KEY is still the .env.example placeholder — set the real object-storage secret",
+        });
+      }
     } else if (val.STORAGE_KIND === "hdd") {
       if (!val.HDD_ROOT) {
         ctx.addIssue({
@@ -64,19 +80,25 @@ const storageEnv = z
  * Reads `STORAGE_KIND` and returns the matching Storage backend.
  * Validation happens up-front via the zod schema so a misconfigured
  * install fails fast at boot instead of on the first object write.
+ *
+ * Pass a telemetry `Registry` to wrap the backend with operation-error
+ * metrics (`furan_storage_operation_errors_total`). It's optional so CLIs and
+ * tests that lack a registry keep working uninstrumented.
  */
-export function createStorage(): Storage {
+export function createStorage(registry?: Registry): Storage {
   const env = getEnv(storageEnv);
   if (env.STORAGE_KIND === "hdd") {
-    return createHddStorage({ root: env.HDD_ROOT! });
+    const hdd = createHddStorage({ root: env.HDD_ROOT! });
+    return registry ? instrumentStorage(hdd, registry, "hdd") : hdd;
   }
   // STORAGE_KIND=s3 — superRefine already guaranteed the S3 fields are
   // set, so the non-null assertions are safe and keep the call site clean.
-  return createS3Storage({
+  const s3 = createS3Storage({
     endpoint: env.S3_ENDPOINT!,
     bucket: env.S3_BUCKET!,
     accessKey: env.S3_ACCESS_KEY!,
     secretKey: env.S3_SECRET_KEY!,
     region: env.S3_REGION,
   });
+  return registry ? instrumentStorage(s3, registry, "s3") : s3;
 }

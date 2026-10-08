@@ -1,0 +1,11 @@
+# E2E port isolation overlay. Publishes the api + dashboard on a dedicated host
+# port range (3010/3011) so the furan-e2e stack coexists with a developer's
+# `pnpm dev` api/dashboard on 3000/3001. Container-internal ports are unchanged
+# (service-to-service comms use the docker network), so only the host-side test
+# client is affected — it targets E2E_API_URL / E2E_DASH_URL (set by the
+# orchestrator to match).
+services:
+  api:
+    ports: ["3010:3000"]
+  dashboard:
+    ports: ["3011:3001"]

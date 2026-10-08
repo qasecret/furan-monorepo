@@ -11,6 +11,7 @@ import { createApp } from "./app.js";
 import { envSchema } from "./env.js";
 import { maybeBootstrapAdmin } from "./lib/bootstrap-admin.js";
 import { createBroadcaster } from "./lib/broadcast.js";
+import { createRedisMemberProjectsCache } from "./lib/member-projects-cache.js";
 import { createRedisUserAuthCache } from "./lib/user-auth-cache.js";
 
 async function main(): Promise<void> {
@@ -23,7 +24,18 @@ async function main(): Promise<void> {
       : {}),
   });
   installProcessErrorHandlers(telemetry.logger);
-  const { db, close } = createDb();
+  // ADR-058: connect as the RLS-subject `furan_app` role when DATABASE_URL_APP
+  // is set; otherwise the owner role (bypasses RLS — backstop inactive). Log
+  // which one so operators can confirm the backstop is live.
+  const { db, close } = createDb(
+    env.DATABASE_URL_APP !== undefined ? { url: env.DATABASE_URL_APP } : {},
+  );
+  telemetry.logger.info(
+    { rlsSubjectRole: env.DATABASE_URL_APP !== undefined },
+    env.DATABASE_URL_APP !== undefined
+      ? "db_connected_as_rls_subject_role"
+      : "db_connected_as_owner_rls_backstop_inactive",
+  );
   const diffQueue = createQueue("diff");
   // Dedicated Redis publisher connection for project-channel broadcasts.
   // The SSE route opens its own subscriber connection per subscriber.
@@ -34,6 +46,9 @@ async function main(): Promise<void> {
   // commands; separate from the broadcaster's publisher connection).
   const cacheRedis = createRedisConnection();
   const cache = createRedisUserAuthCache(cacheRedis);
+  // Shares the cache connection — separate key namespace (member-project sets
+  // for the storage-proxy hot path).
+  const memberProjectsCache = createRedisMemberProjectsCache(cacheRedis);
 
   const app = await createApp({
     db,
@@ -42,6 +57,7 @@ async function main(): Promise<void> {
     diffQueue,
     broadcaster,
     cache,
+    memberProjectsCache,
   });
 
   // First-admin bootstrap. Runs at most once (no-op when users exist).
