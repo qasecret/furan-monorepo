@@ -34,7 +34,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-hover data-[highlighted]:text-fg",
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-overlay-hover data-[highlighted]:text-fg",
       className,
     )}
     {...props}
@@ -58,7 +58,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-hover data-[highlighted]:text-fg",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-overlay-hover data-[highlighted]:text-fg",
       className,
     )}
     checked={checked}
@@ -102,7 +102,7 @@ const DropdownMenuRadioItem = React.forwardRef<
   <DropdownMenuPrimitive.RadioItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-hover data-[highlighted]:text-fg",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm text-fg-secondary outline-none transition-colors duration-150 data-[highlighted]:bg-overlay-hover data-[highlighted]:text-fg",
       className,
     )}
     {...props}

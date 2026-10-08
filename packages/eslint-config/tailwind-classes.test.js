@@ -198,6 +198,7 @@ describe("parseClass", () => {
       "raised",
       "overlay",
       "hover",
+      "overlay-hover",
       "edge",
       "edge-subtle",
       "edge-strong",

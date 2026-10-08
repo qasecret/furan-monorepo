@@ -100,6 +100,7 @@ const TOKEN_NAMES = new Set([
   "raised",
   "overlay",
   "hover",
+  "overlay-hover",
   "edge",
   "edge-subtle",
   "edge-strong",

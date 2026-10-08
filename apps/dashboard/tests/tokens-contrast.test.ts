@@ -20,6 +20,7 @@ const LIGHT = {
   raised: "#ffffff",
   overlay: "#ffffff",
   hover: "#f4f4f5",
+  "overlay-hover": "#f4f4f5",
   edge: "#e4e4e7",
   "edge-subtle": "#f0f0f2",
   "edge-strong": "#d4d4d8",
@@ -50,6 +51,7 @@ const DARK = {
   raised: "#131316",
   overlay: "#1a1a1e",
   hover: "#1d1d21",
+  "overlay-hover": "#24242a",
   edge: "#26262b",
   "edge-subtle": "#1b1b1f",
   "edge-strong": "#3a3a41",
@@ -74,7 +76,14 @@ const DARK = {
   "status-neutral-text": "#d4d4d8",
 } as const;
 
-const SURFACES = ["canvas", "sunken", "raised", "overlay", "hover"];
+const SURFACES = [
+  "canvas",
+  "sunken",
+  "raised",
+  "overlay",
+  "hover",
+  "overlay-hover",
+];
 const STATUSES = [
   "passed",
   "unresolved",
