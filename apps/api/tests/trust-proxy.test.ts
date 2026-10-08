@@ -34,6 +34,27 @@ describe("parseTrustProxy (TRUST_PROXY → Fastify trustProxy)", () => {
     expect(parseTrustProxy(raw)).toBe(hops);
   });
 
+  // furan-compose.yml (#416) sets TRUST_PROXY: "1" and relies on it becoming
+  // the NUMBER 1. As the string "1" Fastify would treat it as an IP allowlist
+  // (req.ip = the proxy), and `true` would trust a client-forged left-most XFF.
+  test('"1" is the number 1 (one hop), not the string "1" or true', async () => {
+    const parsed = parseTrustProxy("1");
+    expect(parsed).toBe(1);
+    expect(typeof parsed).toBe("number");
+
+    const app = Fastify({ trustProxy: parsed });
+    app.get("/ip", async (req) => ({ ip: req.ip }));
+    // nginx (peer 172.20.0.4) appended the real client to a forged entry.
+    const res = await app.inject({
+      method: "GET",
+      url: "/ip",
+      remoteAddress: "172.20.0.4",
+      headers: { "x-forwarded-for": "6.6.6.6, 172.20.0.5" },
+    });
+    expect(res.json()).toEqual({ ip: "172.20.0.5" });
+    await app.close();
+  });
+
   test("IPs, CIDRs and proxy-addr keywords pass through as a trimmed list", () => {
     expect(
       parseTrustProxy(
