@@ -2,16 +2,31 @@
 
 We take security seriously and appreciate responsible disclosure.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Email **security@furan.dev** with a description, reproduction steps, and impact.
-GPG-encrypt the body using the key below for anything sensitive.
+**Please do not open a public issue for a security problem.**
 
-- GPG fingerprint: `BC9C7F950A0446E7BC5C97133858ABC603091FB6`
-- Public key available on keys.openpgp.org and reproduced at the bottom of this file
+Report it privately through GitHub:
+**[Report a vulnerability](https://github.com/qasecret/furan-monorepo/security/advisories/new)**
+(the repository's **Security** tab → **Report a vulnerability**).
+
+The report is visible only to the maintainers. Include a description,
+reproduction steps, the affected version (app image tag and/or SDK version),
+and the impact you observed.
 
 We aim to acknowledge within **72 hours** and to ship a fix or mitigation
-within **90 days** of acknowledgement. Coordinated disclosure preferred.
+within **90 days** of acknowledgement. Coordinated disclosure preferred — we'll
+agree a disclosure date with you and credit you in the advisory unless you'd
+rather stay anonymous.
+
+## Supported versions
+
+| Component                                 | Supported with security fixes |
+| ----------------------------------------- | ----------------------------- |
+| App images (`qasecret/furan-*`)           | latest `v1.1.x` release       |
+| Kotlin SDK (`io.github.qasecret:furan-*`) | latest `4.x` release          |
+
+Fixes ship in a new release; older releases are fixed by upgrading.
 
 ## In scope
 
@@ -34,21 +49,3 @@ researchers who:
   service interruption.
 - Give us a reasonable time to investigate and respond before publishing.
 - Do not exploit the issue beyond what is necessary to demonstrate it.
-
-## Public key (ASCII-armored)
-
-```
------BEGIN PGP PUBLIC KEY BLOCK-----
-
-mDMEagfkNBYJKwYBBAHaRw8BAQdAjKptpl1YePg5a+bcqtJ7U3GxZ8BpiUFCAyAR
-LdvaYVi0I0Z1cmFuIFNlY3VyaXR5IDxzZWN1cml0eUBmdXJhbi5kZXY+iJkEExYK
-AEEWIQS8nH+VCgRG57xclxM4WKvGAwkftgUCagfkNAIbIwUJA8JnAAULCQgHAgIi
-AgYVCgkICwIEFgIDAQIeBwIXgAAKCRA4WKvGAwkftg9pAQCdvxHMLJz0Wn4+EGQS
-SnSE32/eB8vkAsFUz3EcGxxO+AD+IBEb4TSe/Md4qvuZQXhKMVHTAs8Dwlz8D6/K
-ucwuywa4OARqB+Q0EgorBgEEAZdVAQUBAQdAgGOvIE0lXwgIt8mICHQ6DPEDDXwm
-hgB6RexYpvhzQhMDAQgHiH4EGBYKACYWIQS8nH+VCgRG57xclxM4WKvGAwkftgUC
-agfkNAIbDAUJA8JnAAAKCRA4WKvGAwkfttjNAP9FOVWNic1RhJPf2mbwuBB3an81
-eXuLaq+E0K2N6Sc2pQD/eX3dQmsuQ7kBKF63GcR+edEFwbw/yBs2d7mtoE/TfAo=
-=2qcl
------END PGP PUBLIC KEY BLOCK-----
-```

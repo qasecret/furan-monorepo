@@ -52,10 +52,12 @@ check. Each Furan deployment provisions its own App during install; the URL
 is **TBD per-deployment** and lives in `apps/integrations` config (`GITHUB_APP_SLUG`).
 
 A reference install slug is `furan-baselines`
-(URL pattern `https://github.com/apps/<slug>`). Follow
-[docs/runbooks/alpha-install.md](../runbooks/alpha-install.md) to provision
-your own App, set the slug in `apps/integrations`, and surface its install
-URL to your team.
+(URL pattern `https://github.com/apps/<slug>`). To run your own App, create a
+GitHub App on your account or organization, then give the `integrations`
+service its credentials: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and
+`GITHUB_APP_WEBHOOK_SECRET` (see `apps/integrations/src/env.ts` for the full
+list), and surface the App's install URL to your team. A step-by-step App
+provisioning guide is not written yet.
 
 After installing the App on your repository, **link the GitHub installation
 to a Furan project** via the admin UI:
@@ -159,5 +161,5 @@ inspect the `test_runs` and `screenshots` tables directly.
 ## See also
 
 - [SDK example project](../../packages/sdk-kotlin/examples/sdk-selenium-junit5/) — runnable Gradle reference
-- [Alpha install runbook](../runbooks/alpha-install.md) — provisioning the GitHub App on a self-hosted deployment
+- [Production deploy runbook](../runbooks/production-deploy.md) — running the full stack, including the `integrations` service
 - [`.examples/visual-regression.yml`](./.examples/visual-regression.yml) — copy-paste workflow

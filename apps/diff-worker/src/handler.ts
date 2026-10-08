@@ -32,7 +32,6 @@ import {
   ollamaProvider,
   geminiProvider,
   anthropicProvider,
-  type EngineConfig,
   type MatchLevel,
   type Severity,
   type VlmProvider,
@@ -68,43 +67,12 @@ import {
   resolveRegionBbox,
   type ElementMap,
 } from "./element-map-resolver.js";
+import { parseEngineConfig, redactSecret } from "./engine-config.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
 import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
-
-const engineConfigSchema = z.object({
-  threshold: z.number().min(0).max(1).default(DEFAULT_ENGINE_CONFIG.threshold),
-  ignoreAntialiasing: z
-    .boolean()
-    .default(DEFAULT_ENGINE_CONFIG.ignoreAntialiasing),
-  allowDiffDimensions: z
-    .boolean()
-    .default(DEFAULT_ENGINE_CONFIG.allowDiffDimensions),
-});
-
-function parseEngineConfig(
-  raw: string | null | undefined,
-  logger: { warn: (obj: object, msg: string) => void },
-  projectId: string,
-): EngineConfig {
-  if (!raw) return DEFAULT_ENGINE_CONFIG;
-  try {
-    const parsed = JSON.parse(raw);
-    return engineConfigSchema.parse(parsed);
-  } catch (err) {
-    logger.warn(
-      {
-        projectId,
-        rawTruncated: raw.slice(0, 200),
-        error: err instanceof Error ? err.message : String(err),
-      },
-      "image_comparison_config_invalid_falling_back_to_defaults",
-    );
-    return DEFAULT_ENGINE_CONFIG;
-  }
-}
 
 function resolveVlmProvider(config: VlmProviderConfig): VlmProvider {
   const provider = config.provider ?? "ollama";
@@ -946,7 +914,13 @@ async function handleDiffJobInner(
         ranTiers: ["l1"],
         durationMs: { l1: performance.now() - t0 },
       };
-      vlmDescription = vlmResult.vlmDescription;
+      // A provider SDK error can echo request details; never let the
+      // project's API key reach the persisted description or the logs.
+      const apiKey = (vlmConfig as { apiKey?: unknown }).apiKey;
+      vlmDescription =
+        vlmResult.vlmDescription === undefined
+          ? undefined
+          : redactSecret(vlmResult.vlmDescription, apiKey);
       if (vlmResult.vlmError) {
         // The VLM layer fell back to the L1 verdict — surface it as a metric
         // + warn so a provider outage is alertable, not just buried in the
@@ -959,7 +933,7 @@ async function handleDiffJobInner(
             runId: data.runId,
             projectId: data.projectId,
             reason: vlmResult.vlmError.reason,
-            detail: vlmResult.vlmError.message,
+            detail: redactSecret(vlmResult.vlmError.message, apiKey),
           },
           "vlm_fallback_to_l1",
         );

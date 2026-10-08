@@ -1,16 +1,11 @@
 "use client";
 
-import type { OverrideStatusInput, RunStatus } from "@furan/shared-types";
 import { Bug } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
-import {
-  buildIgnoreAreasPayload,
-  hasUnsavedIgnoreChanges,
-} from "./ignore-area-payload";
-import { useViewerStore } from "./useViewerStore";
+import type { ReviewActions } from "./review-actions";
 
 import { AggregateSeverityPill } from "@/components/aggregate-severity-pill";
 import { RunStatusBadge } from "@/components/run-status-badge";
@@ -28,30 +23,23 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
-import { trpc } from "@/lib/trpc";
 
 interface Props {
   runId: string;
   /**
-   * ADR-038: the currently-selected checkpoint id. When present, the
-   * "Approve this checkpoint" button calls `runs.approveCheckpoint`;
-   * "Approve all checkpoints" always calls `runs.approveAllCheckpoints`.
-   * When absent (legacy path), falls back to the old `runs.approve` single-run flow.
+   * ADR-038: the currently-selected checkpoint id. Selects the primary
+   * button ("Approve" this checkpoint vs the legacy single-run approve),
+   * gates "Approve all checkpoints", and feeds the group-approval callout.
+   * Must match the `checkpointId` the `actions` were created with.
    */
   checkpointId?: string;
   /**
-   * Current `test_runs.status`. Drives:
-   * - The status pill rendered at the top of the bar.
-   * - Whether approve/reject/override are enabled (legality matrix
-   *   from spec §3.3 — only `passed | unresolved | failed` are
-   *   reviewer-overridable; the rest get a disabled-tooltip explaining
-   *   why and pointing the reviewer at the right next action).
-   *
-   * Optional with a sane fallback so callers that haven't migrated yet
-   * (or that render the bar before `getById` resolves) don't break —
-   * `running` is the safest default since it disables every control.
+   * The run's review actions from `useReviewActions`. The bar renders them;
+   * it owns no mutations. The DiffViewer keyboard shortcuts call the same
+   * object, so a keypress and a click always take the same path. Status,
+   * the reviewable gate, and pending/error state all come from here.
    */
-  status?: RunStatus;
+  actions: ReviewActions;
   /**
    * Diff regions for the current run; feeds the AggregateSeverityPill chip
    * rendered next to the status badge. Optional + defaults to an empty list
@@ -59,13 +47,6 @@ interface Props {
    * cleanly.
    */
   diffRegions?: { severity: string }[];
-  /**
-   * Called after a successful checkpoint approve/reject so the parent can
-   * advance the rail to the next unresolved checkpoint (fast triage loop).
-   * Only fires from the single-checkpoint approve and reject actions —
-   * not from approve-all, bulk-approve, or override.
-   */
-  onResolved?: () => void;
   /**
    * Render as a compact inline action cluster for the ContextualHeader's
    * right slot (the reference's single-row top bar) instead of the
@@ -88,160 +69,28 @@ interface Props {
   checkpointCount?: number;
 }
 
-// ADR-036/037: `new` (no prior baseline) is a legal first-baseline path —
-// approve promotes the candidate to baseline and persists ignoreAreas.
-// `passed | unresolved | failed` are the post-diff review states.
-// `running | aborted | empty` are non-reviewable system states.
-const REVIEW_LEGAL: ReadonlySet<RunStatus> = new Set<RunStatus>([
-  "new",
-  "passed",
-  "unresolved",
-  "failed",
-]);
-
-const DISABLED_REASON: Record<
-  Exclude<RunStatus, "new" | "passed" | "unresolved" | "failed">,
-  string
-> = {
-  running: "Run is still in progress — wait for the diff to finish.",
-  aborted: "Run was aborted before completion — re-run the test instead.",
-  empty: "Run recorded no checks — verify your SDK integration.",
-};
-
 /**
- * Run-action footer for the DiffViewer.
- *
- * Owns its own `runs.approve` / `runs.reject` / `runs.overrideStatus`
- * mutation hooks. The keyboard shortcuts in `<DiffViewer>` use a separate
- * pair of hooks — they share effective behavior via the global React
- * Query cache because both mutation hooks issue an invalidation against
- * `runs.getById` after success.
- *
- * Query-cache invalidation strategy: we use a predicate that matches any
- * cached `runs.getById` entry. tRPC-react-query's exact queryKey shape
- * (`[["runs", "getById"], { input, type }]`) is treated as an implementation
- * detail; the predicate is resilient to minor encoder changes between tRPC
- * patch releases.
+ * Run-action bar for the DiffViewer: status pill, More menu (approve all /
+ * bulk approve / force status), Mark as Bug, Reject, and the primary
+ * Approve. Disabled controls explain why via tooltip (spec §3.5).
  */
 export function ApprovalBar({
   runId,
   checkpointId,
-  status,
+  actions,
   diffRegions,
-  onResolved,
   inline = false,
   showStatus = true,
   checkpointCount = 0,
 }: Props) {
-  const utils = trpc.useUtils();
-  const [error, setError] = useState<string | null>(null);
-
-  const invalidate = () => {
-    // Invalidate the canonical query for this run so SSE-driven and
-    // mutation-driven cache refreshes converge to the same fresh data.
-    void utils.runs.getById.invalidate({ runId });
-    // Also refresh the checkpoint rail so per-checkpoint status reflects
-    // the outcome of the approve/reject without requiring a page reload.
-    void utils.runs.listCheckpoints.invalidate({ runId });
-  };
-
-  const approve = trpc.runs.approve.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: () => invalidate(),
-    onError: (e) => setError(e.message),
-  });
-  // ADR-038: per-checkpoint approval
-  const approveCheckpoint = trpc.runs.approveCheckpoint.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Checkpoint approved");
-      onResolved?.();
-    },
-    onError: (e) => setError(e.message),
-  });
-  // ADR-038: approve all checkpoints in the run
-  const approveAllCheckpoints = trpc.runs.approveAllCheckpoints.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: (res) => {
-      invalidate();
-      toast.success(
-        `Approved ${res.approved} checkpoint${res.approved === 1 ? "" : "s"}`,
-      );
-    },
-    onError: (e) => setError(e.message),
-  });
-  const bulkApprove = trpc.runs.bulkApproveByVariation.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: (res) => {
-      invalidate();
-      toast.success(
-        `Approved ${res.approved} run${res.approved === 1 ? "" : "s"} of this test${
-          res.capped ? ` (capped at ${res.cap} — run again for more)` : ""
-        }`,
-      );
-    },
-    onError: (e) => setError(e.message),
-  });
   const [confirmBulk, setConfirmBulk] = useState(false);
-  const reject = trpc.runs.reject.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: () => {
-      invalidate();
-      onResolved?.();
-    },
-    onError: (e) => setError(e.message),
-  });
-  const override = trpc.runs.overrideStatus.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: () => invalidate(),
-    onError: (e) => setError(e.message),
-  });
-
-  // ADR-036: when the reviewer has drawn/edited ignore regions in the viewer
-  // but not separately saved them, fold them into the approve call so
-  // "Save as baseline" / "Approve" doesn't silently drop them. Read at click
-  // time (not render) so the latest drawn regions are captured. Persisted
-  // onto the variation atomically server-side — no diff re-enqueue.
-  const pendingIgnoreAreas = () => {
-    const s = useViewerStore.getState();
-    return hasUnsavedIgnoreChanges(s)
-      ? { ignoreAreas: buildIgnoreAreasPayload(s, "variation") }
-      : {};
-  };
-
-  const effectiveStatus: RunStatus = status ?? "running";
-  const canReview = REVIEW_LEGAL.has(effectiveStatus);
-  const disabledReason = canReview
-    ? null
-    : DISABLED_REASON[
-        effectiveStatus as Exclude<
-          RunStatus,
-          "new" | "passed" | "unresolved" | "failed"
-        >
-      ];
-
-  const pending =
-    approve.isPending ||
-    approveCheckpoint.isPending ||
-    approveAllCheckpoints.isPending ||
-    reject.isPending ||
-    override.isPending ||
-    bulkApprove.isPending;
-
-  const callOverride = (next: OverrideStatusInput) => {
-    override.mutate({ runId, status: next });
-  };
-
-  // "Mark as bug" (reference TestStep top bar): reject the checkpoint AND
-  // seed + open the comments tab so the reviewer logs why. Reuses the
-  // existing reject mutation + the embedded comment editor — no new state.
-  const markAsBug = () => {
-    reject.mutate({ runId });
-    const store = useViewerStore.getState();
-    store.setCommentPrefill("Marked as bug: ");
-    store.setCommentPanelOpen(true);
-  };
+  const {
+    status: effectiveStatus,
+    canReview,
+    disabledReason,
+    pending,
+    error,
+  } = actions;
 
   // In inline (header) mode there's no room for an inline error string, so
   // surface mutation failures as a toast instead. The standalone bar keeps
@@ -304,7 +153,7 @@ export function ApprovalBar({
                 {checkpointId && checkpointCount > 1 && (
                   <DropdownMenuItem
                     data-testid="approve-all-checkpoints-button"
-                    onSelect={() => approveAllCheckpoints.mutate({ runId })}
+                    onSelect={actions.approveAllCheckpoints}
                   >
                     Approve all checkpoints
                   </DropdownMenuItem>
@@ -319,19 +168,19 @@ export function ApprovalBar({
                 )}
                 <DropdownMenuItem
                   data-testid="override-set-passed"
-                  onSelect={() => callOverride("passed")}
+                  onSelect={() => actions.override("passed")}
                 >
                   Force passed
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   data-testid="override-set-failed"
-                  onSelect={() => callOverride("failed")}
+                  onSelect={() => actions.override("failed")}
                 >
                   Force failed
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   data-testid="override-set-default"
-                  onSelect={() => callOverride("default")}
+                  onSelect={() => actions.override("default")}
                 >
                   Reset to computed
                 </DropdownMenuItem>
@@ -346,7 +195,7 @@ export function ApprovalBar({
             reason={disabledReason}
             testId="mark-as-bug-button"
             variant="secondary"
-            onClick={markAsBug}
+            onClick={actions.markAsBug}
             title="Reject this checkpoint and open a note explaining the bug."
           >
             <Bug className="mr-1.5 h-4 w-4" aria-hidden />
@@ -358,9 +207,9 @@ export function ApprovalBar({
             reason={disabledReason}
             testId="reject-button"
             variant="destructive"
-            onClick={() => reject.mutate({ runId })}
+            onClick={actions.reject}
           >
-            {reject.isPending ? "Rejecting…" : "Reject"}
+            {actions.isRejecting ? "Rejecting…" : "Reject"}
           </DisabledAwareButton>
 
           {/* ADR-038: with a checkpointId the primary action approves this
@@ -371,16 +220,10 @@ export function ApprovalBar({
               reason={disabledReason}
               testId="approve-checkpoint-button"
               variant="default"
-              onClick={() =>
-                approveCheckpoint.mutate({
-                  runId,
-                  checkpointId,
-                  ...pendingIgnoreAreas(),
-                })
-              }
+              onClick={actions.approve}
               title="Promotes this checkpoint's candidate as the new baseline for its test variation."
             >
-              {approveCheckpoint.isPending ? "Approving…" : "Approve"}
+              {actions.isApproving ? "Approving…" : "Approve"}
             </DisabledAwareButton>
           ) : (
             <DisabledAwareButton
@@ -388,14 +231,14 @@ export function ApprovalBar({
               reason={disabledReason}
               testId="approve-button"
               variant="default"
-              onClick={() => approve.mutate({ runId, ...pendingIgnoreAreas() })}
+              onClick={actions.approve}
               title={
                 effectiveStatus === "new"
                   ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
                   : "Accepts this diff outcome. Ignore regions are persisted onto the variation for future runs."
               }
             >
-              {approve.isPending
+              {actions.isApproving
                 ? effectiveStatus === "new"
                   ? "Saving…"
                   : "Approving…"
@@ -430,20 +273,20 @@ export function ApprovalBar({
               variant="default"
               className="h-7 px-2 text-xs"
               data-testid="approve-bulk-confirm-yes"
-              disabled={bulkApprove.isPending}
+              disabled={actions.isBulkApproving}
               onClick={() => {
-                bulkApprove.mutate({ runId });
+                actions.bulkApproveVariation();
                 setConfirmBulk(false);
               }}
             >
-              {bulkApprove.isPending ? "Approving…" : "Approve all"}
+              {actions.isBulkApproving ? "Approving…" : "Approve all"}
             </Button>
             <Button
               variant="secondary"
               className="h-7 px-2 text-xs"
               data-testid="approve-bulk-confirm-no"
               onClick={() => setConfirmBulk(false)}
-              disabled={bulkApprove.isPending}
+              disabled={actions.isBulkApproving}
             >
               Cancel
             </Button>
