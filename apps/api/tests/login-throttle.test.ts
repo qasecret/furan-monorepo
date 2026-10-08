@@ -103,11 +103,11 @@ describe("POST /auth/login — per-IP limit, TRUST_PROXY unset (default)", () =>
   });
 });
 
-describe("POST /auth/login — TRUST_PROXY=1 (one trusted proxy hop)", () => {
+describe("POST /auth/login — behind a trusted proxy (TRUST_PROXY = its address)", () => {
   let h: TestApp;
   const proxy = "10.0.0.2";
   beforeAll(async () => {
-    h = await createTestApp({ envOverrides: { TRUST_PROXY: "1" } });
+    h = await createTestApp({ envOverrides: { TRUST_PROXY: proxy } });
   });
   afterAll(async () => {
     await h.close();

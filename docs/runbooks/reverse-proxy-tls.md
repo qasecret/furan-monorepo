@@ -181,14 +181,19 @@ services:
   api:
     ports: !reset [] # reachable only via Caddy (Compose >= 2.24)
     environment:
-      TRUST_PROXY: "1" # one hop: Caddy (or the dashboard, for UI logins)
+      TRUST_PROXY: "uniquelocal" # Caddy + the dashboard, on the private Docker network
 ```
 
-> ⚠️ A hop count is only safe when the API is reachable **only** through the
-> proxy — hence the `ports: !reset []`. If the api port stays published, any
-> client can forge `X-Forwarded-For`: set `TRUST_PROXY` to the proxy's IP or
-> CIDR instead. With no proxy in front, leave it unset. Invalid values fail
-> boot; see `.env.example` for the full grammar.
+> ⚠️ Trust proxies by **address**. `uniquelocal` (private ranges) is safe here
+> only because both conditions hold: the api is reachable **only** through the
+> proxy (hence `ports: !reset []`), and the edge proxy **replaces**
+> `X-Forwarded-For` with the client's address rather than appending to it
+> (Caddy does this by default for clients that aren't in its `trusted_proxies`;
+> with nginx, use `proxy_set_header X-Forwarded-For $remote_addr;`). If the
+> proxy appends, a client on a private LAN counts as "trusted" and can forge
+> its IP — trust the proxy's exact IP or CIDR instead. Hop counts such as
+> `"1"` are rejected at boot — Fastify ignores them (ADR-065). With no proxy in
+> front, leave it unset. See `.env.example` for the full grammar.
 
 Because both callers use the baked URL, the public origin
 (`https://api.furan.example.com`) is the value that works everywhere: the

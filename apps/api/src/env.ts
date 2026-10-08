@@ -80,9 +80,10 @@ export const envSchema = z.object({
   /**
    * ADR-063: which reverse proxies the API trusts for `X-Forwarded-For` —
    * i.e. what `req.ip` (and every per-IP rate limit) resolves to. Unset /
-   * `false` (default) ignores XFF; `1` trusts one proxy hop (the bundled
-   * nginx); `true` trusts every hop (spoofable unless the API is reachable
-   * only via the proxy); or a comma-separated IP / CIDR / `loopback` list.
+   * `false` (default) ignores XFF; a comma-separated IP / CIDR / `loopback`
+   * list trusts XFF only from those proxies; `true` trusts every hop
+   * (spoofable unless the API is reachable only via the proxy). Hop counts
+   * are rejected — Fastify ignores them (ADR-065).
    * Kept as the raw string here; `parseTrustProxy` maps it for Fastify and
    * this refinement fails boot on anything it can't parse.
    */
