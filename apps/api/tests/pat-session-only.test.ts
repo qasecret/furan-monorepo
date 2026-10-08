@@ -435,6 +435,47 @@ d("API tokens are session-subordinate (ADR-064 step A)", () => {
       expect(err).not.toMatchObject({ message: "session_required" });
     });
 
+    // ADR-060's admin-only Visual-AI provider settings (provider / baseUrl /
+    // apiKey) are an admin surface too: an admin's token can't repoint the
+    // provider or swap the key, while ordinary settings stay writable.
+    test.each(["owner", "admin"] as const)(
+      "%s PAT → FORBIDDEN session_required on a Visual-AI provider change",
+      async (role) => {
+        await expect(
+          trpc(s[role].pat).projects.update.mutate({
+            projectId: s.projectId,
+            imageComparisonConfig: JSON.stringify({ provider: "gemini" }),
+          }),
+        ).rejects.toMatchObject(TRPC_SESSION_REQUIRED);
+      },
+    );
+
+    test("admin PAT can still change non-provider project settings", async () => {
+      const p = await trpc(s.admin.pat).projects.update.mutate({
+        projectId: s.projectId,
+        retentionDays: 30,
+      });
+      expect(p.retentionDays).toBe(30);
+    });
+
+    test("admin session can change the Visual-AI provider; editor PAT keeps the ADR-060 message", async () => {
+      await expect(
+        trpc(s.admin.jwt).projects.update.mutate({
+          projectId: s.projectId,
+          imageComparisonConfig: JSON.stringify({ provider: "gemini" }),
+        }),
+      ).resolves.toBeDefined();
+      await expect(
+        trpc(s.editor.pat).projects.update.mutate({
+          projectId: s.projectId,
+          imageComparisonConfig: JSON.stringify({ provider: "anthropic" }),
+        }),
+      ).rejects.toMatchObject({
+        message: "vlm_provider_settings_admin_only",
+        data: { code: "FORBIDDEN" },
+      });
+    });
+
     test("admin PAT keeps the project-membership bypass on project-scoped procedures", async () => {
       // The admin is NOT a member of pat-proj.
       const project = await trpc(s.admin.pat).projects.getById.query({
