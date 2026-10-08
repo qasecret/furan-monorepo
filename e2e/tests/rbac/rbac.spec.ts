@@ -6,7 +6,6 @@ import { API_URL as API } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
 import type { SeededPrincipal, SeedResult } from "../../src/seed/seed.js";
 
-
 /**
  * RBAC gates via the seeded owner/admin/editor/guest principals. `GET /users`
  * is the admin-gated surface; a build on `alpha` is the member-scoped surface
@@ -31,10 +30,27 @@ test.describe.serial("rbac", () => {
     testInfo.annotations.push(
       ...coverAnnotations(["rbac.owner_all_gates", "rbac.guest_rejected"]),
     );
-    expect((await api.probe("GET", "/users", { auth: byRole("owner").pat })).status).toBe(200);
-    expect((await api.probe("GET", "/users", { auth: byRole("admin").pat })).status).toBe(200);
-    expect((await api.probe("GET", "/users", { auth: byRole("editor").pat })).status).toBe(403);
-    expect((await api.probe("GET", "/users", { auth: byRole("guest").pat })).status).toBe(403);
+    expect(
+      (await api.probe("GET", "/users", { auth: byRole("owner").jwt })).status,
+    ).toBe(200);
+    expect(
+      (await api.probe("GET", "/users", { auth: byRole("admin").jwt })).status,
+    ).toBe(200);
+    expect(
+      (await api.probe("GET", "/users", { auth: byRole("editor").pat })).status,
+    ).toBe(403);
+    expect(
+      (await api.probe("GET", "/users", { auth: byRole("guest").pat })).status,
+    ).toBe(403);
+  });
+
+  test("admin surfaces are session-only: an owner/admin API token gets session_required", async ({}, testInfo) => {
+    testInfo.annotations.push(...coverAnnotations(["rbac.owner_all_gates"]));
+    for (const role of ["owner", "admin"] as const) {
+      const res = await api.probe("GET", "/users", { auth: byRole(role).pat });
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ code: "session_required" });
+    }
   });
 
   test("editor is allowed on a project it is a member of", async ({}, testInfo) => {
@@ -53,8 +69,12 @@ test.describe.serial("rbac", () => {
   test("JWT and PAT both authenticate", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["rbac.jwt_and_pat"]));
     const owner = byRole("owner");
-    expect((await api.probe("GET", "/users/me", { auth: owner.jwt })).status).toBe(200);
-    expect((await api.probe("GET", "/users/me", { auth: owner.pat })).status).toBe(200);
+    expect(
+      (await api.probe("GET", "/users/me", { auth: owner.jwt })).status,
+    ).toBe(200);
+    expect(
+      (await api.probe("GET", "/users/me", { auth: owner.pat })).status,
+    ).toBe(200);
   });
 
   test("deactivation takes effect on the next request", async ({}, testInfo) => {

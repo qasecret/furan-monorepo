@@ -36,7 +36,9 @@ export interface BuildContextDeps {
 /**
  * Builds the tRPC request context. `req.auth` is populated by the
  * `/trpc/*` onRequest authenticate hook registered in `app.ts` BEFORE
- * tRPC enters its middleware chain (spec §7 P2-R6).
+ * tRPC enters its middleware chain (spec §7 P2-R6). `ctx.user` is that
+ * same {@link AuthedUser}, so it carries `via` (jwt | pat) for the
+ * session-only admin gates (ADR-064).
  */
 export function buildContext(req: FastifyRequest, deps: BuildContextDeps) {
   return {

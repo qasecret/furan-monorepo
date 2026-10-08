@@ -2,6 +2,7 @@ import { and, eq, tokens } from "@furan/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { requireSession } from "../hooks/require-session.js";
 import { emitAudit } from "../lib/emit-audit.js";
 import { sendError } from "../lib/errors.js";
 import { generateRawToken } from "../lib/token.js";
@@ -29,9 +30,12 @@ export const tokenCreateResponse = z.object({
 export async function registerTokensRoutes(
   app: FastifyInstance,
 ): Promise<void> {
+  // Token management is session-only (`requireSession`, ADR-064 step A): an
+  // API token can't list, mint or revoke tokens, so a leaked CI token can't
+  // re-mint itself or outlive its own revocation.
   app.get(
     "/account/tokens",
-    { preHandler: app.authenticate },
+    { preHandler: [app.authenticate, requireSession] },
     async (req, reply) => {
       if (!req.auth) {
         return sendError(reply, 401, "unauthenticated");
@@ -51,7 +55,7 @@ export async function registerTokensRoutes(
   app.post(
     "/account/tokens",
     {
-      preHandler: app.authenticate,
+      preHandler: [app.authenticate, requireSession],
       // PAT minting is rare in normal use; cap the burst so a compromised
       // session can't mass-mint tokens. Opt-in per-route (same pattern as
       // /auth/login) since the rate-limit plugin is registered global:false.
@@ -93,7 +97,7 @@ export async function registerTokensRoutes(
 
   app.delete(
     "/account/tokens/:id",
-    { preHandler: app.authenticate },
+    { preHandler: [app.authenticate, requireSession] },
     async (req, reply) => {
       if (!req.auth) {
         return sendError(reply, 401, "unauthenticated");
