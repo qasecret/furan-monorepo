@@ -7,55 +7,10 @@ import { useMemo, useState } from "react";
 import { StepCard } from "./step-card";
 
 import { cn } from "@/lib/cn";
+import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
-
-/**
- * Per-RunStatus presentation for the result-row status cell — a coloured dot +
- * word, matching the reference's batch-detail test rows. (Distinct from
- * build-status-meta, which covers build aggregate statuses without "new".)
- */
-const RUN_STATUS: Record<
-  RunStatus,
-  { word: string; text: string; dot: string }
-> = {
-  passed: {
-    word: "Passed",
-    text: "text-emerald-600 dark:text-emerald-400",
-    dot: "bg-emerald-500",
-  },
-  unresolved: {
-    word: "Unresolved",
-    text: "text-amber-600 dark:text-amber-400",
-    dot: "bg-amber-500",
-  },
-  failed: {
-    word: "Failed",
-    text: "text-red-600 dark:text-red-400",
-    dot: "bg-red-500",
-  },
-  new: {
-    word: "New",
-    text: "text-sky-600 dark:text-sky-400",
-    dot: "bg-sky-500",
-  },
-  running: {
-    word: "Running",
-    text: "text-blue-600 dark:text-blue-400",
-    dot: "bg-blue-500",
-  },
-  aborted: {
-    word: "Aborted",
-    text: "text-zinc-500 dark:text-zinc-400",
-    dot: "bg-zinc-400 dark:bg-zinc-600",
-  },
-  empty: {
-    word: "Empty",
-    text: "text-zinc-500 dark:text-zinc-400",
-    dot: "bg-zinc-300 dark:bg-zinc-700",
-  },
-};
 
 /**
  * Shared 7-column grid template for the result table — the column header
@@ -238,7 +193,7 @@ function ResultRow({
   view,
   canReview,
 }: RowProps) {
-  const sm = RUN_STATUS[status];
+  const sm = statusStyle(status);
   const hasSteps = checkpoints.length > 0;
   const [open, setOpen] = useState(true);
   return (
@@ -275,7 +230,7 @@ function ResultRow({
             className={cn("h-3.5 w-1 shrink-0 rounded-full", sm.dot)}
           />
           <span className={cn("truncate text-xs font-medium", sm.text)}>
-            {sm.word}
+            {sm.label}
           </span>
         </span>
         <span className="inline-flex items-center gap-1 truncate text-xs text-zinc-600 dark:text-zinc-400">

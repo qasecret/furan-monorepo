@@ -9,12 +9,9 @@ import config from "@furan/eslint-config/node.js";
  * Paths are relative to `apps/dashboard`. Do NOT add entries to hide new code.
  */
 export const UNMIGRATED = [
-  // PR 1 (removed by Tasks 6–8)
+  // PR 1 (removed by Tasks 7–8)
   "src/components/ui/**",
   "src/components/cmdk/**",
-  "src/components/run-status-badge.tsx",
-  "src/components/diff-percent-sparkline.tsx",
-  "src/lib/**",
   // PR 2
   "src/app/(protected)/_components/**",
   "src/app/(protected)/error.tsx",

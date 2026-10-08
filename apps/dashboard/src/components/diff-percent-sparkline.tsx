@@ -2,6 +2,8 @@
 
 import type { RunStatus } from "@furan/shared-types";
 
+import { statusStyle } from "@/lib/status-style";
+
 interface SparklineRun {
   id: string;
   status: RunStatus;
@@ -11,16 +13,6 @@ interface SparklineRun {
 interface Props {
   runs: ReadonlyArray<SparklineRun>;
 }
-
-const STATUS_FILL: Record<RunStatus, string> = {
-  passed: "fill-green-600",
-  new: "fill-green-600",
-  unresolved: "fill-amber-500",
-  failed: "fill-red-700",
-  aborted: "fill-gray-400",
-  empty: "fill-gray-200",
-  running: "fill-blue-500",
-};
 
 const VIEW_W = 480;
 const VIEW_H = 80;
@@ -83,7 +75,7 @@ export function DiffPercentSparkline({ runs }: Props) {
   const points = runs.map((r, i) => ({
     cx: xOf(i, total),
     cy: yOf(r.diffPercent),
-    fill: STATUS_FILL[r.status] ?? STATUS_FILL.empty,
+    fill: statusStyle(r.status).fill,
     run: r,
   }));
   const polylinePoints = points
@@ -104,7 +96,7 @@ export function DiffPercentSparkline({ runs }: Props) {
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className="text-neutral-300"
+          className="text-edge-strong"
         />
       )}
       {points.map((p) => (
