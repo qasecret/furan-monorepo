@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 
 /** The subset of Fastify's `trustProxy` option that TRUST_PROXY can express. */
-export type TrustProxySetting = boolean | number | string[];
+export type TrustProxySetting = boolean | string[];
 
 /** proxy-addr's named ranges (Fastify compiles list entries with proxy-addr). */
 const KEYWORDS = new Set(["loopback", "linklocal", "uniquelocal"]);
@@ -15,10 +15,13 @@ const KEYWORDS = new Set(["loopback", "linklocal", "uniquelocal"]);
  *   is the socket peer. Safe whatever the network topology.
  * - `true` → trust every hop: the left-most XFF entry wins. Spoofable unless
  *   the API is reachable ONLY through the proxy (server.ts warns at boot).
- * - a non-negative integer N → trust the N closest hops (`1` = one reverse
- *   proxy in front, e.g. the bundled nginx).
- * - otherwise a comma-separated list of proxy addresses: IPs, CIDRs
- *   (`10.0.0.0/8`), or `loopback` / `linklocal` / `uniquelocal`.
+ * - a comma-separated list of proxy addresses: IPs, CIDRs (`10.0.0.0/8`),
+ *   or `loopback` / `linklocal` / `uniquelocal`. X-Forwarded-For is honoured
+ *   only when the immediate peer is one of them.
+ * - a bare hop count (`1`) is REJECTED (ADR-065): Fastify >= 5.12 ignores
+ *   numeric trustProxy — it fails closed because a hop count can't tell the
+ *   real proxy from a direct client sending extra X-Forwarded-For entries —
+ *   so accepting it would silently disable per-IP rate limiting.
  *
  * Anything else throws, so a typo fails boot instead of silently trusting (or
  * ignoring) the proxy. Messages never echo the raw value (getEnv convention).
@@ -29,11 +32,9 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting {
   if (lower === "" || lower === "false") return false;
   if (lower === "true") return true;
   if (/^\d+$/.test(value)) {
-    const hops = Number(value);
-    if (!Number.isSafeInteger(hops)) {
-      throw new Error("TRUST_PROXY hop count is out of range");
-    }
-    return hops;
+    throw new Error(
+      "TRUST_PROXY hop counts are not supported (Fastify ignores them) — list the proxy's IP / CIDR, or loopback|linklocal|uniquelocal",
+    );
   }
   return value.split(",").map((part, i) => {
     const entry = part.trim();
