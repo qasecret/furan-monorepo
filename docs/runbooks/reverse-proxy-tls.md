@@ -173,12 +173,15 @@ services:
 ```
 
 > ⚠️ Trust proxies by **address**. `uniquelocal` (private ranges) is safe here
-> because the api is reachable **only** through the proxy — hence the
-> `ports: !reset []`. If the api port stays published, list Caddy's exact IP or
-> CIDR instead, or any client on a private network could forge
-> `X-Forwarded-For`. Hop counts such as `"1"` are rejected at boot — Fastify
-> ignores them (ADR-065). With no proxy in front, leave it unset. See
-> `.env.example` for the full grammar.
+> only because both conditions hold: the api is reachable **only** through the
+> proxy (hence `ports: !reset []`), and the edge proxy **replaces**
+> `X-Forwarded-For` with the client's address rather than appending to it
+> (Caddy does this by default for clients that aren't in its `trusted_proxies`;
+> with nginx, use `proxy_set_header X-Forwarded-For $remote_addr;`). If the
+> proxy appends, a client on a private LAN counts as "trusted" and can forge
+> its IP — trust the proxy's exact IP or CIDR instead. Hop counts such as
+> `"1"` are rejected at boot — Fastify ignores them (ADR-065). With no proxy in
+> front, leave it unset. See `.env.example` for the full grammar.
 
 Because both callers use the baked URL, the public origin
 (`https://api.furan.example.com`) is the value that works everywhere: the
