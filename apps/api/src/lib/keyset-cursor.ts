@@ -2,8 +2,10 @@ import { sql } from "@furan/db";
 import { z } from "zod";
 
 /**
- * Opaque `(created_at, id)` keyset cursor shared by the newest-first list
- * endpoints (inbox, builds). `createdAt` is the `cursorTimestamp` text.
+ * Opaque `(timestamp, id)` keyset cursor shared by the newest-first list
+ * endpoints. `createdAt` is the `cursorTimestamp` text of the column the list
+ * orders by (`applied_at` for auto-rule applications); `id` breaks ties, so
+ * rows sharing a timestamp (e.g. one transaction's now()) aren't skipped.
  */
 const keysetCursor = z.object({
   createdAt: z.string().datetime({ offset: true }),
