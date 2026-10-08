@@ -35,15 +35,25 @@ The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
 
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
-full-page 1440×900 PNG, plus three interaction states (⌘K open, a menu open, a
-dialog open), and runs axe `color-contrast` on each. It is the before/after
-safety net for the design-foundation slice PRs: routes with
-`enforceContrast: true` in `src/visual/routes.ts` fail on any violation, the
-rest only report them as test annotations (also written to
-`visual-out/<label>/color-contrast.json`). A route answering 4xx/5xx fails; a
-route that redirects elsewhere is annotated `landed-elsewhere`. Routes admins
-are redirected away from (`as: "editor"`: `/account/tokens`, `/projects`) are
-captured from the seeded editor's session.
+full-page PNG at a 1440×900 viewport, plus the interaction states in
+`STATES` (⌘K open, a menu open, a dialog open), and runs axe `color-contrast`
+on each. The dashboard scrolls inside its own containers, never the document,
+so before capturing, `src/visual/unclip.ts` lets those containers grow to
+their content: the PNG and axe cover the whole page, not just the first
+900px.
+
+It is the before/after safety net for the design-foundation slice PRs. A
+contrast problem is an axe violation, or a node axe could not measure because
+it lies outside the viewport. Problems are reported as test annotations (also
+written to `visual-out/<label>/color-contrast.json`); on routes and states
+with `enforceContrast: true` in `src/visual/routes.ts` they are also
+collected, and the final `contrast-enforced` test fails once per theme with
+that theme's whole list. Uncaught page errors are annotated `pageerror`
+(hiding Next's dev overlay also hides its error dialog). A route answering
+4xx/5xx fails; a route that redirects elsewhere is annotated
+`landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
+`/account/tokens`, `/projects`) are captured from the seeded editor's
+session.
 
 The dashboard runs as a **dev server** rather than the stack's dashboard image:
 the image bakes `localhost:3000` for client-side calls, so the diff viewer's
@@ -109,7 +119,7 @@ scripts/    e2e.ts (orchestrator) · compose.ts · wait-health.ts · global-setu
             check-coverage.ts · compose.e2e-ports.yml
 src/        env.ts (canonical URLs) · clients/{api-client,virtual-sdk} ·
             seed/{seed,load-seed} · coverage/{manifest,reporter} · fixtures/*.png ·
-            visual/{fixture,routes,masks,upload}
+            visual/{fixture,routes,masks,unclip,upload}
 tests/      deploy · sdk · diff · rbac · branch · storage · ui
 ```
 

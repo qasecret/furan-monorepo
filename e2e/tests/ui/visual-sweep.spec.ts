@@ -26,13 +26,16 @@ import {
   type VisualFixture,
 } from "../../src/visual/fixture.js";
 import { timeMasks } from "../../src/visual/masks.js";
-import { DISCOVERED, staticRoutes } from "../../src/visual/routes.js";
+import { DISCOVERED, STATES, staticRoutes } from "../../src/visual/routes.js";
+import { unclip } from "../../src/visual/unclip.js";
 import { uploadShots } from "../../src/visual/upload.js";
 
 /**
  * Visual sweep (design-foundation spec §7.1): every dashboard route, in light
- * and dark, as a full-page 1440×900 screenshot plus an axe `color-contrast`
- * pass. Run once on `main` (`VISUAL_LABEL=before-…`) and once on the branch
+ * and dark, as a full-page 1440-wide screenshot plus an axe `color-contrast`
+ * pass. The page is un-clipped first (src/visual/unclip.ts) so both see the
+ * whole page, not just the first 900px the app's own scroll containers show.
+ * Run once on `main` (`VISUAL_LABEL=before-…`) and once on the branch
  * (`VISUAL_LABEL=after-…`) and compare the two PNG sets — see e2e/README.md.
  *
  * Not part of `s3-full`: tagged `@visual`, run with `--project=visual`.
@@ -113,9 +116,69 @@ interface Contrast {
   path: string;
   /** Where it actually landed, after redirects. */
   landedPath: string;
+  /** axe violation nodes. */
   nodes: number;
+  /** Nodes axe could not measure because they lie outside the viewport. */
+  outsideViewport: number;
   examples: string[];
 }
+
+type AxeResults = Awaited<ReturnType<AxeBuilder["analyze"]>>;
+type AxeRule = AxeResults["violations"][number];
+type AxeNode = AxeRule["nodes"][number];
+
+/** One colour-contrast problem on one node, for annotations and the summary. */
+interface Problem {
+  route: string;
+  rule: string;
+  selector: string;
+  /** "#fg on #bg = 3.2:1 (needs 4.5:1)", or why it couldn't be measured. */
+  detail: string;
+}
+
+function problem(route: string, rule: string, n: AxeNode): Problem {
+  const d = (n.any[0]?.data ?? {}) as {
+    fgColor?: string;
+    bgColor?: string;
+    contrastRatio?: number;
+    expectedContrastRatio?: string;
+    messageKey?: string;
+  };
+  const detail =
+    d.messageKey === "outsideViewport"
+      ? "not measured: outside the viewport"
+      : `${d.fgColor ?? "?"} on ${d.bgColor ?? "?"} = ${d.contrastRatio ?? "?"}:1 (needs ${d.expectedContrastRatio ?? "?"})`;
+  return { route, rule, selector: n.target.join(" "), detail };
+}
+
+const isOutsideViewport = (n: AxeNode): boolean =>
+  n.any.some(
+    (c) =>
+      (c.data as { messageKey?: string } | null)?.messageKey ===
+      "outsideViewport",
+  );
+
+/**
+ * A route's colour-contrast problems: every violation node, plus every
+ * `incomplete` node axe skipped as outside the viewport — on a page taller
+ * than the viewport, "couldn't check" must not pass as "fine".
+ */
+function contrastProblems(
+  route: string,
+  r: AxeResults,
+): { violations: Problem[]; outsideViewport: Problem[] } {
+  const each = (rules: AxeRule[], keep: (n: AxeNode) => boolean) =>
+    rules.flatMap((rule) =>
+      rule.nodes.filter(keep).map((n) => problem(route, rule.id, n)),
+    );
+  return {
+    violations: each(r.violations, () => true),
+    outsideViewport: each(r.incomplete, isOutsideViewport),
+  };
+}
+
+const formatProblem = (p: Problem): string =>
+  `${p.route} · ${p.rule} · ${p.selector} · ${p.detail}`;
 
 /** A navigation the sweep made: where it went and the server's answer. */
 interface Visit {
@@ -155,6 +218,10 @@ test.describe.serial("visual sweep @visual", () => {
   let anonPage: Page;
   const shots: { name: string; png: Buffer }[] = [];
   const contrast: Contrast[] = [];
+  /** Problems on `enforceContrast` shots, failed once per theme at the end. */
+  const enforced: Record<Theme, Problem[]> = { light: [], dark: [] };
+  /** Uncaught page errors since the current test started (all sessions). */
+  const pageErrors: string[] = [];
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     fixture = await ensureVisualFixture(api);
@@ -178,6 +245,24 @@ test.describe.serial("visual sweep @visual", () => {
     anon = await browser.newContext({ viewport: VIEWPORT });
     await steady(anon);
     anonPage = await anon.newPage();
+
+    // Hiding Next's dev overlay (DEV_OVERLAY) also hides its error dialog, so
+    // record uncaught page errors per test instead of losing them.
+    for (const p of [page, editorPage, anonPage]) {
+      p.on("pageerror", (err) => {
+        pageErrors.push(`${new URL(p.url()).pathname}: ${err.message}`);
+      });
+    }
+  });
+
+  test.beforeEach(() => {
+    pageErrors.length = 0;
+  });
+
+  test.afterEach(({}, testInfo) => {
+    for (const description of pageErrors.splice(0)) {
+      testInfo.annotations.push({ type: "pageerror", description });
+    }
   });
 
   test.afterAll(async () => {
@@ -284,10 +369,12 @@ test.describe.serial("visual sweep @visual", () => {
   }
 
   /**
-   * Check the navigation, settle, then screenshot, save, and run axe
+   * Check the navigation, settle, un-clip, then screenshot, save, and run axe
    * colour-contrast. A 4xx/5xx answer fails the test (an error page must not
    * pass as a screen); landing somewhere other than `v.path` is annotated
    * (`landed-elsewhere`), not failed — several routes redirect by design.
+   * Contrast problems are annotated; on an `enforceContrast` shot they are
+   * also collected for the theme's `contrast-enforced` check.
    */
   async function shoot(
     p: Page,
@@ -311,42 +398,36 @@ test.describe.serial("visual sweep @visual", () => {
         description: `${v.path} → ${landedPath}`,
       });
     }
+    await unclip(p);
     const png = await stableScreenshot(p);
     const file = join(OUT, theme, `${name}.png`);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, png);
     shots.push({ name: `${theme}/${name}`, png });
 
-    const { violations } = await new AxeBuilder({ page: p })
+    const results = await new AxeBuilder({ page: p })
       .withRules(["color-contrast"])
       .exclude(DEV_OVERLAY)
       .analyze();
-    const nodes = violations.flatMap((v) => v.nodes);
-    const examples = nodes.slice(0, 5).map((n) => {
-      const d = (n.any[0]?.data ?? {}) as {
-        fgColor?: string;
-        bgColor?: string;
-        contrastRatio?: number;
-        expectedContrastRatio?: string;
-      };
-      return `${d.fgColor ?? "?"} on ${d.bgColor ?? "?"} = ${d.contrastRatio ?? "?"}:1 (needs ${d.expectedContrastRatio ?? "?"}) at ${n.target.join(" ")}`;
-    });
+    const { violations, outsideViewport } = contrastProblems(name, results);
+    const problems = [...violations, ...outsideViewport];
+    const examples = problems
+      .slice(0, 5)
+      .map((x) => `${x.detail} at ${x.selector}`);
     contrast.push({
       theme,
       route: name,
       path: v.path,
       landedPath,
-      nodes: nodes.length,
+      nodes: violations.length,
+      outsideViewport: outsideViewport.length,
       examples,
     });
-    if (enforceContrast) {
-      expect(violations).toEqual([]);
-    } else {
-      testInfo.annotations.push({
-        type: "color-contrast",
-        description: `${nodes.length} node(s)${examples.length ? ` — ${examples.join("; ")}` : ""}`,
-      });
-    }
+    testInfo.annotations.push({
+      type: enforceContrast ? "color-contrast-enforced" : "color-contrast",
+      description: `${violations.length} violation(s), ${outsideViewport.length} outside the viewport${examples.length ? ` — ${examples.join("; ")}` : ""}`,
+    });
+    if (enforceContrast) enforced[theme].push(...problems);
   }
 
   for (const theme of THEMES) {
@@ -393,41 +474,15 @@ test.describe.serial("visual sweep @visual", () => {
         });
       }
 
-      test("state-cmdk", async ({}, testInfo) => {
-        const v = await visit(page, "/inbox");
-        await settle(page);
-        // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
-        // `e.key === "k"`, and "Meta+K" would send key "K".
-        await page.keyboard.press("ControlOrMeta+k");
-        await expect(page.getByTestId("command-palette")).toBeVisible();
-        await shoot(page, v, theme, "state-cmdk", false, testInfo);
-      });
-
-      test("state-menu", async ({}, testInfo) => {
-        const v = await visit(page, "/inbox");
-        await settle(page);
-        const toggle = page.locator('[data-testid="theme-toggle"]');
-        await toggle.click();
-        // Before the Light/Dark/System menu (main @ 7e4fcd6) the toggle was a
-        // plain button; only expect a menu when the trigger says it opens one.
-        if ((await toggle.getAttribute("aria-haspopup")) === "menu") {
-          await expect(page.getByRole("menu")).toBeVisible();
-        }
-        await shoot(page, v, theme, "state-menu", false, testInfo);
-      });
-
-      test("state-dialog", async ({}, testInfo) => {
-        // The editor's own tokens page: admins are redirected to
-        // /admin/api-keys, which is not the screen this state is about.
-        const v = await visit(editorPage, "/account/tokens");
-        await settle(editorPage);
-        await editorPage
-          .getByRole("button", { name: /token/i })
-          .first()
-          .click();
-        await expect(editorPage.getByRole("dialog")).toBeVisible();
-        await shoot(editorPage, v, theme, "state-dialog", false, testInfo);
-      });
+      for (const s of STATES) {
+        test(s.name, async ({}, testInfo) => {
+          const p = s.as === "editor" ? editorPage : page;
+          const v = await visit(p, s.path);
+          await settle(p);
+          await s.open(p);
+          await shoot(p, v, theme, s.name, s.enforceContrast, testInfo);
+        });
+      }
     });
   }
 
@@ -447,6 +502,23 @@ test.describe.serial("visual sweep @visual", () => {
       } finally {
         await ctx.close();
       }
+    }
+  });
+
+  // The enforceContrast ratchet, checked ONCE per theme with that theme's
+  // whole list, instead of failing at the first offending route. It runs
+  // last, as soft assertions in one test: a failure inside a serial suite
+  // skips every test after it, so a failing check at the end of the light
+  // pass would silently drop the entire dark pass.
+  test("contrast-enforced", () => {
+    for (const theme of THEMES) {
+      const found = enforced[theme].map(formatProblem);
+      expect
+        .soft(
+          found,
+          `${theme}: ${found.length} colour-contrast problem(s) on enforceContrast shots (route · rule · selector · ratio)`,
+        )
+        .toEqual([]);
     }
   });
 });

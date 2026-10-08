@@ -1,12 +1,17 @@
+import { expect, type Page } from "@playwright/test";
+
 import type { VisualFixture } from "./fixture.js";
 
 /**
  * Every dashboard route the visual sweep captures (spec §7.1).
  *
  * `enforceContrast` is the per-route ratchet: `false` → axe `color-contrast`
- * violations are only reported (as test annotations); `true` → they fail the
- * test. Each design-foundation slice PR flips its own routes to `true` as it
- * leaves the lint `UNMIGRATED` list, so "migrated" means "AA-verified".
+ * problems are only reported (as test annotations); `true` → they fail the
+ * theme's `contrast-enforced` check, which runs once at the end of each theme
+ * pass and lists every enforced problem. A problem is an axe violation, or a
+ * node axe could not measure because it lies outside the viewport. Each
+ * design-foundation slice PR flips its own routes to `true` as it leaves the
+ * lint `UNMIGRATED` list, so "migrated" means "AA-verified".
  */
 export interface VisualRoute {
   name: string;
@@ -107,5 +112,59 @@ export const DISCOVERED: ReadonlyArray<{
     from: (f) => `/projects/${f.projectId}/variations`,
     href: /\/variations\/[^/]+$/,
     enforceContrast: false,
+  },
+];
+
+/**
+ * Interaction states: open `path`, let it settle, `open` the state, then
+ * capture it. `enforceContrast` is the same per-shot ratchet as the routes'.
+ */
+export interface VisualState {
+  name: string;
+  path: string;
+  enforceContrast: boolean;
+  /** Capture from the seeded editor's session (see {@link VisualRoute.as}). */
+  as?: "editor";
+  /** Put the settled page into the state; resolves once the state shows. */
+  open: (p: Page) => Promise<void>;
+}
+
+export const STATES: ReadonlyArray<VisualState> = [
+  {
+    name: "state-cmdk",
+    path: "/inbox",
+    enforceContrast: false,
+    open: async (p) => {
+      // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
+      // `e.key === "k"`, and "Meta+K" would send key "K".
+      await p.keyboard.press("ControlOrMeta+k");
+      await expect(p.getByTestId("command-palette")).toBeVisible();
+    },
+  },
+  {
+    name: "state-menu",
+    path: "/inbox",
+    enforceContrast: false,
+    open: async (p) => {
+      const toggle = p.locator('[data-testid="theme-toggle"]');
+      await toggle.click();
+      // Before the Light/Dark/System menu (main @ 7e4fcd6) the toggle was a
+      // plain button; only expect a menu when the trigger says it opens one.
+      if ((await toggle.getAttribute("aria-haspopup")) === "menu") {
+        await expect(p.getByRole("menu")).toBeVisible();
+      }
+    },
+  },
+  {
+    // The editor's own tokens page: admins are redirected to /admin/api-keys,
+    // which is not the screen this state is about.
+    name: "state-dialog",
+    path: "/account/tokens",
+    enforceContrast: false,
+    as: "editor",
+    open: async (p) => {
+      await p.getByRole("button", { name: /token/i }).first().click();
+      await expect(p.getByRole("dialog")).toBeVisible();
+    },
   },
 ];
