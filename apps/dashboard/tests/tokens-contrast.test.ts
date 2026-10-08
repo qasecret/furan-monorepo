@@ -205,6 +205,27 @@ describe("design tokens", () => {
     },
   );
 
+  // components/ui/switch.tsx: white thumb on an fg-muted track (unchecked),
+  // brand-fg thumb on a brand track (checked). Non-text UI parts: >= 3:1
+  // (WCAG 1.4.11), and the track itself must stand off every surface it sits on.
+  test.each(THEMES)("%s: Switch track and thumb >= 3:1", (theme) => {
+    const t = parsed[theme];
+    expect(
+      contrast("#ffffff", t["fg-muted"]!),
+      "white thumb on fg-muted track",
+    ).toBeGreaterThanOrEqual(3);
+    expect(
+      contrast(t["brand-fg"]!, t.brand!),
+      "brand-fg thumb on brand track",
+    ).toBeGreaterThanOrEqual(3);
+    for (const s of ["canvas", "raised", "overlay"]) {
+      expect(
+        contrast(t["fg-muted"]!, t[s]!),
+        `fg-muted track on ${s}`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   test("@theme inline maps every token to a --color-* utility", () => {
     for (const k of Object.keys(LIGHT)) {
       expect(css).toContain(`--color-${k}: var(--${k})`);
