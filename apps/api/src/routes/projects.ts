@@ -9,6 +9,7 @@ import {
   SameBranchError,
 } from "../lib/branch-merge.js";
 import { sendError } from "../lib/errors.js";
+import { toPublicProject } from "../lib/project-ai-config.js";
 import { isAtLeastAdmin } from "../lib/roles.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
@@ -33,7 +34,9 @@ export const projectResponse = z.object({
   maxBranchLifetime: z.number().int().nonnegative().nullable(),
   autoApproveFeature: z.boolean(),
   imageComparison: z.enum(["odiff", "pixelmatch", "looks_same"]),
+  // ADR-060: the Visual-AI `apiKey` is never returned — see hasVlmApiKey.
   imageComparisonConfig: z.unknown().nullable(),
+  hasVlmApiKey: z.boolean(),
   retentionDays: z.number().int().nonnegative().nullable(),
   diffThreshold: z.number().nullable(),
   createdAt: z.date(),
@@ -53,7 +56,11 @@ export async function registerProjectsRoutes(
     const auth = req.auth;
     return withRequestScope(app, req, async (db) => {
       if (isAtLeastAdmin(auth.role)) {
-        return db.select().from(projects).orderBy(asc(projects.name));
+        const rows = await db
+          .select()
+          .from(projects)
+          .orderBy(asc(projects.name));
+        return rows.map(toPublicProject);
       }
       // editor — only member-of projects
       const memberRows = await db
@@ -61,7 +68,7 @@ export async function registerProjectsRoutes(
         .from(projectMembers)
         .where(eq(projectMembers.userId, auth.id));
       if (memberRows.length === 0) return [];
-      return db
+      const rows = await db
         .select()
         .from(projects)
         .where(
@@ -71,6 +78,7 @@ export async function registerProjectsRoutes(
           ),
         )
         .orderBy(asc(projects.name));
+      return rows.map(toPublicProject);
     });
   });
 
@@ -113,7 +121,7 @@ export async function registerProjectsRoutes(
         // Set status + RETURN the row so Fastify sends it AFTER the scope
         // commits (a client that reads the project right after must see it).
         reply.code(201);
-        return created;
+        return toPublicProject(created);
       });
     },
   );
@@ -143,7 +151,7 @@ export async function registerProjectsRoutes(
           if (!rows[0]) {
             return sendError(reply, 404, "not_found");
           }
-          return rows[0];
+          return toPublicProject(rows[0]);
         },
         parsed.data.id,
       );
