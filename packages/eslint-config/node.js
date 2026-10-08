@@ -1,6 +1,7 @@
 // @ts-check
 import base from "./base.js";
 import noRawDrizzle from "./no-raw-drizzle.js";
+import noRawPalette from "./no-raw-palette.js";
 
 /** @type {import("eslint").Linter.Config[]} */
 export default [
@@ -19,6 +20,8 @@ export default [
       "@furan": {
         rules: {
           "no-raw-drizzle": noRawDrizzle,
+          // Registered only; enabled per-app (see apps/dashboard/eslint.config.js).
+          "no-raw-palette": noRawPalette,
         },
       },
     },
