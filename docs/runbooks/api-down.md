@@ -200,5 +200,5 @@ docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml \
 ## See also
 
 - [restore-from-backup.md](./restore-from-backup.md) — Postgres data recovery
-- [alpha-install.md](./alpha-install.md) — first-time install (env vars + compose bring-up)
+- [production-deploy.md](./production-deploy.md) — first-time install (env vars + compose bring-up)
 - [maven-central-publish.md](./maven-central-publish.md) — SDK release flow

@@ -1,5 +1,9 @@
 "use client";
 
+// Swap pixi's `new Function` shader/uniform code generation for its eval-free
+// polyfills — the dashboard CSP (lib/csp.ts) forbids 'unsafe-eval', and without
+// this pixi throws "Current environment does not allow unsafe-eval" on init.
+import "pixi.js/unsafe-eval";
 import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 

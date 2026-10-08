@@ -1,10 +1,12 @@
 name: build-images
 
-# Per-app container build matrix. On PRs we build-only (no push, no scan)
-# to catch broken Dockerfiles cheaply. On push to main + tag pushes we
-# build, run a Trivy CVE scan, and ONLY THEN push to GHCR **and Docker
-# Hub** (dual-publish for installer convenience), sign with cosign
-# (keyless OIDC), and emit a SPDX SBOM as a workflow artifact. The scan
+# Per-app container build matrix. On PRs the `build-pr` job builds only (no
+# push, no scan) to catch broken Dockerfiles cheaply, with a read-only token
+# and no OIDC token. On push to main + tag pushes the `build` job (the only
+# one granted packages: write + id-token: write) builds, runs a Trivy CVE
+# scan, and ONLY THEN pushes to GHCR **and Docker
+# Hub** (dual-publish for installer convenience), signs with cosign
+# (keyless OIDC), and emits a SPDX SBOM as a workflow artifact. The scan
 # precedes the push so a CVE failure can never leak an image (previously
 # push came first, so a failed scan still published the vulnerable,
 # unsigned image and clobbered `:latest`).
@@ -42,8 +44,19 @@ concurrency:
   group: build-images-${{ github.sha }}
   cancel-in-progress: ${{ github.ref_type == 'tag' }}
 
+# Least privilege by default; only the publishing `build` job widens it.
+permissions:
+  contents: read
+
 jobs:
+  # Publishing job: main pushes, tag pushes, workflow_dispatch — never PRs.
+  # Job permissions can't be conditional on the event, so PRs run the
+  # read-only `build-pr` job below instead of getting packages: write and an
+  # OIDC token. Signing stays in THIS workflow file (not a reusable workflow)
+  # because the keyless cert identity is the signing workflow's path, and
+  # users verify against `build-images.yml@refs/tags/v<x.y.z>`.
   build:
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +81,6 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -76,7 +88,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -89,8 +100,8 @@ jobs:
       # CVE failure still leaked the vulnerable (and unsigned, since
       # cosign ran after the scan) image to the registry and clobbered
       # `:latest`. OS-package CVEs (openssl, etc.) are arch-independent,
-      # so the amd64 image is representative for the CVE gate. This step
-      # also doubles as the PR Dockerfile-builds check.
+      # so the amd64 image is representative for the CVE gate. `build-pr`
+      # runs this same build as the PR Dockerfile-builds check.
       - name: Build (amd64) for scan
         uses: docker/build-push-action@v7
         with:
@@ -106,7 +117,6 @@ jobs:
       # step below ever runs; ignore-unfixed avoids blocking on CVEs with
       # no upstream patch. A failure here leaves the registry untouched.
       - name: Trivy scan (gate — before push)
-        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: furan-scan/${{ matrix.app }}:scan
@@ -119,7 +129,6 @@ jobs:
       # arm64 is built fresh here.
       - name: Build and push (multi-arch)
         id: build
-        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -137,7 +146,6 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.app }},mode=max
 
       - name: Install cosign
-        if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@v3
 
       # Keyless signing via the workflow's OIDC token — no long-lived keys
@@ -153,15 +161,16 @@ jobs:
       # manifest this run pushed, so the version/latest tags — which point at
       # this digest — are always covered.
       - name: Sign image (cosign keyless)
-        if: github.event_name != 'pull_request'
-        run: cosign sign --yes ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
+        env:
+          APP: ${{ matrix.app }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/qasecret/furan-${APP}@${DIGEST}"
 
       # upload-release-assets: false stops anchore/sbom-action from trying
       # to attach the SBOM to the GitHub Release on tag pushes — that path
       # needs `contents: write` which the workflow does not grant, and the
       # SBOM is already preserved as a workflow artifact via the next step.
       - name: Generate SBOM (syft → SPDX JSON)
-        if: github.event_name != 'pull_request'
         uses: anchore/sbom-action@v0
         with:
           image: ghcr.io/qasecret/furan-${{ matrix.app }}@${{ steps.build.outputs.digest }}
@@ -170,7 +179,6 @@ jobs:
           upload-release-assets: false
 
       - name: Upload SBOM artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v5
         with:
           name: sbom-${{ matrix.app }}
@@ -205,4 +213,36 @@ jobs:
 
       - name: Sign dashboard-proxy (cosign keyless)
         if: matrix.app == 'dashboard' && startsWith(github.ref, 'refs/tags/v')
-        run: cosign sign --yes ghcr.io/qasecret/furan-dashboard@${{ steps.build_proxy.outputs.digest }}
+        env:
+          DIGEST: ${{ steps.build_proxy.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/qasecret/furan-dashboard@${DIGEST}"
+
+  # PR runs: the Dockerfile-builds check only (amd64, no scan / push / sign —
+  # unchanged from before), now with a read-only token and no OIDC token.
+  # Same build inputs + gha cache scope as the `build` job's scan build, so
+  # PRs reuse main's layer cache exactly as before.
+  build-pr:
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with the `build` job's matrix above.
+        app: [api, dashboard, capture-worker, diff-worker, integrations]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build (amd64, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: furan-scan/${{ matrix.app }}:scan
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max

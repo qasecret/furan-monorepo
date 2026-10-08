@@ -18,5 +18,5 @@ f45e37753db0518a6a05ad7003026455824b5ab3:apps/api/tests/helpers.ts:generic-api-k
 # onto main. Same rationale as the entry above: clearly fake placeholder
 # used only by the mock fetch handler; HEAD-level annotations don't
 # suppress historical commits. Discovered by the v1.0 security dry-run
-# scan (see docs/runbooks/security-dry-run-v1.md §1).
+# scan.
 72a77b36bceb399c14b70efad26f3c881190e4f5:apps/dashboard/tests/account-tokens.test.tsx:generic-api-key:60

@@ -158,6 +158,26 @@ FURAN_DASHBOARD_ORIGIN=https://app.furan.example.com
 NEXT_PUBLIC_API_URL=https://api.furan.example.com
 ```
 
+Tell the API to trust the proxy's `X-Forwarded-For`, so login rate limits
+(ADR-063) key on the real client IP instead of Caddy's — otherwise every
+user behind the proxy shares one 10-attempts/min per-IP bucket. The api
+service doesn't forward this variable by default; add it in the overlay:
+
+```yaml
+# add to infra/docker/compose.domain.yml
+services:
+  api:
+    ports: !reset [] # reachable only via Caddy (Compose >= 2.24)
+    environment:
+      TRUST_PROXY: "1" # one hop: Caddy (or the dashboard, for UI logins)
+```
+
+> ⚠️ A hop count is only safe when the API is reachable **only** through the
+> proxy — hence the `ports: !reset []`. If the api port stays published, any
+> client can forge `X-Forwarded-For`: set `TRUST_PROXY` to the proxy's IP or
+> CIDR instead. With no proxy in front, leave it unset. Invalid values fail
+> boot; see `.env.example` for the full grammar.
+
 Because both callers use the baked URL, the public origin
 (`https://api.furan.example.com`) is the value that works everywhere: the
 browser reaches it directly, and the dashboard container's SSR hairpins out

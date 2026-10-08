@@ -101,9 +101,9 @@ Wait ~15 seconds for healthchecks, then verify:
 docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml ps
 ```
 
-All four services (`postgres`, `redis`, `minio`, `minio-init`) should report
-healthy / exited-0. `minio-init` is a one-shot bucket creator and is
-expected to exit after first run.
+All five services (`postgres`, `redis`, `minio`, `minio-perms`, `minio-init`)
+should report healthy / exited-0. `minio-perms` (volume ownership) and
+`minio-init` (bucket creator) are one-shots and are expected to exit.
 
 > **Production-shaped install:** `compose.yml` boots the **full** stack (data
 > plane + the five app services) from pre-built images published to Docker Hub
@@ -275,8 +275,7 @@ reuse the same values on later runs so they diff against the same baseline. The
 for a variation there is no baseline, so the run is stored as a baseline
 **candidate** that a reviewer approves in the dashboard (ADR-036 — Furan does
 not auto-seed the first baseline by default; `autoApproveFeature` is off for new
-projects). See the [E2E verification report](../runbooks/e2e-verification-2026-06-24.md)
-for a full walkthrough of this loop.
+projects).
 
 <details><summary>Dev-only alternative: enqueue a capture job directly</summary>
 

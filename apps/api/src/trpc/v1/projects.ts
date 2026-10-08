@@ -6,6 +6,15 @@ import {
   mergeBranchBaselinesImpl,
   SameBranchError,
 } from "../../lib/branch-merge.js";
+import { emitAudit } from "../../lib/emit-audit.js";
+import {
+  describeConfigChange,
+  isValidImageComparisonConfig,
+  mergeImageComparisonConfig,
+  providerSettingsChanged,
+  toPublicProject,
+} from "../../lib/project-ai-config.js";
+import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -26,10 +35,60 @@ const updateInput = z.object({
   imageComparison: z
     .enum(["pixelmatch", "looks_same", "odiff", "vlm"])
     .optional(),
-  imageComparisonConfig: z.string().optional(),
+  // ADR-060: a JSON object or "" — an unparseable blob can't be redacted.
+  imageComparisonConfig: z
+    .string()
+    .refine(isValidImageComparisonConfig, "invalid_image_comparison_config")
+    .optional(),
   dynamicTextEnabled: z.boolean().optional(),
 });
 type UpdateInput = z.infer<typeof updateInput>;
+
+type ProjectRow = typeof projects.$inferSelect;
+
+/**
+ * Audit metadata for a project update, or null when nothing changed.
+ * Scalar fields carry before/after; the config blob carries only its changed
+ * sub-keys and what happened to the API key — never its value (ADR-060).
+ */
+function projectUpdateAudit(
+  before: ProjectRow,
+  after: ProjectRow,
+  fields: string[],
+): Record<string, unknown> | null {
+  const changed = fields.filter(
+    (f) =>
+      JSON.stringify(before[f as keyof ProjectRow]) !==
+      JSON.stringify(after[f as keyof ProjectRow]),
+  );
+  if (changed.length === 0) return null;
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const f of changed) {
+    if (f === "imageComparisonConfig") continue;
+    changes[f] = {
+      from: before[f as keyof ProjectRow],
+      to: after[f as keyof ProjectRow],
+    };
+  }
+  return {
+    fields: changed,
+    changes,
+    ...(changed.includes("imageComparisonConfig")
+      ? {
+          imageComparisonConfig: {
+            ...describeConfigChange(
+              before.imageComparisonConfig,
+              after.imageComparisonConfig,
+            ),
+            providerSettingsChanged: providerSettingsChanged(
+              before.imageComparisonConfig,
+              after.imageComparisonConfig,
+            ),
+          },
+        }
+      : {}),
+  };
+}
 
 export const projectsRouter = t.router({
   /**
@@ -60,7 +119,7 @@ export const projectsRouter = t.router({
         .limit(1);
       const project = rows[0];
       if (!project) throw new TRPCError({ code: "NOT_FOUND" });
-      return project;
+      return toPublicProject(project);
     }),
 
   /**
@@ -69,7 +128,12 @@ export const projectsRouter = t.router({
    * they want to change. Bumps `updatedAt` on every write.
    *
    * Authorization: admin-bypass OR project_members row (see note above
-   * about `projectMember("write")` semantics).
+   * about `projectMember("write")` semantics) — except the Visual-AI
+   * provider settings (`provider` / `baseUrl` / `apiKey` inside
+   * `imageComparisonConfig`), which only admins may change (ADR-060).
+   * The API key is write-only: omitting it keeps the stored key.
+   *
+   * Effective changes are audited as `project.updated`.
    */
   update: publicProcedure
     .input(updateInput)
@@ -88,15 +152,34 @@ export const projectsRouter = t.router({
       for (const [k, v] of Object.entries(rest)) {
         if (v !== undefined) updates[k] = v;
       }
-      if (Object.keys(updates).length === 0) {
-        const rows = await ctx.db
-          .select()
-          .from(projects)
-          .where(eq(projects.id, projectId))
-          .limit(1);
-        const project = rows[0];
-        if (!project) throw new TRPCError({ code: "NOT_FOUND" });
-        return project;
+      // Row-locked on the request transaction so a concurrent key change
+      // can't be lost between the merge below and the write.
+      const rows = await ctx.db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .limit(1)
+        .for("update");
+      const current = rows[0];
+      if (!current) throw new TRPCError({ code: "NOT_FOUND" });
+      const fields = Object.keys(updates);
+      if (fields.length === 0) return toPublicProject(current);
+
+      if (typeof updates.imageComparisonConfig === "string") {
+        const next = mergeImageComparisonConfig(
+          current.imageComparisonConfig,
+          updates.imageComparisonConfig,
+        );
+        if (
+          providerSettingsChanged(current.imageComparisonConfig, next) &&
+          !isAtLeastAdmin(ctx.user!.role)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "vlm_provider_settings_admin_only",
+          });
+        }
+        updates.imageComparisonConfig = next;
       }
       updates.updatedAt = new Date();
       const updated = await ctx.db
@@ -105,7 +188,22 @@ export const projectsRouter = t.router({
         .where(eq(projects.id, projectId))
         .returning();
       if (!updated[0]) throw new TRPCError({ code: "NOT_FOUND" });
-      return updated[0];
+
+      const audit = projectUpdateAudit(current, updated[0], fields);
+      if (audit) {
+        await emitAudit(
+          ctx.db,
+          {
+            actorId: ctx.user!.id,
+            action: "project.updated",
+            targetType: "project",
+            targetId: projectId,
+            metadata: audit,
+          },
+          ctx.req.log,
+        );
+      }
+      return toPublicProject(updated[0]);
     }),
 
   /**

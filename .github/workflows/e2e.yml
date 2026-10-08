@@ -10,6 +10,11 @@ on:
   schedule:
     - cron: "0 6 * * *" # ~06:00 UTC nightly
 
+# Least privilege: the job only reads the repo (upload-artifact and the pnpm
+# cache authenticate with the runner's own token, not GITHUB_TOKEN).
+permissions:
+  contents: read
+
 # Never run more than one heavy E2E job at a time.
 concurrency:
   group: e2e-${{ github.ref }}

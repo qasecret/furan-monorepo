@@ -43,13 +43,57 @@ interface ShortcutOptions {
   onNextStep?: () => void;
 }
 
+// <input> types that take no typed text — single-key shortcuts still apply
+// while one of these has focus (e.g. after clicking a checkbox).
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+// Widgets that consume bare keys themselves: menu / listbox typeahead
+// (pressing "A" in the open More menu jumps to "Approve all"), and dialogs
+// layered over the viewer.
+const KEYBOARD_OWNER_ROLES =
+  '[role="menu"],[role="menubar"],[role="listbox"],[role="dialog"],[role="alertdialog"]';
+
 function isTypingInInput(): boolean {
   if (typeof document === "undefined") return false;
   const el = document.activeElement as HTMLElement | null;
   if (!el) return false;
-  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return true;
-  if (el.isContentEditable) return true;
+  if (el.tagName === "INPUT") {
+    return !NON_TEXT_INPUT_TYPES.has((el as HTMLInputElement).type);
+  }
+  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  // `closest` also covers focus inside a nested editable region (and jsdom,
+  // which doesn't implement `isContentEditable`).
+  if (
+    el.isContentEditable ||
+    el.closest('[contenteditable]:not([contenteditable="false"])')
+  ) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * True when this keystroke belongs to something else: a text field or
+ * select has focus, focus is inside a menu / listbox / dialog, or another
+ * handler already consumed it. Every viewer shortcut yields in that case —
+ * otherwise typing "a" into the PatternEditor approves the run, "/" opens
+ * the palette mid-regex, and Backspace deletes the selected region.
+ */
+function keyIsOwnedElsewhere(e: KeyboardEvent): boolean {
+  if (e.defaultPrevented) return true;
+  if (isTypingInInput()) return true;
+  if (typeof document === "undefined") return false;
+  return !!document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
 }
 
 function hasTextSelection(): boolean {
@@ -79,9 +123,8 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
   optsRef.current = opts;
 
   useEffect(() => {
-    return tinykeys(window, {
+    const bindings: Record<string, (e: KeyboardEvent) => void> = {
       ArrowLeft: () => {
-        if (isTypingInInput()) return;
         const o = optsRef.current;
         if (o.onPrevStep) {
           o.onPrevStep();
@@ -90,7 +133,6 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (o.prevDiffHref) router.push(o.prevDiffHref);
       },
       ArrowRight: () => {
-        if (isTypingInInput()) return;
         const o = optsRef.current;
         if (o.onNextStep) {
           o.onNextStep();
@@ -99,12 +141,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (o.nextDiffHref) router.push(o.nextDiffHref);
       },
       D: () => {
-        if (isTypingInInput()) return;
         // Toggle the single-image difference view.
         setMode(mode === "difference" ? "side-by-side" : "difference");
       },
       O: () => {
-        if (isTypingInInput()) return;
         const idx = MODES.indexOf(mode);
         const next = MODES[(idx + 1) % MODES.length];
         if (next) setMode(next);
@@ -124,24 +164,32 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (next) setViewport(next);
       },
       H: () => {
-        if (isTypingInInput()) return;
         const s = useViewerStore.getState();
         s.setHighlightActive(!s.highlightActive);
       },
       n: () => {
-        if (isTypingInInput()) return;
         optsRef.current.onNextDiff?.();
       },
       p: () => {
-        if (isTypingInInput()) return;
         optsRef.current.onPrevDiff?.();
       },
-      A: () => optsRef.current.onApprove?.(),
-      R: () => optsRef.current.onReject?.(),
+      // Approve / reject ignore auto-repeat: holding the key must not fire
+      // a second review action.
+      A: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onApprove?.();
+      },
+      R: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onReject?.();
+      },
       // `X` is the legacy reject hotkey from the predecessor frontend.
       // Aliased to onReject so power reviewers carrying muscle memory from
       // the old viewer hit the same action without retraining.
-      X: () => optsRef.current.onReject?.(),
+      X: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onReject?.();
+      },
       C: () => {
         const store = useViewerStore.getState();
         store.setCommentPanelOpen(!store.commentPanelOpen);
@@ -184,9 +232,7 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       // (Ctrl on Win/Linux, Cmd on Mac). Plain `C` is already bound to
       // toggle the comment panel, so we use the modified form here.
       "$mod+C": (e) => {
-        // Yield to the browser when the user is typing or selecting text
-        // (audit panel, pattern editor, etc.).
-        if (isTypingInInput()) return;
+        // Yield to the browser's own copy when text is selected.
         if (hasTextSelection()) return;
         const projectId = optsRef.current.projectId;
         if (!projectId) return;
@@ -199,7 +245,6 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         e.preventDefault();
       },
       "$mod+V": (e) => {
-        if (isTypingInInput()) return;
         const projectId = optsRef.current.projectId;
         if (!projectId) return;
         const store = useViewerStore.getState();
@@ -215,24 +260,31 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       },
       // Zoom shortcuts. `=` is the unshifted key labeled "+" on US layouts —
       // binding both `+` and `=` covers Shift-+ and bare-= without forcing
-      // users to chord. `0` resets to fit. Skip when typing so users can
-      // type "0" into the PatternEditor / audit comment.
+      // users to chord. `0` resets to fit.
       "=": () => {
-        if (isTypingInInput()) return;
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
       "+": () => {
-        if (isTypingInInput()) return;
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
       "-": () => {
-        if (isTypingInInput()) return;
         useViewerStore.getState().zoomBy(1 / ZOOM_STEP);
       },
       "0": () => {
-        if (isTypingInInput()) return;
         useViewerStore.getState().resetZoom();
       },
-    });
+    };
+    // Guard every binding in one place so a newly added shortcut can't
+    // forget to yield to inputs, menus, and dialogs.
+    const guarded = Object.fromEntries(
+      Object.entries(bindings).map(([key, handler]) => [
+        key,
+        (e: KeyboardEvent) => {
+          if (keyIsOwnedElsewhere(e)) return;
+          handler(e);
+        },
+      ]),
+    );
+    return tinykeys(window, guarded);
   }, [router, mode, setMode, viewport, setViewport]);
 }

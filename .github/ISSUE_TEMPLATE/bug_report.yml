@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in Furan doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Security problems go through [private reporting](https://github.com/qasecret/furan-monorepo/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Furan version
+      description: App image tag (e.g. v1.1.29) and/or Kotlin SDK version.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is Furan installed?
+      options:
+        - One-file quick start (furan-compose.yml)
+        - Docker Compose (compose.yml)
+        - From source (pnpm dev)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      options:
+        - S3 / bundled MinIO
+        - S3 / external bucket
+        - HDD (filesystem)
+        - Not sure
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Dashboard / review UI
+        - Diff results / engines
+        - Visual AI (VLM)
+        - SDK (Selenium / Playwright / Appium)
+        - API / tokens / auth
+        - GitHub / Slack integration
+        - Install / upgrade / deploy
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Logs from the affected service (`docker compose logs <service>`). Remove any secrets first.
+      render: shell
