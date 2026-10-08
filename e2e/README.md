@@ -29,7 +29,10 @@ pnpm --filter @furan/e2e coverage      # reads e2e-coverage.json
 
 The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
 `scripts/compose.e2e-ports.yml` so it coexists with a dev `pnpm dev` on
-3000/3001. Output: `e2e-coverage.md` / `e2e-coverage.json` + `playwright-report/`.
+3000/3001. The overlay replaces the base port mappings with Compose's
+`!override` YAML tag, which needs **Docker Compose ≥ 2.24.4** (`docker compose
+version`); older versions don't support it. Output: `e2e-coverage.md` /
+`e2e-coverage.json` + `playwright-report/`.
 
 ## Visual sweep
 
