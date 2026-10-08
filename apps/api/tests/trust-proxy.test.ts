@@ -66,6 +66,42 @@ describe("parseTrustProxy (TRUST_PROXY → Fastify trustProxy)", () => {
     await app.close();
   });
 
+  // `uniquelocal` trusts every private address — including a client on a
+  // private LAN. It's only safe when the edge proxy REPLACES X-Forwarded-For
+  // with the client's address (nginx `proxy_set_header X-Forwarded-For
+  // $remote_addr`), so the api sees exactly [proxy peer, real client].
+  test.each([
+    ["a LAN client", "192.168.1.50"],
+    ["a public client", "203.0.113.7"],
+  ])(
+    "uniquelocal + an edge that overwrites XFF yields %s's real IP",
+    async (_label, client) => {
+      const app = Fastify({ trustProxy: parseTrustProxy("uniquelocal") });
+      app.get("/ip", async (req) => ({ ip: req.ip }));
+      const res = await app.inject({
+        method: "GET",
+        url: "/ip",
+        remoteAddress: "172.20.0.4",
+        headers: { "x-forwarded-for": client },
+      });
+      expect(res.json()).toEqual({ ip: client });
+      await app.close();
+    },
+  );
+
+  test("trusting the exact proxy address resists a LAN client's forged XFF even if the proxy appends", async () => {
+    const app = Fastify({ trustProxy: parseTrustProxy("172.20.0.4") });
+    app.get("/ip", async (req) => ({ ip: req.ip }));
+    const res = await app.inject({
+      method: "GET",
+      url: "/ip",
+      remoteAddress: "172.20.0.4",
+      headers: { "x-forwarded-for": "6.6.6.6, 192.168.1.50" },
+    });
+    expect(res.json()).toEqual({ ip: "192.168.1.50" });
+    await app.close();
+  });
+
   test("IPs, CIDRs and proxy-addr keywords pass through as a trimmed list", () => {
     expect(
       parseTrustProxy(
