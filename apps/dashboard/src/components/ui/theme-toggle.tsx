@@ -1,21 +1,26 @@
 "use client";
 
-import { Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 /**
- * Theme switcher button.
+ * Theme switcher: a ghost icon button that opens a Light / Dark / System radio
+ * menu. The trigger glyph reflects the *chosen* mode (Sun, Moon, or Monitor
+ * for "system"), not the resolved one, so it is clear when the app is following
+ * the OS.
  *
  * Renders `null` on the server and during the first client render to avoid
  * a hydration mismatch (server can't know the user's localStorage value).
- * After mount, swaps between Sun (dark active) and Moon (light active) glyphs.
- *
- * The actual light-theme styles are rolled out per page in Phase 1+. Until
- * those land, flipping the toggle changes `<html class>` but the visual
- * output is identical because no `dark:` prefixes have been added yet.
  */
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -23,21 +28,29 @@ export function ThemeToggle() {
   useEffect(() => setMounted(true), []);
   if (!mounted) return null;
 
-  const isDark = theme === "dark";
+  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
   return (
-    <Button
-      variant="ghost"
-      className="h-8 w-8 p-0 text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
-      onClick={() => setTheme(isDark ? "light" : "dark")}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      title={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      data-testid="theme-toggle"
-    >
-      {isDark ? (
-        <Sun className="h-4 w-4" aria-hidden />
-      ) : (
-        <Moon className="h-4 w-4" aria-hidden />
-      )}
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          className="h-8 w-8 p-0 text-fg-secondary hover:text-fg"
+          aria-label="Theme"
+          data-testid="theme-toggle"
+        >
+          <Icon className="h-4 w-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup
+          value={theme ?? "system"}
+          onValueChange={setTheme}
+        >
+          <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
