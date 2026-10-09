@@ -1,7 +1,7 @@
 "use client";
 
 import { Bug } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { toast } from "sonner";
 
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -71,7 +71,7 @@ interface Props {
 
 /**
  * Run-action bar for the DiffViewer: status pill, More menu (approve all /
- * bulk approve / force status), Mark as Bug, Reject, and the primary
+ * force status), Mark as Bug, Reject, and the primary
  * Approve. Disabled controls explain why via tooltip (spec §3.5).
  */
 export function ApprovalBar({
@@ -83,7 +83,6 @@ export function ApprovalBar({
   showStatus = true,
   checkpointCount = 0,
 }: Props) {
-  const [confirmBulk, setConfirmBulk] = useState(false);
   const {
     status: effectiveStatus,
     canReview,
@@ -156,14 +155,6 @@ export function ApprovalBar({
                     onSelect={actions.approveAllCheckpoints}
                   >
                     Approve all checkpoints
-                  </DropdownMenuItem>
-                )}
-                {!checkpointId && (
-                  <DropdownMenuItem
-                    data-testid="approve-bulk-variation"
-                    onSelect={() => setConfirmBulk(true)}
-                  >
-                    Approve all runs of this test
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
@@ -257,40 +248,6 @@ export function ApprovalBar({
           >
             {error}
           </span>
-        )}
-
-        {confirmBulk && (
-          <div
-            role="alertdialog"
-            data-testid="approve-bulk-confirm"
-            className="flex items-center gap-2 text-xs ml-auto rounded-md border border-edge bg-hover px-3 py-2 text-fg-secondary"
-          >
-            <span>
-              Approve every reviewer-actionable run of this test variation? Each
-              approved run becomes the variation's baseline for its branch.
-            </span>
-            <Button
-              variant="default"
-              className="h-7 px-2 text-xs"
-              data-testid="approve-bulk-confirm-yes"
-              disabled={actions.isBulkApproving}
-              onClick={() => {
-                actions.bulkApproveVariation();
-                setConfirmBulk(false);
-              }}
-            >
-              {actions.isBulkApproving ? "Approving…" : "Approve all"}
-            </Button>
-            <Button
-              variant="secondary"
-              className="h-7 px-2 text-xs"
-              data-testid="approve-bulk-confirm-no"
-              onClick={() => setConfirmBulk(false)}
-              disabled={actions.isBulkApproving}
-            >
-              Cancel
-            </Button>
-          </div>
         )}
       </div>
     </TooltipProvider>

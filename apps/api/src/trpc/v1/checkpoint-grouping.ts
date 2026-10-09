@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   baselines,
   baselineWriteTime,
   diffRegions,
@@ -60,7 +61,7 @@ export type CheckpointStatus = "new" | "unresolved" | "passed";
 
 /**
  * Cap on how many checkpoints a single "Accept all" propagates. Mirrors
- * BULK_CAP (bulkApproveByVariation/byBuild) for consistency; reconciles the
+ * BULK_CAP (bulkApproveByBuild) for consistency; reconciles the
  * spec's "~500" down to the established bulk-approve cap. A build with more
  * matches needs a second "run again" click.
  */
@@ -332,6 +333,57 @@ export async function deriveCheckpointStatuses(
   return out;
 }
 
+/**
+ * Marks a variation ignore region that approve promoted from a checkpoint's
+ * SDK-captured regions (ADR-067). Everything without it is reviewer-owned
+ * (setIgnoreAreas / addIgnoreAreas / an approve override). The worker's region
+ * parse strips the key, so it never affects masking.
+ */
+export const SDK_REGION_SOURCE = "sdk";
+
+const isSdkRegion = (r: unknown): boolean =>
+  typeof r === "object" &&
+  r !== null &&
+  (r as { source?: unknown }).source === SDK_REGION_SOURCE;
+
+/** Geometry + viewport — the same dedupe key the diff-worker uses. */
+const regionKey = (r: object): string => {
+  const { x, y, width, height, viewport } = r as Record<string, unknown>;
+  return `${String(x)}:${String(y)}:${String(width)}:${String(height)}:${
+    typeof viewport === "string" ? viewport : ""
+  }`;
+};
+
+/**
+ * A variation's ignore regions after an approve that carries no reviewer
+ * override (ADR-067): reviewer-owned regions are kept as-is, and the SDK set an
+ * earlier approve promoted is REPLACED by this checkpoint's captured regions
+ * (tagged so the next approve can replace them in turn). Replacing rather than
+ * appending keeps capture-time boxes that move between runs (the SDK's
+ * caret-focus region) from piling up. A captured region whose geometry matches
+ * a kept one is dropped, so a reviewer's edit of it wins. Empty → null.
+ */
+export function mergeApprovedIgnoreRegions(
+  existing: unknown,
+  captured: unknown,
+): unknown[] | null {
+  const kept = (Array.isArray(existing) ? existing : []).filter(
+    (r) => !isSdkRegion(r),
+  );
+  const seen = new Set(
+    kept.filter((r) => typeof r === "object" && r !== null).map(regionKey),
+  );
+  const out = [...kept];
+  for (const r of Array.isArray(captured) ? captured : []) {
+    if (typeof r !== "object" || r === null) continue;
+    const key = regionKey(r);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...r, source: SDK_REGION_SOURCE });
+  }
+  return out.length > 0 ? out : null;
+}
+
 /** The screenshot fields approveCheckpointInTx promotes onto the baseline. */
 export interface ApprovableCheckpoint {
   testVariationId: string;
@@ -350,11 +402,12 @@ export interface ApprovableRun {
 }
 
 /**
- * Promote one checkpoint's variation baseline, record the baseline row, and
- * flip its run to passed — inside an existing transaction. Extracted VERBATIM
- * from runs.approveCheckpoint so single-checkpoint and group approval cannot
- * drift. (v1.1 has no "partially approved" run: approving any checkpoint flips
- * the whole run to passed — preserved here intentionally.)
+ * The per-checkpoint approve core: promote one checkpoint's variation
+ * baseline, record the baseline row, and flip its run to passed — inside an
+ * existing transaction. Every approve path reaches the baseline through here
+ * (single checkpoint, group, and — via approveRunInTx — run-level and bulk),
+ * so they cannot drift. (v1.1 has no "partially approved" run: approving any
+ * checkpoint flips the whole run to passed — preserved here intentionally.)
  */
 export async function approveCheckpointInTx(
   tx: Tx,
@@ -363,20 +416,31 @@ export async function approveCheckpointInTx(
   userId: string,
   /**
    * ADR-036: when provided, reviewer-drawn ignore regions replace the
-   * checkpoint's captured `ignoreRegions` on the variation — so a region
-   * drawn in the viewer before "Approve" isn't dropped. `undefined` keeps
-   * the screenshot's captured regions (the SDK / bulk / group-approve path).
+   * variation's ignore regions — so a region drawn in the viewer before
+   * "Approve" isn't dropped. `undefined` keeps the variation's saved regions
+   * and refreshes the SDK-captured ones (mergeApprovedIgnoreRegions, ADR-067).
    */
   ignoreAreasOverride?: readonly unknown[] | null,
 ): Promise<void> {
+  let ignoreRegions: unknown = ignoreAreasOverride;
+  if (ignoreAreasOverride === undefined) {
+    // Row-locked read-modify-write so a concurrent approve or region save on
+    // the same variation can't drop the other's regions.
+    const [current] = await tx
+      .select({ ignoreRegions: testVariations.ignoreRegions })
+      .from(testVariations)
+      .where(eq(testVariations.id, s.testVariationId))
+      .for("update");
+    ignoreRegions = mergeApprovedIgnoreRegions(
+      current?.ignoreRegions,
+      s.ignoreRegions,
+    );
+  }
   await tx
     .update(testVariations)
     .set({
       baselineName: s.imageKey,
-      ignoreRegions:
-        ignoreAreasOverride !== undefined
-          ? ignoreAreasOverride
-          : s.ignoreRegions,
+      ignoreRegions,
       layoutRegions: s.layoutRegions,
       floatingRegions: s.floatingRegions,
       contentRegions: s.contentRegions,
@@ -414,4 +478,45 @@ export async function approveCheckpointInTx(
     .update(testRuns)
     .set({ status: "passed", merge: true })
     .where(eq(testRuns.id, run.id));
+}
+
+/**
+ * Approve a whole run inside an existing transaction: every checkpoint goes
+ * through approveCheckpointInTx in capture order, and a checkpoint-less run is
+ * still flipped to passed. The single run-level path for runs.approve /
+ * inbox.approve / REST approve, approveAllCheckpoints and bulkApproveByBuild
+ * (ADR-067) — a passed run shows all its checkpoints passed
+ * (deriveCheckpointStatuses), so all of their baselines must be promoted.
+ *
+ * `ignoreAreasOverride` (ADR-036) goes to the FIRST checkpoint's variation
+ * only — the one the viewer shows when no checkpoint is selected; the other
+ * checkpoints keep their saved regions.
+ */
+export async function approveRunInTx(
+  tx: Tx,
+  run: ApprovableRun,
+  userId: string,
+  ignoreAreasOverride?: readonly unknown[] | null,
+): Promise<{ checkpointIds: string[] }> {
+  const shots = await tx
+    .select()
+    .from(screenshots)
+    .where(eq(screenshots.runId, run.id))
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  if (shots.length === 0) {
+    await tx
+      .update(testRuns)
+      .set({ status: "passed", merge: true })
+      .where(eq(testRuns.id, run.id));
+  }
+  for (const [i, s] of shots.entries()) {
+    await approveCheckpointInTx(
+      tx,
+      s,
+      run,
+      userId,
+      i === 0 ? ignoreAreasOverride : undefined,
+    );
+  }
+  return { checkpointIds: shots.map((s) => s.id) };
 }

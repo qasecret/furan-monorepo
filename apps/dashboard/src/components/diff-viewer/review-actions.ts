@@ -50,7 +50,7 @@ export interface UseReviewActionsArgs {
   /**
    * Called after a successful checkpoint approve/reject so the parent can
    * advance to the next unresolved checkpoint (fast triage loop). Not fired
-   * from approve-all, bulk-approve, or override.
+   * from approve-all or override.
    */
   onResolved?: () => void;
 }
@@ -65,7 +65,6 @@ export interface ReviewActions {
   pending: boolean;
   isApproving: boolean;
   isRejecting: boolean;
-  isBulkApproving: boolean;
   /** Last mutation error message, cleared when the next one starts. */
   error: string | null;
   /**
@@ -77,7 +76,6 @@ export interface ReviewActions {
   /** Reject, then open the comment panel pre-filled for a bug note. */
   markAsBug: () => void;
   approveAllCheckpoints: () => void;
-  bulkApproveVariation: () => void;
   override: (next: OverrideStatusInput) => void;
 }
 
@@ -137,18 +135,6 @@ export function useReviewActions({
     },
     onError: (e) => setError(e.message),
   });
-  const bulkApprove = trpc.runs.bulkApproveByVariation.useMutation({
-    onMutate: () => setError(null),
-    onSuccess: (res) => {
-      invalidate();
-      toast.success(
-        `Approved ${res.approved} run${res.approved === 1 ? "" : "s"} of this test${
-          res.capped ? ` (capped at ${res.cap} — run again for more)` : ""
-        }`,
-      );
-    },
-    onError: (e) => setError(e.message),
-  });
   const rejectRun = trpc.runs.reject.useMutation({
     onMutate: () => setError(null),
     onSuccess: () => {
@@ -191,8 +177,7 @@ export function useReviewActions({
     approveCheckpoint.isPending ||
     approveAll.isPending ||
     rejectRun.isPending ||
-    overrideStatus.isPending ||
-    bulkApprove.isPending;
+    overrideStatus.isPending;
 
   const whenReviewable =
     <A extends unknown[]>(fn: (...args: A) => void) =>
@@ -208,7 +193,6 @@ export function useReviewActions({
     pending,
     isApproving: approveRun.isPending || approveCheckpoint.isPending,
     isRejecting: rejectRun.isPending,
-    isBulkApproving: bulkApprove.isPending,
     error,
     approve: whenReviewable(() => {
       if (checkpointId) {
@@ -231,7 +215,6 @@ export function useReviewActions({
       store.setCommentPanelOpen(true);
     }),
     approveAllCheckpoints: whenReviewable(() => approveAll.mutate({ runId })),
-    bulkApproveVariation: whenReviewable(() => bulkApprove.mutate({ runId })),
     override: whenReviewable((next: OverrideStatusInput) =>
       overrideStatus.mutate({ runId, status: next }),
     ),
