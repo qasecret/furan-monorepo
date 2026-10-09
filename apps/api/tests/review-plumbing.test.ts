@@ -196,13 +196,15 @@ describe("review metrics", () => {
     expect(values).toContainEqual({ labels: { reason }, value: 2 });
   });
 
-  test("a zero or negative count records nothing and never throws", async () => {
+  test("a zero, negative or non-finite count records nothing and never throws", async () => {
     const registry = new Registry();
     expect(() => {
       recordReviewDecisions(registry, "approved", "sdk", 0);
       recordReviewDecisions(registry, "approved", "sdk", -3);
+      recordReviewDecisions(registry, "approved", "sdk", Infinity);
       recordReviewRevert(registry, "skipped", 0);
       recordReviewRevert(registry, "skipped", Number.NaN);
+      recordReviewRevert(registry, "skipped", Infinity);
     }).not.toThrow();
     const json = await registry.getMetricsAsJSON();
     expect(metricValues(json, "furan_review_decisions_total")).toEqual([]);

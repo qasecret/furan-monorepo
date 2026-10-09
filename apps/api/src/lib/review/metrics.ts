@@ -41,12 +41,13 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
 }
 
 /**
- * A non-positive (or NaN) count is a no-op rather than an error: prom-client
- * throws on a negative `inc`, and a bulk path that decided nothing must never
- * fail the review action it is merely observing.
+ * A non-positive or non-finite (NaN, Infinity) count is a no-op rather than an
+ * error: prom-client throws on a negative or non-finite `inc`, and a bulk path
+ * that decided nothing must never fail the review action it is merely
+ * observing.
  */
 function isCountable(n: number): boolean {
-  return n > 0;
+  return Number.isFinite(n) && n > 0;
 }
 
 export function recordReviewDecisions(
