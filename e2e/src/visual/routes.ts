@@ -6,12 +6,12 @@ import type { VisualFixture } from "./fixture.js";
  * Every dashboard route the visual sweep captures (spec §7.1).
  *
  * `enforceContrast` is the per-route ratchet: `false` → axe `color-contrast`
- * problems are only reported (as test annotations); `true` → they fail the
- * theme's `contrast-enforced` check, which runs once at the end of each theme
- * pass and lists every enforced problem. A problem is an axe violation, or a
- * node axe could not measure because it lies outside the viewport. Each
- * design-foundation slice PR flips its own routes to `true` as it leaves the
- * lint `UNMIGRATED` list, so "migrated" means "AA-verified".
+ * problems are only reported (as test annotations); `true` → they also fail
+ * the single `contrast-enforced` test, which runs once after both theme
+ * passes and lists every enforced problem, per theme. A problem is an axe
+ * violation, or a node axe could not measure because it lies outside the
+ * viewport. Each design-foundation slice PR flips its own routes to `true` as
+ * it leaves the lint `UNMIGRATED` list, so "migrated" means "AA-verified".
  */
 export interface VisualRoute {
   name: string;

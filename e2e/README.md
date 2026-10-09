@@ -43,15 +43,16 @@ full-page PNG at a 1440×900 viewport, plus the interaction states in
 on each. The dashboard scrolls inside its own containers, never the document,
 so before capturing, `src/visual/unclip.ts` lets those containers grow to
 their content: the PNG and axe cover the whole page, not just the first
-900px.
+900px. It fails the route if any part of the page is still clipped
+afterwards, so a dashboard layout change can't quietly shrink the shot.
 
 It is the before/after safety net for the design-foundation slice PRs. A
 contrast problem is an axe violation, or a node axe could not measure because
 it lies outside the viewport. Problems are reported as test annotations (also
 written to `visual-out/<label>/color-contrast.json`); on routes and states
 with `enforceContrast: true` in `src/visual/routes.ts` they are also
-collected, and the final `contrast-enforced` test fails once per theme with
-that theme's whole list. Uncaught page errors are annotated `pageerror`
+collected, and the `contrast-enforced` test, which runs after both theme
+passes, fails once per theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
 (hiding Next's dev overlay also hides its error dialog). A route answering
 4xx/5xx fails; a route that redirects elsewhere is annotated
 `landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
@@ -91,7 +92,8 @@ E2E_API_URL=http://localhost:<api> E2E_DASH_URL=http://localhost:<dash-on-branch
 
 **Passing.** The `system theme follows prefers-color-scheme` test fails on any
 checkout from before the design foundation (PR 1), which had no system theme —
-expected for a `before` run on such a `main`. There, "pass" means every
+expected for a `before` run on such a `main`. It runs last, after
+`contrast-enforced`, so that failure skips nothing. There, "pass" means every
 screenshot test passed.
 
 **Reviewing in Furan:**
