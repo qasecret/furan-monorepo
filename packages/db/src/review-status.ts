@@ -102,14 +102,35 @@ export async function loadRollupInputs(
  * the run override via `rollupRunStatus`, and persists it together with
  * `merge` (true iff a `baselines` row exists for the run).
  *
- * Concurrent writers serialize on the run row: it is locked `FOR UPDATE`
- * before anything is read, and the lock is held until the surrounding
- * transaction commits. A lock only lives as long as its transaction, so the
- * whole read-compute-write always runs inside one. Called with a `Tx` (the
- * normal case: the caller has just written a verdict or a decision), Drizzle
- * opens a savepoint and the **caller's** transaction keeps the lock until it
- * commits, so a decision and the status that follows from it become visible
- * together. Called with the bare `DB` it is its own transaction.
+ * Concurrent writers serialize on the run row: it is locked before anything is
+ * read, and the lock is held until the surrounding transaction commits. A lock
+ * only lives as long as its transaction, so the whole read-compute-write always
+ * runs inside one. Called with a `Tx` (the normal case: the caller has just
+ * written a verdict or a decision), Drizzle opens a savepoint and the
+ * **caller's** transaction keeps the lock until it commits, so a decision and
+ * the status that follows from it become visible together. Called with the
+ * bare `DB` it is its own transaction.
+ *
+ * The lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`. Every INSERT
+ * into a table with a foreign key to `test_runs` (screenshots, diff_regions,
+ * baselines, checkpoint_decisions, auto_rule_applications,
+ * run_reviewer_decisions) takes `FOR KEY SHARE` on the parent run row, and
+ * `FOR UPDATE` conflicts with that: two transactions that each insert a child
+ * row for the same run and then recompute would wait on each other (40P01).
+ * `FOR NO KEY UPDATE` is compatible with `KEY SHARE` and still conflicts with
+ * itself, so recomputes serialize. This is safe because the one UPDATE below
+ * touches only non-key columns.
+ *
+ * Caller contract:
+ * - A caller that recomputes several runs in one transaction must do so in
+ *   ascending `id` order (or lock the runs in that order first), or two such
+ *   callers can deadlock on each other.
+ * - This assumes READ COMMITTED (the Postgres default): the reads after the
+ *   lock must see a writer that committed while we waited. A REPEATABLE READ
+ *   or SERIALIZABLE caller gets a serialization failure (40001) instead of
+ *   seeing the other writer's committed decision.
+ * - `changed` is also true when only `merge` moved (`before === after`).
+ *   Callers that emit a status-change event must compare `before !== after`.
  *
  * Nothing is written, and `updated_at` is left alone, when neither `status`
  * nor `merge` changed. `aborted` and `empty` are lifecycle states the rollup
@@ -122,12 +143,13 @@ export async function recomputeRunStatus(
   runId: string,
 ): Promise<{ before: RunStatus; after: RunStatus; changed: boolean }> {
   return db.transaction(async (tx) => {
-    // 1. Lock. Everything below runs in this transaction, after the lock.
+    // 1. Lock (FOR NO KEY UPDATE; see above). Everything below runs in
+    //    this transaction, after the lock.
     const [run] = await tx
       .select({ status: testRuns.status, merge: testRuns.merge })
       .from(testRuns)
       .where(eq(testRuns.id, runId))
-      .for("update");
+      .for("no key update");
     if (!run) throw new Error(`run_not_found:${runId}`);
 
     // 2. Compute. Read after the lock so a writer that committed while we

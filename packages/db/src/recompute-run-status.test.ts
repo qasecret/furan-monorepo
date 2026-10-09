@@ -37,6 +37,20 @@ const RUN_INTEGRATION = !!process.env.DATABASE_URL;
 type Verdict = "new" | "passed" | "unresolved" | null;
 type Decision = "approved" | "rejected";
 
+/** "ok" for a fulfilled promise; otherwise the SQLSTATE of the failure (drizzle
+ *  wraps the driver error, so walk the `cause` chain to the PostgresError that
+ *  carries `code`), falling back to the error message. */
+function outcome(r: PromiseSettledResult<unknown>): string {
+  if (r.status === "fulfilled") return "ok";
+  let cur: unknown = r.reason;
+  for (let depth = 0; cur && depth < 5; depth++) {
+    const code = (cur as { code?: unknown }).code;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return String(r.reason);
+}
+
 describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
   let db: DB;
   let close: () => Promise<void>;
@@ -157,6 +171,26 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
       sql`SELECT xmin::text AS x FROM test_runs WHERE id = ${runId}`,
     );
     return rows[0]!.x;
+  }
+
+  /** Polls (capped) until some backend is waiting on a Lock held by backend
+   *  `blockerPid`: a positive "B is blocked on A" signal, rather than only
+   *  noticing that B has not finished yet. */
+  async function waitForLockWaiter(
+    blockerPid: number,
+    capMs = 5_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + capMs;
+    while (Date.now() < deadline) {
+      const rows = await db.execute<{ n: number }>(sql`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock'
+          AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+      `);
+      if (rows[0]!.n > 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
   }
 
   describe("the §4.3 rollup rules, through real rows", () => {
@@ -637,6 +671,9 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
 
       const a = createDb();
       const b = createDb();
+      // Open B's connection now, so connection setup cannot be what keeps its
+      // recompute "pending" below.
+      await b.db.execute(sql`select 1`);
 
       // A holds the lock (and its uncommitted approval) until `release()`.
       let release!: () => void;
@@ -648,7 +685,12 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
         aHoldsLock = resolve;
       });
 
+      let aPid = 0;
       const aDone = a.db.transaction(async (txA) => {
+        const pid = await txA.execute<{ pid: number }>(
+          sql`select pg_backend_pid() as pid`,
+        );
+        aPid = pid[0]!.pid;
         await recomputeRunStatus(txA, runId); // takes the row lock
         await txA.insert(checkpointDecisions).values({
           projectId,
@@ -671,8 +713,17 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
         // B starts while A holds the lock and must not complete.
         const bResult = recomputeRunStatus(b.db, runId);
         bPromise = bResult;
+
+        // Positive signal: a backend is waiting on a Lock held by A's backend.
+        expect(await waitForLockWaiter(aPid)).toBe(true);
+
+        // And B has not settled. (Either outcome counts as "settled", so a late
+        // rejection of `bResult` cannot become an unhandled rejection here.)
         const raced = await Promise.race([
-          bResult.then(() => "resolved" as const),
+          bResult.then(
+            () => "settled" as const,
+            () => "settled" as const,
+          ),
           new Promise<"pending">((resolve) =>
             setTimeout(() => resolve("pending"), 200),
           ),
@@ -698,7 +749,78 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunStatus", () => {
       }
     }, 20_000);
 
-    it("two writers racing on one run end on the same, correct status", async () => {
+    it("insert-then-recompute does not deadlock: two transactions each approve a different checkpoint, then both recompute", async () => {
+      // Every INSERT into a table with an FK to test_runs (decisions here)
+      // takes FOR KEY SHARE on the parent run row. A FOR UPDATE lock conflicts
+      // with that, so two transactions that each insert a child row and then
+      // recompute would wait on each other (40P01). FOR NO KEY UPDATE does not
+      // conflict with KEY SHARE, and still conflicts with itself.
+      const { runId, shots } = await seedRun({
+        status: "unresolved",
+        checkpoints: [{ verdict: "unresolved" }, { verdict: "unresolved" }],
+      });
+
+      const a = createDb();
+      const b = createDb();
+
+      // Rendezvous: neither transaction recomputes before BOTH have inserted,
+      // so both hold KEY SHARE on the run row at the moment they ask for the lock.
+      let aInserted!: () => void;
+      const aInsertedP = new Promise<void>((resolve) => {
+        aInserted = resolve;
+      });
+      let bInserted!: () => void;
+      const bInsertedP = new Promise<void>((resolve) => {
+        bInserted = resolve;
+      });
+      const bothInserted = Promise.all([aInsertedP, bInsertedP]);
+
+      const approveThenRecompute = (
+        conn: DB,
+        shot: string,
+        arrive: () => void,
+      ) =>
+        conn.transaction(async (tx) => {
+          try {
+            await tx.insert(checkpointDecisions).values({
+              projectId,
+              runId,
+              screenshotId: shot,
+              actionId: randomUUID(),
+              decision: "approved",
+              source: "viewer",
+            });
+          } finally {
+            // Never strand the other transaction on the rendezvous.
+            arrive();
+          }
+          await bothInserted;
+          return recomputeRunStatus(tx, runId);
+        });
+
+      try {
+        // No retry on purpose: a 40P01 must fail the test.
+        const [ra, rb] = await Promise.allSettled([
+          approveThenRecompute(a.db, shots[0]!, aInserted),
+          approveThenRecompute(b.db, shots[1]!, bInserted),
+        ]);
+        // "ok" or the SQLSTATE: a deadlock reads as ["ok", "40P01"].
+        expect([outcome(ra), outcome(rb)]).toEqual(["ok", "ok"]);
+      } finally {
+        await a.close();
+        await b.close();
+      }
+
+      // Both decisions committed, and the status reflects BOTH of them.
+      expect((await storedRun(runId)).status).toBe("passed");
+      expect(await recomputeRunStatus(db, runId)).toEqual({
+        before: "passed",
+        after: "passed",
+        changed: false,
+      });
+    }, 20_000);
+
+    it("six writers racing on one run end on the same, correct status", async () => {
       const { runId } = await seedRun({
         status: "running",
         checkpoints: [{ verdict: "unresolved" }, { verdict: "new" }],
