@@ -15,6 +15,7 @@ import {
   environmentEnum,
   resolutionSourceEnum,
   runStatusEnum,
+  runStatusOverrideEnum,
 } from "./enums.js";
 import { projects } from "./projects.js";
 
@@ -40,6 +41,10 @@ export const testRuns = pgTable(
     diffThresholdOverride: doublePrecision("diff_threshold_override"),
     pixelMisMatchCount: integer("pixel_mis_match_count"),
     status: runStatusEnum("status").notNull().default("running"),
+    // Review model (0035): the run-level "Force passed / Force failed" action.
+    // NULL = the status is the computed rollup of checkpoint verdicts and
+    // decisions ("Reset to computed" clears it).
+    statusOverride: runStatusOverrideEnum("status_override"),
     buildId: uuid("build_id")
       .notNull()
       .references(() => builds.id, { onDelete: "cascade" }),
