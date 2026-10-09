@@ -93,11 +93,13 @@ E2E_API_URL=http://localhost:<api> E2E_DASH_URL=http://localhost:<dash-on-branch
   pnpm --filter @furan/e2e exec playwright test --project=visual
 ```
 
-**Passing.** The `system theme follows prefers-color-scheme` test fails on any
-checkout from before the design foundation (PR 1), which had no system theme —
-expected for a `before` run on such a `main`. It runs last, after
-`contrast-enforced`, so that failure skips nothing. There, "pass" means every
-screenshot test passed.
+**Passing.** On a dashboard with the design foundation (PR 1 onward), every
+test must pass. A `before` run against an older `main` is the exception: that
+dashboard had no system theme, so `system theme follows prefers-color-scheme`
+fails, and its screens predate the AA token palette, so `contrast-enforced`
+can fail too (which then skips the system-theme test). Both run last, after
+every screenshot test, so neither failure skips a shot. For such a run, "pass"
+means every screenshot test passed.
 
 **Reviewing in Furan:**
 
