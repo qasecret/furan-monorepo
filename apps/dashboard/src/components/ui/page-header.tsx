@@ -24,13 +24,11 @@ export function PageHeader({
       data-testid="page-header"
     >
       <div className="min-w-0">
-        <h1 className="truncate text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
+        <h1 className="truncate text-2xl font-semibold tracking-tight text-fg">
           {title}
         </h1>
         {description ? (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            {description}
-          </p>
+          <p className="text-sm text-fg-secondary">{description}</p>
         ) : null}
       </div>
       {actions ? (

@@ -1,57 +1,9 @@
 @import "tailwindcss";
+@import "./tokens.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /*
-   * Token names follow shadcn conventions (--color-background,
-   * --color-muted, ...) so straggler utilities in app pages
-   * (text-muted-foreground, bg-popover, ...) resolve correctly
-   * until those pages are re-skinned in Phase 3. The spec uses
-   * canvas/surface names; that set will replace these in a
-   * follow-on cleanup once all stragglers are gone.
-   */
-
-  /*
-   * Brand has two roles, two tokens — same pattern GitHub / Linear /
-   * Vercel use:
-   *
-   *   --color-brand        Surfaces (bg-brand, border-brand, brand/15
-   *                        tints). Stays at the neon #a8ff53 in BOTH
-   *                        modes so buttons + chips + active-state
-   *                        backgrounds keep the brand vibrancy.
-   *
-   *   --color-brand-text   Text + link colour (text-brand-text). Same
-   *                        neon in dark mode; lime-600 #65a30d in light
-   *                        mode (overridden below) so accent text on a
-   *                        white canvas hits WCAG-AA (~5.5:1) instead of
-   *                        the unreadable 1.5:1 the bright neon gives.
-   */
-  --color-brand: #a8ff53;
-  --color-brand-foreground: #000000;
-  --color-brand-text: #a8ff53;
-
-  /* Semantic surfaces (referenced via bg-*, text-*, border-* utilities) */
-  --color-background: #09090b; /* zinc-950 — used by Dialog/Sheet surface */
-  --color-foreground: #ffffff;
-  --color-card: #09090b;
-  --color-card-foreground: #ffffff;
-  --color-popover: #09090b;
-  --color-popover-foreground: #ffffff;
-  --color-primary: #a8ff53; /* brand */
-  --color-primary-foreground: #000000;
-  --color-secondary: #18181b; /* zinc-900 */
-  --color-secondary-foreground: #d4d4d8;
-  --color-muted: #18181b; /* zinc-900 */
-  --color-muted-foreground: #a1a1aa; /* zinc-400 */
-  --color-accent: #18181b; /* zinc-900 */
-  --color-accent-foreground: #ffffff;
-  --color-destructive: #f87171; /* red-400 — text/border use */
-  --color-destructive-foreground: #ffffff;
-  --color-border: #27272a; /* zinc-800 */
-  --color-input: #27272a; /* zinc-800 */
-  --color-ring: #3f3f46; /* zinc-700 */
-
   /* Fonts — variables are set on <html> by next/font in Task 2 */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
@@ -74,32 +26,11 @@
 
 html,
 body {
-  /* Light mode: pure white canvas (was zinc-50). The off-white shifts to
-   * the sidebar + top bar so the main content area reads as the brightest
-   * surface — so the neon brand pops
-   * against a clean white field instead of a recessed grey canvas. */
-  background-color: #ffffff;
-  color: #18181b; /* zinc-900 */
+  background-color: var(--canvas);
+  color: var(--fg);
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
-}
-
-/* Light-mode override: brand-text drops to lime-800 #3f6212 so accent text
- * on the white canvas hits WCAG-AA (~6.0:1 contrast). Earlier draft used
- * lime-600 #65a30d which measured at 3.06:1 — fails AA for normal text
- * despite the existing --chart-approves comment. --color-brand itself
- * stays neon so bg-brand surfaces (buttons, badges, active tints) keep the
- * brand vibrancy; that surface pairs with black foreground for ~12:1
- * contrast inside the button. Dark mode keeps both tokens at neon. */
-html:not(.dark) {
-  --color-brand-text: #3f6212;
-}
-
-html.dark,
-html.dark body {
-  background-color: #000000;
-  color: #ffffff;
 }
 
 body {
@@ -107,9 +38,24 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Lime wash, readable text: brand-text is the AA lime shade on light surfaces
+ * and the brand itself in dark. */
 ::selection {
   background: rgb(168 255 83 / 0.3);
-  color: var(--color-brand);
+  color: var(--brand-text);
+}
+
+/* Sonner toasts (components/themed-toaster.tsx). Sonner's sheet is unlayered
+ * and wraps its selectors in :where(), so these rules must stay UNLAYERED (no
+ * @layer) to apply, and are set here rather than inline: an inline box-shadow
+ * would also override the :focus-visible ring and hide keyboard focus. */
+[data-sonner-toast][data-styled="true"] {
+  box-shadow: var(--elevation-overlay);
+}
+[data-sonner-toast][data-styled="true"]:focus-visible {
+  box-shadow:
+    var(--elevation-overlay),
+    0 0 0 2px var(--ring);
 }
 
 /* Honor system motion preference. Resets animation + transition durations

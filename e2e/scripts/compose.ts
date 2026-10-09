@@ -38,12 +38,15 @@ export type StorageMode = "s3" | "hdd";
  * .env carries; the bootstrap admin is set so the api seeds it on first boot.
  */
 export function writeEnv(mode: StorageMode): string {
-  // Strip any STORAGE_KIND / COMPOSE_PROFILES the base .env sets so the overlay
-  // is the single authoritative value (rather than a duplicate key that only
-  // works by docker-compose's last-wins parsing).
+  // Strip any STORAGE_KIND / COMPOSE_PROFILES / FURAN_DASHBOARD_ORIGIN the base
+  // .env sets so the overlay is the single authoritative value (rather than a
+  // duplicate key that only works by docker-compose's last-wins parsing).
   const base = readFileSync(join(ROOT, "infra/docker/.env"), "utf8")
     .split("\n")
-    .filter((l) => !/^\s*(STORAGE_KIND|COMPOSE_PROFILES)=/.test(l))
+    .filter(
+      (l) =>
+        !/^\s*(STORAGE_KIND|COMPOSE_PROFILES|FURAN_DASHBOARD_ORIGIN)=/.test(l),
+    )
     .join("\n");
   const overlay =
     mode === "s3"
@@ -52,6 +55,9 @@ export function writeEnv(mode: StorageMode): string {
   const extra = [
     `FURAN_BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_EMAIL}`,
     `FURAN_BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_PASSWORD}`,
+    // CORS: the stack's own dashboard (3011) plus the visual sweep's dashboard
+    // dev server (3012), which calls this api from the browser.
+    "FURAN_DASHBOARD_ORIGIN=http://localhost:3011,http://localhost:3012",
     "",
   ].join("\n");
   const path = join(tmpdir(), `furan-e2e-${mode}.env`);
@@ -62,7 +68,15 @@ export function writeEnv(mode: StorageMode): string {
 function compose(envFile: string, args: string[]): ReturnType<typeof execa> {
   return execa(
     "docker",
-    ["compose", "-p", PROJECT, "--env-file", envFile, ...COMPOSE_FILES, ...args],
+    [
+      "compose",
+      "-p",
+      PROJECT,
+      "--env-file",
+      envFile,
+      ...COMPOSE_FILES,
+      ...args,
+    ],
     { cwd: ROOT, stdio: "inherit" },
   );
 }

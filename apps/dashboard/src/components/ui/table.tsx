@@ -10,7 +10,7 @@ import type {
 import { cn } from "@/lib/cn";
 
 /**
- * Shared table shell — the card-wrapped, zinc-styled `<table>` every admin /
+ * Shared table shell — the card-wrapped, token-styled `<table>` every admin /
  * account / list page renders into, so they stay visually identical. Consumers
  * supply columns via TableHead/TableCell. The header row is a bare `<tr>` inside
  * TableHeader (no hover); body rows use TableRow (hover + `group`, so a primary
@@ -31,7 +31,7 @@ export function Table({
   );
   if (bare) return table;
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="overflow-hidden rounded-lg bg-raised shadow-raised">
       {table}
     </div>
   );
@@ -44,7 +44,7 @@ export function TableHeader({
   return (
     <thead
       className={cn(
-        "border-b border-zinc-200 bg-zinc-100/70 text-left text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400",
+        "border-b border-edge bg-sunken text-left text-2xs font-medium uppercase tracking-wide text-fg-muted",
         className,
       )}
       {...props}
@@ -65,7 +65,7 @@ export function TableBody({
 }: HTMLAttributes<HTMLTableSectionElement>) {
   return (
     <tbody
-      className={cn("divide-y divide-zinc-200 dark:divide-zinc-800", className)}
+      className={cn("divide-y divide-edge-subtle", className)}
       {...props}
     />
   );
@@ -78,7 +78,7 @@ export function TableRow({
   return (
     <tr
       className={cn(
-        "group transition-colors hover:bg-zinc-100/70 dark:hover:bg-zinc-900/40",
+        "group border-edge-subtle transition-colors hover:bg-hover",
         className,
       )}
       {...props}
@@ -104,7 +104,7 @@ export function TableLink({
   return (
     <Link
       className={cn(
-        "font-medium text-zinc-950 transition-colors group-hover:text-brand-text dark:text-white",
+        "font-medium text-fg transition-colors group-hover:text-brand-text",
         className,
       )}
       {...props}
@@ -123,10 +123,7 @@ export function TableEmpty({
     <tr>
       <td
         colSpan={colSpan}
-        className={cn(
-          "px-5 py-10 text-center text-zinc-500 dark:text-zinc-500",
-          className,
-        )}
+        className={cn("px-5 py-10 text-center text-fg-muted", className)}
         {...props}
       >
         {children}

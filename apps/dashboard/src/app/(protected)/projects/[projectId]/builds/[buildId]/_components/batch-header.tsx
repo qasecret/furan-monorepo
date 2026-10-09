@@ -2,6 +2,7 @@
 
 import { buildDisplayName } from "@/lib/build-display-name";
 import { cn } from "@/lib/cn";
+import { statusStyle } from "@/lib/status-style";
 import type { RouterOutputs } from "@/lib/trpc";
 
 export type BatchHeaderData = RouterOutputs["builds"]["getById"];
@@ -9,27 +10,6 @@ export type BatchHeaderData = RouterOutputs["builds"]["getById"];
 interface Props {
   build: BatchHeaderData;
 }
-
-const STATUS_WORD: Record<string, { label: string; color: string }> = {
-  passed: { label: "Passed", color: "text-emerald-600 dark:text-emerald-400" },
-  unresolved: {
-    label: "Unresolved",
-    color: "text-amber-600 dark:text-amber-400",
-  },
-  failed: { label: "Failed", color: "text-red-600 dark:text-red-400" },
-  running: { label: "Running", color: "text-blue-600 dark:text-blue-400" },
-  aborted: { label: "Aborted", color: "text-zinc-500 dark:text-zinc-400" },
-  empty: { label: "Empty", color: "text-zinc-500 dark:text-zinc-400" },
-};
-
-const ACCENT: Record<string, string> = {
-  passed: "bg-emerald-500",
-  unresolved: "bg-amber-500",
-  failed: "bg-red-500",
-  running: "bg-blue-500",
-  aborted: "bg-zinc-400 dark:bg-zinc-600",
-  empty: "bg-zinc-400 dark:bg-zinc-600",
-};
 
 /**
  * Formats the created→updated span as HH:MM:SS (the reference's Duration).
@@ -78,8 +58,7 @@ function Bullet() {
 }
 
 export function BatchHeader({ build }: Props) {
-  const status = STATUS_WORD[build.aggregateStatus] ?? STATUS_WORD.empty!;
-  const accent = ACCENT[build.aggregateStatus] ?? ACCENT.empty!;
+  const status = statusStyle(build.aggregateStatus);
 
   return (
     <header
@@ -90,11 +69,11 @@ export function BatchHeader({ build }: Props) {
         <div className="flex min-w-0 gap-3">
           <span
             aria-hidden
-            className={cn("mt-0.5 h-9 w-1 shrink-0 rounded-full", accent)}
+            className={cn("mt-0.5 h-9 w-1 shrink-0 rounded-full", status.dot)}
           />
           <div className="min-w-0">
             <h1 className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold tracking-tight">
-              <span className={status.color}>{status.label}</span>
+              <span className={status.text}>{status.label}</span>
               <span className="text-zinc-950 dark:text-white">
                 <span className="font-normal text-zinc-500 dark:text-zinc-400">
                   Test results of batch:{" "}

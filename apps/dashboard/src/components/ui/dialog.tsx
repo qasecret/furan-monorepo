@@ -35,13 +35,13 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border border-zinc-200 bg-white text-zinc-950 p-6 shadow-lg rounded-xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-white data-[state=open]:[animation:var(--animate-content-in)] data-[state=closed]:[animation:var(--animate-content-out)]",
+        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-overlay bg-overlay p-6 text-fg shadow-overlay data-[state=open]:[animation:var(--animate-content-in)] data-[state=closed]:[animation:var(--animate-content-out)]",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-zinc-600 opacity-70 transition-[color,opacity] duration-150 hover:text-zinc-950 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none dark:text-zinc-400 dark:hover:text-white dark:focus-visible:ring-offset-zinc-950">
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-fg-secondary opacity-70 transition-[color,opacity] duration-150 hover:text-fg hover:opacity-100 focus-ring disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -85,7 +85,7 @@ const DialogTitle = React.forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      "text-lg font-semibold leading-none tracking-tight text-zinc-950 dark:text-white",
+      "text-lg font-semibold leading-none tracking-tight text-fg",
       className,
     )}
     {...props}
@@ -99,7 +99,7 @@ const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-zinc-600 dark:text-zinc-400", className)}
+    className={cn("text-sm text-fg-secondary", className)}
     {...props}
   />
 ));

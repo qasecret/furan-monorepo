@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
+import { statusStyle } from "@/lib/status-style";
 import { trpc } from "@/lib/trpc";
 
 export interface StepCheckpoint {
@@ -23,20 +24,6 @@ interface Props {
   checkpoint: StepCheckpoint;
   index: number;
   total: number;
-}
-
-function accentFor(s: RunStatus): string {
-  return s === "failed"
-    ? "bg-red-500"
-    : s === "unresolved"
-      ? "bg-amber-500"
-      : s === "passed"
-        ? "bg-emerald-500"
-        : s === "running"
-          ? "bg-blue-500"
-          : s === "new"
-            ? "bg-sky-500"
-            : "bg-zinc-300 dark:bg-zinc-700";
 }
 
 /**
@@ -82,7 +69,7 @@ export function StepCard({
           aria-hidden
           className={cn(
             "absolute inset-y-0 left-0 z-10 w-1",
-            accentFor(checkpoint.status),
+            statusStyle(checkpoint.status).dot,
           )}
         />
         <button

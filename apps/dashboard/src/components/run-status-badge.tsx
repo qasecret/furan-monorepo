@@ -8,72 +8,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-
-/**
- * Visual presentation for a single `RunStatus` value. Single source of truth
- * for the status → label / pill colour / tooltip mapping (spec §3.5).
- *
- * The amber/yellow split is load-bearing: `unresolved` (amber) is "needs
- * reviewer attention", `aborted` (yellow) is "infra issue — re-run". Do not
- * collapse them into one colour without revisiting the spec.
- */
-type StatusConfig = {
-  label: string;
-  className: string;
-  tooltip: string;
-};
-
-/*
- * Per-mode color values. Dark mode keeps the original `text-{c}-400 bg-{c}-500/10`
- * scheme (the dark surface gives high contrast against the lighter text).
- * Light mode darkens the text so the badge passes WCAG-AA against a near-white
- * tinted bg (`bg-{c}-500/10` over white ≈ #EAF…). The original light-mode values
- * measured at ~1.6–2.5:1; the new shades hit ≥4.5:1.
- */
-export const STATUS_CONFIG: Record<RunStatus, StatusConfig> = {
-  new: {
-    label: "New",
-    className:
-      "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800",
-    tooltip: "First run for this test — baseline created",
-  },
-  running: {
-    label: "Running",
-    className:
-      "bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400 dark:border-blue-500/20",
-    tooltip: "Run is in progress",
-  },
-  passed: {
-    label: "Passed",
-    className:
-      "bg-green-500/10 text-green-800 border-green-500/30 dark:text-green-400 dark:border-green-500/20",
-    tooltip: "No visual differences",
-  },
-  unresolved: {
-    label: "Unresolved",
-    className:
-      "bg-amber-500/10 text-amber-800 border-amber-500/30 dark:text-amber-400 dark:border-amber-500/20",
-    tooltip: "Visual differences found — awaiting review",
-  },
-  failed: {
-    label: "Failed",
-    className:
-      "bg-red-500/10 text-red-700 border-red-500/30 dark:text-red-400 dark:border-red-500/20",
-    tooltip: "Differences rejected",
-  },
-  aborted: {
-    label: "Aborted",
-    className:
-      "bg-yellow-500/10 text-yellow-800 border-yellow-500/30 dark:text-yellow-400 dark:border-yellow-500/20",
-    tooltip: "Run terminated before completion (worker issue)",
-  },
-  empty: {
-    label: "Empty",
-    className:
-      "bg-zinc-100/70 text-zinc-600 border-zinc-200 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-800",
-    tooltip: "Run completed but recorded no checks",
-  },
-};
+import { cn } from "@/lib/cn";
+import { statusStyle } from "@/lib/status-style";
 
 interface Props {
   status: RunStatus;
@@ -81,23 +17,34 @@ interface Props {
 
 /**
  * Coloured status pill for a `test_runs.status` value, with a Radix tooltip
- * that explains what the status means. Single source of truth for
- * status → visual representation.
+ * that explains what the status means. The look comes from `statusStyle`
+ * (`@/lib/status-style`), the only status → style map.
  */
 export function RunStatusBadge({ status }: Props) {
-  const config = STATUS_CONFIG[status];
+  const style = statusStyle(status);
+  const Icon = style.icon;
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
           <span
             data-testid={`run-status-badge-${status}`}
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${config.className}`}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium",
+              style.pill,
+            )}
           >
-            {config.label}
+            <Icon
+              className={cn(
+                "h-3 w-3",
+                status === "running" && "motion-safe:animate-spin",
+              )}
+              aria-hidden
+            />
+            {style.label}
           </span>
         </TooltipTrigger>
-        <TooltipContent sideOffset={4}>{config.tooltip}</TooltipContent>
+        <TooltipContent sideOffset={4}>{style.tooltip}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

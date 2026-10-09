@@ -9,6 +9,10 @@ import type { ReactNode } from "react";
  * content paints, and so signed-out (landing/login) and signed-in surfaces all
  * share one theme source + storage key — no per-segment duplication, no flash
  * crossing the auth boundary.
+ *
+ * With no stored choice the app follows the OS colour scheme (`system`). A
+ * returning user's explicit `furan-theme` value ("light" | "dark") is kept and
+ * always wins over the OS.
  */
 export function ThemeProvider({
   children,
@@ -22,8 +26,8 @@ export function ThemeProvider({
     <NextThemesProvider
       nonce={nonce}
       attribute="class"
-      defaultTheme="dark"
-      enableSystem={false}
+      defaultTheme="system"
+      enableSystem
       storageKey="furan-theme"
       disableTransitionOnChange
     >

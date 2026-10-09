@@ -14,7 +14,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 items-center justify-center gap-1 border-b border-zinc-200 dark:border-zinc-800",
+      "inline-flex h-10 items-center justify-center gap-1 border-b border-edge",
       className,
     )}
     {...props}
@@ -29,7 +29,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "relative inline-flex h-10 items-center justify-center whitespace-nowrap rounded-sm px-3 text-sm font-medium text-zinc-600 transition-colors hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-200 dark:focus-visible:ring-offset-zinc-950 disabled:opacity-50 data-[state=active]:text-brand-text data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:bottom-[-1px] data-[state=active]:after:h-px data-[state=active]:after:bg-brand",
+      "relative inline-flex h-10 items-center justify-center whitespace-nowrap rounded-sm px-3 text-sm font-medium text-fg-muted transition-colors hover:text-fg focus-ring disabled:opacity-50 data-[state=active]:text-fg data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:bottom-[-1px] data-[state=active]:after:h-px data-[state=active]:after:bg-brand",
       className,
     )}
     {...props}
@@ -43,10 +43,7 @@ const TabsContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
-    className={cn(
-      "mt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950 rounded-sm",
-      className,
-    )}
+    className={cn("mt-4 rounded-sm focus-ring", className)}
     {...props}
   />
 ));

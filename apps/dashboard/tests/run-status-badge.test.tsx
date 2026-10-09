@@ -39,15 +39,38 @@ describe("RunStatusBadge", () => {
     });
   }
 
-  it("applies distinct colour classes for unresolved (amber) vs aborted (yellow)", () => {
+  it("applies distinct token classes for unresolved vs aborted", () => {
     const { rerender } = render(<RunStatusBadge status="unresolved" />);
     const unresolvedEl = screen.getByTestId("run-status-badge-unresolved");
-    expect(unresolvedEl.className).toContain("amber");
-    expect(unresolvedEl.className).not.toContain("yellow");
+    expect(unresolvedEl.className).toContain("status-unresolved");
+    expect(unresolvedEl.className).not.toContain("status-aborted");
 
     rerender(<RunStatusBadge status="aborted" />);
     const abortedEl = screen.getByTestId("run-status-badge-aborted");
-    expect(abortedEl.className).toContain("yellow");
-    expect(abortedEl.className).not.toContain("amber");
+    expect(abortedEl.className).toContain("status-aborted");
+    expect(abortedEl.className).not.toContain("status-unresolved");
+  });
+
+  it("renders a decorative status icon before the label", () => {
+    render(<RunStatusBadge status="passed" />);
+    const el = screen.getByTestId("run-status-badge-passed");
+    const svg = el.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg!.getAttribute("aria-hidden")).toBe("true");
+    expect(el.firstElementChild).toBe(svg);
+  });
+
+  it("spins only the running icon, and only when motion is allowed", () => {
+    const { rerender } = render(<RunStatusBadge status="running" />);
+    const running = screen
+      .getByTestId("run-status-badge-running")
+      .querySelector("svg")!;
+    expect(running.getAttribute("class")).toContain("motion-safe:animate-spin");
+
+    rerender(<RunStatusBadge status="passed" />);
+    const passed = screen
+      .getByTestId("run-status-badge-passed")
+      .querySelector("svg")!;
+    expect(passed.getAttribute("class")).not.toContain("animate-spin");
   });
 });

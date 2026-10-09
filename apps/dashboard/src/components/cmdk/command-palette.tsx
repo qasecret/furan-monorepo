@@ -31,7 +31,7 @@ const CMD_GROUP_CLASS =
   "[&_[cmdk-group-heading]]:text-xs " +
   "[&_[cmdk-group-heading]]:uppercase " +
   "[&_[cmdk-group-heading]]:tracking-wider " +
-  "[&_[cmdk-group-heading]]:text-muted-foreground " +
+  "[&_[cmdk-group-heading]]:text-fg-muted " +
   "[&_[cmdk-group-heading]]:px-2 " +
   "[&_[cmdk-group-heading]]:pt-2";
 
@@ -126,21 +126,21 @@ export function CommandPalette({ userRole }: Props) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
-        className="p-0 overflow-hidden max-w-xl"
+        className="rounded-overlay bg-overlay shadow-overlay p-0 overflow-hidden max-w-xl"
         data-testid="command-palette"
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Search projects, settings, and account pages.
         </DialogDescription>
-        <Command label="Command palette" className="bg-popover">
+        <Command label="Command palette" className="bg-overlay">
           <Command.Input
             placeholder="Jump to…"
-            className="w-full border-b px-4 py-3 text-sm outline-none bg-transparent"
+            className="w-full border-b border-edge px-4 py-3 text-sm outline-none bg-transparent"
             data-testid="command-input"
           />
           <Command.List className="max-h-80 overflow-auto p-1">
-            <Command.Empty className="p-3 text-sm text-muted-foreground">
+            <Command.Empty className="p-3 text-sm text-fg-muted">
               No matches.
             </Command.Empty>
 
@@ -151,7 +151,7 @@ export function CommandPalette({ userRole }: Props) {
                     key={`recent-${p.id}`}
                     value={`recent ${p.name}`}
                     onSelect={() => go(`/projects/${p.id}/builds`)}
-                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                    className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                     data-testid={`cmd-recent-${p.id}`}
                   >
                     {p.name}
@@ -168,7 +168,7 @@ export function CommandPalette({ userRole }: Props) {
                       key={`project-${p.id}`}
                       value={`project ${p.name}`}
                       onSelect={() => go(`/projects/${p.id}/builds`)}
-                      className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                      className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                       data-testid={`cmd-project-${p.id}`}
                     >
                       Jump to project: {p.name}
@@ -184,7 +184,7 @@ export function CommandPalette({ userRole }: Props) {
                       key={`settings-${p.id}`}
                       value={`settings ${p.name}`}
                       onSelect={() => go(`/projects/${p.id}/settings`)}
-                      className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                      className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                       data-testid={`cmd-settings-${p.id}`}
                     >
                       Project settings: {p.name}
@@ -204,7 +204,7 @@ export function CommandPalette({ userRole }: Props) {
                       : "/account/tokens",
                   )
                 }
-                className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                 data-testid="cmd-api-keys"
               >
                 {isAtLeastAdmin(userRole)
@@ -218,16 +218,16 @@ export function CommandPalette({ userRole }: Props) {
                 <Command.Item
                   value="admin"
                   onSelect={() => go("/admin")}
-                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                   data-testid="cmd-admin"
                 >
                   Admin
-                  <span className="ml-auto text-xs text-zinc-500">/admin</span>
+                  <span className="ml-auto text-xs text-fg-muted">/admin</span>
                 </Command.Item>
                 <Command.Item
                   value="admin members"
                   onSelect={() => go("/admin/members")}
-                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                   data-testid="cmd-admin-members"
                 >
                   /admin/members
@@ -235,7 +235,7 @@ export function CommandPalette({ userRole }: Props) {
                 <Command.Item
                   value="admin installations github"
                   onSelect={() => go("/admin/installations")}
-                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-accent data-[selected=true]:bg-accent"
+                  className="px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover"
                   data-testid="cmd-admin-installations"
                 >
                   /admin/installations

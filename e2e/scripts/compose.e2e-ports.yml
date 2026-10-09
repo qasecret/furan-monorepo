@@ -4,8 +4,12 @@
 # (service-to-service comms use the docker network), so only the host-side test
 # client is affected — it targets E2E_API_URL / E2E_DASH_URL (set by the
 # orchestrator to match).
+#
+# `!override` REPLACES compose.yml's `3000:3000` / `3001:3001` mappings; a plain
+# `ports:` list would be merged (appended), so the stack would still bind host
+# 3000/3001 and collide with the dev servers this overlay exists to avoid.
 services:
   api:
-    ports: ["3010:3000"]
+    ports: !override ["3010:3000"]
   dashboard:
-    ports: ["3011:3001"]
+    ports: !override ["3011:3001"]

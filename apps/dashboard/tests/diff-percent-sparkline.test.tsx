@@ -89,8 +89,8 @@ describe("DiffPercentSparkline", () => {
       />,
     );
     const circles = container.querySelectorAll("circle");
-    expect(circles[0]!.getAttribute("class")).toMatch(/fill-green-600/);
-    expect(circles[1]!.getAttribute("class")).toMatch(/fill-amber-500/);
-    expect(circles[2]!.getAttribute("class")).toMatch(/fill-red-700/);
+    expect(circles[0]!.getAttribute("class")).toMatch(/fill-status-passed/);
+    expect(circles[1]!.getAttribute("class")).toMatch(/fill-status-unresolved/);
+    expect(circles[2]!.getAttribute("class")).toMatch(/fill-status-failed/);
   });
 });

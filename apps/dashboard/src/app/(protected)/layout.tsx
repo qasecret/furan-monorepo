@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
-import { Toaster } from "sonner";
 
 import { AppShell } from "./_components/app-shell";
 import { CurrentProjectProvider } from "./_components/current-project-provider";
 
 import { Providers } from "@/app/providers";
 import { CommandPalette } from "@/components/cmdk/command-palette";
+import { ThemedToaster } from "@/components/themed-toaster";
 import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
 import { apiGet } from "@/lib/api-client";
 import { requireJwt } from "@/lib/auth";
@@ -27,7 +27,7 @@ interface ProjectApiItem {
 }
 
 /**
- * Mounts the AppShell + cmdk palette + sonner Toaster once at the
+ * Mounts the AppShell + cmdk palette + themed Toaster once at the
  * protected-layout level so they're available on every authed page.
  *
  * The `/users/me` lookup is fetched server-side and degrades to a "guest"
@@ -85,7 +85,7 @@ export default async function ProtectedLayout({
         </AppShell>
         <CommandPalette userRole={userRole} />
         <GlobalShortcuts />
-        <Toaster richColors theme="dark" position="bottom-right" />
+        <ThemedToaster />
       </CurrentProjectProvider>
     </Providers>
   );

@@ -29,7 +29,82 @@ pnpm --filter @furan/e2e coverage      # reads e2e-coverage.json
 
 The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
 `scripts/compose.e2e-ports.yml` so it coexists with a dev `pnpm dev` on
-3000/3001. Output: `e2e-coverage.md` / `e2e-coverage.json` + `playwright-report/`.
+3000/3001. The overlay replaces the base port mappings with Compose's
+`!override` YAML tag, which needs **Docker Compose ≥ 2.24.4** (`docker compose
+version`); older versions don't support it. Output: `e2e-coverage.md` /
+`e2e-coverage.json` + `playwright-report/`.
+
+## Visual sweep
+
+`tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
+`s3-full` or CI) captures every dashboard route in **light** and **dark** as a
+full-page PNG at a 1440×900 viewport, plus the interaction states in
+`STATES` (⌘K open, a menu open, a dialog open), and runs axe `color-contrast`
+on each. The dashboard scrolls inside its own containers, never the document,
+so before capturing, `src/visual/unclip.ts` lets those containers grow to
+their content: the PNG and axe cover the whole page, not just the first
+900px.
+
+It is the before/after safety net for the design-foundation slice PRs. A
+contrast problem is an axe violation, or a node axe could not measure because
+it lies outside the viewport. Problems are reported as test annotations (also
+written to `visual-out/<label>/color-contrast.json`); on routes and states
+with `enforceContrast: true` in `src/visual/routes.ts` they are also
+collected, and the final `contrast-enforced` test fails once per theme with
+that theme's whole list. Uncaught page errors are annotated `pageerror`
+(hiding Next's dev overlay also hides its error dialog). A route answering
+4xx/5xx fails; a route that redirects elsewhere is annotated
+`landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
+`/account/tokens`, `/projects`) are captured from the seeded editor's
+session.
+
+The dashboard runs as a **dev server** rather than the stack's dashboard image:
+the image bakes `localhost:3000` for client-side calls, so the diff viewer's
+images would not load on the remapped ports.
+
+```bash
+pnpm --filter @furan/e2e e2e:up
+NEXT_PUBLIC_API_URL=http://localhost:3010 API_INTERNAL_URL=http://localhost:3010 \
+  pnpm --filter @furan/dashboard exec next dev --port 3012
+E2E_API_URL=http://localhost:3010 E2E_DASH_URL=http://localhost:3012 VISUAL_LABEL=before \
+  pnpm --filter @furan/e2e exec playwright test --project=visual
+```
+
+Then check out the branch in that worktree (the dev server hot-reloads) and
+re-run with `VISUAL_LABEL=after`. PNGs land in
+`visual-out/<VISUAL_LABEL>/<theme>/<route>.png` (override the root with
+`VISUAL_OUT`); the fixture project's IDs are kept in `.visual-sweep.json` so
+both runs capture the same data. Both are gitignored.
+
+**Or against a dev stack.** Any running api + diff-worker whose bootstrap admin
+is `e2e-admin@furan.test` (see `BOOTSTRAP_EMAIL` / `BOOTSTRAP_PASSWORD` in
+`scripts/compose.ts`), and whose `FURAN_DASHBOARD_ORIGIN` allows the dashboard
+dev server, works the same way — point the two URLs at it, e.g. one dashboard
+dev server per checkout so `before` and `after` can run back to back:
+
+```bash
+E2E_API_URL=http://localhost:<api> E2E_DASH_URL=http://localhost:<dash-on-main> VISUAL_LABEL=before \
+  pnpm --filter @furan/e2e exec playwright test --project=visual
+E2E_API_URL=http://localhost:<api> E2E_DASH_URL=http://localhost:<dash-on-branch> VISUAL_LABEL=after \
+  pnpm --filter @furan/e2e exec playwright test --project=visual
+```
+
+**Passing.** The `system theme follows prefers-color-scheme` test fails on any
+checkout from before the design foundation (PR 1), which had no system theme —
+expected for a `before` run on such a `main`. There, "pass" means every
+screenshot test passed.
+
+**Reviewing in Furan:**
+
+1. Set `FURAN_VISUAL_URL`, `FURAN_VISUAL_PAT` and `FURAN_VISUAL_PROJECT_ID` to
+   point at any Furan instance other than this e2e stack; each run then
+   uploads its shots as build `sweep-<VISUAL_LABEL>` on branch
+   `FURAN_VISUAL_BRANCH` (default `visual-sweep`). Keep that branch the same
+   for `before` and `after`: baselines are per branch, so an `after` build on
+   another branch would show every screen as new instead of diffed.
+2. Approve every run in the `before` build there to make the shots the
+   baseline.
+3. The `after` build then shows each screen's diff in the diff viewer.
 
 ## Prerequisites
 
@@ -38,7 +113,7 @@ The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
 - The 5 `qasecret/furan-*:local` images (the orchestrator builds any missing).
 - `playwright install chromium` (once) for the UI tests.
 - Optional: a JDK (real Kotlin-SDK smoke) and a local **ollama** (VLM layer) —
-  absent → those capabilities are marked *config-gated*, not failed.
+  absent → those capabilities are marked _config-gated_, not failed.
 
 ## Layout
 
@@ -46,7 +121,8 @@ The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
 scripts/    e2e.ts (orchestrator) · compose.ts · wait-health.ts · global-setup.ts
             check-coverage.ts · compose.e2e-ports.yml
 src/        env.ts (canonical URLs) · clients/{api-client,virtual-sdk} ·
-            seed/{seed,load-seed} · coverage/{manifest,reporter} · fixtures/*.png
+            seed/{seed,load-seed} · coverage/{manifest,reporter} · fixtures/*.png ·
+            visual/{fixture,routes,masks,unclip,upload}
 tests/      deploy · sdk · diff · rbac · branch · storage · ui
 ```
 
@@ -61,7 +137,7 @@ capability by adding it to the manifest and tagging a test.
 
 - **`ui.diff_viewer` is skipped on the coexistence ports.** The dashboard
   browser bundle bakes `NEXT_PUBLIC_API_URL` at build time (default
-  `localhost:3000`) for *client-side* fetches, while SSR reads it from the
+  `localhost:3000`) for _client-side_ fetches, while SSR reads it from the
   runtime env. With the api remapped to 3010, no single baked URL serves both.
   Server-rendered pages (login, builds, admin) work; client-data pages (the
   pixi diff viewer) need the api on the standard port **3000** — a

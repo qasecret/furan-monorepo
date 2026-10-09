@@ -4,9 +4,11 @@
 // polyfills — the dashboard CSP (lib/csp.ts) forbids 'unsafe-eval', and without
 // this pixi throws "Current environment does not allow unsafe-eval" on init.
 import "pixi.js/unsafe-eval";
+import { useTheme } from "next-themes";
 import { Application, Container, type Sprite } from "pixi.js";
 import { useEffect, useRef, useState } from "react";
 
+import { applyCanvasBackground, readCanvasBackground } from "./canvas-theme";
 import { orderDiffRegions } from "./diff-order";
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
 import type { ShadingLayerResult } from "./layers/DiffShadingLayer";
@@ -155,6 +157,10 @@ export function ViewerCanvas({
   const candidateAppRef = useRef<Application | null>(null);
   const baselineAppRef = useRef<Application | null>(null);
   const singleAppRef = useRef<Application | null>(null);
+  // Every initialised Application (cleared on effect cleanup) so a theme change
+  // can repaint the letterbox without tearing the canvas down.
+  const liveAppsRef = useRef<Application[]>([]);
+  const { resolvedTheme } = useTheme();
   // World containers per Application. All overlays (image, regions, diff
   // highlights) parent into the world container so a single
   // scale + translate handles fit-to-canvas (and future zoom + pan).
@@ -242,7 +248,7 @@ export function ViewerCanvas({
       await baselineApp.init({
         width: baselineSize.w,
         height: baselineSize.h,
-        backgroundColor: 0xf3f4f6, // slate-100; lets letterbox bands read as "outside the image"
+        backgroundColor: readCanvasBackground(), // --sunken; lets letterbox bands read as "outside the image"
         antialias: true,
         autoDensity: true,
         resolution: window.devicePixelRatio || 1,
@@ -250,12 +256,18 @@ export function ViewerCanvas({
       await candidateApp.init({
         width: candidateSize.w,
         height: candidateSize.h,
-        backgroundColor: 0xf3f4f6,
+        backgroundColor: readCanvasBackground(),
         antialias: true,
         autoDensity: true,
         resolution: window.devicePixelRatio || 1,
       });
       if (cancelled) return;
+      liveAppsRef.current.push(baselineApp, candidateApp);
+      // The theme may have flipped while the apps were initialising.
+      applyCanvasBackground(
+        [baselineApp, candidateApp],
+        readCanvasBackground(),
+      );
       baselineRef.current?.appendChild(baselineApp.canvas);
       candidateRef.current?.appendChild(candidateApp.canvas);
       // World containers — sprite + overlays parent into these so the
@@ -395,6 +407,9 @@ export function ViewerCanvas({
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
       regionLayerRef.current = null;
+      liveAppsRef.current = liveAppsRef.current.filter(
+        (a) => a !== baselineApp && a !== candidateApp,
+      );
       // Pixi 8 occasionally throws `_cancelResize is not a function` from
       // the cascading texture-destroy path when an effect re-runs (e.g.
       // regions land via tRPC) before the previous Application has fully
@@ -472,12 +487,14 @@ export function ViewerCanvas({
       await app.init({
         width: size.w,
         height: size.h,
-        backgroundColor: 0xf3f4f6,
+        backgroundColor: readCanvasBackground(),
         antialias: true,
         autoDensity: true,
         resolution: window.devicePixelRatio || 1,
       });
       if (cancelled) return;
+      liveAppsRef.current.push(app);
+      applyCanvasBackground([app], readCanvasBackground());
       stageRef.current?.appendChild(app.canvas);
       const world = new Container();
       app.stage.addChild(world);
@@ -578,6 +595,7 @@ export function ViewerCanvas({
       candidateSpriteRef.current = null;
       baselineSpriteRef.current = null;
       regionLayerRef.current = null;
+      liveAppsRef.current = liveAppsRef.current.filter((a) => a !== app);
       // See side-by-side cleanup above for why destroy is wrapped — Pixi
       // 8's `_cancelResize` teardown path throws on rapid effect re-runs.
       try {
@@ -594,6 +612,22 @@ export function ViewerCanvas({
     regions,
     selectedRegionId,
   ]);
+
+  // Repaint the letterbox when the theme flips (pixi can't read CSS variables).
+  // next-themes applies the html class in the PROVIDER's effect, which runs
+  // after this (child) effect in the same commit — so read the token one
+  // microtask later, once the new class is on <html>.
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        applyCanvasBackground(liveAppsRef.current, readCanvasBackground());
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedTheme]);
 
   // Live opacity update.
   useEffect(() => {
