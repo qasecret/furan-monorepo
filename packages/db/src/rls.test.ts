@@ -6,9 +6,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createDb, type DB } from "./client.js";
 import {
   builds,
+  checkpointDecisions,
   projectMembers,
   projects,
+  screenshots,
   testRuns,
+  testVariations,
   users,
 } from "./schema/index.js";
 import { withUserScope } from "./scope.js";
@@ -33,6 +36,12 @@ describe.runIf(RUN)("RLS tenant isolation (integration, as furan_app)", () => {
   const uidB = randomUUID();
   let projA: string;
   let projB: string;
+  // One checkpoint decision seeded per project (migration 0035).
+  let decA: string;
+  let decB: string;
+  let runA: string;
+  let shotB: string;
+  let runB: string;
 
   beforeAll(async () => {
     const o = createDb();
@@ -96,10 +105,57 @@ describe.runIf(RUN)("RLS tenant isolation (integration, as furan_app)", () => {
       .insert(builds)
       .values({ projectId: projB })
       .returning();
-    await owner.insert(testRuns).values([
-      { projectId: projA, buildId: ba!.id, name: "runA", status: "passed" },
-      { projectId: projB, buildId: bb!.id, name: "runB", status: "passed" },
-    ]);
+    const runs = await owner
+      .insert(testRuns)
+      .values([
+        { projectId: projA, buildId: ba!.id, name: "runA", status: "passed" },
+        { projectId: projB, buildId: bb!.id, name: "runB", status: "passed" },
+      ])
+      .returning();
+    runA = runs.find((r) => r.projectId === projA)!.id;
+    runB = runs.find((r) => r.projectId === projB)!.id;
+
+    // One checkpoint + decision per project (checkpoint_decisions, 0035).
+    const seedDecision = async (
+      projectId: string,
+      runId: string,
+      actor: string,
+    ): Promise<{ decisionId: string; screenshotId: string }> => {
+      const [v] = await owner
+        .insert(testVariations)
+        .values({ name: `rls-var-${randomUUID()}`, projectId })
+        .returning();
+      const [s] = await owner
+        .insert(screenshots)
+        .values({
+          runId,
+          projectId,
+          testVariationId: v!.id,
+          name: "home",
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: randomUUID(),
+        })
+        .returning();
+      const [d] = await owner
+        .insert(checkpointDecisions)
+        .values({
+          projectId,
+          runId,
+          screenshotId: s!.id,
+          actionId: randomUUID(),
+          decision: "approved",
+          actorId: actor,
+          source: "viewer",
+        })
+        .returning();
+      return { decisionId: d!.id, screenshotId: s!.id };
+    };
+    const sa = await seedDecision(projA, runA, uidA);
+    const sb = await seedDecision(projB, runB, uidB);
+    decA = sa.decisionId;
+    decB = sb.decisionId;
+    shotB = sb.screenshotId;
   });
 
   afterAll(async () => {
@@ -171,5 +227,94 @@ describe.runIf(RUN)("RLS tenant isolation (integration, as furan_app)", () => {
     });
     const rows = await app.select({ id: testRuns.id }).from(testRuns).limit(5);
     expect(rows).toHaveLength(0);
+  });
+
+  describe("checkpoint_decisions (migration 0035)", () => {
+    test("read isolation: a member of A cannot SELECT project B's decision", async () => {
+      const seen = await withUserScope(
+        app,
+        { userId: uidA, role: "editor" },
+        // Deliberately unfiltered: RLS must catch the missing project filter.
+        (tx) =>
+          tx
+            .select({
+              id: checkpointDecisions.id,
+              projectId: checkpointDecisions.projectId,
+            })
+            .from(checkpointDecisions),
+      );
+      expect(seen.map((r) => r.id)).toContain(decA);
+      expect(seen.map((r) => r.id)).not.toContain(decB);
+      expect(seen.every((r) => r.projectId === projA)).toBe(true);
+    });
+
+    test("cross-tenant: B cannot see A's decision", async () => {
+      const seen = await withUserScope(
+        app,
+        { userId: uidB, role: "editor" },
+        (tx) =>
+          tx.select({ id: checkpointDecisions.id }).from(checkpointDecisions),
+      );
+      expect(seen.map((r) => r.id)).toContain(decB);
+      expect(seen.map((r) => r.id)).not.toContain(decA);
+    });
+
+    test("a direct id lookup of another project's decision returns nothing", async () => {
+      const rows = await withUserScope(
+        app,
+        { userId: uidA, role: "editor" },
+        (tx) =>
+          tx
+            .select({ id: checkpointDecisions.id })
+            .from(checkpointDecisions)
+            .where(eq(checkpointDecisions.id, decB)),
+      );
+      expect(rows).toHaveLength(0);
+    });
+
+    test("fail-closed: no identity set → zero rows", async () => {
+      const rows = await app
+        .select({ id: checkpointDecisions.id })
+        .from(checkpointDecisions)
+        .limit(5);
+      expect(rows).toHaveLength(0);
+    });
+
+    test("admin role bypasses RLS (sees both projects' decisions)", async () => {
+      const seen = await withUserScope(
+        app,
+        { userId: uidA, role: "admin" },
+        (tx) =>
+          tx.select({ id: checkpointDecisions.id }).from(checkpointDecisions),
+      );
+      expect(seen.map((r) => r.id)).toEqual(
+        expect.arrayContaining([decA, decB]),
+      );
+    });
+
+    test("WITH CHECK: a member of A cannot INSERT a decision into project B", async () => {
+      let caught: unknown;
+      try {
+        await withUserScope(app, { userId: uidA, role: "editor" }, (tx) =>
+          tx.insert(checkpointDecisions).values({
+            projectId: projB,
+            runId: runB,
+            screenshotId: shotB,
+            actionId: randomUUID(),
+            decision: "rejected",
+            actorId: uidA,
+            source: "viewer",
+          }),
+        );
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught, "insert should be rejected by the policy").toBeDefined();
+      // 42501 = insufficient_privilege ("violates row-level security policy").
+      const code =
+        (caught as { cause?: { code?: string }; code?: string }).cause?.code ??
+        (caught as { code?: string }).code;
+      expect(code).toBe("42501");
+    });
   });
 });
