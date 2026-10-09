@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  asc,
   baselines,
   builds,
   checkpointDecisions,
@@ -455,6 +456,53 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     expect(run.merge).toBe(true);
   }, 60_000);
 
+  it("records auto-approved baselines in ascending variation-id order, whatever the capture order", async () => {
+    // recordBaseline updates a test_variations row per call, inside one
+    // transaction. Two jobs whose runs share variations deadlock if they take
+    // those row locks in different orders, so the order is fixed by variation
+    // id, not by capture order. Each call stamps clock_timestamp(), so
+    // baselines.created_at shows the order the writes happened in.
+    const names = ["a", "b", "c", "d"];
+    const checkpoints: CheckpointSpec[] = [];
+    for (const name of names) {
+      const img = name < "c" ? await red0() : await blue0();
+      checkpoints.push({
+        name,
+        baseline: img,
+        candidate: img,
+        sameKey: true,
+      });
+    }
+    const s = await seed({ autoApproveFeature: true, checkpoints });
+
+    // Capture order = DESCENDING variation id (the worst case for a handler
+    // that writes in capture order). The handler reads screenshots by
+    // (created_at, id), so spread created_at to make that order explicit.
+    const byVariationDesc = names
+      .map((n) => ({ shot: s.shotId[n]!, variation: s.variationId[n]! }))
+      .sort((x, y) => (x.variation < y.variation ? 1 : -1));
+    const t0 = Date.now();
+    for (const [i, c] of byVariationDesc.entries()) {
+      await db
+        .update(screenshots)
+        .set({ createdAt: new Date(t0 + i * 1000) })
+        .where(eq(screenshots.id, c.shot));
+    }
+
+    await diff(s);
+
+    const written = await db
+      .select({
+        variation: baselines.testVariationId,
+        createdAt: baselines.createdAt,
+      })
+      .from(baselines)
+      .where(eq(baselines.testRunId, s.candidateRunId))
+      .orderBy(asc(baselines.createdAt));
+    const expected = names.map((n) => s.variationId[n]!).sort();
+    expect(written.map((w) => w.variation)).toEqual(expected);
+  }, 60_000);
+
   it("per-checkpoint past-baseline auto-approve pairs each past baseline by variation", async () => {
     // cart's current baseline is red@0. An OLDER baseline run holds cart at
     // red@144 next to another checkpoint (home, inserted first). The candidate
@@ -568,6 +616,156 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
       screenshot_id: s.shotId.cart,
       variation_id: s.variationId.cart,
     });
+  }, 60_000);
+
+  /**
+   * A candidate on a FEATURE branch with its own variation (same name /
+   * browser / viewport / os / device as main's, `branchName` = the feature
+   * branch). Only the MAIN sibling variation has a baseline, so resolution goes
+   * through the default-branch tier and `baselineVariationId` (the sibling) is
+   * not the candidate's `testVariationId`.
+   */
+  async function seedFeatureBranchCandidate(
+    baseline: Buffer,
+    candidate: Buffer,
+  ): Promise<Scenario & { mainVariationId: string }> {
+    const uniq = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const [p] = await db
+      .insert(projects)
+      .values({
+        name: `dw-mc-sib-${uniq}`,
+        mainBranchName: "main",
+        diffThreshold: 0.001,
+      })
+      .returning();
+    const projectId = p!.id;
+    projectIds.push(projectId);
+    const [b] = await db
+      .insert(builds)
+      .values({ projectId, userId, isRunning: false })
+      .returning();
+    const buildId = b!.id;
+
+    const variationFor = async (branchName: string): Promise<string> => {
+      const [v] = await db
+        .insert(testVariations)
+        .values({
+          name: "home",
+          projectId,
+          branchName,
+          browser: "chromium",
+          viewport: VP,
+        })
+        .returning();
+      return v!.id;
+    };
+    const mainVariationId = await variationFor("main");
+    const featureVariationId = await variationFor("feature/sibling");
+    expect(featureVariationId).not.toBe(mainVariationId);
+
+    // main: an approved run holding the baseline image, plus its baselines row.
+    const [br] = await db
+      .insert(testRuns)
+      .values({
+        name: "baseline",
+        projectId,
+        buildId,
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    const baselineKey = `${objectKey(baseline)}-${uniq}-bl`;
+    await storage.put(baselineKey, baseline, "image/png");
+    const [bs] = await db
+      .insert(screenshots)
+      .values({
+        runId: br!.id,
+        projectId,
+        testVariationId: mainVariationId,
+        name: "home",
+        imageKey: baselineKey,
+        viewport: VP,
+        browser: "chromium",
+      })
+      .returning();
+    await db.insert(baselines).values({
+      baselineName: baselineKey,
+      testVariationId: mainVariationId,
+      testRunId: br!.id,
+      branchName: "main",
+      userId,
+    });
+
+    // feature: the candidate run, one screenshot of the FEATURE variation.
+    const [cr] = await db
+      .insert(testRuns)
+      .values({
+        name: "candidate",
+        projectId,
+        buildId,
+        branchName: "feature/sibling",
+        status: "running",
+      })
+      .returning();
+    const candidateKey = `${objectKey(candidate)}-${uniq}-cd`;
+    await storage.put(candidateKey, candidate, "image/png");
+    const [cs] = await db
+      .insert(screenshots)
+      .values({
+        runId: cr!.id,
+        projectId,
+        testVariationId: featureVariationId,
+        name: "home",
+        imageKey: candidateKey,
+        viewport: VP,
+        browser: "chromium",
+      })
+      .returning();
+
+    return {
+      projectId,
+      buildId,
+      candidateRunId: cr!.id,
+      shotId: { home: cs!.id },
+      variationId: { home: featureVariationId },
+      baselineShotId: { home: bs!.id },
+      mainVariationId,
+    };
+  }
+
+  it("a feature-branch checkpoint is diffed against its main sibling's image (changed)", async () => {
+    // Pairing on the candidate's own variation would find nothing in main's
+    // baseline run (the screenshot lives under the sibling), degrade to `new`
+    // and count a missing pair. Pairing on `baselineVariationId` diffs it.
+    const s = await seedFeatureBranchCandidate(await red0(), await blue0());
+    const reg = new Registry();
+
+    await diff(s, createDiffMetrics(reg));
+
+    expect(await verdicts(s, ["home"])).toEqual(["unresolved"]);
+    const run = await runRow(s);
+    expect(run.status).toBe("unresolved");
+    expect(run.baselineSource).toBe("default_branch");
+    expect(run.diffPercent).toBeGreaterThan(0);
+    expect(
+      await counterValue(reg, "furan_diff_baseline_pair_missing_total"),
+    ).toBe(0);
+  }, 60_000);
+
+  it("a feature-branch checkpoint is diffed against its main sibling's image (identical)", async () => {
+    const s = await seedFeatureBranchCandidate(await red0(), await red0());
+    const reg = new Registry();
+
+    await diff(s, createDiffMetrics(reg));
+
+    expect(await verdicts(s, ["home"])).toEqual(["passed"]);
+    const run = await runRow(s);
+    expect(run.status).toBe("passed");
+    expect(run.baselineSource).toBe("default_branch");
+    expect(run.diffPercent).toBe(0);
+    expect(
+      await counterValue(reg, "furan_diff_baseline_pair_missing_total"),
+    ).toBe(0);
   }, 60_000);
 
   it("an active decision survives a re-diff", async () => {

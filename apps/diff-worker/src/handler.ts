@@ -357,8 +357,11 @@ export async function handleDiffJob(
   // failure is terminal and the run is marked `aborted`.
   attempt: DiffAttempt = { finalAttempt: true },
 ): Promise<void> {
+  // Set by the inner handler the moment its core transaction (verdicts + the
+  // recomputed status) has committed.
+  const progress: DiffProgress = { coreCommitted: false };
   try {
-    await handleDiffJobInner(data, logger, deps);
+    await handleDiffJobInner(data, logger, deps, progress);
   } catch (err) {
     // Always log the primary error first. BullMQ stashes it in the job's
     // failedReason but the worker's own structured log was previously
@@ -366,21 +369,28 @@ export async function handleDiffJob(
     // GLIBC mismatch) would aborted-bucket every run with zero clue in
     // dashboards or stdout. The secondary catches below only log when
     // their own write fails, so this is the only place the actual cause
-    // surfaces in the worker log stream.
-    logger.error(
-      {
-        err,
-        runId: data.runId,
-        projectId: data.projectId,
-        finalAttempt: attempt.finalAttempt,
-      },
-      "diff_job_failed",
-    );
+    // surfaces in the worker log stream. A failure BullMQ will retry is a
+    // warning; only the failure that ends the job is an error.
+    const failure = {
+      err,
+      runId: data.runId,
+      projectId: data.projectId,
+      finalAttempt: attempt.finalAttempt,
+      coreCommitted: progress.coreCommitted,
+    };
+    if (attempt.finalAttempt) logger.error(failure, "diff_job_failed");
+    else logger.warn(failure, "diff_job_failed");
     // Ruling R9: BullMQ retries a non-final attempt, so leave the run as it is
     // (`running`) and let the retry derive its status. `aborted` is a
     // lifecycle state `recomputeRunStatus` keeps, so writing it here would
     // stick even after the retry succeeds. Rethrow so BullMQ schedules it.
     if (!attempt.finalAttempt) throw err;
+    // Ruling R11: once the core transaction has committed, the run holds a
+    // valid derived status (and its verdicts, regions and baselines). A later
+    // failure (a Redis publish, say) must not replace it with `aborted`, which
+    // `recomputeRunStatus` would then keep for good. It is logged above;
+    // rethrow so the job still fails.
+    if (progress.coreCommitted) throw err;
     // Final attempt: best-effort terminal status write so an aborted run does
     // not hang in `running` indefinitely. Per spec §3.2 worker exceptions land
     // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
@@ -431,10 +441,17 @@ export async function handleDiffJob(
   }
 }
 
+/** What `handleDiffJobInner` has durably done so far; read by the failure path. */
+interface DiffProgress {
+  /** True once the core transaction has committed (never set earlier). */
+  coreCommitted: boolean;
+}
+
 async function handleDiffJobInner(
   data: DiffJob,
   logger: Logger,
   deps: HandlerDeps,
+  progress: DiffProgress,
 ): Promise<void> {
   const t0 = Date.now();
   await deps.redis.publish(
@@ -1422,10 +1439,22 @@ async function handleDiffJobInner(
 
     // Auto-approved checkpoints become their own variation's baseline;
     // userId omitted → NULL marks it as auto (the SDK's per-run
-    // `autoApproved` flag reads exactly that).
-    for (const r of results) {
-      if (!r.autoApproved) continue;
-      const cs = candidateById.get(r.screenshotId)!;
+    // `autoApproved` flag reads exactly that). Each call updates its
+    // `test_variations` row, and runs of one project share variations, so two
+    // concurrent jobs would deadlock if they locked those rows in different
+    // (capture) orders. Writing in ascending variation-id order makes the lock
+    // order the same everywhere.
+    const autoApproved = results
+      .filter((r) => r.autoApproved)
+      .map((r) => candidateById.get(r.screenshotId)!)
+      .sort((a, b) =>
+        a.testVariationId < b.testVariationId
+          ? -1
+          : a.testVariationId > b.testVariationId
+            ? 1
+            : 0,
+      );
+    for (const cs of autoApproved) {
       await recordBaseline(tx, {
         testVariationId: cs.testVariationId,
         testRunId: run.id,
@@ -1468,6 +1497,9 @@ async function handleDiffJobInner(
     // Last, after every child-row write: derive the run status.
     return recomputeRunStatus(tx, data.runId);
   });
+  // `withProjectScope` resolves only after the transaction committed. A failure
+  // from here on must not mark the run `aborted` (see `handleDiffJob`).
+  progress.coreCommitted = true;
 
   // ── Auto Rules application persistence (fail-open) ───────────
   // Runs in its OWN transaction AFTER the core run result is committed, wrapped
