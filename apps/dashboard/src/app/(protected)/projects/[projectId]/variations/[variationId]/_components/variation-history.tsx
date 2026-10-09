@@ -31,21 +31,19 @@ export function VariationHistory({ projectId, variationId }: Props) {
   });
 
   if (variation.isLoading) {
-    return (
-      <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
-    );
+    return <div className="text-sm text-fg-secondary">Loading…</div>;
   }
   if (variation.error?.data?.code === "NOT_FOUND") {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+        <h1 className="text-xl font-semibold text-fg">
           404 — variation not found
         </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-fg-secondary">
           The variation may have been deleted, or the id is invalid.{" "}
           <Link
             href={`/projects/${projectId}/builds`}
-            className="text-brand-text hover:underline"
+            className="text-brand-text hover:underline focus-ring"
           >
             Back to builds
           </Link>
@@ -56,10 +54,10 @@ export function VariationHistory({ projectId, variationId }: Props) {
   if (variation.error?.data?.code === "FORBIDDEN") {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+        <h1 className="text-xl font-semibold text-fg">
           403 — not a project member
         </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-fg-secondary">
           You need to be added to this project to view its variation history.
         </p>
       </Card>
@@ -67,7 +65,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
   }
   if (variation.error || !variation.data) {
     return (
-      <div className="text-sm text-red-400">
+      <div className="text-sm text-destructive">
         Error: {variation.error?.message ?? "unknown"}
       </div>
     );
@@ -116,26 +114,32 @@ export function VariationHistory({ projectId, variationId }: Props) {
       <header className="flex items-center gap-3 text-sm flex-wrap">
         <Link
           href={`/projects/${projectId}/builds`}
-          className="text-brand-text hover:underline"
+          className="text-brand-text hover:underline focus-ring"
         >
           ← Builds
         </Link>
         <span
-          className="font-mono font-medium text-zinc-950 dark:text-white"
+          className="font-mono font-medium text-fg"
           data-testid="variation-name"
         >
           {variation.data.name}
         </span>
-        <span className="text-zinc-400 dark:text-zinc-600">·</span>
-        <span className="text-zinc-600 dark:text-zinc-400">
+        <span aria-hidden className="text-edge-strong">
+          ·
+        </span>
+        <span className="text-fg-secondary">
           {variation.data.browser ?? "—"}
         </span>
-        <span className="text-zinc-400 dark:text-zinc-600">·</span>
-        <span className="text-zinc-600 dark:text-zinc-400">
+        <span aria-hidden className="text-edge-strong">
+          ·
+        </span>
+        <span className="font-mono tabular-nums text-fg-secondary">
           {variation.data.viewport ?? "—"}
         </span>
-        <span className="text-zinc-400 dark:text-zinc-600">·</span>
-        <span className="text-zinc-600 dark:text-zinc-400">
+        <span aria-hidden className="text-edge-strong">
+          ·
+        </span>
+        <span className="tabular-nums text-fg-secondary">
           {variation.data.totalRuns} runs
         </span>
       </header>

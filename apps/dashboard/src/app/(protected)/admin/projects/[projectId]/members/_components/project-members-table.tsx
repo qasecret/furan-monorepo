@@ -13,6 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/cn";
+import { roleStyle } from "@/lib/role-style";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -23,15 +25,11 @@ export function ProjectMembersTable({ projectId }: Props) {
   const { data, isLoading, error } = trpc.members.list.useQuery({ projectId });
 
   if (isLoading) {
-    return (
-      <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
-    );
+    return <div className="text-sm text-fg-secondary">Loading…</div>;
   }
   if (error) {
     return (
-      <div className="text-sm text-red-600 dark:text-red-400">
-        Error: {error.message}
-      </div>
+      <div className="text-sm text-destructive">Error: {error.message}</div>
     );
   }
   const members = data ?? [];
@@ -58,9 +56,16 @@ export function ProjectMembersTable({ projectId }: Props) {
               <TableRow key={m.id} data-testid={`member-row-${m.userId}`}>
                 <TableCell>{m.email}</TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{m.role}</Badge>
+                  <Badge
+                    className={cn(
+                      "border-transparent capitalize",
+                      roleStyle(m.role),
+                    )}
+                  >
+                    {m.role}
+                  </Badge>
                 </TableCell>
-                <TableCell className="text-zinc-500 dark:text-zinc-500">
+                <TableCell className="tabular-nums text-fg-muted">
                   {new Date(m.createdAt).toLocaleDateString()}
                 </TableCell>
                 <TableCell className="text-right">

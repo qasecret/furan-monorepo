@@ -79,10 +79,10 @@ export function MergeBaselinesPanel({ projectId, userRole }: Props) {
         <CardTitle>Merge baselines</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-fg-secondary">
           Promote approved baselines from one branch to another. Each variation
           with a baseline on the source branch becomes a synthetic{" "}
-          <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+          <code className="rounded bg-hover px-1 py-0.5 text-xs text-fg-secondary">
             merge=true
           </code>{" "}
           test run on the destination branch for reviewer approval. Byte-
@@ -115,7 +115,7 @@ export function MergeBaselinesPanel({ projectId, userRole }: Props) {
           </Button>
         </div>
         {fromBranch && toBranch && fromBranch === toBranch && (
-          <p className="text-xs text-red-400">
+          <p className="text-xs text-destructive">
             Source and destination branches must differ.
           </p>
         )}
@@ -143,7 +143,7 @@ function BranchSelect({
     <div className="space-y-1">
       <label
         htmlFor={testId}
-        className="text-xs font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-400"
+        className="text-xs font-medium uppercase tracking-wider text-fg-secondary"
       >
         {label}
       </label>

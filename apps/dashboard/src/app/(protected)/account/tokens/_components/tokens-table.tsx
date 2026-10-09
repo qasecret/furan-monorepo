@@ -47,13 +47,11 @@ function EmptyTokens({ onCreated }: { onCreated: () => void }) {
   return (
     <div className="flex flex-1 items-center justify-center">
       <div className="mx-auto max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-          <KeyRound className="h-5 w-5 text-zinc-400" />
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-edge bg-hover">
+          <KeyRound className="h-5 w-5 text-fg-muted" />
         </div>
-        <h3 className="text-base font-medium text-zinc-950 dark:text-white">
-          No tokens yet
-        </h3>
-        <p className="mx-auto mt-1 max-w-xs text-sm text-zinc-500 dark:text-zinc-400">
+        <h3 className="text-base font-medium text-fg">No tokens yet</h3>
+        <p className="mx-auto mt-1 max-w-xs text-sm text-fg-muted">
           Create a personal access token to authenticate the Furan SDK or CI
           uploads.
         </p>
@@ -77,13 +75,13 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
   return (
     <>
       {/* Header */}
-      <header className="border-b border-zinc-200 px-6 py-5 dark:border-zinc-900">
+      <header className="border-b border-edge px-6 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950 dark:text-white">
+            <h1 className="text-2xl font-semibold text-fg">
               Personal access tokens
             </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="mt-1 text-sm text-fg-muted">
               Authenticate the Furan SDK or CI uploads. A token works on the
               projects your account can access, but it can&apos;t manage tokens
               or use admin features — sign in for those.
@@ -103,9 +101,12 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
       {/* Body */}
       <div className="flex flex-1 flex-col overflow-y-auto p-6">
         {/* Security callout */}
-        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-200/60 bg-amber-50/50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-300/90">
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+          <ShieldAlert
+            aria-hidden
+            className="mt-0.5 h-4 w-4 shrink-0 text-amber-700"
+          />
+          <p className="text-xs leading-relaxed text-fg">
             Tokens are shown only once on creation. Store them in a secrets
             manager — never commit them to source control.
           </p>
@@ -128,23 +129,21 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
                 <TableRow key={t.id} data-testid={`token-row-${t.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
-                        <KeyRound className="h-3.5 w-3.5 text-zinc-500 dark:text-zinc-400" />
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-hover">
+                        <KeyRound className="h-3.5 w-3.5 text-fg-muted" />
                       </div>
-                      <span className="font-medium text-zinc-950 dark:text-white">
-                        {t.label}
-                      </span>
+                      <span className="font-medium text-fg">{t.label}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-zinc-500 dark:text-zinc-400">
+                  <TableCell className="tabular-nums text-fg-muted">
                     {relative(t.createdAt)}
                   </TableCell>
                   <TableCell>
                     <span
                       className={
                         t.lastUsedAt
-                          ? "text-zinc-500 dark:text-zinc-400"
-                          : "text-zinc-400 italic dark:text-zinc-600"
+                          ? "tabular-nums text-fg-muted"
+                          : "italic text-fg-muted"
                       }
                     >
                       {relative(t.lastUsedAt)}

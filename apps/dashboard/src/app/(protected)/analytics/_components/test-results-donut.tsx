@@ -32,7 +32,7 @@ export function TestResultsDonut({
   const total = passed + failed + unresolved;
   if (total === 0) {
     return (
-      <div className="flex h-52 items-center justify-center text-sm text-zinc-500">
+      <div className="flex h-52 items-center justify-center text-sm text-fg-muted">
         No test runs in this window.
       </div>
     );
@@ -85,10 +85,10 @@ export function TestResultsDonut({
         </PieChart>
       </ResponsiveContainer>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold tabular-nums text-zinc-950 dark:text-white">
+        <span className="text-3xl font-bold tabular-nums text-fg">
           {Math.round(passRate * 100)}%
         </span>
-        <span className="text-xs text-zinc-500">pass rate</span>
+        <span className="text-xs text-fg-muted">pass rate</span>
       </div>
     </div>
   );

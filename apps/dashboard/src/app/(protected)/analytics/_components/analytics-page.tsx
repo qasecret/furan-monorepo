@@ -15,8 +15,7 @@ import { trpc } from "@/lib/trpc";
 const WINDOWS = [7, 14, 30] as const;
 type Window = (typeof WINDOWS)[number];
 
-const CARD =
-  "rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950";
+const CARD = "rounded-lg bg-raised shadow-raised";
 
 function ChartCard({
   title,
@@ -30,12 +29,8 @@ function ChartCard({
   return (
     <div className={`${CARD} overflow-hidden p-5`}>
       <div className="mb-4">
-        <h3 className="text-sm font-medium text-zinc-950 dark:text-white">
-          {title}
-        </h3>
-        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          {subtitle}
-        </p>
+        <h3 className="text-sm font-medium text-fg">{title}</h3>
+        <p className="mt-0.5 text-xs text-fg-muted">{subtitle}</p>
       </div>
       {children}
     </div>
@@ -65,25 +60,23 @@ export function AnalyticsPage() {
 
   return (
     <PageContainer fullBleed>
-      <header className="border-b border-zinc-200 px-6 py-5 dark:border-zinc-900">
+      <header className="border-b border-edge px-6 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-zinc-950 dark:text-white">
-              Insights
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            <h1 className="text-2xl font-semibold text-fg">Insights</h1>
+            <p className="mt-1 text-sm text-fg-muted">
               Analytics across your test suite and visual quality trends.
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex items-center gap-1 rounded-lg border border-edge bg-sunken p-1">
             {WINDOWS.map((w) => (
               <button
                 key={w}
                 onClick={() => setDays(w)}
                 className={
                   w === days
-                    ? "rounded-md px-3 py-1.5 text-xs font-medium bg-white text-zinc-950 shadow-sm dark:bg-zinc-700 dark:text-white"
-                    : "rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
+                    ? "rounded-md px-3 py-1.5 text-xs font-medium tabular-nums bg-raised text-fg shadow-raised focus-ring"
+                    : "rounded-md px-3 py-1.5 text-xs font-medium tabular-nums text-fg-muted hover:text-fg focus-ring"
                 }
                 data-testid={`analytics-window-${w}d`}
               >
@@ -138,11 +131,11 @@ export function AnalyticsPage() {
         {/* ── Full-width fragile tests table ── */}
         {currentProjectId && (
           <div className={`${CARD} overflow-hidden`}>
-            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-              <h2 className="text-base font-medium text-zinc-950 dark:text-white">
+            <div className="border-b border-edge px-6 py-4">
+              <h2 className="text-base font-medium text-fg">
                 Top fragile tests
               </h2>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              <p className="mt-1 text-xs text-fg-muted">
                 Tests with the lowest pass rate in the last {days} days
               </p>
             </div>

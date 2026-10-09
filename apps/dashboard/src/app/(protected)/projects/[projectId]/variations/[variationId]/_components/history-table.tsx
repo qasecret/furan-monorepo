@@ -68,29 +68,26 @@ export function HistoryTable({
         <TableBody>
           {items.length === 0 ? (
             <tr>
-              <td
-                colSpan={8}
-                className="px-4 py-8 text-center text-zinc-500 dark:text-zinc-500"
-              >
+              <td colSpan={8} className="px-4 py-8 text-center text-fg-muted">
                 Loading runs…
               </td>
             </tr>
           ) : (
             items.map((r) => (
               <TableRow key={r.id} data-testid={`history-row-${r.id}`}>
-                <TableCell className="text-zinc-500 dark:text-zinc-500">
+                <TableCell className="tabular-nums text-fg-muted">
                   {relative(r.createdAt)}
                 </TableCell>
                 <TableCell>
                   <RunStatusBadge status={r.status} />
                 </TableCell>
                 <TableCell>{r.branchName ?? "—"}</TableCell>
-                <TableCell>
+                <TableCell className="font-mono tabular-nums">
                   {r.diffPercent !== null
                     ? `${r.diffPercent.toFixed(2)}%`
                     : "—"}
                 </TableCell>
-                <TableCell>
+                <TableCell className="font-mono tabular-nums">
                   {r.pixelMisMatchCount !== null
                     ? r.pixelMisMatchCount.toLocaleString()
                     : "—"}
@@ -98,7 +95,7 @@ export function HistoryTable({
                 <TableCell>
                   {r.merge && r.baselineSource !== null ? (
                     <span
-                      className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
+                      className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
                       title={`Baseline from ${r.baselineSource}`}
                       data-testid={`history-row-promotion-${r.id}`}
                     >
@@ -110,7 +107,7 @@ export function HistoryTable({
                   {r.buildId && r.buildNumber !== null ? (
                     <Link
                       href={`/projects/${projectId}/builds?expand=${r.buildId}`}
-                      className="text-brand-text hover:underline"
+                      className="tabular-nums text-brand-text hover:underline focus-ring"
                       data-testid={`history-row-build-${r.id}`}
                     >
                       #{r.buildNumber}
@@ -120,7 +117,7 @@ export function HistoryTable({
                 <TableCell>
                   <Link
                     href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
-                    className="text-brand-text hover:underline"
+                    className="text-brand-text hover:underline focus-ring"
                     data-testid={`history-row-view-diff-${r.id}`}
                   >
                     View diff →

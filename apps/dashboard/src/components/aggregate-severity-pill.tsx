@@ -47,24 +47,28 @@ function isSeverity(s: string): s is Severity {
   );
 }
 
+// Same chip classes as the viewer's severity badges (RegionItem): severity
+// isn't a run status, so each keeps its hue as an opaque pastel `-100` chip
+// with `-800` text in both themes (Ruling R18) — AA on the chip itself
+// (6.4–7.3:1) whatever surface sits behind it. Full literal strings only.
 const PILL_STYLE: Record<
   Exclude<Severity, "none">,
   { className: string; emoji: string }
 > = {
   breaking: {
-    className: "bg-red-500/10 text-red-400 border-red-500/20",
+    className: "border-red-300 bg-red-100 text-red-800",
     emoji: "🔴",
   },
   major: {
-    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    className: "border-orange-300 bg-orange-100 text-orange-800",
     emoji: "🟠",
   },
   minor: {
-    className: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+    className: "border-yellow-300 bg-yellow-100 text-yellow-800",
     emoji: "🟡",
   },
   cosmetic: {
-    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    className: "border-blue-300 border-dashed bg-blue-100 text-blue-800",
     emoji: "🔵",
   },
 };
@@ -75,9 +79,9 @@ interface Props {
 
 /**
  * Single chip summarizing the highest-severity diff region present on a run.
- * Reuses the SEVERITY_COLORS palette from DiffOverlayLayer.ts so overlay,
- * region badge, and this pill share one visual identity. Hidden when there
- * are no actionable regions.
+ * Uses the same severity hues as the overlay and the region badges, so all
+ * three share one visual identity. Hidden when there are no actionable
+ * regions.
  */
 export function AggregateSeverityPill({ regions }: Props) {
   const result = aggregateSeverity(regions);
@@ -86,7 +90,7 @@ export function AggregateSeverityPill({ regions }: Props) {
   return (
     <span
       data-testid={`aggregate-severity-pill-${result.severity}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${style.className}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums ${style.className}`}
     >
       <span aria-hidden>{style.emoji}</span>
       {result.count} {result.severity}

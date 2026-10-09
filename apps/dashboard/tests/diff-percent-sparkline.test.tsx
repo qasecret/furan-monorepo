@@ -36,6 +36,22 @@ describe("DiffPercentSparkline", () => {
     expect(svg!.querySelector("polyline")).not.toBeNull();
   });
 
+  test("trend line uses fg-muted so it reads in both themes", () => {
+    // edge-strong measured 1.5:1 (light) / 1.7:1 (dark) against the page —
+    // below the 3:1 a data line needs. fg-muted is 5.4:1 / 5.8:1.
+    const { container } = render(
+      <DiffPercentSparkline
+        runs={[
+          { id: "r1", status: "passed", diffPercent: 0 },
+          { id: "r2", status: "unresolved", diffPercent: 2 },
+        ]}
+      />,
+    );
+    const line = container.querySelector("polyline")!;
+    expect(line.getAttribute("stroke")).toBe("currentColor");
+    expect(line.getAttribute("class")).toBe("text-fg-muted");
+  });
+
   test("null diffPercent → dot at baseline (y = padY + plotH)", () => {
     const { container } = render(
       <DiffPercentSparkline

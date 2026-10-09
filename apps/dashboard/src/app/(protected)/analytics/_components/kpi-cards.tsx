@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { statusStyle } from "@/lib/status-style";
 
 interface Summary {
   totalActions: number;
@@ -89,17 +90,15 @@ function Tile({
   isLoading: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="rounded-lg bg-raised p-5 shadow-raised">
       <div className="mb-3 flex items-center justify-between">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-edge bg-hover">
           <Icon className="h-4 w-4 text-brand-text" />
         </div>
         {!isLoading && trend && (
           <div
-            className={`flex items-center gap-1 text-xs font-medium ${
-              up
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-red-600 dark:text-red-400"
+            className={`flex items-center gap-1 text-xs font-medium tabular-nums ${
+              up ? statusStyle("passed").text : statusStyle("failed").text
             }`}
           >
             {up ? (
@@ -114,11 +113,11 @@ function Tile({
       {isLoading ? (
         <Skeleton className="mb-1 h-8 w-20" />
       ) : (
-        <div className="mb-1 text-2xl font-semibold tabular-nums text-zinc-950 dark:text-white">
+        <div className="mb-1 text-2xl font-semibold tabular-nums text-fg">
           {value}
         </div>
       )}
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className="text-xs text-fg-muted">{label}</div>
     </div>
   );
 }

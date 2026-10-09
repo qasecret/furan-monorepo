@@ -134,16 +134,19 @@ export function AssignProjectsDialog({
           <div className="space-y-2">
             <Label>Memberships</Label>
             {membership.isLoading ? (
-              <p className="text-sm text-zinc-500" data-testid="assign-loading">
+              <p className="text-sm text-fg-muted" data-testid="assign-loading">
                 Loading…
               </p>
             ) : membership.isError ? (
-              <p className="text-sm text-red-500" data-testid="assign-error">
+              <p
+                className="text-sm text-destructive"
+                data-testid="assign-error"
+              >
                 Couldn&apos;t load this user&apos;s projects.
               </p>
             ) : allProjects.length === 0 ? (
               <p
-                className="text-sm text-zinc-500"
+                className="text-sm text-fg-muted"
                 data-testid="assign-no-projects"
               >
                 No projects yet.
@@ -153,7 +156,7 @@ export function AssignProjectsDialog({
                 {allProjects.map((p) => (
                   <div
                     key={p.id}
-                    className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+                    className="flex items-center justify-between gap-3 rounded-md border border-edge px-3 py-2"
                   >
                     <Label
                       htmlFor={`assign-project-${p.id}`}
@@ -196,7 +199,7 @@ export function AssignProjectsDialog({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-fg-muted">
               Only projects the user belongs to can be their default.
             </p>
           </div>

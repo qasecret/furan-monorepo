@@ -89,4 +89,23 @@ describe("AggregateSeverityPill", () => {
     const pill = screen.getByTestId("aggregate-severity-pill-major");
     expect(pill.textContent).toMatch(/2 major/);
   });
+
+  test.each([
+    ["breaking", "border-red-300 bg-red-100 text-red-800"],
+    ["major", "border-orange-300 bg-orange-100 text-orange-800"],
+    ["minor", "border-yellow-300 bg-yellow-100 text-yellow-800"],
+    ["cosmetic", "border-blue-300 border-dashed bg-blue-100 text-blue-800"],
+  ])(
+    "'%s' pill is an opaque pastel chip (R18), as in the viewer",
+    (sev, cls) => {
+      const { container } = render(
+        <AggregateSeverityPill regions={[{ severity: sev }]} />,
+      );
+      const pill = container.querySelector<HTMLElement>(
+        `[data-testid="aggregate-severity-pill-${sev}"]`,
+      )!;
+      expect(pill.className).toContain(cls);
+      expect(pill.className).not.toMatch(/-400\b|\/10\b|\/20\b/);
+    },
+  );
 });

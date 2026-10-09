@@ -50,22 +50,22 @@ export function TopReviewers({ items, isLoading }: Props) {
               <span
                 className={
                   it.email
-                    ? "truncate text-zinc-700 dark:text-zinc-300"
-                    : "truncate italic text-zinc-500"
+                    ? "truncate text-fg-secondary"
+                    : "truncate italic text-fg-muted"
                 }
               >
                 {label}
               </span>
-              <span className="ml-2 shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400 font-mono">
+              <span className="ml-2 shrink-0 tabular-nums text-fg-muted font-mono">
                 {it.actions.toLocaleString()}
               </span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+            <div className="h-2 overflow-hidden rounded-full bg-edge">
               <div
                 className={
                   idx === 0
                     ? "h-full rounded-full bg-brand-text"
-                    : "h-full rounded-full bg-zinc-400 dark:bg-zinc-600"
+                    : "h-full rounded-full bg-fg-muted"
                 }
                 style={{ width: `${pct}%` }}
               />

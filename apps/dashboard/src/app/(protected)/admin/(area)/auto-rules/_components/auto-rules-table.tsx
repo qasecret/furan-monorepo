@@ -61,17 +61,15 @@ export function AutoRulesTable() {
   // list query is disabled, so don't render the table or hand a null projectId
   // to the create dialog.
   if (!currentProjectId)
-    return <p className="text-sm text-zinc-500">No project selected.</p>;
-  if (isLoading) return <p className="text-sm text-zinc-500">Loading…</p>;
+    return <p className="text-sm text-fg-muted">No project selected.</p>;
+  if (isLoading) return <p className="text-sm text-fg-muted">Loading…</p>;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+    <div className="overflow-hidden rounded-lg bg-raised shadow-raised">
+      <div className="flex items-center justify-between border-b border-edge px-6 py-4">
         <div className="flex items-center gap-3">
-          <h3 className="text-base font-medium text-zinc-900 dark:text-white">
-            Auto Rules
-          </h3>
-          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-100 px-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+          <h3 className="text-base font-medium text-fg">Auto Rules</h3>
+          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-hover px-1.5 text-xs font-medium tabular-nums text-fg-secondary">
             {rules?.length ?? 0}
           </span>
         </div>
@@ -103,12 +101,12 @@ export function AutoRulesTable() {
               return (
                 <TableRow key={rule.id}>
                   <TableCell>
-                    <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                    <span className="text-sm font-medium text-fg">
                       {rule.label}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <code className="rounded bg-edge px-1.5 py-0.5 text-xs text-fg-secondary">
                       {match.type}: {match.value}
                     </code>
                   </TableCell>
@@ -122,7 +120,7 @@ export function AutoRulesTable() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <span className="text-sm text-zinc-500">
+                    <span className="text-sm tabular-nums text-fg-muted">
                       {rule.appliedCount}
                     </span>
                   </TableCell>

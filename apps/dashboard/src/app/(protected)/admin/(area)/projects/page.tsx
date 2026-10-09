@@ -23,11 +23,9 @@ export default async function AdminProjectsPage() {
   const projectsRes = await apiGet<Project[]>("/projects");
   if (projectsRes.status === 401 || projectsRes.status === 403) {
     return (
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
-          Not authorized
-        </h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      <div className="rounded-lg bg-raised p-6 shadow-raised">
+        <h2 className="text-lg font-semibold text-fg">Not authorized</h2>
+        <p className="text-sm text-fg-secondary">
           Your session may have expired. Try signing in again.
         </p>
       </div>
@@ -40,13 +38,11 @@ export default async function AdminProjectsPage() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+    <div className="rounded-lg bg-raised shadow-raised">
+      <div className="flex items-center justify-between border-b border-edge px-6 py-4">
         <div className="flex items-center gap-3">
-          <h3 className="text-base font-medium text-zinc-950 dark:text-white">
-            Projects
-          </h3>
-          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-100 px-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+          <h3 className="text-base font-medium text-fg">Projects</h3>
+          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-hover px-1.5 text-xs font-medium tabular-nums text-fg-secondary">
             {projects.length}
           </span>
         </div>
@@ -58,16 +54,14 @@ export default async function AdminProjectsPage() {
             <Link
               key={p.id}
               href={`/admin/projects/${p.id}/members`}
-              className="block rounded-xl outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
+              className="block rounded-lg focus-ring"
               data-testid={`admin-project-card-${p.id}`}
             >
-              <Card className="h-full transition-[border-color,box-shadow,transform] duration-150 hover:border-zinc-300 hover:-translate-y-0.5 hover:shadow-md dark:hover:border-zinc-700 dark:hover:shadow-zinc-900/50">
-                <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
-                  {p.name}
-                </h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              <Card className="h-full transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-overlay">
+                <h2 className="text-lg font-semibold text-fg">{p.name}</h2>
+                <p className="text-sm text-fg-secondary">
                   Main branch:{" "}
-                  <code className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                  <code className="font-mono text-xs text-fg-secondary">
                     {p.mainBranchName}
                   </code>
                 </p>
