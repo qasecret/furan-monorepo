@@ -4034,4 +4034,104 @@ d("tRPC runs router", () => {
       });
     });
   });
+
+  describe("approve paths: best-effort audit and run-status legality", () => {
+    /** Approve `cp` through `procedure` with the member's client. */
+    function approveVia(
+      procedure: "approve" | "approveCheckpoint" | "approveAllCheckpoints",
+      cp: { run: { id: string }; shot: { id: string } },
+    ) {
+      const client = makeClient(baseUrl, s.memberJwt);
+      if (procedure === "approve")
+        return client.runs.approve.mutate({ runId: cp.run.id });
+      if (procedure === "approveCheckpoint")
+        return client.runs.approveCheckpoint.mutate({
+          runId: cp.run.id,
+          checkpointId: cp.shot.id,
+        });
+      return client.runs.approveAllCheckpoints.mutate({ runId: cp.run.id });
+    }
+
+    test.each([
+      "approve",
+      "approveCheckpoint",
+      "approveAllCheckpoints",
+    ] as const)(
+      "%s: a failing audit write doesn't undo the approval",
+      async (procedure) => {
+        const cp = await seedCheckpoint(h, {
+          buildId: await getSeedBuildId(h, s.runId),
+          projectId: s.projectId,
+          name: `audit-down-${procedure}`,
+          signature: null,
+          unresolved: true,
+          baselineName: null,
+        });
+        // Fault injection: every audit_log insert fails at the DB level, as it
+        // would on a full disk or a bad column value. The insert runs on the
+        // procedure's request transaction (ADR-058).
+        await h.db.execute(sql`
+          CREATE FUNCTION test_audit_unavailable() RETURNS trigger
+          LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`);
+        await h.db.execute(sql`
+          CREATE TRIGGER test_audit_unavailable BEFORE INSERT ON audit_log
+          FOR EACH ROW EXECUTE FUNCTION test_audit_unavailable()`);
+        try {
+          await approveVia(procedure, cp);
+        } finally {
+          await h.db.execute(
+            sql`DROP TRIGGER IF EXISTS test_audit_unavailable ON audit_log`,
+          );
+          await h.db.execute(
+            sql`DROP FUNCTION IF EXISTS test_audit_unavailable()`,
+          );
+        }
+
+        const [run] = await h.db
+          .select()
+          .from(testRuns)
+          .where(eq(testRuns.id, cp.run.id));
+        expect(run!.status).toBe("passed");
+        const bl = await h.db
+          .select()
+          .from(baselines)
+          .where(eq(baselines.testRunId, cp.run.id));
+        expect(bl.map((b) => b.userId)).toEqual([s.memberId]);
+      },
+    );
+
+    test.each(["approveCheckpoint", "approveAllCheckpoints"] as const)(
+      "%s: rejects a run that isn't reviewable (running / aborted / empty)",
+      async (procedure) => {
+        for (const status of ["running", "aborted", "empty"] as const) {
+          const cp = await seedCheckpoint(h, {
+            buildId: await getSeedBuildId(h, s.runId),
+            projectId: s.projectId,
+            name: `illegal-${status}`,
+            signature: null,
+            unresolved: true,
+            baselineName: null,
+          });
+          await h.db
+            .update(testRuns)
+            .set({ status })
+            .where(eq(testRuns.id, cp.run.id));
+
+          const err = await approveVia(procedure, cp).catch((e) => e);
+          expect(err?.data?.code).toBe("BAD_REQUEST");
+
+          const [run] = await h.db
+            .select()
+            .from(testRuns)
+            .where(eq(testRuns.id, cp.run.id));
+          expect(run!.status).toBe(status);
+          const bl = await h.db
+            .select()
+            .from(baselines)
+            .where(eq(baselines.testRunId, cp.run.id));
+          expect(bl).toHaveLength(0);
+        }
+      },
+    );
+  });
 });

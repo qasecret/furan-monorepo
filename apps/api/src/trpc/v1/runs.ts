@@ -208,6 +208,21 @@ const APPROVE_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
 ]);
 
 /**
+ * Every approve path's status gate (run-level, per-checkpoint, approve-all):
+ * review terminal states plus `new` (spec §3.3, ADR-036). Mid-flight
+ * (`running`) and other system states (`aborted`, `empty`) are rejected — for
+ * those the right response is to re-run.
+ */
+function assertApprovable(status: RunStatus): void {
+  if (!APPROVE_LEGAL_FROM.has(status)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Cannot approve a run with status '${status}'. Re-run the test instead.`,
+    });
+  }
+}
+
+/**
  * Approve a single test run: transitions status → passed, sets merge=true,
  * promotes the baseline of EVERY checkpoint (approveRunInTx), and publishes
  * broadcaster events. Shared by `runs.approve`, `inbox.approve` and the REST
@@ -258,16 +273,7 @@ export async function approveRun(
     const run = runRows[0];
     if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-    // Per spec §3.3 + ADR-036: review terminal states plus `new`
-    // (first-baseline when autoApproveFeature=false). Reject mid-flight
-    // (`running`) and other system states (`aborted`, `empty`) — for
-    // those the right response is to re-run.
-    if (!APPROVE_LEGAL_FROM.has(run.status)) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `Cannot approve a run with status '${run.status}'. Re-run the test instead.`,
-      });
-    }
+    assertApprovable(run.status);
 
     // ADR-067: promote every checkpoint (a checkpoint-less run still flips to
     // passed). ADR-036: reviewer-drawn regions persist in the same flow — no
@@ -1335,6 +1341,7 @@ export const runsRouter = t.router({
         .limit(1);
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+      assertApprovable(run.status);
 
       await ctx.db.transaction(async (tx) => {
         await approveCheckpointInTx(tx, s, run, ctx.user.id, input.ignoreAreas);
@@ -1403,6 +1410,7 @@ export const runsRouter = t.router({
         .limit(1);
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
+      assertApprovable(run.status);
 
       const { checkpointIds } = await ctx.db.transaction((tx) =>
         approveRunInTx(tx, run, ctx.user.id),
