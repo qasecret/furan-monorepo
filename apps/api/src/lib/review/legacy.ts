@@ -21,6 +21,7 @@ import {
   selectPendingTargets,
   selectUndecidedTargets,
   type LockedRun,
+  type ReviewTarget,
 } from "./targets.js";
 
 /**
@@ -251,8 +252,14 @@ export async function approveBuildRuns(
  * cluster the caller re-derived, in its priority order) as one action. At most
  * `runCap` runs that still have something pending are decided, the first ones
  * in `runIds` order; `capped` says more remain, and a re-run drains them
- * (rejected checkpoints stop being pending). The runs are locked first, so the
- * selection is what gets decided.
+ * (rejected checkpoints stop being pending).
+ *
+ * The cap is applied BEFORE anything is locked (R21), so only the runs this
+ * call decides are locked, never the whole cluster: an unlocked read picks
+ * them, they are locked, and their pending checkpoints are selected again
+ * under the lock, so what gets decided is what is pending now. A run that
+ * stopped being pending in between is simply not decided; the next run is
+ * not pulled in, and `capped` still reports the remainder for a re-run.
  */
 export async function rejectPendingInRuns(
   ctx: ReviewActionCtx,
@@ -264,17 +271,23 @@ export async function rejectPendingInRuns(
   },
 ): Promise<ReviewResult> {
   const { projectId } = input;
-  if (input.runIds.length > 0) {
-    await lockRuns(ctx.tx, projectId, input.runIds);
-  }
-  const { targets } = await selectPendingTargets(
+  const unlocked = await selectPendingTargets(
     ctx.tx,
     { projectId, runIds: input.runIds },
     NO_CAP,
   );
-  const withPending = new Set(targets.map((t) => t.runId));
+  const withPending = new Set(unlocked.targets.map((t) => t.runId));
   const ordered = input.runIds.filter((id) => withPending.has(id));
-  const kept = new Set(ordered.slice(0, input.runCap));
+  const kept = ordered.slice(0, Math.max(0, input.runCap));
+  let targets: ReviewTarget[] = [];
+  if (kept.length > 0) {
+    await lockRuns(ctx.tx, projectId, kept);
+    ({ targets } = await selectPendingTargets(
+      ctx.tx,
+      { projectId, runIds: kept },
+      NO_CAP,
+    ));
+  }
   return decideSelection(
     ctx,
     {
@@ -284,7 +297,7 @@ export async function rejectPendingInRuns(
       decision: "rejected",
     },
     {
-      targets: targets.filter((t) => kept.has(t.runId)),
+      targets,
       capped: ordered.length > input.runCap,
       cap: input.runCap,
     },

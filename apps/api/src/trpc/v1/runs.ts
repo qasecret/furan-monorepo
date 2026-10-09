@@ -57,7 +57,7 @@ import {
   NO_REVIEW,
   type CheckpointReviewView,
 } from "../../lib/review/reads.js";
-import { selectPendingTargets } from "../../lib/review/targets.js";
+import { lockRuns, selectPendingTargets } from "../../lib/review/targets.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -977,7 +977,8 @@ export const runsRouter = t.router({
    * (`run_overridden`) until it is reset.
    *
    * Per spec §3.3 only terminal review states (`passed | unresolved |
-   * failed`) are overridable.
+   * failed`) are overridable. That status is read under the run's row lock,
+   * which is held through the write and the recompute (R21).
    */
   overrideStatus: publicProcedure
     .input(
@@ -996,18 +997,20 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      const runRows = await ctx.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, input.runId))
-        .limit(1);
-      const run = runRows[0];
+      const actx = trpcActionCtx(ctx);
+      const projectId = await requireRunProjectId(input, ctx);
+      // Lock the run (R8) BEFORE reading the status the legality gate checks
+      // (R21): a concurrent revert or re-diff that makes the run `running`
+      // either commits first (and the gate sees it) or waits for this one.
+      const [run] = (
+        await lockRuns(actx.tx, projectId, [input.runId])
+      ).values();
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-      if (!REVIEWER_LEGAL_FROM.has(run.status)) {
+      if (!REVIEWER_LEGAL_FROM.has(run.lifecycle)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: `Cannot override status from '${run.status}'.`,
+          message: `Cannot override status from '${run.lifecycle}'.`,
         });
       }
 
@@ -1018,7 +1021,6 @@ export const runsRouter = t.router({
           updatedAt: new Date(),
         })
         .where(eq(testRuns.id, run.id));
-      const actx = trpcActionCtx(ctx);
       const { after } = await recomputeRunStatus(actx.tx, run.id);
 
       await announceRuns(actx, run.projectId, [run.id]);
@@ -1033,7 +1035,7 @@ export const runsRouter = t.router({
           metadata: {
             projectId: run.projectId,
             buildId: run.buildId,
-            from: run.status,
+            from: run.lifecycle,
             to: after,
             requested: input.status,
           },
