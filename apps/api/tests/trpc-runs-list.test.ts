@@ -301,21 +301,85 @@ d("tRPC runs.list", () => {
     expect(page.nextCursor).toBeNull();
   });
 
-  test("bulkApproveByBuild: approves every reviewer-actionable run in the build", async () => {
+  test("bulkApproveByBuild: approves every run that needs review, skipping already-passed runs", async () => {
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.runs.bulkApproveByBuild.mutate({
       buildId: s.buildId,
     });
-    // Seed build: 24 `new` (not reviewable) + 1 `passed` + 1 `failed` = 2.
-    expect(res.approved).toBe(2);
+    // Seed build: 24 `new` (no baseline yet) + 1 `passed` (nothing to
+    // approve) + 1 `failed` → only the failed run is approved.
+    expect(res.approved).toBe(1);
+    expect(res.runIds).toEqual([s.runIdsAsc[25]]);
     expect(res.capped).toBe(false);
-    // The two reviewable runs are now passed; the 24 `new` are untouched.
+    // Both are passed now; the 24 `new` are untouched.
     const passed = await client.runs.list.query({
       projectId: s.projectId,
       buildId: s.buildId,
       status: ["passed"],
     });
     expect(passed.items).toHaveLength(2);
+  });
+
+  test("bulkApproveByBuild: a capped approve is progressive — the next call approves the rest", async () => {
+    // A fresh build with one already-passed run (the OLDEST, so an unordered
+    // or passed-inclusive selection would pick it first) followed by 201
+    // runs that need review, alternating unresolved / failed.
+    const [b2] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, ciBuildId: "build-cap" })
+      .returning();
+    if (!b2) throw new Error("cap build not seeded");
+    const t0 = Date.now() - 300_000;
+    const rows = await h.db
+      .insert(testRuns)
+      .values(
+        Array.from({ length: 202 }, (_, i) => ({
+          projectId: s.projectId,
+          buildId: b2.id,
+          name: `cap-${i}`,
+          branchName: "main",
+          status: i === 0 ? "passed" : i % 2 === 0 ? "failed" : "unresolved",
+          createdAt: new Date(t0 + i * 1000),
+          updatedAt: new Date(t0 + i * 1000),
+        })),
+      )
+      .returning({ id: testRuns.id, name: testRuns.name });
+    const byName = new Map(rows.map((r) => [r.name, r.id]));
+    const needsReviewAsc = Array.from({ length: 201 }, (_, i) => {
+      const id = byName.get(`cap-${i + 1}`);
+      if (!id) throw new Error(`cap-${i + 1} not seeded`);
+      return id;
+    });
+
+    const client = makeClient(baseUrl, s.memberJwt);
+
+    // First click: the 200 oldest runs that need review, in createdAt order.
+    const first = await client.runs.bulkApproveByBuild.mutate({
+      buildId: b2.id,
+    });
+    expect(first.approved).toBe(200);
+    expect(first.capped).toBe(true);
+    expect(first.runIds).toEqual(needsReviewAsc.slice(0, 200));
+
+    // Second click: only the one run left — not the 200 just approved.
+    const second = await client.runs.bulkApproveByBuild.mutate({
+      buildId: b2.id,
+    });
+    expect(second.approved).toBe(1);
+    expect(second.capped).toBe(false);
+    expect(second.runIds).toEqual([needsReviewAsc[200]]);
+
+    // Nothing left to review.
+    const third = await client.runs.bulkApproveByBuild.mutate({
+      buildId: b2.id,
+    });
+    expect(third.approved).toBe(0);
+    const remaining = await client.runs.list.query({
+      projectId: s.projectId,
+      buildId: b2.id,
+      status: ["unresolved", "failed"],
+    });
+    expect(remaining.items).toHaveLength(0);
   });
 
   test("bulkApproveByBuild: non-member editor receives FORBIDDEN", async () => {
