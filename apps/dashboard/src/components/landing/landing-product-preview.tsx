@@ -21,7 +21,8 @@ const RUNS: ReadonlyArray<{ id: string; name: string; status: RunStatus }> = [
  *
  * The mock uses the real app's surface roles (raised frame, sunken diff well,
  * hover for the selected run) and its status styles, so it looks like the
- * product in both themes.
+ * product in both themes. The frame and page cards float on the overlay
+ * elevation so the marketing mock keeps its depth.
  */
 export function LandingProductPreview() {
   return (
@@ -30,7 +31,7 @@ export function LandingProductPreview() {
         {/* Decorative product screenshot stand-in — hidden from assistive tech. */}
         <div
           aria-hidden="true"
-          className="overflow-hidden rounded-2xl bg-raised shadow-raised"
+          className="overflow-hidden rounded-2xl bg-raised shadow-overlay"
         >
           <div className="flex h-[560px] flex-col md:flex-row">
             {/* run list */}
@@ -109,7 +110,7 @@ function DiffPane({ label, accent }: { label: string; accent: boolean }) {
       >
         {label}
       </span>
-      <div className="w-full max-w-xs overflow-hidden rounded-lg bg-raised shadow-raised">
+      <div className="w-full max-w-xs overflow-hidden rounded-lg bg-raised shadow-overlay">
         <div className="flex h-11 items-center gap-3 border-b border-edge px-4">
           <div className="h-5 w-5 rounded bg-edge-strong" />
           <div className="h-2 w-14 rounded-full bg-edge-strong" />

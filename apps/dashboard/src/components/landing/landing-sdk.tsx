@@ -66,7 +66,7 @@ function CodeCard() {
     pl: "text-fg",
   };
   return (
-    <div className="overflow-hidden rounded-2xl bg-raised shadow-raised">
+    <div className="overflow-hidden rounded-2xl bg-raised shadow-overlay">
       <div className="flex items-center gap-2 border-b border-edge bg-sunken px-4 py-3">
         <div className="flex gap-1.5">
           <span className="h-3 w-3 rounded-full bg-red-400/80" />

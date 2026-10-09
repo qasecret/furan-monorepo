@@ -51,6 +51,14 @@ describe("LandingProductPreview", () => {
     expect(label).not.toContain("text-white");
   });
 
+  test("the frame and both page cards float on the overlay elevation (Ruling R22)", () => {
+    const { container } = render(<LandingProductPreview />);
+    const floating = container.querySelectorAll(".shadow-overlay");
+    expect(floating).toHaveLength(3);
+    for (const el of floating) expect(classesOf(el)).toContain("bg-raised");
+    expect(container.querySelector(".shadow-raised")).toBeNull();
+  });
+
   test("uses no raw neutral palette, dark: colour or px font size", () => {
     const { container } = render(<LandingProductPreview />);
     expect(container.innerHTML).not.toMatch(
