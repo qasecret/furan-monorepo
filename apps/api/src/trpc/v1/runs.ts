@@ -63,7 +63,7 @@ type IgnoreRegion = {
  * Caller-facing units stay in image-pixel space (matching screenshot
  * dimensions); the worker re-applies viewport filtering at diff time.
  */
-const ignoreRegionElementSchema = z
+export const ignoreRegionElementSchema = z
   .object({
     x: z.number().int().nonnegative(),
     y: z.number().int().nonnegative(),
@@ -138,7 +138,7 @@ const ignoreRegionElementSchema = z
  * checks `existing.length + incoming.length <= MAX_IGNORE_REGIONS` so
  * append-mode can't exceed the same ceiling.
  */
-const MAX_IGNORE_REGIONS = 50;
+export const MAX_IGNORE_REGIONS = 50;
 
 type IgnoreRegionElement = z.infer<typeof ignoreRegionElementSchema>;
 

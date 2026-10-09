@@ -62,6 +62,27 @@ export async function lockRuns(
   projectId: string,
   runIds: string[],
 ): Promise<Map<string, LockedRun>> {
+  return lockRunsBy(tx, projectId, { runIds });
+}
+
+/**
+ * `lockRuns` for every run of a build, chosen by the same statement that locks
+ * them: a run that appears while the lock is being taken cannot slip between
+ * "which runs" and "lock them".
+ */
+export async function lockBuildRuns(
+  tx: Tx,
+  projectId: string,
+  buildId: string,
+): Promise<Map<string, LockedRun>> {
+  return lockRunsBy(tx, projectId, { buildId });
+}
+
+async function lockRunsBy(
+  tx: Tx,
+  projectId: string,
+  by: { runIds: string[] } | { buildId: string },
+): Promise<Map<string, LockedRun>> {
   const rows = await tx
     .select({
       id: testRuns.id,
@@ -73,7 +94,14 @@ export async function lockRuns(
       override: testRuns.statusOverride,
     })
     .from(testRuns)
-    .where(and(inArray(testRuns.id, runIds), eq(testRuns.projectId, projectId)))
+    .where(
+      and(
+        "runIds" in by
+          ? inArray(testRuns.id, by.runIds)
+          : eq(testRuns.buildId, by.buildId),
+        eq(testRuns.projectId, projectId),
+      ),
+    )
     .orderBy(asc(testRuns.id))
     .for("no key update");
   return new Map(rows.map((r) => [r.id, r]));
@@ -263,20 +291,32 @@ export async function loadWinner(
 }
 
 /**
- * Every pending checkpoint in a run or a build, in capture order, capped at
- * `cap`. Pending is exactly "`decideCheckpoints` would approve it": a
- * reviewable run, verdict `new` or `unresolved`, no active decision
- * (`assessDecision(…, "approved") === null`), so an implicit selection only
- * ever picks legal targets. The preview counts the whole scope, before the cap.
- *
- * Read-only and unlocked: `decideCheckpoints` locks and re-checks every
- * target, so a selection that went stale in between is refused, not misapplied.
+ * What an implicit selection ranges over: one run, a whole build, or a build's
+ * "group" (its checkpoints that share one diff signature).
  */
-export async function selectPendingTargets(
+export type SelectionScope =
+  | { runId: string }
+  | { buildId: string }
+  | { buildId: string; diffSignature: string };
+
+/**
+ * Every checkpoint in `scope` that `decision` would be legal for
+ * (`assessDecision(…, decision) === null`), in capture order, plus the counts
+ * the approve-build preview shows. Run-level facts (`allVerdictsSet`) always
+ * come from the WHOLE run, whatever the scope's signature filter keeps.
+ *
+ * Read-only and unlocked.
+ */
+async function collectLegalTargets(
   tx: Tx,
-  scope: { runId: string } | { buildId: string },
-  cap: number,
-): Promise<{ targets: ReviewTarget[]; preview: ApproveBuildPreview }> {
+  scope: SelectionScope,
+  decision: CheckpointDecisionKind,
+): Promise<{
+  legal: ReviewTarget[];
+  legalRuns: Set<string>;
+  notReviewableTests: number;
+  rejectedLeftAsIs: number;
+}> {
   const runs = await tx
     .select({
       id: testRuns.id,
@@ -300,6 +340,7 @@ export async function selectPendingTargets(
             id: screenshots.id,
             runId: screenshots.runId,
             verdict: screenshots.verdict,
+            diffSignature: screenshots.diffSignature,
           })
           .from(screenshots)
           .where(inArray(screenshots.runId, runIds))
@@ -330,9 +371,10 @@ export async function selectPendingTargets(
     list.push(s);
     shotsByRun.set(s.runId, list);
   }
+  const signature = "diffSignature" in scope ? scope.diffSignature : null;
 
-  const pending: ReviewTarget[] = [];
-  const pendingRuns = new Set<string>();
+  const legal: ReviewTarget[] = [];
+  const legalRuns = new Set<string>();
   let notReviewableTests = 0;
   for (const run of runs) {
     const runFacts = {
@@ -345,27 +387,70 @@ export async function selectPendingTargets(
       continue;
     }
     for (const s of shotsByRun.get(run.id) ?? []) {
+      if (signature !== null && s.diffSignature !== signature) continue;
       const facts = {
         ...runFacts,
         verdict: s.verdict,
         active: activeByShot.get(s.id) ?? null,
       };
-      if (assessDecision(facts, "approved") === null) {
-        pending.push({ runId: run.id, screenshotId: s.id });
-        pendingRuns.add(run.id);
+      if (assessDecision(facts, decision) === null) {
+        legal.push({ runId: run.id, screenshotId: s.id });
+        legalRuns.add(run.id);
       }
     }
   }
 
   return {
-    targets: pending.slice(0, Math.max(0, cap)),
+    legal,
+    legalRuns,
+    notReviewableTests,
+    rejectedLeftAsIs: active.filter((a) => a.decision === "rejected").length,
+  };
+}
+
+/**
+ * Every pending checkpoint in a run, a build or a group, in capture order,
+ * capped at `cap`. Pending is exactly "`decideCheckpoints` would approve it": a
+ * reviewable run, verdict `new` or `unresolved`, no active decision
+ * (`assessDecision(…, "approved") === null`), so an implicit selection only
+ * ever picks legal targets. The preview counts the whole scope, before the cap.
+ *
+ * Read-only and unlocked: `decideCheckpoints` locks and re-checks every
+ * target, so a selection that went stale in between is refused, not misapplied.
+ */
+export async function selectPendingTargets(
+  tx: Tx,
+  scope: SelectionScope,
+  cap: number,
+): Promise<{ targets: ReviewTarget[]; preview: ApproveBuildPreview }> {
+  const c = await collectLegalTargets(tx, scope, "approved");
+  return {
+    targets: c.legal.slice(0, Math.max(0, cap)),
     preview: {
-      pendingCheckpoints: pending.length,
-      tests: pendingRuns.size,
-      rejectedLeftAsIs: active.filter((a) => a.decision === "rejected").length,
-      notReviewableTests,
-      capped: pending.length > cap,
+      pendingCheckpoints: c.legal.length,
+      tests: c.legalRuns.size,
+      rejectedLeftAsIs: c.rejectedLeftAsIs,
+      notReviewableTests: c.notReviewableTests,
+      capped: c.legal.length > cap,
       cap,
     },
+  };
+}
+
+/**
+ * Every undecided checkpoint of a run, in capture order, capped at `cap`:
+ * `decideCheckpoints` would reject it (`assessDecision(…, "rejected") === null`),
+ * whatever its verdict. This is what "reject" without ids falls back to when
+ * nothing is pending (spec §5.2). `total` is the count before the cap.
+ */
+export async function selectUndecidedTargets(
+  tx: Tx,
+  scope: { runId: string },
+  cap: number,
+): Promise<{ targets: ReviewTarget[]; total: number }> {
+  const c = await collectLegalTargets(tx, scope, "rejected");
+  return {
+    targets: c.legal.slice(0, Math.max(0, cap)),
+    total: c.legal.length,
   };
 }
