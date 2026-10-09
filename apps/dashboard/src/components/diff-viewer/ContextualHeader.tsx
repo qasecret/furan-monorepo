@@ -45,7 +45,7 @@ export function ContextualHeader({
 }: Props) {
   return (
     <header
-      className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-950"
+      className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-edge bg-canvas px-4"
       data-testid="contextual-header"
     >
       <div className="flex min-w-0 items-center gap-3">
@@ -55,24 +55,24 @@ export function ContextualHeader({
               href={backHref}
               aria-label="Back to batch"
               data-testid="contextual-header-back"
-              className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white"
+              className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-ring"
             >
               <ArrowLeft className="h-5 w-5" aria-hidden />
             </Link>
-            <span className="h-4 w-px bg-zinc-200 dark:bg-zinc-800" />
+            <span className="h-4 w-px bg-edge" aria-hidden />
           </>
         ) : null}
         <div className="flex min-w-0 items-center gap-2 text-sm">
           {branch ? (
             <>
-              <span className="truncate font-mono text-zinc-500 dark:text-zinc-400">
-                {branch}
+              <span className="truncate font-mono text-fg-muted">{branch}</span>
+              <span className="text-edge-strong" aria-hidden>
+                /
               </span>
-              <span className="text-zinc-300 dark:text-zinc-600">/</span>
             </>
           ) : null}
           <h1
-            className="truncate font-medium text-zinc-900 dark:text-white"
+            className="truncate font-medium text-fg"
             data-testid="contextual-header-title"
           >
             {title}
@@ -86,11 +86,11 @@ export function ContextualHeader({
               data-testid="contextual-header-prev"
               onClick={nav.onPrev}
               disabled={!nav.onPrev}
-              className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:text-white"
+              className="rounded p-1 text-fg-muted transition-colors hover:text-fg focus-ring disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" aria-hidden />
             </button>
-            <span className="w-12 text-center font-mono text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="w-12 text-center font-mono text-xs tabular-nums text-fg-muted">
               {nav.index + 1} / {nav.total}
             </span>
             <button
@@ -99,7 +99,7 @@ export function ContextualHeader({
               data-testid="contextual-header-next"
               onClick={nav.onNext}
               disabled={!nav.onNext}
-              className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:text-white"
+              className="rounded p-1 text-fg-muted transition-colors hover:text-fg focus-ring disabled:opacity-40"
             >
               <ChevronRight className="h-4 w-4" aria-hidden />
             </button>

@@ -3,11 +3,14 @@ import { useTheme } from "next-themes";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Every Application the component creates, so the test can read the colour
-// pixi would actually paint with.
+// pixi would actually paint with. A theme flip must repaint these same apps:
+// a new app (or a destroyed one) would mean the canvas re-mounted, which drops
+// the reviewer's zoom and pan.
 interface FakeApp {
   renderer: { background: { color: number } };
 }
 const apps: FakeApp[] = [];
+let destroyed = 0;
 
 vi.mock("pixi.js/unsafe-eval", () => ({}));
 vi.mock("pixi.js", () => ({
@@ -24,7 +27,9 @@ vi.mock("pixi.js", () => ({
       this.renderer.background.color = opts.backgroundColor;
       apps.push(this as unknown as FakeApp);
     }
-    destroy() {}
+    destroy() {
+      destroyed++;
+    }
   },
   Assets: { load: async () => ({}) },
   Sprite: class {},
@@ -65,6 +70,7 @@ let styleEl: HTMLStyleElement;
 
 beforeEach(() => {
   apps.length = 0;
+  destroyed = 0;
   localStorage.clear();
   document.documentElement.className = "";
   // Same shape as tokens.css: light on :root, dark under .dark.
@@ -117,6 +123,10 @@ describe("ViewerCanvas follows the theme", () => {
         0xfafafa, 0xfafafa,
       ]),
     );
+
+    // Repainted in place: still the original two apps, none torn down.
+    expect(apps).toHaveLength(2);
+    expect(destroyed).toBe(0);
   });
 
   test("single-stage mode: the app repaints when the theme flips", async () => {
@@ -130,5 +140,8 @@ describe("ViewerCanvas follows the theme", () => {
     await waitFor(() =>
       expect(apps[0]!.renderer.background.color).toBe(0x08080a),
     );
+
+    expect(apps).toHaveLength(1);
+    expect(destroyed).toBe(0);
   });
 });

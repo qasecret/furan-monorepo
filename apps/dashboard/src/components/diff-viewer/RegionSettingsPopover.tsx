@@ -91,9 +91,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
       >
         {/* Padding control */}
         <div className="flex items-center gap-2" data-testid="padding-control">
-          <span className="text-xs text-zinc-600 dark:text-zinc-400">
-            Padding
-          </span>
+          <span className="text-xs text-fg-secondary">Padding</span>
           <input
             type="range"
             min={0}
@@ -106,7 +104,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
             aria-label={`Padding for selected region, ${selectedPaddingPx} pixels`}
           />
           <span
-            className="text-xs font-mono w-10 text-right text-zinc-700 dark:text-zinc-300"
+            className="text-xs font-mono tabular-nums w-10 text-right text-fg-secondary"
             data-testid="padding-value"
           >
             {selectedPaddingPx}px
@@ -119,9 +117,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
             className="flex items-center gap-2"
             data-testid="strict-tolerance-control"
           >
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              Tolerance
-            </span>
+            <span className="text-xs text-fg-secondary">Tolerance</span>
             <input
               type="range"
               min={0}
@@ -136,7 +132,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
               aria-label={`Strict region tolerance, ${((selectedThresholdOverride ?? 0) * 100).toFixed(2)} percent`}
             />
             <span
-              className="text-xs font-mono w-14 text-right text-zinc-700 dark:text-zinc-300"
+              className="text-xs font-mono tabular-nums w-14 text-right text-fg-secondary"
               data-testid="strict-tolerance-value"
             >
               {((selectedThresholdOverride ?? 0) * 100).toFixed(2)}%
@@ -219,9 +215,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
             className="flex items-center gap-2"
             data-testid="region-kind-control"
           >
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              Kind
-            </span>
+            <span className="text-xs text-fg-secondary">Kind</span>
             <div data-testid="region-kind-select">
               <Select
                 value={selectedKindAndPattern.kind}
@@ -268,7 +262,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
             {selectedKindAndPattern.kind !== "ignore" &&
               selectedKindAndPattern.kind !== "dynamic-text" && (
                 <span
-                  className="text-[10px] text-zinc-500 max-w-[260px] dark:text-zinc-500"
+                  className="text-2xs text-fg-muted max-w-[260px]"
                   data-testid="region-kind-hint"
                 >
                   {selectedKindAndPattern.kind === "strict" &&

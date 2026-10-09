@@ -74,9 +74,11 @@ export function GroupApprovalCalloutView({
 
   return (
     <AlertDialog open={action !== null} onOpenChange={onOpenChange}>
+      {/* Info callout: the sky tint + edge carry the hue and the text stays
+          neutral, because no single sky text shade reaches AA in both themes. */}
       <div
         data-testid="group-approval-callout"
-        className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300"
+        className="flex items-center gap-2 rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-1.5 text-xs text-fg"
       >
         <span>
           Same change in {countLabel} other checkpoint{plural(checkpointCount)}{" "}
@@ -113,12 +115,12 @@ export function GroupApprovalCalloutView({
             {dialogCopy.description}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <p className="mt-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+        <p className="mt-1 text-xs font-medium text-fg-muted">
           Other affected runs ({runCount}):
         </p>
         <ul
           data-testid="group-approval-run-list"
-          className="max-h-48 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+          className="max-h-48 overflow-y-auto rounded-md border border-edge bg-sunken px-3 py-2 text-xs text-fg-secondary"
         >
           {runs.map((r) => (
             <li key={r.id} className="truncate py-0.5">

@@ -197,9 +197,9 @@ export function ViewerToolbar({
   };
 
   return (
-    <div className="flex items-center gap-4 flex-wrap p-2 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="flex items-center gap-4 flex-wrap p-2 border-b border-edge bg-canvas">
       <div
-        className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100/60 p-1 dark:border-zinc-800 dark:bg-zinc-900/50"
+        className="flex items-center gap-1 rounded-lg border border-edge bg-sunken p-1"
         role="tablist"
         aria-label="View mode"
       >
@@ -214,10 +214,10 @@ export function ViewerToolbar({
               aria-selected={active}
               onClick={() => setMode(m.value)}
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
                 active
-                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white"
-                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white",
+                  ? "bg-raised text-fg shadow-raised"
+                  : "text-fg-muted hover:text-fg",
               )}
             >
               <m.Icon className="h-4 w-4" aria-hidden />
@@ -252,7 +252,7 @@ export function ViewerToolbar({
         <Button
           type="button"
           variant="secondary"
-          className="px-2 py-1 text-xs h-7 min-w-[3.5rem]"
+          className="px-2 py-1 text-xs tabular-nums h-7 min-w-[3.5rem]"
           data-testid="zoom-reset-button"
           aria-label={`Reset zoom (currently ${Math.round(zoom * 100)}%)`}
           title="Fit to canvas (0)"
@@ -305,7 +305,7 @@ export function ViewerToolbar({
             <ChevronLeft className="h-4 w-4" aria-hidden />
           </Button>
           <span
-            className="text-xs font-mono min-w-[4.5rem] text-center"
+            className="text-xs font-mono tabular-nums min-w-[4.5rem] text-center"
             data-testid="diff-counter"
           >
             Diff {stepper.index + 1} / {stepper.count}
@@ -502,9 +502,7 @@ export function ViewerToolbar({
           className="flex items-center gap-2 min-w-[200px]"
           data-testid="opacity-slider-wrap"
         >
-          <span className="text-xs text-zinc-600 dark:text-zinc-400">
-            {sliderLabel}
-          </span>
+          <span className="text-xs text-fg-secondary">{sliderLabel}</span>
           <Slider
             value={[Math.round(opacity * 100)]}
             onValueChange={([v]) => setOpacity((v ?? 0) / 100)}

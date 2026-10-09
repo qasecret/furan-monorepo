@@ -100,11 +100,11 @@ export function RegionListPanel({
 
   return (
     <aside
-      className="border-l border-zinc-200 bg-white flex flex-col w-72 max-w-[30vw] dark:border-zinc-800 dark:bg-zinc-950"
+      className="border-l border-edge bg-canvas flex flex-col w-72 max-w-[30vw]"
       data-testid="region-list-panel"
     >
-      <div className="p-2 border-b border-zinc-200 flex items-center justify-between gap-2 flex-wrap dark:border-zinc-800">
-        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+      <div className="p-2 border-b border-edge flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-medium text-fg">
           Regions ({filtered.length})
         </span>
         <div className="flex gap-1 flex-wrap">
@@ -112,7 +112,7 @@ export function RegionListPanel({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 transition-colors dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
+                className="text-xs rounded-md border border-edge px-2 py-1 text-fg-secondary hover:bg-hover hover:text-fg transition-colors focus-ring"
                 data-testid="severity-filter-trigger"
               >
                 {severityFilter === "all"
@@ -136,7 +136,7 @@ export function RegionListPanel({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-xs rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 transition-colors dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
+                className="text-xs rounded-md border border-edge px-2 py-1 text-fg-secondary hover:bg-hover hover:text-fg transition-colors focus-ring"
                 data-testid="category-filter-trigger"
               >
                 {categoryFilter === "all" ? "All categories" : categoryFilter}
@@ -155,14 +155,14 @@ export function RegionListPanel({
             </DropdownMenuContent>
           </DropdownMenu>
           <label
-            className="flex items-center gap-1 text-xs px-2 py-1 text-zinc-600 dark:text-zinc-400"
+            className="flex items-center gap-1 text-xs px-2 py-1 text-fg-secondary"
             data-testid="show-suppressed-toggle"
           >
             <input
               type="checkbox"
               checked={showSuppressed}
               onChange={(e) => setShowSuppressed(e.target.checked)}
-              className="w-3 h-3 accent-brand"
+              className="w-3 h-3 accent-brand focus-ring"
             />
             Show suppressed
           </label>
@@ -170,14 +170,14 @@ export function RegionListPanel({
       </div>
       {vlmDescription && (
         <div
-          className="mx-2 mt-2 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950/40"
+          className="mx-2 mt-2 rounded-md border border-blue-500/25 bg-blue-500/10 p-3"
           data-testid="vlm-description-box"
         >
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-fg">
+            <Sparkles className="h-3.5 w-3.5 text-blue-500" aria-hidden />
             AI Analysis
           </div>
-          <p className="text-xs leading-relaxed text-blue-800 dark:text-blue-200">
+          <p className="text-xs leading-relaxed text-fg-secondary">
             {vlmDescription}
           </p>
         </div>
@@ -188,12 +188,12 @@ export function RegionListPanel({
             className="flex flex-col items-center justify-center gap-1 p-6 text-center"
             data-testid="regions-empty-state"
           >
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <div className="text-sm font-medium text-fg-secondary">
               {regions.length === 0
                 ? "No regions to display"
                 : "No regions match the active filters"}
             </div>
-            <div className="text-xs text-zinc-500 max-w-[18rem]">
+            <div className="text-xs text-fg-muted max-w-[18rem]">
               {regions.length === 0
                 ? "No ignore or diff regions are configured for this checkpoint. Use 'Edit regions' above to draw ignore areas, or adjust the sensitivity slider to surface pixel-level diffs."
                 : "Try clearing the severity / category filter or toggling 'Show suppressed' above."}

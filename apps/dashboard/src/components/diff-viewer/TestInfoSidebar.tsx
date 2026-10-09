@@ -69,16 +69,17 @@ const SEV_LABEL: Record<string, string> = {
   cosmetic: "Cosmetic",
   none: "None",
 };
-// Worst-severity colour. Hues mirror RegionItem's SEVERITY_STYLE badges
+// Worst-severity chip. Hues mirror RegionItem's SEVERITY_STYLE badges
 // (breaking red → major orange → minor yellow → cosmetic blue → none green)
-// so the card speaks the same colour language as the region rows below; the
-// shades run a touch deeper here since the card has no tinted badge backing.
+// so the card speaks the same colour language as the region rows below.
+// Severity is not a run status, so it is the same opaque pastel chip in both
+// themes: a bare hue text shade can't reach AA on both a light and a dark card.
 const SEV_COLOR: Record<string, string> = {
-  breaking: "text-red-600 dark:text-red-400",
-  major: "text-orange-600 dark:text-orange-400",
-  minor: "text-yellow-600 dark:text-yellow-400",
-  cosmetic: "text-blue-600 dark:text-blue-400",
-  none: "text-emerald-600 dark:text-emerald-400",
+  breaking: "rounded-md bg-red-100 px-1.5 text-red-800",
+  major: "rounded-md bg-orange-100 px-1.5 text-orange-800",
+  minor: "rounded-md bg-yellow-100 px-1.5 text-yellow-800",
+  cosmetic: "rounded-md bg-blue-100 px-1.5 text-blue-800",
+  none: "rounded-md bg-emerald-100 px-1.5 text-emerald-800",
 };
 
 function worstSeverity(regions: DiffRegion[]): string {
@@ -101,11 +102,11 @@ function StatCard({
   valueClass?: string;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+    <div className="flex flex-col items-center justify-center rounded-lg bg-raised px-2 py-2.5 shadow-raised">
       <span className={cn("text-base font-semibold tabular-nums", valueClass)}>
         {value}
       </span>
-      <span className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+      <span className="mt-0.5 font-mono text-2xs uppercase tracking-wider text-fg-muted">
         {label}
       </span>
     </div>
@@ -133,23 +134,21 @@ function StatCards({
         label="Pixel diff"
         valueClass={
           pixelDiffPercent
-            ? "text-red-600 dark:text-red-400"
-            : "text-zinc-400 dark:text-zinc-500"
+            ? "font-mono text-destructive"
+            : "font-mono text-fg-muted"
         }
       />
       <StatCard
         value={regions.length}
         label="Regions"
         valueClass={
-          regions.length
-            ? "text-zinc-900 dark:text-white"
-            : "text-zinc-400 dark:text-zinc-500"
+          regions.length ? "font-mono text-fg" : "font-mono text-fg-muted"
         }
       />
       <StatCard
         value={SEV_LABEL[sev] ?? "None"}
         label="Severity"
-        valueClass={SEV_COLOR[sev] ?? "text-emerald-500"}
+        valueClass={SEV_COLOR[sev] ?? SEV_COLOR.none}
       />
     </div>
   );
@@ -167,11 +166,11 @@ function Row({
 }) {
   return (
     <>
-      <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dt className="text-fg-muted">{label}</dt>
       <dd
         className={cn(
-          "truncate text-zinc-900 dark:text-white",
-          mono && "font-mono text-xs",
+          "truncate text-fg",
+          mono && "font-mono text-xs tabular-nums",
         )}
       >
         {children}
@@ -183,7 +182,7 @@ function Row({
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <h3 className="mb-3 font-mono text-xs uppercase tracking-wider text-zinc-500">
+      <h3 className="mb-3 font-mono text-xs uppercase tracking-wider text-fg-muted">
         {title}
       </h3>
       {children}
@@ -239,10 +238,10 @@ export function TestInfoSidebar({
 
   return (
     <aside
-      className="flex w-80 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+      className="flex w-80 shrink-0 flex-col border-l border-edge bg-canvas"
       data-testid="test-info-sidebar"
     >
-      <div className="flex items-center border-b border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center border-b border-edge">
         {TABS.map(({ id, label, Icon }) => {
           const active = tab === id;
           return (
@@ -253,10 +252,12 @@ export function TestInfoSidebar({
               data-testid={`info-tab-${id}`}
               aria-pressed={active}
               className={cn(
-                "flex-1 border-b-2 py-3 text-xs font-medium uppercase tracking-wider transition-colors",
+                // Inset ring: the viewer body is overflow-hidden and would
+                // clip the top of an outset one.
+                "flex-1 border-b-2 py-3 text-xs font-medium uppercase tracking-wider transition-colors focus-ring focus-visible:-outline-offset-2",
                 active
-                  ? "border-[color:var(--color-brand)] text-zinc-900 dark:text-white"
-                  : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300",
+                  ? "border-brand text-fg"
+                  : "border-transparent text-fg-muted hover:text-fg-secondary",
               )}
             >
               <Icon className="mx-auto mb-1 h-4 w-4" aria-hidden />
@@ -285,7 +286,7 @@ export function TestInfoSidebar({
               </dl>
             </Section>
 
-            <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-px bg-edge" aria-hidden />
 
             <Section title="Environment">
               <dl className="grid grid-cols-[88px_1fr] gap-y-2 text-sm">
@@ -297,7 +298,7 @@ export function TestInfoSidebar({
               </dl>
             </Section>
 
-            <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-px bg-edge" aria-hidden />
 
             <Section title="Execution">
               <dl className="grid grid-cols-[88px_1fr] gap-y-2 text-sm">
@@ -311,7 +312,7 @@ export function TestInfoSidebar({
               </dl>
             </Section>
 
-            <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-px bg-edge" aria-hidden />
 
             <Section title="Detected changes">
               <RegionListPanel
@@ -354,20 +355,16 @@ function HistoryTab({
 
   if (!testVariationId) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-fg-muted">
         History will appear once a baseline is accepted for this checkpoint.
       </p>
     );
   }
   if (isLoading) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-fg-muted">Loading…</p>;
   }
   if (!data || data.items.length === 0) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        No accepted baselines yet.
-      </p>
-    );
+    return <p className="text-sm text-fg-muted">No accepted baselines yet.</p>;
   }
 
   return (
@@ -386,30 +383,26 @@ function HistoryTab({
               <span
                 className={cn(
                   "mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full",
-                  isCurrent
-                    ? "bg-[color:var(--color-brand)]"
-                    : "bg-zinc-300 dark:bg-zinc-700",
+                  isCurrent ? "bg-brand" : "bg-edge-strong",
                 )}
                 aria-hidden
               />
-              {!last && (
-                <span className="my-1 w-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-              )}
+              {!last && <span className="my-1 w-px flex-1 bg-edge" />}
             </div>
             <div className="pb-4">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                <span className="text-sm font-medium text-fg">
                   {b.isAuto
                     ? "System (auto-approved)"
                     : (b.approverEmail ?? "Unknown")}
                 </span>
                 {isCurrent && (
-                  <span className="rounded-full bg-[color:var(--color-brand)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-brand)]">
+                  <span className="rounded-full bg-brand/20 px-1.5 py-0.5 text-2xs font-medium text-brand-text">
                     current
                   </span>
                 )}
               </div>
-              <div className="mt-0.5 font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="mt-0.5 font-mono text-xs tabular-nums text-fg-muted">
                 {formatBatchDateTime(b.createdAt)} · {b.branchName}
               </div>
             </div>

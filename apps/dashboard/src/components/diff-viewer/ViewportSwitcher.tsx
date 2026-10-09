@@ -18,10 +18,10 @@ export function ViewportSwitcher({ viewports }: { viewports: string[] }) {
           type="button"
           onClick={() => setViewport(vp)}
           className={cn(
-            "text-xs px-2 py-1 rounded-md border transition-colors",
+            "text-xs px-2 py-1 rounded-md border transition-colors focus-ring",
             active === vp
               ? "border-brand bg-brand/10 text-brand-text"
-              : "border-zinc-200 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900",
+              : "border-edge text-fg-secondary hover:text-fg hover:bg-hover",
           )}
           data-viewport={vp}
         >

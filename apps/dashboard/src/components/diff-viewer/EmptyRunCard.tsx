@@ -16,26 +16,26 @@ interface Props {
 export function EmptyRunCard({ projectId, buildId }: Props) {
   return (
     <div
-      className="flex flex-col gap-4 p-8 m-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 max-w-2xl text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-300"
+      className="flex flex-col gap-4 p-8 m-4 rounded-xl border border-dashed border-edge-strong bg-sunken max-w-2xl text-sm text-fg-secondary"
       data-testid="empty-run-card"
     >
       <div className="flex items-center gap-2">
         <span aria-hidden className="text-2xl">
           📝
         </span>
-        <h2 className="text-lg font-semibold text-zinc-950 dark:text-white">
+        <h2 className="text-lg font-semibold text-fg">
           No visual checks recorded
         </h2>
       </div>
-      <p className="text-zinc-600 dark:text-zinc-400">
+      <p className="text-fg-secondary">
         This run completed successfully, but your test didn&apos;t capture any
         screenshots. To compare visuals on every run, add{" "}
-        <code className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+        <code className="font-mono text-xs text-fg-secondary">
           furan.snapshot()
         </code>{" "}
         calls inside your tests:
       </p>
-      <pre className="overflow-x-auto rounded-md border border-zinc-200 bg-zinc-100 text-zinc-800 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
+      <pre className="overflow-x-auto rounded-md border border-edge bg-raised text-fg p-3 text-xs">
         {`furan.snapshot("checkout-page")
 furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
       </pre>

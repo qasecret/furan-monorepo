@@ -15,11 +15,12 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   none: "None",
 };
 
-// Shape varies per severity (a11y: don't rely on color alone). Each tint
-// uses the Phase 1 status-pill family: bg-{hue}-500/10 + text-{hue}-400
-// + border-{hue}-500/20. `variant="outline"` keeps the Badge primitive's
-// border styling consistent. `none` uses zinc since there's no hue for
-// the absence-of-severity state; the dotted border carries the a11y cue.
+// Shape varies per severity (a11y: don't rely on color alone). Severity is not
+// a run status, so these are plain hue chips: an opaque pastel -100 fill with
+// -800 text, the same in both themes (a hue tint can't carry AA text in dark).
+// `variant="outline"` keeps the Badge primitive's border styling consistent.
+// `none` is neutral since there's no hue for the absence-of-severity state;
+// the dotted border carries the a11y cue.
 const SEVERITY_STYLE: Record<
   Severity,
   {
@@ -29,28 +30,23 @@ const SEVERITY_STYLE: Record<
 > = {
   breaking: {
     variant: "outline",
-    className:
-      "bg-red-100 text-red-900 border-red-300 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
+    className: "border-red-300 bg-red-100 text-red-800",
   },
   major: {
     variant: "outline",
-    className:
-      "bg-orange-100 text-orange-900 border-orange-300 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20",
+    className: "border-orange-300 bg-orange-100 text-orange-800",
   },
   minor: {
     variant: "outline",
-    className:
-      "bg-yellow-100 text-yellow-900 border-yellow-300 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+    className: "border-yellow-300 bg-yellow-100 text-yellow-800",
   },
   cosmetic: {
     variant: "outline",
-    className:
-      "bg-blue-100 text-blue-900 border-blue-300 border-dashed dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
+    className: "border-blue-300 border-dashed bg-blue-100 text-blue-800",
   },
   none: {
     variant: "outline",
-    className:
-      "bg-zinc-100 text-zinc-700 border-zinc-200 border-dotted dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800",
+    className: "border-edge border-dotted bg-hover text-fg-secondary",
   },
 };
 
@@ -97,11 +93,11 @@ export function RegionItem({
         aria-label={`Dynamic text ${matched ? "matched" : "not matched"}: ${region.ocrText ?? ""}`}
         aria-pressed={isSelected}
         className={cn(
-          "w-full text-left p-2 rounded-md border border-dashed transition-colors flex items-center gap-2",
+          "w-full text-left p-2 rounded-md border border-dashed transition-colors flex items-center gap-2 focus-ring",
           isSelected
-            ? "bg-zinc-200 ring-2 ring-brand border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
-            : "border-zinc-200 hover:bg-zinc-100/70 hover:border-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-900/50 dark:hover:border-zinc-700",
-          matched ? "" : "border-amber-300 dark:border-amber-500/30",
+            ? "bg-hover ring-2 ring-brand border-edge-strong"
+            : "border-edge hover:bg-hover/50 hover:border-edge-strong",
+          matched ? "" : "border-amber-500/50",
         )}
         data-region-id={region.id}
         data-source="dynamic_text"
@@ -110,13 +106,13 @@ export function RegionItem({
           variant="outline"
           className={
             matched
-              ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20"
-              : "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
+              ? "border-purple-300 bg-purple-100 text-purple-800"
+              : "border-amber-300 bg-amber-100 text-amber-800"
           }
         >
           {matched ? "Dynamic text · matched" : "Dynamic text · NOT matched"}
         </Badge>
-        <span className="text-xs font-mono truncate text-zinc-700 dark:text-zinc-300">
+        <span className="text-xs font-mono truncate text-fg-secondary">
           &quot;{region.ocrText ?? ""}&quot;
         </span>
       </button>
@@ -136,10 +132,10 @@ export function RegionItem({
       }`}
       aria-pressed={isSelected}
       className={cn(
-        "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1",
+        "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1 focus-ring",
         isSelected
-          ? "bg-zinc-200 ring-2 ring-brand border-zinc-300 dark:bg-zinc-900 dark:border-zinc-700"
-          : "border-zinc-200 hover:bg-zinc-100/70 hover:border-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-900/50 dark:hover:border-zinc-700",
+          ? "bg-hover ring-2 ring-brand border-edge-strong"
+          : "border-edge hover:bg-hover/50 hover:border-edge-strong",
       )}
       data-region-id={region.id}
     >
@@ -153,7 +149,7 @@ export function RegionItem({
         </Badge>
         {count > 1 && (
           <span
-            className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            className="rounded-full bg-edge px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-fg-secondary"
             data-testid="region-count"
           >
             ×{count}
@@ -163,7 +159,7 @@ export function RegionItem({
             default — every pixel diff is an image region, so the chip was
             pure repetition. Text / color / a11y categories still surface. */}
         {showCategory && (
-          <span className="text-xs text-zinc-500 capitalize">
+          <span className="text-xs text-fg-muted capitalize">
             {region.category}
           </span>
         )}
@@ -171,7 +167,7 @@ export function RegionItem({
           region.source === "layout_suppressed") && (
           <Badge
             variant="outline"
-            className="bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20"
+            className="border-indigo-300 bg-indigo-100 text-indigo-800"
             data-source={region.source}
           >
             {region.source === "layout_suppressed"
@@ -181,14 +177,14 @@ export function RegionItem({
         )}
         {size && (
           <span
-            className="ml-auto font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500"
+            className="ml-auto font-mono text-2xs tabular-nums text-fg-muted"
             data-testid="region-size"
           >
             {size}
           </span>
         )}
       </div>
-      <p className="text-sm text-zinc-800 line-clamp-2 dark:text-zinc-200">
+      <p className="text-sm text-fg line-clamp-2">
         {cleanDescription(region.description)}
       </p>
     </button>

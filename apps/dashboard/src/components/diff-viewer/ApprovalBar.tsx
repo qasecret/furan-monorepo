@@ -105,7 +105,7 @@ export function ApprovalBar({
         className={cn(
           inline
             ? "flex items-center gap-2"
-            : "flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95",
+            : "flex flex-wrap items-center gap-3 border-t border-edge bg-canvas/95 px-4 py-2.5 backdrop-blur-sm",
         )}
         data-testid="approval-bar"
       >
@@ -115,13 +115,13 @@ export function ApprovalBar({
               className="flex items-center gap-2"
               data-testid="approval-bar-status"
             >
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+              <span className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
                 Status
               </span>
               <RunStatusBadge status={effectiveStatus} />
               <AggregateSeverityPill regions={diffRegions ?? []} />
             </div>
-            <span className="hidden h-5 w-px bg-zinc-200 dark:bg-zinc-800 md:block" />
+            <span className="hidden h-5 w-px bg-edge md:block" />
           </>
         )}
 
@@ -251,7 +251,7 @@ export function ApprovalBar({
 
         {!inline && error && (
           <span
-            className="text-sm text-red-400 ml-auto"
+            className="text-sm text-destructive ml-auto"
             role="alert"
             data-testid="approval-error"
           >
@@ -263,7 +263,7 @@ export function ApprovalBar({
           <div
             role="alertdialog"
             data-testid="approve-bulk-confirm"
-            className="flex items-center gap-2 text-xs ml-auto rounded-md border border-zinc-200 bg-zinc-100 px-3 py-2 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+            className="flex items-center gap-2 text-xs ml-auto rounded-md border border-edge bg-hover px-3 py-2 text-fg-secondary"
           >
             <span>
               Approve every reviewer-actionable run of this test variation? Each

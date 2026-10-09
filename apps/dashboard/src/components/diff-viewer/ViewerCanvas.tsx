@@ -80,7 +80,7 @@ function aspectStyle(
 function DiffBadge() {
   return (
     <span
-      className="inline-flex h-4 w-4 items-center justify-center rounded border border-zinc-300 bg-white text-[10px] font-bold leading-none text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+      className="inline-flex h-4 w-4 items-center justify-center rounded border border-edge-strong bg-raised text-2xs font-bold leading-none text-fg-secondary"
       data-testid="diff-badge"
       aria-label="Has differences"
       title="This image has differences"
@@ -1018,7 +1018,7 @@ export function ViewerCanvas({
         <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
           <div className="flex flex-col gap-2">
             <div
-              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
               title="Baseline"
               aria-label="Baseline"
             >
@@ -1033,7 +1033,7 @@ export function ViewerCanvas({
               ref={baselineRef}
               data-testid="baseline-canvas-host"
               style={aspectStyle(baselineDims)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
             >
               {!baselineUrl && (
                 <CanvasEmptyState label="No baseline yet">
@@ -1045,7 +1045,7 @@ export function ViewerCanvas({
           </div>
           <div className="flex flex-col gap-2">
             <div
-              className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0"
+              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
               title="Candidate"
               aria-label="Candidate"
             >
@@ -1060,7 +1060,7 @@ export function ViewerCanvas({
               ref={candidateRef}
               data-testid="candidate-canvas-host"
               style={aspectStyle(candidateDims)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
             >
               {!candidateUrl && (
                 <CanvasEmptyState label="Waiting for capture…">
@@ -1094,7 +1094,7 @@ export function ViewerCanvas({
     <div className="flex min-h-full p-6">
       <div
         style={aspectStyle(candidateDims ?? baselineDims)}
-        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg border bg-zinc-50 shadow-lg dark:bg-zinc-900"
+        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
@@ -1144,8 +1144,8 @@ function CanvasEmptyState({
       className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center"
       data-testid="canvas-empty-state"
     >
-      <div className="text-sm font-medium text-zinc-300">{label}</div>
-      <div className="text-xs text-zinc-500 max-w-[26rem]">{children}</div>
+      <div className="text-sm font-medium text-fg-secondary">{label}</div>
+      <div className="text-xs text-fg-muted max-w-[26rem]">{children}</div>
     </div>
   );
 }
