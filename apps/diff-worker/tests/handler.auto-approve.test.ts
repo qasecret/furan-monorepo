@@ -192,6 +192,8 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     candidateRunId: string;
     projectId: string;
     variationId: string;
+    /** The mobile checkpoint's own variation (identity includes viewport). */
+    mobileVariationId: string;
     mismatchOnMobile: boolean;
   }): Promise<void> {
     const baselineBytes = FIXTURE("baseline-a.png");
@@ -241,7 +243,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .values({
         runId: opts.baselineRunId,
         projectId: opts.projectId,
-        testVariationId: opts.variationId,
+        testVariationId: opts.mobileVariationId,
         name: "home",
         imageKey: baselineKey,
         viewport: VP_MOBILE,
@@ -255,7 +257,7 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .values({
         runId: opts.candidateRunId,
         projectId: opts.projectId,
-        testVariationId: opts.variationId,
+        testVariationId: opts.mobileVariationId,
         name: "home",
         imageKey: candidateMobileKey,
         viewport: VP_MOBILE,
@@ -323,9 +325,28 @@ desc("handleDiffJob — auto-approve (integration)", () => {
     expect(auto[0]!.userId).toBeNull();
   });
 
-  it("multi-viewport one-mismatch falls through to engine path", async () => {
+  it("multi-viewport one-mismatch: only the matching checkpoint auto-approves, the other is diffed", async () => {
+    // Auto-approve is per checkpoint (review flow spec §3): the matching
+    // desktop checkpoint passes and becomes its variation's baseline, while
+    // the mismatching mobile checkpoint falls through to the engine. Each
+    // viewport is its own variation with its own baseline, as in real data.
     const ctx = await setupProject({ autoApproveFeature: true });
-    await seedMismatchedScreenshots({ ...ctx, mismatchOnMobile: true });
+    const [mobile] = await db
+      .insert(testVariations)
+      .values({ name: "home", projectId: ctx.projectId, viewport: VP_MOBILE })
+      .returning();
+    await db.insert(baselines).values({
+      baselineName: "home",
+      testVariationId: mobile.id,
+      testRunId: ctx.baselineRunId,
+      userId,
+      branchName: "main",
+    });
+    await seedMismatchedScreenshots({
+      ...ctx,
+      mobileVariationId: mobile.id,
+      mismatchOnMobile: true,
+    });
 
     await handleDiffJob(
       { runId: ctx.candidateRunId, projectId: ctx.projectId },
@@ -337,7 +358,23 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .select()
       .from(baselines)
       .where(eq(baselines.testRunId, ctx.candidateRunId));
-    expect(auto.length).toBe(0);
+    expect(auto.length).toBe(1);
+    expect(auto[0]!.testVariationId).toBe(ctx.variationId);
+    expect(auto[0]!.userId).toBeNull();
+
+    const shots = await db
+      .select({ viewport: screenshots.viewport, verdict: screenshots.verdict })
+      .from(screenshots)
+      .where(eq(screenshots.runId, ctx.candidateRunId));
+    expect(
+      Object.fromEntries(shots.map((s) => [s.viewport, s.verdict])),
+    ).toEqual({ [VP_DESKTOP]: "passed", [VP_MOBILE]: "unresolved" });
+    const [row] = await db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, ctx.candidateRunId))
+      .limit(1);
+    expect(row.status).toBe("unresolved");
   });
 
   it("autoApproveFeature=false falls through to engine path", async () => {

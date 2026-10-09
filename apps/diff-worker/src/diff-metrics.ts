@@ -97,6 +97,14 @@ export interface DiffMetrics {
    * `parse_error`, `call_failed`.
    */
   vlmFailures: Counter<"reason">;
+  /**
+   * Checkpoints whose baseline resolved but whose baseline screenshot could
+   * not be paired: no screenshot of the baseline's variation exists in the
+   * baseline's run (data drift). The checkpoint degrades to verdict `new`
+   * instead of being diffed against another checkpoint's image (spec §3).
+   * Should stay at 0; alert on any increase.
+   */
+  baselinePairMissing: Counter<string>;
 }
 
 export function createDiffMetrics(registry: Registry): DiffMetrics {
@@ -171,6 +179,11 @@ export function createDiffMetrics(registry: Registry): DiffMetrics {
       name: "furan_diff_vlm_failures_total",
       help: "VLM layer failures that fell back to the L1 verdict, by reason",
       labelNames: ["reason"],
+      registers: [registry],
+    }),
+    baselinePairMissing: new Counter({
+      name: "furan_diff_baseline_pair_missing_total",
+      help: "Checkpoints whose resolved baseline has no screenshot of its variation in the baseline run (degraded to new)",
       registers: [registry],
     }),
   };
