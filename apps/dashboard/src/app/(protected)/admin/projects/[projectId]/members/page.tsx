@@ -56,10 +56,8 @@ export default async function ProjectMembersPage({
   return (
     <PageContainer>
       <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-zinc-950 dark:text-white">
-          Members
-        </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="text-2xl font-bold text-fg">Members</h1>
+        <p className="text-sm text-fg-secondary">
           Project: <span className="font-medium">{project.data.name}</span>
         </p>
         <ProjectMembersTable projectId={projectId} />

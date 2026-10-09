@@ -26,17 +26,15 @@ export function AuditLogTable() {
       { getNextPageParam: (last) => last.nextCursor ?? undefined },
     );
 
-  if (isLoading) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (isLoading) return <p className="text-sm text-fg-muted">Loading…</p>;
 
   const rows = data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center gap-3 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-        <h3 className="text-base font-medium text-zinc-900 dark:text-white">
-          Audit Log
-        </h3>
-        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-100 px-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+    <div className="overflow-hidden rounded-lg bg-raised shadow-raised">
+      <div className="flex items-center gap-3 border-b border-edge px-6 py-4">
+        <h3 className="text-base font-medium text-fg">Audit Log</h3>
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-hover px-1.5 text-xs font-medium tabular-nums text-fg-secondary">
           {rows.length}
         </span>
       </div>
@@ -60,28 +58,28 @@ export function AuditLogTable() {
             rows.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>
-                  <span className="whitespace-nowrap text-sm text-zinc-500">
+                  <span className="whitespace-nowrap text-sm tabular-nums text-fg-muted">
                     {new Date(r.createdAt).toLocaleString()}
                   </span>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-zinc-700 dark:text-zinc-300">
+                  <span className="text-sm text-fg-secondary">
                     {r.actorEmail ?? r.actorId ?? "system"}
                   </span>
                 </TableCell>
                 <TableCell>
-                  <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                  <code className="rounded bg-edge px-1.5 py-0.5 text-xs text-fg-secondary">
                     {r.action}
                   </code>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-zinc-500">
+                  <span className="text-sm text-fg-muted">
                     {r.targetType}
                     {r.targetId ? `:${r.targetId.slice(0, 8)}` : ""}
                   </span>
                 </TableCell>
                 <TableCell>
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-fg-muted">
                     {summarize(r.metadata)}
                   </span>
                 </TableCell>
@@ -91,7 +89,7 @@ export function AuditLogTable() {
         </TableBody>
       </Table>
       {hasNextPage && (
-        <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800">
+        <div className="border-t border-edge px-6 py-3">
           <Button
             variant="ghost"
             onClick={() => void fetchNextPage()}

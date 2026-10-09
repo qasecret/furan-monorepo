@@ -62,28 +62,24 @@ export function ApiKeyCard({
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-edge bg-sunken p-4">
       <div className="flex min-w-0 flex-1 items-center gap-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-edge bg-raised">
           <KeyRound className="h-4 w-4 text-brand-text" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-zinc-950 dark:text-white">
-            {label}
-          </div>
-          <div className="truncate font-mono text-xs text-zinc-400 dark:text-zinc-500">
+          <div className="text-sm font-medium text-fg">{label}</div>
+          <div className="truncate font-mono text-xs tabular-nums text-fg-muted">
             {maskedKey}
           </div>
-          <div className="mt-1 flex items-center gap-3 font-mono text-[10px] text-zinc-400 dark:text-zinc-600">
+          <div className="mt-1 flex items-center gap-3 font-mono text-2xs tabular-nums text-fg-muted">
             <span>Created {fmtDate(createdAt)}</span>
-            <span>&middot;</span>
+            <span aria-hidden className="text-edge-strong">
+              &middot;
+            </span>
             <span>
               Last used{" "}
-              <span
-                className={
-                  lastUsedAt ? "" : "italic text-zinc-300 dark:text-zinc-700"
-                }
-              >
+              <span className={lastUsedAt ? "" : "italic"}>
                 {relative(lastUsedAt)}
               </span>
             </span>
@@ -93,14 +89,14 @@ export function ApiKeyCard({
       <div className="flex shrink-0 items-center gap-1">
         <button
           onClick={() => void handleCopy()}
-          className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-white"
+          className="rounded-md p-2 text-fg-muted transition-colors hover:bg-edge hover:text-fg focus-ring"
           title="Copy key ID"
         >
-          <Copy className={`h-4 w-4 ${copied ? "text-emerald-500" : ""}`} />
+          <Copy className={`h-4 w-4 ${copied ? "text-emerald-600" : ""}`} />
         </button>
         <DeleteTokenButton tokenId={id} label={label} onDeleted={onDeleted}>
           <button
-            className="rounded-md p-2 text-zinc-400 transition-colors hover:bg-red-100 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-red-400"
+            className="rounded-md p-2 text-fg-muted transition-colors hover:bg-destructive/10 hover:text-destructive focus-ring"
             title="Revoke"
           >
             <Trash2 className="h-4 w-4" />

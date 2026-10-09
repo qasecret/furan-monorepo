@@ -40,22 +40,22 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
     { name: "landing", path: "/", enforceContrast: false },
     { name: "login", path: "/login", enforceContrast: false },
     { name: "inbox", path: "/inbox", enforceContrast: true },
-    { name: "analytics", path: "/analytics", enforceContrast: false },
+    { name: "analytics", path: "/analytics", enforceContrast: true },
     {
       name: "account-tokens",
       path: "/account/tokens",
-      enforceContrast: false,
+      enforceContrast: true,
       as: "editor",
     },
     ...ADMIN_AREAS.map((x) => ({
       name: `admin-${x}`,
       path: `/admin/${x}`,
-      enforceContrast: false,
+      enforceContrast: true,
     })),
     {
       name: "admin-project-members",
       path: `/admin/projects/${f.projectId}/members`,
-      enforceContrast: false,
+      enforceContrast: true,
     },
     {
       name: "projects",
@@ -72,8 +72,8 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
       path: `${P}/runs/${f.unresolvedRunId}`,
       enforceContrast: true,
     },
-    { name: "settings", path: `${P}/settings`, enforceContrast: false },
-    { name: "variations", path: `${P}/variations`, enforceContrast: false },
+    { name: "settings", path: `${P}/settings`, enforceContrast: true },
+    { name: "variations", path: `${P}/variations`, enforceContrast: true },
   ];
 }
 
@@ -111,7 +111,7 @@ export const DISCOVERED: ReadonlyArray<{
     name: "variation",
     from: (f) => `/projects/${f.projectId}/variations`,
     href: /\/variations\/[^/]+$/,
-    enforceContrast: false,
+    enforceContrast: true,
   },
 ];
 
@@ -160,7 +160,7 @@ export const STATES: ReadonlyArray<VisualState> = [
     // which is not the screen this state is about.
     name: "state-dialog",
     path: "/account/tokens",
-    enforceContrast: false,
+    enforceContrast: true,
     as: "editor",
     open: async (p) => {
       await p.getByRole("button", { name: /token/i }).first().click();

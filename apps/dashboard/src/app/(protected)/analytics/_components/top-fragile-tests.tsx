@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { statusStyle } from "@/lib/status-style";
 
 interface Item {
   name: string;
@@ -23,7 +24,7 @@ interface Props {
 }
 
 const LABEL_CLS =
-  "text-xs font-medium uppercase tracking-wider font-mono text-zinc-500 dark:text-zinc-400";
+  "text-xs font-medium uppercase tracking-wider font-mono text-fg-muted";
 
 export function TopFragileTests({ items, isLoading }: Props) {
   if (isLoading) {
@@ -66,26 +67,24 @@ export function TopFragileTests({ items, isLoading }: Props) {
               : 0;
           return (
             <TableRow key={it.name}>
-              <TableCell className="tabular-nums text-zinc-500">
+              <TableCell className="tabular-nums text-fg-muted">
                 {idx + 1}
               </TableCell>
               <TableCell>
-                <span className="font-medium text-zinc-950 dark:text-white">
-                  {it.name}
-                </span>
+                <span className="font-medium text-fg">{it.name}</span>
               </TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="text-right font-mono tabular-nums">
                 {it.executions}
               </TableCell>
               <TableCell className="text-right">
                 <span
-                  className={
+                  className={`font-mono tabular-nums ${
                     pct === 100
-                      ? "tabular-nums text-emerald-600 dark:text-emerald-400"
+                      ? statusStyle("passed").text
                       : pct === 0
-                        ? "tabular-nums text-red-600 dark:text-red-400"
-                        : "tabular-nums text-amber-600 dark:text-amber-400"
-                  }
+                        ? statusStyle("failed").text
+                        : statusStyle("unresolved").text
+                  }`}
                 >
                   {pct}%
                 </span>

@@ -96,7 +96,7 @@ export function DiffPercentSparkline({ runs }: Props) {
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className="text-edge-strong"
+          className="text-fg-muted"
         />
       )}
       {points.map((p) => (

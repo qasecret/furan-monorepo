@@ -56,10 +56,10 @@ export function AdminTabs() {
             <Link
               key={t.href}
               href={t.href}
-              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-ring ${
                 active
-                  ? "border-l-2 border-brand bg-zinc-100 pl-[10px] text-brand dark:bg-zinc-900"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-white"
+                  ? "border-l-2 border-brand bg-hover pl-[10px] text-brand-text"
+                  : "text-fg-muted hover:bg-hover hover:text-fg"
               }`}
             >
               <t.icon className="h-4 w-4" />

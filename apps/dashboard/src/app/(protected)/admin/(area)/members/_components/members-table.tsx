@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { isOwner, type ViewerRole } from "@/lib/roles";
+import { statusStyle } from "@/lib/status-style";
 
 export interface MemberRow {
   id: string;
@@ -42,7 +43,7 @@ interface MembersTableProps {
 }
 
 const LABEL_CLS =
-  "text-xs font-medium uppercase tracking-wider font-mono text-zinc-500 dark:text-zinc-400";
+  "text-xs font-medium uppercase tracking-wider font-mono text-fg-muted";
 
 function initials(u: MemberRow): string {
   if (u.firstName && u.lastName) {
@@ -105,14 +106,12 @@ export function MembersTable({
   }, [search]);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="overflow-hidden rounded-lg bg-raised shadow-raised">
       {/* Card header */}
-      <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+      <div className="flex items-center justify-between border-b border-edge px-6 py-4">
         <div className="flex items-center gap-3">
-          <h3 className="text-base font-medium text-zinc-950 dark:text-white">
-            Members
-          </h3>
-          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-100 px-1.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+          <h3 className="text-base font-medium text-fg">Members</h3>
+          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-hover px-1.5 text-xs font-medium tabular-nums text-fg-secondary">
             {initialUsers.length}
           </span>
         </div>
@@ -161,30 +160,31 @@ export function MembersTable({
                         <div className="relative">
                           <Avatar initial={initials(u)} />
                           <span
-                            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-zinc-950 ${
+                            aria-hidden
+                            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-raised ${
                               u.isActive
-                                ? "bg-emerald-500"
-                                : "bg-zinc-400 dark:bg-zinc-600"
+                                ? statusStyle("passed").dot
+                                : "bg-fg-muted"
                             }`}
                           />
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-zinc-950 dark:text-white">
+                          <p className="truncate text-sm font-medium text-fg">
                             {name ?? u.email}
                             {u.id === currentUserId && (
-                              <span className="ml-1.5 text-xs font-normal text-zinc-500">
+                              <span className="ml-1.5 text-xs font-normal text-fg-muted">
                                 (you)
                               </span>
                             )}
                           </p>
                           {name && (
-                            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                            <p className="truncate text-xs text-fg-muted">
                               {u.email}
                             </p>
                           )}
                           {u.defaultProjectId &&
                             projectNameById.has(u.defaultProjectId) && (
-                              <p className="truncate text-xs text-zinc-500 dark:text-zinc-500">
+                              <p className="truncate text-xs text-fg-muted">
                                 {projectNameById.get(u.defaultProjectId)}
                               </p>
                             )}

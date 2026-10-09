@@ -9,14 +9,6 @@ import config from "@furan/eslint-config/node.js";
  * Paths are relative to `apps/dashboard`. Do NOT add entries to hide new code.
  */
 export const UNMIGRATED = [
-  // PR 4
-  "src/app/(protected)/admin/**",
-  "src/app/(protected)/analytics/**",
-  "src/app/(protected)/account/**",
-  "src/app/(protected)/projects/[projectId]/settings/**",
-  "src/app/(protected)/projects/[projectId]/variations/**",
-  "src/app/(protected)/projects/*.tsx",
-  "src/app/(protected)/projects/_components/**",
   // PR 5
   "src/app/(public)/**",
   "src/app/not-found.tsx",

@@ -75,6 +75,7 @@ vi.mock("@/lib/trpc", () => ({
 import { AddMemberDialog } from "../src/app/(protected)/admin/projects/[projectId]/members/_components/add-member-dialog";
 import { ProjectMembersTable } from "../src/app/(protected)/admin/projects/[projectId]/members/_components/project-members-table";
 import { RemoveMemberButton } from "../src/app/(protected)/admin/projects/[projectId]/members/_components/remove-member-button";
+import { ROLE_STYLE } from "../src/lib/role-style";
 
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 
@@ -99,6 +100,19 @@ describe("ProjectMembersTable", () => {
     ).toBeDefined();
     expect(screen.getByText("alice@x.test")).toBeDefined();
     expect(screen.getByText("bob@x.test")).toBeDefined();
+  });
+
+  test("role badges use the same chip classes as the account menu", () => {
+    render(<ProjectMembersTable projectId={PROJECT_ID} />);
+    const badges = screen.getAllByText("editor");
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) {
+      for (const cls of ROLE_STYLE.editor.split(" ")) {
+        expect(badge.className).toContain(cls);
+      }
+      // The Badge primitive's neutral fill must not survive the merge.
+      expect(badge.className).not.toContain("bg-muted");
+    }
   });
 });
 

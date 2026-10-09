@@ -367,10 +367,10 @@ function EngineKnobsEditor({
 
     return (
       <div
-        className="space-y-3 rounded-md border border-zinc-200 bg-zinc-100/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+        className="space-y-3 rounded-md border border-edge bg-sunken p-3"
         data-testid="engine-knobs-vlm"
       >
-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+        <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">
           VLM knobs
         </p>
 
@@ -392,13 +392,13 @@ function EngineKnobsEditor({
               <SelectItem value="anthropic">Anthropic Claude</SelectItem>
             </SelectContent>
           </Select>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+          <p className="text-xs text-fg-muted">
             VLM provider. Ollama runs locally; Gemini and Anthropic require an
             API key.
           </p>
           {!canEditProvider && (
             <p
-              className="text-xs text-zinc-600 dark:text-zinc-400"
+              className="text-xs text-fg-secondary"
               data-testid="vlm-provider-admin-only-hint"
             >
               Only admins can change the provider, its endpoint, or its API key
@@ -416,7 +416,7 @@ function EngineKnobsEditor({
             disabled={disabled}
             data-testid="vlm-model-input"
           />
-          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+          <p className="text-xs text-fg-muted">
             Model identifier (e.g. gemma3:12b for Ollama, gemini-2.0-flash for
             Gemini).
           </p>
@@ -426,7 +426,7 @@ function EngineKnobsEditor({
           <div className="space-y-1">
             <Label htmlFor="vlm-api-key">API Key</Label>
             <p
-              className="text-xs text-zinc-600 dark:text-zinc-400"
+              className="text-xs text-fg-secondary"
               data-testid="vlm-api-key-status"
             >
               {clearApiKey
@@ -478,7 +478,7 @@ function EngineKnobsEditor({
                   </Button>
                 ))}
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+            <p className="text-xs text-fg-muted">
               Write-only: saved keys are never displayed or sent back to the
               browser. Leave blank to keep the current key.
             </p>
@@ -499,7 +499,7 @@ function EngineKnobsEditor({
             disabled={disabled}
             data-testid="vlm-temperature-slider"
           />
-          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+          <p className="text-xs text-fg-muted">
             Controls randomness in the VLM response. Lower values produce more
             deterministic output.
           </p>
@@ -513,11 +513,11 @@ function EngineKnobsEditor({
             value={vlm.prompt}
             onChange={(e) => writeKey("prompt", e.target.value)}
             disabled={disabled}
-            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
+            className="w-full rounded-md border border-edge bg-canvas px-3 py-2 text-sm font-mono text-fg placeholder:text-fg-muted focus-ring"
             placeholder="Override the default VLM system prompt…"
             data-testid="vlm-prompt-textarea"
           />
-          <p className="text-xs text-zinc-500 dark:text-zinc-500">
+          <p className="text-xs text-fg-muted">
             Optional. Replaces the default system prompt sent to the VLM. Leave
             blank to use the built-in prompt.
           </p>
@@ -531,10 +531,10 @@ function EngineKnobsEditor({
 
   return (
     <div
-      className="space-y-3 rounded-md border border-zinc-200 bg-zinc-100/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+      className="space-y-3 rounded-md border border-edge bg-sunken p-3"
       data-testid={`engine-knobs-${engine}`}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+      <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">
         {engine} knobs
       </p>
       {knobs.map((knob) => {
@@ -551,13 +551,11 @@ function EngineKnobsEditor({
               <div>
                 <label
                   htmlFor={`engine-${engine}-${knob.key}`}
-                  className="text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                  className="text-sm font-medium text-fg"
                 >
                   {knob.label}
                 </label>
-                <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                  {knob.help}
-                </p>
+                <p className="text-xs text-fg-muted">{knob.help}</p>
               </div>
               <Switch
                 id={`engine-${engine}-${knob.key}`}
@@ -577,7 +575,7 @@ function EngineKnobsEditor({
           <div key={knob.key} className="space-y-1">
             <label
               htmlFor={`engine-${engine}-${knob.key}`}
-              className="block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+              className="block text-sm font-medium text-fg"
             >
               {knob.label} ({value})
             </label>
@@ -595,9 +593,7 @@ function EngineKnobsEditor({
               disabled={disabled}
               data-testid={`engine-${engine}-${knob.key}`}
             />
-            <p className="text-xs text-zinc-500 dark:text-zinc-500">
-              {knob.help}
-            </p>
+            <p className="text-xs text-fg-muted">{knob.help}</p>
           </div>
         );
       })}
@@ -606,7 +602,7 @@ function EngineKnobsEditor({
 }
 
 const LABEL_CLS =
-  "text-xs font-medium uppercase tracking-wider font-mono text-zinc-500 dark:text-zinc-400";
+  "text-xs font-medium uppercase tracking-wider font-mono text-fg-muted";
 
 const TABS: ReadonlyArray<{
   id: TabId;
@@ -735,21 +731,15 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
   const isGuest = userRole === "guest";
 
   if (isLoading) {
-    return (
-      <div className="text-sm text-zinc-600 dark:text-zinc-400">
-        Loading settings…
-      </div>
-    );
+    return <div className="text-sm text-fg-secondary">Loading settings…</div>;
   }
   if (error) {
-    return <div className="text-sm text-red-400">Error: {error.message}</div>;
+    return (
+      <div className="text-sm text-destructive">Error: {error.message}</div>
+    );
   }
   if (!project) {
-    return (
-      <div className="text-sm text-zinc-600 dark:text-zinc-400">
-        No project data.
-      </div>
-    );
+    return <div className="text-sm text-fg-secondary">No project data.</div>;
   }
 
   const onSubmit = ({
@@ -780,10 +770,10 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
               key={t.id}
               type="button"
               onClick={() => setActiveTab(t.id)}
-              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-ring ${
                 activeTab === t.id
-                  ? "border-l-2 border-brand bg-zinc-100 pl-[10px] text-brand dark:bg-zinc-900"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-white"
+                  ? "border-l-2 border-brand bg-hover pl-[10px] text-brand-text"
+                  : "text-fg-muted hover:bg-hover hover:text-fg"
               }`}
             >
               <t.icon className="h-4 w-4" />
@@ -795,12 +785,12 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
 
       {/* Content area */}
       <div className="min-w-0 flex-1">
-        <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-            <h3 className="text-base font-medium text-zinc-950 dark:text-white">
+        <div className="rounded-lg bg-raised shadow-raised">
+          <div className="border-b border-edge px-6 py-4">
+            <h3 className="text-base font-medium text-fg">
               {activeMeta.label}
             </h3>
-            <p className="mt-1 text-xs text-zinc-500">{activeMeta.desc}</p>
+            <p className="mt-1 text-xs text-fg-muted">{activeMeta.desc}</p>
           </div>
           <div className="p-6">
             {/* Settings form — hidden when on variations tab, stays mounted for RHF */}
@@ -993,7 +983,7 @@ export function ProjectSettingsForm({ projectId, userRole }: Props) {
                           <textarea
                             {...field}
                             rows={4}
-                            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
+                            className="w-full rounded-md border border-edge bg-canvas px-3 py-2 text-sm font-mono text-fg placeholder:text-fg-muted focus-ring"
                             data-testid="image-config-textarea"
                           />
                         </FormControl>

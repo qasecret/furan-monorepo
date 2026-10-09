@@ -38,15 +38,11 @@ export function InstallationsTable() {
   });
 
   if (isLoading) {
-    return (
-      <div className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</div>
-    );
+    return <div className="text-sm text-fg-secondary">Loading…</div>;
   }
   if (error) {
     return (
-      <div className="text-sm text-red-600 dark:text-red-400">
-        Error: {error.message}
-      </div>
+      <div className="text-sm text-destructive">Error: {error.message}</div>
     );
   }
   const { installations = [], projects = [] } = data ?? {};
@@ -55,7 +51,7 @@ export function InstallationsTable() {
     return (
       <div
         data-testid="installations-empty"
-        className="text-sm text-zinc-600 dark:text-zinc-400"
+        className="text-sm text-fg-secondary"
       >
         No installations yet — install the Furan GitHub App on a repo to
         populate this list.
@@ -77,8 +73,12 @@ export function InstallationsTable() {
         {installations.map((inst) => (
           <TableRow key={inst.id} data-testid={`install-row-${inst.id}`}>
             <TableCell>{inst.accountLogin}</TableCell>
-            <TableCell>{inst.installationId}</TableCell>
-            <TableCell>{inst.repositoryIds.length}</TableCell>
+            <TableCell className="font-mono tabular-nums">
+              {inst.installationId}
+            </TableCell>
+            <TableCell className="tabular-nums">
+              {inst.repositoryIds.length}
+            </TableCell>
             <TableCell>
               <Select
                 value={inst.projectId ?? UNASSIGNED}

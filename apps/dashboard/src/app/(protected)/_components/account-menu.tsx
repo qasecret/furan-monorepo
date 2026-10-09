@@ -14,26 +14,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ViewerRole } from "@/lib/roles";
+import { roleStyle } from "@/lib/role-style";
 
 interface Props {
   email: string;
   initial: string;
   role: string;
 }
-
-// Typed by role so a new tier is a compile error here (the previous
-// Record<string,…> silently fell back to the guest style for `owner`).
-// Roles aren't statuses, so they keep their own hues rather than status
-// tokens. One opaque pastel chip serves both themes: no single text shade
-// reaches 4.5:1 on both a light and a dark surface, but -700/-800 on its
-// -100 chip does (5.1–6.4:1) whatever the surface behind the chip.
-const ROLE_STYLE: Record<ViewerRole, string> = {
-  owner: "bg-amber-100 text-amber-800",
-  admin: "bg-violet-100 text-violet-700",
-  editor: "bg-sky-100 text-sky-700",
-  guest: "bg-muted text-fg-secondary",
-};
 
 const NEON_HOVER =
   "data-[highlighted]:bg-brand/10 data-[highlighted]:text-brand-text";
@@ -60,7 +47,7 @@ export function AccountMenu({ email, initial, role }: Props) {
               {email || "Signed in"}
             </p>
             <span
-              className={`mt-0.5 inline-block rounded px-1.5 py-px text-2xs font-semibold capitalize leading-tight ${ROLE_STYLE[role as ViewerRole] ?? ROLE_STYLE.guest}`}
+              className={`mt-0.5 inline-block rounded px-1.5 py-px text-2xs font-semibold capitalize leading-tight ${roleStyle(role)}`}
             >
               {role}
             </span>

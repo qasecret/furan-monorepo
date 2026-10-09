@@ -188,7 +188,7 @@ export function CreateTokenDialog({
               <div className="flex items-stretch gap-2">
                 <code
                   aria-label="Personal access token"
-                  className="flex-1 rounded-md border border-zinc-200 bg-zinc-50 text-zinc-800 px-3 py-2 font-mono text-xs break-all dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                  className="flex-1 rounded-md border border-edge bg-sunken text-fg px-3 py-2 font-mono text-xs break-all"
                   data-testid="raw-token-display"
                 >
                   {rawToken}
