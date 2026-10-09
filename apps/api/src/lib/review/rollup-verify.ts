@@ -40,8 +40,7 @@ export interface RollupMismatch {
  * pagination, so the cost per batch does not grow with the offset). Each
  * batch is read in one REPEATABLE READ, READ ONLY transaction, so a run's
  * status, verdicts and decisions come from the same snapshot: a review that
- * commits mid-scan cannot show up as a false mismatch. A run that is
- * `running` by the time its batch is read is skipped too.
+ * commits mid-scan cannot show up as a false mismatch.
  *
  * Mismatches are returned in ascending run id order.
  */
@@ -79,8 +78,9 @@ export async function findRollupMismatches(
         const batch: RollupMismatch[] = [];
         for (const id of pageIds) {
           const input = inputs.get(id);
-          // Deleted (retention) between the two reads, or no longer finished.
-          if (!input || input.lifecycle === "running") continue;
+          // Defensive only: the page and its inputs share one snapshot, so
+          // every id on the page has its inputs.
+          if (!input) continue;
           const computed = rollupRunStatus(input);
           if (computed !== input.lifecycle) {
             batch.push({ runId: id, stored: input.lifecycle, computed });

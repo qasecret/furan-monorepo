@@ -13,7 +13,13 @@
 -- Step 1, verdicts. For each screenshot whose verdict IS NULL, of a run whose
 -- status is not running / aborted / empty (those are lifecycle states the
 -- rollup keeps; a running run's diff is genuinely pending):
---   1. 'unresolved' if the checkpoint has a qualifying diff region: a
+--   0. 'passed' on EVERY checkpoint of a machine-passed run (status 'passed'
+--      AND merge = false: passed by the diff, never approved or promoted),
+--      whatever its regions. Regions there were below the diff threshold, and
+--      the per-checkpoint diff-worker judges such a step 'passed'; marking it
+--      'unresolved' would need a synthetic approval (step 2) that, as
+--      decisions survive re-diffs, would mask a later re-diff of the step.
+--   1. else 'unresolved' if the checkpoint has a qualifying diff region: a
 --      diff_regions row with severity <> 'none' AND resolved_by_application_id
 --      IS NULL, matched by screenshot_id, or — for a legacy pre-v1.1.20 row
 --      with NULL screenshot_id — by the same run and viewport. This is the
@@ -29,7 +35,9 @@
 --   verdict_at = the run's updated_at.
 --
 -- Step 2, legacy decisions, for runs with status 'passed' or 'failed':
---   - passed: 'approved' on each checkpoint whose verdict <> 'passed'. Actor:
+--   - passed: 'approved' on each checkpoint whose verdict <> 'passed' (so
+--     only approved or promoted runs, merge = true, ever get one: step 1.0
+--     leaves a machine-passed run all 'passed'). Actor:
 --     MIN(user_id) over the run's baselines rows with a user (deterministic;
 --     the same choice 0036 made), else NULL.
 --   - failed: 'rejected' on each checkpoint whose verdict <> 'passed', or on
@@ -76,7 +84,7 @@ DECLARE
 BEGIN
   -- Step 1: verdicts. ---------------------------------------------------------
   WITH run_scope AS (
-    SELECT r."id", r."status", r."updated_at"
+    SELECT r."id", r."status", r."merge", r."updated_at"
     FROM "test_runs" r
     WHERE r."status" NOT IN ('running', 'aborted', 'empty')
       AND r."status_override" IS NULL
@@ -92,6 +100,7 @@ BEGIN
       s."run_id",
       s."verdict",
       rs."status"     AS run_status,
+      rs."merge"      AS run_merge,
       rs."updated_at" AS run_updated_at,
       EXISTS (
         SELECT 1 FROM "diff_regions" dr
@@ -111,6 +120,7 @@ BEGIN
       c."id",
       c.run_updated_at,
       (CASE
+        WHEN c.run_status = 'passed' AND NOT c.run_merge THEN 'passed'
         WHEN c.has_region THEN 'unresolved'
         WHEN c.run_status = 'new' THEN 'new'
         WHEN c.run_status = 'unresolved'

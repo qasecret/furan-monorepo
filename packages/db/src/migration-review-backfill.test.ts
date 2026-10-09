@@ -291,6 +291,22 @@ describe.runIf(RUN_INTEGRATION)("0037_review_backfill migration", () => {
       decisions: {},
     },
     {
+      // R22: passed by the diff and never promoted (merge = false). Regions
+      // below the diff threshold do not make it unresolved: the per-checkpoint
+      // worker would have judged every step `passed`. Recording a synthetic
+      // approval instead would mask a later re-diff of the step.
+      name: "machine-passed with sub-threshold regions",
+      status: "passed",
+      merge: false,
+      shots: [{ name: "a" }, { name: "b" }, { name: "c", viewport: MOBILE }],
+      setup: async (r) => {
+        await seedRegion(r, { on: "a" }, { severity: "minor" });
+        await seedRegion(r, { legacyViewport: MOBILE }, { severity: "minor" });
+      },
+      verdicts: { a: "passed", b: "passed", c: "passed" },
+      decisions: {},
+    },
+    {
       name: "approved single",
       status: "passed",
       merge: true,

@@ -50,8 +50,14 @@ async function main(): Promise<number> {
     return usageError(`--project must be a project id (uuid): ${projectId}`);
   }
 
-  getEnv(envSchema); // fails closed if env malformed
+  // Only the database is needed (fails closed if DATABASE_URL is missing).
+  getEnv(envSchema.pick({ DATABASE_URL: true }));
 
+  // The OWNER connection (`DATABASE_URL`), never the api's RLS-subject
+  // `DATABASE_URL_APP`: under row-level security, with no request identity,
+  // the policies hide every project-scoped row (`checkpoint_decisions`
+  // included), so the check would read wrong inputs and report false
+  // mismatches, or nothing at all. `createDb()` reads `DATABASE_URL`.
   const { db, close } = createDb();
   try {
     if (values.repairs) {
