@@ -37,13 +37,22 @@ describe("SEVERITY_STYLE", () => {
   });
 
   it("keeps the absence of severity neutral, on tokens", () => {
-    expect(SEVERITY_STYLE.none).toMatch(/\bbg-hover\b/);
+    expect(SEVERITY_STYLE.none).toMatch(/\bbg-edge\b/);
     expect(SEVERITY_STYLE.none).toMatch(/\btext-fg-secondary\b/);
+  });
+
+  it("keeps the none chip off the hover surface so it shows in a hovered or selected row", () => {
+    // Region rows paint bg-hover when selected (and bg-hover/50 on hover); a
+    // bg-hover chip would vanish into them.
+    expect(SEVERITY_STYLE.none).not.toMatch(/\bbg-hover\b/);
   });
 
   it("varies the border style so meaning doesn't rest on colour alone", () => {
     expect(SEVERITY_STYLE.cosmetic).toMatch(/\bborder-dashed\b/);
     expect(SEVERITY_STYLE.none).toMatch(/\bborder-dotted\b/);
+    // The dotted border must differ from the none chip's bg-edge fill, or the
+    // shape cue is invisible.
+    expect(SEVERITY_STYLE.none).toMatch(/\bborder-edge-strong\b/);
   });
 
   it("builds no class name by template interpolation", () => {
