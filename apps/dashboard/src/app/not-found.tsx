@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Button } from "@/components/ui/button";
+
 export const metadata: Metadata = {
   title: "Page not found",
 };
@@ -31,12 +33,9 @@ export default function NotFound() {
             or run may have been deleted, or the link may have a typo.
           </p>
         </div>
-        <Link
-          href="/projects"
-          className="inline-flex w-full items-center justify-center rounded-md bg-raised px-4 py-2 text-sm font-medium text-fg shadow-raised transition-colors hover:bg-hover focus-ring"
-        >
-          Back to projects
-        </Link>
+        <Button asChild variant="secondary" className="w-full">
+          <Link href="/projects">Back to projects</Link>
+        </Button>
       </div>
     </main>
   );
