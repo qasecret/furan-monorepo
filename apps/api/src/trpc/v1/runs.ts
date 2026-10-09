@@ -1185,15 +1185,20 @@ export const runsRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       const BULK_CAP = 200;
-      // Oldest run first: when several runs share a variation (retries), the
-      // newest run's baseline is written last and wins (baselineWriteTime).
+      // Only runs still awaiting a decision. `passed` is reviewer-legal for a
+      // single approve, but approval itself lands runs in `passed`, so
+      // including it let a capped second click re-select already-approved
+      // runs instead of the rest. Oldest-first keeps each click's batch
+      // stable, so repeated clicks drain the build — and when several runs
+      // share a variation (retries), the newest run's baseline is written
+      // last and wins (baselineWriteTime).
       const targets = await ctx.db
         .select()
         .from(testRuns)
         .where(
           and(
             eq(testRuns.buildId, input.buildId),
-            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+            inArray(testRuns.status, ["unresolved", "failed"]),
           ),
         )
         .orderBy(asc(testRuns.createdAt), asc(testRuns.id))
