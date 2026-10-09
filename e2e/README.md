@@ -61,7 +61,12 @@ session.
 
 The dashboard runs as a **dev server** rather than the stack's dashboard image:
 the image bakes `localhost:3000` for client-side calls, so the diff viewer's
-images would not load on the remapped ports.
+images would not load on the remapped ports. A dev server compiles each route
+on its first visit, so `beforeAll` visits every static route once before the
+theme passes, and a navigation that times out (90s) is retried once
+(annotated `nav-retry`). Every browser context sets
+`reducedMotion: "reduce"`, so the diff canvas draws its region ring static
+and the `run` and `diff` shots come out byte-identical from run to run.
 
 ```bash
 pnpm --filter @furan/e2e e2e:up
@@ -100,6 +105,20 @@ fails, and its screens predate the AA token palette, so `contrast-enforced`
 can fail too (which then skips the system-theme test). Both run last, after
 every screenshot test, so neither failure skips a shot. For such a run, "pass"
 means every screenshot test passed.
+
+**What the sweep does not cover.** A green sweep says nothing about:
+
+- **The project, builds, build and runs screens as such.** `project`,
+  `builds`, `build` and `runs` all redirect to the fixture's batch page, so
+  those four shots are the same screen.
+- **States the fixture never renders:** multi-checkpoint step arrows, empty
+  and error states, a selected region, menus opened from the keyboard,
+  settings tabs other than the default, and toasts.
+- **Contrast axe cannot decide.** axe `incomplete` results (text over an
+  image or gradient, overlapped or pseudo-element backgrounds, …) are counted
+  by reason (`messageKey`) per shot in `color-contrast.json` and annotated
+  `color-contrast-incomplete`. They are reported, not enforced: only
+  `outsideViewport` counts toward `contrast-enforced`.
 
 **Reviewing in Furan:**
 
