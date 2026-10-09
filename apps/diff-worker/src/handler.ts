@@ -1,20 +1,23 @@
 import {
   and,
+  asc,
   autoRuleApplications,
   autoRules,
   baselines,
   desc,
   diffRegions,
   eq,
+  inArray,
   isNull,
   projects,
+  recomputeRunStatus,
   recordBaseline,
-  resolveBaseline,
   screenshots,
   sql,
   testRuns,
   testVariations,
   withProjectScope,
+  type BaselineSource,
   type DB,
 } from "@furan/db";
 import {
@@ -57,6 +60,7 @@ import sharp from "sharp";
 import { z } from "zod";
 
 import { resolveAxeBboxes } from "./axe-bbox-resolver.js";
+import { resolveCheckpointBaseline } from "./checkpoint-baseline.js";
 import type { DiffMetrics } from "./diff-metrics.js";
 import {
   evaluateDynamicTextRegions,
@@ -71,7 +75,11 @@ import { parseEngineConfig, redactSecret } from "./engine-config.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
-import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
+import {
+  aggregateRuleStatus,
+  checkpointFailures,
+  regionEngineId,
+} from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 function resolveVlmProvider(config: VlmProviderConfig): VlmProvider {
@@ -150,7 +158,20 @@ async function publishProjectRunUpdate(
   }
 }
 
-interface PerViewportResult {
+/** What the diff found for one checkpoint (`screenshots.verdict`). */
+type CheckpointVerdict = NonNullable<
+  (typeof screenshots.$inferSelect)["verdict"]
+>;
+
+/**
+ * One candidate screenshot (checkpoint) after its own baseline was resolved,
+ * paired and diffed (spec §3). Results are kept in CANDIDATE ORDER: the
+ * auto-rule application persistence zips `regionEngineId(index, i)` with the
+ * inserted `diff_regions` ids, so the two traversals must line up.
+ */
+interface CheckpointResult {
+  /** The candidate screenshot this result is for. */
+  screenshotId: string;
   viewport: string | null;
   passed: boolean;
   diffPercent: number;
@@ -166,18 +187,54 @@ interface PerViewportResult {
     screenshotId: string;
   }>;
   ranTiers: Array<"l1">;
+  /**
+   * No baseline image to diff against: none resolved in any tier, or the
+   * resolved baseline's screenshot is missing. Verdict `new`; such a result
+   * keeps `passed: true` and no regions so the rules/status inputs hold.
+   */
   firstBaseline: boolean;
+  /**
+   * Auto-approved (ADR-032 hash match, past-baseline match, or first-capture
+   * auto-seed under `autoApproveFeature`): the checkpoint becomes its
+   * variation's baseline with a NULL user.
+   */
+  autoApproved: boolean;
+  /** Tier the checkpoint's baseline resolved from; null when none did. */
+  baselineSource: BaselineSource | null;
+  verdict: CheckpointVerdict;
   vlmDescription?: string | undefined;
   /** Auto-rule selectors resolved against this checkpoint's DOM + element-map
    * (engine-shaped, keyed by the rule's selector string). Empty when there are
    * no rules / no DOM / no element-map. */
   ruleElementMap?: RulesElementMap;
-  /** ADR-042: the candidate screenshot (checkpoint) this result is for, and
-   * its computed diff signature. Set only on the paired-baseline (diffed) path
-   * — pass OR unresolved; the no-baseline/first-baseline path leaves them
-   * undefined. */
-  screenshotId?: string;
-  diffSignature?: string | null;
+  /** ADR-042: the checkpoint's diff signature; null when it was not diffed or
+   * had no meaningful regions. */
+  diffSignature: string | null;
+}
+
+/** A checkpoint before the auto-rules pass decides its verdict. */
+type CheckpointDiff = Omit<CheckpointResult, "verdict">;
+
+/** A checkpoint that is not diffed: first capture, missing pair, or auto-approved. */
+function undiffedCheckpoint(
+  cs: { id: string; viewport: string | null },
+  outcome: Pick<
+    CheckpointDiff,
+    "firstBaseline" | "autoApproved" | "baselineSource"
+  >,
+): CheckpointDiff {
+  return {
+    screenshotId: cs.id,
+    viewport: cs.viewport ?? null,
+    passed: true,
+    diffPercent: 0,
+    pixelMismatchCount: 0,
+    diffImageKey: null,
+    regions: [],
+    ranTiers: [],
+    diffSignature: null,
+    ...outcome,
+  };
 }
 
 async function tryAutoApproveByPastBaselines(
@@ -189,7 +246,10 @@ async function tryAutoApproveByPastBaselines(
   logger: Logger,
 ): Promise<boolean> {
   const pastBaselines = await db
-    .select({ testRunId: baselines.testRunId })
+    .select({
+      testRunId: baselines.testRunId,
+      testVariationId: baselines.testVariationId,
+    })
     .from(baselines)
     .where(eq(baselines.testVariationId, variationId))
     // resolveBaseline's order, so [0] is the current baseline skipped below.
@@ -203,10 +263,19 @@ async function tryAutoApproveByPastBaselines(
 
   for (const bl of pastBaselines.slice(1)) {
     try {
+      // The past baseline's own image: its run's screenshot OF THIS VARIATION.
+      // A run holds one screenshot per checkpoint, so pairing by run alone
+      // would compare against an arbitrary sibling checkpoint.
       const blScreenshot = await db
         .select({ imageKey: screenshots.imageKey })
         .from(screenshots)
-        .where(eq(screenshots.runId, bl.testRunId))
+        .where(
+          and(
+            eq(screenshots.runId, bl.testRunId),
+            eq(screenshots.testVariationId, bl.testVariationId),
+          ),
+        )
+        .orderBy(desc(screenshots.createdAt), desc(screenshots.id))
         .limit(1);
       if (!blScreenshot[0]?.imageKey) continue;
 
@@ -243,35 +312,33 @@ async function tryAutoApproveByPastBaselines(
 }
 
 /**
- * Phase 2 diff handler (v0.5 multi-viewport): looks up project + candidate
- * run, then for each candidate screenshot (one per viewport) resolves the
- * baseline via the three-tier `resolveBaseline` chain, matches the
- * same-viewport baseline screenshot, and runs the image diff. When no
- * matching baseline screenshot exists for a viewport (new viewport added
- * since the baseline was captured) the viewport is treated as a
- * first-baseline (passes with 0% diff for that viewport).
+ * Diff handler, one baseline per checkpoint (review flow spec §3, ADR-070).
+ * Looks up the project + candidate run, then for EACH candidate screenshot
+ * (checkpoint) in capture order:
+ *   1. resolves that checkpoint's own baseline via the three-tier
+ *      `resolveBaseline` chain on its variation, and pairs it with the
+ *      baseline run's screenshot OF THAT VARIATION (`checkpoint-baseline.ts`);
+ *   2. no baseline, or a missing pair → verdict `new` (a first capture is
+ *      auto-seeded as its variation's baseline under `autoApproveFeature`);
+ *   3. hash or past-baseline match under `autoApproveFeature` (ADR-032) →
+ *      verdict `passed` and the checkpoint becomes its variation's baseline;
+ *   4. otherwise runs the image diff masked by its variation's ignore regions
+ *      plus the run's temp regions → `passed` or `unresolved` after auto-rules.
  *
- * Aggregation rolled back to the single `test_runs` row:
- *   status        = "unresolved" if ANY viewport failed; else "passed"
- *                   (per spec §3.2 the diff-worker NEVER writes "failed";
- *                   "failed" is reserved for reviewer-rejected runs.)
- *   diffPercent   = MAX(per-viewport diffPercent) — surfaces the worst
- *                   viewport for at-a-glance triage. Per-viewport breakdown
- *                   is recoverable from `diff_regions.viewport`.
- *   pixelMisMatchCount = SUM(per-viewport pixelMismatchCount)
- *   diffName      = imageKey of the worst (max diffPercent) viewport's
- *                   overlay; null if no overlay produced anywhere.
- *   baselineSource = baseline.source from the chain (same for all viewports
- *                   of a run; the chain resolves per variation + branch).
+ * Every path ends in ONE transaction that writes the run aggregates, the
+ * regions, each checkpoint's `screenshots.verdict`, and then calls
+ * `recomputeRunStatus`, the only writer of `test_runs.status` after a diff (so
+ * a reviewer's decision survives any re-diff). Run aggregates:
+ *   diffPercent   = MAX(per-checkpoint diffPercent); NULL when no checkpoint
+ *                   had a baseline to compare against.
+ *   pixelMisMatchCount = SUM(per-checkpoint pixelMismatchCount); NULL likewise.
+ *   diffName      = overlay key of the worst (max diffPercent) checkpoint;
+ *                   null if no overlay was produced anywhere.
+ *   baselineSource = tier of the worst checkpoint that resolved a baseline.
  *
- * Backwards compatibility: when the candidate run has a single screenshot
- * with NULL viewport (legacy v0.4 row), the loop runs exactly once and the
- * inserted `diff_regions` rows carry NULL viewport — matching pre-v0.5
- * behavior.
- *
- * Preserved from T9: publishes a terminal `run.completed` event after
- * `diff.completed` so the integrations subscriber (GitHub flow + webhook
- * flow) can fan out.
+ * Preserved from T9: publishes a terminal `run.completed` event (carrying the
+ * recomputed status) after `diff.completed` so the integrations subscriber
+ * (GitHub flow + webhook flow) can fan out.
  */
 export async function handleDiffJob(
   data: DiffJob,
@@ -366,321 +433,54 @@ async function handleDiffJobInner(
     throw new Error(`run_missing_branch_name:${data.runId}`);
   }
 
-  // ADR-038: testVariationId is no longer stored on test_runs — it lives on
-  // each screenshots row (one checkpoint = one variation). Resolve the
-  // primary variation from the first screenshot so we can locate the
-  // baseline and read per-variation ignore regions.
-  const firstShotRow = await deps.db
-    .select({
-      testVariationId: screenshots.testVariationId,
-      imageKey: screenshots.imageKey,
-    })
+  // Spec §3 (ADR-070): one baseline per checkpoint. Each candidate screenshot
+  // (one checkpoint = one variation, ADR-038) resolves, pairs, auto-approves
+  // and diffs on its own; nothing below is keyed on "the run's variation".
+  // Capture order, so results (and ties) are stable across re-diffs.
+  const candidateShots = await deps.db
+    .select()
     .from(screenshots)
     .where(eq(screenshots.runId, data.runId))
-    .limit(1);
-  if (!firstShotRow[0]) {
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  if (candidateShots.length === 0) {
     throw new Error(`run_has_no_screenshots:${data.runId}`);
   }
-  const runTestVariationId = firstShotRow[0].testVariationId;
-  const runImageKey = firstShotRow[0].imageKey;
 
-  const baseline = await resolveBaseline(
-    deps.db,
-    data.projectId,
-    run.branchName,
-    runTestVariationId,
-    {
-      defaultBranch: project.mainBranchName,
-      parentPrBaseBranch: data.parentPrBaseBranch ?? null,
-    },
+  // Per ADR-031: ignore regions are the checkpoint's VARIATION regions plus
+  // the run's temp regions, both JSON arrays of {x,y,width,height,viewport?}.
+  // The viewport tag is filtered against each candidate's viewport inside the
+  // loop; legacy rows without `viewport` apply universally. Load every
+  // candidate variation once (ignoreRegions is jsonb, already parsed by
+  // Drizzle; parseIgnoreAreas handles both string and pre-parsed values).
+  const variationRows = await deps.db
+    .select({
+      id: testVariations.id,
+      ignoreRegions: testVariations.ignoreRegions,
+    })
+    .from(testVariations)
+    .where(
+      inArray(testVariations.id, [
+        ...new Set(candidateShots.map((cs) => cs.testVariationId)),
+      ]),
+    );
+  const variationRegions = new Map(
+    variationRows.map((v) => [v.id, parseIgnoreAreas(v.ignoreRegions) ?? []]),
   );
-
-  if (!baseline) {
-    // First-baseline: no prior baseline existed for this variation+branch.
-    // Two paths, gated on `project.autoApproveFeature` (ADR-036):
-    //
-    //   autoApproveFeature = true  → auto-seed: candidate becomes the
-    //     baseline atomically. `userId = NULL` marks it as auto. The wire
-    //     status stays `new` and the SDK reports it as a pass via the
-    //     `autoApproved=true` derived flag. Opt-in for projects that want
-    //     to keep the pre-ADR-036 behavior on existing CI.
-    //
-    //   autoApproveFeature = false → manual-approve required: no
-    //     baselines row inserted, status stays `new`. The dashboard
-    //     renders its "No baseline yet — Save as baseline" CTA and the
-    //     user explicitly approves to create the baseline. Matches the
-    //     legacy backend's first-run semantics and is the column default
-    //     for projects created after migration 0016.
-    //
-    // Either way: status=new, merge=true, emit the same SSE events; the
-    // only difference is whether a `baselines` row gets written here.
-    const seedBaseline = project.autoApproveFeature === true;
-    await withProjectScope(deps.db, data.projectId, async (tx) => {
-      await tx
-        .update(testRuns)
-        .set({ status: "new", merge: true })
-        .where(eq(testRuns.id, data.runId));
-      if (seedBaseline) {
-        await recordBaseline(tx, {
-          testVariationId: runTestVariationId,
-          testRunId: run.id,
-          imageKey: runImageKey,
-          runName: run.baselineName ?? run.name,
-          // userId omitted → auto-baseline.
-          branchName: run.branchName,
-        });
-      }
-    });
-    await deps.redis.publish(
-      `run:${data.runId}:events`,
-      JSON.stringify({
-        type: "diff.completed",
-        runId: data.runId,
-        passed: seedBaseline,
-        firstBaseline: true,
-        autoApproved: seedBaseline,
-      }),
-    );
-    await deps.redis.publish(
-      `run:${data.runId}:events`,
-      JSON.stringify({
-        type: "run.completed",
-        runId: data.runId,
-        projectId: data.projectId,
-        status: "new",
-        diffPercent: 0,
-        branchName: run.branchName,
-        numChanges: 0,
-      }),
-    );
-    await publishProjectRunUpdate(
-      deps,
-      {
-        projectId: data.projectId,
-        runId: data.runId,
-        status: "new",
-        buildId: run.buildId,
-      },
-      logger,
-    );
-    logger.info(
-      { runId: data.runId, firstBaseline: true, autoSeeded: seedBaseline },
-      "diff_completed_first_baseline",
-    );
-    return;
-  }
-
-  const baselineRow = await deps.db.query.baselines.findFirst({
-    where: eq(baselines.id, baseline.baselineId),
-  });
-  if (!baselineRow?.testRunId) {
-    throw new Error(`baseline_has_no_run:${baseline.baselineId}`);
-  }
-
-  // Pull all screenshots for both runs and group by viewport. With v0.5
-  // multi-viewport captures, expect N rows per run (one per viewport); with
-  // legacy v0.4 single-viewport runs, expect 1 row with NULL viewport — the
-  // loop below collapses to the same single-pair flow.
-  const baselineShots = await deps.db.query.screenshots.findMany({
-    where: eq(screenshots.runId, baselineRow.testRunId),
-  });
-  const candidateShots = await deps.db.query.screenshots.findMany({
-    where: eq(screenshots.runId, data.runId),
-  });
-  if (candidateShots.length === 0) {
-    throw new Error(`missing_screenshot:candidate=0`);
-  }
-  if (baselineShots.length === 0) {
-    throw new Error(`missing_screenshot:baseline=0`);
-  }
-
-  const baselineByViewport = new Map<
-    string | null,
-    (typeof baselineShots)[0]
-  >();
-  for (const bs of baselineShots) {
-    // Use null key for legacy NULL-viewport rows (v0.4 single-viewport).
-    baselineByViewport.set(bs.viewport ?? null, bs);
-  }
-
-  // ADR-032: pre-engine auto-approve. If the project has the feature
-  // enabled and every candidate viewport's image hash matches its
-  // baseline counterpart, short-circuit the image diff entirely. Write
-  // the run row, insert a baselines row with userId=NULL (signal: auto),
-  // publish the SSE events, and return.
-  if (
-    project.autoApproveFeature &&
-    allHashesMatch(candidateShots, baselineByViewport)
-  ) {
-    await withProjectScope(deps.db, data.projectId, async (tx) => {
-      await tx
-        .update(testRuns)
-        .set({
-          status: "passed",
-          diffPercent: 0,
-          pixelMisMatchCount: 0,
-          merge: true,
-          baselineSource: baseline.source,
-        })
-        .where(eq(testRuns.id, data.runId));
-      await recordBaseline(tx, {
-        testVariationId: runTestVariationId,
-        testRunId: run.id,
-        imageKey: candidateShots[0]!.imageKey,
-        runName: run.baselineName ?? run.name,
-        // userId omitted → auto-approve.
-        branchName: run.branchName,
-      });
-    });
-
-    await deps.redis.publish(
-      `run:${data.runId}:events`,
-      JSON.stringify({
-        type: "diff.completed",
-        runId: data.runId,
-        passed: true,
-        diffPercent: 0,
-        ranTiers: [],
-        viewportCount: candidateShots.length,
-        durationMs: Date.now() - t0,
-        autoApproved: true,
-      }),
-    );
-    await deps.redis.publish(
-      `run:${data.runId}:events`,
-      JSON.stringify({
-        type: "run.completed",
-        runId: data.runId,
-        projectId: data.projectId,
-        status: "passed",
-        diffPercent: 0,
-        branchName: run.branchName,
-        numChanges: 0,
-      }),
-    );
-    await publishProjectRunUpdate(
-      deps,
-      {
-        projectId: data.projectId,
-        runId: data.runId,
-        status: "passed",
-        buildId: run.buildId,
-      },
-      logger,
-    );
-    logger.info(
-      { runId: data.runId, projectId: data.projectId, autoApproved: true },
-      "diff_auto_approved",
-    );
-    return;
-  }
-
-  // Past-baseline auto-approve: if the project has auto-approve enabled
-  // and hashes didn't match (we fell through the block above), check if
-  // the candidate matches any of the 10 most recent older baselines.
-  if (project.autoApproveFeature) {
-    const diffThresholdForAutoApprove =
-      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
-    const pastAutoApproved = await tryAutoApproveByPastBaselines(
-      deps.db,
-      deps.storage,
-      runTestVariationId,
-      candidateShots[0]!.imageKey,
-      diffThresholdForAutoApprove,
-      logger,
-    );
-    if (pastAutoApproved) {
-      await withProjectScope(deps.db, data.projectId, async (tx) => {
-        await tx
-          .update(testRuns)
-          .set({
-            status: "passed",
-            diffPercent: 0,
-            pixelMisMatchCount: 0,
-            merge: true,
-            baselineSource: baseline.source,
-          })
-          .where(eq(testRuns.id, data.runId));
-        await recordBaseline(tx, {
-          testVariationId: runTestVariationId,
-          testRunId: run.id,
-          imageKey: candidateShots[0]!.imageKey,
-          runName: run.baselineName ?? run.name,
-          branchName: run.branchName,
-        });
-      });
-
-      await deps.redis.publish(
-        `run:${data.runId}:events`,
-        JSON.stringify({
-          type: "diff.completed",
-          runId: data.runId,
-          passed: true,
-          diffPercent: 0,
-          ranTiers: [],
-          viewportCount: candidateShots.length,
-          durationMs: Date.now() - t0,
-          autoApproved: true,
-        }),
-      );
-      await deps.redis.publish(
-        `run:${data.runId}:events`,
-        JSON.stringify({
-          type: "run.completed",
-          runId: data.runId,
-          projectId: data.projectId,
-          status: "passed",
-          diffPercent: 0,
-          branchName: run.branchName,
-          numChanges: 0,
-        }),
-      );
-      await publishProjectRunUpdate(
-        deps,
-        {
-          projectId: data.projectId,
-          runId: data.runId,
-          status: "passed",
-          buildId: run.buildId,
-        },
-        logger,
-      );
-      logger.info(
-        {
-          runId: data.runId,
-          projectId: data.projectId,
-          autoApproved: true,
-          strategy: "past-baseline",
-        },
-        "diff_auto_approved_past_baseline",
-      );
-      return;
-    }
-  }
-
-  // Per ADR-031: merge variation + run ignore areas. Both are JSON arrays
-  // of {x,y,width,height,viewport?}. The viewport tag is filtered against
-  // each candidate screenshot's viewport inside the per-viewport loop
-  // below. Legacy rows without `viewport` apply universally.
-  //
-  // ADR-038: testVariationId is no longer on test_runs; use the variation
-  // resolved from the first screenshot. Run-level ignoreAreas was removed
-  // from test_runs, so only the variation's ignoreRegions apply.
-  const variationRow = await deps.db.query.testVariations.findFirst({
-    where: eq(testVariations.id, runTestVariationId),
-  });
-  // ignoreRegions is jsonb (already parsed by Drizzle); parseIgnoreAreas
-  // handles both string and pre-parsed values.
-  const variationRegions = parseIgnoreAreas(variationRow?.ignoreRegions) ?? [];
   const tempRegions = parseIgnoreAreas(run.tempIgnoreAreas) ?? [];
-  const allRegions = dedupeRegions([...variationRegions, ...tempRegions]);
-  const perViewport: PerViewportResult[] = [];
-  // Per-viewport dynamic-text OCR audit. Each entry carries the viewport
-  // string and the per-region OCR results, so we can persist a synthetic
-  // audit row in `diff_regions` per (viewport, region) pair.
+
+  // Per-run override (set via the in-viewer sensitivity slider) wins over the
+  // project default. Null/undefined means "inherit".
+  const diffThreshold =
+    run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
+
+  const checkpoints: CheckpointDiff[] = [];
+  // Per-checkpoint dynamic-text OCR audit. Each entry carries the checkpoint's
+  // regions and the per-region OCR results, so we can persist a synthetic
+  // audit row in `diff_regions` per (checkpoint, region) pair.
   const dynamicTextAudits: Array<{
     viewport: string | null;
     screenshotId: string;
+    regions: ParsedIgnoreArea[];
     results: DynamicTextResult[];
   }> = [];
   // Per-job cache shared across viewports. Avoids refetching the same
@@ -726,35 +526,103 @@ async function handleDiffJobInner(
 
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
-    // Try exact viewport match first; for legacy v0.4 candidate (NULL),
-    // fall back to any baseline screenshot so the pair-up still works.
-    const baselineShot =
-      baselineByViewport.get(viewportKey) ??
-      (viewportKey === null ? baselineShots[0] : undefined);
 
-    if (!baselineShot) {
-      // New viewport added since baseline was captured — no pair to diff.
-      // Treat as first-baseline for this viewport: pass with 0% diff and
-      // skip the engine call.
-      perViewport.push({
-        viewport: viewportKey,
-        passed: true,
-        diffPercent: 0,
-        pixelMismatchCount: 0,
-        diffImageKey: null,
-        regions: [],
-        ranTiers: [],
-        firstBaseline: true,
-      });
-      logger.info(
-        {
-          runId: data.runId,
-          viewport: viewportKey,
-        },
-        "diff_viewport_no_baseline",
+    // 1. Resolve this checkpoint's own baseline (three-tier chain on ITS
+    //    variation) and pair it with that baseline's exact image.
+    const pairing = await resolveCheckpointBaseline(deps.db, {
+      projectId: data.projectId,
+      branchName: run.branchName,
+      testVariationId: cs.testVariationId,
+      defaultBranch: project.mainBranchName,
+      parentPrBaseBranch: data.parentPrBaseBranch ?? null,
+    });
+
+    // 2. No baseline image → verdict `new`, no diff.
+    //    - none: a first capture. With `autoApproveFeature` (ADR-036) it is
+    //      auto-seeded as its variation's baseline (NULL user); otherwise the
+    //      reviewer saves it. Either way the verdict stays `new`.
+    //    - pair_missing: a baseline resolved but its run holds no screenshot of
+    //      its variation (data drift). Never diffed against another
+    //      checkpoint's image, and never auto-seeded over the real baseline.
+    if (pairing.kind !== "paired") {
+      if (pairing.kind === "pair_missing") {
+        deps.metrics?.baselinePairMissing.inc();
+        logger.warn(
+          {
+            project_id: data.projectId,
+            run_id: data.runId,
+            screenshot_id: cs.id,
+            variation_id: cs.testVariationId,
+            baseline_id: pairing.baselineId,
+          },
+          "diff_baseline_pair_missing",
+        );
+      } else {
+        logger.info(
+          { runId: data.runId, screenshotId: cs.id, viewport: viewportKey },
+          "diff_checkpoint_no_baseline",
+        );
+      }
+      checkpoints.push(
+        undiffedCheckpoint(cs, {
+          firstBaseline: true,
+          autoApproved:
+            pairing.kind === "none" && project.autoApproveFeature === true,
+          baselineSource:
+            pairing.kind === "pair_missing" ? pairing.source : null,
+        }),
       );
       continue;
     }
+    const baselineShot = pairing.baselineShot;
+
+    // 3. Auto-approve, per checkpoint (ADR-032): this checkpoint's image hash
+    //    equals its paired baseline's, or it matches one of its variation's
+    //    recent past baselines. Short-circuits the engine; the checkpoint
+    //    passes and becomes its variation's baseline (NULL user).
+    if (project.autoApproveFeature) {
+      let strategy: "hash" | "past-baseline" | null = null;
+      if (cs.imageKey === baselineShot.imageKey) {
+        strategy = "hash";
+      } else if (
+        await tryAutoApproveByPastBaselines(
+          deps.db,
+          deps.storage,
+          cs.testVariationId,
+          cs.imageKey,
+          diffThreshold,
+          logger,
+        )
+      ) {
+        strategy = "past-baseline";
+      }
+      if (strategy !== null) {
+        logger.info(
+          {
+            runId: data.runId,
+            projectId: data.projectId,
+            screenshotId: cs.id,
+            strategy,
+          },
+          "diff_checkpoint_auto_approved",
+        );
+        checkpoints.push(
+          undiffedCheckpoint(cs, {
+            firstBaseline: false,
+            autoApproved: true,
+            baselineSource: pairing.source,
+          }),
+        );
+        continue;
+      }
+    }
+
+    // 4. Engine diff against the paired image, masked by THIS checkpoint's
+    //    variation regions plus the run's temp regions.
+    const allRegions = dedupeRegions([
+      ...(variationRegions.get(cs.testVariationId) ?? []),
+      ...tempRegions,
+    ]);
 
     const baselineBytes = await deps.storage.get(baselineShot.imageKey);
     const candidateBytes = await deps.storage.get(cs.imageKey);
@@ -799,6 +667,7 @@ async function handleDiffJobInner(
       dynamicTextAudits.push({
         viewport: cs.viewport ?? null,
         screenshotId: cs.id,
+        regions: allRegions,
         results: dynamicTextResults,
       });
     }
@@ -878,9 +747,6 @@ async function handleDiffJobInner(
       baseEngineConfig,
       screenshotMatchLevel,
     );
-
-    const diffThreshold =
-      run.diffThresholdOverride ?? project.diffThreshold ?? 0.001;
 
     let result: Awaited<ReturnType<typeof runDiff>>;
     let vlmDescription: string | undefined;
@@ -1232,7 +1098,8 @@ async function handleDiffJobInner(
       await deps.storage.put(diffImageKey, result.diffImageBytes, "image/png");
     }
 
-    perViewport.push({
+    checkpoints.push({
+      screenshotId: cs.id,
       viewport: viewportKey,
       passed: result.passed,
       diffPercent: result.diffPercent,
@@ -1255,8 +1122,9 @@ async function handleDiffJobInner(
       })),
       ranTiers: result.ranTiers,
       firstBaseline: false,
+      autoApproved: false,
+      baselineSource: pairing.source,
       vlmDescription,
-      screenshotId: cs.id,
       diffSignature: computeCheckpointSignature(result.regions, bounds),
       ruleElementMap,
     });
@@ -1277,7 +1145,7 @@ async function handleDiffJobInner(
 
       // evaluateCompiled is synchronous CPU work (no I/O), so a plain map is
       // correct — Promise.all here would only add microtask overhead.
-      const perVpResults = perViewport.map((vp, vpIdx) => {
+      const perVpResults = checkpoints.map((vp, vpIdx) => {
         if (vp.regions.length === 0) {
           return {
             decisions: [],
@@ -1378,52 +1246,69 @@ async function handleDiffJobInner(
     rulesResult = null;
   }
 
-  // Aggregate per-viewport results to the single test_runs row.
-  // - status: "unresolved" if any viewport failed (per spec §3.2 the
-  //   diff-worker NEVER writes "failed" — that's reviewer-rejected only).
-  // - diffPercent: MAX across viewports (surfaces the worst viewport).
-  // - pixelMisMatchCount: SUM across viewports.
-  // - diffName: overlay key of the viewport with max diffPercent (or null).
-  // Derive run status + resolution attribution from per-viewport pixel results
-  // and the rule decisions (see rules-aggregation.ts for the exact rules and
-  // its unit tests). Extracted so this branching is testable without a DB.
+  // Per-checkpoint outcome after auto-rules + resolution attribution (see
+  // rules-aggregation.ts for the exact rules and its unit tests). Each
+  // checkpoint's verdict (spec §3): no baseline image → `new`; otherwise
+  // `unresolved` if it still fails after rules, else `passed`. The diff-worker
+  // never writes `failed` (reviewer-rejected only) and never writes the run
+  // status: `recomputeRunStatus` derives it from these verdicts and any active
+  // decisions, so a reviewer's decision survives every re-diff.
+  const statusInputs = checkpoints.map((c) => ({
+    passed: c.passed,
+    regionCount: c.regions.length,
+  }));
+  const failures = checkpointFailures(statusInputs, rulesResult);
   const { aggregateFailed, resolutionSource } = aggregateRuleStatus(
-    perViewport.map((vp) => ({
-      passed: vp.passed,
-      regionCount: vp.regions.length,
-    })),
+    statusInputs,
     rulesResult,
   );
+  const results: CheckpointResult[] = checkpoints.map((c, i) => ({
+    ...c,
+    verdict: c.firstBaseline ? "new" : failures[i] ? "unresolved" : "passed",
+  }));
 
-  const aggregateDiffPercent = perViewport.reduce(
+  // Run aggregates on the single test_runs row:
+  // - diffPercent: MAX across checkpoints (surfaces the worst one); NULL when
+  //   no checkpoint had a baseline to compare against (nothing was compared).
+  // - pixelMisMatchCount: SUM across checkpoints (NULL likewise).
+  // - diffName: overlay key of the checkpoint with max diffPercent (or null).
+  // - baselineSource: tier of the worst checkpoint that resolved a baseline
+  //   (first such checkpoint on ties); null when none resolved one.
+  const compared = results.some((r) => !r.firstBaseline);
+  const aggregateDiffPercent = results.reduce(
     (m, v) => (v.diffPercent > m ? v.diffPercent : m),
     0,
   );
-  const aggregatePixelMismatch = perViewport.reduce(
+  const aggregatePixelMismatch = results.reduce(
     (s, v) => s + v.pixelMismatchCount,
     0,
   );
-  const worst = perViewport.reduce<PerViewportResult | null>(
-    (acc, v) => (acc === null || v.diffPercent > acc.diffPercent ? v : acc),
-    null,
-  );
-  const aggregateDiffName = worst?.diffImageKey ?? null;
-  const aggregateRegions = perViewport.flatMap((v) => v.regions);
-  const aggregateStatus = aggregateFailed ? "unresolved" : "passed";
+  const worstOf = (rs: CheckpointResult[]) =>
+    rs.reduce<CheckpointResult | null>(
+      (acc, v) => (acc === null || v.diffPercent > acc.diffPercent ? v : acc),
+      null,
+    );
+  const aggregateDiffName = worstOf(results)?.diffImageKey ?? null;
+  const runBaselineSource =
+    worstOf(results.filter((r) => r.baselineSource !== null))?.baselineSource ??
+    null;
+  const aggregateRegions = results.flatMap((v) => v.regions);
   const aggregateVlmDescription =
-    perViewport.find((v) => v.vlmDescription)?.vlmDescription ?? null;
+    results.find((v) => v.vlmDescription)?.vlmDescription ?? null;
+  const allAutoApproved = results.every((r) => r.autoApproved);
 
   // ADR-043 §4.2: roll up the most-severe unresolved checkpoint's diff_signature
-  // as the run's primary_signature for inbox grouping. Computed from perViewport
-  // so it includes all checkpoints that completed diffing. sweeper.ts (stale-run
-  // finalizer) has no perViewport data and intentionally leaves primary_signature NULL.
+  // as the run's primary_signature for inbox grouping. Computed from the
+  // checkpoint results so it includes all checkpoints that completed diffing.
+  // sweeper.ts (stale-run finalizer) has no diff data and intentionally leaves
+  // primary_signature NULL.
   // INVARIANT: computed once here, never recomputed — relies on v1.1 having no
   // partial approval (approving any checkpoint flips the whole run to passed, so a
   // run stays wholly unresolved while in the inbox). If partial approval ever lands,
   // primary_signature must be recomputed when a checkpoint's status changes.
   const primarySignature = computePrimarySignature(
-    perViewport.map((v) => ({
-      diffSignature: v.diffSignature ?? null,
+    results.map((v) => ({
+      diffSignature: v.diffSignature,
       // Rank by the SAME regions the signature is built from. Image-first
       // (ADR-047): image (l1_pixel) regions are the primary signal — they feed
       // both the checkpoint signature and this ranking. EXCLUDED_SOURCES excludes
@@ -1445,8 +1330,12 @@ async function handleDiffJobInner(
   // application persistence can run in its OWN transaction afterwards —
   // an audit-write failure must never roll back the committed run result.
   let insertedRegionIds: string[] = [];
+  const candidateById = new Map(candidateShots.map((cs) => [cs.id, cs]));
 
-  await withProjectScope(deps.db, data.projectId, async (tx) => {
+  // The single write of every path (first capture, auto-approve, missing
+  // pair, engine diff). It ends with `recomputeRunStatus`, which locks the run
+  // (FOR NO KEY UPDATE) and derives its status from the verdicts written here.
+  const rollup = await withProjectScope(deps.db, data.projectId, async (tx) => {
     // Idempotency: clear this run's prior diff artifacts before re-deriving
     // them, so a BullMQ retry (attempts:3) OR a re-enqueued diff (e.g. after
     // setIgnoreAreas / addIgnoreAreas / setDiffThresholdOverride) REPLACES the
@@ -1458,14 +1347,14 @@ async function handleDiffJobInner(
       .where(eq(autoRuleApplications.testRunId, data.runId));
     await tx.delete(diffRegions).where(eq(diffRegions.runId, data.runId));
 
+    // No `status` here: after a diff only `recomputeRunStatus` writes it.
     await tx
       .update(testRuns)
       .set({
-        diffPercent: aggregateDiffPercent,
-        pixelMisMatchCount: aggregatePixelMismatch,
+        diffPercent: compared ? aggregateDiffPercent : null,
+        pixelMisMatchCount: compared ? aggregatePixelMismatch : null,
         diffName: aggregateDiffName,
-        status: aggregateStatus,
-        baselineSource: baseline.source,
+        baselineSource: runBaselineSource,
         vlmDescription: aggregateVlmDescription,
         primarySignature,
         resolutionSource,
@@ -1492,15 +1381,33 @@ async function handleDiffJobInner(
       insertedRegionIds = inserted.map((r) => r.id);
     }
 
-    // ADR-042: persist each diffed checkpoint's signature for build-scoped
-    // grouping. Only the success path sets screenshotId; null is written when
-    // the checkpoint had no meaningful regions (→ "ungrouped").
-    for (const v of perViewport) {
-      if (v.screenshotId === undefined) continue;
+    // Per checkpoint: its verdict (spec §3) and its ADR-042 signature for
+    // build-scoped grouping (null when it was not diffed or had no meaningful
+    // regions → "ungrouped"). A re-diff rewrites both.
+    for (const r of results) {
       await tx
         .update(screenshots)
-        .set({ diffSignature: v.diffSignature ?? null })
-        .where(eq(screenshots.id, v.screenshotId));
+        .set({
+          diffSignature: r.diffSignature,
+          verdict: r.verdict,
+          verdictAt: sql`clock_timestamp()`,
+        })
+        .where(eq(screenshots.id, r.screenshotId));
+    }
+
+    // Auto-approved checkpoints become their own variation's baseline;
+    // userId omitted → NULL marks it as auto (the SDK's per-run
+    // `autoApproved` flag reads exactly that).
+    for (const r of results) {
+      if (!r.autoApproved) continue;
+      const cs = candidateById.get(r.screenshotId)!;
+      await recordBaseline(tx, {
+        testVariationId: cs.testVariationId,
+        testRunId: run.id,
+        imageKey: cs.imageKey,
+        runName: run.baselineName ?? run.name,
+        branchName: run.branchName,
+      });
     }
 
     // Synthetic audit rows for dynamic-text OCR decisions (matched OR
@@ -1508,9 +1415,9 @@ async function handleDiffJobInner(
     // distinguish these from real diff regions; severity is always
     // "none" so they're hidden from the default RegionListPanel view.
     const auditValues = dynamicTextAudits.flatMap(
-      ({ viewport, screenshotId, results }) =>
-        results.map((dt) => {
-          const r = allRegions[dt.regionIndex]!;
+      ({ viewport, screenshotId, regions, results: ocrResults }) =>
+        ocrResults.map((dt) => {
+          const r = regions[dt.regionIndex]!;
           const preview = (dt.ocrText ?? "").slice(0, 80);
           return {
             runId: data.runId,
@@ -1532,6 +1439,9 @@ async function handleDiffJobInner(
     if (auditValues.length > 0) {
       await tx.insert(diffRegions).values(auditValues);
     }
+
+    // Last, after every child-row write: derive the run status.
+    return recomputeRunStatus(tx, data.runId);
   });
 
   // ── Auto Rules application persistence (fail-open) ───────────
@@ -1547,7 +1457,7 @@ async function handleDiffJobInner(
       // engineIds enumerate regions in the SAME order as aggregateRegions (and
       // therefore insertedRegionIds), so zipping the two is a stable mapping
       // with no positional drift between separate traversals.
-      const engineIds = perViewport.flatMap((vp, vpIdx) =>
+      const engineIds = results.flatMap((vp, vpIdx) =>
         vp.regions.map((_r, i) => regionEngineId(vpIdx, i)),
       );
       const regionIdMap = new Map<string, string>();
@@ -1636,9 +1546,7 @@ async function handleDiffJobInner(
   }
 
   const durationMs = Date.now() - t0;
-  const ranTiersUnion = Array.from(
-    new Set(perViewport.flatMap((v) => v.ranTiers)),
-  );
+  const ranTiersUnion = Array.from(new Set(results.flatMap((v) => v.ranTiers)));
   await deps.redis.publish(
     `run:${data.runId}:events`,
     JSON.stringify({
@@ -1647,8 +1555,12 @@ async function handleDiffJobInner(
       passed: !aggregateFailed,
       diffPercent: aggregateDiffPercent,
       ranTiers: ranTiersUnion,
-      viewportCount: perViewport.length,
+      viewportCount: results.length,
       durationMs,
+      // True only when EVERY checkpoint was auto-approved / was a first
+      // capture (the shapes the old whole-run short-circuits published).
+      autoApproved: allAutoApproved,
+      firstBaseline: results.every((r) => r.firstBaseline),
     }),
   );
   // T9: emit the terminal `run.completed` event so the integrations
@@ -1665,7 +1577,8 @@ async function handleDiffJobInner(
       type: "run.completed",
       runId: data.runId,
       projectId: data.projectId,
-      status: aggregateStatus,
+      // The derived status after this diff (the recompute's `after`).
+      status: rollup.after,
       diffPercent: aggregateDiffPercent,
       branchName: run.branchName,
       numChanges: aggregateRegions.length,
@@ -1678,7 +1591,7 @@ async function handleDiffJobInner(
     {
       projectId: data.projectId,
       runId: data.runId,
-      status: aggregateStatus,
+      status: rollup.after,
       buildId: run.buildId,
     },
     logger,
@@ -1690,31 +1603,14 @@ async function handleDiffJobInner(
       diffPercent: aggregateDiffPercent,
       pixelMismatchCount: aggregatePixelMismatch,
       ranTiers: ranTiersUnion,
-      baselineSource: baseline.source,
-      viewportCount: perViewport.length,
+      baselineSource: runBaselineSource,
+      viewportCount: results.length,
+      status: rollup.after,
+      autoApproved: allAutoApproved,
       durationMs,
     },
     "diff_completed",
   );
-}
-
-/**
- * ADR-032 auto-approve gate: every candidate viewport's image hash must
- * equal its same-viewport baseline counterpart. Returns false if any
- * viewport has no baseline match or a hash mismatch. Defensive false
- * on empty candidate list.
- */
-function allHashesMatch(
-  candidateShots: Array<{ imageKey: string; viewport: string | null }>,
-  baselineByViewport: Map<string | null, { imageKey: string }>,
-): boolean {
-  if (candidateShots.length === 0) return false;
-  for (const cs of candidateShots) {
-    const bs = baselineByViewport.get(cs.viewport ?? null);
-    if (!bs) return false;
-    if (cs.imageKey !== bs.imageKey) return false;
-  }
-  return true;
 }
 
 const ignoreAreaParseSchema = z
