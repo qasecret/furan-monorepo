@@ -244,4 +244,47 @@ describe("RegionListPanel", () => {
       .find((b) => b.hasAttribute("data-region-id"))!;
     expect(row.getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("a selected row wears the focus-ring token, not the brand ring", () => {
+    useViewerStore.setState({ selectedRegionId: "r2" });
+    render(<RegionListPanel regions={mockRegions} />);
+    const row = document.querySelector('[data-region-id="r2"]') as HTMLElement;
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+    expect(row.classList.contains("ring-ring")).toBe(true);
+    expect(row.classList.contains("ring-brand")).toBe(false);
+    // An unselected row carries no ring at all.
+    const other = document.querySelector(
+      '[data-region-id="r1"]',
+    ) as HTMLElement;
+    expect(other.classList.contains("ring-ring")).toBe(false);
+  });
+
+  it("a selected dynamic-text row wears the focus-ring token too", () => {
+    useViewerStore.setState({ selectedRegionId: "dt1" });
+    render(
+      <RegionListPanel
+        regions={[
+          {
+            id: "dt1",
+            severity: "none",
+            category: "text",
+            bbox: { x: 0, y: 0, width: 50, height: 20 },
+            description: 'Dynamic text matched: "Mar 5, 2026"',
+            source: "dynamic_text",
+            ocrText: "Mar 5, 2026",
+            ocrMatched: true,
+          },
+        ]}
+      />,
+    );
+    fireEvent.click(
+      screen.getByTestId("show-suppressed-toggle").querySelector("input")!,
+    );
+    const row = document.querySelector(
+      '[data-source="dynamic_text"]',
+    ) as HTMLElement;
+    expect(row.getAttribute("aria-pressed")).toBe("true");
+    expect(row.classList.contains("ring-ring")).toBe(true);
+    expect(row.classList.contains("ring-brand")).toBe(false);
+  });
 });
