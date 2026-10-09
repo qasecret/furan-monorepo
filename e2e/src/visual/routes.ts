@@ -6,12 +6,12 @@ import type { VisualFixture } from "./fixture.js";
  * Every dashboard route the visual sweep captures (spec §7.1).
  *
  * `enforceContrast` is the per-route ratchet: `false` → axe `color-contrast`
- * problems are only reported (as test annotations); `true` → they fail the
- * theme's `contrast-enforced` check, which runs once at the end of each theme
- * pass and lists every enforced problem. A problem is an axe violation, or a
- * node axe could not measure because it lies outside the viewport. Each
- * design-foundation slice PR flips its own routes to `true` as it leaves the
- * lint `UNMIGRATED` list, so "migrated" means "AA-verified".
+ * problems are only reported (as test annotations); `true` → they also fail
+ * the single `contrast-enforced` test, which runs once after both theme
+ * passes and lists every enforced problem, per theme. A problem is an axe
+ * violation, or a node axe could not measure because it lies outside the
+ * viewport. Each design-foundation slice PR flips its own routes to `true` as
+ * it leaves the lint `UNMIGRATED` list, so "migrated" means "AA-verified".
  */
 export interface VisualRoute {
   name: string;
@@ -39,7 +39,7 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
   return [
     { name: "landing", path: "/", enforceContrast: false },
     { name: "login", path: "/login", enforceContrast: false },
-    { name: "inbox", path: "/inbox", enforceContrast: false },
+    { name: "inbox", path: "/inbox", enforceContrast: true },
     { name: "analytics", path: "/analytics", enforceContrast: false },
     {
       name: "account-tokens",
@@ -60,12 +60,12 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
     {
       name: "projects",
       path: "/projects",
-      enforceContrast: false,
+      enforceContrast: true,
       as: "editor",
     },
-    { name: "project", path: P, enforceContrast: false },
-    { name: "builds", path: `${P}/builds`, enforceContrast: false },
-    { name: "build", path: `${P}/builds/${f.buildId}`, enforceContrast: false },
+    { name: "project", path: P, enforceContrast: true },
+    { name: "builds", path: `${P}/builds`, enforceContrast: true },
+    { name: "build", path: `${P}/builds/${f.buildId}`, enforceContrast: true },
     { name: "runs", path: `${P}/runs`, enforceContrast: false },
     {
       name: "run",
@@ -133,7 +133,7 @@ export const STATES: ReadonlyArray<VisualState> = [
   {
     name: "state-cmdk",
     path: "/inbox",
-    enforceContrast: false,
+    enforceContrast: true,
     open: async (p) => {
       // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
       // `e.key === "k"`, and "Meta+K" would send key "K".
@@ -144,7 +144,7 @@ export const STATES: ReadonlyArray<VisualState> = [
   {
     name: "state-menu",
     path: "/inbox",
-    enforceContrast: false,
+    enforceContrast: true,
     open: async (p) => {
       const toggle = p.locator('[data-testid="theme-toggle"]');
       await toggle.click();

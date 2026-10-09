@@ -15,10 +15,8 @@ export function NoProject() {
     >
       <Card className="max-w-md text-center">
         <div className="space-y-2 p-2">
-          <h1 className="text-lg font-semibold text-zinc-950 dark:text-white">
-            No project assigned
-          </h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <h1 className="text-lg font-semibold text-fg">No project assigned</h1>
+          <p className="text-sm text-fg-secondary">
             Ask an admin to add you to a project.
           </p>
         </div>

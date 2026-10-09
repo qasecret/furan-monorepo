@@ -26,27 +26,25 @@ export function BuildListItem({ build, projectId, selected }: Props) {
       className={cn(
         "group block border-l-2 px-3 py-2.5 transition-colors",
         meta.border,
-        selected
-          ? "bg-zinc-100 dark:bg-zinc-800/60"
-          : "hover:bg-zinc-50 dark:hover:bg-zinc-900/40",
+        selected ? "bg-hover" : "hover:bg-hover/50",
       )}
     >
       <div className="flex items-center gap-2">
         <span
           className={cn(
-            "min-w-0 flex-1 truncate text-sm font-medium text-zinc-900 transition-colors dark:text-zinc-100",
+            "min-w-0 flex-1 truncate text-sm font-medium text-fg transition-colors",
             selected ? "text-brand-text" : "group-hover:text-brand-text",
           )}
         >
           {buildDisplayName(build)}
         </span>
         {build.branchName && (
-          <span className="shrink-0 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+          <span className="shrink-0 truncate font-mono text-2xs text-fg-muted">
             {build.branchName}
           </span>
         )}
       </div>
-      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+      <div className="mt-1 text-xs tabular-nums text-fg-muted">
         {formatBatchDateTime(build.createdAt)}
       </div>
       <div className={cn("mt-0.5 text-xs font-medium", meta.text)}>

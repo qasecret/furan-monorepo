@@ -69,7 +69,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
           data-testid="properties-filter-input"
         />
         {draft && filteredPairs.length > 0 && (
-          <div className="absolute z-10 mt-1 w-full rounded-md border border-zinc-200 bg-white shadow-lg max-h-60 overflow-auto dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="absolute z-10 mt-1 w-full rounded-overlay bg-overlay shadow-overlay max-h-60 overflow-auto">
             {filteredPairs.slice(0, 20).map((p) => (
               <button
                 key={`${p.key}=${p.value}`}
@@ -77,7 +77,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
                   add(p.key, p.value);
                   setDraft("");
                 }}
-                className="block w-full text-left px-2 py-1 text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 transition-colors dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-white"
+                className="block w-full text-left px-2 py-1 text-sm text-fg-secondary hover:bg-overlay-hover hover:text-fg transition-colors"
                 data-testid={`property-suggestion-${p.key}-${p.value}`}
               >
                 {p.key}={p.value}
@@ -90,7 +90,7 @@ export function PropertiesFilter({ projectId, value, onChange }: Props) {
         <button
           type="button"
           onClick={() => onChange({})}
-          className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline px-2 py-1 transition-colors dark:text-zinc-400 dark:hover:text-white"
+          className="text-sm text-fg-secondary hover:text-fg hover:underline px-2 py-1 transition-colors"
           data-testid="properties-filter-clear"
         >
           Clear

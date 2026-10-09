@@ -39,7 +39,7 @@ export function LatestBuildRedirect({ projectId }: { projectId: string }) {
   }
   if (error) {
     return (
-      <p className="p-4 text-sm text-red-600 dark:text-red-400">
+      <p className="p-4 text-sm text-destructive">
         Couldn’t load builds: {error.message}
       </p>
     );

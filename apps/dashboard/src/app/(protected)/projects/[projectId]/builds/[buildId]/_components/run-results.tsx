@@ -120,8 +120,8 @@ export function RunResults({
 
   if (q.isLoading) {
     return (
-      <div className="border-b border-zinc-100 px-4 py-3.5 dark:border-zinc-900">
-        <div className="h-5 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+      <div className="border-b border-edge-subtle px-4 py-3.5">
+        <div className="h-5 animate-pulse rounded bg-hover" />
       </div>
     );
   }
@@ -197,7 +197,7 @@ function ResultRow({
   const hasSteps = checkpoints.length > 0;
   const [open, setOpen] = useState(true);
   return (
-    <div className="border-b border-zinc-100 last:border-b-0 dark:border-zinc-900">
+    <div className="border-b border-edge-subtle last:border-b-0">
       <button
         type="button"
         data-testid={`result-row-${runId}`}
@@ -206,19 +206,19 @@ function ResultRow({
         className={cn(
           RESULT_GRID,
           "w-full px-4 py-3 text-left transition-colors",
-          hasSteps && "hover:bg-zinc-50 dark:hover:bg-zinc-900/40",
+          hasSteps && "hover:bg-hover",
         )}
       >
         <span className="flex items-center gap-1.5">
           {hasSteps ? (
             open ? (
               <ChevronDown
-                className="h-4 w-4 shrink-0 text-zinc-400"
+                className="h-4 w-4 shrink-0 text-fg-muted"
                 aria-hidden
               />
             ) : (
               <ChevronRight
-                className="h-4 w-4 shrink-0 text-zinc-400"
+                className="h-4 w-4 shrink-0 text-fg-muted"
                 aria-hidden
               />
             )
@@ -233,31 +233,23 @@ function ResultRow({
             {sm.label}
           </span>
         </span>
-        <span className="inline-flex items-center gap-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
+        <span className="inline-flex items-center gap-1 truncate text-xs text-fg-secondary">
           <Server className="h-3.5 w-3.5 shrink-0" aria-hidden />
           Self-hosted
         </span>
-        <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
-          {testName}
-        </span>
-        <span className="truncate font-mono text-xs text-zinc-600 dark:text-zinc-400">
+        <span className="truncate text-sm font-medium text-fg">{testName}</span>
+        <span className="truncate font-mono text-xs text-fg-secondary">
           {branchName ?? "—"}
         </span>
-        <span className="truncate text-xs text-zinc-600 dark:text-zinc-400">
-          {os ?? "—"}
-        </span>
-        <span className="truncate text-xs text-zinc-600 dark:text-zinc-400">
-          {browser}
-        </span>
-        <span className="truncate text-xs text-zinc-600 dark:text-zinc-400">
-          {viewport}
-        </span>
+        <span className="truncate text-xs text-fg-secondary">{os ?? "—"}</span>
+        <span className="truncate text-xs text-fg-secondary">{browser}</span>
+        <span className="truncate text-xs text-fg-secondary">{viewport}</span>
       </button>
       {hasSteps && open && (
         <div className="px-4 pb-4">
           <div
             className={cn(
-              "rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-900/30",
+              "rounded-lg border border-edge bg-sunken p-4",
               view === "grid"
                 ? "flex flex-wrap gap-4"
                 : "flex gap-4 overflow-x-auto",

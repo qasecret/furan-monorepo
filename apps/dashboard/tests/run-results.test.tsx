@@ -102,6 +102,23 @@ describe("RunResults", () => {
     );
   });
 
+  test("a step card names its status, not just its accent colour", () => {
+    // Aborted and unresolved accents are near-identical yellows, so each card
+    // carries the status icon with an accessible label.
+    renderRun([
+      cp({ id: "cA", status: "aborted", os: "linux" }),
+      cp({ id: "cU", status: "unresolved", os: "windows" }),
+    ]);
+    const aborted = screen.getByTestId("step-status-cA");
+    const unresolved = screen.getByTestId("step-status-cU");
+    expect(aborted.textContent).toBe("Aborted");
+    expect(unresolved.textContent).toBe("Unresolved");
+    expect(aborted.querySelector("svg")).not.toBeNull();
+    expect(aborted.getAttribute("title")).not.toBe(
+      unresolved.getAttribute("title"),
+    );
+  });
+
   test("worst status wins for the env row (a failed step makes the row failed)", () => {
     renderRun([
       cp({ id: "c1", status: "passed" }),

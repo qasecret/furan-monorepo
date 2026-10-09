@@ -27,15 +27,13 @@ export default function ProtectedError({
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
       <div className="space-y-1">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-          Something went wrong
-        </h2>
-        <p className="max-w-md text-sm text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-lg font-semibold text-fg">Something went wrong</h2>
+        <p className="max-w-md text-sm text-fg-muted">
           This view failed to load. You can retry, or reload the page if the
           problem persists.
         </p>
         {error.digest ? (
-          <p className="pt-1 font-mono text-xs text-zinc-400 dark:text-zinc-600">
+          <p className="pt-1 font-mono text-xs tabular-nums text-fg-muted">
             ref: {error.digest}
           </p>
         ) : null}

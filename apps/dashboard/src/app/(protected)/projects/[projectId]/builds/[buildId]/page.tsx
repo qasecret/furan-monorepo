@@ -30,10 +30,10 @@ export default async function BuildDetailPage({
   if (project.status === 403 || !project.data) {
     return (
       <Card>
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-white">
+        <h1 className="text-xl font-semibold text-fg">
           403 — not a project member
         </h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-fg-secondary">
           You need to be added to this project to view its builds.
         </p>
       </Card>

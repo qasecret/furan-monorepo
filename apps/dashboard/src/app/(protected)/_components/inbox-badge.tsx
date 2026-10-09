@@ -22,7 +22,7 @@ export function InboxBadge() {
   if (total === 0) return null;
   return (
     <span
-      className="ml-auto rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+      className="ml-auto rounded-full bg-edge px-1.5 py-0.5 text-2xs font-medium tabular-nums text-fg-secondary"
       aria-label={`${total} open runs`}
     >
       <span aria-hidden="true">{total > 99 ? "99+" : total}</span>

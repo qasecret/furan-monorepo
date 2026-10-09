@@ -486,7 +486,28 @@ test.describe.serial("visual sweep @visual", () => {
     });
   }
 
-  // Its own test so a `before` run on a pre-system-theme `main` fails only here.
+  // The enforceContrast ratchet, checked ONCE per theme with that theme's
+  // whole list, instead of failing at the first offending route: soft
+  // assertions in one test, after both theme passes. A failure inside a serial
+  // suite skips every test after it, so this must come after every shot (a
+  // failing check after the light pass would silently drop the whole dark
+  // pass) but BEFORE the system-theme test, which is expected to fail on a
+  // pre-system-theme `main` and would otherwise skip this check there.
+  test("contrast-enforced", () => {
+    for (const theme of THEMES) {
+      const found = enforced[theme].map(formatProblem);
+      expect
+        .soft(
+          found,
+          `${theme}: ${found.length} colour-contrast problem(s) on enforceContrast shots (route · rule · selector · ratio)`,
+        )
+        .toEqual([]);
+    }
+  });
+
+  // Its own test, and the last one, so a `before` run on a pre-system-theme
+  // `main` fails only here and skips nothing. (A failing `contrast-enforced`
+  // skips this one in turn; the contrast problems come first.)
   test("system theme follows prefers-color-scheme", async ({ browser }) => {
     for (const colorScheme of ["dark", "light"] as const) {
       const ctx = await browser.newContext({ viewport: VIEWPORT, colorScheme });
@@ -502,23 +523,6 @@ test.describe.serial("visual sweep @visual", () => {
       } finally {
         await ctx.close();
       }
-    }
-  });
-
-  // The enforceContrast ratchet, checked ONCE per theme with that theme's
-  // whole list, instead of failing at the first offending route. It runs
-  // last, as soft assertions in one test: a failure inside a serial suite
-  // skips every test after it, so a failing check at the end of the light
-  // pass would silently drop the entire dark pass.
-  test("contrast-enforced", () => {
-    for (const theme of THEMES) {
-      const found = enforced[theme].map(formatProblem);
-      expect
-        .soft(
-          found,
-          `${theme}: ${found.length} colour-contrast problem(s) on enforceContrast shots (route · rule · selector · ratio)`,
-        )
-        .toEqual([]);
     }
   });
 });

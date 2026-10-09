@@ -43,7 +43,7 @@ interface Props {
 function Segment({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+      <span className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
         {label}
       </span>
       <div className="flex items-center gap-1">{children}</div>
@@ -72,10 +72,10 @@ function IconButton({
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        "inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors",
+        "inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors focus-ring",
         active
           ? "border-brand/40 bg-brand/10 text-brand-text"
-          : "border-transparent text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200",
+          : "border-transparent text-fg-muted hover:bg-hover hover:text-fg",
       )}
     >
       {children}
@@ -84,7 +84,7 @@ function IconButton({
 }
 
 function Divider() {
-  return <div className="h-8 w-px self-end bg-zinc-200 dark:bg-zinc-800" />;
+  return <div className="h-8 w-px self-end bg-edge" />;
 }
 
 /**
@@ -104,7 +104,7 @@ export function ContextualToolbar({
   isApproving,
 }: Props) {
   return (
-    <div className="flex flex-wrap items-end gap-4 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+    <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
       <Segment label="View">
         <IconButton
           active={view === "list"}
@@ -139,7 +139,7 @@ export function ContextualToolbar({
               type="button"
               aria-label="Filter tests"
               data-testid="batch-filter-trigger"
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-fg-secondary transition-colors hover:bg-hover hover:text-fg focus-ring"
             >
               <ListFilter className="h-4 w-4" aria-hidden />
               {CHIP_LABEL[chip]}

@@ -92,7 +92,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
   if (buildQ.isError && !build) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <p className="text-sm text-red-600 dark:text-red-400">
+        <p className="text-sm text-destructive">
           Couldn’t load this build: {buildQ.error?.message ?? "unknown error"}
         </p>
       </div>
@@ -153,11 +153,11 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
         {list.isLoading ? (
           <RowSkeletons />
         ) : list.isError ? (
-          <p className="p-8 text-center text-sm text-red-600 dark:text-red-400">
+          <p className="p-8 text-center text-sm text-destructive">
             Error loading tests: {list.error?.message}
           </p>
         ) : items.length === 0 ? (
-          <p className="p-10 text-center text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="p-10 text-center text-sm text-fg-secondary">
             No tests{" "}
             {chip === "needs-review"
               ? "need review"
@@ -202,7 +202,7 @@ function ResultsColumnHeader() {
     <div
       className={cn(
         RESULT_GRID,
-        "sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50/80 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-zinc-500 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-500",
+        "sticky top-0 z-10 border-b border-edge bg-sunken/80 px-4 py-2 text-2xs font-medium uppercase tracking-wide text-fg-muted backdrop-blur",
       )}
     >
       <span>Status</span>
@@ -220,10 +220,7 @@ function RowSkeletons() {
   return (
     <div aria-busy="true">
       {Array.from({ length: 6 }).map((_, i) => (
-        <div
-          key={i}
-          className="border-b border-zinc-100 px-4 py-3.5 dark:border-zinc-900"
-        >
+        <div key={i} className="border-b border-edge-subtle px-4 py-3.5">
           <Skeleton className="h-5 w-full rounded" />
         </div>
       ))}

@@ -76,23 +76,23 @@ export function BuildsListPanel({ projectId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-        <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+      <div className="flex items-center justify-between gap-2 border-b border-edge bg-sunken px-3 py-2.5">
+        <span className="text-2xs font-medium uppercase tracking-wide text-fg-muted">
           Recent batch runs
         </span>
         {items.length > 0 && (
-          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <span className="rounded-full bg-hover px-1.5 py-0.5 text-2xs font-medium tabular-nums text-fg-muted">
             {items.length}
           </span>
         )}
       </div>
-      <div className="flex items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+      <div className="flex items-center gap-1 border-b border-edge px-2 py-1.5">
         <button
           type="button"
           onClick={() => void refetch?.()}
           aria-label="Refresh batch runs"
           data-testid="builds-refresh"
-          className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+          className="rounded p-1.5 text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-ring"
         >
           <RefreshCw
             className={cn("h-4 w-4", isFetching && "animate-spin")}
@@ -106,10 +106,10 @@ export function BuildsListPanel({ projectId }: Props) {
           aria-pressed={showFilter}
           data-testid="builds-filter-toggle"
           className={cn(
-            "relative rounded p-1.5 transition-colors",
+            "relative rounded p-1.5 transition-colors focus-ring",
             showFilter
-              ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white"
-              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white",
+              ? "bg-hover text-fg"
+              : "text-fg-muted hover:bg-hover hover:text-fg",
           )}
         >
           <Filter className="h-4 w-4" aria-hidden />
@@ -119,7 +119,7 @@ export function BuildsListPanel({ projectId }: Props) {
         </button>
       </div>
       {showFilter ? (
-        <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
+        <div className="border-b border-edge p-2">
           <PropertiesFilter
             projectId={projectId}
             value={properties}
@@ -129,11 +129,9 @@ export function BuildsListPanel({ projectId }: Props) {
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto" data-testid="builds-list">
         {isLoading && !data ? (
-          <p className="p-3 text-sm text-zinc-500">Loading…</p>
+          <p className="p-3 text-sm text-fg-muted">Loading…</p>
         ) : error ? (
-          <p className="p-3 text-sm text-red-600 dark:text-red-400">
-            Error: {error.message}
-          </p>
+          <p className="p-3 text-sm text-destructive">Error: {error.message}</p>
         ) : items.length === 0 ? (
           <div className="p-3">
             <EmptyState
@@ -159,7 +157,7 @@ export function BuildsListPanel({ projectId }: Props) {
             />
           </div>
         ) : (
-          <div className="divide-y divide-zinc-100 dark:divide-zinc-900">
+          <div className="divide-y divide-edge-subtle">
             {items.map((b) => (
               <BuildListItem
                 key={b.id}
@@ -172,7 +170,7 @@ export function BuildsListPanel({ projectId }: Props) {
         )}
       </div>
       {data?.nextCursor && items.length > 0 && (
-        <div className="border-t border-zinc-200 p-2 dark:border-zinc-800">
+        <div className="border-t border-edge p-2">
           <Button
             variant="secondary"
             onClick={onLoadMore}

@@ -17,6 +17,7 @@ import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
+import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type BuildRow = RouterOutputs["builds"]["list"]["items"][number];
@@ -119,7 +120,7 @@ export function InboxPage({ initialStatus }: Props) {
   if (!currentProjectId) {
     return (
       <div
-        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-zinc-500"
+        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-fg-muted"
         data-testid="inbox-no-project"
       >
         No project assigned. Ask an admin to add you to a project.
@@ -137,7 +138,7 @@ export function InboxPage({ initialStatus }: Props) {
             <>
               <div className="relative">
                 <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted"
                   aria-hidden
                 />
                 <Input
@@ -170,8 +171,8 @@ export function InboxPage({ initialStatus }: Props) {
           id="inbox-status-filter"
           className="flex flex-wrap items-center gap-2 text-sm"
         >
-          <Filter className="h-4 w-4 text-zinc-400" aria-hidden />
-          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <Filter className="h-4 w-4 text-fg-muted" aria-hidden />
+          <span className="mr-1 text-xs font-medium uppercase tracking-wide text-fg-muted">
             Status:
           </span>
           {FILTERS.map((f) => {
@@ -185,8 +186,8 @@ export function InboxPage({ initialStatus }: Props) {
                 className={cn(
                   "rounded-full px-3 py-1 font-medium transition-colors",
                   active
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
+                    ? "bg-fg text-canvas"
+                    : "text-fg-secondary hover:bg-hover",
                 )}
               >
                 {f.label}
@@ -197,11 +198,11 @@ export function InboxPage({ initialStatus }: Props) {
 
         <div
           id="inbox-batches-table"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-raised shadow-raised"
         >
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full text-left text-sm">
-              <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <thead className="sticky top-0 z-10 border-b border-edge bg-sunken text-2xs uppercase tracking-wide text-fg-muted">
                 <tr>
                   <th className="px-5 py-3 font-medium">Status</th>
                   <th className="px-5 py-3 font-medium">Batch</th>
@@ -210,7 +211,7 @@ export function InboxPage({ initialStatus }: Props) {
                   <th className="px-5 py-3 font-medium">Started</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              <tbody className="divide-y divide-edge-subtle">
                 {list.isLoading ? (
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i}>
@@ -223,7 +224,7 @@ export function InboxPage({ initialStatus }: Props) {
                   <tr>
                     <td
                       colSpan={5}
-                      className="px-5 py-16 text-center text-sm text-zinc-500"
+                      className="px-5 py-16 text-center text-sm text-fg-muted"
                     >
                       {search
                         ? `No batches match "${search}".`
@@ -238,7 +239,7 @@ export function InboxPage({ initialStatus }: Props) {
                       <tr
                         key={b.id}
                         onClick={() => router.push(href)}
-                        className="group cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+                        className="group cursor-pointer transition-colors hover:bg-hover"
                         data-testid={`inbox-batch-row-${b.id}`}
                       >
                         <td className="px-5 py-3.5 align-middle">
@@ -255,24 +256,29 @@ export function InboxPage({ initialStatus }: Props) {
                           <Link
                             href={href}
                             onClick={(e) => e.stopPropagation()}
-                            className="font-medium text-zinc-950 transition-colors group-hover:text-brand-text dark:text-white"
+                            className="font-medium text-fg transition-colors group-hover:text-brand-text"
                           >
                             {buildDisplayName(b)}
                           </Link>
                         </td>
-                        <td className="px-5 py-3.5 align-middle font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                        <td className="px-5 py-3.5 align-middle font-mono text-xs text-fg-muted">
                           {b.branchName ?? "—"}
                         </td>
-                        <td className="px-5 py-3.5 align-middle tabular-nums text-zinc-600 dark:text-zinc-400">
+                        <td className="px-5 py-3.5 align-middle tabular-nums text-fg-secondary">
                           {b.runCount}
                           {b.unresolvedCount > 0 && (
-                            <span className="font-medium text-red-500">
+                            <span
+                              className={cn(
+                                "font-medium",
+                                statusStyle("unresolved").text,
+                              )}
+                            >
                               {" "}
                               ({b.unresolvedCount})
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-3.5 align-middle whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                        <td className="px-5 py-3.5 align-middle whitespace-nowrap tabular-nums text-fg-muted">
                           {formatBatchDateTime(b.createdAt)}
                         </td>
                       </tr>
@@ -282,7 +288,7 @@ export function InboxPage({ initialStatus }: Props) {
               </tbody>
             </table>
             {list.data?.nextCursor && !search && (
-              <div className="flex justify-center border-t border-zinc-200 p-3 dark:border-zinc-800">
+              <div className="flex justify-center border-t border-edge p-3">
                 <Button
                   variant="secondary"
                   onClick={loadMore}

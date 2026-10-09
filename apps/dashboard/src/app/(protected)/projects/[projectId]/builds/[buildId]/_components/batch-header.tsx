@@ -28,18 +28,29 @@ function formatDuration(startIso: string, endIso: string): string {
   return `${pad(h)}:${pad(m)}:${pad(secs)}`;
 }
 
-/** One labelled meta group — "Tests: 1 in total | 0 unresolved | 1 new". */
-function MetaGroup({ label, parts }: { label: string; parts: string[] }) {
+/**
+ * One labelled meta group — "Tests: 1 in total | 0 unresolved | 1 new".
+ * `data` sets the values in the data face (mono, tabular), e.g. a duration.
+ */
+function MetaGroup({
+  label,
+  parts,
+  data = false,
+}: {
+  label: string;
+  parts: string[];
+  data?: boolean;
+}) {
   return (
     <span className="whitespace-nowrap text-xs">
-      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
-        {label}:
-      </span>{" "}
-      <span className="text-zinc-500 dark:text-zinc-400">
+      <span className="font-semibold text-fg">{label}:</span>{" "}
+      <span className={cn("tabular-nums text-fg-muted", data && "font-mono")}>
         {parts.map((p, i) => (
           <span key={i}>
             {i > 0 && (
-              <span className="px-1.5 text-zinc-300 dark:text-zinc-600">|</span>
+              <span aria-hidden className="px-1.5 text-edge-strong">
+                |
+              </span>
             )}
             {p}
           </span>
@@ -51,7 +62,7 @@ function MetaGroup({ label, parts }: { label: string; parts: string[] }) {
 
 function Bullet() {
   return (
-    <span aria-hidden className="text-zinc-300 dark:text-zinc-600">
+    <span aria-hidden className="text-edge-strong">
       •
     </span>
   );
@@ -61,10 +72,7 @@ export function BatchHeader({ build }: Props) {
   const status = statusStyle(build.aggregateStatus);
 
   return (
-    <header
-      id="batch-header"
-      className="border-b border-zinc-200 px-4 py-3.5 dark:border-zinc-800"
-    >
+    <header id="batch-header" className="border-b border-edge px-4 py-3.5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 gap-3">
           <span
@@ -74,8 +82,8 @@ export function BatchHeader({ build }: Props) {
           <div className="min-w-0">
             <h1 className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold tracking-tight">
               <span className={status.text}>{status.label}</span>
-              <span className="text-zinc-950 dark:text-white">
-                <span className="font-normal text-zinc-500 dark:text-zinc-400">
+              <span className="text-fg">
+                <span className="font-normal text-fg-muted">
                   Test results of batch:{" "}
                 </span>
                 {buildDisplayName(build)}
@@ -103,6 +111,7 @@ export function BatchHeader({ build }: Props) {
               <MetaGroup
                 label="Duration"
                 parts={[formatDuration(build.createdAt, build.updatedAt)]}
+                data
               />
               <Bullet />
               <MetaGroup label="Run by" parts={[build.runByName ?? "—"]} />
