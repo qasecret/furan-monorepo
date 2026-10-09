@@ -95,7 +95,7 @@ export function RegionItem({
         className={cn(
           "w-full text-left p-2 rounded-md border border-dashed transition-colors flex items-center gap-2 focus-ring",
           isSelected
-            ? "bg-hover ring-2 ring-brand border-edge-strong"
+            ? "bg-hover ring-2 ring-ring border-edge-strong"
             : "border-edge hover:bg-hover/50 hover:border-edge-strong",
           matched ? "" : "border-amber-500/50",
         )}
@@ -134,7 +134,7 @@ export function RegionItem({
       className={cn(
         "w-full text-left p-2 rounded-md border transition-colors flex flex-col gap-1 focus-ring",
         isSelected
-          ? "bg-hover ring-2 ring-brand border-edge-strong"
+          ? "bg-hover ring-2 ring-ring border-edge-strong"
           : "border-edge hover:bg-hover/50 hover:border-edge-strong",
       )}
       data-region-id={region.id}
