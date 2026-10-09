@@ -6,6 +6,7 @@ import { useViewerStore } from "./useViewerStore";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
+import { SEVERITY_STYLE } from "@/lib/severity-style";
 
 const SEVERITY_LABEL: Record<Severity, string> = {
   breaking: "Breaking",
@@ -13,41 +14,6 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   minor: "Minor",
   cosmetic: "Cosmetic",
   none: "None",
-};
-
-// Shape varies per severity (a11y: don't rely on color alone). Severity is not
-// a run status, so these are plain hue chips: an opaque pastel -100 fill with
-// -800 text, the same in both themes (a hue tint can't carry AA text in dark).
-// `variant="outline"` keeps the Badge primitive's border styling consistent.
-// `none` is neutral since there's no hue for the absence-of-severity state;
-// the dotted border carries the a11y cue.
-const SEVERITY_STYLE: Record<
-  Severity,
-  {
-    variant: "default" | "destructive" | "secondary" | "outline";
-    className: string;
-  }
-> = {
-  breaking: {
-    variant: "outline",
-    className: "border-red-300 bg-red-100 text-red-800",
-  },
-  major: {
-    variant: "outline",
-    className: "border-orange-300 bg-orange-100 text-orange-800",
-  },
-  minor: {
-    variant: "outline",
-    className: "border-yellow-300 bg-yellow-100 text-yellow-800",
-  },
-  cosmetic: {
-    variant: "outline",
-    className: "border-blue-300 border-dashed bg-blue-100 text-blue-800",
-  },
-  none: {
-    variant: "outline",
-    className: "border-edge border-dotted bg-hover text-fg-secondary",
-  },
 };
 
 function asSeverity(v: string): Severity {
@@ -79,7 +45,6 @@ export function RegionItem({
   const count = ids.length;
   const isSelected = selectedId != null && ids.includes(selectedId);
   const sev = asSeverity(region.severity);
-  const style = SEVERITY_STYLE[sev];
 
   // Dynamic-text audit rows get a smaller, distinct card: the badge is the
   // match outcome, and we surface the OCR text inline so reviewers can audit
@@ -140,9 +105,11 @@ export function RegionItem({
       data-region-id={region.id}
     >
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Chip colours + border style per severity: lib/severity-style.ts.
+            `outline` keeps the Badge primitive's border styling. */}
         <Badge
-          variant={style.variant}
-          className={style.className}
+          variant="outline"
+          className={SEVERITY_STYLE[sev]}
           data-severity={sev}
         >
           {SEVERITY_LABEL[sev]}

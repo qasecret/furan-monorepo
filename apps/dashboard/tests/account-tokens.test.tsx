@@ -112,6 +112,29 @@ describe("TokensTable", () => {
     expect(row2.textContent).toContain("Never");
   });
 
+  // The row highlights with bg-hover; a tile filled with the same token would
+  // vanish into the row on hover, so it sits on the edge surface instead.
+  test("row icon tile stays distinct from the row's hover fill", () => {
+    setupFetch();
+    render(
+      <TokensTable
+        initialTokens={[
+          {
+            id: "tok-1",
+            label: "CI",
+            createdAt: new Date().toISOString(),
+            lastUsedAt: null,
+          },
+        ]}
+      />,
+    );
+    const tile = screen
+      .getByTestId("token-row-tok-1")
+      .querySelector("svg")!.parentElement!;
+    expect(tile.classList.contains("bg-edge")).toBe(true);
+    expect(tile.classList.contains("bg-hover")).toBe(false);
+  });
+
   test("renders an empty state when there are no tokens", () => {
     setupFetch();
     render(<TokensTable initialTokens={[]} />);

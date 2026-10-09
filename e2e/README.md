@@ -46,13 +46,13 @@ their content: the PNG and axe cover the whole page, not just the first
 900px. It fails the route if any part of the page is still clipped
 afterwards, so a dashboard layout change can't quietly shrink the shot.
 
-It is the before/after safety net for the design-foundation slice PRs. A
-contrast problem is an axe violation, or a node axe could not measure because
-it lies outside the viewport. Problems are reported as test annotations (also
-written to `visual-out/<label>/color-contrast.json`); on routes and states
-with `enforceContrast: true` in `src/visual/routes.ts` they are also
-collected, and the `contrast-enforced` test, which runs after both theme
-passes, fails once per theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
+It is the before/after safety net for dashboard UI changes. A contrast
+problem is an axe violation, or a node axe could not measure because it lies
+outside the viewport. Every route and state is checked, in both themes:
+problems are reported as test annotations (also written to
+`visual-out/<label>/color-contrast.json`) and collected, and the
+`contrast-enforced` test, which runs after both theme passes, fails once per
+theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
 (hiding Next's dev overlay also hides its error dialog). A route answering
 4xx/5xx fails; a route that redirects elsewhere is annotated
 `landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
@@ -61,7 +61,12 @@ session.
 
 The dashboard runs as a **dev server** rather than the stack's dashboard image:
 the image bakes `localhost:3000` for client-side calls, so the diff viewer's
-images would not load on the remapped ports.
+images would not load on the remapped ports. A dev server compiles each route
+on its first visit, so `beforeAll` visits every static route once before the
+theme passes, and a navigation that times out (90s) is retried once
+(annotated `nav-retry`). Every browser context sets
+`reducedMotion: "reduce"`, so the diff canvas draws its region ring static
+and the `run` and `diff` shots come out byte-identical from run to run.
 
 ```bash
 pnpm --filter @furan/e2e e2e:up
@@ -93,11 +98,27 @@ E2E_API_URL=http://localhost:<api> E2E_DASH_URL=http://localhost:<dash-on-branch
   pnpm --filter @furan/e2e exec playwright test --project=visual
 ```
 
-**Passing.** The `system theme follows prefers-color-scheme` test fails on any
-checkout from before the design foundation (PR 1), which had no system theme —
-expected for a `before` run on such a `main`. It runs last, after
-`contrast-enforced`, so that failure skips nothing. There, "pass" means every
-screenshot test passed.
+**Passing.** On a dashboard with the design foundation (PR 1 onward), every
+test must pass. A `before` run against an older `main` is the exception: that
+dashboard had no system theme, so `system theme follows prefers-color-scheme`
+fails, and its screens predate the AA token palette, so `contrast-enforced`
+can fail too (which then skips the system-theme test). Both run last, after
+every screenshot test, so neither failure skips a shot. For such a run, "pass"
+means every screenshot test passed.
+
+**What the sweep does not cover.** A green sweep says nothing about:
+
+- **The project, builds, build and runs screens as such.** `project`,
+  `builds`, `build` and `runs` all redirect to the fixture's batch page, so
+  those four shots are the same screen.
+- **States the fixture never renders:** multi-checkpoint step arrows, empty
+  and error states, a selected region, menus opened from the keyboard,
+  settings tabs other than the default, and toasts.
+- **Contrast axe cannot decide.** axe `incomplete` results (text over an
+  image or gradient, overlapped or pseudo-element backgrounds, …) are counted
+  by reason (`messageKey`) per shot in `color-contrast.json` and annotated
+  `color-contrast-incomplete`. They are reported, not enforced: only
+  `outsideViewport` counts toward `contrast-enforced`.
 
 **Reviewing in Furan:**
 

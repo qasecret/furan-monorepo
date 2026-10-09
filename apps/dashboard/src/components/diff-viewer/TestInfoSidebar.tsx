@@ -3,13 +3,15 @@
 import { History, Info, MessageSquare } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { DiffRegion } from "./layers/regionTypes";
+import type { DiffRegion, Severity } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
 import { useViewerStore } from "./useViewerStore";
 
+import { aggregateSeverity } from "@/components/aggregate-severity-pill";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
+import { SEVERITY_STYLE } from "@/lib/severity-style";
 import { trpc } from "@/lib/trpc";
 
 type Tab = "info" | "history" | "comments";
@@ -55,40 +57,17 @@ function val(value: string | null | undefined): string {
   return value && value.trim() ? value : "—";
 }
 
-const SEV_RANK: Record<string, number> = {
-  breaking: 4,
-  major: 3,
-  minor: 2,
-  cosmetic: 1,
-  none: 0,
-};
-const SEV_LABEL: Record<string, string> = {
+const SEV_LABEL: Record<Severity, string> = {
   breaking: "Breaking",
   major: "Major",
   minor: "Minor",
   cosmetic: "Cosmetic",
   none: "None",
 };
-// Worst-severity chip. Hues mirror RegionItem's SEVERITY_STYLE badges
-// (breaking red → major orange → minor yellow → cosmetic blue → none green)
-// so the card speaks the same colour language as the region rows below.
-// Severity is not a run status, so it is the same opaque pastel chip in both
-// themes: a bare hue text shade can't reach AA on both a light and a dark card.
-const SEV_COLOR: Record<string, string> = {
-  breaking: "rounded-md bg-red-100 px-1.5 text-red-800",
-  major: "rounded-md bg-orange-100 px-1.5 text-orange-800",
-  minor: "rounded-md bg-yellow-100 px-1.5 text-yellow-800",
-  cosmetic: "rounded-md bg-blue-100 px-1.5 text-blue-800",
-  none: "rounded-md bg-emerald-100 px-1.5 text-emerald-800",
-};
 
-function worstSeverity(regions: DiffRegion[]): string {
-  let worst = "none";
-  for (const r of regions) {
-    if ((SEV_RANK[r.severity] ?? 0) > (SEV_RANK[worst] ?? 0))
-      worst = r.severity;
-  }
-  return worst;
+/** The highest severity among the regions; `none` when there is nothing to flag. */
+function worstSeverity(regions: DiffRegion[]): Severity {
+  return aggregateSeverity(regions)?.severity ?? "none";
 }
 
 /** A single summary stat card (value over a small uppercase label). */
@@ -145,10 +124,12 @@ function StatCards({
           regions.length ? "font-mono text-fg" : "font-mono text-fg-muted"
         }
       />
+      {/* The same severity chip as the region badges and the run header's
+          aggregate pill (lib/severity-style.ts). */}
       <StatCard
-        value={SEV_LABEL[sev] ?? "None"}
+        value={SEV_LABEL[sev]}
         label="Severity"
-        valueClass={SEV_COLOR[sev] ?? SEV_COLOR.none}
+        valueClass={cn("rounded-md border px-1.5", SEVERITY_STYLE[sev])}
       />
     </div>
   );

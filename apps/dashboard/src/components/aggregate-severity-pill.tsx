@@ -1,6 +1,8 @@
 "use client";
 
-type Severity = "breaking" | "major" | "minor" | "cosmetic" | "none";
+import type { Severity } from "@/components/diff-viewer/layers/regionTypes";
+import { cn } from "@/lib/cn";
+import { SEVERITY_STYLE } from "@/lib/severity-style";
 
 const SEVERITY_RANK: Record<Severity, number> = {
   breaking: 4,
@@ -47,30 +49,13 @@ function isSeverity(s: string): s is Severity {
   );
 }
 
-// Same chip classes as the viewer's severity badges (RegionItem): severity
-// isn't a run status, so each keeps its hue as an opaque pastel `-100` chip
-// with `-800` text in both themes (Ruling R18) — AA on the chip itself
-// (6.4–7.3:1) whatever surface sits behind it. Full literal strings only.
-const PILL_STYLE: Record<
-  Exclude<Severity, "none">,
-  { className: string; emoji: string }
-> = {
-  breaking: {
-    className: "border-red-300 bg-red-100 text-red-800",
-    emoji: "🔴",
-  },
-  major: {
-    className: "border-orange-300 bg-orange-100 text-orange-800",
-    emoji: "🟠",
-  },
-  minor: {
-    className: "border-yellow-300 bg-yellow-100 text-yellow-800",
-    emoji: "🟡",
-  },
-  cosmetic: {
-    className: "border-blue-300 border-dashed bg-blue-100 text-blue-800",
-    emoji: "🔵",
-  },
+// Chip colours come from the shared severity map (lib/severity-style.ts), so
+// the pill matches the viewer's region badges; only the emoji is local.
+const PILL_EMOJI: Record<Exclude<Severity, "none">, string> = {
+  breaking: "🔴",
+  major: "🟠",
+  minor: "🟡",
+  cosmetic: "🔵",
 };
 
 interface Props {
@@ -86,13 +71,16 @@ interface Props {
 export function AggregateSeverityPill({ regions }: Props) {
   const result = aggregateSeverity(regions);
   if (!result) return null;
-  const style = PILL_STYLE[result.severity as Exclude<Severity, "none">];
+  const severity = result.severity as Exclude<Severity, "none">;
   return (
     <span
-      data-testid={`aggregate-severity-pill-${result.severity}`}
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums ${style.className}`}
+      data-testid={`aggregate-severity-pill-${severity}`}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums",
+        SEVERITY_STYLE[severity],
+      )}
     >
-      <span aria-hidden>{style.emoji}</span>
+      <span aria-hidden>{PILL_EMOJI[severity]}</span>
       {result.count} {result.severity}
     </span>
   );

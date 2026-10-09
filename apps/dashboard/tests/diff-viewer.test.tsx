@@ -375,6 +375,10 @@ describe("DiffViewer", () => {
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.getByTestId("empty-run-card")).toBeDefined();
     expect(r.queryByTestId("region-list-panel")).toBeNull();
+    // The card's links show the shared focus ring when keyboard-focused.
+    for (const id of ["empty-run-card-sdk-docs", "empty-run-card-timeline"]) {
+      expect(r.getByTestId(id).classList.contains("focus-ring"), id).toBe(true);
+    }
   });
 
   test("non-empty status (e.g. unresolved) renders viewer + region list normally", () => {

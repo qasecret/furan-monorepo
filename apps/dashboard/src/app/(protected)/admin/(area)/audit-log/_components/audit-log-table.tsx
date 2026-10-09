@@ -73,7 +73,7 @@ export function AuditLogTable() {
                   </code>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-fg-muted">
+                  <span className="font-mono text-sm tabular-nums text-fg-muted">
                     {r.targetType}
                     {r.targetId ? `:${r.targetId.slice(0, 8)}` : ""}
                   </span>

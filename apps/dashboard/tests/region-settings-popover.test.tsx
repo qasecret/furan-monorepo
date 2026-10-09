@@ -189,6 +189,12 @@ describe("RegionSettingsPopover", () => {
     expect(screen.getByTestId("strict-tolerance-control")).toBeDefined();
     expect(screen.getByTestId("strict-tolerance-slider")).toBeDefined();
     expect(screen.getByTestId("strict-tolerance-value")).toBeDefined();
+    // Both range inputs show the shared focus ring when keyboard-focused.
+    for (const id of ["padding-slider", "strict-tolerance-slider"]) {
+      expect(screen.getByTestId(id).classList.contains("focus-ring"), id).toBe(
+        true,
+      );
+    }
   });
 
   test("strict-tolerance-control does NOT appear for layout or content kinds", async () => {

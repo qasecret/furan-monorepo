@@ -170,7 +170,7 @@ export default function LoginPage() {
           </p>
 
           {/* compact diff motif */}
-          <div className="mt-10 rounded-2xl bg-raised/80 p-4 shadow-raised backdrop-blur">
+          <div className="mt-10 rounded-2xl bg-raised/80 p-4 shadow-overlay backdrop-blur">
             <div className="mb-3 flex items-center justify-between">
               <span className="font-mono text-2xs uppercase tracking-wider text-fg-muted">
                 build #1284 · main

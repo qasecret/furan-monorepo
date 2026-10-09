@@ -5,18 +5,15 @@ import type { VisualFixture } from "./fixture.js";
 /**
  * Every dashboard route the visual sweep captures (spec §7.1).
  *
- * `enforceContrast` is the per-route ratchet: `false` → axe `color-contrast`
- * problems are only reported (as test annotations); `true` → they also fail
- * the single `contrast-enforced` test, which runs once after both theme
- * passes and lists every enforced problem, per theme. A problem is an axe
- * violation, or a node axe could not measure because it lies outside the
- * viewport. Each design-foundation slice PR flips its own routes to `true` as
- * it leaves the lint `UNMIGRATED` list, so "migrated" means "AA-verified".
+ * Every shot — route, discovered route and state — is also checked with axe
+ * `color-contrast`, in both themes. Its problems are annotated on the test and
+ * fail the single `contrast-enforced` test, which runs once after both theme
+ * passes and lists every problem, per theme. A problem is an axe violation,
+ * or a node axe could not measure because it lies outside the viewport.
  */
 export interface VisualRoute {
   name: string;
   path: string;
-  enforceContrast: boolean;
   /**
    * Capture from a seeded editor session instead of the admin one: admins are
    * redirected from these routes to their `/admin/*` counterparts, so the
@@ -37,43 +34,24 @@ const ADMIN_AREAS = [
 export function staticRoutes(f: VisualFixture): VisualRoute[] {
   const P = `/projects/${f.projectId}`;
   return [
-    { name: "landing", path: "/", enforceContrast: true },
-    { name: "login", path: "/login", enforceContrast: true },
-    { name: "inbox", path: "/inbox", enforceContrast: true },
-    { name: "analytics", path: "/analytics", enforceContrast: true },
-    {
-      name: "account-tokens",
-      path: "/account/tokens",
-      enforceContrast: true,
-      as: "editor",
-    },
-    ...ADMIN_AREAS.map((x) => ({
-      name: `admin-${x}`,
-      path: `/admin/${x}`,
-      enforceContrast: true,
-    })),
+    { name: "landing", path: "/" },
+    { name: "login", path: "/login" },
+    { name: "inbox", path: "/inbox" },
+    { name: "analytics", path: "/analytics" },
+    { name: "account-tokens", path: "/account/tokens", as: "editor" },
+    ...ADMIN_AREAS.map((x) => ({ name: `admin-${x}`, path: `/admin/${x}` })),
     {
       name: "admin-project-members",
       path: `/admin/projects/${f.projectId}/members`,
-      enforceContrast: true,
     },
-    {
-      name: "projects",
-      path: "/projects",
-      enforceContrast: true,
-      as: "editor",
-    },
-    { name: "project", path: P, enforceContrast: true },
-    { name: "builds", path: `${P}/builds`, enforceContrast: true },
-    { name: "build", path: `${P}/builds/${f.buildId}`, enforceContrast: true },
-    { name: "runs", path: `${P}/runs`, enforceContrast: true },
-    {
-      name: "run",
-      path: `${P}/runs/${f.unresolvedRunId}`,
-      enforceContrast: true,
-    },
-    { name: "settings", path: `${P}/settings`, enforceContrast: true },
-    { name: "variations", path: `${P}/variations`, enforceContrast: true },
+    { name: "projects", path: "/projects", as: "editor" },
+    { name: "project", path: P },
+    { name: "builds", path: `${P}/builds` },
+    { name: "build", path: `${P}/builds/${f.buildId}` },
+    { name: "runs", path: `${P}/runs` },
+    { name: "run", path: `${P}/runs/${f.unresolvedRunId}` },
+    { name: "settings", path: `${P}/settings` },
+    { name: "variations", path: `${P}/variations` },
   ];
 }
 
@@ -98,31 +76,27 @@ export const DISCOVERED: ReadonlyArray<{
   /** Links to follow, in order, from `from` before looking for `href`. */
   via?: ReadonlyArray<RegExp>;
   href: RegExp;
-  enforceContrast: boolean;
 }> = [
   {
     name: "diff",
     from: (f) => `/projects/${f.projectId}/variations`,
     via: [/\/variations\/[^/]+$/],
     href: /\/diffs\/[^/]+$/,
-    enforceContrast: true,
   },
   {
     name: "variation",
     from: (f) => `/projects/${f.projectId}/variations`,
     href: /\/variations\/[^/]+$/,
-    enforceContrast: true,
   },
 ];
 
 /**
  * Interaction states: open `path`, let it settle, `open` the state, then
- * capture it. `enforceContrast` is the same per-shot ratchet as the routes'.
+ * capture it (and contrast-check it, as every route is).
  */
 export interface VisualState {
   name: string;
   path: string;
-  enforceContrast: boolean;
   /** Capture from the seeded editor's session (see {@link VisualRoute.as}). */
   as?: "editor";
   /** Put the settled page into the state; resolves once the state shows. */
@@ -133,7 +107,6 @@ export const STATES: ReadonlyArray<VisualState> = [
   {
     name: "state-cmdk",
     path: "/inbox",
-    enforceContrast: true,
     open: async (p) => {
       // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
       // `e.key === "k"`, and "Meta+K" would send key "K".
@@ -144,7 +117,6 @@ export const STATES: ReadonlyArray<VisualState> = [
   {
     name: "state-menu",
     path: "/inbox",
-    enforceContrast: true,
     open: async (p) => {
       const toggle = p.locator('[data-testid="theme-toggle"]');
       await toggle.click();
@@ -160,7 +132,6 @@ export const STATES: ReadonlyArray<VisualState> = [
     // which is not the screen this state is about.
     name: "state-dialog",
     path: "/account/tokens",
-    enforceContrast: true,
     as: "editor",
     open: async (p) => {
       await p.getByRole("button", { name: /token/i }).first().click();
