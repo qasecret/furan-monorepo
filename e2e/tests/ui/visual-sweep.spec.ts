@@ -53,6 +53,13 @@ const OUT_ROOT = process.env.VISUAL_OUT
   : fileURLToPath(new URL("../../visual-out/", import.meta.url));
 const OUT = join(OUT_ROOT, LABEL);
 const VIEWPORT = { width: 1440, height: 900 };
+/**
+ * Options for every browser context the sweep opens. Reduced motion makes the
+ * app render the static form of motion it gates on `prefers-reduced-motion`:
+ * otherwise the diff canvas's region ring pulses, and a pulse caught at a
+ * different phase makes the `run` and `diff` shots differ from run to run.
+ */
+const CONTEXT = { viewport: VIEWPORT, reducedMotion: "reduce" } as const;
 
 /** Pages a signed-in user can't see: `/` redirects a session to /home, so
  *  these are captured from a signed-out context. */
@@ -226,14 +233,14 @@ test.describe.serial("visual sweep @visual", () => {
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     fixture = await ensureVisualFixture(api);
 
-    context = await browser.newContext({ viewport: VIEWPORT });
+    context = await browser.newContext(CONTEXT);
     await steady(context);
     page = await context.newPage();
     await logIn(page, BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD);
 
     // Admins are redirected off the non-admin routes (`as: "editor"`), so
     // those are captured from a seeded editor's session.
-    editor = await browser.newContext({ viewport: VIEWPORT });
+    editor = await browser.newContext(CONTEXT);
     await steady(editor);
     editorPage = await editor.newPage();
     await logIn(
@@ -242,7 +249,7 @@ test.describe.serial("visual sweep @visual", () => {
       USER_PASSWORD,
     );
 
-    anon = await browser.newContext({ viewport: VIEWPORT });
+    anon = await browser.newContext(CONTEXT);
     await steady(anon);
     anonPage = await anon.newPage();
 
@@ -509,7 +516,7 @@ test.describe.serial("visual sweep @visual", () => {
   // skips this one in turn; the contrast problems come first.)
   test("system theme follows prefers-color-scheme", async ({ browser }) => {
     for (const colorScheme of ["dark", "light"] as const) {
-      const ctx = await browser.newContext({ viewport: VIEWPORT, colorScheme });
+      const ctx = await browser.newContext({ ...CONTEXT, colorScheme });
       try {
         const p = await ctx.newPage();
         await p.goto("/login");
