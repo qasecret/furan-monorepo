@@ -47,10 +47,10 @@ export function LandingFeatures() {
     <section id="features" className="py-24">
       <div className="mx-auto max-w-6xl px-4">
         <Reveal className="mx-auto mb-14 max-w-2xl text-center">
-          <h2 className="text-3xl font-semibold tracking-tight text-zinc-950 dark:text-white md:text-5xl">
+          <h2 className="text-3xl font-semibold tracking-tight text-fg md:text-5xl">
             Everything you need to ship with confidence
           </h2>
-          <p className="mt-4 text-lg text-zinc-600 dark:text-zinc-400">
+          <p className="mt-4 text-lg text-fg-secondary">
             A complete visual-testing platform — pixels, semantics, and
             accessibility — built for engineering teams that own their stack.
           </p>
@@ -59,14 +59,14 @@ export function LandingFeatures() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.title} delay={(i % 3) * 80}>
-              <div className="group h-full rounded-2xl border border-zinc-200 bg-white p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[0_12px_40px_-16px_rgba(168,255,83,0.35)] dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 transition-colors group-hover:border-brand/50 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="group h-full rounded-2xl border border-edge bg-raised p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[0_12px_40px_-16px_rgba(168,255,83,0.35)]">
+                <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-edge bg-hover transition-colors group-hover:border-brand/50">
                   <feature.icon className="h-5 w-5 text-brand-text" />
                 </div>
-                <h3 className="mb-2 text-lg font-semibold text-zinc-950 dark:text-white">
+                <h3 className="mb-2 text-lg font-semibold text-fg">
                   {feature.title}
                 </h3>
-                <p className="text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                <p className="text-sm leading-relaxed text-fg-secondary">
                   {feature.desc}
                 </p>
               </div>

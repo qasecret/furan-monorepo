@@ -12,10 +12,10 @@ export function LandingFinalCta() {
     <section className="relative overflow-hidden py-32">
       <div className="pointer-events-none absolute left-1/2 top-1/2 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--furan-glow)] blur-[130px]" />
       <Reveal className="relative z-10 mx-auto max-w-3xl px-4 text-center">
-        <h2 className="text-4xl font-semibold tracking-tight text-zinc-950 dark:text-white md:text-6xl">
+        <h2 className="text-4xl font-semibold tracking-tight text-fg md:text-6xl">
           Own your visual testing.
         </h2>
-        <p className="mx-auto mt-5 max-w-xl text-lg text-zinc-600 dark:text-zinc-400">
+        <p className="mx-auto mt-5 max-w-xl text-lg text-fg-secondary">
           Stop shipping visual bugs — and keep every screenshot on your own
           infrastructure while you do it.
         </p>

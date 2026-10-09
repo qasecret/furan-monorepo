@@ -37,8 +37,8 @@ const ADMIN_AREAS = [
 export function staticRoutes(f: VisualFixture): VisualRoute[] {
   const P = `/projects/${f.projectId}`;
   return [
-    { name: "landing", path: "/", enforceContrast: false },
-    { name: "login", path: "/login", enforceContrast: false },
+    { name: "landing", path: "/", enforceContrast: true },
+    { name: "login", path: "/login", enforceContrast: true },
     { name: "inbox", path: "/inbox", enforceContrast: true },
     { name: "analytics", path: "/analytics", enforceContrast: true },
     {

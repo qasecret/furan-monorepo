@@ -17,23 +17,23 @@ export const metadata: Metadata = {
  */
 export default function NotFound() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-black">
-      <div className="w-full max-w-sm space-y-4 rounded-lg border border-zinc-200 bg-white p-6 text-center dark:border-zinc-800 dark:bg-zinc-950">
+    <main className="flex min-h-screen items-center justify-center bg-sunken p-4">
+      <div className="w-full max-w-sm space-y-4 rounded-lg bg-raised p-6 text-center shadow-raised">
         <div className="mx-auto flex h-8 w-8 rotate-12 items-center justify-center rounded-sm bg-brand">
-          <div className="h-2 w-2 rounded-full bg-black" />
+          <div className="h-2 w-2 rounded-full bg-brand-fg" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-white">
+          <h1 className="text-xl font-semibold tracking-tight text-fg">
             404 · Page not found
           </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="mt-1 text-sm text-fg-secondary">
             The URL doesn&apos;t match anything in this workspace. The project
             or run may have been deleted, or the link may have a typo.
           </p>
         </div>
         <Link
           href="/projects"
-          className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:hover:bg-zinc-800"
+          className="inline-flex w-full items-center justify-center rounded-md bg-raised px-4 py-2 text-sm font-medium text-fg shadow-raised transition-colors hover:bg-hover focus-ring"
         >
           Back to projects
         </Link>
