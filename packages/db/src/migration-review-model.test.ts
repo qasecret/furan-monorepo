@@ -446,20 +446,16 @@ describe.runIf(RUN_INTEGRATION)("0035_review_model migration", () => {
           await tx.insert(checkpointDecisions).values(decision(runId, s));
         }
       });
-      const rows = await db
-        .select({
-          s: checkpointDecisions.screenshotId,
-          at: checkpointDecisions.createdAt,
-        })
-        .from(checkpointDecisions)
-        .where(eq(checkpointDecisions.runId, runId));
-      const byShot = new Map(rows.map((r) => [r.s, r.at.getTime()]));
       // now() would stamp every row of the transaction identically; with
-      // clock_timestamp() the insertion order is recoverable.
-      const times = shots.map((s) => byShot.get(s)!);
-      expect(new Set(times).size).toBeGreaterThan(1);
-      expect([...times].sort((a, b) => a - b)).toEqual(times);
-      // And sub-millisecond order is preserved server-side.
+      // clock_timestamp() each insert gets its own instant. Assert it
+      // server-side: a JS Date has only millisecond precision, so three
+      // inserts landing in one millisecond would look identical there.
+      const distinct = await db.execute<{ n: number }>(sql`
+        SELECT count(DISTINCT created_at)::int AS n FROM checkpoint_decisions
+        WHERE run_id = ${runId}
+      `);
+      expect(distinct[0]?.n).toBe(3);
+      // And the insertion order is preserved at microsecond resolution.
       const ordered = await db.execute<{ screenshot_id: string }>(sql`
         SELECT screenshot_id FROM checkpoint_decisions
         WHERE run_id = ${runId} ORDER BY created_at ASC
