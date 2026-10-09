@@ -10,7 +10,6 @@ import {
   inArray,
   isNull,
   projects,
-  recordBaseline,
   resolveBaseline,
   screenshots,
   sql,
@@ -38,6 +37,7 @@ import { publicProcedure, t } from "../trpc.js";
 
 import {
   approveCheckpointInTx,
+  approveRunInTx,
   deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
   loadGroupSeed,
@@ -209,12 +209,12 @@ const APPROVE_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
 
 /**
  * Approve a single test run: transitions status → passed, sets merge=true,
- * snapshots into baselines, and publishes broadcaster events. Shared by
- * `runs.approve` and `inbox.approve` so both callers apply identical side
- * effects without duplicating logic.
+ * promotes the baseline of EVERY checkpoint (approveRunInTx), and publishes
+ * broadcaster events. Shared by `runs.approve`, `inbox.approve` and the REST
+ * `POST /runs/:id/approve` so all callers apply identical side effects.
  *
  * Throws TRPCError NOT_FOUND if the run doesn't exist, BAD_REQUEST if its
- * status isn't in REVIEWER_LEGAL_FROM.
+ * status isn't in APPROVE_LEGAL_FROM.
  */
 export async function approveRun(
   ctx: {
@@ -235,9 +235,9 @@ export async function approveRun(
   runId: string,
   /**
    * ADR-036: when provided, the drawn ignore regions are persisted onto the
-   * run's variation as part of approval — so "Save as baseline" doesn't drop
-   * regions the reviewer drew but hadn't separately saved. `undefined` leaves
-   * the variation's existing regions untouched (the inbox/bulk callers).
+   * first checkpoint's variation as part of approval — so "Save as baseline"
+   * doesn't drop regions the reviewer drew but hadn't separately saved.
+   * `undefined` keeps every variation's saved regions (the inbox/REST callers).
    */
   ignoreAreas?: IgnoreRegionElement[] | null,
 ): Promise<{ runId: string; approved: true }> {
@@ -249,7 +249,7 @@ export async function approveRun(
   // Broadcaster calls are intentionally kept OUTSIDE the transaction: they
   // are best-effort side-effects that must not roll back DB work if they
   // fail, and the DB must be committed before consumers see the event.
-  const run = await ctx.db.transaction(async (tx) => {
+  const { run, checkpointIds } = await ctx.db.transaction(async (tx) => {
     const runRows = await tx
       .select()
       .from(testRuns)
@@ -269,50 +269,17 @@ export async function approveRun(
       });
     }
 
-    await tx
-      .update(testRuns)
-      .set({ status: "passed", merge: true })
-      .where(eq(testRuns.id, runId));
+    // ADR-067: promote every checkpoint (a checkpoint-less run still flips to
+    // passed). ADR-036: reviewer-drawn regions persist in the same flow — no
+    // separate diff enqueue, so nothing races the status=passed write.
+    const { checkpointIds } = await approveRunInTx(
+      tx,
+      run,
+      ctx.user.id,
+      ignoreAreas,
+    );
 
-    // ADR-038: runs no longer have a single testVariationId. Snapshot the
-    // first checkpoint's variation as the baseline for backward compat.
-    // Full per-checkpoint baseline promotion is handled by approveCheckpoint.
-    // For legacy approve (run-level), we find the first screenshot row and
-    // use its testVariationId.
-    const firstShot = await tx
-      .select({
-        testVariationId: screenshots.testVariationId,
-        imageKey: screenshots.imageKey,
-      })
-      .from(screenshots)
-      .where(eq(screenshots.runId, runId))
-      .limit(1);
-
-    if (firstShot[0]) {
-      // ADR-036: persist any reviewer-drawn ignore regions onto the variation
-      // in the same flow — no separate diff enqueue, so nothing races the
-      // status=passed set above. Forward mask applied to future runs.
-      if (ignoreAreas !== undefined) {
-        await tx
-          .update(testVariations)
-          .set({ ignoreRegions: ignoreAreas, updatedAt: new Date() })
-          .where(eq(testVariations.id, firstShot[0].testVariationId));
-      }
-      await recordBaseline(tx, {
-        testVariationId: firstShot[0].testVariationId,
-        testRunId: run.id,
-        imageKey: firstShot[0].imageKey,
-        runName: run.name,
-        userId: ctx.user.id,
-        branchName: run.branchName,
-      });
-    } else {
-      // No screenshots yet — insert a placeholder baseline using run name.
-      // This branch handles legacy flow where runs might not have checkpoints.
-      // We skip the baseline insert rather than fail — approve still transitions status.
-    }
-
-    return run;
+    return { run, checkpointIds };
   });
 
   // Broadcaster calls after commit — consumers refetch committed state. When
@@ -344,7 +311,12 @@ export async function approveRun(
         action: "run.approve",
         targetType: "run",
         targetId: run.id,
-        metadata: { projectId: run.projectId, buildId: run.buildId },
+        metadata: {
+          projectId: run.projectId,
+          buildId: run.buildId,
+          checkpoints: checkpointIds.length,
+          checkpointIds,
+        },
       },
       ctx.log,
     );
@@ -1032,133 +1004,16 @@ export const runsRouter = t.router({
     }),
 
   /**
-   * Bulk-approve every reviewer-actionable run that shares the same test
-   * variation as the supplied `runId`. Same per-run side effects as
-   * `approve` (status → passed, merge → true, snapshot into `baselines`),
-   * but applied in a single transaction so the user doesn't end up half
-   * approved if a row fails.
-   *
-   * Scope choice: variation-wide (not build-wide). Reviewers ask for this
-   * when they've decided "this candidate looks right for this test
-   * everywhere it appeared," which often spans multiple builds (re-runs,
-   * branch fan-out). The procedure caps at 200 rows to keep the
-   * transaction bounded; the toast surfaces if we hit the cap so the user
-   * knows to re-trigger.
-   *
-   * Pre-condition: the supplied runId must itself be reviewer-actionable
-   * (passed | unresolved | failed). The bulk operation can include runs
-   * already in `passed` — those are idempotently re-approved (baseline
-   * row inserted, status unchanged), which matches the existing single
-   * `approve` behavior.
-   */
-  bulkApproveByVariation: publicProcedure
-    .input(runIdInput)
-    .use(authed)
-    .use(
-      projectMember<RunIdInput>("write", {
-        from: {
-          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
-        },
-      }),
-    )
-    .mutation(async ({ input, ctx }) => {
-      const seedRows = await ctx.db
-        .select()
-        .from(testRuns)
-        .where(eq(testRuns.id, input.runId))
-        .limit(1);
-      const seed = seedRows[0];
-      if (!seed) throw new TRPCError({ code: "NOT_FOUND" });
-      if (!REVIEWER_LEGAL_FROM.has(seed.status)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Cannot bulk-approve from a '${seed.status}' run. Re-run the test instead.`,
-        });
-      }
-
-      // ADR-038: runs no longer have a single testVariationId. Bulk approve
-      // operates on runs in the same build/project in reviewer-legal states.
-      // Phase 5 will add per-variation bulk approve for the new model.
-      const BULK_CAP = 200;
-      const siblings = await ctx.db
-        .select()
-        .from(testRuns)
-        .where(
-          and(
-            eq(testRuns.projectId, seed.projectId),
-            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
-          ),
-        )
-        .limit(BULK_CAP + 1);
-      const capped = siblings.length > BULK_CAP;
-      const approveTargets = capped ? siblings.slice(0, BULK_CAP) : siblings;
-
-      // Same row-level side effects as the per-run approve, looped. A
-      // single transaction prevents a partial outcome on an unexpected
-      // constraint violation; if any row fails, the user retries with a
-      // clean state.
-      const approvedIds: string[] = [];
-      const affectedBuildIds = new Set<string>();
-      await ctx.db.transaction(async (tx) => {
-        for (const run of approveTargets) {
-          await tx
-            .update(testRuns)
-            .set({ status: "passed", merge: true })
-            .where(eq(testRuns.id, run.id));
-          // ADR-038: find first checkpoint variation for baseline insertion.
-          const firstShot = await tx
-            .select({
-              testVariationId: screenshots.testVariationId,
-              imageKey: screenshots.imageKey,
-            })
-            .from(screenshots)
-            .where(eq(screenshots.runId, run.id))
-            .limit(1);
-          if (firstShot[0]) {
-            await recordBaseline(tx, {
-              testVariationId: firstShot[0].testVariationId,
-              testRunId: run.id,
-              imageKey: firstShot[0].imageKey,
-              runName: run.name,
-              userId: ctx.user.id,
-              branchName: run.branchName,
-            });
-          }
-          approvedIds.push(run.id);
-          if (run.buildId) affectedBuildIds.add(run.buildId);
-        }
-      });
-
-      // Subscribers debounce per event-type, so per-row broadcasts coalesce
-      // into one flush. Deduping build_updated keeps the post-tx loop O(B)
-      // not O(N*B) when many runs share a build.
-      for (const runId of approvedIds) {
-        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
-          event: "testRun_updated",
-          data: { id: runId },
-        });
-      }
-      for (const buildId of affectedBuildIds) {
-        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
-          event: "build_updated",
-          data: { id: buildId },
-        });
-      }
-
-      return {
-        approved: approvedIds.length,
-        runIds: approvedIds,
-        capped,
-        cap: BULK_CAP,
-      };
-    }),
-
-  /**
    * Bulk-approve every reviewer-actionable run in a build, in one capped
    * transaction. Unlike a per-row client fan-out, this approves the WHOLE
    * build (not just the page of runs the dashboard happens to have loaded),
    * so "Approve all" can't silently leave later-page runs unreviewed, and a
    * mid-flight failure rolls the whole batch back instead of half-approving.
+   * Each run goes through approveRunInTx, so every checkpoint is promoted.
+   *
+   * (The variation-wide sibling, `bulkApproveByVariation`, was removed in
+   * ADR-067: it approved up to 200 reviewer-legal runs across the whole
+   * project, not just runs of the seed's variations.)
    */
   bulkApproveByBuild: publicProcedure
     .input(z.object({ buildId: z.string().uuid() }))
@@ -1209,30 +1064,11 @@ export const runsRouter = t.router({
       const projectId = first.projectId;
 
       const approvedIds: string[] = [];
+      let checkpoints = 0;
       await ctx.db.transaction(async (tx) => {
         for (const run of approveTargets) {
-          await tx
-            .update(testRuns)
-            .set({ status: "passed", merge: true })
-            .where(eq(testRuns.id, run.id));
-          const firstShot = await tx
-            .select({
-              testVariationId: screenshots.testVariationId,
-              imageKey: screenshots.imageKey,
-            })
-            .from(screenshots)
-            .where(eq(screenshots.runId, run.id))
-            .limit(1);
-          if (firstShot[0]) {
-            await recordBaseline(tx, {
-              testVariationId: firstShot[0].testVariationId,
-              testRunId: run.id,
-              imageKey: firstShot[0].imageKey,
-              runName: run.name,
-              userId: ctx.user.id,
-              branchName: run.branchName,
-            });
-          }
+          const res = await approveRunInTx(tx, run, ctx.user.id);
+          checkpoints += res.checkpointIds.length;
           approvedIds.push(run.id);
         }
       });
@@ -1247,6 +1083,24 @@ export const runsRouter = t.router({
         event: "build_updated",
         data: { id: input.buildId },
       });
+
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.approve_build",
+          targetType: "build",
+          targetId: input.buildId,
+          metadata: {
+            projectId,
+            approved: approvedIds.length,
+            runIds: approvedIds,
+            checkpoints,
+            capped,
+          },
+        },
+        ctx.req.log,
+      );
 
       return {
         approved: approvedIds.length,
@@ -1398,6 +1252,24 @@ export const runsRouter = t.router({
         });
       }
 
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.override_status",
+          targetType: "run",
+          targetId: run.id,
+          metadata: {
+            projectId: run.projectId,
+            buildId: run.buildId,
+            from: run.status,
+            to: nextStatus,
+            requested: input.status,
+          },
+        },
+        ctx.req.log,
+      );
+
       return { runId: run.id, status: nextStatus };
     }),
 
@@ -1471,6 +1343,24 @@ export const runsRouter = t.router({
         });
       }
 
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.approve_checkpoint",
+          targetType: "run",
+          targetId: run.id,
+          metadata: {
+            projectId: run.projectId,
+            buildId: run.buildId,
+            checkpointId: s.id,
+            testVariationId: s.testVariationId,
+            ignoreAreasOverride: input.ignoreAreas !== undefined,
+          },
+        },
+        ctx.req.log,
+      );
+
       return { checkpointId: input.checkpointId };
     }),
 
@@ -1492,11 +1382,12 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const rows = await ctx.db
-        .select()
+      const anyShot = await ctx.db
+        .select({ id: screenshots.id })
         .from(screenshots)
-        .where(eq(screenshots.runId, input.runId));
-      if (rows.length === 0) return { approved: 0 };
+        .where(eq(screenshots.runId, input.runId))
+        .limit(1);
+      if (anyShot.length === 0) return { approved: 0 };
       const runRows = await ctx.db
         .select()
         .from(testRuns)
@@ -1505,11 +1396,9 @@ export const runsRouter = t.router({
       const run = runRows[0];
       if (!run) throw new TRPCError({ code: "NOT_FOUND" });
 
-      await ctx.db.transaction(async (tx) => {
-        for (const s of rows) {
-          await approveCheckpointInTx(tx, s, run, ctx.user.id);
-        }
-      });
+      const { checkpointIds } = await ctx.db.transaction((tx) =>
+        approveRunInTx(tx, run, ctx.user.id),
+      );
 
       await ctx.broadcaster.publishProjectEvent(run.projectId, {
         event: "testRun_updated",
@@ -1522,7 +1411,24 @@ export const runsRouter = t.router({
         });
       }
 
-      return { approved: rows.length };
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.approve_all_checkpoints",
+          targetType: "run",
+          targetId: run.id,
+          metadata: {
+            projectId: run.projectId,
+            buildId: run.buildId,
+            approved: checkpointIds.length,
+            checkpointIds,
+          },
+        },
+        ctx.req.log,
+      );
+
+      return { approved: checkpointIds.length };
     }),
 
   listCheckpoints: publicProcedure
@@ -1764,6 +1670,28 @@ export const runsRouter = t.router({
         data: { id: seed.buildId },
       });
 
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.approve_group",
+          targetType: "build",
+          targetId: seed.buildId,
+          metadata: {
+            projectId: seed.projectId,
+            seedRunId: seed.runId,
+            seedCheckpointId: seed.id,
+            diffSignature: seed.diffSignature,
+            approved: targets.length,
+            runCount: affectedRunIds.length,
+            runIds: affectedRunIds,
+            checkpointIds: targets.map((m) => m.id),
+            capped,
+          },
+        },
+        ctx.req.log,
+      );
+
       return {
         approved: targets.length,
         runCount: affectedRunIds.length,
@@ -1856,6 +1784,26 @@ export const runsRouter = t.router({
         event: "build_updated",
         data: { id: seed.buildId },
       });
+
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.reject_group",
+          targetType: "build",
+          targetId: seed.buildId,
+          metadata: {
+            projectId: seed.projectId,
+            seedRunId: seed.runId,
+            seedCheckpointId: seed.id,
+            diffSignature: seed.diffSignature,
+            rejected: targetRunIds.length,
+            runIds: targetRunIds,
+            capped,
+          },
+        },
+        ctx.req.log,
+      );
 
       // rejected === runCount here (run-level action); runCount retained for
       // shape-parity with approveCheckpointGroup's {approved, runCount, ...}.

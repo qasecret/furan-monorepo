@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 
 import {
+  auditLog,
   baselines,
   builds,
   diffRegions,
@@ -47,6 +48,7 @@ interface Seeded {
 
 async function seed(h: TestApp): Promise<Seeded> {
   // FK-order: dependents before parents.
+  await h.db.delete(auditLog);
   await h.db.delete(diffRegions);
   await h.db.delete(screenshots);
   await h.db.delete(baselines);
@@ -2256,9 +2258,9 @@ d("tRPC runs router", () => {
       });
     });
 
-    test("bulkApproveByVariation fans out one testRun_updated per approved run + one build_updated per build", async () => {
-      // Seed two sibling runs so bulk-approve has something to fan out over
-      // (beyond the seed run). ADR-038: no testVariationId on testRuns.
+    test("bulkApproveByBuild fans out one testRun_updated per approved run + one build_updated", async () => {
+      // Two sibling runs in the seed's build so bulk-approve has something to
+      // fan out over (beyond the seed run).
       const buildId = await getSeedBuildId(h, s.runId);
       const [sib1] = await h.db
         .insert(testRuns)
@@ -2283,13 +2285,9 @@ d("tRPC runs router", () => {
 
       h.broadcasterPublish.mockClear();
       const client = makeClient(baseUrl, s.memberJwt);
-      const res = await client.runs.bulkApproveByVariation.mutate({
-        runId: s.runId,
-      });
+      const res = await client.runs.bulkApproveByBuild.mutate({ buildId });
       expect(res.approved).toBe(3);
 
-      // 3 testRun_updated + 1 build_updated (all three siblings share the
-      // same build, so the dedupe collapses to one).
       const testRunCalls = h.broadcasterPublish.mock.calls.filter(
         ([, ev]) => (ev as { event: string }).event === "testRun_updated",
       );
@@ -2306,52 +2304,6 @@ d("tRPC runs router", () => {
         testRunCalls.map(([, ev]) => (ev as { data: { id: string } }).data.id),
       );
       expect(broadcastRunIds).toEqual(new Set([s.runId, sib1!.id, sib2!.id]));
-    });
-
-    test("bulkApproveByVariation inserts baselines from checkpoint variations (ADR-038)", async () => {
-      // ADR-038: run-level ignoreAreas removed from test_runs. bulkApproveByVariation
-      // now inserts baseline rows using the first screenshot's testVariationId.
-      // Seed a screenshot linking the seed run to the variation so a baseline row is inserted.
-      const buildId = await getSeedBuildId(h, s.runId);
-      await h.db.insert(screenshots).values({
-        runId: s.runId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        name: "home",
-        imageKey: "seed-img",
-        viewport: "1280x720",
-        browser: "chromium",
-      });
-      // Sibling run without a checkpoint — bulk-approve still transitions its status.
-      await h.db
-        .insert(testRuns)
-        .values({
-          buildId,
-          projectId: s.projectId,
-          status: "unresolved",
-          name: "sib1",
-          branchName: "feature/x",
-        })
-        .returning();
-
-      // Sanity: variation starts with no ignore_regions.
-      const beforeVariation = await h.db
-        .select()
-        .from(testVariations)
-        .where(eq(testVariations.id, s.variationId))
-        .limit(1);
-      expect(beforeVariation[0]?.ignoreRegions).toBeNull();
-
-      const client = makeClient(baseUrl, s.memberJwt);
-      await client.runs.bulkApproveByVariation.mutate({ runId: s.runId });
-
-      // The seed run had a screenshot → baseline inserted with that variation.
-      const baselineRows = await h.db
-        .select()
-        .from(baselines)
-        .where(eq(baselines.testRunId, s.runId));
-      expect(baselineRows.length).toBe(1);
-      expect(baselineRows[0]?.testVariationId).toBe(s.variationId);
     });
   });
 
@@ -2399,7 +2351,8 @@ d("tRPC runs router", () => {
         .limit(1);
       expect(v!.baselineName).toBe(imageKey);
       expect(v!.matchLevel).toBe("Layout");
-      expect(v!.ignoreRegions).toEqual([ignoreRegion]);
+      // ADR-067: captured regions are promoted tagged as SDK-owned.
+      expect(v!.ignoreRegions).toEqual([{ ...ignoreRegion, source: "sdk" }]);
       // Remaining region columns were null on the screenshot — must be null on variation.
       expect(v!.layoutRegions).toBeNull();
       expect(v!.floatingRegions).toBeNull();
@@ -3305,7 +3258,11 @@ d("tRPC runs router", () => {
           baselineSource: "default_branch",
         })
         .returning();
-      const mkShot = async (variationId: string, viewport: string, key: string) =>
+      const mkShot = async (
+        variationId: string,
+        viewport: string,
+        key: string,
+      ) =>
         (
           await h.db
             .insert(screenshots)
@@ -3353,6 +3310,463 @@ d("tRPC runs router", () => {
       // Regression guard: no default sibling baseline → genuinely new, and NOT
       // masked by the run's other (baselined) viewport.
       expect(statuses.get(shot375.id)).toBe("new");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ADR-067: every approve path promotes every checkpoint through one core,
+  // keeps reviewer-saved ignore regions, and is audited.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Give `runId` one checkpoint per name, each on its own variation, with
+   * strictly increasing createdAt so "first checkpoint" is deterministic.
+   */
+  async function addCheckpoints(
+    runId: string,
+    names: string[],
+    opts: { ignoreRegions?: (name: string) => unknown } = {},
+  ) {
+    const base = Date.now() - 60_000;
+    const out: Array<{
+      shotId: string;
+      variationId: string;
+      imageKey: string;
+    }> = [];
+    for (const [i, name] of names.entries()) {
+      const [v] = await h.db
+        .insert(testVariations)
+        .values({ name, projectId: s.projectId, branchName: "feature/x" })
+        .returning();
+      const imageKey = `${name}-${runId.slice(0, 8)}`.padEnd(64, "k");
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId,
+          projectId: s.projectId,
+          testVariationId: v!.id,
+          name,
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey,
+          ignoreRegions: opts.ignoreRegions?.(name),
+          createdAt: new Date(base + i * 1000),
+        })
+        .returning();
+      out.push({ shotId: shot!.id, variationId: v!.id, imageKey });
+    }
+    return out;
+  }
+
+  async function variationRow(id: string) {
+    const [v] = await h.db
+      .select()
+      .from(testVariations)
+      .where(eq(testVariations.id, id))
+      .limit(1);
+    return v!;
+  }
+
+  const savedRegion = {
+    x: 5,
+    y: 6,
+    width: 70,
+    height: 80,
+    viewport: "1280x720",
+    paddingPx: 0,
+    kind: "ignore",
+  };
+
+  describe("run-level approve promotes every checkpoint (ADR-067)", () => {
+    test.each(["runs.approve", "inbox.approve"] as const)(
+      "%s promotes the baseline of every checkpoint in a multi-checkpoint run",
+      async (path) => {
+        const cps = await addCheckpoints(s.runId, ["cp-a", "cp-b", "cp-c"]);
+        const client = makeClient(baseUrl, s.memberJwt);
+        if (path === "runs.approve") {
+          await client.runs.approve.mutate({ runId: s.runId });
+        } else {
+          await client.inbox.approve.mutate({ runId: s.runId });
+        }
+
+        const rows = await h.db
+          .select()
+          .from(baselines)
+          .where(eq(baselines.testRunId, s.runId));
+        expect(new Set(rows.map((r) => r.testVariationId))).toEqual(
+          new Set(cps.map((c) => c.variationId)),
+        );
+        for (const c of cps) {
+          const v = await variationRow(c.variationId);
+          expect(v.baselineName).toBe(c.imageKey);
+        }
+      },
+    );
+
+    test("runs.approve applies the reviewer's override to the first checkpoint only", async () => {
+      const [first, second] = await addCheckpoints(s.runId, ["cp-1", "cp-2"]);
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: [savedRegion] })
+        .where(eq(testVariations.id, second!.variationId));
+      const drawn = {
+        x: 50,
+        y: 60,
+        width: 100,
+        height: 80,
+        viewport: "1280x720",
+        kind: "ignore" as const,
+      };
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approve.mutate({
+        runId: s.runId,
+        ignoreAreas: [drawn],
+      });
+
+      const v1 = await variationRow(first!.variationId);
+      expect(v1.ignoreRegions).toEqual([{ ...drawn, paddingPx: 0 }]);
+      const v2 = await variationRow(second!.variationId);
+      expect(v2.ignoreRegions).toEqual([savedRegion]);
+    });
+
+    test("bulkApproveByBuild promotes every checkpoint of every run in the build", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const [run2] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          status: "unresolved",
+          name: "second test",
+          branchName: "feature/x",
+        })
+        .returning();
+      const cps = [
+        ...(await addCheckpoints(s.runId, ["r1-a", "r1-b"])),
+        ...(await addCheckpoints(run2!.id, ["r2-a", "r2-b"])),
+      ];
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.bulkApproveByBuild.mutate({ buildId });
+      expect(res.approved).toBe(2);
+
+      const rows = await h.db.select().from(baselines);
+      expect(new Set(rows.map((r) => r.testVariationId))).toEqual(
+        new Set(cps.map((c) => c.variationId)),
+      );
+      for (const c of cps) {
+        expect((await variationRow(c.variationId)).baselineName).toBe(
+          c.imageKey,
+        );
+      }
+    });
+  });
+
+  describe("bulkApproveByVariation is removed (ADR-067)", () => {
+    test("the procedure is gone and approves nothing", async () => {
+      // A reviewer-actionable run elsewhere in the project — the old
+      // procedure approved it even though it shares no variation with the seed.
+      const buildId = await getSeedBuildId(h, s.runId);
+      const [other] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          status: "unresolved",
+          name: "unrelated test",
+          branchName: "feature/x",
+        })
+        .returning();
+
+      const res = await fetch(`${baseUrl}/trpc/runs.bulkApproveByVariation`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${s.memberJwt}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ runId: s.runId }),
+      });
+      expect(res.status).toBe(404);
+
+      const runs = await h.db
+        .select({ id: testRuns.id, status: testRuns.status })
+        .from(testRuns);
+      for (const r of runs) expect(r.status).toBe("unresolved");
+      expect(runs.map((r) => r.id)).toContain(other!.id);
+    });
+  });
+
+  describe("approve keeps reviewer-saved ignore regions (ADR-067)", () => {
+    const sdkRegion = { x: 1, y: 2, width: 10, height: 20 };
+
+    test("approveCheckpoint without an override keeps saved regions and adds the SDK-captured ones once", async () => {
+      const [cp] = await addCheckpoints(s.runId, ["keep"], {
+        // Captured twice (duplicate in the SDK payload) — stored once.
+        ignoreRegions: () => [sdkRegion, sdkRegion],
+      });
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: [savedRegion] })
+        .where(eq(testVariations.id, cp!.variationId));
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
+        checkpointId: cp!.shotId,
+      });
+
+      const v = await variationRow(cp!.variationId);
+      expect(v.ignoreRegions).toEqual([
+        savedRegion,
+        { ...sdkRegion, source: "sdk" },
+      ]);
+    });
+
+    test("re-approving replaces the previously promoted SDK regions instead of accumulating them", async () => {
+      const [cp] = await addCheckpoints(s.runId, ["moving"], {
+        ignoreRegions: () => [{ x: 300, y: 40, width: 120, height: 30 }],
+      });
+      // State after an earlier approve: a saved region + the SDK region the
+      // previous capture promoted (e.g. a caret box that has since moved).
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: [savedRegion, { ...sdkRegion, source: "sdk" }] })
+        .where(eq(testVariations.id, cp!.variationId));
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
+        checkpointId: cp!.shotId,
+      });
+
+      const v = await variationRow(cp!.variationId);
+      expect(v.ignoreRegions).toEqual([
+        savedRegion,
+        { x: 300, y: 40, width: 120, height: 30, source: "sdk" },
+      ]);
+    });
+
+    test("approveAllCheckpoints keeps each variation's saved regions", async () => {
+      const cps = await addCheckpoints(s.runId, ["all-a", "all-b"]);
+      for (const c of cps) {
+        await h.db
+          .update(testVariations)
+          .set({ ignoreRegions: [savedRegion] })
+          .where(eq(testVariations.id, c.variationId));
+      }
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveAllCheckpoints.mutate({ runId: s.runId });
+
+      for (const c of cps) {
+        expect((await variationRow(c.variationId)).ignoreRegions).toEqual([
+          savedRegion,
+        ]);
+      }
+    });
+
+    test("approveCheckpointGroup keeps the group's saved regions", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "grp-a",
+        signature: SIG,
+        unresolved: true,
+      });
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: [savedRegion] })
+        .where(eq(testVariations.id, a.variation.id));
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: a.run.id,
+        checkpointId: a.shot.id,
+      });
+      expect(res.approved).toBe(1);
+
+      expect((await variationRow(a.variation.id)).ignoreRegions).toEqual([
+        savedRegion,
+      ]);
+    });
+  });
+
+  describe("review mutations are audited (ADR-067)", () => {
+    async function auditRows(action: string) {
+      return h.db.select().from(auditLog).where(eq(auditLog.action, action));
+    }
+
+    test("runs.approve records the promoted checkpoint count", async () => {
+      const cps = await addCheckpoints(s.runId, ["au-a", "au-b"]);
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approve.mutate({ runId: s.runId });
+
+      const [row] = await auditRows("run.approve");
+      expect(row?.targetId).toBe(s.runId);
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        checkpoints: 2,
+        checkpointIds: cps.map((c) => c.shotId),
+      });
+    });
+
+    test("approveCheckpoint → run.approve_checkpoint", async () => {
+      const [cp] = await addCheckpoints(s.runId, ["au-one"]);
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
+        checkpointId: cp!.shotId,
+      });
+
+      const rows = await auditRows("run.approve_checkpoint");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actorId: s.memberId,
+        targetType: "run",
+        targetId: s.runId,
+      });
+      expect(rows[0]?.metadata).toMatchObject({
+        projectId: s.projectId,
+        checkpointId: cp!.shotId,
+        testVariationId: cp!.variationId,
+        ignoreAreasOverride: false,
+      });
+    });
+
+    test("approveAllCheckpoints → run.approve_all_checkpoints", async () => {
+      const cps = await addCheckpoints(s.runId, ["au-x", "au-y"]);
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveAllCheckpoints.mutate({ runId: s.runId });
+
+      const [row] = await auditRows("run.approve_all_checkpoints");
+      expect(row).toMatchObject({ targetType: "run", targetId: s.runId });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        approved: 2,
+        checkpointIds: cps.map((c) => c.shotId),
+      });
+    });
+
+    test("approveCheckpointGroup → run.approve_group", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "ga",
+        signature: SIG,
+        unresolved: true,
+      });
+      const b = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "gb",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpointGroup.mutate({
+        runId: a.run.id,
+        checkpointId: a.shot.id,
+      });
+
+      const [row] = await auditRows("run.approve_group");
+      expect(row).toMatchObject({ targetType: "build", targetId: buildId });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        seedRunId: a.run.id,
+        seedCheckpointId: a.shot.id,
+        diffSignature: SIG,
+        approved: 2,
+        runCount: 2,
+        capped: false,
+      });
+      const meta = row?.metadata as {
+        runIds: string[];
+        checkpointIds: string[];
+      };
+      expect(new Set(meta.runIds)).toEqual(new Set([a.run.id, b.run.id]));
+      expect(new Set(meta.checkpointIds)).toEqual(
+        new Set([a.shot.id, b.shot.id]),
+      );
+    });
+
+    test("rejectCheckpointGroup → run.reject_group", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      const a = await seedCheckpoint(h, {
+        buildId,
+        projectId: s.projectId,
+        name: "ra",
+        signature: SIG,
+        unresolved: true,
+      });
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.rejectCheckpointGroup.mutate({
+        runId: a.run.id,
+        checkpointId: a.shot.id,
+      });
+
+      const [row] = await auditRows("run.reject_group");
+      expect(row).toMatchObject({ targetType: "build", targetId: buildId });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        seedRunId: a.run.id,
+        seedCheckpointId: a.shot.id,
+        rejected: 1,
+        runIds: [a.run.id],
+        capped: false,
+      });
+    });
+
+    test("bulkApproveByBuild → run.approve_build", async () => {
+      const buildId = await getSeedBuildId(h, s.runId);
+      await addCheckpoints(s.runId, ["bb-a", "bb-b"]);
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.bulkApproveByBuild.mutate({ buildId });
+
+      const [row] = await auditRows("run.approve_build");
+      expect(row).toMatchObject({ targetType: "build", targetId: buildId });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        approved: 1,
+        runIds: [s.runId],
+        checkpoints: 2,
+        capped: false,
+      });
+    });
+
+    test("overrideStatus → run.override_status", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "passed",
+      });
+
+      const [row] = await auditRows("run.override_status");
+      expect(row).toMatchObject({ targetType: "run", targetId: s.runId });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        from: "unresolved",
+        to: "passed",
+        requested: "passed",
+      });
+    });
+
+    test("inbox.reject → run.reviewer_reject", async () => {
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.inbox.reject.mutate({ runId: s.runId, reason: "flaky" });
+
+      const [row] = await auditRows("run.reviewer_reject");
+      expect(row).toMatchObject({
+        actorId: s.memberId,
+        targetType: "run",
+        targetId: s.runId,
+      });
+      expect(row?.metadata).toMatchObject({
+        projectId: s.projectId,
+        reason: "flaky",
+      });
     });
   });
 });

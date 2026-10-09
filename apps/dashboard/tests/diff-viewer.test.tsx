@@ -150,7 +150,6 @@ vi.mock("../src/lib/trpc", () => {
         setIgnoreAreas: { useMutation: noopMutation },
         setTempIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
-        bulkApproveByVariation: { useMutation: noopMutation },
         approveCheckpoint: {
           useMutation: () => ({
             mutate: reviewSpies.approveCheckpoint,

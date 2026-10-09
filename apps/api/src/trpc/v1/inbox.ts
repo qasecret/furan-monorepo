@@ -566,6 +566,27 @@ export const inboxRouter = t.router({
             reason: input.reason ?? null,
           },
         });
+
+      const [run] = await ctx.db
+        .select({ projectId: testRuns.projectId, buildId: testRuns.buildId })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      await emitAudit(
+        ctx.db,
+        {
+          actorId: ctx.user.id,
+          action: "run.reviewer_reject",
+          targetType: "run",
+          targetId: input.runId,
+          metadata: {
+            projectId: run?.projectId ?? null,
+            buildId: run?.buildId ?? null,
+            reason: input.reason ?? null,
+          },
+        },
+        ctx.req.log,
+      );
       return { ok: true as const };
     }),
 });
