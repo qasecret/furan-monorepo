@@ -23,13 +23,16 @@
 --     time of candidate (V, R) is
 --       - created_at of the existing baselines row (V, R), if R owns one (that
 --         row was stamped when this very step was accepted); else
---       - the run's acceptance time: MAX(created_at) over the baselines rows R
---         owns for ANY variation (under run-level approve R owns a row for its
---         first checkpoint, stamped when R was approved); else
+--       - the run's acceptance time: MIN(created_at) over the baselines rows R
+--         owns for ANY variation, i.e. when R was first accepted (under
+--         run-level approve R owns a row for its first checkpoint, stamped when
+--         R was approved as a whole). MIN, not MAX: a later single-step
+--         re-approval of an older run would otherwise make that run win for
+--         every OTHER variation; else
 --       - R.updated_at when R owns no baselines row at all.
 --     Rows this migration itself wrote (the audit_log 'baseline.repair' targets)
---     are ignored when computing acceptance: they are stamped "now" and would
---     otherwise inflate their run's acceptance time on a re-run.
+--     are ignored when computing acceptance, so a re-run sees exactly what the
+--     first pass saw.
 --   * The source R is the candidate with the LATEST acceptance time; ties break
 --     on R.created_at DESC, R.id DESC.
 --   * V's current baseline on B is its newest baselines row on B
@@ -76,7 +79,7 @@ BEGIN
       r."id"                                       AS run_id,
       r."branch_name"                              AS branch,
       r."created_at"                               AS run_created_at,
-      COALESCE(MAX(ar."created_at"), r."updated_at") AS run_accepted_at
+      COALESCE(MIN(ar."created_at"), r."updated_at") AS run_accepted_at
     FROM "test_runs" r
     LEFT JOIN accepted_rows ar ON ar."test_run_id" = r."id"
     WHERE r."status" = 'passed'

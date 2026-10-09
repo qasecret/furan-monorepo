@@ -830,6 +830,72 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
     expect(await repairAuditFor([current!.id])).toHaveLength(1);
   });
 
+  it("uses a run's first acceptance as its run-level approval time, not a later single-step re-approval", async () => {
+    const v1 = await seedVariation("firstacc-v1");
+    const v2 = await seedVariation("firstacc-v2");
+    const v3 = await seedVariation("firstacc-v3");
+
+    // Both runs have all three steps; neither owns a baselines row for v3.
+    const older = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(500),
+      variationIds: [v1, v2, v3],
+    });
+    const newer = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(510),
+      variationIds: [v1, v2, v3],
+    });
+    // `older` approved run-level at t1; `newer` approved at t3 > t1...
+    const v1Older = await seedBaseline({
+      variationId: v1,
+      runId: older.runId,
+      createdAt: at(501),
+      userId: approverId,
+    });
+    const v1Newer = await seedBaseline({
+      variationId: v1,
+      runId: newer.runId,
+      createdAt: at(511),
+      userId: approverId,
+    });
+    // ...then ONE step of the older run is re-approved much later, t4 > t3.
+    const v2Older = await seedBaseline({
+      variationId: v2,
+      runId: older.runId,
+      createdAt: at(520),
+      userId: approverId,
+    });
+
+    await runMigration();
+
+    // v3 has no baseline: it comes from the run approved as a whole most
+    // recently (`newer`, t3), not from `older`, whose latest row is just one
+    // re-approved step (t4). A MAX over the run's rows would pick `older`.
+    const v3Rows = await baselineRows(v3);
+    expect(v3Rows).toHaveLength(1);
+    expect(v3Rows[0]).toMatchObject({
+      testRunId: newer.runId,
+      baselineName: newer.keys[v3],
+      userId: approverId,
+    });
+    // The other steps are untouched: v1 stays on newer, v2 keeps its re-approval.
+    expect((await baselineRows(v1)).map((r) => r.id).sort()).toEqual(
+      [v1Older, v1Newer].sort(),
+    );
+    expect((await currentBaseline(v1))!.id).toBe(v1Newer);
+    expect((await baselineRows(v2)).map((r) => r.id)).toEqual([v2Older]);
+    expect(await repairAuditFor([v1Older, v1Newer, v2Older])).toHaveLength(0);
+
+    // Re-run is a no-op (the repaired v3 row is excluded from acceptance).
+    await runMigration();
+    expect((await baselineRows(v3)).map((r) => r.id)).toEqual([v3Rows[0]!.id]);
+    expect((await baselineRows(v2)).map((r) => r.id)).toEqual([v2Older]);
+    expect(await repairAuditFor([v3Rows[0]!.id])).toHaveLength(1);
+  });
+
   it("falls back to the run's updated_at when it owns no baselines row", async () => {
     // A run that owns no baselines row at all (first-baseline without
     // auto-approve): its acceptance time is test_runs.updated_at.
