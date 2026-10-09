@@ -1040,15 +1040,23 @@ export const runsRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       const BULK_CAP = 200;
+      // Only runs still awaiting a decision. `passed` is reviewer-legal for a
+      // single approve, but approval itself lands runs in `passed`, so
+      // including it let a capped second click re-select already-approved
+      // runs instead of the rest. Oldest-first keeps each click's batch
+      // stable, so repeated clicks drain the build — and when several runs
+      // share a variation (retries), the newest run's baseline is written
+      // last and wins (baselineWriteTime).
       const targets = await ctx.db
         .select()
         .from(testRuns)
         .where(
           and(
             eq(testRuns.buildId, input.buildId),
-            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+            inArray(testRuns.status, ["unresolved", "failed"]),
           ),
         )
+        .orderBy(asc(testRuns.createdAt), asc(testRuns.id))
         .limit(BULK_CAP + 1);
       const capped = targets.length > BULK_CAP;
       const approveTargets = capped ? targets.slice(0, BULK_CAP) : targets;
@@ -1627,7 +1635,13 @@ export const runsRouter = t.router({
             eq(screenshots.diffSignature, seed.diffSignature),
           ),
         )
-        .orderBy(asc(screenshots.createdAt));
+        // Oldest run first, so a variation matched in several runs ends on the
+        // newest run's baseline (written last — baselineWriteTime).
+        .orderBy(
+          asc(testRuns.createdAt),
+          asc(screenshots.createdAt),
+          asc(screenshots.id),
+        );
 
       const statuses = await deriveCheckpointStatuses(ctx.db, matches);
       const unresolved = matches.filter(

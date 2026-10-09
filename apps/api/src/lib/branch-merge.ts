@@ -143,11 +143,12 @@ export async function mergeBranchBaselinesImpl(
     });
   }
 
-  // 2. Latest baseline per variation on fromBranch — desc by createdAt,
-  //    dedupe in-memory (first-occurrence wins). Joins through
-  //    test_variations so we get only baselines that belong to this
-  //    project (defensive: baselines.test_variation_id is FK'd, but the
-  //    join also gives us project_id for the screenshot copy below).
+  // 2. Latest baseline per variation on fromBranch — desc by createdAt with
+  //    resolveBaseline's id tiebreak, dedupe in-memory (first-occurrence
+  //    wins). Joins through test_variations so we get only baselines that
+  //    belong to this project (defensive: baselines.test_variation_id is
+  //    FK'd, but the join also gives us project_id for the screenshot copy
+  //    below).
   const sourceRows = await deps.db
     .select({
       variationId: baselines.testVariationId,
@@ -163,7 +164,7 @@ export async function mergeBranchBaselinesImpl(
         eq(baselines.branchName, fromBranch),
       ),
     )
-    .orderBy(desc(baselines.createdAt));
+    .orderBy(desc(baselines.createdAt), desc(baselines.id));
 
   const seen = new Set<string>();
   const latestPerVariation = sourceRows.filter((r) => {
