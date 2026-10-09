@@ -5,6 +5,7 @@ vi.mock("../src/app/(public)/login/action", () => ({
   loginAction: vi.fn(async () => ({})),
 }));
 
+import { loginAction } from "../src/app/(public)/login/action";
 import LoginPage from "../src/app/(public)/login/page";
 
 describe("LoginPage", () => {
@@ -33,5 +34,27 @@ describe("LoginPage", () => {
     fireEvent.click(toggle);
     expect(input.type).toBe("password");
     expect(toggle.getAttribute("aria-label")).toBe("Show password");
+  });
+
+  test("a failed sign-in shows a destructive-token alert, not a raw red hue", async () => {
+    vi.mocked(loginAction).mockResolvedValueOnce({
+      error: "invalid_credentials",
+      email: "you@company.com",
+    });
+    render(<LoginPage />);
+    fireEvent.submit(
+      screen.getByRole("button", { name: /sign in/i }).closest("form")!,
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Invalid email or password.");
+    const cls = alert.className.split(/\s+/);
+    expect(cls).toEqual(
+      expect.arrayContaining([
+        "border-destructive/25",
+        "bg-destructive/10",
+        "text-destructive",
+      ]),
+    );
+    expect(alert.className).not.toMatch(/red-|status-|dark:/);
   });
 });

@@ -8,13 +8,7 @@ import config from "@furan/eslint-config/node.js";
  *
  * Paths are relative to `apps/dashboard`. Do NOT add entries to hide new code.
  */
-export const UNMIGRATED = [
-  // PR 5
-  "src/app/(public)/**",
-  "src/app/not-found.tsx",
-  "src/app/page.tsx",
-  "src/components/landing/**",
-];
+export const UNMIGRATED = [];
 
 // minimatch treats ( ) [ ] as special; route groups and dynamic segments contain them.
 const esc = (p) => p.replace(/[()[\]]/g, "\\$&");

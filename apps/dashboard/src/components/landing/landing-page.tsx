@@ -19,7 +19,7 @@ import { LandingWorksWith } from "./landing-works-with";
  */
 export function LandingPage() {
   return (
-    <div className="h-dvh overflow-y-auto scroll-pt-24 scroll-smooth bg-white text-zinc-900 antialiased dark:bg-black dark:text-white">
+    <div className="h-dvh overflow-y-auto scroll-pt-24 scroll-smooth bg-canvas text-fg antialiased">
       <LandingNav />
       <main>
         <LandingHero />

@@ -26,7 +26,7 @@ export function LandingHero() {
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 hidden select-none items-center justify-center opacity-[0.04] lg:flex"
       >
-        <pre className="-rotate-6 font-mono text-xs leading-7 text-zinc-900 dark:text-white">
+        <pre className="-rotate-6 font-mono text-xs leading-7 text-fg">
           {TERMINAL_LINES.join("\n")}
         </pre>
       </div>
@@ -35,30 +35,30 @@ export function LandingHero() {
         <Reveal>
           <a
             href="#features"
-            className="group mb-7 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1.5 text-sm backdrop-blur transition-colors hover:border-brand/40 dark:border-zinc-800 dark:bg-zinc-900/50"
+            className="group mb-7 inline-flex items-center gap-2 rounded-full border border-edge bg-raised/70 px-3 py-1.5 text-sm backdrop-blur transition-colors hover:border-brand/40 focus-ring"
           >
-            <span className="inline-flex items-center gap-1 rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-brand-text">
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand/15 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wider text-brand-text">
               <Sparkles className="h-3 w-3" /> New
             </span>
-            <span className="text-zinc-600 dark:text-zinc-300">
+            <span className="text-fg-secondary">
               Image-first diffing with VLM root-cause
             </span>
-            <ArrowRight className="h-3.5 w-3.5 text-zinc-400 transition-transform group-hover:translate-x-0.5" />
+            <ArrowRight className="h-3.5 w-3.5 text-fg-muted transition-transform group-hover:translate-x-0.5" />
           </a>
         </Reveal>
 
         <Reveal delay={80}>
-          <h1 className="text-balance text-5xl font-semibold leading-[1.05] tracking-tight text-zinc-950 dark:text-white md:text-7xl">
+          <h1 className="text-balance text-5xl font-semibold leading-[1.05] tracking-tight text-fg md:text-7xl">
             Catch every visual regression.
             <br />
-            <span className="bg-gradient-to-r from-zinc-500 to-zinc-900 bg-clip-text text-transparent dark:from-zinc-400 dark:to-white">
+            <span className="bg-gradient-to-r from-fg-muted to-fg bg-clip-text text-transparent">
               Before your users do.
             </span>
           </h1>
         </Reveal>
 
         <Reveal delay={160}>
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-zinc-600 dark:text-zinc-400 md:text-xl">
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg text-fg-secondary md:text-xl">
             Furan is self-hosted visual regression testing for modern teams.
             Pixel-perfect diffs, an AI smart layer that explains what changed,
             and built-in accessibility checks — all running on infrastructure
@@ -81,7 +81,7 @@ export function LandingHero() {
         </Reveal>
 
         <Reveal delay={320}>
-          <p className="mt-7 flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-zinc-500">
+          <p className="mt-7 flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-fg-muted">
             <span
               aria-hidden="true"
               className="h-1.5 w-1.5 rounded-full bg-brand shadow-[0_0_8px_rgba(168,255,83,0.8)]"
