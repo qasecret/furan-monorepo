@@ -97,6 +97,8 @@ const INSERT_CHUNK = 1_000;
  * 1. Locks the target runs `FOR NO KEY UPDATE`, ascending id (R8).
  * 2. Then, under those locks, replays a known `actionId` (`replayed: true`,
  *    nothing else done), so a retry racing its original cannot act twice.
+ *    With no targets nothing is locked or written, but a known `actionId`
+ *    still replays (a retried "all pending" selection comes back empty).
  * 3. Loads the facts and applies legality (spec §5.4). Explicit targets are
  *    all-or-nothing: any refusal throws before the first write —
  *    `CONFLICT already_decided` (with `details.winner`) when a target is
@@ -130,7 +132,17 @@ export async function decideCheckpoints(
     );
   }
   if (targets.length === 0) {
-    return { actionId, decided: [], runs: [], replayed: false };
+    // Still a replay when the action was applied: a retried implicit
+    // selection ("all pending", the build drain, saveNewTests) finds nothing
+    // left once its original committed. Nothing is written, so no locks.
+    return (
+      (await replayAction(tx, projectId, actionId)) ?? {
+        actionId,
+        decided: [],
+        runs: [],
+        replayed: false,
+      }
+    );
   }
 
   // 1. Locks first (R8); 2. then idempotency, so it sees a committed original.

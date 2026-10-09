@@ -945,6 +945,41 @@ d("decideCheckpoints", () => {
       expect((await auditOfRun(s.runId)).length).toBe(auditCount);
       expect(await decisionsMetric("approved", "viewer")).toBe(metric);
     });
+
+    test("a retry that finds nothing left to decide still replays the stored result", async () => {
+      // An implicit selection ("approve all pending", the build drain, the
+      // SDK's saveNewTests) re-run after its original committed selects no
+      // targets: the retry must still report what the action did.
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "new" },
+        ],
+      });
+      const actionId = randomUUID();
+      const first = await decide(s, {
+        decision: "approved",
+        actionId,
+        targets: [
+          target(s.runId, s.shots.home!.id),
+          target(s.runId, s.shots.cart!.id),
+        ],
+      });
+      const auditCount = (await auditOfRun(s.runId)).length;
+      const metric = await decisionsMetric("approved", "viewer");
+
+      const retry = await decide(s, {
+        decision: "approved",
+        actionId,
+        targets: [],
+      });
+
+      expect(first.decided).toHaveLength(2);
+      expect(retry).toEqual({ ...first, replayed: true });
+      expect(await decisionsOfAction(actionId)).toHaveLength(2);
+      expect((await auditOfRun(s.runId)).length).toBe(auditCount);
+      expect(await decisionsMetric("approved", "viewer")).toBe(metric);
+    });
   });
 
   describe("audit, metrics and logs", () => {
