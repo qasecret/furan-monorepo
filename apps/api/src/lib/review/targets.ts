@@ -292,12 +292,16 @@ export async function loadWinner(
 
 /**
  * What an implicit selection ranges over: one run, a whole build, or a build's
- * "group" (its checkpoints that share one diff signature).
+ * "group" (its checkpoints that share one diff signature). Every scope carries
+ * the project the caller resolved and only that project's runs are selected: a
+ * build should never span projects, but a corrupt build/project state must not
+ * make the core refuse the whole action (`decideCheckpoints` locks the
+ * project's runs only) or inflate the preview.
  */
 export type SelectionScope =
-  | { runId: string }
-  | { buildId: string }
-  | { buildId: string; diffSignature: string };
+  | { projectId: string; runId: string }
+  | { projectId: string; buildId: string }
+  | { projectId: string; buildId: string; diffSignature: string };
 
 /**
  * Every checkpoint in `scope` that `decision` would be legal for
@@ -325,9 +329,12 @@ async function collectLegalTargets(
     })
     .from(testRuns)
     .where(
-      "runId" in scope
-        ? eq(testRuns.id, scope.runId)
-        : eq(testRuns.buildId, scope.buildId),
+      and(
+        "runId" in scope
+          ? eq(testRuns.id, scope.runId)
+          : eq(testRuns.buildId, scope.buildId),
+        eq(testRuns.projectId, scope.projectId),
+      ),
     )
     .orderBy(asc(testRuns.createdAt), asc(testRuns.id));
   const runIds = runs.map((r) => r.id);
@@ -445,7 +452,7 @@ export async function selectPendingTargets(
  */
 export async function selectUndecidedTargets(
   tx: Tx,
-  scope: { runId: string },
+  scope: { projectId: string; runId: string },
   cap: number,
 ): Promise<{ targets: ReviewTarget[]; total: number }> {
   const c = await collectLegalTargets(tx, scope, "rejected");

@@ -1435,7 +1435,7 @@ d("decideCheckpoints", () => {
 
   describe("selectPendingTargets", () => {
     const select = (
-      scope: { runId: string } | { buildId: string },
+      scope: { projectId: string } & ({ runId: string } | { buildId: string }),
       cap: number,
     ) => h.db.transaction((tx) => selectPendingTargets(tx, scope, cap));
 
@@ -1453,7 +1453,7 @@ d("decideCheckpoints", () => {
         targets: [target(s.runId, s.shots.b!.id)],
       });
 
-      const res = await select({ runId: s.runId }, 10);
+      const res = await select({ projectId: s.projectId, runId: s.runId }, 10);
       expect(res.targets).toEqual([
         target(s.runId, s.shots.a!.id),
         target(s.runId, s.shots.d!.id),
@@ -1467,7 +1467,10 @@ d("decideCheckpoints", () => {
         cap: 10,
       });
 
-      const capped = await select({ runId: s.runId }, 1);
+      const capped = await select(
+        { projectId: s.projectId, runId: s.runId },
+        1,
+      );
       expect(capped.targets).toEqual([target(s.runId, s.shots.a!.id)]);
       expect(capped.preview).toMatchObject({
         pendingCheckpoints: 2,
@@ -1504,7 +1507,10 @@ d("decideCheckpoints", () => {
         targets: [target(r5.runId, r5.shots.f!.id)],
       });
 
-      const all = await select({ buildId: s.buildId }, 10);
+      const all = await select(
+        { projectId: s.projectId, buildId: s.buildId },
+        10,
+      );
       expect(all.targets).toEqual([
         target(s.runId, s.shots.a!.id),
         target(s.runId, s.shots.b!.id),
@@ -1519,7 +1525,10 @@ d("decideCheckpoints", () => {
         cap: 10,
       });
 
-      const firstTwo = await select({ buildId: s.buildId }, 2);
+      const firstTwo = await select(
+        { projectId: s.projectId, buildId: s.buildId },
+        2,
+      );
       expect(firstTwo.targets).toEqual([
         target(s.runId, s.shots.a!.id),
         target(s.runId, s.shots.b!.id),
@@ -1540,10 +1549,16 @@ d("decideCheckpoints", () => {
           { name: "c", verdict: "new" },
         ],
       });
-      const { targets } = await select({ buildId: s.buildId }, 10);
+      const { targets } = await select(
+        { projectId: s.projectId, buildId: s.buildId },
+        10,
+      );
       const res = await decide(s, { decision: "approved", targets });
       expect(res.runs).toEqual([{ runId: s.runId, status: "passed" }]);
-      expect((await select({ buildId: s.buildId }, 10)).targets).toEqual([]);
+      expect(
+        (await select({ projectId: s.projectId, buildId: s.buildId }, 10))
+          .targets,
+      ).toEqual([]);
     });
   });
 });

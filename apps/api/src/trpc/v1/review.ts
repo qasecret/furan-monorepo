@@ -297,7 +297,7 @@ async function decideGroup(
   const scope: SelectionScope | undefined =
     seed.diffSignature === null
       ? undefined
-      : { buildId: seed.buildId, diffSignature: seed.diffSignature };
+      : { projectId, buildId: seed.buildId, diffSignature: seed.diffSignature };
   const selected = scope
     ? await selectPendingTargets(txOf(ctx), scope, GROUP_APPROVE_CAP)
     : null;
@@ -360,7 +360,7 @@ export const reviewRouter = t.router({
           "ignore_areas_need_a_single_approve_target",
         );
       }
-      const scope: SelectionScope = { runId: input.runId };
+      const scope: SelectionScope = { projectId, runId: input.runId };
       let selection: Selection;
       if (input.checkpointIds) {
         selection = explicitSelection(input.runId, input.checkpointIds);
@@ -404,7 +404,7 @@ export const reviewRouter = t.router({
     )
     .mutation(async ({ ctx, input }): Promise<ReviewResult> => {
       const projectId = await requireRunProject(ctx, input.runId);
-      const scope: SelectionScope = { runId: input.runId };
+      const scope: SelectionScope = { projectId, runId: input.runId };
       let selection: Selection;
       if (input.checkpointIds) {
         selection = explicitSelection(input.runId, input.checkpointIds);
@@ -420,7 +420,7 @@ export const reviewRouter = t.router({
         } else {
           const undecided = await selectUndecidedTargets(
             txOf(ctx),
-            { runId: input.runId },
+            { projectId, runId: input.runId },
             RUN_CAP,
           );
           selection = {
@@ -482,10 +482,10 @@ export const reviewRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }): Promise<ApproveBuildPreview> => {
-      await requireBuildProject(ctx, input.buildId);
+      const projectId = await requireBuildProject(ctx, input.buildId);
       const { preview } = await selectPendingTargets(
         txOf(ctx),
-        { buildId: input.buildId },
+        { projectId, buildId: input.buildId },
         APPROVE_BUILD_CAP,
       );
       return preview;
@@ -518,7 +518,7 @@ export const reviewRouter = t.router({
         source: "batch",
         decision: "approved",
       } as const;
-      const scope: SelectionScope = { buildId: input.buildId };
+      const scope: SelectionScope = { projectId, buildId: input.buildId };
 
       // 1. Lock the build's runs (ascending id, FOR NO KEY UPDATE). Everything
       //    below sees the state no concurrent decision can change under us.

@@ -1301,6 +1301,142 @@ d("review router", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Project pinning (R18)
+  // -------------------------------------------------------------------------
+
+  describe("a build that holds another project's run (corrupt state)", () => {
+    /**
+     * `s` is project A's build with two pending checkpoints of one diff
+     * signature. `foreign` is project B's run, moved INTO that build (the
+     * build/project mismatch the pin guards against), with a pending
+     * checkpoint of the same signature.
+     */
+    async function seedWithForeignRun() {
+      const s = await seedGroup();
+      const foreign = await seed({
+        checkpoints: [{ name: "x", verdict: "unresolved", withBaseline: true }],
+      });
+      await setSignature([foreign.shots.x!.id], `sig-${s.tag}`);
+      await h.db
+        .update(testRuns)
+        .set({ buildId: s.buildId })
+        .where(eq(testRuns.id, foreign.runId));
+      return { s, foreign };
+    }
+
+    async function expectForeignUntouched(foreign: ReviewSeed) {
+      expect(await decisionsOfRun(foreign.runId)).toHaveLength(0);
+      expect(await runStatus(foreign.runId)).toBe("unresolved");
+    }
+
+    test("previewApproveBuild counts only the build's own project", async () => {
+      const { s } = await seedWithForeignRun();
+      const preview = await as(s.editor).review.previewApproveBuild.query({
+        buildId: s.buildId,
+      });
+      expect(preview).toMatchObject({
+        pendingCheckpoints: 2,
+        tests: 1,
+        notReviewableTests: 0,
+      });
+    });
+
+    test("approveBuild approves its own project's checkpoints and ignores the foreign run", async () => {
+      const { s, foreign } = await seedWithForeignRun();
+      const res = await as(s.editor).review.approveBuild.mutate({
+        buildId: s.buildId,
+        actionId: newAction(),
+        expectedCount: 2,
+      });
+      expect(res.decided.map((x) => x.checkpointId)).toEqual([
+        s.shots.a!.id,
+        s.shots.b!.id,
+      ]);
+      expect(await runStatus(s.runId)).toBe("passed");
+      await expectForeignUntouched(foreign);
+    });
+
+    test("approveGroup and rejectGroup ignore the foreign run", async () => {
+      const { s, foreign } = await seedWithForeignRun();
+      const approved = await as(s.editor).review.approveGroup.mutate({
+        runId: s.runId,
+        checkpointId: s.shots.a!.id,
+        actionId: newAction(),
+      });
+      expect(approved.decided.map((x) => x.checkpointId)).toEqual([
+        s.shots.a!.id,
+        s.shots.b!.id,
+      ]);
+
+      const other = await seedWithForeignRun();
+      const rejected = await as(other.s.editor).review.rejectGroup.mutate({
+        runId: other.s.runId,
+        checkpointId: other.s.shots.a!.id,
+        actionId: newAction(),
+      });
+      expect(rejected.decided.map((x) => x.checkpointId)).toEqual([
+        other.s.shots.a!.id,
+        other.s.shots.b!.id,
+      ]);
+      await expectForeignUntouched(foreign);
+      await expectForeignUntouched(other.foreign);
+    });
+  });
+
+  describe("an actionId is scoped to its project", () => {
+    test("replaying project A's actionId through project B's run is a fresh decision, never A's result", async () => {
+      const a = await twoPending();
+      const b = await twoPending();
+      const actionId = newAction();
+      const first = await as(a.editor).review.approve.mutate({
+        runId: a.runId,
+        actionId,
+      });
+      expect(first.decided).toHaveLength(2);
+
+      const second = await as(b.editor).review.approve.mutate({
+        runId: b.runId,
+        actionId,
+      });
+      expect(second.replayed).toBe(false);
+      expect(second.decided.map((x) => x.checkpointId).sort()).toEqual(
+        [b.shots.a!.id, b.shots.b!.id].sort(),
+      );
+      expect(second.runs.map((r) => r.runId)).toEqual([b.runId]);
+      // A's rows are A's; B has its own, under the same actionId.
+      expect(await decisionsOfRun(a.runId)).toHaveLength(2);
+      expect(await decisionsOfRun(b.runId)).toHaveLength(2);
+    });
+
+    test("when project B has nothing to decide, A's actionId is an empty no-op, not a replay", async () => {
+      const a = await twoPending();
+      const b = await seed({
+        checkpoints: [{ name: "ok", verdict: "passed" }],
+      });
+      const actionId = newAction();
+      await as(a.editor).review.approve.mutate({ runId: a.runId, actionId });
+
+      const viaRun = await as(b.editor).review.approve.mutate({
+        runId: b.runId,
+        actionId,
+      });
+      expect(viaRun).toMatchObject({ decided: [], runs: [], replayed: false });
+
+      const viaBuild = await as(b.editor).review.approveBuild.mutate({
+        buildId: b.buildId,
+        actionId,
+        expectedCount: 0,
+      });
+      expect(viaBuild).toMatchObject({
+        decided: [],
+        runs: [],
+        replayed: false,
+      });
+      expect(await decisionsOfRun(b.runId)).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Broadcasts
   // -------------------------------------------------------------------------
 
