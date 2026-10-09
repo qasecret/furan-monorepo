@@ -145,6 +145,9 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
     status: (typeof testRuns.$inferInsert)["status"];
     merge: boolean;
     createdAt: Date;
+    /** Pinned explicitly (default: createdAt) — it is the acceptance-time
+     *  fallback for a run that owns no baselines row, so it must not be "now". */
+    updatedAt?: Date;
     branchName?: string | null;
     /** Variations this run has a screenshot of (image keys come back keyed). */
     variationIds: string[];
@@ -158,6 +161,7 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
         status: opts.status,
         merge: opts.merge,
         createdAt: opts.createdAt,
+        updatedAt: opts.updatedAt ?? opts.createdAt,
         branchName: opts.branchName === undefined ? "main" : opts.branchName,
       })
       .returning();
@@ -683,5 +687,204 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
       .from(testVariations)
       .where(eq(testVariations.id, v));
     expect(row!.baselineName).toBeNull();
+  });
+  // --- "newer" means newer ACCEPTANCE, not newer run creation (ruling R13) ----
+
+  it("respects a deliberate later re-approval of an older run's step", async () => {
+    const v1 = await seedVariation("reapprove-v1");
+    const v2 = await seedVariation("reapprove-v2");
+    const v3 = await seedVariation("reapprove-v3");
+
+    // Two approved runs of the same 2-step test; `later` is also the only run
+    // that has the (new) third step.
+    const earlier = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(200),
+      variationIds: [v1, v2],
+    });
+    const later = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(210),
+      variationIds: [v1, v2, v3],
+    });
+    // earlier was approved at t(201); later at t3 = t(211) (its first checkpoint)...
+    const v1Earlier = await seedBaseline({
+      variationId: v1,
+      runId: earlier.runId,
+      createdAt: at(201),
+      userId: approverId,
+    });
+    const v1Later = await seedBaseline({
+      variationId: v1,
+      runId: later.runId,
+      createdAt: at(211),
+      userId: approverId,
+    });
+    // ...and then step 2 of the OLDER run was deliberately re-approved, after t3.
+    const v2Earlier = await seedBaseline({
+      variationId: v2,
+      runId: earlier.runId,
+      createdAt: at(212),
+      userId: approverId,
+    });
+
+    await runMigration();
+
+    // v2: the re-approval is respected (run creation order would have said
+    // "later is newer" and overwritten it).
+    expect((await baselineRows(v2)).map((r) => r.id)).toEqual([v2Earlier]);
+    // v1: earlier's later re-approval of ANOTHER step must not drag step 1 back
+    // to the older run — step 1's own newest acceptance is on `later`.
+    expect((await baselineRows(v1)).map((r) => r.id).sort()).toEqual(
+      [v1Earlier, v1Later].sort(),
+    );
+    expect((await currentBaseline(v1))!.id).toBe(v1Later);
+    // v3 (only `later` has it, no baseline yet) is still repaired.
+    const v3Rows = await baselineRows(v3);
+    expect(v3Rows).toHaveLength(1);
+    expect(v3Rows[0]).toMatchObject({
+      testRunId: later.runId,
+      baselineName: later.keys[v3],
+    });
+    expect(await repairAuditFor([v1Earlier, v1Later, v2Earlier])).toHaveLength(
+      0,
+    );
+    expect(await repairAuditFor([v3Rows[0]!.id])).toHaveLength(1);
+
+    // Re-run: the repaired v3 row (stamped "now") must NOT inflate `later`'s
+    // acceptance time past the re-approval and flip v2 on the second pass.
+    await runMigration();
+    expect((await baselineRows(v2)).map((r) => r.id)).toEqual([v2Earlier]);
+    expect((await baselineRows(v1)).map((r) => r.id).sort()).toEqual(
+      [v1Earlier, v1Later].sort(),
+    );
+    expect(await baselineRows(v3)).toHaveLength(1);
+    expect(await repairAuditFor([v3Rows[0]!.id])).toHaveLength(1);
+  });
+
+  it("repairs when the newer-approved run was created BEFORE the run holding the current baseline", async () => {
+    const v1 = await seedVariation("interleave-v1");
+    const v2 = await seedVariation("interleave-v2");
+
+    // `late` is created first but approved last; `early` is created after it
+    // but approved (step 2 at t1' = t(305)) before `late` was (step 1 at t3 =
+    // t(310)). Creation order would call `early` the newer run and do nothing.
+    const late = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(300),
+      variationIds: [v1, v2],
+    });
+    const early = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(301),
+      variationIds: [v1, v2],
+    });
+    const v1Early = await seedBaseline({
+      variationId: v1,
+      runId: early.runId,
+      createdAt: at(302),
+      userId: approverId,
+    });
+    const v2Early = await seedBaseline({
+      variationId: v2,
+      runId: early.runId,
+      createdAt: at(305),
+      userId: approverId,
+    });
+    const v1Late = await seedBaseline({
+      variationId: v1,
+      runId: late.runId,
+      createdAt: at(310),
+      userId: approverId,
+    });
+
+    await runMigration();
+
+    // v1 is already on its newest acceptance: untouched.
+    expect((await baselineRows(v1)).map((r) => r.id).sort()).toEqual(
+      [v1Early, v1Late].sort(),
+    );
+    // v2 was accepted at t(305) < t(310) when `late` was approved: repaired to
+    // `late`, the stale row kept as history and named as previousBaselineId.
+    const v2Rows = await baselineRows(v2);
+    expect(v2Rows).toHaveLength(2);
+    const current = await currentBaseline(v2);
+    expect(current).toMatchObject({
+      test_run_id: late.runId,
+      baseline_name: late.keys[v2],
+    });
+    const [audit] = await repairAuditFor([current!.id]);
+    expect(audit!.metadata).toEqual({
+      variationId: v2,
+      runId: late.runId,
+      branch: "main",
+      previousBaselineId: v2Early,
+    });
+
+    await runMigration();
+    expect(await baselineRows(v2)).toHaveLength(2);
+    expect(await repairAuditFor([current!.id])).toHaveLength(1);
+  });
+
+  it("falls back to the run's updated_at when it owns no baselines row", async () => {
+    // A run that owns no baselines row at all (first-baseline without
+    // auto-approve): its acceptance time is test_runs.updated_at.
+    const stale = await seedVariation("fallback-stale");
+    const fresh = await seedVariation("fallback-fresh");
+
+    const staleOther = await seedRun({
+      status: "unresolved",
+      merge: false,
+      createdAt: at(398),
+      variationIds: [stale],
+    });
+    const freshOther = await seedRun({
+      status: "unresolved",
+      merge: false,
+      createdAt: at(398),
+      variationIds: [fresh],
+    });
+    // Both variations have a current baseline from some unrelated run...
+    const staleBaseline = await seedBaseline({
+      variationId: stale,
+      runId: staleOther.runId,
+      createdAt: at(401), // ...newer than the approved run was last updated
+    });
+    const freshBaseline = await seedBaseline({
+      variationId: fresh,
+      runId: freshOther.runId,
+      createdAt: at(399), // ...older than the approved run was last updated
+    });
+    const approvedStale = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(397),
+      updatedAt: at(400),
+      variationIds: [stale],
+    });
+    const approvedFresh = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(397),
+      updatedAt: at(400),
+      variationIds: [fresh],
+    });
+
+    await runMigration();
+
+    expect((await baselineRows(stale)).map((r) => r.id)).toEqual([
+      staleBaseline,
+    ]);
+    const freshRows = await baselineRows(fresh);
+    expect(freshRows).toHaveLength(2);
+    expect(freshRows.map((r) => r.id)).toContain(freshBaseline);
+    expect((await currentBaseline(fresh))!.test_run_id).toBe(
+      approvedFresh.runId,
+    );
+    void approvedStale;
   });
 });
