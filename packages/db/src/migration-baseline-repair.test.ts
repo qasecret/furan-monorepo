@@ -58,15 +58,17 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
   let close: () => Promise<void>;
 
   const tag = randomUUID().slice(0, 8);
-  /** A fixed reference point; runs and baselines are seeded relative to it. */
-  const T0 = Date.now() - 400 * HOUR;
+  /** A fixed reference point; runs and baselines are seeded relative to it.
+   *  600h back, so even `at(520)` lies in the past. */
+  const T0 = Date.now() - 600 * HOUR;
   const at = (hours: number): Date => new Date(T0 + hours * HOUR);
 
   let projectId: string;
   let buildId: string;
   let approverId: string;
   const userIds: string[] = [];
-  /** Every baseline id this test could have produced, for audit cleanup. */
+  /** Every variation id this test seeds; cleanup finds the baselines (and so the
+   *  audit_log rows, which have no FK) through them. */
   const touchedVariationIds: string[] = [];
 
   beforeAll(async () => {
@@ -253,7 +255,7 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
 
   // --- the migration file ---------------------------------------------------
 
-  it("is a non-empty, breakpoint-delimited data migration", () => {
+  it("is a non-empty data migration that audits as baseline.repair", () => {
     const body = MIGRATION_SQL.replace(/--.*$/gm, "").trim();
     expect(body.length).toBeGreaterThan(0);
     expect(body).toMatch(/baseline\.repair/);
@@ -343,12 +345,14 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
       runId: run.runId,
       branch: "main",
       previousBaselineId: null,
+      op: "inserted",
     });
     expect(byTarget.get(current!.id)).toEqual({
       variationId: checkout,
       runId: run.runId,
       branch: "main",
       previousBaselineId: staleId,
+      op: "inserted",
     });
   });
 
@@ -601,11 +605,29 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
     expect(byBranch.get(`feature-${tag}`)!.testRunId).toBe(featRun.runId);
   });
 
-  it("re-points an existing (variation, run) row stranded on another branch, once", async () => {
+  it("moves an existing (variation, run) row stranded on another branch in place, once", async () => {
     // The unique key is (variation, run), so the insert conflicts with this row;
     // the update must move it onto the run's branch or the repair would never
-    // converge (and would re-audit on every run).
+    // converge (and would re-audit on every run). It keeps its created_at (it
+    // is, by construction, already the newest on that branch) and its approver.
+    const [otherUser] = await db
+      .insert(users)
+      .values({
+        email: `baseline-repair-other-${tag}@t.example`,
+        hashedPassword: "x",
+        firstName: "baseline",
+        lastName: "other",
+        role: "editor",
+      })
+      .returning();
+    userIds.push(otherUser!.id);
+    // The repair's candidate approver is MIN(user_id::text) over the run's rows,
+    // so give the stranded row the LARGER user and a sibling row the SMALLER:
+    // "keep the existing approver" and "take the candidate" then differ.
+    const [low, high] = [approverId, otherUser!.id].sort() as [string, string];
+
     const v = await seedVariation("stranded");
+    const sibling = await seedVariation("stranded-sibling");
     const run = await seedRun({
       status: "passed",
       merge: true,
@@ -617,9 +639,18 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
       variationId: v,
       runId: run.runId,
       createdAt: at(111),
-      userId: approverId,
+      userId: high,
       branchName: "main",
       baselineName: "stale-name",
+    });
+    // Another approver already recorded on the same run (for a step this
+    // migration has no screenshot for, so it is not itself a candidate).
+    await seedBaseline({
+      variationId: sibling,
+      runId: run.runId,
+      createdAt: at(112),
+      userId: low,
+      branchName: `feature-${tag}`,
     });
 
     await runMigration();
@@ -630,12 +661,96 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
       id: strandedId,
       branchName: `feature-${tag}`,
       baselineName: run.keys[v],
-      userId: approverId, // kept: a repair never erases the approver
+      userId: high, // kept: a repair never replaces an existing approver
     });
-    expect(await repairAuditFor([strandedId])).toHaveLength(1);
+    // Not re-stamped: the moved row keeps the time it was really accepted.
+    expect(rows[0]!.createdAt.getTime()).toBe(at(111).getTime());
+    const audits = await repairAuditFor([strandedId]);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.metadata).toEqual({
+      variationId: v,
+      runId: run.runId,
+      branch: `feature-${tag}`,
+      previousBaselineId: null,
+      op: "updated",
+    });
 
     await runMigration();
     expect(await repairAuditFor([strandedId])).toHaveLength(1);
+  });
+
+  it("is idempotent when it moves a stranded row that is the run's only baseline", async () => {
+    // Regression: the moved row is the run's ONLY (hence earliest) acceptance.
+    // If a re-run stopped counting it, the run would fall back to updated_at,
+    // which lies after a sibling's current baseline, and that sibling would be
+    // "repaired" on pass 2, overriding a newer baseline.
+    const featureBranch = `feature-${tag}`;
+    const v1 = await seedVariation("only-v1");
+    const v2 = await seedVariation("only-v2");
+
+    const run = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(100),
+      updatedAt: at(130),
+      branchName: featureBranch,
+      variationIds: [v1, v2],
+    });
+    const strandedId = await seedBaseline({
+      variationId: v1,
+      runId: run.runId,
+      createdAt: at(110),
+      userId: approverId,
+      branchName: "main",
+    });
+    // v2's current baseline sits between the run's first acceptance (110) and
+    // its updated_at (130), on an unrelated (unresolved) run.
+    const other = await seedRun({
+      status: "unresolved",
+      merge: false,
+      createdAt: at(115),
+      branchName: featureBranch,
+      variationIds: [v2],
+    });
+    const v2Current = await seedBaseline({
+      variationId: v2,
+      runId: other.runId,
+      createdAt: at(120),
+      branchName: featureBranch,
+    });
+
+    const snapshot = async () => {
+      const rows = await db
+        .select()
+        .from(baselines)
+        .where(inArray(baselines.testVariationId, [v1, v2]));
+      const audits = await repairAuditFor(rows.map((r) => r.id));
+      return {
+        rows: rows
+          .map(
+            (r) =>
+              `${r.id}|${r.branchName}|${r.createdAt.toISOString()}|${r.updatedAt.toISOString()}`,
+          )
+          .sort(),
+        audits: audits.map((a) => a.id).sort(),
+      };
+    };
+
+    await runMigration();
+    const first = await snapshot();
+    // v1's stranded row moved onto the run's branch; v2 is untouched.
+    expect(first.rows).toHaveLength(2);
+    expect((await baselineRows(v2)).map((r) => r.id)).toEqual([v2Current]);
+    expect(first.audits).toHaveLength(1);
+
+    // Passes 2 and 3 write nothing: no new baselines, no new audit rows.
+    await runMigration();
+    expect(await snapshot()).toEqual(first);
+    await runMigration();
+    expect(await snapshot()).toEqual(first);
+
+    const [movedAudit] = await repairAuditFor([strandedId]);
+    expect(movedAudit!.metadata).toMatchObject({ op: "updated" });
   });
 
   it("takes user_id from any baseline already on the run, else NULL", async () => {
@@ -823,6 +938,7 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
       runId: late.runId,
       branch: "main",
       previousBaselineId: v2Early,
+      op: "inserted",
     });
 
     await runMigration();
