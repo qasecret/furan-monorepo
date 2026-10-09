@@ -29,7 +29,10 @@ import {
 
 import { decideCheckpoints } from "../src/lib/review/decide.js";
 import { lockRuns } from "../src/lib/review/targets.js";
-import { GROUP_APPROVE_CAP } from "../src/trpc/v1/checkpoint-grouping.js";
+import {
+  GROUP_APPROVE_CAP,
+  groupScope,
+} from "../src/trpc/v1/checkpoint-grouping.js";
 import { APPROVE_BUILD_CAP } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
@@ -85,6 +88,31 @@ async function failure(p: Promise<unknown>): Promise<{
 
 const newAction = () => randomUUID();
 const quietLogger = { info: () => undefined, error: () => undefined };
+
+describe("groupScope", () => {
+  const seed = {
+    id: randomUUID(),
+    runId: randomUUID(),
+    buildId: randomUUID(),
+    projectId: randomUUID(),
+    diffSignature: "sig",
+  };
+
+  test("pins the project the caller resolved, not the seed row's (R18/R20)", () => {
+    const resolved = randomUUID();
+    expect(groupScope(seed, resolved)).toEqual({
+      projectId: resolved,
+      buildId: seed.buildId,
+      diffSignature: "sig",
+    });
+  });
+
+  test("a seed without a diff signature has no group", () => {
+    expect(groupScope({ ...seed, diffSignature: null }, seed.projectId)).toBe(
+      null,
+    );
+  });
+});
 
 d("review router", () => {
   let h: TestApp;

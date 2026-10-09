@@ -298,7 +298,7 @@ async function decideGroup(
   // with the seed's diff signature, filtered by the core's own pending rule.
   // A seed without a signature (VLM / auto-approved / no meaningful diff) has
   // no group; the empty selection still lets the core replay a known actionId.
-  const scope = groupScope(seed) ?? undefined;
+  const scope = groupScope(seed, projectId) ?? undefined;
   const selected = scope
     ? await selectPendingTargets(txOf(ctx), scope, GROUP_APPROVE_CAP)
     : null;

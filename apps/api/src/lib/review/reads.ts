@@ -16,6 +16,7 @@ import {
   type CheckpointReviewState,
   type CheckpointVerdict,
   type DecisionSource,
+  type RunStatus,
 } from "@furan/shared-types";
 
 import { loadActiveDecisionDetails, selectPendingTargets } from "./targets.js";
@@ -62,21 +63,26 @@ export interface CheckpointReviewView {
   } | null;
 }
 
-/** The statuses `runs.listCheckpoints` has always reported per checkpoint, plus the two it now can. */
+/** The statuses `runs.listCheckpoints` reports per checkpoint. */
 export type CheckpointStatusAlias =
-  "new" | "unresolved" | "passed" | "failed" | "running";
+  "new" | "unresolved" | "passed" | "failed" | "running" | "aborted" | "empty";
 
 /**
  * `listCheckpoints.status`, kept until the dashboard reads `state`:
- * `approved` is shown as `passed`, `rejected` as `failed`, and a checkpoint
- * that is not diffed yet (no state) as `running`.
+ * `approved` is shown as `passed`, `rejected` as `failed`. A checkpoint that
+ * is not diffed yet (no state) shows its run's lifecycle when the run ended
+ * without diffing it (`aborted` / `empty`: no diff is coming), otherwise
+ * `running` (R20).
  */
 export function checkpointStatusAlias(
   state: CheckpointReviewState | null,
+  lifecycle: RunStatus,
 ): CheckpointStatusAlias {
   switch (state) {
     case null:
-      return "running";
+      return lifecycle === "aborted" || lifecycle === "empty"
+        ? lifecycle
+        : "running";
     case "approved":
       return "passed";
     case "rejected":

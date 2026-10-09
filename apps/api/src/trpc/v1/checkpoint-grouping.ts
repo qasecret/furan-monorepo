@@ -61,17 +61,19 @@ export const GROUP_APPROVE_CAP = 200;
 
 /**
  * The scope of a checkpoint's group: its build's checkpoints that share its
- * diff signature, pinned to the seed's project. Null when the seed has no
- * signature (VLM / auto-approved / no meaningful diff): no group can be formed.
- * Every group read and action selects its members from this scope with
+ * diff signature, pinned to `projectId`, the project the caller resolved for
+ * its membership gate (R18). Null when the seed has no signature (VLM /
+ * auto-approved / no meaningful diff): no group can be formed. Every group
+ * read and action selects its members from this scope with
  * `selectPendingTargets`, so "the group" and "pending" each have one definition.
  */
 export function groupScope(
   seed: Awaited<ReturnType<typeof loadGroupSeed>>,
+  projectId: string,
 ): SelectionScope | null {
   if (seed.diffSignature === null) return null;
   return {
-    projectId: seed.projectId,
+    projectId,
     buildId: seed.buildId,
     diffSignature: seed.diffSignature,
   };

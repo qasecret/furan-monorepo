@@ -354,6 +354,19 @@ async function resolveRunProjectId(
 }
 
 /**
+ * The run's project, as the membership gate resolved it; NOT_FOUND when there
+ * is no such run (an admin skips the gate's resolver).
+ */
+async function requireRunProjectId(
+  input: RunIdInput,
+  ctx: Context,
+): Promise<string> {
+  const projectId = await resolveRunProjectId(input, ctx);
+  if (!projectId) throw new TRPCError({ code: "NOT_FOUND" });
+  return projectId;
+}
+
+/**
  * The non-status WHERE conditions `list` applies
  * (projectId + branch/buildId/customTags). A shared builder keeps filter
  * logic centralized so it can't drift when a dimension is added
@@ -1507,6 +1520,14 @@ export const runsRouter = t.router({
 
       if (rows.length === 0) return { items: [] };
 
+      // The run's lifecycle names an undiffed checkpoint of a run that ended
+      // without diffing it (R20).
+      const [run] = await ctx.db
+        .select({ status: testRuns.status })
+        .from(testRuns)
+        .where(eq(testRuns.id, input.runId))
+        .limit(1);
+      const lifecycle = run?.status ?? "running";
       const review = await loadCheckpointReview(ctx.db, input.runId);
 
       const items = rows.map((r) => {
@@ -1525,8 +1546,9 @@ export const runsRouter = t.router({
           createdAt: r.createdAt,
           ...view,
           // Kept until the dashboard reads `state`: an alias of it
-          // (approved -> passed, rejected -> failed, no verdict -> running).
-          status: checkpointStatusAlias(view.state),
+          // (approved -> passed, rejected -> failed, no verdict -> running,
+          // or the run's lifecycle when it ended aborted / empty).
+          status: checkpointStatusAlias(view.state, lifecycle),
         };
       });
       return { items };
@@ -1558,9 +1580,10 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
+      const projectId = await requireRunProjectId(input, ctx);
       const seed = await loadGroupSeed(ctx.db, input);
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
-      const scope = groupScope(seed);
+      const scope = groupScope(seed, projectId);
       if (scope === null) {
         return {
           checkpoints: [],
@@ -1634,9 +1657,10 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const projectId = await requireRunProjectId(input, ctx);
       const seed = await loadGroupSeed(ctx.db, input);
       // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
-      const scope = groupScope(seed);
+      const scope = groupScope(seed, projectId);
       if (scope === null) {
         return {
           approved: 0,
@@ -1715,12 +1739,12 @@ export const runsRouter = t.router({
 
       const affectedRunIds = [...new Set(targets.map((m) => m.runId))];
       for (const runId of affectedRunIds) {
-        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        await ctx.broadcaster.publishProjectEvent(projectId, {
           event: "testRun_updated",
           data: { id: runId },
         });
       }
-      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+      await ctx.broadcaster.publishProjectEvent(projectId, {
         event: "build_updated",
         data: { id: seed.buildId },
       });
@@ -1733,7 +1757,7 @@ export const runsRouter = t.router({
           targetType: "build",
           targetId: seed.buildId,
           metadata: {
-            projectId: seed.projectId,
+            projectId,
             seedRunId: seed.runId,
             seedCheckpointId: seed.id,
             diffSignature: seed.diffSignature,
@@ -1769,6 +1793,7 @@ export const runsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const projectId = await requireRunProjectId(input, ctx);
       const seed = await loadGroupSeed(ctx.db, input);
       // Shared zero-result for both empty-group exits (NULL signature below +
       // zero runs with a pending member after selection).
@@ -1779,7 +1804,7 @@ export const runsRouter = t.router({
         cap: GROUP_APPROVE_CAP,
       };
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
-      const scope = groupScope(seed);
+      const scope = groupScope(seed, projectId);
       if (scope === null) return empty;
 
       // Same build-scoped, project-pinned, signature selection as
@@ -1832,12 +1857,12 @@ export const runsRouter = t.router({
         .where(inArray(testRuns.id, targetRunIds));
 
       for (const runId of targetRunIds) {
-        await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+        await ctx.broadcaster.publishProjectEvent(projectId, {
           event: "testRun_updated",
           data: { id: runId },
         });
       }
-      await ctx.broadcaster.publishProjectEvent(seed.projectId, {
+      await ctx.broadcaster.publishProjectEvent(projectId, {
         event: "build_updated",
         data: { id: seed.buildId },
       });
@@ -1850,7 +1875,7 @@ export const runsRouter = t.router({
           targetType: "build",
           targetId: seed.buildId,
           metadata: {
-            projectId: seed.projectId,
+            projectId,
             seedRunId: seed.runId,
             seedCheckpointId: seed.id,
             diffSignature: seed.diffSignature,

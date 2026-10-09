@@ -12,7 +12,7 @@ import {
   users,
   type DB,
 } from "@furan/db";
-import type { CheckpointReviewState } from "@furan/shared-types";
+import type { CheckpointReviewState, RunStatus } from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import {
   afterAll,
@@ -79,16 +79,24 @@ function countingDb(db: DB): { db: DB; count: () => number } {
 }
 
 describe("checkpointStatusAlias", () => {
-  const cases: Array<[CheckpointReviewState | null, string]> = [
-    ["new", "new"],
-    ["unresolved", "unresolved"],
-    ["passed", "passed"],
-    ["approved", "passed"],
-    ["rejected", "failed"],
-    [null, "running"],
+  const cases: Array<[CheckpointReviewState | null, RunStatus, string]> = [
+    ["new", "new", "new"],
+    ["unresolved", "unresolved", "unresolved"],
+    ["passed", "passed", "passed"],
+    ["approved", "passed", "passed"],
+    ["rejected", "failed", "failed"],
+    [null, "running", "running"],
+    // R20: an undiffed checkpoint of a run that ended without diffing it shows
+    // the run's lifecycle, not a "Running" spinner that never stops.
+    [null, "aborted", "aborted"],
+    [null, "empty", "empty"],
+    // Any other lifecycle with an undiffed checkpoint: a diff is still due.
+    [null, "unresolved", "running"],
+    // A diffed checkpoint never takes the run's lifecycle.
+    ["unresolved", "aborted", "unresolved"],
   ];
-  test.each(cases)("%s -> %s", (state, status) => {
-    expect(checkpointStatusAlias(state)).toBe(status);
+  test.each(cases)("%s in a %s run -> %s", (state, lifecycle, status) => {
+    expect(checkpointStatusAlias(state, lifecycle)).toBe(status);
   });
 });
 
@@ -318,6 +326,26 @@ d("review read model", () => {
         { verdict: null, state: null, status: "running", decision: null },
       ]);
     });
+
+    test.each(["aborted", "empty"] as const)(
+      "an undiffed checkpoint of an %s run reads as that lifecycle, not running (R20)",
+      async (lifecycle) => {
+        const s = await seed({
+          checkpoints: [
+            { name: "done", verdict: "unresolved", withBaseline: true },
+            { name: "never-diffed", verdict: null },
+          ],
+          lifecycle,
+        });
+        const { items } = await as(s.editor).runs.listCheckpoints.query({
+          runId: s.runId,
+        });
+        expect(items.map((i) => [i.state, i.status])).toEqual([
+          ["unresolved", "unresolved"],
+          [null, lifecycle],
+        ]);
+      },
+    );
 
     test("the state follows each checkpoint's own verdict and decision, not the run's status", async () => {
       // The run was forced to `passed` (as the old run-level approve left it),
