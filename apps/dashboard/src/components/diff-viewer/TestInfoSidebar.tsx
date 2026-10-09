@@ -69,7 +69,7 @@ const SEV_LABEL: Record<string, string> = {
   cosmetic: "Cosmetic",
   none: "None",
 };
-// Worst-severity chip. Hues mirror RegionItem's SEVERITY_STYLE badges
+// Worst-severity chip. Hues mirror the shared SEVERITY_STYLE chips
 // (breaking red → major orange → minor yellow → cosmetic blue → none green)
 // so the card speaks the same colour language as the region rows below.
 // Severity is not a run status, so it is the same opaque pastel chip in both

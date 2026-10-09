@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DiffRegion } from "../src/components/diff-viewer/layers/regionTypes";
 import { RegionListPanel } from "../src/components/diff-viewer/RegionListPanel";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { SEVERITY_STYLE } from "../src/lib/severity-style";
 
 const mockRegions: DiffRegion[] = [
   {
@@ -73,6 +74,19 @@ describe("RegionListPanel", () => {
     expect(severities).toContain("breaking");
     expect(severities).toContain("major");
     expect(severities).toContain("minor");
+  });
+
+  it("severity chips wear the shared severity map's classes", () => {
+    render(<RegionListPanel regions={mockRegions} />);
+    const chips = document.querySelectorAll<HTMLElement>("[data-severity]");
+    for (const chip of chips) {
+      const sev = chip.getAttribute(
+        "data-severity",
+      ) as keyof typeof SEVERITY_STYLE;
+      for (const cls of SEVERITY_STYLE[sev].split(" ")) {
+        expect(chip.classList.contains(cls), `${sev}: ${cls}`).toBe(true);
+      }
+    }
   });
 
   it("source='dynamic_text' rows hidden by default; visible when toggle on", () => {
