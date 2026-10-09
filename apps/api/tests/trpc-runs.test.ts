@@ -3493,40 +3493,44 @@ d("tRPC runs router", () => {
       expect(await variationBaselineName()).toBe(newer.shot.imageKey);
     });
 
-    test("bulkApproveByBuild: re-recording the newer run's existing baseline keeps it the latest", async () => {
-      const buildId = await newBuild();
-      const t0 = Date.now();
-      const older = await seedVariationRun(buildId, {
-        label: "older",
-        createdAt: new Date(t0 - 60_000),
-        status: "unresolved",
-      });
-      // The newer run already passed with an auto-recorded baseline
-      // (diff-worker hash match, userId NULL). Re-approving it hits the
-      // (variation, run) upsert's conflict path, which must re-stamp the row
-      // so the older run's freshly inserted baseline can't outrank it.
-      const newer = await seedVariationRun(buildId, {
-        label: "newer",
-        createdAt: new Date(t0),
-        status: "passed",
-      });
-      await h.db.insert(baselines).values({
-        baselineName: newer.shot.imageKey,
-        testVariationId: s.variationId,
-        testRunId: newer.run.id,
-        branchName: "feature/x",
-      });
+    test.each(["approve", "approveCheckpoint"] as const)(
+      "%s: re-approving an older run makes its image the baseline again",
+      async (procedure) => {
+        const buildId = await newBuild();
+        const t0 = Date.now();
+        const older = await seedVariationRun(buildId, {
+          label: "older",
+          createdAt: new Date(t0 - 60_000),
+          status: "unresolved",
+        });
+        const newer = await seedVariationRun(buildId, {
+          label: "newer",
+          createdAt: new Date(t0),
+          status: "unresolved",
+        });
+        const client = makeClient(baseUrl, s.memberJwt);
+        await client.runs.bulkApproveByBuild.mutate({ buildId });
+        expect((await resolvedBaseline()).testRunId).toBe(newer.run.id);
 
-      const client = makeClient(baseUrl, s.memberJwt);
-      const res = await client.runs.bulkApproveByBuild.mutate({ buildId });
-      expect(res.approved).toBe(2);
+        // The older run already has a baseline row, so re-approving it hits
+        // the (variation, run) upsert's conflict path. That must re-stamp the
+        // row, or baseline_name would name the older image while the resolver
+        // kept diffing against the newer one.
+        if (procedure === "approve") {
+          await client.runs.approve.mutate({ runId: older.run.id });
+        } else {
+          await client.runs.approveCheckpoint.mutate({
+            runId: older.run.id,
+            checkpointId: older.shot.id,
+          });
+        }
 
-      expect(await stampedAfter(newer.run.id, older.run.id)).toBe(true);
-      const resolved = await resolvedBaseline();
-      expect(resolved.testRunId).toBe(newer.run.id);
-      expect(resolved.userId).toBe(s.memberId);
-      expect(await variationBaselineName()).toBe(newer.shot.imageKey);
-    });
+        expect(await stampedAfter(older.run.id, newer.run.id)).toBe(true);
+        const resolved = await resolvedBaseline();
+        expect(resolved.testRunId).toBe(older.run.id);
+        expect(await variationBaselineName()).toBe(older.shot.imageKey);
+      },
+    );
 
     test("approveCheckpointGroup: one variation across runs — the newer run's image is the baseline", async () => {
       // A prior baseline on the branch, so the checkpoints are "unresolved".
