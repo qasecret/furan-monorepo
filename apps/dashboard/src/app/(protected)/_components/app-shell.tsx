@@ -25,11 +25,11 @@ export function AppShell({
   children,
 }: Props) {
   return (
-    <div className="flex h-screen overflow-hidden bg-white text-zinc-950 dark:bg-black dark:text-white">
+    <div className="flex h-screen overflow-hidden bg-canvas text-fg">
       <Sidebar userRole={userRole} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar email={userEmail} initial={userInitial} role={userRole} />
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#050505]">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
           {children}
         </main>
       </div>

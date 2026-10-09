@@ -31,7 +31,7 @@ export default async function BuildsLayout({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 md:flex-row md:p-6">
       <aside className="flex min-h-0 shrink-0 flex-col md:w-72">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-raised shadow-raised">
           <BuildsListPanel projectId={projectId} />
         </div>
       </aside>

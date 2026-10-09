@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 
 import { useCurrentProject } from "./current-project-provider";
 
+import { cn } from "@/lib/cn";
+
 /**
  * Header project context (ADR-052) — a FIXED, non-interactive label. The
  * project is admin-assigned; there is no switching, creating, or listing here
@@ -29,11 +31,12 @@ export function ProjectSelector() {
           ? "Analytics and Admin span all projects — not just this one"
           : undefined
       }
-      className={`flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm font-medium text-zinc-900 dark:border-zinc-800 dark:text-zinc-100${
-        scopedOut ? " opacity-60" : ""
-      }`}
+      className={cn(
+        "flex items-center gap-2 rounded-md border border-edge px-2.5 py-1.5 text-sm font-medium text-fg",
+        scopedOut && "opacity-60",
+      )}
     >
-      <FolderKanban className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
+      <FolderKanban className="h-4 w-4 shrink-0 text-fg-muted" aria-hidden />
       <span className="max-w-[12rem] truncate">{name ?? "No project"}</span>
     </div>
   );

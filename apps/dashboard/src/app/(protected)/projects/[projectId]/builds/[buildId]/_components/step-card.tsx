@@ -30,7 +30,8 @@ interface Props {
  * A single checkpoint rendered as the reference's "test step" card — left
  * status accent, the screenshot thumbnail (loaded via the authed storage
  * proxy), a hover action toolbar (quick-approve + open), and an "n/total name"
- * label. The card opens the checkpoint in the diff viewer.
+ * label led by the status icon. The card opens the checkpoint in the diff
+ * viewer.
  */
 export function StepCard({
   projectId,
@@ -43,6 +44,8 @@ export function StepCard({
   const router = useRouter();
   const utils = trpc.useUtils();
   const thumb = useAuthedImage(checkpoint.imageKey);
+  const status = statusStyle(checkpoint.status);
+  const StatusIcon = status.icon;
 
   const approve = trpc.runs.approveCheckpoint.useMutation({
     onSuccess: () => {
@@ -64,19 +67,16 @@ export function StepCard({
       data-testid={`step-card-${checkpoint.id}`}
       className="group relative w-[320px] shrink-0"
     >
-      <div className="relative overflow-hidden rounded-lg border border-zinc-200 bg-white transition-colors group-hover:border-brand/40 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="relative overflow-hidden rounded-lg border border-edge bg-raised transition-colors group-hover:border-brand/40">
         <span
           aria-hidden
-          className={cn(
-            "absolute inset-y-0 left-0 z-10 w-1",
-            statusStyle(checkpoint.status).dot,
-          )}
+          className={cn("absolute inset-y-0 left-0 z-10 w-1", status.dot)}
         />
         <button
           type="button"
           aria-label={`Open ${checkpoint.name}`}
           onClick={open}
-          className="block aspect-video w-full cursor-pointer overflow-hidden bg-zinc-100 dark:bg-zinc-900"
+          className="block aspect-video w-full cursor-pointer overflow-hidden bg-muted"
         >
           {thumb ? (
             <img
@@ -85,10 +85,10 @@ export function StepCard({
               className="h-full w-full object-cover object-top"
             />
           ) : (
-            <div className="h-full w-full bg-[repeating-linear-gradient(45deg,#e4e4e7,#e4e4e7_4px,#d4d4d8_4px,#d4d4d8_8px)] dark:bg-[repeating-linear-gradient(45deg,#18181b,#18181b_4px,#1f1f23_4px,#1f1f23_8px)]" />
+            <div className="h-full w-full bg-[repeating-linear-gradient(45deg,var(--edge),var(--edge)_4px,transparent_4px,transparent_8px)]" />
           )}
         </button>
-        <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex items-center justify-between border-t border-edge bg-sunken px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           <div className="flex items-center gap-1">
             {canReview && (
               <button
@@ -100,7 +100,7 @@ export function StepCard({
                   e.stopPropagation();
                   approve.mutate({ runId, checkpointId: checkpoint.id });
                 }}
-                className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-emerald-600 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-emerald-400"
+                className="rounded p-1.5 text-fg-muted transition-colors hover:bg-edge hover:text-status-passed-text focus-ring disabled:opacity-50"
               >
                 <ThumbsUp className="h-4 w-4" aria-hidden />
               </button>
@@ -113,18 +113,32 @@ export function StepCard({
               e.stopPropagation();
               open();
             }}
-            className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+            className="rounded p-1.5 text-fg-muted transition-colors hover:bg-edge hover:text-fg focus-ring"
           >
             <Maximize2 className="h-4 w-4" aria-hidden />
           </button>
         </div>
       </div>
       <div className="mt-2 flex items-center gap-2 px-0.5 text-sm">
-        <Star
-          className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-600"
-          aria-hidden
-        />
-        <span className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300">
+        {/* The accent bar alone can't tell aborted from unresolved (near-
+            identical yellows), so the status icon names it too. */}
+        <span
+          title={status.tooltip}
+          data-testid={`step-status-${checkpoint.id}`}
+          className="inline-flex shrink-0"
+        >
+          <StatusIcon
+            className={cn(
+              "h-4 w-4",
+              status.text,
+              checkpoint.status === "running" && "motion-safe:animate-spin",
+            )}
+            aria-hidden
+          />
+          <span className="sr-only">{status.label}</span>
+        </span>
+        <Star className="h-4 w-4 shrink-0 text-edge-strong" aria-hidden />
+        <span className="min-w-0 flex-1 truncate tabular-nums text-fg-secondary">
           {index + 1}/{total} {checkpoint.name}
         </span>
       </div>

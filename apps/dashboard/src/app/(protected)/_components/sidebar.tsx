@@ -67,7 +67,7 @@ function Logo({ collapsed }: { collapsed: boolean }) {
         <span className="h-2.5 w-2.5 rounded-sm bg-black" />
       </span>
       {!collapsed && (
-        <span className="text-lg font-semibold tracking-tight text-zinc-950 dark:text-white">
+        <span className="text-lg font-semibold tracking-tight text-fg">
           Furan
         </span>
       )}
@@ -89,9 +89,9 @@ function Nav({ isAdmin, collapsed }: { isAdmin: boolean; collapsed: boolean }) {
           <div key={item.href}>
             {showDivider &&
               (collapsed ? (
-                <div className="mx-2 mb-1.5 mt-3 h-px bg-zinc-200 dark:bg-zinc-800" />
+                <div className="mx-2 mb-1.5 mt-3 h-px bg-edge" />
               ) : (
-                <div className="mb-1 mt-3 px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                <div className="mb-1 mt-3 px-3 text-2xs font-medium uppercase tracking-wider text-fg-muted">
                   Admin
                 </div>
               ))}
@@ -102,15 +102,18 @@ function Nav({ isAdmin, collapsed }: { isAdmin: boolean; collapsed: boolean }) {
               title={collapsed ? item.label : undefined}
               data-testid={`sidebar-nav-${item.label.toLowerCase()}`}
               className={cn(
-                "relative flex items-center rounded-md text-sm font-medium transition-colors",
+                "relative flex items-center rounded-md text-sm font-medium transition-colors focus-ring",
                 collapsed ? "justify-center py-2" : "gap-3 px-3 py-2",
                 active
                   ? cn(
-                      "bg-brand/10 text-brand-text",
-                      !collapsed &&
-                        "shadow-[inset_2px_0_0_0_var(--color-brand)]",
+                      "bg-hover",
+                      // Brand indicator: the inset bar when expanded; the
+                      // collapsed rail has no bar, so its icon goes brand.
+                      collapsed
+                        ? "text-brand-text"
+                        : "text-fg shadow-[inset_2px_0_0_0_var(--color-brand)]",
                     )
-                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white",
+                  : "text-fg-secondary hover:bg-hover hover:text-fg",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" aria-hidden />
@@ -165,13 +168,13 @@ export function Sidebar({ userRole }: { userRole: string }) {
       <aside
         data-testid="app-sidebar"
         className={cn(
-          "hidden shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/80 transition-[width] duration-200 ease-in-out dark:border-zinc-800 dark:bg-zinc-950/50 md:flex",
+          "hidden shrink-0 flex-col border-r border-edge bg-sunken transition-[width] duration-200 ease-in-out md:flex",
           collapsed ? "w-16" : "w-56",
         )}
       >
         <div
           className={cn(
-            "flex h-14 items-center border-b border-zinc-200 dark:border-zinc-800",
+            "flex h-14 items-center border-b border-edge",
             collapsed ? "justify-center px-2" : "px-4",
           )}
         >
@@ -190,14 +193,14 @@ export function Sidebar({ userRole }: { userRole: string }) {
             className="absolute inset-0 bg-black/50"
             onClick={() => setOpen(false)}
           />
-          <aside className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="flex h-14 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
+          <aside className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-edge bg-sunken">
+            <div className="flex h-14 items-center justify-between border-b border-edge px-4">
               <Logo collapsed={false} />
               <button
                 type="button"
                 aria-label="Close menu"
                 onClick={() => setOpen(false)}
-                className="rounded-md p-1 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+                className="rounded-md p-1 text-fg-secondary hover:bg-hover focus-ring"
               >
                 <X className="h-5 w-5" />
               </button>

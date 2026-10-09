@@ -34,7 +34,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
 
   return (
     <header
-      className="h-14 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/50 flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
+      className="h-14 border-b border-edge bg-sunken/80 backdrop-blur-sm flex items-center justify-between gap-3 px-4 md:px-6 shrink-0"
       data-testid="app-top-bar"
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -44,7 +44,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
           onClick={toggleDrawer}
           aria-label="Open menu"
           data-testid="sidebar-toggle"
-          className="-ml-1 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900 md:hidden"
+          className="-ml-1 rounded-md p-2 text-fg-secondary hover:bg-hover focus-ring md:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -56,7 +56,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
           aria-expanded={!collapsed}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           data-testid="sidebar-collapse-toggle"
-          className="hidden md:flex -ml-1 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+          className="hidden md:flex -ml-1 rounded-md p-2 text-fg-secondary hover:bg-hover focus-ring"
         >
           {collapsed ? (
             <ChevronsRight className="h-5 w-5" />
@@ -74,7 +74,7 @@ export function TopBar({ email, initial, role }: TopBarProps) {
           aria-disabled
           aria-label="Notifications (coming soon)"
           title="Notifications coming soon"
-          className="p-2 rounded-md text-zinc-600 opacity-50 cursor-not-allowed dark:text-zinc-400"
+          className="p-2 rounded-md text-fg-secondary opacity-50 cursor-not-allowed"
           data-testid="top-bar-bell"
         >
           <Bell className="w-5 h-5" />
