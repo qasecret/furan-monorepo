@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   aggregateRuleStatus,
+  checkpointFailures,
   regionEngineId,
   type ViewportStatusInput,
 } from "../src/rules-aggregation.js";
@@ -33,6 +34,70 @@ describe("regionEngineId", () => {
   it("encodes checkpoint index + region index", () => {
     expect(regionEngineId(0, 2)).toBe("0:2");
     expect(regionEngineId(3, 0)).toBe("3:0");
+  });
+});
+
+describe("checkpointFailures", () => {
+  it("returns one verdict per checkpoint, in input order", () => {
+    const decisions = [
+      decision("0:0", "auto_approve"),
+      decision("0:1", "auto_approve"),
+    ];
+    const r = checkpointFailures(
+      [vp(false, 2), vp(true, 0), vp(false, 1)],
+      rulesResult(decisions, { auto_approve: 2 }),
+    );
+    // cp0 fully auto-approved -> not failed; cp1 passed -> not failed;
+    // cp2 failed with no decision for 2:0 -> still failed.
+    expect(r).toEqual([false, false, true]);
+  });
+
+  it("with no rules, a checkpoint fails iff it did not pass", () => {
+    expect(
+      checkpointFailures([vp(true, 0), vp(false, 3), vp(false, 0)], null),
+    ).toEqual([false, true, true]);
+  });
+
+  it("returns an empty array for no checkpoints", () => {
+    expect(checkpointFailures([], null)).toEqual([]);
+    expect(checkpointFailures([], rulesResult([]))).toEqual([]);
+  });
+
+  it("a failed checkpoint with ZERO regions stays failed even when rules exist", () => {
+    expect(checkpointFailures([vp(false, 0)], rulesResult([]))).toEqual([true]);
+  });
+
+  it("a checkpoint with one non-auto_approve region stays failed", () => {
+    const decisions = [
+      decision("0:0", "auto_approve"),
+      decision("0:1", "flag"),
+    ];
+    expect(
+      checkpointFailures(
+        [vp(false, 2)],
+        rulesResult(decisions, { auto_approve: 1, flag: 1 }),
+      ),
+    ).toEqual([true]);
+  });
+
+  it("a region decided with a null finalAction keeps the checkpoint failed", () => {
+    const decisions = [decision("0:0", null)];
+    expect(checkpointFailures([vp(false, 1)], rulesResult(decisions))).toEqual([
+      true,
+    ]);
+  });
+
+  it("scores each checkpoint on its own decisions (index-keyed ids, shared viewport)", () => {
+    const decisions = [
+      decision("0:0", "auto_approve"),
+      decision("1:0", "flag"),
+    ];
+    expect(
+      checkpointFailures(
+        [vp(false, 1), vp(false, 1)],
+        rulesResult(decisions, { auto_approve: 1, flag: 1 }),
+      ),
+    ).toEqual([false, true]);
   });
 });
 
