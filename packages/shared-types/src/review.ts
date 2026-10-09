@@ -121,22 +121,33 @@ export function rollupRunStatus(input: RollupInput): RunStatus {
   if (lifecycle === "aborted" || lifecycle === "empty") return lifecycle;
   if (override !== null) return override;
   if (checkpoints.length === 0) return lifecycle;
-  if (checkpoints.some((c) => c.verdict === null)) return "running";
 
   let worst: RollupStatus = "passed";
   for (const c of checkpoints) {
-    // The `some` above guarantees a verdict on every checkpoint.
-    const verdict = c.verdict as CheckpointVerdict;
+    // A diff is still pending for this checkpoint: it outranks everything.
+    if (c.verdict === null) return "running";
     const status: RollupStatus =
       c.decision === "approved"
         ? "passed"
         : c.decision === "rejected"
           ? "failed"
-          : verdict;
+          : c.verdict;
     if (STATUS_PRECEDENCE[status] > STATUS_PRECEDENCE[worst]) worst = status;
   }
   return worst;
 }
+
+/**
+ * A jsonb column value inside a snapshot: any JSON value (including `null`),
+ * but the KEY must be present. Plain `z.unknown()` would accept an omitted key
+ * and drop it, so a revert built from the parsed snapshot would silently skip
+ * restoring that column instead of refusing a corrupt snapshot. The declared
+ * type excludes `undefined` so the inferred object keeps the key required.
+ */
+const jsonColumn = z.custom<NonNullable<unknown> | null>(
+  (v) => v !== undefined,
+  { message: "required" },
+);
 
 /**
  * The undo snapshot stored in `checkpoint_decisions.before`: what a decision
@@ -148,7 +159,8 @@ export function rollupRunStatus(input: RollupInput): RunStatus {
  * `prev.createdAt` is included because baseline writes re-stamp `created_at`
  * on the upsert's update branch (ADR-068) and `created_at` decides which
  * baseline is current. Timestamps are ISO strings; the region fields are
- * opaque JSON.
+ * opaque JSON, but each key must be present (a missing key is a corrupt
+ * snapshot, not an empty value).
  */
 export const decisionSnapshotSchema = z.object({
   baseline: z
@@ -172,11 +184,11 @@ export const decisionSnapshotSchema = z.object({
       id: z.string(),
       baselineName: z.string().nullable(),
       matchLevel: z.string(),
-      ignoreRegions: z.unknown(),
-      layoutRegions: z.unknown(),
-      floatingRegions: z.unknown(),
-      contentRegions: z.unknown(),
-      accessibilityRegions: z.unknown(),
+      ignoreRegions: jsonColumn,
+      layoutRegions: jsonColumn,
+      floatingRegions: jsonColumn,
+      contentRegions: jsonColumn,
+      accessibilityRegions: jsonColumn,
     })
     .nullable(),
 });

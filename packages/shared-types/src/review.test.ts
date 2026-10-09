@@ -13,6 +13,7 @@ import {
   runStatusOverrideSchema,
   type CheckpointDecisionKind,
   type CheckpointVerdict,
+  type DecisionSnapshot,
   type RollupInput,
 } from "./review.js";
 import type { RunStatus } from "./run-status.js";
@@ -309,6 +310,13 @@ describe("decisionSnapshotSchema", () => {
     contentRegions: { anything: "goes" },
     accessibilityRegions: null,
   };
+  const REGION_KEYS = [
+    "ignoreRegions",
+    "layoutRegions",
+    "floatingRegions",
+    "contentRegions",
+    "accessibilityRegions",
+  ] as const;
   const prev = {
     baselineName: "home-v0.png",
     userId: "9b1c3d7e-0000-4000-8000-0000000000aa",
@@ -348,6 +356,39 @@ describe("decisionSnapshotSchema", () => {
     expect(parsed.success).toBe(true);
   });
 
+  test("accepts any JSON value in a region field, including null", () => {
+    for (const key of REGION_KEYS) {
+      for (const value of [
+        null,
+        [],
+        [{ x: 1 }],
+        {},
+        { a: [1] },
+        "s",
+        0,
+        false,
+      ]) {
+        const parsed = decisionSnapshotSchema.safeParse({
+          baseline: null,
+          variation: { ...variation, [key]: value },
+        });
+        expect(parsed.success, `${key}=${JSON.stringify(value)}`).toBe(true);
+        if (parsed.success) {
+          // The value comes back untouched, never coerced or dropped.
+          expect(parsed.data.variation?.[key]).toStrictEqual(value);
+        }
+      }
+    }
+    // Every region field explicitly null at once (a variation with no regions).
+    const allNull = Object.fromEntries(REGION_KEYS.map((k) => [k, null]));
+    expect(
+      decisionSnapshotSchema.safeParse({
+        baseline: null,
+        variation: { ...variation, ...allNull },
+      }).success,
+    ).toBe(true);
+  });
+
   test("accepts a reject snapshot: no baseline, no variation", () => {
     const parsed = decisionSnapshotSchema.safeParse({
       baseline: null,
@@ -369,6 +410,48 @@ describe("decisionSnapshotSchema", () => {
         variation,
       }).success,
     ).toBe(false);
+  });
+
+  test("rejects a variation with a region key missing", () => {
+    for (const key of REGION_KEYS) {
+      const withoutKey: Record<string, unknown> = { ...variation };
+      delete withoutKey[key];
+      const parsed = decisionSnapshotSchema.safeParse({
+        baseline: null,
+        variation: withoutKey,
+      });
+      expect(parsed.success, `missing ${key}`).toBe(false);
+      if (!parsed.success) {
+        // The failure points at the missing key, not at something else.
+        expect(parsed.error.issues.map((i) => i.path.join("."))).toContain(
+          `variation.${key}`,
+        );
+      }
+    }
+    // An explicit undefined is the same as missing (it cannot be stored in jsonb).
+    expect(
+      decisionSnapshotSchema.safeParse({
+        baseline: null,
+        variation: { ...variation, layoutRegions: undefined },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("the inferred type keeps every region key required", () => {
+    type Variation = NonNullable<DecisionSnapshot["variation"]>;
+    const ok: Variation = { ...variation };
+    expect(ok.layoutRegions).toBeNull();
+    // @ts-expect-error layoutRegions is required, not optional
+    const missing: Variation = {
+      id: "v",
+      baselineName: null,
+      matchLevel: "strict",
+      ignoreRegions: null,
+      floatingRegions: null,
+      contentRegions: null,
+      accessibilityRegions: null,
+    };
+    expect(missing).toBeDefined();
   });
 
   test("rejects structurally broken snapshots", () => {
