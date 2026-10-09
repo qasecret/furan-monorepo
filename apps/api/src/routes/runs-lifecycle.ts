@@ -1,12 +1,12 @@
-import { type DB, eq, screenshots, testRuns } from "@furan/db";
+import { type DB, eq, screenshots, testRuns, type Tx } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
+import { approveRunPending } from "../lib/review/legacy.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
-import { approveRun } from "../trpc/v1/runs.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
 
@@ -191,7 +191,11 @@ export async function registerRunLifecycleRoutes(
     },
   );
 
-  // POST /runs/:id/approve — REST wrapper over approveRun (SDK saveNewTests).
+  // POST /runs/:id/approve — the SDK's `saveNewTests`. A thin wrapper over the
+  // decision core (spec §5.7): approves every pending checkpoint of the run as
+  // one action, `source: "sdk"`, decided by the token's user. Nothing pending
+  // (e.g. an already-passed run) is a successful no-op, not an error; a run
+  // that isn't reviewable is refused with 409, as before.
   app.post(
     "/runs/:id/approve",
     {
@@ -212,28 +216,33 @@ export async function registerRunLifecycleRoutes(
       const params = runIdParam.safeParse(req.params);
       if (!params.success) return sendError(reply, 400, "invalid_id");
       if (!req.auth) return sendError(reply, 401, "unauthenticated");
-      const authUserId = req.auth.id;
+      const actor = req.auth;
       try {
-        const out = await withRequestScope(app, req, (db, onCommit) =>
-          approveRun(
+        const { runId } = await withRequestScope(app, req, (db, onCommit) =>
+          approveRunPending(
             {
-              db,
+              // The request-scoped transaction (ADR-058).
+              tx: db as unknown as Tx,
+              actor,
+              deps: { registry: app.telemetry.metrics, logger: req.log },
               broadcaster: app.broadcaster,
-              user: { id: authUserId },
               onCommit,
-              log: req.log,
             },
-            params.data.id,
+            { runId: params.data.id, source: "sdk" },
           ),
         );
-        return reply.code(200).send(out);
+        // Sent after the scope committed (a getRun poll must not race it).
+        return reply.code(200).send({ runId, approved: true });
       } catch (err) {
         if (err instanceof TRPCError) {
           switch (err.code) {
             case "NOT_FOUND":
               return sendError(reply, 404, "not_found");
             case "BAD_REQUEST":
-              // Run is in a non-approvable state → 409 Conflict
+            case "PRECONDITION_FAILED":
+            case "CONFLICT":
+              // The core refused the approve (the run isn't reviewable, is
+              // overridden, or lost a race) → 409 Conflict, as before.
               return sendError(reply, 409, "approve_failed");
             case "FORBIDDEN":
               return sendError(reply, 403, "forbidden");

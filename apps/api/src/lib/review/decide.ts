@@ -54,8 +54,12 @@ export interface DecideInput {
   source: DecisionSource;
   decision: CheckpointDecisionKind;
   targets: ReadonlyArray<ReviewTarget>;
-  /** ADR-036 reviewer-drawn ignore regions: approve, exactly one target. */
-  ignoreAreas?: unknown[];
+  /**
+   * ADR-036 reviewer-drawn ignore regions: approve, exactly one target. They
+   * replace the variation's regions; `null` clears them (the legacy
+   * `runs.approve` / `approveCheckpoint` inputs accept it).
+   */
+  ignoreAreas?: unknown[] | null;
   /** Reject note; recorded on the audit row. */
   reason?: string;
 }

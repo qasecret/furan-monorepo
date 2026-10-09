@@ -28,11 +28,8 @@ import {
 } from "vitest";
 
 import { decideCheckpoints } from "../src/lib/review/decide.js";
+import { GROUP_APPROVE_CAP, groupScope } from "../src/lib/review/groups.js";
 import { lockRuns } from "../src/lib/review/targets.js";
-import {
-  GROUP_APPROVE_CAP,
-  groupScope,
-} from "../src/trpc/v1/checkpoint-grouping.js";
 import { APPROVE_BUILD_CAP } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 

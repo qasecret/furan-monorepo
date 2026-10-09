@@ -3,13 +3,17 @@ import type { AddressInfo } from "node:net";
 
 import {
   and,
+  asc,
   auditLog,
   baselines,
   builds,
+  checkpointDecisions,
   diffRegions,
   eq,
+  inArray,
   projectMembers,
   projects,
+  recomputeRunStatus,
   resolveBaseline,
   screenshots,
   sql,
@@ -17,7 +21,10 @@ import {
   testVariations,
   users,
 } from "@furan/db";
-import type { CheckpointVerdict } from "@furan/shared-types";
+import type {
+  CheckpointVerdict,
+  ReviewErrorDetails,
+} from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import {
   afterAll,
@@ -29,13 +36,19 @@ import {
 } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
-import {
-  approveCheckpointInTx,
-  GROUP_APPROVE_CAP,
-} from "../src/trpc/v1/checkpoint-grouping.js";
+import { decideCheckpoints } from "../src/lib/review/decide.js";
+import { GROUP_APPROVE_CAP } from "../src/lib/review/groups.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  addReviewRun,
+  cleanupReviewSeeds,
+  seedReviewRun,
+  type ReviewRunSpec,
+  type ReviewSeed,
+  type ReviewUser,
+} from "./review-fixtures.js";
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -520,6 +533,9 @@ d("tRPC runs router", () => {
       imageKey: "approve-test-img",
       viewport: "1280x720",
       browser: "chromium",
+      // Diffed and pending: only a `new` / `unresolved` checkpoint is
+      // approvable (spec §5.4).
+      verdict: "unresolved",
     });
 
     const client = makeClient(baseUrl, s.memberJwt);
@@ -552,6 +568,9 @@ d("tRPC runs router", () => {
       imageKey: "approve-ign-img",
       viewport: "1280x720",
       browser: "chromium",
+      // Diffed and pending: only a `new` / `unresolved` checkpoint is
+      // approvable (spec §5.4).
+      verdict: "unresolved",
     });
 
     const region = {
@@ -619,6 +638,9 @@ d("tRPC runs router", () => {
       imageKey: "approve-noign-img",
       viewport: "1280x720",
       browser: "chromium",
+      // Diffed and pending: only a `new` / `unresolved` checkpoint is
+      // approvable (spec §5.4).
+      verdict: "unresolved",
     });
 
     const client = makeClient(baseUrl, s.memberJwt);
@@ -636,9 +658,21 @@ d("tRPC runs router", () => {
     expect(stored?.[0]?.x).toBe(1);
   });
 
-  test("reject: writes status=failed, merge=false (and does NOT insert a baseline)", async () => {
-    // First approve to flip status=passed/merge=true, then reject to
-    // ensure both flips work; both source statuses are reviewer-legal.
+  test("reject after approve changes nothing: a decided checkpoint changes only through undo (R19)", async () => {
+    // Was: approve then reject flipped the run passed -> failed. A reject now
+    // decides the run's pending checkpoints, else its undecided ones; after
+    // the approve there are neither, so the approval stands (R19, spec §5.4:
+    // a decision is never changed directly, only undone).
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "approve-then-reject-img",
+      viewport: "1280x720",
+      browser: "chromium",
+      verdict: "unresolved",
+    });
     const client = makeClient(baseUrl, s.memberJwt);
     await client.runs.approve.mutate({ runId: s.runId });
 
@@ -650,8 +684,13 @@ d("tRPC runs router", () => {
       .from(testRuns)
       .where(eq(testRuns.id, s.runId))
       .limit(1);
-    expect(updatedRows[0]?.merge).toBe(false);
-    expect(updatedRows[0]?.status).toBe("failed");
+    expect(updatedRows[0]?.merge).toBe(true);
+    expect(updatedRows[0]?.status).toBe("passed");
+    const decisions = await h.db
+      .select({ decision: checkpointDecisions.decision })
+      .from(checkpointDecisions)
+      .where(eq(checkpointDecisions.runId, s.runId));
+    expect(decisions).toEqual([{ decision: "approved" }]);
   });
 
   test("transitions unresolved → failed and sets merge=false (canonical reviewer reject)", async () => {
@@ -659,7 +698,18 @@ d("tRPC runs router", () => {
     // approves first (so the source status is `passed`); this test
     // covers the more common production case where the reviewer sees a
     // diff-worker-emitted `unresolved` and rejects without any prior
-    // approve hop. Seed gives status=unresolved already (see `seed()`).
+    // approve hop. Seed gives status=unresolved already (see `seed()`); the
+    // diff left one unresolved checkpoint, which is what the reject decides.
+    await h.db.insert(screenshots).values({
+      runId: s.runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      imageKey: "canonical-reject-img",
+      viewport: "1280x720",
+      browser: "chromium",
+      verdict: "unresolved",
+    });
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.runs.reject.mutate({ runId: s.runId });
     expect(res).toEqual({ runId: s.runId, approved: false });
@@ -682,7 +732,9 @@ d("tRPC runs router", () => {
     expect(baselineRows.length).toBe(0);
   });
 
-  test("approve: rejects BAD_REQUEST when run.status='aborted'", async () => {
+  test("approve: rejects PRECONDITION_FAILED when run.status='aborted'", async () => {
+    // Was BAD_REQUEST (assertApprovable). The decision core's legality refuses
+    // a run that isn't reviewable as PRECONDITION_FAILED not_reviewable.
     await h.db
       .update(testRuns)
       .set({ status: "aborted" })
@@ -694,7 +746,8 @@ d("tRPC runs router", () => {
     } catch (e) {
       err = e as TRPCClientError<AppRouter>;
     }
-    expect(err?.data?.code).toBe("BAD_REQUEST");
+    expect(err?.data?.code).toBe("PRECONDITION_FAILED");
+    expect(err?.message).toBe("not_reviewable");
   });
 
   test("approve: accepts run.status='new' and materialises baseline (ADR-036)", async () => {
@@ -710,6 +763,8 @@ d("tRPC runs router", () => {
       imageKey: "new-status-img",
       viewport: "1280x720",
       browser: "chromium",
+      // The diff found no baseline for this checkpoint.
+      verdict: "new",
     });
     await h.db
       .update(testRuns)
@@ -755,6 +810,9 @@ d("tRPC runs router", () => {
       imageKey: "abcd",
       viewport: "1280x720",
       browser: "chromium",
+      // Diffed and pending: only a `new` / `unresolved` checkpoint is
+      // approvable (spec §5.4).
+      verdict: "unresolved",
     });
 
     const client = makeClient(baseUrl, s.memberJwt);
@@ -786,19 +844,49 @@ d("tRPC runs router", () => {
     expect(rows[0]?.merge).toBe(true);
   });
 
-  test("reject: rejects BAD_REQUEST when run.status='new' (would orphan baseline)", async () => {
+  test("reject: a `new` run's checkpoints are rejected without touching any baseline", async () => {
+    // Was BAD_REQUEST ("would orphan baseline"). Spec §5.4 makes reject legal
+    // for a `new` checkpoint: it records a decision and never writes or
+    // removes a baseline, so nothing is orphaned; the run rolls up to failed.
     await h.db
       .update(testRuns)
       .set({ status: "new", merge: true })
       .where(eq(testRuns.id, s.runId));
+    const [shot] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: "reject-new-img",
+        viewport: "1280x720",
+        browser: "chromium",
+        verdict: "new",
+      })
+      .returning();
     const client = makeClient(baseUrl, s.memberJwt);
-    let err: TRPCClientError<AppRouter> | undefined;
-    try {
-      await client.runs.reject.mutate({ runId: s.runId });
-    } catch (e) {
-      err = e as TRPCClientError<AppRouter>;
-    }
-    expect(err?.data?.code).toBe("BAD_REQUEST");
+    const res = await client.runs.reject.mutate({ runId: s.runId });
+    expect(res).toEqual({ runId: s.runId, approved: false });
+
+    const decisions = await h.db
+      .select()
+      .from(checkpointDecisions)
+      .where(eq(checkpointDecisions.runId, s.runId));
+    expect(decisions.map((d) => [d.screenshotId, d.decision])).toEqual([
+      [shot!.id, "rejected"],
+    ]);
+    const [run] = await h.db
+      .select()
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId));
+    expect(run!.status).toBe("failed");
+    expect(
+      await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.testRunId, s.runId)),
+    ).toHaveLength(0);
   });
 
   describe("overrideStatus", () => {
@@ -816,16 +904,31 @@ d("tRPC runs router", () => {
         .where(eq(testRuns.id, s.runId))
         .limit(1);
       expect(rows[0]?.status).toBe("passed");
+      // Written as the run's override (ADR-070), which the rollup honours.
+      expect(rows[0]?.statusOverride).toBe("passed");
       // merge unchanged (still default false from the seed insert).
       expect(rows[0]?.merge).toBe(false);
     });
 
+    /** Gives the seeded run one diffed checkpoint with `verdict`. */
+    async function diffedCheckpoint(verdict: CheckpointVerdict) {
+      await h.db.insert(screenshots).values({
+        runId: s.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "home",
+        imageKey: `override-${verdict}-img`,
+        viewport: "1280x720",
+        browser: "chromium",
+        verdict,
+      });
+    }
+
     test("status='default' recomputes to 'unresolved' when diff_regions has severity!=none", async () => {
-      // Pre-seed run as `passed` so the recompute must flip it back.
-      await h.db
-        .update(testRuns)
-        .set({ status: "passed" })
-        .where(eq(testRuns.id, s.runId));
+      // "default" clears the override and recomputes the rollup (ADR-070),
+      // which reads the checkpoint verdicts the diff wrote, not diff_regions:
+      // the unresolved verdict that came with the major region decides.
+      await diffedCheckpoint("unresolved");
       await h.db.insert(diffRegions).values({
         runId: s.runId,
         projectId: s.projectId,
@@ -836,6 +939,11 @@ d("tRPC runs router", () => {
         source: "l1",
       });
       const client = makeClient(baseUrl, s.memberJwt);
+      // Forced `passed` first, so the reset must flip it back.
+      await client.runs.overrideStatus.mutate({
+        runId: s.runId,
+        status: "passed",
+      });
       const res = await client.runs.overrideStatus.mutate({
         runId: s.runId,
         status: "default",
@@ -850,8 +958,10 @@ d("tRPC runs router", () => {
     });
 
     test("status='default' resolves to 'passed' when no diff_regions rows exist", async () => {
-      // Seed: status=unresolved (from helper), no diff_regions inserted.
-      // Recompute should flip it to passed.
+      // Seed: status=unresolved (from helper), no diff_regions inserted. The
+      // run's one checkpoint diffed clean (verdict passed), so the recompute
+      // (the rollup of the verdicts, ADR-070) flips it to passed.
+      await diffedCheckpoint("passed");
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.overrideStatus.mutate({
         runId: s.runId,
@@ -861,6 +971,8 @@ d("tRPC runs router", () => {
     });
 
     test("status='default' resolves to 'passed' when all diff_regions have severity=none", async () => {
+      // A below-threshold region leaves the checkpoint's verdict passed.
+      await diffedCheckpoint("passed");
       await h.db.insert(diffRegions).values({
         runId: s.runId,
         projectId: s.projectId,
@@ -1118,17 +1230,27 @@ d("tRPC runs router", () => {
 
       // Stage 2: diff-worker would now do its work. We simulate the
       // diff-found terminal write (spec §3.2: "unresolved" replaces the
-      // legacy "failed" on diff-found). The real handler is integration-
-      // tested in apps/diff-worker/tests/handler.test.ts.
+      // legacy "failed" on diff-found): the checkpoint's verdict and the
+      // rolled-up run status. The real handler is integration-tested in
+      // apps/diff-worker/tests/handler.test.ts.
+      await h.db.insert(screenshots).values({
+        runId: created.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "lifecycle-e2e",
+        imageKey: "lifecycle-e2e-img",
+        viewport: "1280x720",
+        browser: "chromium",
+        verdict: "unresolved",
+      });
       await h.db
         .update(testRuns)
         .set({ status: "unresolved" })
         .where(eq(testRuns.id, created.runId));
 
       // Stage 3: reviewer approves via tRPC. This must (a) flip
-      // status → passed and (b) set merge → true. ADR-038: baseline
-      // insertion requires a checkpoint; skip baseline assertions here
-      // since no screenshot was uploaded in this test.
+      // status → passed and (b) set merge → true (the approve baselined the
+      // run's checkpoint).
       const client = makeClient(baseUrl, s.memberJwt);
       const approveRes = await client.runs.approve.mutate({
         runId: created.runId,
@@ -1171,13 +1293,25 @@ d("tRPC runs router", () => {
       };
       expect(created.status).toBe("running");
 
-      // Simulate diff-worker writing the diff-found terminal state.
+      // Simulate diff-worker writing the diff-found terminal state. The
+      // checkpoint's own verdict is passed: the regions were pruned.
+      await h.db.insert(screenshots).values({
+        runId: created.runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "lifecycle-e2e-override",
+        imageKey: "lifecycle-e2e-override-img",
+        viewport: "1280x720",
+        browser: "chromium",
+        verdict: "passed",
+      });
       await h.db
         .update(testRuns)
         .set({ status: "unresolved" })
         .where(eq(testRuns.id, created.runId));
 
-      // No diff_regions inserted — the recompute branch sees zero rows.
+      // No diff_regions inserted — the recompute (the rollup of the verdicts)
+      // resolves to passed.
       const client = makeClient(baseUrl, s.memberJwt);
       const overrideRes = await client.runs.overrideStatus.mutate({
         runId: created.runId,
@@ -2177,7 +2311,25 @@ d("tRPC runs router", () => {
       h.broadcasterPublish.mockClear();
     });
 
+    /**
+     * Gives `runId` one diffed, unresolved checkpoint: an approve / reject
+     * that decides nothing changes nothing and announces nothing.
+     */
+    async function pendingCheckpoint(runId: string, name: string) {
+      await h.db.insert(screenshots).values({
+        runId,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name,
+        imageKey: `${name}-${runId.slice(0, 8)}`,
+        viewport: "1280x720",
+        browser: "chromium",
+        verdict: "unresolved",
+      });
+    }
+
     test("approve broadcasts testRun_updated + build_updated", async () => {
+      await pendingCheckpoint(s.runId, "bc-approve");
       const client = makeClient(baseUrl, s.memberJwt);
       const buildId = await getSeedBuildId(h, s.runId);
       await client.runs.approve.mutate({ runId: s.runId });
@@ -2192,6 +2344,7 @@ d("tRPC runs router", () => {
     });
 
     test("reject broadcasts testRun_updated + build_updated", async () => {
+      await pendingCheckpoint(s.runId, "bc-reject");
       const client = makeClient(baseUrl, s.memberJwt);
       const buildId = await getSeedBuildId(h, s.runId);
       await client.runs.reject.mutate({ runId: s.runId });
@@ -2293,6 +2446,9 @@ d("tRPC runs router", () => {
           branchName: "feature/x",
         })
         .returning();
+      for (const runId of [s.runId, sib1!.id, sib2!.id]) {
+        await pendingCheckpoint(runId, "bc-bulk");
+      }
 
       h.broadcasterPublish.mockClear();
       const client = makeClient(baseUrl, s.memberJwt);
@@ -2344,6 +2500,7 @@ d("tRPC runs router", () => {
           imageKey,
           matchLevel: "Layout",
           ignoreRegions: [ignoreRegion],
+          verdict: "unresolved",
         })
         .returning();
 
@@ -2389,6 +2546,7 @@ d("tRPC runs router", () => {
           imageKey: "c".repeat(64),
           matchLevel: "Strict",
           ignoreRegions: [captured],
+          verdict: "unresolved",
         })
         .returning();
 
@@ -2487,6 +2645,7 @@ d("tRPC runs router", () => {
           viewport: "1280x720",
           browser: "chromium",
           imageKey: `${"d".repeat(60)}${name.slice(0, 4).padEnd(4, "0")}`,
+          verdict: "unresolved",
         });
       }
 
@@ -2975,6 +3134,9 @@ d("tRPC runs router", () => {
     }, 60_000);
 
     test("the batch is atomic — a mid-loop failure rolls everything back", async () => {
+      // Every approve path now writes through the decision core
+      // (decideCheckpoints; the legacy approveCheckpointInTx is gone): a
+      // failure after it ran in the same transaction leaves nothing behind.
       const buildId = await getSeedBuildId(h, s.runId);
       const a = await seedCheckpoint(h, {
         buildId,
@@ -2983,27 +3145,36 @@ d("tRPC runs router", () => {
         signature: SIG,
         unresolved: true,
       });
+      const [member] = await h.db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(eq(users.id, s.memberId));
       await expect(
         h.db.transaction(async (tx) => {
-          await approveCheckpointInTx(
+          await decideCheckpoints(
             tx,
             {
-              id: a.shot.id,
-              testVariationId: a.variation.id,
-              imageKey: a.shot.imageKey,
-              ignoreRegions: null,
-              layoutRegions: null,
-              floatingRegions: null,
-              contentRegions: null,
-              accessibilityRegions: null,
-              matchLevel: "Strict",
+              actor: { id: member!.id, role: member!.role, via: "jwt" },
+              projectId: s.projectId,
+              actionId: randomUUID(),
+              source: "group",
+              decision: "approved",
+              targets: [{ runId: a.run.id, screenshotId: a.shot.id }],
             },
-            { id: a.run.id, name: a.run.name, branchName: a.run.branchName },
-            s.memberId,
+            {
+              registry: h.telemetry.metrics,
+              logger: { info: () => undefined, error: () => undefined },
+            },
           );
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
+      expect(
+        await h.db
+          .select()
+          .from(checkpointDecisions)
+          .where(eq(checkpointDecisions.runId, a.run.id)),
+      ).toHaveLength(0);
       const [v] = await h.db
         .select()
         .from(testVariations)
@@ -3093,7 +3264,16 @@ d("tRPC runs router", () => {
           .from(testRuns)
           .where(eq(testRuns.id, runId));
         expect(r.status).toBe("failed");
-        expect(r.merge).toBe(false);
+        // Was `merge: false` (the legacy reject wrote it). `merge` is now
+        // recomputed as "the run has a baseline row" (ADR-070), and this
+        // fixture's run owns its variation's baseline row. The reject itself
+        // wrote no baseline:
+        expect(r.merge).toBe(true);
+        const bl = await h.db
+          .select()
+          .from(baselines)
+          .where(eq(baselines.testRunId, runId));
+        expect(bl.every((b) => b.userId === null)).toBe(true);
       }
       for (const runId of [other.run.id, xbuild.run.id]) {
         const [r] = await h.db
@@ -3340,8 +3520,12 @@ d("tRPC runs router", () => {
     });
 
     test.each(["approve", "approveCheckpoint"] as const)(
-      "%s: re-approving an older run makes its image the baseline again",
+      "%s: re-approving an older, already-approved run leaves the newer image the baseline (R19)",
       async (procedure) => {
+        // Was (ADR-068): re-approving the older run re-promoted its image.
+        // R19 / ADR-071: a decided checkpoint changes only through undo, so an
+        // explicit re-approve is refused (CONFLICT already_decided) and a
+        // run-level one finds nothing pending and writes nothing.
         const buildId = await newBuild();
         const t0 = Date.now();
         const older = await seedVariationRun(buildId, {
@@ -3358,23 +3542,33 @@ d("tRPC runs router", () => {
         await client.runs.bulkApproveByBuild.mutate({ buildId });
         expect((await resolvedBaseline()).testRunId).toBe(newer.run.id);
 
-        // The older run already has a baseline row, so re-approving it hits
-        // the (variation, run) upsert's conflict path. That must re-stamp the
-        // row, or baseline_name would name the older image while the resolver
-        // kept diffing against the newer one.
         if (procedure === "approve") {
-          await client.runs.approve.mutate({ runId: older.run.id });
+          expect(
+            await client.runs.approve.mutate({ runId: older.run.id }),
+          ).toEqual({ runId: older.run.id, approved: true });
         } else {
-          await client.runs.approveCheckpoint.mutate({
-            runId: older.run.id,
-            checkpointId: older.shot.id,
-          });
+          const err = await client.runs.approveCheckpoint
+            .mutate({ runId: older.run.id, checkpointId: older.shot.id })
+            .catch((e: unknown) => e);
+          expect(err).toBeInstanceOf(TRPCClientError);
+          expect((err as TRPCClientError<AppRouter>).data?.code).toBe(
+            "CONFLICT",
+          );
+          expect((err as TRPCClientError<AppRouter>).message).toBe(
+            "already_decided",
+          );
         }
 
-        expect(await stampedAfter(older.run.id, newer.run.id)).toBe(true);
+        // The newer image stays current, in the resolver and the pointer.
+        expect(await stampedAfter(newer.run.id, older.run.id)).toBe(true);
         const resolved = await resolvedBaseline();
-        expect(resolved.testRunId).toBe(older.run.id);
-        expect(await variationBaselineName()).toBe(older.shot.imageKey);
+        expect(resolved.testRunId).toBe(newer.run.id);
+        expect(await variationBaselineName()).toBe(newer.shot.imageKey);
+        const decisions = await h.db
+          .select()
+          .from(checkpointDecisions)
+          .where(eq(checkpointDecisions.runId, older.run.id));
+        expect(decisions).toHaveLength(1);
       },
     );
 
@@ -3483,7 +3677,11 @@ d("tRPC runs router", () => {
   async function addCheckpoints(
     runId: string,
     names: string[],
-    opts: { ignoreRegions?: (name: string) => unknown } = {},
+    opts: {
+      ignoreRegions?: (name: string) => unknown;
+      /** Defaults to `unresolved`: diffed and pending (approvable). */
+      verdict?: CheckpointVerdict;
+    } = {},
   ) {
     const base = Date.now() - 60_000;
     const out: Array<{
@@ -3508,6 +3706,7 @@ d("tRPC runs router", () => {
           browser: "chromium",
           imageKey,
           ignoreRegions: opts.ignoreRegions?.(name),
+          verdict: opts.verdict ?? "unresolved",
           createdAt: new Date(base + i * 1000),
         })
         .returning();
@@ -3756,29 +3955,16 @@ d("tRPC runs router", () => {
       return h.db.select().from(auditLog).where(eq(auditLog.action, action));
     }
 
+    // The single-run approve paths are audited by the decision core: one
+    // `run.approve_checkpoints` row per run, carrying the action id, the
+    // source and the decided checkpoints (spec §5.1). They replace the legacy
+    // `run.approve` / `run.approve_checkpoint` / `run.approve_all_checkpoints`.
     test("runs.approve records the promoted checkpoint count", async () => {
       const cps = await addCheckpoints(s.runId, ["au-a", "au-b"]);
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.approve.mutate({ runId: s.runId });
 
-      const [row] = await auditRows("run.approve");
-      expect(row?.targetId).toBe(s.runId);
-      expect(row?.metadata).toMatchObject({
-        projectId: s.projectId,
-        checkpoints: 2,
-        checkpointIds: cps.map((c) => c.shotId),
-      });
-    });
-
-    test("approveCheckpoint → run.approve_checkpoint", async () => {
-      const [cp] = await addCheckpoints(s.runId, ["au-one"]);
-      const client = makeClient(baseUrl, s.memberJwt);
-      await client.runs.approveCheckpoint.mutate({
-        runId: s.runId,
-        checkpointId: cp!.shotId,
-      });
-
-      const rows = await auditRows("run.approve_checkpoint");
+      const rows = await auditRows("run.approve_checkpoints");
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
         actorId: s.memberId,
@@ -3786,23 +3972,45 @@ d("tRPC runs router", () => {
         targetId: s.runId,
       });
       expect(rows[0]?.metadata).toMatchObject({
-        projectId: s.projectId,
+        source: "viewer",
+        count: 2,
+        checkpointIds: cps.map((c) => c.shotId),
+      });
+      expect(rows[0]?.metadata).toHaveProperty("actionId");
+    });
+
+    test("approveCheckpoint → run.approve_checkpoints", async () => {
+      const [cp] = await addCheckpoints(s.runId, ["au-one"]);
+      const client = makeClient(baseUrl, s.memberJwt);
+      await client.runs.approveCheckpoint.mutate({
+        runId: s.runId,
         checkpointId: cp!.shotId,
-        testVariationId: cp!.variationId,
-        ignoreAreasOverride: false,
+      });
+
+      const rows = await auditRows("run.approve_checkpoints");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actorId: s.memberId,
+        targetType: "run",
+        targetId: s.runId,
+      });
+      expect(rows[0]?.metadata).toMatchObject({
+        source: "viewer",
+        count: 1,
+        checkpointIds: [cp!.shotId],
       });
     });
 
-    test("approveAllCheckpoints → run.approve_all_checkpoints", async () => {
+    test("approveAllCheckpoints → run.approve_checkpoints", async () => {
       const cps = await addCheckpoints(s.runId, ["au-x", "au-y"]);
       const client = makeClient(baseUrl, s.memberJwt);
       await client.runs.approveAllCheckpoints.mutate({ runId: s.runId });
 
-      const [row] = await auditRows("run.approve_all_checkpoints");
+      const [row] = await auditRows("run.approve_checkpoints");
       expect(row).toMatchObject({ targetType: "run", targetId: s.runId });
       expect(row?.metadata).toMatchObject({
-        projectId: s.projectId,
-        approved: 2,
+        source: "viewer",
+        count: 2,
         checkpointIds: cps.map((c) => c.shotId),
       });
     });
@@ -3829,6 +4037,8 @@ d("tRPC runs router", () => {
         checkpointId: a.shot.id,
       });
 
+      // The build-level summary the review router's group action writes
+      // (`count` checkpoints over `runIds`), next to the core's per-run rows.
       const [row] = await auditRows("run.approve_group");
       expect(row).toMatchObject({ targetType: "build", targetId: buildId });
       expect(row?.metadata).toMatchObject({
@@ -3836,8 +4046,8 @@ d("tRPC runs router", () => {
         seedRunId: a.run.id,
         seedCheckpointId: a.shot.id,
         diffSignature: SIG,
-        approved: 2,
-        runCount: 2,
+        source: "group",
+        count: 2,
         capped: false,
       });
       const meta = row?.metadata as {
@@ -3871,7 +4081,9 @@ d("tRPC runs router", () => {
         projectId: s.projectId,
         seedRunId: a.run.id,
         seedCheckpointId: a.shot.id,
-        rejected: 1,
+        source: "group",
+        count: 1,
+        checkpointIds: [a.shot.id],
         runIds: [a.run.id],
         capped: false,
       });
@@ -3887,9 +4099,9 @@ d("tRPC runs router", () => {
       expect(row).toMatchObject({ targetType: "build", targetId: buildId });
       expect(row?.metadata).toMatchObject({
         projectId: s.projectId,
-        approved: 1,
+        source: "batch",
         runIds: [s.runId],
-        checkpoints: 2,
+        count: 2,
         capped: false,
       });
     });
@@ -3993,9 +4205,16 @@ d("tRPC runs router", () => {
       },
     );
 
-    test.each(["approveCheckpoint", "approveAllCheckpoints"] as const)(
+    test.each([
+      "approve",
+      "approveCheckpoint",
+      "approveAllCheckpoints",
+    ] as const)(
       "%s: rejects a run that isn't reviewable (running / aborted / empty)",
       async (procedure) => {
+        // Was BAD_REQUEST (assertApprovable, #437). The decision core's
+        // `not_reviewable` refusal covers the same states, as
+        // PRECONDITION_FAILED.
         for (const status of ["running", "aborted", "empty"] as const) {
           const cp = await seedCheckpoint(h, {
             buildId: await getSeedBuildId(h, s.runId),
@@ -4011,7 +4230,8 @@ d("tRPC runs router", () => {
             .where(eq(testRuns.id, cp.run.id));
 
           const err = await approveVia(procedure, cp).catch((e) => e);
-          expect(err?.data?.code).toBe("BAD_REQUEST");
+          expect(err?.data?.code).toBe("PRECONDITION_FAILED");
+          expect(err?.message).toBe("not_reviewable");
 
           const [run] = await h.db
             .select()
@@ -4024,6 +4244,609 @@ d("tRPC runs router", () => {
             .where(eq(baselines.testRunId, cp.run.id));
           expect(bl).toHaveLength(0);
         }
+      },
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 12 (spec §5.7): every legacy approve/reject path is a thin wrapper
+  // over the decision core, so the current dashboard is correct per checkpoint.
+  // ---------------------------------------------------------------------------
+
+  describe("legacy paths run through the decision core (spec §5.7)", () => {
+    const seeds: ReviewSeed[] = [];
+    afterAll(async () => {
+      await cleanupReviewSeeds(h, seeds);
+    });
+
+    async function reviewSeed(spec: ReviewRunSpec): Promise<ReviewSeed> {
+      const rs = await seedReviewRun(h, spec);
+      seeds.push(rs);
+      return rs;
+    }
+
+    const as = (u: ReviewUser) => makeClient(baseUrl, u.jwt);
+
+    const decisionsOf = (runId: string) =>
+      h.db
+        .select()
+        .from(checkpointDecisions)
+        .where(eq(checkpointDecisions.runId, runId))
+        .orderBy(
+          asc(checkpointDecisions.createdAt),
+          asc(checkpointDecisions.id),
+        );
+
+    async function runRow(runId: string) {
+      const [r] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.id, runId));
+      return r!;
+    }
+
+    /** The refusal a tRPC call came back with (over HTTP, so `details` is set). */
+    async function refusal(p: Promise<unknown>) {
+      const e = await p.then(
+        () => {
+          throw new Error("expected the call to be refused");
+        },
+        (err: unknown) => err,
+      );
+      expect(e).toBeInstanceOf(TRPCClientError);
+      const err = e as TRPCClientError<AppRouter>;
+      const data = err.data as
+        { code?: string; details?: ReviewErrorDetails } | undefined;
+      return { code: data?.code, message: err.message, details: data?.details };
+    }
+
+    test("approveCheckpoint on 1 of 3 leaves the run unresolved (ADR-070)", async () => {
+      // Inverts the old "approving a checkpoint passes the whole run": v1.1 had
+      // no partial approval. Per ADR-070 the run status is the rollup of its
+      // checkpoints, so the two still-unresolved steps keep it unresolved.
+      const rs = await reviewSeed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+          { name: "cart", verdict: "unresolved", withBaseline: true },
+          { name: "checkout", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const res = await as(rs.editor).runs.approveCheckpoint.mutate({
+        runId: rs.runId,
+        checkpointId: rs.shots.home!.id,
+      });
+      expect(res).toEqual({ checkpointId: rs.shots.home!.id });
+
+      expect((await runRow(rs.runId)).status).toBe("unresolved");
+      const rows = await decisionsOf(rs.runId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        screenshotId: rs.shots.home!.id,
+        decision: "approved",
+        source: "viewer",
+        actorId: rs.editor.id,
+      });
+    });
+
+    test("approveCheckpoint on a running run is PRECONDITION_FAILED not_reviewable (closes the ADR-067 gap)", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+        lifecycle: "running",
+      });
+      const r = await refusal(
+        as(rs.editor).runs.approveCheckpoint.mutate({
+          runId: rs.runId,
+          checkpointId: rs.shots.a!.id,
+        }),
+      );
+      expect(r.code).toBe("PRECONDITION_FAILED");
+      expect(r.message).toBe("not_reviewable");
+      expect(r.details?.reasons).toEqual([
+        { checkpointId: rs.shots.a!.id, reason: "not_reviewable" },
+      ]);
+      expect(await decisionsOf(rs.runId)).toHaveLength(0);
+      expect((await runRow(rs.runId)).status).toBe("running");
+    });
+
+    test.each(["approve", "approveAllCheckpoints", "reject"] as const)(
+      "runs.%s on a run that isn't reviewable is PRECONDITION_FAILED and writes nothing",
+      async (procedure) => {
+        const running = await reviewSeed({
+          checkpoints: [{ name: "a", verdict: "unresolved" }],
+          lifecycle: "running",
+        });
+        const overridden = await reviewSeed({
+          checkpoints: [{ name: "a", verdict: "unresolved" }],
+          override: "passed",
+        });
+        for (const [rs, reason] of [
+          [running, "not_reviewable"],
+          [overridden, "run_overridden"],
+        ] as const) {
+          const c = as(rs.editor);
+          const call =
+            procedure === "approve"
+              ? c.runs.approve.mutate({ runId: rs.runId })
+              : procedure === "approveAllCheckpoints"
+                ? c.runs.approveAllCheckpoints.mutate({ runId: rs.runId })
+                : c.runs.reject.mutate({ runId: rs.runId });
+          const r = await refusal(call);
+          expect(r.code).toBe("PRECONDITION_FAILED");
+          expect(r.message).toBe(reason);
+          expect(await decisionsOf(rs.runId)).toHaveLength(0);
+        }
+      },
+    );
+
+    test("R19: re-approving an approved checkpoint is CONFLICT already_decided; a run-level re-approve finds nothing pending", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const c = as(rs.editor);
+      await c.runs.approveCheckpoint.mutate({
+        runId: rs.runId,
+        checkpointId: rs.shots.a!.id,
+      });
+
+      // Explicit: a decided checkpoint changes only through undo.
+      const r = await refusal(
+        c.runs.approveCheckpoint.mutate({
+          runId: rs.runId,
+          checkpointId: rs.shots.a!.id,
+        }),
+      );
+      expect(r.code).toBe("CONFLICT");
+      expect(r.message).toBe("already_decided");
+      expect(r.details?.winner).toEqual({
+        checkpointId: rs.shots.a!.id,
+        kind: "approved",
+        actorName: rs.editor.name,
+      });
+
+      // Implicit: nothing is pending, so the run-level paths succeed and
+      // decide nothing (spec §5.7: zero pending is a successful no-op).
+      expect(await c.runs.approve.mutate({ runId: rs.runId })).toEqual({
+        runId: rs.runId,
+        approved: true,
+      });
+      expect(
+        await c.runs.approveAllCheckpoints.mutate({ runId: rs.runId }),
+      ).toEqual({ approved: 0 });
+      expect(await decisionsOf(rs.runId)).toHaveLength(1);
+      expect((await runRow(rs.runId)).status).toBe("passed");
+    });
+
+    test("runs.approve with nothing pending succeeds and writes no rows (spec §5.7)", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [
+          { name: "a", verdict: "passed", withBaseline: true },
+          { name: "b", verdict: "passed", withBaseline: true },
+        ],
+      });
+      const baselinesBefore = await h.db.select().from(baselines);
+      h.broadcasterPublish.mockClear();
+
+      const res = await as(rs.editor).runs.approve.mutate({ runId: rs.runId });
+      expect(res).toEqual({ runId: rs.runId, approved: true });
+
+      expect(await decisionsOf(rs.runId)).toHaveLength(0);
+      expect(await h.db.select().from(baselines)).toHaveLength(
+        baselinesBefore.length,
+      );
+      expect((await runRow(rs.runId)).status).toBe("passed");
+      // Nothing changed, so nothing is announced.
+      expect(h.broadcasterPublish).not.toHaveBeenCalled();
+    });
+
+    test("runs.approve decides every pending checkpoint as one action, source viewer", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "passed", withBaseline: true },
+          { name: "c", verdict: "new" },
+        ],
+      });
+      await as(rs.editor).runs.approve.mutate({ runId: rs.runId });
+
+      const rows = await decisionsOf(rs.runId);
+      expect(rows.map((r) => r.screenshotId)).toEqual([
+        rs.shots.a!.id,
+        rs.shots.c!.id,
+      ]);
+      expect(new Set(rows.map((r) => r.actionId)).size).toBe(1);
+      expect(rows.every((r) => r.source === "viewer")).toBe(true);
+      expect((await runRow(rs.runId)).status).toBe("passed");
+    });
+
+    test("runs.reject rejects the pending checkpoints, else every undecided one", async () => {
+      const pending = await reviewSeed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "passed", withBaseline: true },
+        ],
+      });
+      expect(
+        await as(pending.editor).runs.reject.mutate({ runId: pending.runId }),
+      ).toEqual({ runId: pending.runId, approved: false });
+      expect(
+        (await decisionsOf(pending.runId)).map((r) => [
+          r.screenshotId,
+          r.decision,
+          r.source,
+        ]),
+      ).toEqual([[pending.shots.a!.id, "rejected", "viewer"]]);
+      expect((await runRow(pending.runId)).status).toBe("failed");
+
+      // Nothing pending ("Mark as bug" on a passed run): every undecided step.
+      const passed = await reviewSeed({
+        checkpoints: [
+          { name: "a", verdict: "passed", withBaseline: true },
+          { name: "b", verdict: "passed", withBaseline: true },
+        ],
+      });
+      await as(passed.editor).runs.reject.mutate({ runId: passed.runId });
+      expect(
+        (await decisionsOf(passed.runId)).map((r) => r.screenshotId),
+      ).toEqual([passed.shots.a!.id, passed.shots.b!.id]);
+      expect((await runRow(passed.runId)).status).toBe("failed");
+      // Reject never touches a baseline.
+      expect(
+        await h.db
+          .select()
+          .from(baselines)
+          .where(eq(baselines.testRunId, passed.runId)),
+      ).toHaveLength(0);
+    });
+
+    test("bulkApproveByBuild, the group procedures and approveCheckpoint record their source", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [
+          { name: "g1", verdict: "unresolved", withBaseline: true },
+          { name: "g2", verdict: "unresolved", withBaseline: true },
+          { name: "solo", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const other = await addReviewRun(h, rs, {
+        checkpoints: [{ name: "late", verdict: "new" }],
+      });
+      await h.db
+        .update(screenshots)
+        .set({ diffSignature: `sig-${rs.tag}` })
+        .where(inArray(screenshots.id, [rs.shots.g1!.id, rs.shots.g2!.id]));
+      const c = as(rs.editor);
+
+      const group = await c.runs.approveCheckpointGroup.mutate({
+        runId: rs.runId,
+        checkpointId: rs.shots.g1!.id,
+      });
+      expect(group).toEqual({
+        approved: 2,
+        runCount: 1,
+        capped: false,
+        cap: GROUP_APPROVE_CAP,
+      });
+      await c.runs.approveCheckpoint.mutate({
+        runId: rs.runId,
+        checkpointId: rs.shots.solo!.id,
+      });
+      const bulk = await c.runs.bulkApproveByBuild.mutate({
+        buildId: rs.buildId,
+      });
+      // Only the other run still had something pending.
+      expect(bulk).toEqual({
+        approved: 1,
+        runIds: [other.runId],
+        capped: false,
+        cap: 200,
+      });
+
+      const bySource = (rows: Awaited<ReturnType<typeof decisionsOf>>) =>
+        rows.map((r) => [r.screenshotId, r.source]);
+      expect(bySource(await decisionsOf(rs.runId))).toEqual([
+        [rs.shots.g1!.id, "group"],
+        [rs.shots.g2!.id, "group"],
+        [rs.shots.solo!.id, "viewer"],
+      ]);
+      expect(bySource(await decisionsOf(other.runId))).toEqual([
+        [other.shots.late!.id, "batch"],
+      ]);
+      expect((await runRow(rs.runId)).status).toBe("passed");
+      expect((await runRow(other.runId)).status).toBe("passed");
+    });
+
+    test("rejectCheckpointGroup rejects the group's pending checkpoints, source group", async () => {
+      const rs = await reviewSeed({
+        checkpoints: [
+          { name: "g1", verdict: "unresolved", withBaseline: true },
+          { name: "g2", verdict: "unresolved", withBaseline: true },
+          { name: "solo", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      await h.db
+        .update(screenshots)
+        .set({ diffSignature: `sig-${rs.tag}` })
+        .where(inArray(screenshots.id, [rs.shots.g1!.id, rs.shots.g2!.id]));
+
+      const res = await as(rs.editor).runs.rejectCheckpointGroup.mutate({
+        runId: rs.runId,
+        checkpointId: rs.shots.g1!.id,
+      });
+      expect(res).toEqual({
+        rejected: 1,
+        runCount: 1,
+        capped: false,
+        cap: GROUP_APPROVE_CAP,
+      });
+      expect(
+        (await decisionsOf(rs.runId)).map((r) => [
+          r.screenshotId,
+          r.decision,
+          r.source,
+        ]),
+      ).toEqual([
+        [rs.shots.g1!.id, "rejected", "group"],
+        [rs.shots.g2!.id, "rejected", "group"],
+      ]);
+      // "solo" is not in the group and stays pending.
+      expect((await runRow(rs.runId)).status).toBe("failed");
+    });
+
+    describe("overrideStatus writes status_override", () => {
+      test("an override survives a re-diff; 'default' clears it and restores the rollup", async () => {
+        const rs = await reviewSeed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const c = as(rs.editor);
+        expect(
+          await c.runs.overrideStatus.mutate({
+            runId: rs.runId,
+            status: "failed",
+          }),
+        ).toEqual({ runId: rs.runId, status: "failed" });
+        expect(await runRow(rs.runId)).toMatchObject({
+          status: "failed",
+          statusOverride: "failed",
+        });
+
+        // A re-diff (ignore-region / threshold edit): the diff-worker rewrites
+        // the verdict and recomputes. The reviewer's override wins.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: new Date() })
+          .where(eq(screenshots.id, rs.shots.a!.id));
+        await recomputeRunStatus(h.db, rs.runId);
+        expect((await runRow(rs.runId)).status).toBe("failed");
+
+        expect(
+          await c.runs.overrideStatus.mutate({
+            runId: rs.runId,
+            status: "default",
+          }),
+        ).toEqual({ runId: rs.runId, status: "passed" });
+        expect(await runRow(rs.runId)).toMatchObject({
+          status: "passed",
+          statusOverride: null,
+        });
+
+        const audit = await h.db
+          .select()
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, "run.override_status"),
+              eq(auditLog.targetId, rs.runId),
+            ),
+          )
+          .orderBy(asc(auditLog.createdAt));
+        expect(audit.map((a) => a.metadata)).toMatchObject([
+          { from: "unresolved", to: "failed", requested: "failed" },
+          { from: "failed", to: "passed", requested: "default" },
+        ]);
+      });
+
+      test("an overridden run is not reviewable per checkpoint until reset", async () => {
+        const rs = await reviewSeed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const c = as(rs.editor);
+        await c.runs.overrideStatus.mutate({
+          runId: rs.runId,
+          status: "passed",
+        });
+        const r = await refusal(
+          c.runs.approveCheckpoint.mutate({
+            runId: rs.runId,
+            checkpointId: rs.shots.a!.id,
+          }),
+        );
+        expect(r.code).toBe("PRECONDITION_FAILED");
+        expect(r.message).toBe("run_overridden");
+
+        await c.runs.overrideStatus.mutate({
+          runId: rs.runId,
+          status: "default",
+        });
+        await c.runs.approveCheckpoint.mutate({
+          runId: rs.runId,
+          checkpointId: rs.shots.a!.id,
+        });
+        expect((await runRow(rs.runId)).status).toBe("passed");
+      });
+    });
+
+    describe("ignore areas target the selected checkpoint's variation", () => {
+      const region = {
+        x: 10,
+        y: 20,
+        width: 30,
+        height: 40,
+        viewport: "1280x720",
+        paddingPx: 0,
+        kind: "ignore" as const,
+      };
+
+      async function regionsOf(variationId: string) {
+        const [v] = await h.db
+          .select({ ignoreRegions: testVariations.ignoreRegions })
+          .from(testVariations)
+          .where(eq(testVariations.id, variationId));
+        return v!.ignoreRegions;
+      }
+
+      test("setIgnoreAreas({ checkpointId: cart }) writes cart's variation, not home's", async () => {
+        const rs = await reviewSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved" },
+            { name: "cart", verdict: "unresolved" },
+          ],
+        });
+        await as(rs.editor).runs.setIgnoreAreas.mutate({
+          runId: rs.runId,
+          scope: "variation",
+          checkpointId: rs.shots.cart!.id,
+          ignoreAreas: [region],
+        });
+        expect(await regionsOf(rs.shots.cart!.variationId)).toEqual([region]);
+        expect(await regionsOf(rs.shots.home!.variationId)).toBeNull();
+      });
+
+      test("without checkpointId, old clients still write the first checkpoint's variation", async () => {
+        const rs = await reviewSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved" },
+            { name: "cart", verdict: "unresolved" },
+          ],
+        });
+        await as(rs.editor).runs.setIgnoreAreas.mutate({
+          runId: rs.runId,
+          scope: "run",
+          ignoreAreas: [region],
+        });
+        expect(await regionsOf(rs.shots.home!.variationId)).toEqual([region]);
+        expect(await regionsOf(rs.shots.cart!.variationId)).toBeNull();
+      });
+
+      test("addIgnoreAreas({ checkpointId: cart }) appends to cart's variation", async () => {
+        const rs = await reviewSeed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved" },
+            { name: "cart", verdict: "unresolved" },
+          ],
+        });
+        const c = as(rs.editor);
+        await c.runs.setIgnoreAreas.mutate({
+          runId: rs.runId,
+          scope: "variation",
+          checkpointId: rs.shots.cart!.id,
+          ignoreAreas: [region],
+        });
+        const second = { ...region, x: 200 };
+        const res = await c.runs.addIgnoreAreas.mutate({
+          runId: rs.runId,
+          scope: "variation",
+          checkpointId: rs.shots.cart!.id,
+          ignoreAreas: [second],
+        });
+        expect(res.total).toBe(2);
+        expect(await regionsOf(rs.shots.cart!.variationId)).toEqual([
+          region,
+          second,
+        ]);
+        expect(await regionsOf(rs.shots.home!.variationId)).toBeNull();
+      });
+
+      test.each(["setIgnoreAreas", "addIgnoreAreas"] as const)(
+        "%s refuses a checkpoint of another run with BAD_REQUEST",
+        async (procedure) => {
+          const rs = await reviewSeed({
+            checkpoints: [{ name: "home", verdict: "unresolved" }],
+          });
+          const other = await addReviewRun(h, rs, {
+            checkpoints: [{ name: "elsewhere", verdict: "unresolved" }],
+          });
+          h.diffQueueAdd.mockClear();
+          const input = {
+            runId: rs.runId,
+            scope: "variation" as const,
+            checkpointId: other.shots.elsewhere!.id,
+            ignoreAreas: [region],
+          };
+          const c = as(rs.editor);
+          const r = await refusal(
+            procedure === "setIgnoreAreas"
+              ? c.runs.setIgnoreAreas.mutate(input)
+              : c.runs.addIgnoreAreas.mutate(input),
+          );
+          expect(r.code).toBe("BAD_REQUEST");
+          expect(
+            await regionsOf(other.shots.elsewhere!.variationId),
+          ).toBeNull();
+          expect(h.diffQueueAdd).not.toHaveBeenCalled();
+        },
+      );
+    });
+
+    test.each([
+      "setIgnoreAreas",
+      "setTempIgnoreAreas",
+      "addIgnoreAreas",
+      "setDiffThresholdOverride",
+    ] as const)(
+      "%s re-diffs with the run's parentPrBaseBranch (ADR-055)",
+      async (procedure) => {
+        const rs = await reviewSeed({
+          checkpoints: [{ name: "home", verdict: "unresolved" }],
+        });
+        await h.db
+          .update(testRuns)
+          .set({ parentBranchName: "main" })
+          .where(eq(testRuns.id, rs.runId));
+        const c = as(rs.editor);
+        const areas = [
+          {
+            x: 1,
+            y: 1,
+            width: 5,
+            height: 5,
+            viewport: "1280x720",
+            paddingPx: 0,
+            kind: "ignore" as const,
+          },
+        ];
+        h.diffQueueAdd.mockClear();
+        if (procedure === "setIgnoreAreas") {
+          await c.runs.setIgnoreAreas.mutate({
+            runId: rs.runId,
+            scope: "run",
+            ignoreAreas: areas,
+          });
+        } else if (procedure === "setTempIgnoreAreas") {
+          await c.runs.setTempIgnoreAreas.mutate({
+            runId: rs.runId,
+            tempIgnoreAreas: areas,
+          });
+        } else if (procedure === "addIgnoreAreas") {
+          await c.runs.addIgnoreAreas.mutate({
+            runId: rs.runId,
+            scope: "run",
+            ignoreAreas: areas,
+          });
+        } else {
+          await c.runs.setDiffThresholdOverride.mutate({
+            runId: rs.runId,
+            threshold: 0.05,
+          });
+        }
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+          runId: rs.runId,
+          projectId: rs.projectId,
+          parentPrBaseBranch: "main",
+        });
       },
     );
   });

@@ -362,17 +362,25 @@ export async function loadWinner(
 }
 
 /**
- * What an implicit selection ranges over: one run, a whole build, or a build's
- * "group" (its checkpoints that share one diff signature). Every scope carries
- * the project the caller resolved and only that project's runs are selected: a
- * build should never span projects, but a corrupt build/project state must not
- * make the core refuse the whole action (`decideCheckpoints` locks the
- * project's runs only) or inflate the preview.
+ * What an implicit selection ranges over: one run, a set of runs (the inbox's
+ * cluster), a whole build, or a build's "group" (its checkpoints that share one
+ * diff signature). Every scope carries the project the caller resolved and only
+ * that project's runs are selected: a build should never span projects, but a
+ * corrupt build/project state must not make the core refuse the whole action
+ * (`decideCheckpoints` locks the project's runs only) or inflate the preview.
  */
 export type SelectionScope =
   | { projectId: string; runId: string }
+  | { projectId: string; runIds: string[] }
   | { projectId: string; buildId: string }
   | { projectId: string; buildId: string; diffSignature: string };
+
+/** The runs a scope ranges over, as a WHERE condition on `test_runs`. */
+function scopeRuns(scope: SelectionScope) {
+  if ("runId" in scope) return eq(testRuns.id, scope.runId);
+  if ("runIds" in scope) return inArray(testRuns.id, scope.runIds);
+  return eq(testRuns.buildId, scope.buildId);
+}
 
 /**
  * Every checkpoint in `scope` that `decision` would be legal for
@@ -392,22 +400,18 @@ async function collectLegalTargets(
   notReviewableTests: number;
   rejectedLeftAsIs: number;
 }> {
-  const runs = await tx
-    .select({
-      id: testRuns.id,
-      lifecycle: testRuns.status,
-      override: testRuns.statusOverride,
-    })
-    .from(testRuns)
-    .where(
-      and(
-        "runId" in scope
-          ? eq(testRuns.id, scope.runId)
-          : eq(testRuns.buildId, scope.buildId),
-        eq(testRuns.projectId, scope.projectId),
-      ),
-    )
-    .orderBy(asc(testRuns.createdAt), asc(testRuns.id));
+  const runs =
+    "runIds" in scope && scope.runIds.length === 0
+      ? []
+      : await tx
+          .select({
+            id: testRuns.id,
+            lifecycle: testRuns.status,
+            override: testRuns.statusOverride,
+          })
+          .from(testRuns)
+          .where(and(scopeRuns(scope), eq(testRuns.projectId, scope.projectId)))
+          .orderBy(asc(testRuns.createdAt), asc(testRuns.id));
   const runIds = runs.map((r) => r.id);
 
   const shots =
@@ -487,11 +491,12 @@ async function collectLegalTargets(
 }
 
 /**
- * Every pending checkpoint in a run, a build or a group, in capture order,
- * capped at `cap`. Pending is exactly "`decideCheckpoints` would approve it": a
- * reviewable run, verdict `new` or `unresolved`, no active decision
- * (`assessDecision(…, "approved") === null`), so an implicit selection only
- * ever picks legal targets. The preview counts the whole scope, before the cap.
+ * Every pending checkpoint in a run, a set of runs, a build or a group, in
+ * capture order, capped at `cap`. Pending is exactly "`decideCheckpoints`
+ * would approve it": a reviewable run, verdict `new` or `unresolved`, no
+ * active decision (`assessDecision(…, "approved") === null`), so an implicit
+ * selection only ever picks legal targets. The preview counts the whole
+ * scope, before the cap.
  *
  * Read-only and unlocked: `decideCheckpoints` locks and re-checks every
  * target, so a selection that went stale in between is refused, not misapplied.
