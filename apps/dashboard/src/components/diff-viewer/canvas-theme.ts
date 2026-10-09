@@ -1,10 +1,13 @@
 /**
  * Theme bridge for the pixi diff canvas. Pixi cannot read CSS variables, so the
- * letterbox colour is resolved from the `--sunken` design token at runtime and
- * pushed into each live renderer when the theme changes.
+ * letterbox colour is resolved from the `--hover` design token at runtime and
+ * pushed into each live renderer when the theme changes. It reads `--hover`
+ * rather than `--sunken` so the bands outside the image stay distinct from a
+ * white screenshot in light mode: #f4f4f5 on #fff is 1.10:1, where `--sunken`
+ * (#fafafa) is 1.04:1.
  */
 
-/** Used when `--sunken` is unset or not a 6-digit hex (e.g. under jsdom). */
+/** Used when `--hover` is unset or not a 6-digit hex (e.g. under jsdom). */
 export const FALLBACK_CANVAS_BG = 0xf3f4f6;
 
 const HEX6 = /^#([0-9a-f]{6})$/i;
@@ -16,13 +19,13 @@ export function cssHexToPixi(value: string): number | null {
 }
 
 /**
- * Resolve the current `--sunken` token to a pixi colour number. Browser-only:
+ * Resolve the current `--hover` token to a pixi colour number. Browser-only:
  * it reads `document` (and computed style), so call it from an effect, never
  * during server rendering.
  */
 export function readCanvasBackground(root?: HTMLElement): number {
   const el = root ?? document.documentElement;
-  const raw = getComputedStyle(el).getPropertyValue("--sunken");
+  const raw = getComputedStyle(el).getPropertyValue("--hover");
   return cssHexToPixi(raw) ?? FALLBACK_CANVAS_BG;
 }
 

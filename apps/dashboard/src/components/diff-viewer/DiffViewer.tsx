@@ -479,21 +479,13 @@ export function DiffViewer({
   });
 
   if (isLoading)
-    return (
-      <div className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
-        Loading…
-      </div>
-    );
+    return <div className="p-4 text-sm text-fg-secondary">Loading…</div>;
   if (error)
     return (
-      <div className="p-4 text-sm text-red-400">Error: {error.message}</div>
+      <div className="p-4 text-sm text-destructive">Error: {error.message}</div>
     );
   if (!data)
-    return (
-      <div className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
-        No run data.
-      </div>
-    );
+    return <div className="p-4 text-sm text-fg-secondary">No run data.</div>;
 
   const isEmpty = data?.status === "empty";
 
@@ -583,17 +575,17 @@ export function DiffViewer({
         data-testid="diff-viewer-mobile-gate"
       >
         <div className="max-w-sm space-y-3">
-          <h2 className="text-base font-semibold text-zinc-950 dark:text-white">
+          <h2 className="text-base font-semibold text-fg">
             Diff review needs a wider screen
           </h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm text-fg-secondary">
             Reviewing pixel diffs and editing ignore regions both need the
             side-by-side canvas + region sidebar to be visible. Open this run on
             tablet or desktop to continue.
           </p>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-fg-muted">
             Run status:{" "}
-            <span className="font-mono text-zinc-700 dark:text-zinc-300">
+            <span className="font-mono text-fg-secondary">
               {data?.status ?? "loading"}
             </span>
           </p>
@@ -601,7 +593,7 @@ export function DiffViewer({
       </div>
       <div
         id="diff-viewer-root"
-        className="hidden bg-white md:flex md:flex-col md:flex-1 md:min-h-0 dark:bg-zinc-950"
+        className="hidden bg-canvas md:flex md:flex-col md:flex-1 md:min-h-0"
       >
         <ContextualHeader
           title={data.name ?? "Untitled run"}
@@ -659,7 +651,7 @@ export function DiffViewer({
             </div>
             {showMetaStrip && (
               <div
-                className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800"
+                className="flex items-center gap-2 px-3 py-2 border-b border-edge"
                 data-testid="diff-viewer-meta-strip"
               >
                 {baselineFallback && (
@@ -667,7 +659,7 @@ export function DiffViewer({
                 )}
                 {data.autoApproved && (
                   <span
-                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                    className="inline-flex items-center gap-1 rounded-md border border-edge bg-hover px-2 py-0.5 text-xs text-fg-secondary"
                     data-testid="auto-approved-badge"
                     title="System-approved: candidate's image bytes matched the baseline exactly."
                   >
@@ -709,7 +701,7 @@ export function DiffViewer({
                       disabled={!onPrevStep}
                       aria-label="Previous step"
                       data-testid="diff-viewer-step-prev"
-                      className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                      className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-overlay/90 text-fg-secondary shadow-overlay backdrop-blur transition-colors hover:bg-overlay-hover hover:text-fg focus-ring disabled:pointer-events-none disabled:opacity-30"
                     >
                       <ChevronLeft className="h-5 w-5" aria-hidden />
                     </button>
@@ -719,7 +711,7 @@ export function DiffViewer({
                       disabled={!onNextStep}
                       aria-label="Next step"
                       data-testid="diff-viewer-step-next"
-                      className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-lg backdrop-blur transition-colors hover:bg-white hover:text-zinc-900 disabled:pointer-events-none disabled:opacity-30 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                      className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-overlay/90 text-fg-secondary shadow-overlay backdrop-blur transition-colors hover:bg-overlay-hover hover:text-fg focus-ring disabled:pointer-events-none disabled:opacity-30"
                     >
                       <ChevronRight className="h-5 w-5" aria-hidden />
                     </button>
@@ -763,26 +755,26 @@ export function DiffViewer({
                 className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
                 data-testid="diff-viewer-shortcut-hints"
               >
-                <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white/90 px-3 py-1.5 text-xs text-zinc-500 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400">
+                <div className="flex items-center gap-3 rounded-lg bg-overlay/90 px-3 py-1.5 text-xs text-fg-muted shadow-overlay backdrop-blur">
                   <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
                       ←
                     </kbd>
-                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
                       →
                     </kbd>
                     navigate
                   </span>
-                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
                   <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
                       A
                     </kbd>
                     approve
                   </span>
-                  <span className="h-3 w-px bg-zinc-200 dark:bg-zinc-700" />
+                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
                   <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
                       R
                     </kbd>
                     reject

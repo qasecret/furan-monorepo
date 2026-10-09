@@ -44,7 +44,7 @@ export function RegionKindTabs({
             {k.label}
             {!k.enforced ? (
               <span
-                className="ml-1 rounded bg-zinc-200 px-1 text-[10px] uppercase text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 cursor-help"
+                className="ml-1 rounded bg-edge px-1 text-2xs uppercase text-fg-secondary cursor-help"
                 title="Regions are saved but won't affect pass/fail status yet"
               >
                 preview

@@ -3,11 +3,14 @@ import { useTheme } from "next-themes";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Every Application the component creates, so the test can read the colour
-// pixi would actually paint with.
+// pixi would actually paint with. A theme flip must repaint these same apps:
+// a new app (or a destroyed one) would mean the canvas re-mounted, which drops
+// the reviewer's zoom and pan.
 interface FakeApp {
   renderer: { background: { color: number } };
 }
 const apps: FakeApp[] = [];
+let destroyed = 0;
 
 vi.mock("pixi.js/unsafe-eval", () => ({}));
 vi.mock("pixi.js", () => ({
@@ -24,7 +27,9 @@ vi.mock("pixi.js", () => ({
       this.renderer.background.color = opts.backgroundColor;
       apps.push(this as unknown as FakeApp);
     }
-    destroy() {}
+    destroy() {
+      destroyed++;
+    }
   },
   Assets: { load: async () => ({}) },
   Sprite: class {},
@@ -65,11 +70,12 @@ let styleEl: HTMLStyleElement;
 
 beforeEach(() => {
   apps.length = 0;
+  destroyed = 0;
   localStorage.clear();
   document.documentElement.className = "";
   // Same shape as tokens.css: light on :root, dark under .dark.
   styleEl = document.createElement("style");
-  styleEl.textContent = ":root{--sunken:#fafafa}:root.dark{--sunken:#08080a}";
+  styleEl.textContent = ":root{--hover:#f4f4f5}:root.dark{--hover:#1d1d21}";
   document.head.appendChild(styleEl);
 });
 
@@ -96,27 +102,31 @@ function renderCanvas() {
 }
 
 describe("ViewerCanvas follows the theme", () => {
-  test("side-by-side: both apps repaint to the new --sunken when the theme flips", async () => {
+  test("side-by-side: both apps repaint to the new --hover when the theme flips", async () => {
     localStorage.setItem("furan-theme", "light");
     renderCanvas();
     await waitFor(() => expect(apps).toHaveLength(2));
     expect(apps.map((a) => a.renderer.background.color)).toEqual([
-      0xfafafa, 0xfafafa,
+      0xf4f4f5, 0xf4f4f5,
     ]);
 
     act(() => setTheme("dark"));
     await waitFor(() =>
       expect(apps.map((a) => a.renderer.background.color)).toEqual([
-        0x08080a, 0x08080a,
+        0x1d1d21, 0x1d1d21,
       ]),
     );
 
     act(() => setTheme("light"));
     await waitFor(() =>
       expect(apps.map((a) => a.renderer.background.color)).toEqual([
-        0xfafafa, 0xfafafa,
+        0xf4f4f5, 0xf4f4f5,
       ]),
     );
+
+    // Repainted in place: still the original two apps, none torn down.
+    expect(apps).toHaveLength(2);
+    expect(destroyed).toBe(0);
   });
 
   test("single-stage mode: the app repaints when the theme flips", async () => {
@@ -124,11 +134,14 @@ describe("ViewerCanvas follows the theme", () => {
     localStorage.setItem("furan-theme", "light");
     renderCanvas();
     await waitFor(() => expect(apps).toHaveLength(1));
-    expect(apps[0]!.renderer.background.color).toBe(0xfafafa);
+    expect(apps[0]!.renderer.background.color).toBe(0xf4f4f5);
 
     act(() => setTheme("dark"));
     await waitFor(() =>
-      expect(apps[0]!.renderer.background.color).toBe(0x08080a),
+      expect(apps[0]!.renderer.background.color).toBe(0x1d1d21),
     );
+
+    expect(apps).toHaveLength(1);
+    expect(destroyed).toBe(0);
   });
 });

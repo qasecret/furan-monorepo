@@ -37,11 +37,44 @@ function readFixture(): VisualFixture | null {
 /**
  * Reuse `e2e/.visual-sweep.json` while its project still exists on this stack
  * (so the `before` and `after` sweeps capture identical data); otherwise create
- * the fixture and write the file. Requires the Playwright globalSetup seed.
+ * the fixture and write the file. Either way, the project is made the sweep
+ * admin's default (see {@link makeAdminDefault}). Requires the Playwright
+ * globalSetup seed.
  */
 export async function ensureVisualFixture(
   api: ApiClient,
 ): Promise<VisualFixture> {
+  const admin = loadSeed().bootstrapAdminJwt;
+  const fixture = await reuseOrCreate(api);
+  await makeAdminDefault(api, admin, fixture.projectId);
+  return fixture;
+}
+
+/**
+ * The sweep's admin session renders the project-less routes (`/inbox`) for its
+ * CURRENT project, which is its default project. An admin sees every project,
+ * so with no default and 2+ projects it has none, and `/inbox` would only ever
+ * show "No project assigned" — the batches table, and its enforced contrast
+ * check, would go unswept. Adds `projectId` to the admin's memberships (keeping
+ * every existing one; `setUserProjects` replaces the whole set) and makes it
+ * the default. A no-op when that is already so.
+ */
+async function makeAdminDefault(
+  api: ApiClient,
+  admin: string,
+  projectId: string,
+): Promise<void> {
+  const me = await api.me(admin);
+  const memberOf = await api.listUserProjects(admin, me.id);
+  if (me.defaultProjectId === projectId && memberOf.includes(projectId)) return;
+  await api.setUserProjects(admin, {
+    userId: me.id,
+    projectIds: [...new Set([...memberOf, projectId])],
+    defaultProjectId: projectId,
+  });
+}
+
+async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
   const seed = loadSeed();
   const admin = seed.bootstrapAdminJwt;
   const pat = principal(seed, "owner").pat;

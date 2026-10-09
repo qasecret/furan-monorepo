@@ -66,11 +66,11 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
     { name: "project", path: P, enforceContrast: true },
     { name: "builds", path: `${P}/builds`, enforceContrast: true },
     { name: "build", path: `${P}/builds/${f.buildId}`, enforceContrast: true },
-    { name: "runs", path: `${P}/runs`, enforceContrast: false },
+    { name: "runs", path: `${P}/runs`, enforceContrast: true },
     {
       name: "run",
       path: `${P}/runs/${f.unresolvedRunId}`,
-      enforceContrast: false,
+      enforceContrast: true,
     },
     { name: "settings", path: `${P}/settings`, enforceContrast: false },
     { name: "variations", path: `${P}/variations`, enforceContrast: false },
@@ -105,7 +105,7 @@ export const DISCOVERED: ReadonlyArray<{
     from: (f) => `/projects/${f.projectId}/variations`,
     via: [/\/variations\/[^/]+$/],
     href: /\/diffs\/[^/]+$/,
-    enforceContrast: false,
+    enforceContrast: true,
   },
   {
     name: "variation",

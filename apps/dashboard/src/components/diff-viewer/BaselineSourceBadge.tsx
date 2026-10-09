@@ -10,27 +10,26 @@ import {
 
 type BaselineSource = "this_branch" | "parent_pr" | "default_branch";
 
+// Where the baseline came from is not a run status, so these are plain hue
+// chips (opaque pastel, the same in both themes), not status tokens.
 const LABELS: Record<
   BaselineSource,
   { text: string; className: string; tooltip: string }
 > = {
   this_branch: {
     text: "this branch",
-    className:
-      "bg-green-100 text-green-900 border-green-300 dark:bg-green-500/10 dark:text-green-400 dark:border-green-500/20",
+    className: "border-green-300 bg-green-100 text-green-800",
     tooltip: "Baseline comes from the same branch as this run.",
   },
   parent_pr: {
     text: "parent PR",
-    className:
-      "bg-yellow-100 text-yellow-900 border-yellow-300 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+    className: "border-yellow-300 bg-yellow-100 text-yellow-800",
     tooltip:
       "No baseline on this branch yet — using the parent PR's base branch baseline.",
   },
   default_branch: {
     text: "default branch",
-    className:
-      "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800",
+    className: "border-edge bg-hover text-fg-secondary",
     tooltip:
       "No branch-scoped baseline found — using the project's default branch baseline.",
   },
@@ -48,7 +47,11 @@ export function BaselineSourceBadge({
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span tabIndex={0} aria-label={`Baseline source: ${entry.text}`}>
+          <span
+            tabIndex={0}
+            aria-label={`Baseline source: ${entry.text}`}
+            className="rounded-md focus-ring"
+          >
             <Badge
               variant="outline"
               className={entry.className}

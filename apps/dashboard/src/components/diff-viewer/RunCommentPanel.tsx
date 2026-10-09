@@ -90,9 +90,7 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
   return (
     <div
       className={
-        embedded
-          ? "space-y-2"
-          : "border-t border-zinc-200 bg-white p-3 space-y-2 dark:border-zinc-800 dark:bg-zinc-950"
+        embedded ? "space-y-2" : "border-t border-edge bg-canvas p-3 space-y-2"
       }
       data-testid="comment-panel"
     >
@@ -119,12 +117,12 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
         onKeyDown={handleKeyDown}
         maxLength={MAX_LEN}
         rows={4}
-        className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-mono text-zinc-950 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:border-zinc-300 focus-visible:ring-1 focus-visible:ring-brand dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 dark:focus-visible:border-zinc-700"
+        className="w-full rounded-md border border-edge bg-canvas px-3 py-2 text-sm font-mono text-fg placeholder:text-fg-muted focus-ring"
         placeholder="Notes on this run…"
         data-testid="comment-textarea"
       />
       <div className="flex items-center justify-between">
-        <span className="text-xs text-zinc-500">
+        <span className="text-xs tabular-nums text-fg-muted">
           {value.length} / {MAX_LEN}
           <span className="ml-2">(Cmd/Ctrl+Enter to save)</span>
         </span>
@@ -140,7 +138,7 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
       {error && (
         <span
           role="alert"
-          className="text-sm text-red-400"
+          className="text-sm text-destructive"
           data-testid="comment-error"
         >
           {error}

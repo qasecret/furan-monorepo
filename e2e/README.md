@@ -75,7 +75,10 @@ Then check out the branch in that worktree (the dev server hot-reloads) and
 re-run with `VISUAL_LABEL=after`. PNGs land in
 `visual-out/<VISUAL_LABEL>/<theme>/<route>.png` (override the root with
 `VISUAL_OUT`); the fixture project's IDs are kept in `.visual-sweep.json` so
-both runs capture the same data. Both are gitignored.
+both runs capture the same data. Both are gitignored. The fixture also makes
+that project the bootstrap admin's default project (keeping its other
+memberships), so `/inbox` captures the batches table rather than "No project
+assigned".
 
 **Or against a dev stack.** Any running api + diff-worker whose bootstrap admin
 is `e2e-admin@furan.test` (see `BOOTSTRAP_EMAIL` / `BOOTSTRAP_PASSWORD` in
