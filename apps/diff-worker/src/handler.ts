@@ -107,6 +107,15 @@ export interface HandlerDeps {
   metrics?: DiffMetrics;
 }
 
+/** Where this call sits in the job's BullMQ retry budget. */
+export interface DiffAttempt {
+  /**
+   * True when no retry follows if this attempt throws (`isFinalAttempt` from
+   * `@furan/queue`). Only the final attempt marks the run `aborted`.
+   */
+  finalAttempt: boolean;
+}
+
 /**
  * Best-effort dual-publish: in addition to the existing per-run channel
  * (`run:{runId}:events`, which the diff viewer subscribes to), also fire
@@ -344,6 +353,9 @@ export async function handleDiffJob(
   data: DiffJob,
   logger: Logger,
   deps: HandlerDeps,
+  // Callers that don't track retries (CLIs, tests) get the safe default: a
+  // failure is terminal and the run is marked `aborted`.
+  attempt: DiffAttempt = { finalAttempt: true },
 ): Promise<void> {
   try {
     await handleDiffJobInner(data, logger, deps);
@@ -356,12 +368,22 @@ export async function handleDiffJob(
     // their own write fails, so this is the only place the actual cause
     // surfaces in the worker log stream.
     logger.error(
-      { err, runId: data.runId, projectId: data.projectId },
+      {
+        err,
+        runId: data.runId,
+        projectId: data.projectId,
+        finalAttempt: attempt.finalAttempt,
+      },
       "diff_job_failed",
     );
-    // Best-effort terminal status write so an aborted run does not hang
-    // in `running` indefinitely. Per spec §3.2 worker exceptions land as
-    // `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
+    // Ruling R9: BullMQ retries a non-final attempt, so leave the run as it is
+    // (`running`) and let the retry derive its status. `aborted` is a
+    // lifecycle state `recomputeRunStatus` keeps, so writing it here would
+    // stick even after the retry succeeds. Rethrow so BullMQ schedules it.
+    if (!attempt.finalAttempt) throw err;
+    // Final attempt: best-effort terminal status write so an aborted run does
+    // not hang in `running` indefinitely. Per spec §3.2 worker exceptions land
+    // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
     // own try/catch so a status-write failure does not mask the original
     // error — the worker's error visibility is unchanged.
     try {
@@ -1302,10 +1324,13 @@ async function handleDiffJobInner(
   // checkpoint results so it includes all checkpoints that completed diffing.
   // sweeper.ts (stale-run finalizer) has no diff data and intentionally leaves
   // primary_signature NULL.
-  // INVARIANT: computed once here, never recomputed — relies on v1.1 having no
-  // partial approval (approving any checkpoint flips the whole run to passed, so a
-  // run stays wholly unresolved while in the inbox). If partial approval ever lands,
-  // primary_signature must be recomputed when a checkpoint's status changes.
+  // Computed once per diff job from the diff results, never from decisions.
+  // ADR-070 brought partial approval (a run can hold approved and unresolved
+  // checkpoints at once), and deciding a checkpoint deliberately does NOT
+  // recompute primary_signature: it can still name an approved checkpoint
+  // until the next re-diff. Accepted because it feeds only the cross-build
+  // inbox clustering (review flow spec §11); recompute it on decision changes
+  // if that clustering ever needs to track review state.
   const primarySignature = computePrimarySignature(
     results.map((v) => ({
       diffSignature: v.diffSignature,
