@@ -30,17 +30,17 @@ The migrations, applied in order by the `migrate` one-shot before the apps start
 
 How `0037` derives a checkpoint's verdict, in order:
 
-1. `passed` for every checkpoint of a run the diff passed and nobody approved or
-   promoted (`status = 'passed'`, `merge = false`), whatever its regions: they
-   were below the diff threshold;
+1. `passed` for every checkpoint of a `passed` run that was never approved or
+   promoted (`merge = false`: the diff passed it, or an operator forced it to
+   passed), whatever its regions;
 2. `unresolved` if the checkpoint has a diff region that counts (severity other than `none`, not resolved by an auto rule);
 3. `new` if the run is `new`;
 4. `unresolved` if the run is `unresolved` and none of its checkpoints has such a region (the run was unresolved as a whole);
 5. otherwise `passed`.
 
 So in an old unresolved run, only the checkpoints with differences are left to
-review; the others count as passed. A machine-passed run gets no decisions at
-all.
+review; the others count as passed. A passed run that was never approved or
+promoted gets no decisions at all.
 
 Decisions recorded by the backfill:
 
@@ -65,7 +65,12 @@ Decisions recorded by the backfill:
      verdicts or decisions. §5 restores that, but only that.
 
    So stop `api` and the workers first, and let `migrate` finish before the new
-   images start:
+   images start. Before running the commands below, update the checkout and the
+   image tags in `compose.yml` (for the one-file install: set `FURAN_VERSION`,
+   or download the new `furan-compose.yml`), as in
+   [`production-deploy.md` §0](./production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep).
+   Otherwise `$P pull` fetches the old pinned images and `migrate` applies the
+   old migrations.
 
    ```bash
    P="docker compose -p docker --env-file infra/docker/.env -f infra/docker/compose.yml"
@@ -202,8 +207,10 @@ before.
   again, run the CLI and, if it lists them, re-run the backfill (§5): that
   restores their status. It does not repair their baselines: an approval made
   while rolled back promotes only one checkpoint of the run, and `0036` does
-  not run again. Avoid approving multi-step runs while rolled back, or approve
-  the affected steps again, checkpoint by checkpoint, after upgrading.
+  not run again. Avoid approving multi-step runs while rolled back. A step left
+  without its baseline shows up on its next build: as `new` when it has no
+  baseline, or as a difference when its image changed since the older
+  baseline. Review it there.
 - **Repaired baselines stay.** They are ordinary baselines, the ones the
   reviewers approved, and the previous release reads them as such.
 - **Decisions recorded by the backfill cannot be undone**, by design: they
