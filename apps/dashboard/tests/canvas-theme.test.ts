@@ -26,13 +26,19 @@ describe("cssHexToPixi", () => {
 });
 
 describe("readCanvasBackground", () => {
-  test("reads --sunken from the given root", () => {
+  test("reads --hover from the given root", () => {
     const el = document.createElement("div");
-    el.style.setProperty("--sunken", "#08080a");
-    expect(readCanvasBackground(el)).toBe(0x08080a);
+    el.style.setProperty("--hover", "#1d1d21");
+    expect(readCanvasBackground(el)).toBe(0x1d1d21);
   });
 
-  test("falls back when --sunken is not set", () => {
+  test("ignores --sunken (the letterbox follows --hover)", () => {
+    const el = document.createElement("div");
+    el.style.setProperty("--sunken", "#08080a");
+    expect(readCanvasBackground(el)).toBe(FALLBACK_CANVAS_BG);
+  });
+
+  test("falls back when --hover is not set", () => {
     const el = document.createElement("div");
     expect(readCanvasBackground(el)).toBe(0xf3f4f6);
     expect(FALLBACK_CANVAS_BG).toBe(0xf3f4f6);

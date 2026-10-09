@@ -75,7 +75,7 @@ beforeEach(() => {
   document.documentElement.className = "";
   // Same shape as tokens.css: light on :root, dark under .dark.
   styleEl = document.createElement("style");
-  styleEl.textContent = ":root{--sunken:#fafafa}:root.dark{--sunken:#08080a}";
+  styleEl.textContent = ":root{--hover:#f4f4f5}:root.dark{--hover:#1d1d21}";
   document.head.appendChild(styleEl);
 });
 
@@ -102,25 +102,25 @@ function renderCanvas() {
 }
 
 describe("ViewerCanvas follows the theme", () => {
-  test("side-by-side: both apps repaint to the new --sunken when the theme flips", async () => {
+  test("side-by-side: both apps repaint to the new --hover when the theme flips", async () => {
     localStorage.setItem("furan-theme", "light");
     renderCanvas();
     await waitFor(() => expect(apps).toHaveLength(2));
     expect(apps.map((a) => a.renderer.background.color)).toEqual([
-      0xfafafa, 0xfafafa,
+      0xf4f4f5, 0xf4f4f5,
     ]);
 
     act(() => setTheme("dark"));
     await waitFor(() =>
       expect(apps.map((a) => a.renderer.background.color)).toEqual([
-        0x08080a, 0x08080a,
+        0x1d1d21, 0x1d1d21,
       ]),
     );
 
     act(() => setTheme("light"));
     await waitFor(() =>
       expect(apps.map((a) => a.renderer.background.color)).toEqual([
-        0xfafafa, 0xfafafa,
+        0xf4f4f5, 0xf4f4f5,
       ]),
     );
 
@@ -134,11 +134,11 @@ describe("ViewerCanvas follows the theme", () => {
     localStorage.setItem("furan-theme", "light");
     renderCanvas();
     await waitFor(() => expect(apps).toHaveLength(1));
-    expect(apps[0]!.renderer.background.color).toBe(0xfafafa);
+    expect(apps[0]!.renderer.background.color).toBe(0xf4f4f5);
 
     act(() => setTheme("dark"));
     await waitFor(() =>
-      expect(apps[0]!.renderer.background.color).toBe(0x08080a),
+      expect(apps[0]!.renderer.background.color).toBe(0x1d1d21),
     );
 
     expect(apps).toHaveLength(1);

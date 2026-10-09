@@ -248,7 +248,7 @@ export function ViewerCanvas({
       await baselineApp.init({
         width: baselineSize.w,
         height: baselineSize.h,
-        backgroundColor: readCanvasBackground(), // --sunken; lets letterbox bands read as "outside the image"
+        backgroundColor: readCanvasBackground(), // --hover; lets letterbox bands read as "outside the image"
         antialias: true,
         autoDensity: true,
         resolution: window.devicePixelRatio || 1,
@@ -1033,7 +1033,7 @@ export function ViewerCanvas({
               ref={baselineRef}
               data-testid="baseline-canvas-host"
               style={aspectStyle(baselineDims)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
             >
               {!baselineUrl && (
                 <CanvasEmptyState label="No baseline yet">
@@ -1060,7 +1060,7 @@ export function ViewerCanvas({
               ref={candidateRef}
               data-testid="candidate-canvas-host"
               style={aspectStyle(candidateDims)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
             >
               {!candidateUrl && (
                 <CanvasEmptyState label="Waiting for capture…">
@@ -1094,7 +1094,7 @@ export function ViewerCanvas({
     <div className="flex min-h-full p-6">
       <div
         style={aspectStyle(candidateDims ?? baselineDims)}
-        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg bg-sunken shadow-raised"
+        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
         ref={stageRef}
         data-testid="single-stage-host"
         data-mode={mode}
