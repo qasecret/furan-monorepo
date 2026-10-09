@@ -20,10 +20,7 @@ export type { Tx } from "./review-status.js";
 
 // Canonical branch-agnostic variation identity (ADR-054) — shared by every
 // cross-branch sibling-matcher so they can't drift onto a stale column subset.
-export {
-  variationIdentityKey,
-  variationIdentityWhere,
-} from "./variation-identity.js";
+export { variationIdentityWhere } from "./variation-identity.js";
 export type { VariationIdentity } from "./variation-identity.js";
 
 // Explicit type re-export for the run-status enum (the table-exports above
