@@ -27,7 +27,8 @@ export interface SweepArgs {
  *  1. No checkpoints: the run is `empty` (a lifecycle write the rollup keeps).
  *  2. Otherwise every checkpoint whose `verdict` is still NULL gets one:
  *     `unresolved` if it has a region with `severity <> 'none'`, else
- *     `passed` (today's outcome rule, applied per checkpoint). Without this,
+ *     `passed` (today's outcome rule, applied per checkpoint; a region an
+ *     auto rule resolved does not count, as in the backfill). Without this,
  *     rollup rule 4 (a NULL verdict means a diff is pending) would keep the
  *     run `running` forever. Verdicts the diff-worker already wrote are left
  *     alone.
@@ -83,12 +84,15 @@ export async function sweepStaleRuns({
         return true;
       }
 
-      // A region belongs to a checkpoint by `screenshot_id`; a legacy row
-      // without one (pre-v1.1.20) matches on the run and viewport instead.
+      // The backfill's derivation (spec §4.5 step 1): a region counts when its
+      // severity is not 'none' and no auto rule resolved it. It belongs to a
+      // checkpoint by `screenshot_id`; a legacy row without one (pre-v1.1.20)
+      // matches on the run and viewport instead.
       const hasSeverityRegion = sql`EXISTS (
         SELECT 1 FROM ${diffRegions}
         WHERE ${diffRegions.runId} = ${screenshots.runId}
           AND ${diffRegions.severity} <> 'none'
+          AND ${diffRegions.resolvedByApplicationId} IS NULL
           AND (
             ${diffRegions.screenshotId} = ${screenshots.id}
             OR (

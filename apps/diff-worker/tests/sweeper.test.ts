@@ -245,6 +245,7 @@ desc("sweepStaleRuns — per checkpoint on the shared rollup", () => {
     runId: string,
     screenshotId: string | null,
     severity: string,
+    resolvedByApplicationId: string | null = null,
   ): Promise<void> {
     await db.insert(diffRegions).values({
       runId,
@@ -256,6 +257,7 @@ desc("sweepStaleRuns — per checkpoint on the shared rollup", () => {
       description: "region",
       source: "l1_pixel",
       viewport: "400x400",
+      resolvedByApplicationId,
     });
   }
 
@@ -300,6 +302,34 @@ desc("sweepStaleRuns — per checkpoint on the shared rollup", () => {
 
     expect(await verdictOf(shot)).toBe("passed");
     expect((await runRow(runId)).status).toBe("passed");
+  });
+
+  it("ignores a region an auto rule resolved, like the backfill", async () => {
+    // `resolved_by_application_id` is deliberately not a foreign key (see the
+    // diff_regions schema), so any uuid stands in for the winning application.
+    const runId = await seedStaleRun();
+    const resolved = await seedCheckpoint(runId, "rule-resolved", null);
+    await seedRegion(runId, resolved, "high", randomUUID());
+    // A second checkpoint with an unresolved severity region still counts.
+    const open = await seedCheckpoint(runId, "still-open", null);
+    await seedRegion(runId, open, "high");
+
+    await sweepStaleRuns({ db, now, thresholdMs: 5 * 60_000 });
+
+    expect(await verdictOf(resolved)).toBe("passed");
+    expect(await verdictOf(open)).toBe("unresolved");
+    expect((await runRow(runId)).status).toBe("unresolved");
+  });
+
+  it("matches a legacy region without a screenshot id on the run and viewport", async () => {
+    const runId = await seedStaleRun();
+    const shot = await seedCheckpoint(runId, "legacy", null);
+    await seedRegion(runId, null, "medium");
+
+    await sweepStaleRuns({ db, now, thresholdMs: 5 * 60_000 });
+
+    expect(await verdictOf(shot)).toBe("unresolved");
+    expect((await runRow(runId)).status).toBe("unresolved");
   });
 
   it("judges each checkpoint by its own regions, not the run's", async () => {
