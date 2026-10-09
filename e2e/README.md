@@ -46,13 +46,13 @@ their content: the PNG and axe cover the whole page, not just the first
 900px. It fails the route if any part of the page is still clipped
 afterwards, so a dashboard layout change can't quietly shrink the shot.
 
-It is the before/after safety net for the design-foundation slice PRs. A
-contrast problem is an axe violation, or a node axe could not measure because
-it lies outside the viewport. Problems are reported as test annotations (also
-written to `visual-out/<label>/color-contrast.json`); on routes and states
-with `enforceContrast: true` in `src/visual/routes.ts` they are also
-collected, and the `contrast-enforced` test, which runs after both theme
-passes, fails once per theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
+It is the before/after safety net for dashboard UI changes. A contrast
+problem is an axe violation, or a node axe could not measure because it lies
+outside the viewport. Every route and state is checked, in both themes:
+problems are reported as test annotations (also written to
+`visual-out/<label>/color-contrast.json`) and collected, and the
+`contrast-enforced` test, which runs after both theme passes, fails once per
+theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
 (hiding Next's dev overlay also hides its error dialog). A route answering
 4xx/5xx fails; a route that redirects elsewhere is annotated
 `landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:

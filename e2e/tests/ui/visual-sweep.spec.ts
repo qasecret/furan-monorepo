@@ -218,8 +218,8 @@ test.describe.serial("visual sweep @visual", () => {
   let anonPage: Page;
   const shots: { name: string; png: Buffer }[] = [];
   const contrast: Contrast[] = [];
-  /** Problems on `enforceContrast` shots, failed once per theme at the end. */
-  const enforced: Record<Theme, Problem[]> = { light: [], dark: [] };
+  /** Every shot's contrast problems, failed once per theme at the end. */
+  const allProblems: Record<Theme, Problem[]> = { light: [], dark: [] };
   /** Uncaught page errors since the current test started (all sessions). */
   const pageErrors: string[] = [];
 
@@ -373,15 +373,14 @@ test.describe.serial("visual sweep @visual", () => {
    * colour-contrast. A 4xx/5xx answer fails the test (an error page must not
    * pass as a screen); landing somewhere other than `v.path` is annotated
    * (`landed-elsewhere`), not failed — several routes redirect by design.
-   * Contrast problems are annotated; on an `enforceContrast` shot they are
-   * also collected for the theme's `contrast-enforced` check.
+   * Contrast problems are annotated and also collected for the theme's
+   * `contrast-enforced` check.
    */
   async function shoot(
     p: Page,
     v: Visit,
     theme: Theme,
     name: string,
-    enforceContrast: boolean,
     testInfo: TestInfo,
   ): Promise<void> {
     // No response = a same-document navigation, which is fine.
@@ -424,10 +423,10 @@ test.describe.serial("visual sweep @visual", () => {
       examples,
     });
     testInfo.annotations.push({
-      type: enforceContrast ? "color-contrast-enforced" : "color-contrast",
+      type: "color-contrast",
       description: `${violations.length} violation(s), ${outsideViewport.length} outside the viewport${examples.length ? ` — ${examples.join("; ")}` : ""}`,
     });
-    if (enforceContrast) enforced[theme].push(...problems);
+    allProblems[theme].push(...problems);
   }
 
   for (const theme of THEMES) {
@@ -458,7 +457,7 @@ test.describe.serial("visual sweep @visual", () => {
               ? editorPage
               : page;
           const v = await visit(p, route.path);
-          await shoot(p, v, theme, route.name, route.enforceContrast, testInfo);
+          await shoot(p, v, theme, route.name, testInfo);
         });
       }
 
@@ -470,7 +469,7 @@ test.describe.serial("visual sweep @visual", () => {
             const href = await firstLink(page, hop);
             v = await visit(page, new URL(href, page.url()).pathname);
           }
-          await shoot(page, v, theme, d.name, d.enforceContrast, testInfo);
+          await shoot(page, v, theme, d.name, testInfo);
         });
       }
 
@@ -480,13 +479,13 @@ test.describe.serial("visual sweep @visual", () => {
           const v = await visit(p, s.path);
           await settle(p);
           await s.open(p);
-          await shoot(p, v, theme, s.name, s.enforceContrast, testInfo);
+          await shoot(p, v, theme, s.name, testInfo);
         });
       }
     });
   }
 
-  // The enforceContrast ratchet, checked ONCE per theme with that theme's
+  // Colour contrast on every shot, checked ONCE per theme with that theme's
   // whole list, instead of failing at the first offending route: soft
   // assertions in one test, after both theme passes. A failure inside a serial
   // suite skips every test after it, so this must come after every shot (a
@@ -495,11 +494,11 @@ test.describe.serial("visual sweep @visual", () => {
   // pre-system-theme `main` and would otherwise skip this check there.
   test("contrast-enforced", () => {
     for (const theme of THEMES) {
-      const found = enforced[theme].map(formatProblem);
+      const found = allProblems[theme].map(formatProblem);
       expect
         .soft(
           found,
-          `${theme}: ${found.length} colour-contrast problem(s) on enforceContrast shots (route · rule · selector · ratio)`,
+          `${theme}: ${found.length} colour-contrast problem(s) (route · rule · selector · ratio)`,
         )
         .toEqual([]);
     }
