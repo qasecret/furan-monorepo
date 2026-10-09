@@ -1185,6 +1185,8 @@ export const runsRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       const BULK_CAP = 200;
+      // Oldest run first: when several runs share a variation (retries), the
+      // newest run's baseline is written last and wins (baselineWriteTime).
       const targets = await ctx.db
         .select()
         .from(testRuns)
@@ -1194,6 +1196,7 @@ export const runsRouter = t.router({
             inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
           ),
         )
+        .orderBy(asc(testRuns.createdAt), asc(testRuns.id))
         .limit(BULK_CAP + 1);
       const capped = targets.length > BULK_CAP;
       const approveTargets = capped ? targets.slice(0, BULK_CAP) : targets;
@@ -1721,7 +1724,13 @@ export const runsRouter = t.router({
             eq(screenshots.diffSignature, seed.diffSignature),
           ),
         )
-        .orderBy(asc(screenshots.createdAt));
+        // Oldest run first, so a variation matched in several runs ends on the
+        // newest run's baseline (written last — baselineWriteTime).
+        .orderBy(
+          asc(testRuns.createdAt),
+          asc(screenshots.createdAt),
+          asc(screenshots.id),
+        );
 
       const statuses = await deriveCheckpointStatuses(ctx.db, matches);
       const unresolved = matches.filter(

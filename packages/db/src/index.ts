@@ -5,7 +5,11 @@ export * as schema from "./schema/index.js";
 export * from "./schema/index.js";
 
 // Baseline resolution + creation helpers.
-export { resolveBaseline, recordBaseline } from "./baseline.js";
+export {
+  resolveBaseline,
+  recordBaseline,
+  baselineWriteTime,
+} from "./baseline.js";
 export type { BaselineSource, GitRefs } from "./baseline.js";
 
 // Canonical branch-agnostic variation identity (ADR-054) — shared by every

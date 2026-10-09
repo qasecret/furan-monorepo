@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 
 import type { DB } from "./client.js";
 import { baselines, testVariations } from "./schema/index.js";
@@ -36,6 +36,10 @@ export interface GitRefs {
  * cross-branch tiers. Callers that fetch the baseline's screenshot MUST key off
  * this, not the candidate's `testVariationId` (which, for a cross-branch match,
  * indexes nothing in the baseline run).
+ *
+ * "Most recent" is `created_at`, which every write stamps via
+ * `baselineWriteTime`; the `id` tiebreak only keeps readers agreeing on rows
+ * written before that, which could tie.
  */
 export async function resolveBaseline(
   db: DB,
@@ -54,7 +58,7 @@ export async function resolveBaseline(
       eq(baselines.testVariationId, testVariationId),
       eq(baselines.branchName, branchName),
     ),
-    orderBy: [desc(baselines.createdAt)],
+    orderBy: [desc(baselines.createdAt), desc(baselines.id)],
   });
   if (onBranch)
     return {
@@ -97,7 +101,7 @@ export async function resolveBaseline(
     if (!sibling) return null;
     const b = await db.query.baselines.findFirst({
       where: eq(baselines.testVariationId, sibling.id),
-      orderBy: [desc(baselines.createdAt)],
+      orderBy: [desc(baselines.createdAt), desc(baselines.id)],
     });
     return b ? { baselineId: b.id, variationId: sibling.id } : null;
   };
@@ -125,6 +129,18 @@ export async function resolveBaseline(
 
   return null;
 }
+
+/**
+ * The `created_at` every baseline write stamps, on insert AND on the
+ * (variation, run) conflict update. `created_at` is resolveBaseline's
+ * latest-wins key, but its column default `now()` is the TRANSACTION start
+ * time, so baselines written for one variation in a single transaction (bulk /
+ * group approve) tied and the resolved image was arbitrary.
+ * `clock_timestamp()` advances within the transaction, so the row written last
+ * sorts newest — and re-recording an existing row re-stamps it, matching the
+ * variation's `baseline_name`, which every write overwrites.
+ */
+export const baselineWriteTime = (): SQL => sql`clock_timestamp()`;
 
 /** A Drizzle transaction or db handle — `recordBaseline` runs in either. */
 type BaselineWriter = DB | Parameters<Parameters<DB["transaction"]>[0]>[0];
@@ -167,6 +183,7 @@ export async function recordBaseline(
       testRunId: params.testRunId,
       ...(params.userId ? { userId: params.userId } : {}),
       ...(params.branchName ? { branchName: params.branchName } : {}),
+      createdAt: baselineWriteTime(),
     })
     .onConflictDoUpdate({
       target: [baselines.testVariationId, baselines.testRunId],
@@ -174,6 +191,7 @@ export async function recordBaseline(
         baselineName: params.imageKey ?? params.runName ?? "auto",
         userId: params.userId ?? null,
         ...(params.branchName ? { branchName: params.branchName } : {}),
+        createdAt: baselineWriteTime(),
         updatedAt: new Date(),
       },
     });

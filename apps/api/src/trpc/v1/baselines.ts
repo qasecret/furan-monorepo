@@ -49,7 +49,7 @@ export const baselinesRouter = t.router({
         .from(baselines)
         .leftJoin(users, eq(users.id, baselines.userId))
         .where(eq(baselines.testVariationId, input.testVariationId))
-        .orderBy(desc(baselines.createdAt))
+        .orderBy(desc(baselines.createdAt), desc(baselines.id))
         .limit(input.limit);
 
       return {
