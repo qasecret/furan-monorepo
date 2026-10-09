@@ -21,7 +21,9 @@ vi.mock("@/lib/trpc", () => ({
   },
 }));
 
+import type { DiffRegion } from "@/components/diff-viewer/layers/regionTypes";
 import { TestInfoSidebar } from "@/components/diff-viewer/TestInfoSidebar";
+import { SEVERITY_STYLE } from "@/lib/severity-style";
 
 afterEach(cleanup);
 
@@ -55,6 +57,38 @@ describe("TestInfoSidebar", () => {
     expect(screen.getByText("Pixel diff")).toBeDefined();
     expect(screen.getByText("None")).toBeDefined(); // no regions → severity None
   });
+
+  const region = (id: string, severity: string): DiffRegion => ({
+    id,
+    severity,
+    category: "image",
+    bbox: { x: 0, y: 0, width: 10, height: 10 },
+    description: "",
+    source: "l1_pixel",
+  });
+
+  test.each([
+    ["Breaking", "breaking", ["minor", "breaking", "cosmetic"]],
+    ["Major", "major", ["major", "minor"]],
+    ["Minor", "minor", ["minor", "none"]],
+    ["Cosmetic", "cosmetic", ["cosmetic", "bogus"]],
+    ["None", "none", []],
+    ["None", "none", ["none", "none"]],
+  ] as const)(
+    "severity stat shows %s on the shared severity chip",
+    (label, sev, severities) => {
+      render(
+        <TestInfoSidebar
+          {...baseProps}
+          regions={severities.map((s, i) => region(`r${i}`, s))}
+        />,
+      );
+      const stat = screen.getByText(label);
+      for (const cls of SEVERITY_STYLE[sev].split(" ")) {
+        expect(stat.classList.contains(cls), `${sev}: ${cls}`).toBe(true);
+      }
+    },
+  );
 
   test("INFO tab shows test details / environment / execution + region list", () => {
     render(<TestInfoSidebar {...baseProps} />);

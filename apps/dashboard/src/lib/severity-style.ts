@@ -1,9 +1,11 @@
 import type { Severity } from "@/components/diff-viewer/layers/regionTypes";
 
 /**
- * The ONLY diff-region severity -> chip colour map in the dashboard. The diff
- * viewer's region badges (RegionItem) and the run header's aggregate pill
- * both read from here, so a severity looks the same everywhere.
+ * The ONLY diff-region severity -> chip colour map in the dashboard. Its three
+ * consumers all read from here, so a severity looks the same everywhere: the
+ * diff viewer's region badges (RegionItem), the run header's aggregate pill
+ * (AggregateSeverityPill) and the worst-severity stat in the viewer's info
+ * sidebar (TestInfoSidebar).
  *
  * Severity isn't a run status, so it keeps its own hues rather than status
  * tokens (Ruling R18): an opaque pastel `-100` chip with `-800` text and a
