@@ -129,7 +129,7 @@ export function TokensTable({ initialTokens }: TokensTableProps) {
                 <TableRow key={t.id} data-testid={`token-row-${t.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-hover">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-edge">
                         <KeyRound className="h-3.5 w-3.5 text-fg-muted" />
                       </div>
                       <span className="font-medium text-fg">{t.label}</span>
