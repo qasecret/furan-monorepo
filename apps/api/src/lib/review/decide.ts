@@ -249,7 +249,8 @@ export async function decideCheckpoints(
   deps.logger.info(
     {
       project_id: projectId,
-      run_ids: runIds,
+      // T2: a single-run action carries the `run_id` tag.
+      ...(runIds.length === 1 ? { run_id: runIds[0] } : { run_ids: runIds }),
       actor_id: actor.id,
       action_id: actionId,
       decision,

@@ -8,6 +8,7 @@ import {
   createDb,
   eq,
   inArray,
+  recomputeRunStatus,
   sql,
   testRuns,
   testVariations,
@@ -51,6 +52,13 @@ import {
   type ReviewSeed,
   type ReviewUser,
 } from "./review-fixtures.js";
+
+// A test-only failure hook: `recomputeRunStatus` calls straight through unless
+// a test queues a one-off implementation (the R16 JS-throw test does).
+vi.mock("@furan/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@furan/db")>();
+  return { ...actual, recomputeRunStatus: vi.fn(actual.recomputeRunStatus) };
+});
 
 // ---------------------------------------------------------------------------
 // Legality (pure): every row of the spec §5.4 table.
@@ -655,6 +663,43 @@ d("decideCheckpoints", () => {
           count: 1,
         },
       ]);
+      // A multi-run action logs every run id (and no single run_id tag).
+      expect(logger.info).toHaveBeenCalledWith(
+        {
+          project_id: s.projectId,
+          run_ids: res.runs.map((r) => r.runId),
+          actor_id: s.editor.id,
+          action_id: res.actionId,
+          decision: "approved",
+          source: "viewer",
+          count: 3,
+        },
+        "review_decided",
+      );
+    });
+
+    test("accepts upper- and mixed-case ids, and dedupes them", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "unresolved" },
+        ],
+      });
+      const home = s.shots.home!;
+
+      const res = await decide(s, {
+        decision: "approved",
+        targets: [
+          target(s.runId.toUpperCase(), home.id.toUpperCase()),
+          target(s.runId, home.id),
+        ],
+      });
+
+      expect(res.decided).toEqual([
+        { checkpointId: home.id, runId: s.runId, state: "approved" },
+      ]);
+      expect(res.runs).toEqual([{ runId: s.runId, status: "unresolved" }]);
+      expect(await decisionsFor([home.id])).toHaveLength(1);
     });
 
     test("no targets decides nothing", async () => {
@@ -1019,7 +1064,7 @@ d("decideCheckpoints", () => {
       expect(logger.info).toHaveBeenCalledWith(
         {
           project_id: s.projectId,
-          run_ids: [s.runId],
+          run_id: s.runId,
           actor_id: s.editor.id,
           action_id: res.actionId,
           decision: "approved",
@@ -1329,6 +1374,56 @@ d("decideCheckpoints", () => {
       });
 
       expect(pgCode(caught)).toBe("23514");
+      expect(await baselinesOfRun(s.runId)).toEqual([]);
+      expect(await variationRow(home.variationId)).toEqual(homeBefore);
+      expect(await variationRow(cart.variationId)).toEqual(cartBefore);
+      expect(await decisionsFor([home.id, cart.id])).toEqual([]);
+      expect(await runRow(s.runId)).toEqual(runBefore);
+      expect(await auditOfRun(s.runId)).toEqual([]);
+    });
+  });
+
+  describe("atomicity against an application-level throw (R16)", () => {
+    test("a JS throw after the promotions and decision inserts leaves nothing behind even when the outer transaction commits", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+          { name: "cart", verdict: "new" },
+        ],
+      });
+      const home = s.shots.home!;
+      const cart = s.shots.cart!;
+      const homeBefore = await variationRow(home.variationId);
+      const cartBefore = await variationRow(cart.variationId);
+      const runBefore = await runRow(s.runId);
+      // Fires on the core's first recompute: both promotions and the decision
+      // inserts have already succeeded. No database statement fails, so only
+      // the core's savepoint can undo them.
+      vi.mocked(recomputeRunStatus).mockImplementationOnce(() =>
+        Promise.reject(new Error("injected_after_writes")),
+      );
+
+      let caught: unknown;
+      await h.db.transaction(async (tx) => {
+        try {
+          await decideCheckpoints(
+            tx,
+            {
+              actor: actorOf(s.editor),
+              projectId: s.projectId,
+              actionId: randomUUID(),
+              source: "viewer",
+              decision: "approved",
+              targets: [target(s.runId, home.id), target(s.runId, cart.id)],
+            },
+            deps(),
+          );
+        } catch (e) {
+          caught = e;
+        }
+      });
+
+      expect((caught as Error).message).toBe("injected_after_writes");
       expect(await baselinesOfRun(s.runId)).toEqual([]);
       expect(await variationRow(home.variationId)).toEqual(homeBefore);
       expect(await variationRow(cart.variationId)).toEqual(cartBefore);

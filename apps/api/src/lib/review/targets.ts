@@ -161,17 +161,24 @@ export interface TargetRefusal {
   reason: ReviewRefusalReason;
 }
 
-/** One entry per (run, checkpoint), first occurrence kept. */
+/**
+ * One entry per (run, checkpoint), first occurrence kept, with ids lowercased.
+ * Zod's `.uuid()` accepts upper case and Postgres compares uuids by value, but
+ * the core keys its maps by the text it reads back (always lowercase), so a
+ * mixed-case id would otherwise miss its run or dodge the dedupe.
+ */
 export function dedupeTargets(
   targets: ReadonlyArray<ReviewTarget>,
 ): ReviewTarget[] {
   const seen = new Set<string>();
   const out: ReviewTarget[] = [];
   for (const t of targets) {
-    const key = `${t.runId}:${t.screenshotId}`;
+    const runId = t.runId.toLowerCase();
+    const screenshotId = t.screenshotId.toLowerCase();
+    const key = `${runId}:${screenshotId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ runId: t.runId, screenshotId: t.screenshotId });
+    out.push({ runId, screenshotId });
   }
   return out;
 }

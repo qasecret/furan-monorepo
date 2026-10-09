@@ -5,6 +5,7 @@ import {
   baselines,
   builds,
   inArray,
+  or,
   projectMembers,
   projects,
   screenshots,
@@ -88,6 +89,8 @@ export interface ReviewSeed extends ReviewRun {
   outsider: ReviewUser;
   /** The earlier run that owns the `withBaseline` rows; null when none. */
   baselineRunId: string | null;
+  /** The baseline run's own (earlier) build; null when none. */
+  baselineBuildId: string | null;
   /** Every run seeded into this build (the first one and `addReviewRun`'s). */
   runIds: string[];
   tag: string;
@@ -262,16 +265,18 @@ export async function seedReviewRun(
   // The baseline run lives in its own, earlier build: it stands for the run
   // a previous approval promoted. Created lazily, only when needed.
   let baselineRunId: string | null = null;
+  let baselineBuildId: string | null = null;
   const ensureBaselineRun = async (): Promise<string> => {
     if (baselineRunId) return baselineRunId;
     const [b] = await h.db
       .insert(builds)
       .values({ projectId, branchName: BRANCH })
       .returning({ id: builds.id });
+    baselineBuildId = b!.id;
     const [r] = await h.db
       .insert(testRuns)
       .values({
-        buildId: b!.id,
+        buildId: baselineBuildId,
         projectId,
         name: `baseline-${tag}`,
         status: "passed",
@@ -301,6 +306,7 @@ export async function seedReviewRun(
     guest,
     outsider,
     baselineRunId,
+    baselineBuildId,
     runIds: [run.runId],
     tag,
   };
@@ -333,21 +339,30 @@ export async function addReviewRun(
 /**
  * Removes exactly what the given seeds created: their projects (cascading to
  * builds, runs, variations, screenshots, baselines and decisions), their
- * users, and the audit rows written about their runs.
+ * users, and the audit rows about their runs and builds (run- and build-level
+ * review actions) or written by their users (`audit_log` has no FKs, so
+ * nothing cascades to it).
  */
 export async function cleanupReviewSeeds(
   h: TestApp,
   seeds: ReadonlyArray<ReviewSeed>,
 ): Promise<void> {
   if (seeds.length === 0) return;
-  const runIds = seeds.flatMap((s) => [
+  const targetIds = seeds.flatMap((s) => [
     ...s.runIds,
+    s.buildId,
     ...(s.baselineRunId ? [s.baselineRunId] : []),
+    ...(s.baselineBuildId ? [s.baselineBuildId] : []),
   ]);
   const userIds = seeds.flatMap((s) => Object.values(s.users).map((u) => u.id));
-  if (runIds.length > 0) {
-    await h.db.delete(auditLog).where(inArray(auditLog.targetId, runIds));
-  }
+  await h.db
+    .delete(auditLog)
+    .where(
+      or(
+        inArray(auditLog.targetId, targetIds),
+        inArray(auditLog.actorId, userIds),
+      ),
+    );
   await h.db.delete(projects).where(
     inArray(
       projects.id,
