@@ -14,6 +14,8 @@ export interface User {
   email: string;
   role: Role;
   isActive?: boolean;
+  /** Present on `GET /users/me`: the user's admin-assigned landing project. */
+  defaultProjectId?: string | null;
 }
 
 export interface LoginResult {
@@ -62,9 +64,7 @@ export class ApiClient {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers,
-      ...(opts.body !== undefined
-        ? { body: JSON.stringify(opts.body) }
-        : {}),
+      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
     });
     const text = await res.text();
     const body: unknown = text ? safeJson(text) : null;
@@ -174,6 +174,43 @@ export class ApiClient {
       { auth, body: input },
     );
     return body.result.data;
+  }
+
+  /** Call a tRPC query: the same RAW, non-batch form as `trpcMutate`, as
+   *  GET /trpc/<procedure>?input=<json>. */
+  async trpcQuery<T>(
+    auth: string,
+    procedure: string,
+    input: unknown,
+  ): Promise<T> {
+    const { body } = await this.request<{ result: { data: T } }>(
+      "GET",
+      `/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(input))}`,
+      { auth },
+    );
+    return body.result.data;
+  }
+
+  /** Admin-only: the project ids `userId` is a member of. */
+  async listUserProjects(admin: string, userId: string): Promise<string[]> {
+    return this.trpcQuery<string[]>(admin, "members.listUserProjects", {
+      userId,
+    });
+  }
+
+  /**
+   * Admin-only: set `userId`'s memberships to EXACTLY `projectIds` (others are
+   * removed) and their default landing project, which must be one of them.
+   */
+  async setUserProjects(
+    admin: string,
+    input: {
+      userId: string;
+      projectIds: string[];
+      defaultProjectId: string | null;
+    },
+  ): Promise<void> {
+    await this.trpcMutate(admin, "members.setUserProjects", input);
   }
 
   /** Create a project auto-rule (selector matcher). Returns the created row. */
@@ -348,7 +385,8 @@ export class ApiClient {
     form.append("browser", input.browser);
     if (input.matchLevel) form.append("matchLevel", input.matchLevel);
     if (input.domHtml) form.append("domHtml", input.domHtml);
-    if (input.elementMapJson) form.append("elementMapJson", input.elementMapJson);
+    if (input.elementMapJson)
+      form.append("elementMapJson", input.elementMapJson);
     if (input.accessibilityLevel)
       form.append("accessibilityLevel", input.accessibilityLevel);
     if (input.accessibilityVersion)
@@ -362,7 +400,12 @@ export class ApiClient {
     const text = await res.text();
     const body: unknown = text ? safeJson(text) : null;
     if (res.status < 200 || res.status >= 300) {
-      throw new ApiError(res.status, "POST", `/runs/${runId}/screenshots`, body);
+      throw new ApiError(
+        res.status,
+        "POST",
+        `/runs/${runId}/screenshots`,
+        body,
+      );
     }
     return body as {
       screenshotId: string;
