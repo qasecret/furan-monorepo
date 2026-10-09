@@ -99,7 +99,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
             step={1}
             value={selectedPaddingPx}
             onChange={(e) => setPaddingForSelected(Number(e.target.value))}
-            className="w-32 accent-brand"
+            className="w-32 accent-brand focus-ring"
             data-testid="padding-slider"
             aria-label={`Padding for selected region, ${selectedPaddingPx} pixels`}
           />
@@ -127,7 +127,7 @@ export function RegionSettingsPopover({ dynamicTextEnabled }: Props) {
               onChange={(e) =>
                 setThresholdForSelected(Number(e.target.value) / 10000)
               }
-              className="w-32 accent-brand"
+              className="w-32 accent-brand focus-ring"
               data-testid="strict-tolerance-slider"
               aria-label={`Strict region tolerance, ${((selectedThresholdOverride ?? 0) * 100).toFixed(2)} percent`}
             />

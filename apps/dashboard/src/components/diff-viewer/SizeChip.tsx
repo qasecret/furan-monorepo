@@ -40,7 +40,7 @@ export function SizeChip({ baseline, candidate }: Props) {
       <span>
         {baseline.width}×{baseline.height}
       </span>
-      <span className="text-amber-700">→</span>
+      <span className="text-amber-800">→</span>
       <span>
         {candidate.width}×{candidate.height}
       </span>

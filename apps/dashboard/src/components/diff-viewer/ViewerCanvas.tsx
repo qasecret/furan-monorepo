@@ -293,7 +293,7 @@ export function ViewerCanvas({
       candidateSpriteRef.current = candidateSprite;
       // Fit each pane to its canvas. If the sprite never loaded (e.g. no
       // baseline yet, first-ever run), the world stays at identity and
-      // the canvas shows just the slate-100 background.
+      // the canvas shows just the `--hover` letterbox (canvas-theme.ts).
       // Read zoom + pan from the store at mount time so the initial fit
       // already reflects any persisted view (e.g. user hit "0" mid-load).
       const view = (() => {
