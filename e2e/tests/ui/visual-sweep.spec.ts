@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { AxeBuilder } from "@axe-core/playwright";
 import {
+  errors,
   expect,
   test,
   type Browser,
@@ -60,6 +61,12 @@ const VIEWPORT = { width: 1440, height: 900 };
  * different phase makes the `run` and `diff` shots differ from run to run.
  */
 const CONTEXT = { viewport: VIEWPORT, reducedMotion: "reduce" } as const;
+/**
+ * Per-attempt budget for a navigation. The config sets no navigationTimeout,
+ * so without this a stalled dev-server navigation would simply run into the
+ * test timeout instead of timing out and being retried (`visit`).
+ */
+const NAV_TIMEOUT = 90_000;
 
 /** Pages a signed-in user can't see: `/` redirects a session to /home, so
  *  these are captured from a signed-out context. */
@@ -127,6 +134,13 @@ interface Contrast {
   nodes: number;
   /** Nodes axe could not measure because they lie outside the viewport. */
   outsideViewport: number;
+  /**
+   * Every node axe left `incomplete` (could not decide), counted by reason:
+   * the check's `messageKey`, e.g. `bgImage`, `bgOverlap`, `pseudoContent`,
+   * `outsideViewport`. Reported, not enforced: of these, only
+   * `outsideViewport` is a contrast problem (counted again above).
+   */
+  incomplete: Record<string, number>;
   examples: string[];
 }
 
@@ -184,6 +198,22 @@ function contrastProblems(
   };
 }
 
+/** Why axe could not decide a node: its check's `messageKey`. */
+const incompleteReason = (n: AxeNode): string =>
+  n.any
+    .map((c) => (c.data as { messageKey?: string } | null)?.messageKey)
+    .find((k) => k !== undefined) ?? "unknown";
+
+/** A shot's `incomplete` nodes counted by reason, keys sorted for stable JSON. */
+function incompleteByReason(r: AxeResults): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const n of r.incomplete.flatMap((rule) => rule.nodes)) {
+    const reason = incompleteReason(n);
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts].sort(([a], [b]) => a.localeCompare(b)));
+}
+
 const formatProblem = (p: Problem): string =>
   `${p.route} · ${p.rule} · ${p.selector} · ${p.detail}`;
 
@@ -193,8 +223,24 @@ interface Visit {
   response: Response | null;
 }
 
+/**
+ * Navigate to `path`, retrying ONCE if the navigation times out: a dev server
+ * busy compiling (or stalled on) a route can leave the first request hanging,
+ * and a fresh request usually lands. Any other error, or a second timeout,
+ * fails as before. A retry is annotated `nav-retry`.
+ */
 async function visit(p: Page, path: string): Promise<Visit> {
-  return { path, response: await p.goto(path) };
+  const go = () => p.goto(path, { timeout: NAV_TIMEOUT });
+  try {
+    return { path, response: await go() };
+  } catch (err) {
+    if (!(err instanceof errors.TimeoutError)) throw err;
+    test.info().annotations.push({
+      type: "nav-retry",
+      description: `${path}: no response in ${NAV_TIMEOUT / 1000}s, retried`,
+    });
+    return { path, response: await go() };
+  }
 }
 
 /** Log in through the dashboard's form, as tests/ui/dashboard.spec.ts does. */
@@ -231,6 +277,10 @@ test.describe.serial("visual sweep @visual", () => {
   const pageErrors: string[] = [];
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
+    // Hooks run under the config's per-test timeout, not the 300s above; the
+    // pre-warm below needs room for a first compile of every route.
+    test.setTimeout(120_000 + STATIC_NAMES.length * 2 * NAV_TIMEOUT);
+
     fixture = await ensureVisualFixture(api);
 
     context = await browser.newContext(CONTEXT);
@@ -259,6 +309,22 @@ test.describe.serial("visual sweep @visual", () => {
       p.on("pageerror", (err) => {
         pageErrors.push(`${new URL(p.url()).pathname}: ${err.message}`);
       });
+    }
+
+    // Pre-warm: a dev server compiles each route on its first visit, which on
+    // a busy machine can take minutes. Visit every static route once, in the
+    // admin session, before either theme pass, so the shots don't race first
+    // compiles. Best effort: a route that fails here is still visited, and
+    // judged, by its own test.
+    for (const r of staticRoutes(fixture)) {
+      try {
+        await visit(page, r.path);
+        await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT });
+      } catch (err) {
+        console.warn(
+          `[visual] pre-warm ${r.path}: ${String(err).split("\n")[0]}`,
+        );
+      }
     }
   });
 
@@ -417,6 +483,7 @@ test.describe.serial("visual sweep @visual", () => {
       .analyze();
     const { violations, outsideViewport } = contrastProblems(name, results);
     const problems = [...violations, ...outsideViewport];
+    const incomplete = incompleteByReason(results);
     const examples = problems
       .slice(0, 5)
       .map((x) => `${x.detail} at ${x.selector}`);
@@ -427,11 +494,18 @@ test.describe.serial("visual sweep @visual", () => {
       landedPath,
       nodes: violations.length,
       outsideViewport: outsideViewport.length,
+      incomplete,
       examples,
     });
     testInfo.annotations.push({
       type: "color-contrast",
       description: `${violations.length} violation(s), ${outsideViewport.length} outside the viewport${examples.length ? ` — ${examples.join("; ")}` : ""}`,
+    });
+    // Reported, never failed: what axe could not decide, and why.
+    const reasons = Object.entries(incomplete).map(([k, n]) => `${k} ×${n}`);
+    testInfo.annotations.push({
+      type: "color-contrast-incomplete",
+      description: reasons.length ? reasons.join(", ") : "none",
     });
     allProblems[theme].push(...problems);
   }
