@@ -30,6 +30,13 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
+import {
+  checkpointStatusAlias,
+  loadCheckpointReview,
+  NO_REVIEW,
+  type CheckpointReviewView,
+} from "../../lib/review/reads.js";
+import { selectPendingTargets } from "../../lib/review/targets.js";
 import type { Context } from "../context.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -38,8 +45,8 @@ import { publicProcedure, t } from "../trpc.js";
 import {
   approveCheckpointInTx,
   approveRunInTx,
-  deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
+  groupScope,
   loadGroupSeed,
 } from "./checkpoint-grouping.js";
 
@@ -191,6 +198,9 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "unresolved",
   "failed",
 ]);
+
+/** `selectPendingTargets` with no cap: the caller applies its own limit. */
+const NO_SELECTION_CAP = Number.MAX_SAFE_INTEGER;
 
 /**
  * Statuses that the `approve` mutation accepts. Superset of
@@ -589,10 +599,21 @@ export const runsRouter = t.router({
       const contextList = await Promise.all(
         shots.map(resolveCheckpointContext),
       );
-      const checkpointContexts: Record<string, CheckpointContext> = {};
+      // Each checkpoint's review (verdict, state, decision, newer capture):
+      // one batched read for the run, not one per checkpoint.
+      const review = await loadCheckpointReview(ctx.db, run.id);
+      const checkpointContexts: Record<
+        string,
+        CheckpointContext & CheckpointReviewView
+      > = {};
       shots.forEach((shot, i) => {
         const c = contextList[i];
-        if (c) checkpointContexts[shot.id] = c;
+        if (c) {
+          checkpointContexts[shot.id] = {
+            ...c,
+            ...(review.get(shot.id) ?? NO_REVIEW),
+          };
+        }
       });
 
       // Back-compat: keep the top-level fields wired to the first
@@ -1465,8 +1486,9 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      // Per-checkpoint status comes from deriveCheckpointStatuses — the single
-      // source of truth for the new/unresolved/passed predicate (checkpoint-grouping.ts).
+      // Per-checkpoint review (verdict, state, decision, newer capture) comes
+      // from loadCheckpointReview, the read model over the decision core's own
+      // rows (lib/review/reads.ts); nothing is inferred from the run's status.
       const rows = await ctx.db
         .select({
           id: screenshots.id,
@@ -1485,37 +1507,38 @@ export const runsRouter = t.router({
 
       if (rows.length === 0) return { items: [] };
 
-      const statuses = await deriveCheckpointStatuses(
-        ctx.db,
-        rows.map((r) => ({
-          id: r.id,
-          runId: input.runId,
-          viewport: r.viewport,
-          testVariationId: r.testVariationId,
-        })),
-      );
+      const review = await loadCheckpointReview(ctx.db, input.runId);
 
-      const items = rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        viewport: r.viewport,
-        browser: r.browser,
-        os: r.os,
-        matchLevel: r.matchLevel,
-        imageKey: r.imageKey,
-        testVariationId: r.testVariationId,
-        createdAt: r.createdAt,
-        // statuses always has an entry per row; ?? is a defensive fallback.
-        status: statuses.get(r.id) ?? "passed",
-      }));
+      const items = rows.map((r) => {
+        // An entry per row unless a checkpoint was added since the first read;
+        // an undiffed one reads as verdict null.
+        const view = review.get(r.id) ?? NO_REVIEW;
+        return {
+          id: r.id,
+          name: r.name,
+          viewport: r.viewport,
+          browser: r.browser,
+          os: r.os,
+          matchLevel: r.matchLevel,
+          imageKey: r.imageKey,
+          testVariationId: r.testVariationId,
+          createdAt: r.createdAt,
+          ...view,
+          // Kept until the dashboard reads `state`: an alias of it
+          // (approved -> passed, rejected -> failed, no verdict -> running).
+          status: checkpointStatusAlias(view.state),
+        };
+      });
       return { items };
     }),
 
   /**
    * Build-scoped similarity lookup: given a checkpoint (screenshot) in a run,
-   * return the other unresolved checkpoints in the same CI build that share
-   * the same diff_signature. Used by the "Accept all N like this" button in
-   * the diff-review panel (ADR-042 Phase B Step 2).
+   * return the other pending checkpoints in the same CI build that share the
+   * same diff_signature. Used by the "Accept all N like this" button in the
+   * diff-review panel (ADR-042 Phase B Step 2). "Pending" is the decision
+   * core's rule (`selectPendingTargets`): a reviewable run, verdict `new` or
+   * `unresolved`, no active decision.
    *
    * NULL diff_signature means VLM / auto-approved / no meaningful diff —
    * those carry no structural fingerprint, so no group can be formed.
@@ -1537,7 +1560,8 @@ export const runsRouter = t.router({
     .query(async ({ ctx, input }) => {
       const seed = await loadGroupSeed(ctx.db, input);
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
-      if (seed.diffSignature === null) {
+      const scope = groupScope(seed);
+      if (scope === null) {
         return {
           checkpoints: [],
           checkpointCount: 0,
@@ -1546,35 +1570,41 @@ export const runsRouter = t.router({
         };
       }
 
-      // Fetch ALL same-signature checkpoints in the build (the diff_signature index keeps this targeted); the unresolved set is filtered in-app and capped for display. No SQL limit — a limited window would never slide as rows get approved, stranding the rest.
-      const candidates = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          name: screenshots.name,
-          viewport: screenshots.viewport,
-          testName: testRuns.name,
-          testVariationId: screenshots.testVariationId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(
-          and(
-            eq(testRuns.buildId, seed.buildId),
-            // Defense-in-depth: pin to the seed's project (a build should never span projects; this guards against a corrupt build↔project state).
-            eq(testRuns.projectId, seed.projectId),
-            eq(screenshots.diffSignature, seed.diffSignature),
-          ),
-        )
-        .orderBy(asc(screenshots.createdAt));
-
-      const others = candidates.filter((c) => c.id !== input.checkpointId);
-      const statuses = await deriveCheckpointStatuses(ctx.db, others);
-      const unresolved = others.filter(
-        (c) => statuses.get(c.id) === "unresolved",
+      // ALL pending same-signature checkpoints of the build (no window: a
+      // limited one would never slide as rows get decided, stranding the
+      // rest); the seed is left out and the list is capped for display.
+      const { targets } = await selectPendingTargets(
+        ctx.db,
+        scope,
+        NO_SELECTION_CAP,
       );
-      const capped = unresolved.length > GROUP_APPROVE_CAP;
-      const shown = unresolved.slice(0, GROUP_APPROVE_CAP);
+      const others = targets.filter(
+        (t) => t.screenshotId !== input.checkpointId,
+      );
+      const capped = others.length > GROUP_APPROVE_CAP;
+      const shownTargets = others.slice(0, GROUP_APPROVE_CAP);
+
+      const rows =
+        shownTargets.length === 0
+          ? []
+          : await ctx.db
+              .select({
+                id: screenshots.id,
+                runId: screenshots.runId,
+                name: screenshots.name,
+                viewport: screenshots.viewport,
+                testName: testRuns.name,
+              })
+              .from(screenshots)
+              .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+              .where(
+                inArray(
+                  screenshots.id,
+                  shownTargets.map((t) => t.screenshotId),
+                ),
+              );
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const shown = shownTargets.flatMap((t) => byId.get(t.screenshotId) ?? []);
 
       return {
         checkpoints: shown.map((c) => ({
@@ -1606,7 +1636,8 @@ export const runsRouter = t.router({
     .mutation(async ({ ctx, input }) => {
       const seed = await loadGroupSeed(ctx.db, input);
       // NULL signature (VLM / auto-approved / no meaningful diff) -> no group.
-      if (seed.diffSignature === null) {
+      const scope = groupScope(seed);
+      if (scope === null) {
         return {
           approved: 0,
           runCount: 0,
@@ -1615,50 +1646,52 @@ export const runsRouter = t.router({
         };
       }
 
-      // Server RE-DERIVES the group from signature + build (never a client list).
-      // Includes the seed when it is still unresolved. Build-scoped hard boundary.
-      // Fetch ALL same-signature matches in the build (no SQL limit — a limited window never slides, so re-running "Accept all" would strand rows beyond it). Filter unresolved in-app, cap the APPROVED set; re-running drains the rest because approved rows drop out of the unresolved filter.
-      const matches = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          viewport: screenshots.viewport,
-          testVariationId: screenshots.testVariationId,
-          imageKey: screenshots.imageKey,
-          ignoreRegions: screenshots.ignoreRegions,
-          layoutRegions: screenshots.layoutRegions,
-          floatingRegions: screenshots.floatingRegions,
-          contentRegions: screenshots.contentRegions,
-          accessibilityRegions: screenshots.accessibilityRegions,
-          matchLevel: screenshots.matchLevel,
-          runName: testRuns.name,
-          branchName: testRuns.branchName,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(
-          and(
-            eq(testRuns.buildId, seed.buildId),
-            eq(testRuns.projectId, seed.projectId),
-            eq(screenshots.diffSignature, seed.diffSignature),
-          ),
-        )
-        // Oldest run first, so a variation matched in several runs ends on the
-        // newest run's baseline (written last — baselineWriteTime).
-        .orderBy(
-          asc(testRuns.createdAt),
-          asc(screenshots.createdAt),
-          asc(screenshots.id),
-        );
-
-      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
-      const unresolved = matches.filter(
-        (m) => statuses.get(m.id) === "unresolved",
+      // Server RE-DERIVES the group from signature + build (never a client
+      // list): the pending checkpoints of the build with the seed's signature,
+      // including the seed while it is still pending, in capture order (oldest
+      // run first, so a variation matched in several runs ends on the newest
+      // run's baseline — written last — baselineWriteTime). The selection is
+      // capped; re-running drains the rest because decided rows stop being
+      // pending.
+      const selected = await selectPendingTargets(
+        ctx.db,
+        scope,
+        GROUP_APPROVE_CAP,
       );
-      const capped = unresolved.length > GROUP_APPROVE_CAP;
-      const targets = capped
-        ? unresolved.slice(0, GROUP_APPROVE_CAP)
-        : unresolved;
+      const capped = selected.preview.capped;
+
+      const targets =
+        selected.targets.length === 0
+          ? []
+          : await ctx.db
+              .select({
+                id: screenshots.id,
+                runId: screenshots.runId,
+                testVariationId: screenshots.testVariationId,
+                imageKey: screenshots.imageKey,
+                ignoreRegions: screenshots.ignoreRegions,
+                layoutRegions: screenshots.layoutRegions,
+                floatingRegions: screenshots.floatingRegions,
+                contentRegions: screenshots.contentRegions,
+                accessibilityRegions: screenshots.accessibilityRegions,
+                matchLevel: screenshots.matchLevel,
+                runName: testRuns.name,
+                branchName: testRuns.branchName,
+              })
+              .from(screenshots)
+              .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+              .where(
+                inArray(
+                  screenshots.id,
+                  selected.targets.map((t) => t.screenshotId),
+                ),
+              )
+              .orderBy(
+                asc(testRuns.createdAt),
+                asc(testRuns.id),
+                asc(screenshots.createdAt),
+                asc(screenshots.id),
+              );
 
       if (targets.length === 0) {
         return {
@@ -1738,7 +1771,7 @@ export const runsRouter = t.router({
     .mutation(async ({ ctx, input }) => {
       const seed = await loadGroupSeed(ctx.db, input);
       // Shared zero-result for both empty-group exits (NULL signature below +
-      // zero unresolved runs after derivation).
+      // zero runs with a pending member after selection).
       const empty = {
         rejected: 0,
         runCount: 0,
@@ -1746,39 +1779,41 @@ export const runsRouter = t.router({
         cap: GROUP_APPROVE_CAP,
       };
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
-      if (seed.diffSignature === null) return empty;
+      const scope = groupScope(seed);
+      if (scope === null) return empty;
 
-      // Same build-scoped, project-guarded, signature derivation as
-      // approveCheckpointGroup. Reject is RUN-level (no per-checkpoint reject),
-      // so we fail the DISTINCT runs of the matched still-unresolved checkpoints.
-      const matches = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          viewport: screenshots.viewport,
-          testVariationId: screenshots.testVariationId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(
-          and(
-            eq(testRuns.buildId, seed.buildId),
-            eq(testRuns.projectId, seed.projectId),
-            eq(screenshots.diffSignature, seed.diffSignature),
-            inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
-          ),
-        )
-        .orderBy(asc(screenshots.createdAt));
-
-      const statuses = await deriveCheckpointStatuses(ctx.db, matches);
-      const unresolved = matches.filter(
-        (m) => statuses.get(m.id) === "unresolved",
+      // Same build-scoped, project-pinned, signature selection as
+      // approveCheckpointGroup. Reject is RUN-level (no per-checkpoint reject
+      // here), so we fail the DISTINCT runs that still have a pending member,
+      // restricted to the statuses a reviewer may reject from (never `new`).
+      const { targets } = await selectPendingTargets(
+        ctx.db,
+        scope,
+        NO_SELECTION_CAP,
       );
-      const distinctRunIds = [...new Set(unresolved.map((m) => m.runId))];
+      const pendingRunIds = [...new Set(targets.map((t) => t.runId))];
+      const rejectable =
+        pendingRunIds.length === 0
+          ? new Set<string>()
+          : new Set(
+              (
+                await ctx.db
+                  .select({ id: testRuns.id })
+                  .from(testRuns)
+                  .where(
+                    and(
+                      inArray(testRuns.id, pendingRunIds),
+                      inArray(testRuns.status, [...REVIEWER_LEGAL_FROM]),
+                    ),
+                  )
+              ).map((r) => r.id),
+            );
+      const distinctRunIds = pendingRunIds.filter((id) => rejectable.has(id));
       // GROUP_APPROVE_CAP doubles as the group-action cap; reject bounds RUNS
       // (vs approve's checkpoints) since reject is run-level. A capped reject is
       // idempotent on re-run, NOT progressive: failed runs stay matchable
-      // (`failed` is in REVIEWER_LEGAL_FROM) and their diff_regions persist, so a
+      // (`failed` is in REVIEWER_LEGAL_FROM) and this run-level reject records
+      // no per-checkpoint decision, so their checkpoints stay pending and a
       // second "Reject all" re-targets the same first-cap runs (failed -> failed,
       // a no-op) instead of draining the next window. >cap distinct runs sharing
       // one signature in a build is pathological; the cap is a blast-radius bound.

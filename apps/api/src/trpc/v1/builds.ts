@@ -11,6 +11,7 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
+import { countPendingCheckpoints } from "../../lib/review/reads.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
@@ -282,6 +283,12 @@ export const buildsRouter = t.router({
       if (!r) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
+      // The run-level counts above key on run status and keep their meaning;
+      // this one is per checkpoint: what "approve pending" would act on.
+      const pendingCheckpoints = await countPendingCheckpoints(ctx.db, {
+        projectId: r.project_id,
+        buildId: r.id,
+      });
       return {
         id: r.id,
         ciBuildId: r.ci_build_id,
@@ -306,6 +313,7 @@ export const buildsRouter = t.router({
         newCount: Number(r.new_count),
         emptyCount: Number(r.empty_count),
         stepsTotal: Number(r.steps_total),
+        pendingCheckpoints,
         runByName:
           r.run_by_first_name || r.run_by_last_name
             ? `${r.run_by_first_name ?? ""} ${r.run_by_last_name ?? ""}`.trim()

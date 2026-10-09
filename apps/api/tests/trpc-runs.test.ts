@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -16,6 +17,7 @@ import {
   testVariations,
   users,
 } from "@furan/db";
+import type { CheckpointVerdict } from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import {
   afterAll,
@@ -29,7 +31,6 @@ import {
 import { hashPassword } from "../src/lib/password.js";
 import {
   approveCheckpointInTx,
-  deriveCheckpointStatuses,
   GROUP_APPROVE_CAP,
 } from "../src/trpc/v1/checkpoint-grouping.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
@@ -165,6 +166,11 @@ async function seedCheckpoint(
     name: string;
     signature: string | null;
     unresolved: boolean;
+    /**
+     * The checkpoint's stored verdict (what the diff-worker wrote). Defaults to
+     * the intent of `unresolved`: `unresolved`, else `passed`.
+     */
+    verdict?: CheckpointVerdict;
     branchName?: string;
     viewport?: string;
     baselineName?: string | null;
@@ -188,8 +194,7 @@ async function seedCheckpoint(
       projectId: opts.projectId,
       // Run status mirrors the checkpoint intent: an unresolved checkpoint
       // lives in an unresolved run; a non-unresolved one models a resolved
-      // (passed) run — so deriveCheckpointStatuses (which now reads the
-      // baselines table + the run verdict) classifies it correctly.
+      // (passed) run.
       status: opts.unresolved ? "unresolved" : "passed",
       branchName: opts.branchName ?? "feature/x",
       name: opts.name,
@@ -207,11 +212,14 @@ async function seedCheckpoint(
       imageKey: opts.name.padEnd(64, "k").slice(0, 64),
       matchLevel: "Strict",
       diffSignature: opts.signature,
+      // The per-checkpoint verdict is what the review reads (and the group
+      // procedures' "pending" rule) go by; a checkpoint with none is not
+      // diffed yet and its run is not reviewable.
+      verdict: opts.verdict ?? (opts.unresolved ? "unresolved" : "passed"),
     })
     .returning();
-  // deriveCheckpointStatuses reads the authoritative `baselines` table (not
-  // test_variations.baseline_name), so a fixture representing a variation WITH
-  // a baseline must insert a real baselines row on the run's branch.
+  // A fixture representing a variation WITH a baseline inserts a real
+  // baselines row on the run's branch (what a diff would have compared to).
   if (effectiveBaselineName !== null) {
     await h.db.insert(baselines).values({
       baselineName: effectiveBaselineName,
@@ -2638,7 +2646,7 @@ d("tRPC runs router", () => {
       expect(err?.data?.code).toBe("NOT_FOUND");
     });
 
-    test("excludes a same-signature 'new' checkpoint (no baseline yet)", async () => {
+    test("includes a same-signature 'new' checkpoint (pending, no baseline yet)", async () => {
       const buildId = await getSeedBuildId(h, s.runId);
       const seedCp = await seedCheckpoint(h, {
         buildId,
@@ -2654,13 +2662,16 @@ d("tRPC runs router", () => {
         signature: SIG,
         unresolved: true,
       });
-      // Same signature but first-run (no baseline) -> status "new" -> must be excluded.
-      await seedCheckpoint(h, {
+      // Same signature but first-run (no baseline): its verdict is `new`, which
+      // is pending like `unresolved` (the decision core's rule), so it is a
+      // member of the group.
+      const fresh = await seedCheckpoint(h, {
         buildId,
         projectId: s.projectId,
         name: "fresh",
         signature: SIG,
         unresolved: true,
+        verdict: "new",
         baselineName: null,
       });
       const client = makeClient(baseUrl, s.memberJwt);
@@ -2669,9 +2680,9 @@ d("tRPC runs router", () => {
         checkpointId: seedCp.shot.id,
       });
       expect(new Set(res.checkpoints.map((c) => c.id))).toEqual(
-        new Set([m1.shot.id]),
+        new Set([m1.shot.id, fresh.shot.id]),
       );
-      expect(res.checkpointCount).toBe(1);
+      expect(res.checkpointCount).toBe(2);
     });
 
     test("rejects a non-member with FORBIDDEN", async () => {
@@ -2772,10 +2783,11 @@ d("tRPC runs router", () => {
       expect(err?.data?.code).toBe("FORBIDDEN");
     });
 
-    test("approved run derives its checkpoints as passed despite diff regions", async () => {
-      // Regression: approve flips the RUN to passed but keeps diff_regions for
-      // display. The checkpoint status must follow (v1.1 has no partial
-      // approval), else the batch row badge stays "Unresolved" after approval.
+    test("an approved checkpoint reads as passed despite its diff regions; the run's status alone does not decide", async () => {
+      // Regression (was: "approved run derives its checkpoints as passed"):
+      // approving keeps diff_regions for display, and the checkpoint's state
+      // follows ITS decision. Forcing the run to `passed` without a decision no
+      // longer turns its checkpoints passed (that inference is gone).
       const buildId = await getSeedBuildId(h, s.runId);
       const cp = await seedCheckpoint(h, {
         buildId,
@@ -2791,23 +2803,35 @@ d("tRPC runs router", () => {
       });
       expect(before.items[0]?.status).toBe("unresolved");
 
-      // Approve = run → passed (the diff_regions are intentionally left).
       await h.db
         .update(testRuns)
         .set({ status: "passed" })
         .where(eq(testRuns.id, cp.run.id));
+      const forced = await client.runs.listCheckpoints.query({
+        runId: cp.run.id,
+      });
+      expect(forced.items[0]?.status).toBe("unresolved");
 
+      await client.review.approve.mutate({
+        runId: cp.run.id,
+        actionId: randomUUID(),
+        checkpointIds: [cp.shot.id],
+      });
       const after = await client.runs.listCheckpoints.query({
         runId: cp.run.id,
       });
-      expect(after.items[0]?.status).toBe("passed");
+      expect(after.items[0]).toMatchObject({
+        status: "passed",
+        state: "approved",
+        verdict: "unresolved",
+      });
     });
 
-    test("region-less unresolved run derives its checkpoint as unresolved", async () => {
-      // The diff-worker can mark a run `unresolved` (diffPercent > threshold)
-      // yet persist no severity!='none' diff_regions for a small/scattered
-      // diff (and no diff_signature) — leaving no per-checkpoint signal. The
-      // checkpoint must follow the run verdict, not read "passed".
+    test("a checkpoint with no diff regions reads as its stored verdict", async () => {
+      // Regression (was: "region-less unresolved run derives its checkpoint as
+      // unresolved"): the diff-worker can find a diff yet persist no
+      // severity!='none' diff_regions (a small/scattered one). The old read had
+      // to guess from the run's status; the verdict is now stored per checkpoint.
       const buildId = await getSeedBuildId(h, s.runId);
       const cp = await seedCheckpoint(h, {
         buildId,
@@ -2815,16 +2839,13 @@ d("tRPC runs router", () => {
         name: "regionless",
         signature: null,
         unresolved: false, // baseline present, NO diff_regions
+        verdict: "unresolved",
       });
-      // Force the diff-worker's region-less unresolved state.
-      await h.db
-        .update(testRuns)
-        .set({ status: "unresolved" })
-        .where(eq(testRuns.id, cp.run.id));
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.listCheckpoints.query({ runId: cp.run.id });
       expect(res.items[0]?.status).toBe("unresolved");
+      expect(res.items[0]?.verdict).toBe("unresolved");
     });
   });
 
@@ -3104,6 +3125,7 @@ d("tRPC runs router", () => {
           imageKey: "seed2".padEnd(64, "k"),
           matchLevel: "Strict",
           diffSignature: SIG,
+          verdict: "unresolved",
         })
         .returning();
       await h.db.insert(diffRegions).values({
@@ -3186,137 +3208,6 @@ d("tRPC runs router", () => {
     });
   });
 
-  describe("deriveCheckpointStatuses: cross-branch (default-branch sibling)", () => {
-    // ADR-054 makes each variation branch-specific, so a feature checkpoint's
-    // default-branch baseline lives under a DISTINCT same-identity SIBLING
-    // variation. deriveCheckpointStatuses must resolve that sibling PER
-    // VARIATION — a run spanning several viewports must keep per-checkpoint
-    // granularity so a genuinely-new viewport isn't masked by a baselined one.
-    test("sibling-baselined viewport is 'unresolved'; a new-viewport sibling stays 'new'", async () => {
-      const [proj] = await h.db
-        .insert(projects)
-        .values({ name: `xbranch-${Date.now()}`, mainBranchName: "main" })
-        .returning();
-      const [build] = await h.db
-        .insert(builds)
-        .values({ projectId: proj!.id, isRunning: false })
-        .returning();
-
-      // MAIN (default-branch) sibling variation home@1280 WITH a baseline.
-      const [mainVar] = await h.db
-        .insert(testVariations)
-        .values({
-          name: "home",
-          projectId: proj!.id,
-          branchName: "main",
-          viewport: "1280x720",
-          browser: "chromium",
-        })
-        .returning();
-      const [mainRun] = await h.db
-        .insert(testRuns)
-        .values({
-          buildId: build!.id,
-          projectId: proj!.id,
-          status: "passed",
-          branchName: "main",
-          name: "home",
-        })
-        .returning();
-      await h.db.insert(baselines).values({
-        baselineName: "b",
-        testVariationId: mainVar!.id,
-        testRunId: mainRun!.id,
-        branchName: "main",
-      });
-
-      // FEATURE run, two branch-specific candidate variations, NEITHER with a
-      // baseline of its own. home@1280 has a baselined main sibling + a diff
-      // region; home@375 has NO main sibling (genuinely new viewport).
-      const mkFeatVar = async (viewport: string) =>
-        (
-          await h.db
-            .insert(testVariations)
-            .values({
-              name: "home",
-              projectId: proj!.id,
-              branchName: "feature",
-              viewport,
-              browser: "chromium",
-            })
-            .returning()
-        )[0]!;
-      const featVar1280 = await mkFeatVar("1280x720");
-      const featVar375 = await mkFeatVar("375x812");
-      const [featRun] = await h.db
-        .insert(testRuns)
-        .values({
-          buildId: build!.id,
-          projectId: proj!.id,
-          status: "unresolved",
-          branchName: "feature",
-          name: "home",
-          // The diff-worker records this per-run; the fix must NOT rely on it
-          // (it's set even though home@375 has no baseline) — asserting home@375
-          // stays "new" proves per-variation resolution, not the run-level flag.
-          baselineSource: "default_branch",
-        })
-        .returning();
-      const mkShot = async (
-        variationId: string,
-        viewport: string,
-        key: string,
-      ) =>
-        (
-          await h.db
-            .insert(screenshots)
-            .values({
-              runId: featRun!.id,
-              projectId: proj!.id,
-              testVariationId: variationId,
-              name: "home",
-              viewport,
-              browser: "chromium",
-              imageKey: key.repeat(64),
-            })
-            .returning()
-        )[0]!;
-      const shot1280 = await mkShot(featVar1280.id, "1280x720", "a");
-      const shot375 = await mkShot(featVar375.id, "375x812", "c");
-      await h.db.insert(diffRegions).values({
-        runId: featRun!.id,
-        projectId: proj!.id,
-        screenshotId: shot1280.id,
-        severity: "high",
-        category: "layout",
-        source: "l2_dom",
-        description: "diff",
-        bbox: { x: 0, y: 0, width: 10, height: 10 },
-      });
-
-      const statuses = await deriveCheckpointStatuses(h.db, [
-        {
-          id: shot1280.id,
-          runId: featRun!.id,
-          viewport: "1280x720",
-          testVariationId: featVar1280.id,
-        },
-        {
-          id: shot375.id,
-          runId: featRun!.id,
-          viewport: "375x812",
-          testVariationId: featVar375.id,
-        },
-      ]);
-
-      // #372 fix: default sibling baselined + diff region → unresolved (was "new").
-      expect(statuses.get(shot1280.id)).toBe("unresolved");
-      // Regression guard: no default sibling baseline → genuinely new, and NOT
-      // masked by the run's other (baselined) viewport.
-      expect(statuses.get(shot375.id)).toBe("new");
-    });
-  });
-
   describe("baseline latest-wins (several baselines in one transaction)", () => {
     // resolveBaseline picks the newest `baselines` row by created_at, whose
     // column default now() is the TRANSACTION start time: every baseline a
@@ -3356,6 +3247,7 @@ d("tRPC runs router", () => {
           imageKey: opts.label.padEnd(64, "k").slice(0, 64),
           matchLevel: "Strict",
           diffSignature: opts.signature ?? null,
+          verdict: opts.status === "unresolved" ? "unresolved" : "passed",
         })
         .returning();
       return { run: run!, shot: shot! };

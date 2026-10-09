@@ -6,14 +6,17 @@ import {
   inArray,
   isNull,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
+  type DB,
   type Tx,
 } from "@furan/db";
 import type {
   ApproveBuildPreview,
   CheckpointDecisionKind,
+  DecisionSource,
   ReviewErrorDetails,
   ReviewRefusalReason,
   RunStatus,
@@ -257,17 +260,53 @@ export async function assessTargets(
 }
 
 /**
- * The active decision on a checkpoint, as review errors report it: the
- * actor's "First Last" name, else their email, else null (a legacy/system
- * decision or a deleted user).
+ * How review surfaces name a person: "First Last", else their email, else null
+ * (no person: a legacy/system decision, or a deleted user). The one definition,
+ * for review errors (`loadWinner`) and the read model alike.
  */
-export async function loadWinner(
-  tx: Tx,
-  screenshotId: string,
-): Promise<NonNullable<ReviewErrorDetails["winner"]> | null> {
-  const [row] = await tx
+export function actorDisplayName(u: {
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+}): string | null {
+  const fullName = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
+  return fullName || u.email || null;
+}
+
+/** A checkpoint's active decision, with who made it. */
+export interface ActiveDecision {
+  id: string;
+  actionId: string;
+  kind: CheckpointDecisionKind;
+  /** NULL for a legacy/system decision (`actor_id IS NULL`). */
+  actor: { id: string; name: string } | null;
+  at: Date;
+  source: DecisionSource;
+  /** No undo snapshot (`before IS NULL`): a backfilled or pre-undo decision. */
+  legacy: boolean;
+}
+
+/**
+ * The active decision (`reverted_at IS NULL`; at most one per checkpoint, by
+ * the partial unique index) of each checkpoint, either the given ones or every
+ * one of a run. Decisions always carry their screenshot's run
+ * (`decideCheckpoints`, backfill), so the run form reads the same rows.
+ */
+export async function loadActiveDecisionDetails(
+  db: DB | Tx,
+  by: { screenshotIds: string[] } | { runId: string },
+): Promise<Map<string, ActiveDecision>> {
+  if ("screenshotIds" in by && by.screenshotIds.length === 0) return new Map();
+  const rows = await db
     .select({
+      screenshotId: checkpointDecisions.screenshotId,
+      id: checkpointDecisions.id,
+      actionId: checkpointDecisions.actionId,
       kind: checkpointDecisions.decision,
+      source: checkpointDecisions.source,
+      createdAt: checkpointDecisions.createdAt,
+      legacy: sql<boolean>`${checkpointDecisions.before} is null`,
+      actorId: checkpointDecisions.actorId,
       firstName: users.firstName,
       lastName: users.lastName,
       email: users.email,
@@ -276,17 +315,49 @@ export async function loadWinner(
     .leftJoin(users, eq(users.id, checkpointDecisions.actorId))
     .where(
       and(
-        eq(checkpointDecisions.screenshotId, screenshotId),
+        "screenshotIds" in by
+          ? inArray(checkpointDecisions.screenshotId, by.screenshotIds)
+          : eq(checkpointDecisions.runId, by.runId),
         isNull(checkpointDecisions.revertedAt),
       ),
-    )
-    .limit(1);
-  if (!row) return null;
-  const fullName = `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim();
+    );
+  return new Map(
+    rows.map((r) => [
+      r.screenshotId,
+      {
+        id: r.id,
+        actionId: r.actionId,
+        kind: r.kind,
+        actor:
+          r.actorId === null
+            ? null
+            : { id: r.actorId, name: actorDisplayName(r) ?? "" },
+        at: r.createdAt,
+        // Closed set, enforced by `checkpoint_decisions_source_chk`.
+        source: r.source as DecisionSource,
+        legacy: r.legacy,
+      },
+    ]),
+  );
+}
+
+/**
+ * The active decision on a checkpoint, as review errors report it: the
+ * actor's "First Last" name, else their email, else null (a legacy/system
+ * decision or a deleted user).
+ */
+export async function loadWinner(
+  tx: Tx,
+  screenshotId: string,
+): Promise<NonNullable<ReviewErrorDetails["winner"]> | null> {
+  const active = (
+    await loadActiveDecisionDetails(tx, { screenshotIds: [screenshotId] })
+  ).get(screenshotId);
+  if (!active) return null;
   return {
     checkpointId: screenshotId,
-    kind: row.kind,
-    actorName: fullName || row.email || null,
+    kind: active.kind,
+    actorName: active.actor?.name || null,
   };
 }
 
@@ -312,7 +383,7 @@ export type SelectionScope =
  * Read-only and unlocked.
  */
 async function collectLegalTargets(
-  tx: Tx,
+  tx: DB | Tx,
   scope: SelectionScope,
   decision: CheckpointDecisionKind,
 ): Promise<{
@@ -426,7 +497,7 @@ async function collectLegalTargets(
  * target, so a selection that went stale in between is refused, not misapplied.
  */
 export async function selectPendingTargets(
-  tx: Tx,
+  tx: DB | Tx,
   scope: SelectionScope,
   cap: number,
 ): Promise<{ targets: ReviewTarget[]; preview: ApproveBuildPreview }> {
@@ -451,7 +522,7 @@ export async function selectPendingTargets(
  * nothing is pending (spec §5.2). `total` is the count before the cap.
  */
 export async function selectUndecidedTargets(
-  tx: Tx,
+  tx: DB | Tx,
   scope: { projectId: string; runId: string },
   cap: number,
 ): Promise<{ targets: ReviewTarget[]; total: number }> {
