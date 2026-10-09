@@ -2967,6 +2967,7 @@ d("tRPC runs router", () => {
           await approveCheckpointInTx(
             tx,
             {
+              id: a.shot.id,
               testVariationId: a.variation.id,
               imageKey: a.shot.imageKey,
               ignoreRegions: null,

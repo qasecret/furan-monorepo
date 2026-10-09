@@ -2,7 +2,6 @@ import {
   and,
   asc,
   baselines,
-  baselineWriteTime,
   diffRegions,
   eq,
   inArray,
@@ -16,6 +15,15 @@ import {
   type VariationIdentity,
 } from "@furan/db";
 import { TRPCError } from "@trpc/server";
+
+import {
+  promoteCheckpointInTx,
+  type ApprovableCheckpoint,
+  type ApprovableRun,
+} from "../../lib/review/promote.js";
+
+// The legacy wrappers' parameter types now live with the promotion.
+export type { ApprovableCheckpoint, ApprovableRun };
 
 /** A Drizzle transaction handle (first arg of `db.transaction(cb)`). */
 type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
@@ -334,84 +342,17 @@ export async function deriveCheckpointStatuses(
 }
 
 /**
- * Marks a variation ignore region that approve promoted from a checkpoint's
- * SDK-captured regions (ADR-067). Everything without it is reviewer-owned
- * (setIgnoreAreas / addIgnoreAreas / an approve override). The worker's region
- * parse strips the key, so it never affects masking.
- */
-export const SDK_REGION_SOURCE = "sdk";
-
-const isSdkRegion = (r: unknown): boolean =>
-  typeof r === "object" &&
-  r !== null &&
-  (r as { source?: unknown }).source === SDK_REGION_SOURCE;
-
-/** Geometry + viewport — the same dedupe key the diff-worker uses. */
-const regionKey = (r: object): string => {
-  const { x, y, width, height, viewport } = r as Record<string, unknown>;
-  return `${String(x)}:${String(y)}:${String(width)}:${String(height)}:${
-    typeof viewport === "string" ? viewport : ""
-  }`;
-};
-
-/**
- * A variation's ignore regions after an approve that carries no reviewer
- * override (ADR-067): reviewer-owned regions are kept as-is, and the SDK set an
- * earlier approve promoted is REPLACED by this checkpoint's captured regions
- * (tagged so the next approve can replace them in turn). Replacing rather than
- * appending keeps capture-time boxes that move between runs (the SDK's
- * caret-focus region) from piling up. A captured region whose geometry matches
- * a kept one is dropped, so a reviewer's edit of it wins. Empty → null.
- */
-export function mergeApprovedIgnoreRegions(
-  existing: unknown,
-  captured: unknown,
-): unknown[] | null {
-  const kept = (Array.isArray(existing) ? existing : []).filter(
-    (r) => !isSdkRegion(r),
-  );
-  const seen = new Set(
-    kept.filter((r) => typeof r === "object" && r !== null).map(regionKey),
-  );
-  const out = [...kept];
-  for (const r of Array.isArray(captured) ? captured : []) {
-    if (typeof r !== "object" || r === null) continue;
-    const key = regionKey(r);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ ...r, source: SDK_REGION_SOURCE });
-  }
-  return out.length > 0 ? out : null;
-}
-
-/** The screenshot fields approveCheckpointInTx promotes onto the baseline. */
-export interface ApprovableCheckpoint {
-  testVariationId: string;
-  imageKey: string | null;
-  ignoreRegions: unknown;
-  layoutRegions: unknown;
-  floatingRegions: unknown;
-  contentRegions: unknown;
-  accessibilityRegions: unknown;
-  matchLevel: string;
-}
-export interface ApprovableRun {
-  id: string;
-  name: string | null;
-  branchName: string | null;
-}
-
-/**
- * The per-checkpoint approve core: promote one checkpoint's variation
- * baseline, record the baseline row, and flip its run to passed — inside an
- * existing transaction. Every approve path reaches the baseline through here
- * (single checkpoint, group, and — via approveRunInTx — run-level and bulk),
- * so they cannot drift. (v1.1 has no "partially approved" run: approving any
- * checkpoint flips the whole run to passed — preserved here intentionally.)
+ * Legacy approve wrapper, kept unchanged in behaviour for the existing
+ * procedures until they move onto `decideCheckpoints` (Task 12, ruling R1):
+ * the per-checkpoint promotion (`promoteCheckpointInTx`) followed by the old
+ * run-level status write. v1.1 has no "partially approved" run: approving any
+ * checkpoint flips the whole run to passed. Every approve path reaches the
+ * baseline through `promoteCheckpointInTx` (single checkpoint, group, and — via
+ * approveRunInTx — run-level and bulk), so they cannot drift.
  */
 export async function approveCheckpointInTx(
   tx: Tx,
-  s: ApprovableCheckpoint,
+  s: ApprovableCheckpoint & { id: string },
   run: ApprovableRun,
   userId: string,
   /**
@@ -422,68 +363,14 @@ export async function approveCheckpointInTx(
    */
   ignoreAreasOverride?: readonly unknown[] | null,
 ): Promise<void> {
-  let ignoreRegions: unknown = ignoreAreasOverride;
-  if (ignoreAreasOverride === undefined) {
-    // Row-locked read-modify-write so a concurrent approve or region save on
-    // the same variation can't drop the other's regions.
-    const [current] = await tx
-      .select({ ignoreRegions: testVariations.ignoreRegions })
-      .from(testVariations)
-      .where(eq(testVariations.id, s.testVariationId))
-      .for("update");
-    ignoreRegions = mergeApprovedIgnoreRegions(
-      current?.ignoreRegions,
-      s.ignoreRegions,
-    );
-  }
-  await tx
-    .update(testVariations)
-    .set({
-      baselineName: s.imageKey,
-      ignoreRegions,
-      layoutRegions: s.layoutRegions,
-      floatingRegions: s.floatingRegions,
-      contentRegions: s.contentRegions,
-      accessibilityRegions: s.accessibilityRegions,
-      matchLevel: s.matchLevel,
-      updatedAt: new Date(),
-    })
-    .where(eq(testVariations.id, s.testVariationId));
-
-  // Upsert on (variation, run) so re-approving a checkpoint doesn't violate the
-  // baselines_variation_run_unique constraint / append a duplicate row. Both
-  // branches stamp baselineWriteTime so the checkpoint approved last wins.
-  await tx
-    .insert(baselines)
-    .values({
-      baselineName: s.imageKey ?? run.name ?? "auto",
-      testVariationId: s.testVariationId,
-      testRunId: run.id,
-      userId,
-      ...(run.branchName ? { branchName: run.branchName } : {}),
-      createdAt: baselineWriteTime(),
-    })
-    .onConflictDoUpdate({
-      target: [baselines.testVariationId, baselines.testRunId],
-      set: {
-        baselineName: s.imageKey ?? run.name ?? "auto",
-        userId,
-        ...(run.branchName ? { branchName: run.branchName } : {}),
-        createdAt: baselineWriteTime(),
-        updatedAt: new Date(),
-      },
-    });
-
-  await tx
-    .update(testRuns)
-    .set({ status: "passed", merge: true })
-    .where(eq(testRuns.id, run.id));
+  await promoteCheckpointInTx(tx, s, run, userId, ignoreAreasOverride);
+  await markRunApprovedLegacy(tx, run.id);
 }
 
 /**
- * Approve a whole run inside an existing transaction: every checkpoint goes
- * through approveCheckpointInTx in capture order, and a checkpoint-less run is
- * still flipped to passed. The single run-level path for runs.approve /
+ * Approve a whole run inside an existing transaction: every checkpoint is
+ * promoted in capture order, then the run is flipped to passed (a
+ * checkpoint-less run too). The single run-level path for runs.approve /
  * inbox.approve / REST approve, approveAllCheckpoints and bulkApproveByBuild
  * (ADR-067) — a passed run shows all its checkpoints passed
  * (deriveCheckpointStatuses), so all of their baselines must be promoted.
@@ -503,14 +390,8 @@ export async function approveRunInTx(
     .from(screenshots)
     .where(eq(screenshots.runId, run.id))
     .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
-  if (shots.length === 0) {
-    await tx
-      .update(testRuns)
-      .set({ status: "passed", merge: true })
-      .where(eq(testRuns.id, run.id));
-  }
   for (const [i, s] of shots.entries()) {
-    await approveCheckpointInTx(
+    await promoteCheckpointInTx(
       tx,
       s,
       run,
@@ -518,5 +399,17 @@ export async function approveRunInTx(
       i === 0 ? ignoreAreasOverride : undefined,
     );
   }
+  await markRunApprovedLegacy(tx, run.id);
   return { checkpointIds: shots.map((s) => s.id) };
+}
+
+/**
+ * The pre-review-model run status write (R1). Only the legacy wrappers above
+ * use it; `decideCheckpoints` leaves the status to `recomputeRunStatus`.
+ */
+async function markRunApprovedLegacy(tx: Tx, runId: string): Promise<void> {
+  await tx
+    .update(testRuns)
+    .set({ status: "passed", merge: true })
+    .where(eq(testRuns.id, runId));
 }
