@@ -104,6 +104,9 @@ const isoMicros = (
  * 3. Upserts the (variation, run) baseline row, stamped with
  *    `baselineWriteTime()` so the checkpoint written last is current (ADR-068).
  *
+ * The snapshot also records the variation fields as written
+ * (`variationAfter`), so an undo can tell a later edit from its own write.
+ *
  * The snapshot's region keys are always present (`undefined` → `null`):
  * `JSON.stringify` drops undefined keys, which would leave an unparseable
  * snapshot behind.
@@ -167,7 +170,9 @@ export async function promoteCheckpointInTx(
     ignoreAreasOverride === undefined
       ? mergeApprovedIgnoreRegions(v.ignoreRegions, s.ignoreRegions)
       : ignoreAreasOverride;
-  await tx
+  // RETURNING gives exactly what was stored (jsonb as Postgres normalised it),
+  // which an undo compares against to spot a later edit (R25).
+  const [after] = await tx
     .update(testVariations)
     .set({
       baselineName: s.imageKey,
@@ -179,7 +184,30 @@ export async function promoteCheckpointInTx(
       matchLevel: s.matchLevel,
       updatedAt: new Date(),
     })
-    .where(eq(testVariations.id, s.testVariationId));
+    .where(eq(testVariations.id, s.testVariationId))
+    .returning({
+      baselineName: testVariations.baselineName,
+      matchLevel: testVariations.matchLevel,
+      ignoreRegions: testVariations.ignoreRegions,
+      layoutRegions: testVariations.layoutRegions,
+      floatingRegions: testVariations.floatingRegions,
+      contentRegions: testVariations.contentRegions,
+      accessibilityRegions: testVariations.accessibilityRegions,
+    });
+  if (!after) {
+    throw new Error(
+      `variation_not_found:${s.testVariationId} (checkpoint ${s.id})`,
+    );
+  }
+  const variationAfter: NonNullable<DecisionSnapshot["variationAfter"]> = {
+    baselineName: after.baselineName,
+    matchLevel: after.matchLevel,
+    ignoreRegions: after.ignoreRegions ?? null,
+    layoutRegions: after.layoutRegions ?? null,
+    floatingRegions: after.floatingRegions ?? null,
+    contentRegions: after.contentRegions ?? null,
+    accessibilityRegions: after.accessibilityRegions ?? null,
+  };
 
   // Upsert on (variation, run) so re-approving a checkpoint doesn't violate the
   // baselines_variation_run_unique constraint / append a duplicate row. Both
@@ -233,5 +261,6 @@ export async function promoteCheckpointInTx(
         }
       : { op: "inserted", id: written.id },
     variation,
+    variationAfter,
   };
 }

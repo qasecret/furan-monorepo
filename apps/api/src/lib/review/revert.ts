@@ -82,6 +82,73 @@ const UPDATE_CHUNK = 1_000;
 // ---------------------------------------------------------------------------
 
 type VariationSnapshot = NonNullable<DecisionSnapshot["variation"]>;
+/** The variation fields an approve writes (and an undo puts back). */
+type VariationFields = NonNullable<DecisionSnapshot["variationAfter"]>;
+
+/** Those fields of a variation snapshot or row (`undefined` read as null). */
+const fieldsOf = (v: {
+  baselineName: string | null;
+  matchLevel: string;
+  ignoreRegions: unknown;
+  layoutRegions: unknown;
+  floatingRegions: unknown;
+  contentRegions: unknown;
+  accessibilityRegions: unknown;
+}): VariationFields => ({
+  baselineName: v.baselineName,
+  matchLevel: v.matchLevel,
+  ignoreRegions: v.ignoreRegions ?? null,
+  layoutRegions: v.layoutRegions ?? null,
+  floatingRegions: v.floatingRegions ?? null,
+  contentRegions: v.contentRegions ?? null,
+  accessibilityRegions: v.accessibilityRegions ?? null,
+});
+
+/**
+ * JSON equality by value: object keys in any order, arrays in order. Both
+ * sides come back from jsonb, where SQL NULL and a JSON null both read as null.
+ */
+export function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== "object" ||
+    typeof b !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((x, i) => jsonEqual(x, b[i]))
+    );
+  }
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return (
+    ka.length === kb.length &&
+    ka.every(
+      (k) =>
+        Object.prototype.hasOwnProperty.call(b, k) &&
+        jsonEqual(
+          (a as Record<string, unknown>)[k],
+          (b as Record<string, unknown>)[k],
+        ),
+    )
+  );
+}
+
+const sameFields = (a: VariationFields, b: VariationFields): boolean =>
+  a.baselineName === b.baselineName &&
+  a.matchLevel === b.matchLevel &&
+  jsonEqual(a.ignoreRegions, b.ignoreRegions) &&
+  jsonEqual(a.layoutRegions, b.layoutRegions) &&
+  jsonEqual(a.floatingRegions, b.floatingRegions) &&
+  jsonEqual(a.contentRegions, b.contentRegions) &&
+  jsonEqual(a.accessibilityRegions, b.accessibilityRegions);
 
 /** An approve's snapshot, checked to be restorable; ids lowercased. */
 interface ApproveRestore {
@@ -102,6 +169,11 @@ interface ApproveRestore {
         prevCreatedMicros: bigint;
       };
   variation: VariationSnapshot;
+  /**
+   * The variation as the approve wrote it (R25); null on a snapshot written
+   * before it was recorded, which skips the edit check.
+   */
+  variationAfter: VariationFields | null;
 }
 
 type Classified =
@@ -174,6 +246,9 @@ function classify(
   if (d.decision === "rejected") return { kind: "reject" };
 
   const { baseline, variation } = parsed.data;
+  const variationAfter = parsed.data.variationAfter
+    ? fieldsOf(parsed.data.variationAfter)
+    : null;
   if (
     !baseline ||
     !variation ||
@@ -190,6 +265,7 @@ function classify(
       restore: {
         baseline: { op: "inserted", id },
         variation: restoredVariation,
+        variationAfter,
       },
     };
   }
@@ -207,6 +283,7 @@ function classify(
     restore: {
       baseline: { op: "updated", id, prev, prevCreatedMicros },
       variation: restoredVariation,
+      variationAfter,
     },
   };
 }
@@ -250,9 +327,12 @@ interface ApproveFacts {
    * wrote. Rows the approves wrote are judged through the simulation instead.
    */
   staticNewest: Map<string, BaselineState>;
-  /** The snapshot variations that exist. */
-  variations: Set<string>;
-  /** Decisions with a capture of their variation or a sibling made after them in another run. */
+  /** The snapshot variations that exist, as they are now. */
+  variations: Map<string, VariationFields>;
+  /**
+   * Decisions with a capture of their variation or a sibling, in another run,
+   * made (`created_at`) or re-diffed (`verdict_at`, R24) after them.
+   */
   newerCapture: Set<string>;
 }
 
@@ -267,7 +347,7 @@ async function loadApproveFacts(
     rows: new Map(),
     rowsByVariation: new Map(),
     staticNewest: new Map(),
-    variations: new Set(),
+    variations: new Map(),
     newerCapture: new Set(),
   };
   if (approves.length === 0) return facts;
@@ -339,6 +419,14 @@ async function loadApproveFacts(
       browser: testVariations.browser,
       os: testVariations.os,
       device: testVariations.device,
+      // What the edit check (R25) compares against.
+      baselineName: testVariations.baselineName,
+      matchLevel: testVariations.matchLevel,
+      ignoreRegions: testVariations.ignoreRegions,
+      layoutRegions: testVariations.layoutRegions,
+      floatingRegions: testVariations.floatingRegions,
+      contentRegions: testVariations.contentRegions,
+      accessibilityRegions: testVariations.accessibilityRegions,
     })
     .from(testVariations)
     .where(inArray(testVariations.id, variationIds));
@@ -355,7 +443,7 @@ async function loadApproveFacts(
     ]);
   const identities = new Map<string, Identity>();
   for (const v of decided) {
-    facts.variations.add(v.id);
+    facts.variations.set(v.id, fieldsOf(v));
     identities.set(identityKey(v), v);
   }
   const siblingRows = await db
@@ -393,7 +481,8 @@ async function loadApproveFacts(
     ]),
   );
 
-  // Captures in another run, made after the decision (µs, compared in SQL).
+  // Captures in another run made after the decision, or re-diffed after it
+  // (R24: diffed while this approve's baseline was current). µs, in SQL.
   const candidates = approves.filter((a) =>
     facts.variations.has(a.restore.variation.id),
   );
@@ -413,7 +502,10 @@ async function loadApproveFacts(
                 ...new Set(siblingRows.map((s) => s.id)),
               ]),
               ne(screenshots.runId, checkpointDecisions.runId),
-              gt(screenshots.createdAt, checkpointDecisions.createdAt),
+              or(
+                gt(screenshots.createdAt, checkpointDecisions.createdAt),
+                gt(screenshots.verdictAt, checkpointDecisions.createdAt),
+              ),
             ),
           )
           .where(
@@ -437,12 +529,20 @@ async function loadApproveFacts(
   return facts;
 }
 
+/** One action's undo as simulated so far: what its later decisions put back. */
+interface Simulated {
+  /** A baseline row now: deleted (null), restored to `prev`, or as stored. */
+  baseline(row: BaselineState): BaselineState | null;
+  /** A variation's fields now: restored to a snapshot, or as stored. */
+  variation(id: string): VariationFields | undefined;
+}
+
 /**
  * Judges `decisions` — whole actions, in the order they were written
  * (`created_at, id`) — as an undo of each action would meet them: newest
  * first, each one judged with that action's later undoable decisions already
  * undone (a later approve of the same variation would otherwise always
- * "supersede" an earlier one). Reads only.
+ * "supersede" an earlier one, or look like an edit of it). Reads only.
  */
 async function judgeActions(
   db: DB | Tx,
@@ -464,11 +564,15 @@ async function judgeActions(
 
   const out = new Map<string, RevertSkipReason | null>();
   for (const action of byAction.values()) {
-    // This action's simulated undo: a row deleted (null) or restored to `prev`.
-    const overlay = new Map<string, BaselineState | null>();
-    const stateOf = (row: BaselineState): BaselineState | null => {
-      const simulated = overlay.get(row.id);
-      return simulated === undefined ? row : simulated;
+    // This action's simulated undo, on top of the stored state.
+    const rows = new Map<string, BaselineState | null>();
+    const variations = new Map<string, VariationFields>();
+    const sim: Simulated = {
+      baseline: (row) => {
+        const simulated = rows.get(row.id);
+        return simulated === undefined ? row : simulated;
+      },
+      variation: (id) => variations.get(id) ?? facts.variations.get(id),
     };
     for (const d of [...action].reverse()) {
       const c = classified.get(d.id)!;
@@ -476,17 +580,18 @@ async function judgeActions(
         out.set(d.id, c.kind === "skip" ? c.reason : null);
         continue;
       }
-      const reason = judgeApprove(d, c.restore, facts, stateOf);
+      const reason = judgeApprove(d, c.restore, facts, sim);
       out.set(d.id, reason);
       if (reason !== null) continue;
-      const b = c.restore.baseline;
+      const { baseline: b, variation: v } = c.restore;
       const row = facts.rows.get(b.id)!;
-      overlay.set(
+      rows.set(
         row.id,
         b.op === "inserted"
           ? null
           : { ...row, branch: b.prev.branchName, micros: b.prevCreatedMicros },
       );
+      variations.set(v.id, fieldsOf(v));
     }
   }
   return out;
@@ -497,7 +602,7 @@ function judgeApprove(
   d: CheckpointDecisionRow,
   restore: ApproveRestore,
   facts: ApproveFacts,
-  stateOf: (row: BaselineState) => BaselineState | null,
+  sim: Simulated,
 ): RevertSkipReason | null {
   const variationId = restore.variation.id;
   const row = facts.rows.get(restore.baseline.id);
@@ -512,16 +617,24 @@ function judgeApprove(
   if (facts.newerCapture.has(d.id)) return "superseded_newer_capture";
   // The newest-baseline check is judged on the row's own branch, so a row
   // that is gone can only be history_expired.
-  const current = row ? stateOf(row) : null;
+  const current = row ? sim.baseline(row) : null;
   if (!current) return "history_expired";
   const rival = facts.staticNewest.get(pairKey(variationId, current.branch));
   if (rival && isNewer(rival, current)) return "superseded_newer_baseline";
   for (const other of facts.rowsByVariation.get(variationId) ?? []) {
     if (other.id === current.id) continue;
-    const s = stateOf(other);
+    const s = sim.baseline(other);
     if (s && s.branch === current.branch && isNewer(s, current)) {
       return "superseded_newer_baseline";
     }
+  }
+  // R25: the variation must still be exactly what this approve wrote, or the
+  // undo would silently wipe a later edit (a reviewer's regions, say).
+  if (
+    restore.variationAfter &&
+    !sameFields(sim.variation(variationId)!, restore.variationAfter)
+  ) {
+    return "superseded_variation_edit";
   }
   return null;
 }
@@ -672,7 +785,8 @@ async function restoreApprove(
  *    `prev`, timestamps µs-exact) and variation, clears the verdict of a
  *    checkpoint re-diffed since, stamps `reverted_at`/`reverted_by` on every
  *    undoable decision (a reject needs nothing else), and recomputes each run.
- * 5. Writes one `run.revert_action` audit row, counts the outcomes and logs.
+ * 5. Writes one `run.revert_action` audit row (none for a pure no-op: every
+ *    decision already undone, R26), counts the outcomes and logs.
  *
  * Skipped decisions are reported, not fatal. Enqueueing `rediffRunIds` and
  * broadcasting are the caller's job, after commit.
@@ -812,27 +926,34 @@ export async function revertAction(
     return out;
   });
 
-  // 5. Audit, metrics, log.
+  // 5. Audit, metrics, log. A pure no-op (a retry: every decision already
+  // undone) leaves no audit row (R26); any other outcome, refusals included,
+  // is audited.
+  const noOp =
+    undoable.length === 0 &&
+    skipped.every((x) => x.reason === "already_undone");
   const buildIds = new Set(runIds.map((id) => runs.get(id)!.buildId));
-  await emitAudit(
-    tx,
-    {
-      actorId: actor.id,
-      action: "run.revert_action",
-      ...(runIds.length === 1
-        ? { targetType: "run", targetId: runIds[0]! }
-        : {
-            targetType: "build",
-            // The shared build, else the first run's.
-            targetId:
-              buildIds.size === 1
-                ? [...buildIds][0]!
-                : runs.get(runIds[0]!)!.buildId,
-          }),
-      metadata: { actionId, reverted: undoable.length, skipped, runIds },
-    },
-    deps.logger,
-  );
+  if (!noOp) {
+    await emitAudit(
+      tx,
+      {
+        actorId: actor.id,
+        action: "run.revert_action",
+        ...(runIds.length === 1
+          ? { targetType: "run", targetId: runIds[0]! }
+          : {
+              targetType: "build",
+              // The shared build, else the first run's.
+              targetId:
+                buildIds.size === 1
+                  ? [...buildIds][0]!
+                  : runs.get(runIds[0]!)!.buildId,
+            }),
+        metadata: { actionId, reverted: undoable.length, skipped, runIds },
+      },
+      deps.logger,
+    );
+  }
   recordReviewRevert(deps.registry, "reverted", undoable.length);
   recordReviewRevert(deps.registry, "skipped", skipped.length);
   for (const s of skipped) recordReviewRevertRefused(deps.registry, s.reason);

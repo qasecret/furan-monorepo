@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AddressInfo } from "node:net";
 
 import {
   and,
@@ -19,6 +20,7 @@ import {
   type CheckpointDecisionRow,
 } from "@furan/db";
 import type { RevertSkipReason } from "@furan/shared-types";
+import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import { TRPCError } from "@trpc/server";
 import {
   afterAll,
@@ -36,10 +38,12 @@ import { SDK_REGION_SOURCE } from "../src/lib/review/promote.js";
 import {
   assessRevert,
   isoToMicros,
+  jsonEqual,
   revertAction,
   type RevertResult,
 } from "../src/lib/review/revert.js";
 import type { AuthedUser } from "../src/plugins/auth.js";
+import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
@@ -165,8 +169,43 @@ describe("isoToMicros", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// jsonEqual (pure): the R25 edit check compares variation fields by value.
+// ---------------------------------------------------------------------------
+
+describe("jsonEqual", () => {
+  test.each<[string, unknown, unknown]>([
+    [
+      "object keys in another order",
+      { a: 1, b: [2, { c: 3, d: 4 }] },
+      { b: [2, { d: 4, c: 3 }], a: 1 },
+    ],
+    ["null and null", null, null],
+    ["equal primitives", "Strict", "Strict"],
+    ["empty arrays", [], []],
+  ])("equal: %s", (_label, a, b) => {
+    expect(jsonEqual(a, b)).toBe(true);
+    expect(jsonEqual(b, a)).toBe(true);
+  });
+
+  test.each<[string, unknown, unknown]>([
+    ["arrays in another order", [1, 2], [2, 1]],
+    ["a region added", [{ x: 1 }], [{ x: 1 }, { x: 2 }]],
+    ["a key added", { x: 1 }, { x: 1, source: "sdk" }],
+    ["a value changed deep down", { a: [{ x: 1 }] }, { a: [{ x: 2 }] }],
+    ["null and an empty array", null, []],
+    ["an empty array and an empty object", [], {}],
+    ["a number and its string", 1, "1"],
+    ["a key whose value is null, and no key", { x: null }, { y: null }],
+  ])("different: %s", (_label, a, b) => {
+    expect(jsonEqual(a, b)).toBe(false);
+    expect(jsonEqual(b, a)).toBe(false);
+  });
+});
+
 d("revertAction", () => {
   let h: TestApp;
+  let baseUrl: string;
   const seeds: ReviewSeed[] = [];
   const extraUserIds: string[] = [];
 
@@ -354,18 +393,40 @@ d("revertAction", () => {
         branchName: opts.branch,
       })
       .returning({ id: testRuns.id });
-    await h.db.insert(screenshots).values({
-      runId: r!.id,
-      projectId: s.projectId,
-      testVariationId: v!.id,
-      name: "home",
-      viewport,
-      browser: BROWSER,
-      imageKey: `later-${randomUUID()}.png`,
-      verdict: "unresolved",
-      verdictAt: new Date(),
+    const [shot] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: r!.id,
+        projectId: s.projectId,
+        testVariationId: v!.id,
+        name: "home",
+        viewport,
+        browser: BROWSER,
+        imageKey: `later-${randomUUID()}.png`,
+        verdict: "unresolved",
+        verdictAt: new Date(),
+      })
+      .returning({ id: screenshots.id });
+    return { runId: r!.id, variationId: v!.id, screenshotId: shot!.id };
+  }
+
+  /** A re-diff of `screenshotId` landing now (after any decision so far). */
+  const rediffNow = (screenshotId: string) =>
+    h.db
+      .update(screenshots)
+      .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+      .where(eq(screenshots.id, screenshotId));
+
+  /** The dashboard's tRPC client, as `u`. */
+  function clientFor(u: ReviewUser) {
+    return createTRPCClient<AppRouter>({
+      links: [
+        httpBatchLink({
+          url: `${baseUrl}/trpc`,
+          headers: { authorization: `Bearer ${u.jwt}` },
+        }),
+      ],
     });
-    return { runId: r!.id, variationId: v!.id };
   }
 
   /** True once some backend waits on a lock held by `blockerPid`. */
@@ -388,6 +449,9 @@ d("revertAction", () => {
 
   beforeAll(async () => {
     h = await createTestApp();
+    h.app.log.level = "silent";
+    await h.app.listen({ host: "127.0.0.1", port: 0 });
+    baseUrl = `http://127.0.0.1:${(h.app.server.address() as AddressInfo).port}`;
   });
 
   afterAll(async () => {
@@ -720,6 +784,53 @@ d("revertAction", () => {
       ]);
     });
 
+    test.each([
+      ["an older run of the same variation", "same"],
+      ["an older capture of a sibling on another branch", "sibling"],
+    ] as const)(
+      "another run re-diffed after the approve (%s) supersedes it (R24)",
+      async (_label, kind) => {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        // A capture taken BEFORE the approve, in another run.
+        let decided: { runId: string; id: string };
+        let older: string;
+        if (kind === "same") {
+          const r = await addReviewRun(h, s, {
+            checkpoints: [{ name: "home", verdict: "unresolved" }],
+          });
+          decided = { runId: r.runId, id: r.shots.home!.id };
+          older = s.shots.home!.id;
+        } else {
+          older = (await captureNow(s, { branch: "main" })).screenshotId;
+          decided = { runId: s.runId, id: s.shots.home!.id };
+        }
+        const actionId = await decide(s, "approved", [
+          target(decided.runId, decided.id),
+        ]);
+        const decisions = await decisionsOfAction(actionId);
+        // Captured earlier and not re-diffed since: no reason to refuse.
+        expect(await assessRevert(h.db, decisions)).toEqual(
+          new Map([[decisions[0]!.id, null]]),
+        );
+
+        // Re-diffed while this approve's baseline was current.
+        await rediffNow(older);
+        const res = await revert(s.editor, actionId);
+
+        expect(res.reverted).toBe(0);
+        expect(res.skipped).toEqual([
+          { checkpointId: decided.id, reason: "superseded_newer_capture" },
+        ]);
+        expect(res.rediffRunIds).toEqual([]);
+        expect(await baselinesOfRun(decided.runId)).toHaveLength(1);
+        expect((await decisionsOfAction(actionId))[0]!.revertedAt).toBeNull();
+      },
+    );
+
     test("a later approval of the variation supersedes an approve (superseded_newer_baseline)", async () => {
       const s = await seed({
         checkpoints: [
@@ -803,6 +914,17 @@ d("revertAction", () => {
         rediffRunIds: [],
         runs: [{ runId: s.runId, status: "passed" }],
       });
+      // A refusal for any reason but already_undone is audited (R26).
+      expect(await revertAudit(actionId)).toEqual([
+        expect.objectContaining({
+          metadata: {
+            actionId,
+            reverted: 0,
+            skipped: [{ checkpointId: home.id, reason: "not_undoable_legacy" }],
+            runIds: [s.runId],
+          },
+        }),
+      ]);
       expect((await decisionsOfAction(actionId))[0]!.revertedAt).toBeNull();
       expect(await variationRow(home.variationId)).toEqual(variationBefore);
     });
@@ -898,6 +1020,8 @@ d("revertAction", () => {
 
       const second = await revert(s.editor, actionId);
 
+      // A pure no-op (every skip already_undone) writes no audit row (R26).
+      expect(await revertAudit(actionId)).toHaveLength(1);
       expect(second).toEqual({
         actionId,
         reverted: 0,
@@ -907,6 +1031,134 @@ d("revertAction", () => {
       });
       expect((await decisionsOfAction(actionId))[0]).toEqual(afterFirst);
       expect(await variationRow(home.variationId)).toEqual(variationAfterFirst);
+    });
+  });
+
+  describe("a variation edited since the approve (R25)", () => {
+    /** The fields an approve writes onto the variation, as a row holds them. */
+    const writtenFields = (v: typeof testVariations.$inferSelect) => ({
+      baselineName: v.baselineName,
+      matchLevel: v.matchLevel,
+      ignoreRegions: v.ignoreRegions,
+      layoutRegions: v.layoutRegions,
+      floatingRegions: v.floatingRegions,
+      contentRegions: v.contentRegions,
+      accessibilityRegions: v.accessibilityRegions,
+    });
+
+    test("a reviewer's region edit since the approve refuses the undo, and the edit stays", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const home = s.shots.home!;
+      const actionId = await decide(s, "approved", [target(s.runId, home.id)]);
+      await clientFor(s.editor).runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        checkpointId: home.id,
+        ignoreAreas: [
+          { x: 3, y: 4, width: 50, height: 60, viewport: VIEWPORT },
+        ],
+      });
+      const edited = await variationRow(home.variationId);
+      expect(edited.ignoreRegions).toEqual([
+        expect.objectContaining({ x: 3, y: 4, width: 50, height: 60 }),
+      ]);
+      const refusedBefore = await refusedMetric("superseded_variation_edit");
+
+      const res = await revert(s.editor, actionId);
+
+      expect(res).toEqual({
+        actionId,
+        reverted: 0,
+        skipped: [
+          { checkpointId: home.id, reason: "superseded_variation_edit" },
+        ],
+        rediffRunIds: [],
+        runs: [{ runId: s.runId, status: "passed" }],
+      });
+      expect(await variationRow(home.variationId)).toEqual(edited);
+      expect(await baselinesOfRun(s.runId)).toHaveLength(1);
+      expect((await decisionsOfAction(actionId))[0]!.revertedAt).toBeNull();
+      expect(await refusedMetric("superseded_variation_edit")).toBe(
+        refusedBefore + 1,
+      );
+    });
+
+    test("the approve records the variation as written; untouched since (or re-saved with equal values), the undo goes through", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const home = s.shots.home!;
+      const sdkRegion = {
+        x: 10,
+        y: 20,
+        width: 30,
+        height: 40,
+        viewport: VIEWPORT,
+      };
+      await h.db
+        .update(screenshots)
+        .set({ ignoreRegions: [sdkRegion], matchLevel: "Layout" })
+        .where(eq(screenshots.id, home.id));
+      const before = await variationRow(home.variationId);
+      const actionId = await decide(s, "approved", [target(s.runId, home.id)]);
+      const promoted = await variationRow(home.variationId);
+      const [decision] = await decisionsOfAction(actionId);
+      expect(
+        (decision!.before as { variationAfter?: unknown }).variationAfter,
+      ).toEqual(writtenFields(promoted));
+
+      // The same values written again, object keys in another order: equal
+      // by value, so not an edit.
+      const reordered = (
+        promoted.ignoreRegions as Array<Record<string, unknown>>
+      ).map((r) => Object.fromEntries(Object.entries(r).reverse()));
+      await h.db
+        .update(testVariations)
+        .set({ ignoreRegions: reordered, updatedAt: new Date() })
+        .where(eq(testVariations.id, home.variationId));
+
+      const res = await revert(s.editor, actionId);
+
+      expect(res.reverted).toBe(1);
+      expect(res.skipped).toEqual([]);
+      expect(stable(await variationRow(home.variationId))).toEqual(
+        stable(before),
+      );
+    });
+
+    test("a snapshot without variationAfter (written before it existed) keeps the unchecked undo", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const home = s.shots.home!;
+      const before = await variationRow(home.variationId);
+      const actionId = await decide(s, "approved", [target(s.runId, home.id)]);
+      await h.db
+        .update(checkpointDecisions)
+        .set({ before: sql`${checkpointDecisions.before} - 'variationAfter'` })
+        .where(eq(checkpointDecisions.actionId, actionId));
+      const [decision] = await decisionsOfAction(actionId);
+      expect(decision!.before).not.toHaveProperty("variationAfter");
+      // An edit the old snapshot cannot see: today's behaviour overwrites it.
+      await h.db
+        .update(testVariations)
+        .set({ matchLevel: "Content" })
+        .where(eq(testVariations.id, home.variationId));
+
+      const res = await revert(s.editor, actionId);
+
+      expect(res.reverted).toBe(1);
+      expect(stable(await variationRow(home.variationId))).toEqual(
+        stable(before),
+      );
     });
   });
 
@@ -1222,6 +1474,7 @@ d("revertAction", () => {
     await b.close();
 
     expect(ra.reverted).toBe(1);
+    expect(await revertAudit(actionId)).toHaveLength(1);
     expect(rb).toEqual({
       actionId,
       reverted: 0,
