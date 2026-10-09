@@ -1,13 +1,16 @@
 import type { AddressInfo } from "node:net";
 
 import {
+  and,
   baselines,
   builds,
   diffRegions,
   eq,
   projectMembers,
   projects,
+  resolveBaseline,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
@@ -3305,7 +3308,11 @@ d("tRPC runs router", () => {
           baselineSource: "default_branch",
         })
         .returning();
-      const mkShot = async (variationId: string, viewport: string, key: string) =>
+      const mkShot = async (
+        variationId: string,
+        viewport: string,
+        key: string,
+      ) =>
         (
           await h.db
             .insert(screenshots)
@@ -3353,6 +3360,268 @@ d("tRPC runs router", () => {
       // Regression guard: no default sibling baseline → genuinely new, and NOT
       // masked by the run's other (baselined) viewport.
       expect(statuses.get(shot375.id)).toBe("new");
+    });
+  });
+
+  describe("baseline latest-wins (several baselines in one transaction)", () => {
+    // resolveBaseline picks the newest `baselines` row by created_at, whose
+    // column default now() is the TRANSACTION start time: every baseline a
+    // bulk / group approve wrote for one variation tied, so which image
+    // resolved was arbitrary. The newest run must win.
+    const SIG_LW = `v1:${"c".repeat(64)}`;
+
+    async function seedVariationRun(
+      buildId: string,
+      opts: {
+        label: string;
+        createdAt: Date;
+        status: "unresolved" | "passed";
+        signature?: string;
+      },
+    ) {
+      const [run] = await h.db
+        .insert(testRuns)
+        .values({
+          buildId,
+          projectId: s.projectId,
+          status: opts.status,
+          branchName: "feature/x",
+          name: "home page",
+          createdAt: opts.createdAt,
+        })
+        .returning();
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: run!.id,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          name: "home",
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: opts.label.padEnd(64, "k").slice(0, 64),
+          matchLevel: "Strict",
+          diffSignature: opts.signature ?? null,
+        })
+        .returning();
+      return { run: run!, shot: shot! };
+    }
+
+    async function newBuild(): Promise<string> {
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: s.projectId, userId: s.memberId })
+        .returning();
+      return build!.id;
+    }
+
+    /** The baseline row resolveBaseline diffs the variation's next run against. */
+    async function resolvedBaseline() {
+      const res = await resolveBaseline(
+        h.db,
+        s.projectId,
+        "feature/x",
+        s.variationId,
+        { defaultBranch: "main" },
+      );
+      expect(res?.source).toBe("this_branch");
+      const [row] = await h.db
+        .select()
+        .from(baselines)
+        .where(eq(baselines.id, res!.baselineId));
+      return row!;
+    }
+
+    /**
+     * `laterRunId`'s baseline row sorts strictly after `earlierRunId`'s —
+     * compared in SQL, since JS Dates drop created_at's microseconds.
+     */
+    async function stampedAfter(
+      laterRunId: string,
+      earlierRunId: string,
+    ): Promise<boolean> {
+      const [row] = await h.db
+        .select({
+          after: sql<boolean>`${baselines.createdAt} > (
+            select b.created_at from baselines b
+            where b.test_variation_id = ${s.variationId}
+              and b.test_run_id = ${earlierRunId})`,
+        })
+        .from(baselines)
+        .where(
+          and(
+            eq(baselines.testVariationId, s.variationId),
+            eq(baselines.testRunId, laterRunId),
+          ),
+        );
+      return row?.after === true;
+    }
+
+    async function variationBaselineName(): Promise<string | null> {
+      const [v] = await h.db
+        .select({ baselineName: testVariations.baselineName })
+        .from(testVariations)
+        .where(eq(testVariations.id, s.variationId));
+      return v!.baselineName;
+    }
+
+    test("bulkApproveByBuild: two runs of one variation — the newer run's image is the baseline", async () => {
+      const buildId = await newBuild();
+      const t0 = Date.now();
+      // Inserted newest-first, so heap order is the reverse of run order: the
+      // bulk must still approve the newest run last.
+      const newer = await seedVariationRun(buildId, {
+        label: "newer",
+        createdAt: new Date(t0),
+        status: "unresolved",
+      });
+      const older = await seedVariationRun(buildId, {
+        label: "older",
+        createdAt: new Date(t0 - 60_000),
+        status: "unresolved",
+      });
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.bulkApproveByBuild.mutate({ buildId });
+      expect(res.approved).toBe(2);
+
+      expect(await stampedAfter(newer.run.id, older.run.id)).toBe(true);
+      const resolved = await resolvedBaseline();
+      expect(resolved.testRunId).toBe(newer.run.id);
+      expect(resolved.baselineName).toBe(newer.shot.imageKey);
+      // The denormalized pointer agrees with the resolver.
+      expect(await variationBaselineName()).toBe(newer.shot.imageKey);
+    });
+
+    test.each(["approve", "approveCheckpoint"] as const)(
+      "%s: re-approving an older run makes its image the baseline again",
+      async (procedure) => {
+        const buildId = await newBuild();
+        const t0 = Date.now();
+        const older = await seedVariationRun(buildId, {
+          label: "older",
+          createdAt: new Date(t0 - 60_000),
+          status: "unresolved",
+        });
+        const newer = await seedVariationRun(buildId, {
+          label: "newer",
+          createdAt: new Date(t0),
+          status: "unresolved",
+        });
+        const client = makeClient(baseUrl, s.memberJwt);
+        await client.runs.bulkApproveByBuild.mutate({ buildId });
+        expect((await resolvedBaseline()).testRunId).toBe(newer.run.id);
+
+        // The older run already has a baseline row, so re-approving it hits
+        // the (variation, run) upsert's conflict path. That must re-stamp the
+        // row, or baseline_name would name the older image while the resolver
+        // kept diffing against the newer one.
+        if (procedure === "approve") {
+          await client.runs.approve.mutate({ runId: older.run.id });
+        } else {
+          await client.runs.approveCheckpoint.mutate({
+            runId: older.run.id,
+            checkpointId: older.shot.id,
+          });
+        }
+
+        expect(await stampedAfter(older.run.id, newer.run.id)).toBe(true);
+        const resolved = await resolvedBaseline();
+        expect(resolved.testRunId).toBe(older.run.id);
+        expect(await variationBaselineName()).toBe(older.shot.imageKey);
+      },
+    );
+
+    test("approveCheckpointGroup: one variation across runs — the newer run's image is the baseline", async () => {
+      // A prior baseline on the branch, so the checkpoints are "unresolved".
+      const prior = await seedVariationRun(await newBuild(), {
+        label: "prior",
+        createdAt: new Date(Date.now() - 120_000),
+        status: "passed",
+      });
+      await h.db.insert(baselines).values({
+        baselineName: prior.shot.imageKey,
+        testVariationId: s.variationId,
+        testRunId: prior.run.id,
+        branchName: "feature/x",
+      });
+
+      const buildId = await newBuild();
+      const t0 = Date.now();
+      // The newer run's checkpoint is captured first, so capture order is the
+      // reverse of run order: the group must still approve the newest run last.
+      const newer = await seedVariationRun(buildId, {
+        label: "newer",
+        createdAt: new Date(t0),
+        status: "unresolved",
+        signature: SIG_LW,
+      });
+      const older = await seedVariationRun(buildId, {
+        label: "older",
+        createdAt: new Date(t0 - 60_000),
+        status: "unresolved",
+        signature: SIG_LW,
+      });
+      for (const cp of [newer, older]) {
+        await h.db.insert(diffRegions).values({
+          runId: cp.run.id,
+          projectId: s.projectId,
+          screenshotId: cp.shot.id,
+          severity: "high",
+          category: "layout",
+          source: "l2_dom",
+          description: "diff",
+          bbox: { x: 0, y: 0, width: 10, height: 10 },
+        });
+      }
+
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.runs.approveCheckpointGroup.mutate({
+        runId: older.run.id,
+        checkpointId: older.shot.id,
+      });
+      expect(res.approved).toBe(2);
+
+      expect(await stampedAfter(newer.run.id, older.run.id)).toBe(true);
+      const resolved = await resolvedBaseline();
+      expect(resolved.testRunId).toBe(newer.run.id);
+      expect(resolved.baselineName).toBe(newer.shot.imageKey);
+      expect(await variationBaselineName()).toBe(newer.shot.imageKey);
+    });
+
+    test("rows already tied on created_at resolve deterministically by id", async () => {
+      // Baselines written by one transaction before baselineWriteTime share
+      // created_at. Inserted low-id first so a tie left to scan order would
+      // resolve the low id.
+      const buildId = await newBuild();
+      const a = await seedVariationRun(buildId, {
+        label: "tie-a",
+        createdAt: new Date(),
+        status: "passed",
+      });
+      const b = await seedVariationRun(buildId, {
+        label: "tie-b",
+        createdAt: new Date(),
+        status: "passed",
+      });
+      const lowId = "00000000-0000-4000-8000-000000000001";
+      const highId = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+      await h.db.transaction(async (tx) => {
+        for (const [id, cp] of [
+          [lowId, a],
+          [highId, b],
+        ] as const) {
+          await tx.insert(baselines).values({
+            id,
+            baselineName: cp.shot.imageKey,
+            testVariationId: s.variationId,
+            testRunId: cp.run.id,
+            branchName: "feature/x",
+          });
+        }
+      });
+
+      expect((await resolvedBaseline()).id).toBe(highId);
     });
   });
 });

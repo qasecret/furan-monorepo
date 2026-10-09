@@ -192,7 +192,8 @@ async function tryAutoApproveByPastBaselines(
     .select({ testRunId: baselines.testRunId })
     .from(baselines)
     .where(eq(baselines.testVariationId, variationId))
-    .orderBy(desc(baselines.createdAt))
+    // resolveBaseline's order, so [0] is the current baseline skipped below.
+    .orderBy(desc(baselines.createdAt), desc(baselines.id))
     .limit(10);
 
   if (pastBaselines.length <= 1) return false;

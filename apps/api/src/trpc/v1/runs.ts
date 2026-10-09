@@ -1189,7 +1189,9 @@ export const runsRouter = t.router({
       // single approve, but approval itself lands runs in `passed`, so
       // including it let a capped second click re-select already-approved
       // runs instead of the rest. Oldest-first keeps each click's batch
-      // stable, so repeated clicks drain the build.
+      // stable, so repeated clicks drain the build — and when several runs
+      // share a variation (retries), the newest run's baseline is written
+      // last and wins (baselineWriteTime).
       const targets = await ctx.db
         .select()
         .from(testRuns)
@@ -1727,7 +1729,13 @@ export const runsRouter = t.router({
             eq(screenshots.diffSignature, seed.diffSignature),
           ),
         )
-        .orderBy(asc(screenshots.createdAt));
+        // Oldest run first, so a variation matched in several runs ends on the
+        // newest run's baseline (written last — baselineWriteTime).
+        .orderBy(
+          asc(testRuns.createdAt),
+          asc(screenshots.createdAt),
+          asc(screenshots.id),
+        );
 
       const statuses = await deriveCheckpointStatuses(ctx.db, matches);
       const unresolved = matches.filter(

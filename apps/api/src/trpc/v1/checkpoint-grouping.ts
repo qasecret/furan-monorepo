@@ -1,6 +1,7 @@
 import {
   and,
   baselines,
+  baselineWriteTime,
   diffRegions,
   eq,
   inArray,
@@ -386,7 +387,8 @@ export async function approveCheckpointInTx(
     .where(eq(testVariations.id, s.testVariationId));
 
   // Upsert on (variation, run) so re-approving a checkpoint doesn't violate the
-  // baselines_variation_run_unique constraint / append a duplicate row.
+  // baselines_variation_run_unique constraint / append a duplicate row. Both
+  // branches stamp baselineWriteTime so the checkpoint approved last wins.
   await tx
     .insert(baselines)
     .values({
@@ -395,6 +397,7 @@ export async function approveCheckpointInTx(
       testRunId: run.id,
       userId,
       ...(run.branchName ? { branchName: run.branchName } : {}),
+      createdAt: baselineWriteTime(),
     })
     .onConflictDoUpdate({
       target: [baselines.testVariationId, baselines.testRunId],
@@ -402,6 +405,7 @@ export async function approveCheckpointInTx(
         baselineName: s.imageKey ?? run.name ?? "auto",
         userId,
         ...(run.branchName ? { branchName: run.branchName } : {}),
+        createdAt: baselineWriteTime(),
         updatedAt: new Date(),
       },
     });
