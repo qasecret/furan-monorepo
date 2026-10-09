@@ -519,6 +519,9 @@ importers:
       '@furan/config':
         specifier: workspace:*
         version: link:../config
+      '@furan/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(postgres@3.4.9)

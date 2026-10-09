@@ -12,6 +12,12 @@ export {
 } from "./baseline.js";
 export type { BaselineSource, GitRefs } from "./baseline.js";
 
+// Run-status rollup: `recomputeRunStatus` is the ONLY writer of
+// `test_runs.status` after a diff (review flow, spec §4.3). It locks the run
+// row and holds the lock until the surrounding transaction commits.
+export { loadRollupInputs, recomputeRunStatus } from "./review-status.js";
+export type { Tx } from "./review-status.js";
+
 // Canonical branch-agnostic variation identity (ADR-054) — shared by every
 // cross-branch sibling-matcher so they can't drift onto a stale column subset.
 export {
