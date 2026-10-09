@@ -46,4 +46,19 @@ describe("AccountMenu", () => {
     await user.click(screen.getByTestId("account-menu-trigger"));
     expect(screen.queryByRole("menuitem", { name: "Preferences" })).toBeNull();
   });
+
+  test("menu items take the shared menu highlight, not a brand wash", async () => {
+    const user = userEvent.setup();
+    render(<AccountMenu email="me@x.io" initial="M" role="admin" />);
+    await user.click(screen.getByTestId("account-menu-trigger"));
+    const settings = screen.getByRole("menuitem", { name: /settings/i });
+    expect(settings.className).not.toContain("bg-brand/10");
+    expect(settings.className).not.toContain("text-brand-text");
+    expect(
+      settings.classList.contains("data-[highlighted]:bg-overlay-hover"),
+    ).toBe(true);
+    expect(settings.classList.contains("data-[highlighted]:text-fg")).toBe(
+      true,
+    );
+  });
 });

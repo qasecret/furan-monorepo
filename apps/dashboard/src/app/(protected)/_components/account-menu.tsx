@@ -35,9 +35,6 @@ const ROLE_STYLE: Record<ViewerRole, string> = {
   guest: "bg-muted text-fg-secondary",
 };
 
-const NEON_HOVER =
-  "data-[highlighted]:bg-brand/10 data-[highlighted]:text-brand-text";
-
 export function AccountMenu({ email, initial, role }: Props) {
   const { currentProjectId } = useCurrentProject();
   return (
@@ -69,7 +66,7 @@ export function AccountMenu({ email, initial, role }: Props) {
         <DropdownMenuSeparator />
         {currentProjectId && (
           <>
-            <DropdownMenuItem asChild className={NEON_HOVER}>
+            <DropdownMenuItem asChild>
               <Link href={`/projects/${currentProjectId}/settings`}>
                 <Settings className="mr-2 h-3.5 w-3.5 text-fg-muted" />
                 Settings
