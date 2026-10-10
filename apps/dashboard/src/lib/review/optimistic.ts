@@ -78,7 +78,11 @@ export function runStatusFor(
   });
 }
 
-/** One change, applied to the two views that list a run's checkpoints. */
+/**
+ * One change, applied to the two views that list a run's checkpoints. Both
+ * halves return what they were given, untouched, when the change reaches
+ * nothing in it, so a caller can skip writing it back.
+ */
 export interface ReviewChange {
   /** `runs.listCheckpoints`: the items. */
   items(items: CheckpointItem[]): CheckpointItem[];
@@ -92,14 +96,15 @@ export interface ReviewChange {
 
 function changeOf(rewrite: Rewrite): ReviewChange {
   return {
-    items: (items) => items.map((i) => rewrite(i.id, i)),
+    items: (items) => {
+      const next = items.map((i) => rewrite(i.id, i));
+      return next.some((n, k) => n !== items[k]) ? next : items;
+    },
     run: (run, items) => {
-      const checkpointContexts = Object.fromEntries(
-        Object.entries(run.checkpointContexts).map(([id, c]) => [
-          id,
-          rewrite(id, c),
-        ]),
-      );
+      const entries = Object.entries(run.checkpointContexts);
+      const rewritten = entries.map(([id, c]) => [id, rewrite(id, c)] as const);
+      if (rewritten.every(([, c], k) => c === entries[k]?.[1])) return run;
+      const checkpointContexts = Object.fromEntries(rewritten);
       return {
         ...run,
         checkpointContexts,
@@ -130,6 +135,33 @@ export function revertChange(actionId: string): ReviewChange {
   return changeOf((_id, c) =>
     c.decision?.actionId === actionId ? revertOne(c) : c,
   );
+}
+
+/** A checkpoint's review state and decision: what a decision or an undo moves. */
+export type ReviewFields = Pick<Review, "state" | "decision">;
+
+/** Puts back the state and decision `captured` holds, per checkpoint id. */
+export function restoreChange(
+  captured: ReadonlyMap<string, ReviewFields>,
+): ReviewChange {
+  return changeOf((id, c) => {
+    const fields = captured.get(id);
+    return fields ? { ...c, ...fields } : c;
+  });
+}
+
+/** The state and decision of every checkpoint in `rows` decided under `actionId`. */
+export function decidedBy(
+  rows: Iterable<readonly [string, Review]>,
+  actionId: string,
+): Map<string, ReviewFields> {
+  const found = new Map<string, ReviewFields>();
+  for (const [id, c] of rows) {
+    if (c.decision?.actionId === actionId) {
+      found.set(id, { state: c.state, decision: c.decision });
+    }
+  }
+  return found;
 }
 
 export function applyDecision(
@@ -173,7 +205,7 @@ export function withPendingDelta(
 
 /**
  * A `runs.list` page with the status of run `runId` replaced; the same page
- * when the run is not on it. `status` gets the run's row, so a caller without
+ * when the run is not on it or already has that status. `status` gets the run's row, so a caller without
  * a patched run can still derive it from the row's own override.
  */
 export function patchListedRun(
@@ -181,11 +213,12 @@ export function patchListedRun(
   runId: string,
   status: (row: RunsListPage["items"][number]) => RunStatus,
 ): RunsListPage {
-  if (!page.items.some((r) => r.id === runId)) return page;
+  const row = page.items.find((r) => r.id === runId);
+  if (!row) return page;
+  const next = status(row);
+  if (next === row.status) return page;
   return {
     ...page,
-    items: page.items.map((r) =>
-      r.id === runId ? { ...r, status: status(r) } : r,
-    ),
+    items: page.items.map((r) => (r === row ? { ...r, status: next } : r)),
   };
 }

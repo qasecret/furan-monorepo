@@ -8,21 +8,23 @@ import {
   type ReviewErrorDetails,
 } from "@furan/shared-types";
 import { useQueryClient } from "@tanstack/react-query";
-import { getQueryKey } from "@trpc/react-query";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
 
 import {
+  cancelRun,
+  loadedDecisions,
+  patchRun,
+  runsDecidedBy,
+  type Caches,
+} from "./cache-patch";
+import {
   decisionChange,
-  patchListedRun,
-  pendingDelta,
+  restoreChange,
   revertChange,
-  runStatusFor,
-  withPendingDelta,
   type Actor,
   type ReviewChange,
-  type RunsListPage,
 } from "./optimistic";
 import { describeRefusal, describeSkip } from "./review-copy";
 import { useUndoStore } from "./use-undo-store";
@@ -108,18 +110,49 @@ interface Action {
   runIds: string[];
   /** The optimistic change; none for group and build actions (the server picks the members). */
   change?: ReviewChange;
+  /**
+   * Builds the change that takes `change` back, once the caches are quiet and
+   * before they are patched. It is applied to whatever the caches hold when
+   * the call fails, so it undoes only this action's own patch.
+   */
+  inverse?: (caches: Caches) => ReviewChange;
+  /** Set once the caches are patched; what a failure applies. */
+  rollback?: ReviewChange;
   /** Checkpoints held in flight until the call settles. */
   held: string[];
   onConflict?: (preview: ApproveBuildPreview) => void;
-  /** Undoes each cache patch, in the order they were made. */
-  restores: Array<() => void>;
 }
 
 const ACTIONS = new Map<string, Action>();
 
-/** Puts every cache back the way it was, newest patch first. */
-function rollBack(action: Action): void {
-  for (const restore of action.restores.splice(0).reverse()) restore();
+/**
+ * Registers the action and holds its checkpoints before `send` makes the call;
+ * should anything throw, neither is left behind.
+ */
+function start(actionId: string, action: Action, send: () => void): void {
+  ACTIONS.set(actionId, action);
+  try {
+    useInFlightStore.getState().hold(action.held);
+    send();
+  } catch (error) {
+    ACTIONS.delete(actionId);
+    useInFlightStore.getState().release(action.held);
+    throw error;
+  }
+}
+
+/** Takes the action's own patch back off the caches, as they are now. */
+function rollBack(caches: Caches, action: Action): void {
+  const { rollback } = action;
+  action.rollback = undefined;
+  if (!rollback) return;
+  for (const runId of action.runIds) {
+    try {
+      patchRun(caches, runId, rollback);
+    } catch {
+      // Best effort: the refetch that follows every call corrects the rest.
+    }
+  }
 }
 
 /**
@@ -172,103 +205,31 @@ export function useReviewMutations() {
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
   const inFlight = useInFlightStore((s) => s.ids);
-
-  /**
-   * Shows `change` on the review caches that are loaded: the run's
-   * checkpoints and detail, the run's row on every `runs.list` page, and the
-   * pending count of its build. A cache that is not loaded is left alone.
-   */
-  const patchRun = async (
-    runId: string,
-    change: ReviewChange,
-    restores: Action["restores"],
-  ) => {
-    // An answer already on its way would land on top of the patch.
-    await Promise.all([
-      utils.runs.listCheckpoints.cancel({ runId }),
-      utils.runs.getById.cancel({ runId }),
-      utils.runs.list.cancel(),
-      utils.builds.getById.cancel(),
-    ]);
-
-    const put = <T>(
-      before: T | undefined,
-      after: T | undefined,
-      write: (value: T) => void,
-    ) => {
-      if (before === undefined || after === undefined) return;
-      write(after);
-      restores.push(() => write(before));
-    };
-
-    const list = utils.runs.listCheckpoints.getData({ runId });
-    const nextList = list && { ...list, items: change.items(list.items) };
-    put(list, nextList, (v) =>
-      utils.runs.listCheckpoints.setData({ runId }, v),
-    );
-
-    // The run's status is derived from the patched checkpoint list when that
-    // is loaded, otherwise from the patched contexts of the run itself.
-    const run = utils.runs.getById.getData({ runId });
-    const nextRun = run && change.run(run, nextList?.items);
-    put(run, nextRun, (v) => utils.runs.getById.setData({ runId }, v));
-
-    // `runs.list` is cached once per filter and cursor: patch every page.
-    let buildId = run?.buildId;
-    const pages = queryClient.getQueriesData<RunsListPage>({
-      queryKey: getQueryKey(trpc.runs.list),
-    });
-    for (const [key, page] of pages) {
-      if (!page?.items) continue;
-      buildId ??= page.items.find((r) => r.id === runId)?.buildId;
-      if (!nextRun && !nextList) continue;
-      const next = patchListedRun(
-        page,
-        runId,
-        (row) =>
-          nextRun?.status ??
-          (nextList
-            ? runStatusFor(nextList.items, row.status, row.statusOverride)
-            : row.status),
-      );
-      put(page, next === page ? undefined : next, (v) =>
-        queryClient.setQueryData(key, v),
-      );
-    }
-
-    // The steps that stopped (or started) needing a reviewer move the build's count.
-    const before =
-      list?.items ?? (run && Object.values(run.checkpointContexts));
-    const after =
-      nextList?.items ?? (nextRun && Object.values(nextRun.checkpointContexts));
-    if (buildId && before && after) {
-      const build = utils.builds.getById.getData({ buildId });
-      put(
-        build,
-        build && withPendingDelta(build, pendingDelta(before, after)),
-        (v) => utils.builds.getById.setData({ buildId }, v),
-      );
-    }
-  };
+  const caches: Caches = useMemo(
+    () => ({ utils, queryClient }),
+    [utils, queryClient],
+  );
 
   const onMutate = async ({ actionId }: { actionId: string }) => {
     const action = ACTIONS.get(actionId);
     if (!action?.change) return;
     try {
+      await Promise.all(action.runIds.map((runId) => cancelRun(caches, runId)));
+      action.rollback = action.inverse?.(caches);
       for (const runId of action.runIds) {
-        await patchRun(runId, action.change, action.restores);
+        patchRun(caches, runId, action.change);
       }
     } catch {
       // The patch is only a courtesy: whatever went wrong with it, the call
       // still goes out, and the refetch that follows shows the truth.
-      rollBack(action);
+      rollBack(caches, action);
     }
   };
 
   const onError = (err: ReviewError, { actionId }: { actionId: string }) => {
     const action = ACTIONS.get(actionId);
     if (!action) return;
-    rollBack(action);
+    rollBack(caches, action);
     const preview = err.data?.details?.preview;
     if (
       err.data?.code === "CONFLICT" &&
@@ -357,18 +318,24 @@ export function useReviewMutations() {
       // Nothing to undo, or this action is still in flight (a second click):
       // leave the stack exactly as it is.
       if (id === undefined || ACTIONS.has(id)) return;
-      ACTIONS.set(id, {
-        label: entry?.label ?? "",
-        // An action that is not in this session's stack (a decision from
-        // before a reload) has no known runs: it is refetched, not patched.
-        runIds: entry?.runIds ?? [],
-        change: revertChange(id),
-        held: [],
-        restores: [],
-      });
-      revert.mutate({ actionId: id });
+      // The runs the action decided in: this session's entry knows them; for a
+      // decision from before a reload they are found in the loaded caches.
+      const runIds = entry?.runIds ?? runsDecidedBy(caches, id);
+      start(
+        id,
+        {
+          label: entry?.label ?? "",
+          runIds,
+          change: revertChange(id),
+          // The decisions this undo clears, to put back if it fails.
+          inverse: (c) => restoreChange(loadedDecisions(c, runIds, id)),
+          // A decide on one of these steps waits for the undo to finish.
+          held: [...loadedDecisions(caches, runIds, id).keys()],
+        },
+        () => revert.mutate({ actionId: id }),
+      );
     },
-    [revert.mutate],
+    [revert.mutate, caches],
   );
 
   const decided = (
@@ -414,35 +381,40 @@ export function useReviewMutations() {
       if (reach.some((id) => flying.has(id))) return;
 
       const actionId = newActionId();
-      useInFlightStore.getState().hold(targets);
-      ACTIONS.set(actionId, {
-        label,
-        runIds: [runId],
-        change: decisionChange(
-          new Set(targets),
-          kind,
-          OPTIMISTIC_ACTOR,
-          actionId,
-        ),
-        held: targets,
-        restores: [],
-      });
       const input = {
         runId,
         actionId,
         ...(checkpointIds && { checkpointIds }),
       };
-      if (kind === "approved") {
-        approve.mutate({
-          ...input,
-          ...(args.ignoreAreas && { ignoreAreas: args.ignoreAreas }),
-        });
-      } else {
-        reject.mutate({
-          ...input,
-          ...(args.reason !== undefined && { reason: args.reason }),
-        });
-      }
+      start(
+        actionId,
+        {
+          label,
+          runIds: [runId],
+          change: decisionChange(
+            new Set(targets),
+            kind,
+            OPTIMISTIC_ACTOR,
+            actionId,
+          ),
+          // Only this action's own decisions are taken back on a failure.
+          inverse: () => revertChange(actionId),
+          held: targets,
+        },
+        () => {
+          if (kind === "approved") {
+            approve.mutate({
+              ...input,
+              ...(args.ignoreAreas && { ignoreAreas: args.ignoreAreas }),
+            });
+          } else {
+            reject.mutate({
+              ...input,
+              ...(args.reason !== undefined && { reason: args.reason }),
+            });
+          }
+        },
+      );
     },
     [utils, approve.mutate, reject.mutate],
   );
@@ -451,18 +423,13 @@ export function useReviewMutations() {
     ({ runId, checkpointId, kind, label }: DecideGroupArgs) => {
       if (useInFlightStore.getState().ids.has(checkpointId)) return;
       const actionId = newActionId();
-      useInFlightStore.getState().hold([checkpointId]);
-      ACTIONS.set(actionId, {
-        label,
-        runIds: [],
-        held: [checkpointId],
-        restores: [],
-      });
-      (kind === "approved" ? approveGroup : rejectGroup).mutate({
-        runId,
-        checkpointId,
-        actionId,
-      });
+      start(actionId, { label, runIds: [], held: [checkpointId] }, () =>
+        (kind === "approved" ? approveGroup : rejectGroup).mutate({
+          runId,
+          checkpointId,
+          actionId,
+        }),
+      );
     },
     [approveGroup.mutate, rejectGroup.mutate],
   );
@@ -470,14 +437,9 @@ export function useReviewMutations() {
   const approveBuild = useCallback(
     ({ buildId, expectedCount, label, onConflict }: ApproveBuildArgs) => {
       const actionId = newActionId();
-      ACTIONS.set(actionId, {
-        label,
-        runIds: [],
-        held: [],
-        onConflict,
-        restores: [],
-      });
-      approveBuildMutation.mutate({ buildId, actionId, expectedCount });
+      start(actionId, { label, runIds: [], held: [], onConflict }, () =>
+        approveBuildMutation.mutate({ buildId, actionId, expectedCount }),
+      );
     },
     [approveBuildMutation.mutate],
   );

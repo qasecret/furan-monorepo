@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   applyDecision,
+  decidedBy,
   decisionChange,
   pendingDelta,
   patchListedRun,
+  restoreChange,
   revertChange,
   revertDecision,
   runStatusFor,
@@ -269,6 +271,61 @@ describe("decisionChange / revertChange", () => {
   });
 });
 
+describe("changes that reach nothing", () => {
+  it("hand back the very same list and run", () => {
+    const items = [item("a"), item("b")];
+    const run = runDetail();
+
+    expect(
+      applyDecision(items, new Set(["z"]), "approved", ACTOR, ACTION),
+    ).toBe(items);
+    expect(revertDecision(items, ACTION)).toBe(items);
+    expect(
+      decisionChange(new Set(["z"]), "approved", ACTOR, ACTION).run(run),
+    ).toBe(run);
+    expect(revertChange(ACTION).run(run)).toBe(run);
+  });
+});
+
+describe("restoreChange / decidedBy", () => {
+  it("captures the decisions of an action and puts them back after an undo", () => {
+    const decision = approvedBy(ACTION);
+    const items = [
+      item("a", { state: "approved", decision }),
+      item("b"),
+      item("c", { state: "approved", decision: approvedBy("other") }),
+    ];
+
+    const captured = decidedBy(
+      items.map((i) => [i.id, i] as const),
+      ACTION,
+    );
+    expect([...captured.keys()]).toEqual(["a"]);
+
+    const undone = revertDecision(items, ACTION);
+    expect(undone[0]).toMatchObject({ state: "unresolved", decision: null });
+    expect(restoreChange(captured).items(undone)).toEqual(items);
+  });
+
+  it("only touches the checkpoints it captured", () => {
+    const current = [
+      item("a"),
+      item("b", { state: "approved", decision: approvedBy("x") }),
+    ];
+    const captured = new Map([
+      ["a", { state: "approved" as const, decision: approvedBy(ACTION) }],
+    ]);
+
+    const next = restoreChange(captured).items(current);
+
+    expect(next[0]).toMatchObject({
+      state: "approved",
+      decision: { actionId: ACTION },
+    });
+    expect(next[1]).toBe(current[1]);
+  });
+});
+
 describe("pending counts", () => {
   it("counts new and unresolved steps that stop being pending", () => {
     const before = [
@@ -318,6 +375,12 @@ describe("patchListedRun", () => {
     );
 
     expect(next.items.map((r) => r.status)).toEqual(["passed", "unresolved"]);
+  });
+
+  it("returns the page untouched when the row already has that status", () => {
+    const original = page([row("r1", "passed")]);
+
+    expect(patchListedRun(original, "r1", () => "passed")).toBe(original);
   });
 
   it("returns the page untouched when the run is not on it", () => {

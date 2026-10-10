@@ -94,7 +94,10 @@ const { server, mutationFor } = vi.hoisted(() => {
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => utils,
-    runs: { list: { _def: () => ({ path: ["runs", "list"] }) } },
+    runs: {
+      list: { _def: () => ({ path: ["runs", "list"] }) },
+      listCheckpoints: { _def: () => ({ path: ["runs", "listCheckpoints"] }) },
+    },
     review: {
       approve: mutationFor("approve"),
       reject: mutationFor("reject"),
@@ -515,6 +518,27 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(itemsCache()).toEqual(before.items);
   });
 
+  it("writes nothing when the patch reaches nothing", async () => {
+    seed({ items: false });
+    const setQueryData = vi.spyOn(qc, "setQueryData");
+    const { result, run } = setup();
+
+    // No ids and no loaded checkpoint list: there is nothing to target.
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        kind: "approved",
+        label: "Approved",
+      }),
+    );
+
+    expect(server.approve).toHaveBeenCalledTimes(1);
+    expect(utils.runs.getById.setData).not.toHaveBeenCalled();
+    expect(utils.builds.getById.setData).not.toHaveBeenCalled();
+    expect(setQueryData).not.toHaveBeenCalled();
+    setQueryData.mockRestore();
+  });
+
   it("refreshes the review caches once the call settles", async () => {
     seed();
     const { result, run } = setup();
@@ -532,6 +556,86 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(utils.runs.getById.invalidate).toHaveBeenCalled();
     expect(utils.runs.list.invalidate).toHaveBeenCalled();
     expect(utils.builds.getById.invalidate).toHaveBeenCalled();
+  });
+});
+
+describe("useReviewMutations: rollback of overlapping decides", () => {
+  const decideStep = (
+    result: { current: ReturnType<typeof useReviewMutations> },
+    id: string,
+  ) =>
+    result.current.decide({
+      runId: RUN,
+      checkpointIds: [id],
+      kind: "approved",
+      label: `Approved ${id}`,
+    });
+
+  it("undoes only the failed decide's patch, each time, whichever fails first", async () => {
+    seed();
+    const before = snapshotCaches();
+    const callA = deferred();
+    const callB = deferred();
+    server.approve
+      .mockReturnValueOnce(callA.promise)
+      .mockReturnValueOnce(callB.promise);
+    const { result, run } = setup();
+
+    await run(() => decideStep(result, A));
+    await run(() => decideStep(result, B));
+    expect(itemState(A)).toBe("approved");
+    expect(itemState(B)).toBe("approved");
+    expect(runCache()?.status).toBe("passed");
+    expect(buildCache()?.pendingCheckpoints).toBe(3);
+
+    // A is refused: B's approval is still on screen, A's is gone.
+    callA.reject(
+      trpcError("run_overridden", "PRECONDITION_FAILED", {
+        reasons: [{ checkpointId: A, reason: "run_overridden" }],
+      }),
+    );
+    await run();
+    expect(itemState(A)).toBe("unresolved");
+    expect(itemsCache()?.find((i) => i.id === A)?.decision).toBeNull();
+    expect(itemState(B)).toBe("approved");
+    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+      state: "unresolved",
+    });
+    expect(runCache()?.checkpointContexts[B]).toMatchObject({
+      state: "approved",
+    });
+    expect(runCache()?.status).toBe("unresolved");
+    expect(listRows()?.find((r) => r.id === RUN)?.status).toBe("unresolved");
+    expect(buildCache()?.pendingCheckpoints).toBe(4);
+
+    // Then B is refused: neither shows as decided, as before either call.
+    callB.reject(new Error("offline"));
+    await run();
+    expect(snapshotCaches()).toEqual(before);
+  });
+
+  it("does not bring a refused decide back when the other one fails later", async () => {
+    seed();
+    const callA = deferred();
+    const callB = deferred();
+    server.approve
+      .mockReturnValueOnce(callA.promise)
+      .mockReturnValueOnce(callB.promise);
+    const { result, run } = setup();
+
+    await run(() => decideStep(result, A));
+    await run(() => decideStep(result, B));
+
+    // B fails first: A stays approved on screen while its own call is out.
+    callB.reject(new Error("offline"));
+    await run();
+    expect(itemState(B)).toBe("new");
+    expect(itemState(A)).toBe("approved");
+
+    callA.resolve(decided());
+    await run();
+    expect(itemState(A)).toBe("approved");
+    expect(toast.success).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -836,6 +940,16 @@ describe("useReviewMutations: undo", () => {
         ]),
       ),
     });
+    qc.setQueryData(
+      keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
+      {
+        items: [
+          { id: RUN, buildId: BUILD, status: "new", statusOverride: null },
+          { id: RUN_2, buildId: BUILD, status: "failed", statusOverride: null },
+        ],
+        nextCursor: null,
+      },
+    );
     useUndoStore
       .getState()
       .push({ actionId: ACTION, label: "Approved home", runIds: [RUN] });
@@ -1053,6 +1167,17 @@ describe("useReviewMutations: undo", () => {
         },
       ],
     });
+    // The second run's only step is approved, so the run reads as passed.
+    qc.setQueryData(
+      keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
+      {
+        items: [
+          { id: RUN, buildId: BUILD, status: "new", statusOverride: null },
+          { id: RUN_2, buildId: BUILD, status: "passed", statusOverride: null },
+        ],
+        nextCursor: null,
+      },
+    );
     useUndoStore.setState({
       stack: [{ actionId: ACTION, label: "Approved 2", runIds: [RUN, RUN_2] }],
     });
@@ -1072,8 +1197,31 @@ describe("useReviewMutations: undo", () => {
     expect(snapshotCaches()).toEqual(before);
   });
 
-  it("still reverts an action it has no entry for, without patching", async () => {
+  it("finds the runs of an action it has no entry for in the loaded caches, and patches them", async () => {
     seedDecided();
+    useUndoStore.setState({ stack: [] });
+    const pending = deferred();
+    server.revert.mockReturnValueOnce(pending.promise);
+    const { result, run } = setup();
+
+    await run(() => result.current.undo(ACTION));
+
+    // A decision from before a reload has no stack entry, and still reverts
+    // on screen at once.
+    expect(itemState(A)).toBe("unresolved");
+    expect(runCache()?.status).toBe("unresolved");
+    expect(buildCache()?.pendingCheckpoints).toBe(6);
+    expect(result.current.isInFlight(A)).toBe(true);
+
+    pending.resolve(reverted());
+    await run();
+    expect(server.revert).toHaveBeenCalledWith({ actionId: ACTION });
+    expect(toast.success).toHaveBeenCalledWith("Undone");
+    expect(result.current.isInFlight(A)).toBe(false);
+  });
+
+  it("does not touch a run whose caches hold no decision of that action", async () => {
+    seed();
     useUndoStore.setState({ stack: [] });
     const { result, run } = setup();
 
@@ -1081,7 +1229,80 @@ describe("useReviewMutations: undo", () => {
 
     expect(server.revert).toHaveBeenCalledWith({ actionId: ACTION });
     expect(utils.runs.listCheckpoints.setData).not.toHaveBeenCalled();
-    expect(toast.success).toHaveBeenCalledWith("Undone");
+    expect(utils.runs.getById.setData).not.toHaveBeenCalled();
+  });
+
+  it("ignores a decide on a step whose undo is still out", async () => {
+    seedDecided();
+    const pending = deferred();
+    server.revert.mockReturnValueOnce(pending.promise);
+    const { result, run } = setup();
+
+    await run(() => result.current.undo(ACTION));
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "rejected",
+        label: "Rejected home",
+      }),
+    );
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        kind: "approved",
+        label: "Approved 2",
+      }),
+    );
+
+    expect(server.reject).not.toHaveBeenCalled();
+    expect(server.approve).not.toHaveBeenCalled();
+
+    pending.resolve(reverted());
+    await run();
+  });
+
+  it("puts back only what a failed undo cleared, leaving a decide still in flight alone", async () => {
+    seedDecided();
+    const undoCall = deferred();
+    const decideCall = deferred();
+    server.revert.mockReturnValueOnce(undoCall.promise);
+    server.approve.mockReturnValueOnce(decideCall.promise);
+    const { result, run } = setup();
+
+    await run(() => result.current.undo(ACTION));
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [B],
+        kind: "approved",
+        label: "Approved pricing",
+      }),
+    );
+    expect(itemState(A)).toBe("unresolved");
+    expect(itemState(B)).toBe("approved");
+
+    undoCall.reject(new Error("offline"));
+    await run();
+
+    // A's decision is back, with its original action; B's is still on screen.
+    expect(itemsCache()?.find((i) => i.id === A)).toMatchObject({
+      state: "approved",
+      decision: { actionId: ACTION },
+    });
+    expect(itemState(B)).toBe("approved");
+    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+      state: "approved",
+    });
+    expect(runCache()?.checkpointContexts[B]).toMatchObject({
+      state: "approved",
+    });
+    expect(runCache()?.status).toBe("passed");
+    // A pending again, then not again; B no longer pending: 5 - 1.
+    expect(buildCache()?.pendingCheckpoints).toBe(4);
+
+    decideCall.resolve(decided());
+    await run();
   });
 });
 
