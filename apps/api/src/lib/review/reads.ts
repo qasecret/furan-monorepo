@@ -212,10 +212,13 @@ async function loadNewerCaptures(
  * `undo` for each of a run's active decisions, keyed by decision id, as
  * `review.revert` would answer `viewer` now.
  *
- * - A decision with no snapshot is never undoable, whoever asks (a reason
- *   about the decision, not the viewer).
- * - Otherwise only the decider or an admin may undo (`not_decider`); that is
- *   judged first, as `revertAction` authorises before it assesses.
+ * - Judged first: a decision with no snapshot is never undoable, whoever asks
+ *   (`not_undoable_legacy`, a reason about the decision, not the viewer).
+ *   Spec §5.3: legacy rows with a NULL actor are only ever refused as not
+ *   undoable, so every viewer is told that. (`review.revert` itself answers a
+ *   non-admin `not_decider` first; `allowed` is false either way.)
+ * - Then only the decider or an admin may undo (`not_decider`), judged before
+ *   the assessment, as `revertAction` authorises before it assesses.
  * - The rest go through `assessRevert` in ONE call, which is itself a fixed
  *   number of statements however many decisions there are. It judges each
  *   decision as part of its whole action, so a decision that only a later one

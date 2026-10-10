@@ -353,10 +353,11 @@ export const reviewRouter = t.router({
    * not fatal. The gate's project is the one of the action's oldest decision,
    * and the core acts in that project only (an action id may exist in two).
    *
-   * After commit: a re-diff is queued for every run with an approve undone
-   * (`rediffRunIds`, with the run's parent branch like the upload that first
-   * diffed it), then the project is told which runs changed. A retry
-   * announces again; the events are idempotent refresh hints.
+   * After commit: the project is told which runs changed, then a re-diff is
+   * queued for every run in `rediffRunIds` (with the run's parent branch like
+   * the upload that first diffed it). A retry announces again, and queues
+   * again a run that still waits for its diff (R30); the events are
+   * idempotent refresh hints.
    */
   revert: publicProcedure
     .input(revertInput)
@@ -377,6 +378,15 @@ export const reviewRouter = t.router({
         { actor: actx.actor, actionId: input.actionId, projectId },
         actx.deps,
       );
+      // Announce first: the after-commit effects run in order, and a failing
+      // `enqueue` (queue down) stops the ones behind it. Publishing never
+      // throws (the broadcaster swallows its errors), so announcing first
+      // costs nothing and viewers still refresh when only the queue fails.
+      await announceRuns(
+        actx,
+        projectId,
+        result.runs.map((r) => r.runId),
+      );
       if (rediffRunIds.length > 0) {
         const rediffs = await actx.tx
           .select({
@@ -389,11 +399,6 @@ export const reviewRouter = t.router({
           .orderBy(asc(testRuns.id));
         for (const run of rediffs) enqueueRunDiff(ctx, run);
       }
-      await announceRuns(
-        actx,
-        projectId,
-        result.runs.map((r) => r.runId),
-      );
       return result;
     }),
 });

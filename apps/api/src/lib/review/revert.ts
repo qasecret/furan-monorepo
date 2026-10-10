@@ -70,6 +70,11 @@ export interface RevertResult {
    * lands. For every other undone approve the verdict stands, but a diff job
    * already in flight when the undo committed may still write a verdict
    * computed against that baseline; the re-diff corrects it.
+   *
+   * A retry (R30) also names a run whose approve was already undone while any
+   * of its checkpoints still has no verdict: the caller's enqueue after the
+   * first commit may have been lost (queue down), and nothing else would ever
+   * re-queue it.
    */
   rediffRunIds: string[];
   /** Each of the action's runs and its status afterwards, ascending run id. */
@@ -319,6 +324,30 @@ const pairKey = (variationId: string, branch: string) =>
 const epochMicros = (col: typeof baselines.createdAt) =>
   sql<string>`(extract(epoch from ${col}) * 1000000)::bigint::text`;
 
+/**
+ * The fields of a variation's ADR-054 identity (`VariationIdentity`: the
+ * identity minus the project and branch scoping), one entry each. Typed as a
+ * `Record` over the interface's keys, adding a field to `VariationIdentity`
+ * fails typecheck here until it takes part in sibling matching; the selects
+ * below, whose rows must satisfy `VariationIdentity`, fail the same way.
+ */
+const IDENTITY_FIELDS: Record<keyof VariationIdentity, true> = {
+  name: true,
+  viewport: true,
+  browser: true,
+  os: true,
+  device: true,
+};
+const IDENTITY_KEYS = Object.keys(IDENTITY_FIELDS) as Array<
+  keyof VariationIdentity
+>;
+
+type Identity = VariationIdentity & { projectId: string };
+
+/** Equal for variations of one project with the same identity, whatever the branch. */
+const identityKey = (i: Identity): string =>
+  JSON.stringify([i.projectId, ...IDENTITY_KEYS.map((k) => i[k])]);
+
 /** Everything the approve checks need, loaded in a fixed number of queries. */
 interface ApproveFacts {
   /** The baseline rows the approves wrote, by id (absent: deleted since). */
@@ -434,16 +463,6 @@ async function loadApproveFacts(
     .from(testVariations)
     .where(inArray(testVariations.id, variationIds));
   if (decided.length === 0) return facts;
-  type Identity = VariationIdentity & { projectId: string };
-  const identityKey = (i: Identity) =>
-    JSON.stringify([
-      i.projectId,
-      i.name,
-      i.viewport,
-      i.browser,
-      i.os,
-      i.device,
-    ]);
   const identities = new Map<string, Identity>();
   for (const v of decided) {
     facts.variations.set(v.id, fieldsOf(v));
@@ -793,8 +812,9 @@ async function restoreApprove(
  *    does), and re-reads the action under those locks (a concurrent undo has
  *    committed by then, so a retry finds `already_undone`). Decisions whose run
  *    retention has deleted are simply gone.
- * 3. Assesses every decision (`assessRevert`'s rules) and finds the approved
- *    checkpoints re-diffed since their approve, all before the first write.
+ * 3. Assesses every decision (`assessRevert`'s rules), finds the approved
+ *    checkpoints re-diffed since their approve and the runs to re-diff (see
+ *    `RevertResult.rediffRunIds`), all before the first write.
  * 4. In one savepoint (R16), newest decision first: restores each undoable
  *    approve's baseline row (delete an inserted row; rewrite an updated one to
  *    `prev`, timestamps µs-exact) and variation, clears the verdict of a
@@ -906,8 +926,34 @@ export async function revertAction(
         );
   // Every run with an approve undone is re-diffed after commit (R28): a diff
   // job already in flight may yet write a verdict against the undone baseline.
+  //
+  // So is a run whose approve was undone by an earlier call while a checkpoint
+  // of it still has no verdict (R30): that call's enqueue, after its commit,
+  // may have been lost, and without this a retry (all `already_undone`) would
+  // never queue it again. A diff that has since landed leaves no NULL verdict.
+  const undoneEarlier = [
+    ...new Set(
+      decisions
+        .filter((d) => d.revertedAt !== null && d.decision === "approved")
+        .map((d) => d.runId),
+    ),
+  ];
+  const waitingForDiff =
+    undoneEarlier.length === 0
+      ? []
+      : (
+          await tx
+            .selectDistinct({ runId: screenshots.runId })
+            .from(screenshots)
+            .where(
+              and(
+                inArray(screenshots.runId, undoneEarlier),
+                isNull(screenshots.verdict),
+              ),
+            )
+        ).map((r) => r.runId);
   const rediffRunIds = [
-    ...new Set(undoableApproves.map((d) => d.runId)),
+    ...new Set([...undoableApproves.map((d) => d.runId), ...waitingForDiff]),
   ].sort();
 
   // 4. The writes, atomic on their own (R16), newest decision first.

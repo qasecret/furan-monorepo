@@ -249,6 +249,10 @@ d("review router", () => {
   beforeEach(() => {
     h.broadcasterPublish.mockReset();
     h.broadcasterPublish.mockResolvedValue(undefined);
+    // Back to the app's default producer: a test that swaps in an
+    // implementation (or a one-off rejection) must not leak it to the next.
+    h.diffQueueAdd.mockReset();
+    h.diffQueueAdd.mockResolvedValue({ id: "test-job-id" });
   });
 
   // -------------------------------------------------------------------------
@@ -1590,7 +1594,6 @@ d("review router", () => {
           parentPrBaseBranch: "main",
         });
         expect(seen).toEqual([2]);
-        h.diffQueueAdd.mockReset();
       });
 
       test("a run without a parent branch is enqueued without parentPrBaseBranch", async () => {
@@ -1622,6 +1625,60 @@ d("review router", () => {
         expect(h.diffQueueAdd.mock.calls.map(([, p]) => p.runId)).toEqual([
           run2.runId,
         ]);
+      });
+
+      test("a re-diff lost to a failing queue is enqueued by the retry, and the project was told either way", async () => {
+        const { s, actionId } = await approved();
+        // `a` was re-diffed after its approve: undoing it clears its verdict.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, s.shots.a!.id));
+        h.diffQueueAdd.mockRejectedValueOnce(new Error("queue is down"));
+
+        const failed = await failure(
+          as(s.editor).review.revert.mutate({ actionId }),
+        );
+
+        // The undo committed before the enqueue failed, and the announce went
+        // out ahead of it: viewers refresh even though the queue is down.
+        expect(failed.code).toBe("INTERNAL_SERVER_ERROR");
+        expect(await revertedRows(actionId)).toHaveLength(2);
+        expect(await runStatus(s.runId)).toBe("running");
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(
+          h.broadcasterPublish.mock.calls.map(
+            ([, ev]) => (ev as { event: string }).event,
+          ),
+        ).toEqual(["testRun_updated", "build_updated"]);
+        h.diffQueueAdd.mockClear();
+
+        // The retry has nothing left to undo, but the run is still waiting
+        // for its diff: that re-diff is queued now.
+        const retry = await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(retry.reverted).toBe(0);
+        expect(retry.skipped.map((x) => x.reason)).toEqual([
+          "already_undone",
+          "already_undone",
+        ]);
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+          runId: s.runId,
+          projectId: s.projectId,
+        });
+      });
+
+      test("a retry of an approve undo whose runs all have their verdicts enqueues nothing", async () => {
+        const { s, actionId } = await approved();
+        await as(s.editor).review.revert.mutate({ actionId });
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        h.diffQueueAdd.mockClear();
+
+        const retry = await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(retry.reverted).toBe(0);
+        expect(h.diffQueueAdd).not.toHaveBeenCalled();
       });
 
       test("undoing a reject, a refused undo and a retry enqueue nothing", async () => {

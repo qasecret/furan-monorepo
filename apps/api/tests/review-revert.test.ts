@@ -354,7 +354,12 @@ d("revertAction", () => {
    */
   async function captureNow(
     s: ReviewSeed,
-    opts: { branch: string; viewport?: string },
+    opts: {
+      branch: string;
+      viewport?: string;
+      os?: string;
+      device?: string;
+    },
   ): Promise<{ runId: string; variationId: string; screenshotId: string }> {
     const viewport = opts.viewport ?? VIEWPORT;
     const [v] = await h.db
@@ -365,6 +370,8 @@ d("revertAction", () => {
         branchName: opts.branch,
         browser: BROWSER,
         viewport,
+        ...(opts.os !== undefined ? { os: opts.os } : {}),
+        ...(opts.device !== undefined ? { device: opts.device } : {}),
       })
       .onConflictDoUpdate({
         target: [
@@ -785,6 +792,33 @@ d("revertAction", () => {
           },
         }),
       ]);
+    });
+
+    test("a capture that differs from the decided variation only in os or only in device is no sibling; one that differs only in branch is", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const home = s.shots.home!;
+      const actionId = await decide(s, "approved", [target(s.runId, home.id)]);
+      const decisions = await decisionsOfAction(actionId);
+      const undoable = new Map([[decisions[0]!.id, null]]);
+
+      // Each of these is a different ADR-054 identity: not a sibling, however
+      // new the capture.
+      await captureNow(s, { branch: "main", os: "macos" });
+      expect(await assessRevert(h.db, decisions)).toEqual(undoable);
+      await captureNow(s, { branch: "main", device: "iPhone 15" });
+      expect(await assessRevert(h.db, decisions)).toEqual(undoable);
+      await captureNow(s, { branch: "main", os: "macos", device: "iPhone 15" });
+      expect(await assessRevert(h.db, decisions)).toEqual(undoable);
+
+      // The control: the same identity on another branch is a sibling.
+      await captureNow(s, { branch: "main" });
+      expect(await assessRevert(h.db, decisions)).toEqual(
+        new Map([[decisions[0]!.id, "superseded_newer_capture"]]),
+      );
     });
 
     test.each([
@@ -1349,6 +1383,109 @@ d("revertAction", () => {
         },
       ]);
       expect(res.rediffRunIds).toEqual([]);
+    });
+
+    describe("a retried undo (R30: the re-diff may have been lost after the first commit)", () => {
+      /** An approved checkpoint whose verdict a later re-diff wrote. */
+      async function approvedAndRediffed() {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const home = s.shots.home!;
+        const actionId = await decide(s, "approved", [
+          target(s.runId, home.id),
+        ]);
+        await rediffNow(home.id);
+        return { s, home, actionId };
+      }
+
+      test("asks again for the runs that still have a checkpoint without a verdict, and writes no second audit row", async () => {
+        const { s, home, actionId } = await approvedAndRediffed();
+        const first = await revert(s.editor, actionId);
+        expect(first.rediffRunIds).toEqual([s.runId]);
+        expect((await shotRow(home.id)).verdict).toBeNull();
+        expect(await revertAudit(actionId)).toHaveLength(1);
+        logger.info.mockClear();
+
+        // The caller's enqueue after the first commit was lost: the retry
+        // finds everything already undone and still names the run.
+        const retry = await revert(s.editor, actionId);
+
+        expect(retry).toEqual({
+          actionId,
+          reverted: 0,
+          skipped: [{ checkpointId: home.id, reason: "already_undone" }],
+          rediffRunIds: [s.runId],
+          runs: [{ runId: s.runId, status: "running" }],
+        });
+        expect(await revertAudit(actionId)).toHaveLength(1);
+        expect(logger.info).toHaveBeenCalledWith(
+          expect.objectContaining({ reverted: 0, skipped: 1, rediff: 1 }),
+          "review_reverted",
+        );
+      });
+
+      test("stops asking once the re-diff has landed", async () => {
+        const { s, home, actionId } = await approvedAndRediffed();
+        await revert(s.editor, actionId);
+        await rediffNow(home.id);
+
+        const retry = await revert(s.editor, actionId);
+
+        expect(retry.rediffRunIds).toEqual([]);
+        expect(retry.skipped).toEqual([
+          { checkpointId: home.id, reason: "already_undone" },
+        ]);
+      });
+
+      test("names only the action's runs that are still waiting for a diff", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const r2 = await addReviewRun(h, s, {
+          checkpoints: [{ name: "cart", verdict: "unresolved" }],
+        });
+        const actionId = await decide(s, "approved", [
+          target(s.runId, s.shots.home!.id),
+          target(r2.runId, r2.shots.cart!.id),
+        ]);
+        await revert(s.editor, actionId);
+        // Only the second run is still waiting for its diff.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: null, verdictAt: null })
+          .where(eq(screenshots.id, r2.shots.cart!.id));
+
+        const retry = await revert(s.editor, actionId);
+
+        expect(retry.reverted).toBe(0);
+        expect(retry.rediffRunIds).toEqual([r2.runId]);
+      });
+
+      test("an undone reject never asks for a re-diff, whatever the verdicts", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+            { name: "cart", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const actionId = await decide(s, "rejected", [
+          target(s.runId, s.shots.home!.id),
+        ]);
+        await revert(s.editor, actionId);
+        await h.db
+          .update(screenshots)
+          .set({ verdict: null, verdictAt: null })
+          .where(eq(screenshots.id, s.shots.cart!.id));
+
+        const retry = await revert(s.editor, actionId);
+
+        expect(retry.rediffRunIds).toEqual([]);
+      });
     });
   });
 
