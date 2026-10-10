@@ -2,10 +2,8 @@
 
 import {
   isPending,
-  reviewRefusalReasonSchema,
   type ApproveBuildPreview,
   type CheckpointDecisionKind,
-  type ReviewErrorDetails,
 } from "@furan/shared-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
@@ -26,7 +24,11 @@ import {
   type Actor,
   type ReviewChange,
 } from "./optimistic";
-import { describeRefusal, describeSkip } from "./review-copy";
+import {
+  describeReviewError,
+  describeSkip,
+  type ReviewError,
+} from "./review-copy";
 import { useUndoStore } from "./use-undo-store";
 
 import { trpc, type RouterInputs, type RouterOutputs } from "@/lib/trpc";
@@ -64,13 +66,6 @@ export interface ApproveBuildArgs {
   onConflict(preview: ApproveBuildPreview): void;
 }
 
-/** What the server tells the client when a review call is refused. */
-interface ReviewError {
-  message: string;
-  data?: { code?: string; details?: ReviewErrorDetails } | null;
-}
-
-const GENERIC_ERROR = "Couldn't save your review. Try again.";
 const UNDO_TOAST_MS = 10_000;
 
 /** Shown for a decision until the refetch brings the real reviewer back. */
@@ -97,6 +92,14 @@ export const useInFlightStore = create<InFlightState>((set) => ({
       return { ids: next };
     }),
 }));
+
+/**
+ * Whether one checkpoint has a decision in flight. It selects a boolean, so a
+ * component using it (one card of many) re-renders only for its own checkpoint.
+ */
+export function useIsInFlight(checkpointId: string): boolean {
+  return useInFlightStore((s) => s.ids.has(checkpointId));
+}
 
 /**
  * What a call needs from the moment it is made until it settles. The tRPC
@@ -141,6 +144,16 @@ function start(actionId: string, action: Action, send: () => void): void {
   }
 }
 
+/**
+ * The optimistic patch is a courtesy, so its failures never reach the user,
+ * but a bug in it should not hide either: say so, outside production.
+ */
+function warnPatchFailed(what: string, error: unknown): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(`review: the optimistic ${what} failed`, error);
+  }
+}
+
 /** Takes the action's own patch back off the caches, as they are now. */
 function rollBack(caches: Caches, action: Action): void {
   const { rollback } = action;
@@ -149,8 +162,9 @@ function rollBack(caches: Caches, action: Action): void {
   for (const runId of action.runIds) {
     try {
       patchRun(caches, runId, rollback);
-    } catch {
+    } catch (error) {
       // Best effort: the refetch that follows every call corrects the rest.
+      warnPatchFailed("rollback", error);
     }
   }
 }
@@ -166,28 +180,6 @@ function newActionId(): string {
   b[8] = ((b[8] ?? 0) & 0x3f) | 0x80;
   const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-
-/** The toast for a failed call, from the error the server gave. */
-function errorText(
-  err: ReviewError,
-  stepName: (checkpointId: string) => string | undefined,
-): string {
-  const code = err.data?.code;
-  const details = err.data?.details;
-  if (code === "CONFLICT" && err.message === "already_decided") {
-    const winner = details?.winner;
-    if (!winner) return describeRefusal("already_decided");
-    return `${winner.actorName ?? "Someone"} already ${winner.kind} ${stepName(winner.checkpointId) ?? "this step"}`;
-  }
-  if (code === "PRECONDITION_FAILED") {
-    const reason = reviewRefusalReasonSchema.safeParse(err.message);
-    if (reason.success) return describeRefusal(reason.data);
-  }
-  if (code === "FORBIDDEN" && err.message === "not_decider") {
-    return describeSkip("not_decider");
-  }
-  return GENERIC_ERROR;
 }
 
 /**
@@ -219,9 +211,10 @@ export function useReviewMutations() {
       for (const runId of action.runIds) {
         patchRun(caches, runId, action.change);
       }
-    } catch {
-      // The patch is only a courtesy: whatever went wrong with it, the call
-      // still goes out, and the refetch that follows shows the truth.
+    } catch (error) {
+      // Whatever went wrong with the patch, the call still goes out, and the
+      // refetch that follows shows the truth.
+      warnPatchFailed("patch", error);
       rollBack(caches, action);
     }
   };
@@ -241,7 +234,7 @@ export function useReviewMutations() {
       return;
     }
     toast.error(
-      errorText(
+      describeReviewError(
         err,
         (checkpointId) =>
           action.runIds

@@ -54,6 +54,17 @@ function revertOne<T extends Review>(c: T): T {
   return { ...c, state: c.verdict, decision: null };
 }
 
+/**
+ * The legacy `status` alias `listCheckpoints` keeps beside `state` until the
+ * alias is removed: a decision shows as passed or failed, otherwise the verdict.
+ * Kept in step with the patched `state` so a cached item never contradicts itself.
+ */
+function legacyStatus(c: CheckpointItem): CheckpointItem["status"] {
+  if (c.state === "approved") return "passed";
+  if (c.state === "rejected") return "failed";
+  return c.verdict ?? c.status;
+}
+
 /** Rewrites one checkpoint's review fields, or returns it as it is. */
 type Rewrite = <T extends Review>(id: string, c: T) => T;
 
@@ -97,7 +108,10 @@ export interface ReviewChange {
 function changeOf(rewrite: Rewrite): ReviewChange {
   return {
     items: (items) => {
-      const next = items.map((i) => rewrite(i.id, i));
+      const next = items.map((i) => {
+        const n = rewrite(i.id, i);
+        return n === i ? i : { ...n, status: legacyStatus(n) };
+      });
       return next.some((n, k) => n !== items[k]) ? next : items;
     },
     run: (run, items) => {

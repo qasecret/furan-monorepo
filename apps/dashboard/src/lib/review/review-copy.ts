@@ -1,6 +1,8 @@
-import type {
-  RevertSkipReason,
-  ReviewRefusalReason,
+import {
+  reviewRefusalReasonSchema,
+  type RevertSkipReason,
+  type ReviewErrorDetails,
+  type ReviewRefusalReason,
 } from "@furan/shared-types";
 
 /**
@@ -36,4 +38,40 @@ export function describeRefusal(reason: ReviewRefusalReason): string {
 /** Why an undo left a decision as it was: a fragment that follows "because". */
 export function describeSkip(reason: RevertSkipReason | "not_decider"): string {
   return SKIP[reason];
+}
+
+/** What the server tells the client when a review call is refused or fails. */
+export interface ReviewError {
+  /** The refusal word, e.g. `already_decided`, for a review refusal. */
+  message: string;
+  data?: { code?: string; details?: ReviewErrorDetails } | null;
+}
+
+const GENERIC_ERROR = "Couldn't save your review. Try again.";
+
+/**
+ * The toast for a failed review call. `stepName` finds a step's name by id for
+ * the "already decided" message; a step it does not know reads as "this step".
+ */
+export function describeReviewError(
+  err: ReviewError,
+  stepName: (checkpointId: string) => string | undefined,
+): string {
+  const code = err.data?.code;
+  if (code === "CONFLICT" && err.message === "already_decided") {
+    const winner = err.data?.details?.winner;
+    // Without a clear winner there is no one to name.
+    if (winner?.kind !== "approved" && winner?.kind !== "rejected") {
+      return describeRefusal("already_decided");
+    }
+    return `${winner.actorName ?? "Someone"} already ${winner.kind} ${stepName(winner.checkpointId) ?? "this step"}`;
+  }
+  if (code === "PRECONDITION_FAILED") {
+    const reason = reviewRefusalReasonSchema.safeParse(err.message);
+    if (reason.success) return describeRefusal(reason.data);
+  }
+  if (code === "FORBIDDEN" && err.message === "not_decider") {
+    return describeSkip("not_decider");
+  }
+  return GENERIC_ERROR;
 }

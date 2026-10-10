@@ -114,6 +114,7 @@ vi.mock("sonner", () => ({
 
 import {
   useInFlightStore,
+  useIsInFlight,
   useReviewMutations,
   type DecideArgs,
 } from "../src/lib/review/use-review-mutations";
@@ -138,16 +139,26 @@ const review = (verdict: string, state = verdict) => ({
 interface Item {
   id: string;
   name: string;
+  /** The legacy alias of the state; the patches keep it in step. */
+  status: string;
   verdict: string;
   state: string;
   decision: { actionId: string; kind: string } | null;
 }
 
 const seedItems = (): Item[] => [
-  { id: A, name: "home", ...review("unresolved") },
-  { id: B, name: "pricing", ...review("new") },
-  { id: C, name: "footer", ...review("passed") },
+  { id: A, name: "home", status: "unresolved", ...review("unresolved") },
+  { id: B, name: "pricing", status: "new", ...review("new") },
+  { id: C, name: "footer", status: "passed", ...review("passed") },
 ];
+
+/** What `runs.getById` carries per checkpoint: the review fields, no name or alias. */
+const contextOf = ({ verdict, state, decision }: Item) => ({
+  verdict,
+  state,
+  decision,
+  newerCapture: null,
+});
 
 function seed(
   loaded: {
@@ -170,7 +181,7 @@ function seed(
       status: "unresolved",
       statusOverride: null,
       checkpointContexts: Object.fromEntries(
-        seedItems().map(({ id, ...rest }) => [id, rest]),
+        seedItems().map((i) => [i.id, contextOf(i)]),
       ),
     });
   }
@@ -206,7 +217,10 @@ const itemsCache = () =>
 const runCache = () =>
   qc.getQueryData<{
     status: string;
-    checkpointContexts: Record<string, Omit<Item, "id" | "name">>;
+    checkpointContexts: Record<
+      string,
+      Pick<Item, "verdict" | "state" | "decision">
+    >;
   }>(keyOf(["runs", "getById"], { runId: RUN }));
 const listRows = () =>
   qc.getQueryData<{ items: Array<{ id: string; status: string }> }>(
@@ -499,9 +513,10 @@ describe("useReviewMutations: optimistic decide", () => {
     await run();
   });
 
-  it("never lets a broken cache stop the call or leave a half patch behind", async () => {
+  it("never lets a broken cache stop the call or leave a half patch behind, and says so outside production", async () => {
     seed();
     const before = snapshotCaches();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     utils.runs.getById.getData.mockReturnValueOnce({ status: "unresolved" });
     const { result, run } = setup();
 
@@ -516,6 +531,64 @@ describe("useReviewMutations: optimistic decide", () => {
 
     expect(server.approve).toHaveBeenCalledTimes(1);
     expect(itemsCache()).toEqual(before.items);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("optimistic patch failed"),
+      expect.any(TypeError),
+    );
+    warn.mockRestore();
+  });
+
+  it("stays quiet about a broken patch in production", async () => {
+    seed();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubEnv("NODE_ENV", "production");
+    utils.runs.getById.getData.mockReturnValueOnce({ status: "unresolved" });
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+
+    expect(server.approve).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it("waits for the running fetches to be cancelled before it patches or calls", async () => {
+    seed();
+    const cancelled = deferred<undefined>();
+    utils.runs.listCheckpoints.cancel.mockReturnValueOnce(cancelled.promise);
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+
+    // The cancel has not resolved: nothing is written, and nothing is sent.
+    expect(utils.runs.listCheckpoints.cancel).toHaveBeenCalledTimes(1);
+    expect(utils.runs.listCheckpoints.setData).not.toHaveBeenCalled();
+    expect(utils.runs.getById.setData).not.toHaveBeenCalled();
+    expect(itemState(A)).toBe("unresolved");
+    expect(server.approve).not.toHaveBeenCalled();
+
+    cancelled.resolve(undefined);
+    await run();
+
+    expect(utils.runs.listCheckpoints.setData).toHaveBeenCalledTimes(1);
+    expect(itemState(A)).toBe("approved");
+    expect(server.approve).toHaveBeenCalledTimes(1);
   });
 
   it("writes nothing when the patch reaches nothing", async () => {
@@ -716,6 +789,43 @@ describe("useReviewMutations: in flight", () => {
     first.resolve(decided());
     await run();
     expect(result.current.isInFlight(A)).toBe(false);
+  });
+
+  it("tells a card about its own checkpoint only", async () => {
+    seed();
+    const first = deferred();
+    server.approve.mockReturnValueOnce(first.promise);
+    let renders = 0;
+    const card = renderHook(
+      () => {
+        renders += 1;
+        return useIsInFlight(C);
+      },
+      { wrapper },
+    );
+    const { result, run } = setup();
+    const rendersBefore = renders;
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+
+    // A is in flight; the card for C neither says so nor re-renders for it.
+    expect(useInFlightStore.getState().ids.has(A)).toBe(true);
+    expect(card.result.current).toBe(false);
+    expect(renders).toBe(rendersBefore);
+
+    const forA = renderHook(() => useIsInFlight(A), { wrapper });
+    expect(forA.result.current).toBe(true);
+
+    first.resolve(decided());
+    await run();
+    expect(forA.result.current).toBe(false);
   });
 
   it("frees the checkpoint again after a failure", async () => {
@@ -925,7 +1035,9 @@ describe("useReviewMutations: undo", () => {
     const decision = { actionId: ACTION, kind: "approved" };
     qc.setQueryData(keyOf(["runs", "listCheckpoints"], { runId: RUN }), {
       items: seedItems().map((i) =>
-        i.id === A ? { ...i, state: "approved", decision } : i,
+        i.id === A
+          ? { ...i, state: "approved", status: "passed", decision }
+          : i,
       ),
     });
     qc.setQueryData(keyOf(["runs", "getById"], { runId: RUN }), {
@@ -934,9 +1046,9 @@ describe("useReviewMutations: undo", () => {
       status: "new",
       statusOverride: null,
       checkpointContexts: Object.fromEntries(
-        seedItems().map(({ id, ...rest }) => [
-          id,
-          id === A ? { ...rest, state: "approved", decision } : rest,
+        seedItems().map((i) => [
+          i.id,
+          contextOf(i.id === A ? { ...i, state: "approved", decision } : i),
         ]),
       ),
     });
@@ -1162,6 +1274,7 @@ describe("useReviewMutations: undo", () => {
         {
           id: "cp-d",
           name: "settings",
+          status: "passed",
           ...review("unresolved", "approved"),
           decision: { actionId: ACTION, kind: "approved" },
         },

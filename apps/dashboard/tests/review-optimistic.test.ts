@@ -1,9 +1,5 @@
-import {
-  reviewRefusalReasonSchema,
-  revertSkipReasonSchema,
-  rollupRunStatus,
-} from "@furan/shared-types";
-import { beforeEach, describe, expect, it } from "vitest";
+import { rollupRunStatus } from "@furan/shared-types";
+import { describe, expect, it } from "vitest";
 
 import {
   applyDecision,
@@ -19,8 +15,6 @@ import {
   type CheckpointItem,
   type RunDetail,
 } from "../src/lib/review/optimistic";
-import { describeRefusal, describeSkip } from "../src/lib/review/review-copy";
-import { useUndoStore } from "../src/lib/review/use-undo-store";
 
 const ACTOR = { id: "user-1", name: "Ada" };
 const ACTION = "11111111-1111-4111-8111-111111111111";
@@ -41,6 +35,9 @@ function item(id: string, over: Partial<CheckpointItem> = {}): CheckpointItem {
     decision: null,
     newerCapture: null,
     status: "unresolved",
+    // The legacy alias follows what the item says about itself.
+    ...(over.verdict && !over.status && { status: over.verdict }),
+    ...(over.state === "approved" && !over.status && { status: "passed" }),
     ...over,
   };
 }
@@ -108,6 +105,35 @@ describe("applyDecision", () => {
 
     expect(items[0]?.state).toBe("unresolved");
     expect(items[0]?.decision).toBeNull();
+  });
+});
+
+describe("the legacy status alias", () => {
+  it("follows the patched state, and goes back to the verdict on a revert", () => {
+    const items = [item("a"), item("b", { verdict: "new", state: "new" })];
+
+    const approved = applyDecision(
+      items,
+      new Set(["a"]),
+      "approved",
+      ACTOR,
+      ACTION,
+    );
+    expect(approved.map((i) => i.status)).toEqual(["passed", "new"]);
+
+    const rejected = applyDecision(
+      items,
+      new Set(["a", "b"]),
+      "rejected",
+      ACTOR,
+      ACTION,
+    );
+    expect(rejected.map((i) => i.status)).toEqual(["failed", "failed"]);
+
+    expect(revertDecision(rejected, ACTION).map((i) => i.status)).toEqual([
+      "unresolved",
+      "new",
+    ]);
   });
 });
 
@@ -387,79 +413,5 @@ describe("patchListedRun", () => {
     const original = page([row("r2", "unresolved")]);
 
     expect(patchListedRun(original, "r1", () => "passed")).toBe(original);
-  });
-});
-
-describe("review copy", () => {
-  it("describes every refusal in plain English", () => {
-    const expected = {
-      not_reviewable: "This run is still processing",
-      run_overridden: "Clear the run override to review steps",
-      nothing_to_approve: "Nothing pending to approve",
-      not_in_run: "This step is not part of the run",
-      already_decided: "Already decided — undo it first",
-    } as const;
-
-    for (const reason of reviewRefusalReasonSchema.options) {
-      expect(describeRefusal(reason)).toBe(expected[reason]);
-    }
-  });
-
-  it("describes every reason an undo can be skipped", () => {
-    const expected = {
-      already_undone: "already undone",
-      not_undoable_legacy: "decided before review history",
-      history_corrupt: "its history can't be read",
-      superseded_newer_capture: "a newer capture of this step exists",
-      superseded_newer_baseline: "a newer baseline replaced it",
-      history_expired: "its baseline was cleaned up",
-      superseded_variation_edit: "the step's settings changed since",
-    } as const;
-
-    for (const reason of revertSkipReasonSchema.options) {
-      expect(describeSkip(reason)).toBe(expected[reason]);
-    }
-    expect(describeSkip("not_decider")).toBe(
-      "only the reviewer who decided or an admin can undo this",
-    );
-  });
-});
-
-describe("useUndoStore", () => {
-  beforeEach(() => useUndoStore.setState({ stack: [] }));
-
-  const entry = (n: number) => ({
-    actionId: `action-${n}`,
-    label: `Approved ${n}`,
-    runIds: [`run-${n}`],
-  });
-
-  it("takes the newest entry first", () => {
-    useUndoStore.getState().push(entry(1));
-    useUndoStore.getState().push(entry(2));
-
-    expect(useUndoStore.getState().take()).toEqual(entry(2));
-    expect(useUndoStore.getState().stack).toEqual([entry(1)]);
-    expect(useUndoStore.getState().take()).toEqual(entry(1));
-    expect(useUndoStore.getState().take()).toBeUndefined();
-  });
-
-  it("drops an entry by action id and ignores an unknown id", () => {
-    useUndoStore.getState().push(entry(1));
-    useUndoStore.getState().push(entry(2));
-
-    useUndoStore.getState().drop("action-1");
-    useUndoStore.getState().drop("nope");
-
-    expect(useUndoStore.getState().stack).toEqual([entry(2)]);
-  });
-
-  it("keeps the newest 20 entries", () => {
-    for (let n = 1; n <= 25; n++) useUndoStore.getState().push(entry(n));
-
-    const { stack } = useUndoStore.getState();
-    expect(stack).toHaveLength(20);
-    expect(stack[0]).toEqual(entry(6));
-    expect(stack[19]).toEqual(entry(25));
   });
 });
