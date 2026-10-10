@@ -1,5 +1,6 @@
-import type { RunStatus } from "@furan/shared-types";
+import type { CheckpointReviewState, RunStatus } from "@furan/shared-types";
 import {
+  BadgeCheck,
   Ban,
   CircleAlert,
   CircleCheck,
@@ -8,6 +9,7 @@ import {
   CircleX,
   LoaderCircle,
   type LucideIcon,
+  ThumbsDown,
 } from "lucide-react";
 
 /**
@@ -116,5 +118,35 @@ export const STATUS_STYLE = {
 export function statusStyle(status: string): StatusStyle {
   return Object.hasOwn(STATUS_STYLE, status)
     ? STATUS_STYLE[status as RunStatus]
+    : STATUS_STYLE.empty;
+}
+
+/**
+ * Per-checkpoint review state. A reviewer's decision replaces the diff verdict,
+ * so `approved` keeps the `passed` colours and `rejected` keeps the `failed`
+ * colours, each with its own icon, label and tooltip.
+ */
+export const REVIEW_STATE_STYLE = {
+  new: STATUS_STYLE.new,
+  passed: STATUS_STYLE.passed,
+  unresolved: STATUS_STYLE.unresolved,
+  approved: {
+    ...STATUS_STYLE.passed,
+    icon: BadgeCheck,
+    label: "Approved",
+    tooltip: "Approved by a reviewer",
+  },
+  rejected: {
+    ...STATUS_STYLE.failed,
+    icon: ThumbsDown,
+    label: "Rejected",
+    tooltip: "Rejected by a reviewer",
+  },
+} as const satisfies Record<CheckpointReviewState, StatusStyle>;
+
+/** Style for a review state; anything unrecognised renders as `empty`. */
+export function reviewStateStyle(state: string): StatusStyle {
+  return Object.hasOwn(REVIEW_STATE_STYLE, state)
+    ? REVIEW_STATE_STYLE[state as CheckpointReviewState]
     : STATUS_STYLE.empty;
 }
