@@ -225,8 +225,8 @@ d("revertAction", () => {
     decision: "approved" | "rejected",
     targets: Array<{ runId: string; screenshotId: string }>,
     by: ReviewUser = s.editor,
+    actionId: string = randomUUID(),
   ): Promise<string> {
-    const actionId = randomUUID();
     await h.db.transaction((tx) =>
       decideCheckpoints(
         tx,
@@ -532,7 +532,8 @@ d("revertAction", () => {
         actionId,
         reverted: 1,
         skipped: [],
-        rediffRunIds: [],
+        // Every run with an approve undone is re-diffed (R28).
+        rediffRunIds: [s.runId],
         runs: [{ runId: s.runId, status: "unresolved" }],
       });
       const run = await runRow(s.runId);
@@ -568,7 +569,7 @@ d("revertAction", () => {
           action_id: actionId,
           reverted: 1,
           skipped: 0,
-          rediff: 0,
+          rediff: 1,
         },
         "review_reverted",
       );
@@ -1267,7 +1268,7 @@ d("revertAction", () => {
       );
     });
 
-    test("one microsecond before the decision: the verdict stands", async () => {
+    test("one microsecond before the decision: the verdict stands, but the run is still re-diffed (R28)", async () => {
       const s = await seed({
         checkpoints: [
           { name: "home", verdict: "unresolved", withBaseline: true },
@@ -1285,9 +1286,69 @@ d("revertAction", () => {
 
       const res = await revert(s.editor, actionId);
 
-      expect(res.rediffRunIds).toEqual([]);
+      expect(res.rediffRunIds).toEqual([s.runId]);
       expect(res.runs).toEqual([{ runId: s.runId, status: "unresolved" }]);
       expect((await shotRow(home.id)).verdict).toBe("unresolved");
+    });
+
+    test("every run with an approve undone is re-diffed, once, ascending; a run with only rejects undone is not (R28)", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+          { name: "cart", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const r2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "home", verdict: "unresolved" }],
+      });
+      const r3 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "login", verdict: "unresolved" }],
+      });
+      const approved = await decide(s, "approved", [
+        target(s.runId, s.shots.home!.id),
+        target(s.runId, s.shots.cart!.id),
+        target(r2.runId, r2.shots.home!.id),
+      ]);
+      const rejected = await decide(s, "rejected", [
+        target(r3.runId, r3.shots.login!.id),
+      ]);
+
+      // Two approves in one run and one in another: each run once, ascending.
+      const first = await revert(s.editor, approved);
+      expect(first.reverted).toBe(3);
+      expect(first.rediffRunIds).toEqual([s.runId, r2.runId].sort());
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ action_id: approved, rediff: 2 }),
+        "review_reverted",
+      );
+
+      // A reject changes no baseline: nothing for a re-diff to correct.
+      const second = await revert(s.editor, rejected);
+      expect(second.reverted).toBe(1);
+      expect(second.rediffRunIds).toEqual([]);
+    });
+
+    test("a run whose only approve is refused is not re-diffed (R28)", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const actionId = await decide(s, "approved", [
+        target(s.runId, s.shots.home!.id),
+      ]);
+      await captureNow(s, { branch: "release/1" });
+
+      const res = await revert(s.editor, actionId);
+
+      expect(res.reverted).toBe(0);
+      expect(res.skipped).toEqual([
+        {
+          checkpointId: s.shots.home!.id,
+          reason: "superseded_newer_capture",
+        },
+      ]);
+      expect(res.rediffRunIds).toEqual([]);
     });
   });
 
@@ -1315,7 +1376,7 @@ d("revertAction", () => {
       actionId,
       reverted: 1,
       skipped: [],
-      rediffRunIds: [],
+      rediffRunIds: [s.runId],
       runs: [{ runId: s.runId, status: "unresolved" }],
     });
     expect(await baselinesOfRun(s.runId)).toEqual([]);
@@ -1481,6 +1542,88 @@ d("revertAction", () => {
 
       // The action's own project is fine.
       expect((await revert(s.editor, actionId, s.projectId)).reverted).toBe(1);
+    });
+
+    describe("an action id used in two projects", () => {
+      /** The same client-generated action id, decided in two projects. */
+      async function spanningAction(
+        decidedInB: (a: ReviewSeed, b: ReviewSeed) => ReviewUser = (_a, b) =>
+          b.editor,
+      ) {
+        const a = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const b = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const actionId = randomUUID();
+        await decide(
+          a,
+          "approved",
+          [target(a.runId, a.shots.home!.id)],
+          a.editor,
+          actionId,
+        );
+        await decide(
+          b,
+          "approved",
+          [target(b.runId, b.shots.home!.id)],
+          decidedInB(a, b),
+          actionId,
+        );
+        return { a, b, actionId };
+      }
+
+      test("authorisation comes first: a caller who did not decide it all learns nothing about the second project", async () => {
+        const { a, b, actionId } = await spanningAction();
+
+        // Neither the stranger nor either project's own decider (each decided
+        // only one half) gets action_spans_projects, which would confirm that
+        // the action exists elsewhere.
+        for (const who of [a.outsider, a.editor, b.editor]) {
+          expect(refusal(await rejection(revert(who, actionId)))).toEqual({
+            code: "FORBIDDEN",
+            message: "not_decider",
+          });
+        }
+        expect(
+          (await decisionsOfAction(actionId)).every(
+            (x) => x.revertedAt === null,
+          ),
+        ).toBe(true);
+      });
+
+      test("an authorised caller without a project is told the action is ambiguous; with the project it is undone there only", async () => {
+        const { a, b, actionId } = await spanningAction();
+
+        expect(refusal(await rejection(revert(a.admin, actionId)))).toEqual({
+          code: "BAD_REQUEST",
+          message: "action_spans_projects",
+        });
+        expect(await revertAudit(actionId)).toEqual([]);
+
+        const res = await revert(a.admin, actionId, a.projectId);
+
+        expect(res.reverted).toBe(1);
+        const rows = await decisionsOfAction(actionId);
+        expect(
+          rows.filter((x) => x.revertedAt !== null).map((x) => x.projectId),
+        ).toEqual([a.projectId]);
+        expect(await baselinesOfRun(b.runId)).toHaveLength(1);
+      });
+
+      test("the one user who decided both halves is authorised, then told the action is ambiguous", async () => {
+        const { a, actionId } = await spanningAction((a) => a.editor);
+
+        expect(refusal(await rejection(revert(a.editor, actionId)))).toEqual({
+          code: "BAD_REQUEST",
+          message: "action_spans_projects",
+        });
+      });
     });
   });
 

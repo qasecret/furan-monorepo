@@ -64,9 +64,13 @@ export interface RevertResult {
   /** Decisions left as they were, in the order the action wrote them. */
   skipped: Array<{ checkpointId: string; reason: RevertSkipReason }>;
   /**
-   * Runs (ascending id) with a checkpoint re-diffed after its approve: its
-   * verdict was computed against the baseline just undone, so it is cleared
-   * and the caller must enqueue a re-diff after commit.
+   * Runs (ascending id) with at least one approve undone: the caller must
+   * enqueue a re-diff for each after commit (R28). A checkpoint re-diffed
+   * since its approve had its verdict computed against the baseline just
+   * undone, so it is cleared here and its run is `running` until the re-diff
+   * lands. For every other undone approve the verdict stands, but a diff job
+   * already in flight when the undo committed may still write a verdict
+   * computed against that baseline; the re-diff corrects it.
    */
   rediffRunIds: string[];
   /** Each of the action's runs and its status afterwards, ascending run id. */
@@ -772,7 +776,9 @@ async function restoreApprove(
  * 1. Loads the action; unknown (in `input.projectId`, when given) →
  *    `NOT_FOUND action_not_found`. Authorises before any lock or write: every
  *    decision must be the actor's, unless the actor is an admin or owner →
- *    otherwise `FORBIDDEN not_decider`.
+ *    otherwise `FORBIDDEN not_decider`. Only then, with no `projectId` given,
+ *    an action found in two projects is refused as `BAD_REQUEST
+ *    action_spans_projects`.
  * 2. Locks the action's runs, then the variations its approves would restore,
  *    both `FOR NO KEY UPDATE` in ascending id order (R8, as the decision core
  *    does), and re-reads the action under those locks (a concurrent undo has
@@ -790,6 +796,12 @@ async function restoreApprove(
  *
  * Skipped decisions are reported, not fatal. Enqueueing `rediffRunIds` and
  * broadcasting are the caller's job, after commit.
+ *
+ * Known limitation (R29): a new capture of the same variation that commits
+ * while an undo runs is not seen by the assessment (a capture takes neither
+ * the run nor the variation locks), so its diff may be computed against the
+ * baseline being undone. This is accepted; the next capture of the variation
+ * is diffed against the restored baseline and corrects it.
  */
 export async function revertAction(
   tx: Tx,
@@ -809,12 +821,14 @@ export async function revertAction(
   if (recorded.length === 0) {
     throw reviewError("NOT_FOUND", "action_not_found");
   }
+  authorise(actor, recorded);
   const projectId = recorded[0]!.projectId;
   if (recorded.some((d) => d.projectId !== projectId)) {
     // The same client-generated id in two projects: two different actions.
+    // Said only to a caller already authorised for all of it, so a stranger
+    // cannot learn that an action exists in another project.
     throw reviewError("BAD_REQUEST", "action_spans_projects");
   }
-  authorise(actor, recorded);
 
   // 2. Locks (R8), then the action as it is under them.
   const runs = await lockRuns(
@@ -856,7 +870,8 @@ export async function revertAction(
   });
   const undoableApproves = undoable.filter((d) => restoreOf(d) !== null);
   // Re-diffed since the approve: that verdict was computed against the
-  // baseline being undone. Compared in SQL, at µs precision.
+  // baseline being undone, so it is cleared now. Compared in SQL, at µs
+  // precision.
   const rediffed =
     undoableApproves.length === 0
       ? new Set<string>()
@@ -880,10 +895,10 @@ export async function revertAction(
               )
           ).map((r) => r.id),
         );
+  // Every run with an approve undone is re-diffed after commit (R28): a diff
+  // job already in flight may yet write a verdict against the undone baseline.
   const rediffRunIds = [
-    ...new Set(
-      undoableApproves.filter((d) => rediffed.has(d.id)).map((d) => d.runId),
-    ),
+    ...new Set(undoableApproves.map((d) => d.runId)),
   ].sort();
 
   // 4. The writes, atomic on their own (R16), newest decision first.
