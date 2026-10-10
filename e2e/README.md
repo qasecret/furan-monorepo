@@ -108,9 +108,10 @@ means every screenshot test passed.
 
 **What the sweep does not cover.** A green sweep says nothing about:
 
-- **The project, builds, build and runs screens as such.** `project`,
-  `builds`, `build` and `runs` all redirect to the fixture's batch page, so
-  those four shots are the same screen.
+- **The project, builds and runs screens as such.** `project`, `builds` and
+  `runs` redirect to the latest batch (the multi-step build), so those three
+  shots are the same screen as `build-multi`; `build` shows the single-step
+  build.
 - **States the fixture never renders:** empty and error states, a selected
   region, menus opened from the keyboard, settings tabs other than the
   default, and toasts. (The multi-step run covers step arrows and the

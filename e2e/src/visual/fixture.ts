@@ -60,16 +60,18 @@ const isId = (v: unknown): v is string => typeof v === "string" && v !== "";
  * lacks a single-step id is no fixture at all.
  */
 function readFixture(): (SingleFixture & Partial<MultiFixture>) | null {
-  let raw: Record<string, unknown>;
+  let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(FIXTURE_FILE, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    raw = JSON.parse(readFileSync(FIXTURE_FILE, "utf8"));
   } catch {
     return null;
   }
-  const { projectId, buildId, unresolvedRunId, multiRunId, multiBuildId } = raw;
+  // `null`, an array or a scalar parses fine but is no fixture either.
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const { projectId, buildId, unresolvedRunId, multiRunId, multiBuildId } =
+    raw as Record<string, unknown>;
   if (!isId(projectId) || !isId(buildId) || !isId(unresolvedRunId)) {
     return null;
   }
