@@ -151,8 +151,10 @@ test.describe.serial("review: partial approval and undo", () => {
     expect(result.runs).toEqual([
       { runId: candidate.runId, status: "unresolved" },
     ]);
-    // Undo queues a re-diff of the run; it must land on the same verdicts, so
-    // wait for the run to settle (never a fixed sleep), then read both views.
+    // Undo queues a re-diff of the run. This poll tolerates a transient
+    // `running` while that re-diff is in flight (never a fixed sleep). It
+    // cannot tell a re-diff that has already landed from one still to come, so
+    // it does not prove a later re-diff leaves these verdicts alone.
     const settle = { intervals: [500, 1_000, 2_000], timeout: 30_000 };
     await expect.poll(sdkStatus, settle).toBe("unresolved");
     await expect

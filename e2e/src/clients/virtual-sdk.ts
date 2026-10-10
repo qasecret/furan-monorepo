@@ -109,6 +109,38 @@ export async function pollRunStatus(
   );
 }
 
+/**
+ * Wait until `runs.listCheckpoints` shows every checkpoint in `checkpointIds`
+ * with a verdict (a non-null `state`), or until `timeoutMs`. A multi-step run's
+ * status alone is not proof its steps were all diffed: a step uploaded after an
+ * earlier step's diff finished could leave the run looking settled. Reading the
+ * steps themselves is.
+ */
+export async function waitForCheckpointVerdicts(
+  api: ApiClient,
+  pat: string,
+  runId: string,
+  checkpointIds: string[],
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let waitingOn: string[] = checkpointIds;
+  while (Date.now() < deadline) {
+    const { items } = await api.trpcQuery<{
+      items: Array<{ id: string; state: string | null }>;
+    }>(pat, "runs.listCheckpoints", { runId });
+    const diffed = new Set(
+      items.filter((c) => c.state !== null).map((c) => c.id),
+    );
+    waitingOn = checkpointIds.filter((id) => !diffed.has(id));
+    if (waitingOn.length === 0) return;
+    await sleep(500);
+  }
+  throw new Error(
+    `run ${runId}: ${waitingOn.length} of ${checkpointIds.length} checkpoints had no verdict within ${timeoutMs}ms (${waitingOn.join(", ")})`,
+  );
+}
+
 export async function capture(
   api: ApiClient,
   input: CaptureInput,
@@ -168,10 +200,11 @@ export async function capture(
 
 /**
  * Capture one run with several checkpoints: ONE build and ONE run, one upload
- * per checkpoint in the order given, then complete and wait for the verdict —
- * the flow of a multi-step test. The run is named after the first checkpoint.
- * Every checkpoint is uploaded with the base64 endpoint; `matchLevel` /
- * accessibility options (multipart only) are not supported here, use `capture`.
+ * per checkpoint in the order given, then complete and wait for the verdict of
+ * the run and of every checkpoint — the flow of a multi-step test. The run is
+ * named after the first checkpoint. Every checkpoint is uploaded with the
+ * base64 endpoint; `matchLevel` / accessibility options (multipart only) are
+ * not supported here, use `capture`.
  */
 export async function captureRun(
   api: ApiClient,
@@ -214,6 +247,16 @@ export async function captureRun(
     checkpointIds[checkpoint.name] = uploaded.checkpointId;
   }
   await api.completeRun(input.pat, run.runId);
+  await pollRunStatus(api, input.pat, run.runId);
+  // Every step must be diffed before the caller acts on the run, whatever
+  // status it reads: wait for each step's verdict, then read the status again
+  // so the result reflects the settled run.
+  await waitForCheckpointVerdicts(
+    api,
+    input.pat,
+    run.runId,
+    Object.values(checkpointIds),
+  );
   const settled = await pollRunStatus(api, input.pat, run.runId);
   return {
     buildId: build.id,
