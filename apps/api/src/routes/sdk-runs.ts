@@ -4,6 +4,7 @@ import {
   builds,
   eq,
   isNull,
+  recomputeRunStatus,
   screenshots,
   sql,
   testRuns,
@@ -459,6 +460,15 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
         .update(testRuns)
         .set({ checkpointCount: sql`${testRuns.checkpointCount} + 1` })
         .where(eq(testRuns.id, run.id));
+
+      // The new checkpoint has no verdict yet, so the run is `running` until
+      // its diff lands (R31). A multi-step test uploads one step at a time and
+      // each step's diff job rolls the run up when it ends: without this, an
+      // earlier step's job that finished before this row existed leaves a final
+      // status (even `passed`) that an SDK poll would read too early. Same
+      // transaction as the insert; `aborted` / `empty` / an override pass
+      // through the rollup unchanged.
+      await recomputeRunStatus(db, run.id);
 
       // Best-effort diff enqueue — deferred to post-commit so the worker
       // never picks up the job before the screenshot/run rows are visible.

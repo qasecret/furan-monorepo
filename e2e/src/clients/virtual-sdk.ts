@@ -53,6 +53,27 @@ export interface CaptureResult {
   autoApproved: boolean;
 }
 
+/**
+ * A run of several checkpoints (steps) captured under one build. Takes every
+ * `CaptureInput` option except the per-checkpoint ones, which `checkpoints`
+ * carries.
+ */
+export interface CaptureRunInput extends Omit<
+  CaptureInput,
+  "checkpointName" | "fixture"
+> {
+  checkpoints: Array<{ name: string; fixture: Fixture }>;
+}
+
+export interface CaptureRunResult {
+  buildId: string;
+  runId: string;
+  status: string;
+  autoApproved: boolean;
+  /** Each checkpoint's id (the id `review.approve` takes), keyed by its name. */
+  checkpointIds: Record<string, string>;
+}
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
@@ -83,7 +104,41 @@ export async function pollRunStatus(
     }
     await sleep(1_000);
   }
-  throw new Error(`run ${runId} did not settle within ${timeoutMs}ms (last=${last})`);
+  throw new Error(
+    `run ${runId} did not settle within ${timeoutMs}ms (last=${last})`,
+  );
+}
+
+/**
+ * Wait until `runs.listCheckpoints` shows every checkpoint in `checkpointIds`
+ * with a verdict (a non-null `state`), or until `timeoutMs`. A multi-step run's
+ * status alone is not proof its steps were all diffed: a step uploaded after an
+ * earlier step's diff finished could leave the run looking settled. Reading the
+ * steps themselves is.
+ */
+export async function waitForCheckpointVerdicts(
+  api: ApiClient,
+  pat: string,
+  runId: string,
+  checkpointIds: string[],
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let waitingOn: string[] = checkpointIds;
+  while (Date.now() < deadline) {
+    const { items } = await api.trpcQuery<{
+      items: Array<{ id: string; state: string | null }>;
+    }>(pat, "runs.listCheckpoints", { runId });
+    const diffed = new Set(
+      items.filter((c) => c.state !== null).map((c) => c.id),
+    );
+    waitingOn = checkpointIds.filter((id) => !diffed.has(id));
+    if (waitingOn.length === 0) return;
+    await sleep(500);
+  }
+  throw new Error(
+    `run ${runId}: ${waitingOn.length} of ${checkpointIds.length} checkpoints had no verdict within ${timeoutMs}ms (${waitingOn.join(", ")})`,
+  );
 }
 
 export async function capture(
@@ -140,5 +195,74 @@ export async function capture(
     runId: run.runId,
     status: settled.status,
     autoApproved: settled.autoApproved,
+  };
+}
+
+/**
+ * Capture one run with several checkpoints: ONE build and ONE run, one upload
+ * per checkpoint in the order given, then complete and wait for the verdict of
+ * the run and of every checkpoint — the flow of a multi-step test. The run is
+ * named after the first checkpoint. Every checkpoint is uploaded with the
+ * base64 endpoint; `matchLevel` / accessibility options (multipart only) are
+ * not supported here, use `capture`.
+ */
+export async function captureRun(
+  api: ApiClient,
+  input: CaptureRunInput,
+): Promise<CaptureRunResult> {
+  const first = input.checkpoints[0];
+  if (!first) throw new Error("captureRun needs at least one checkpoint");
+  const names = input.checkpoints.map((c) => c.name);
+  if (new Set(names).size !== names.length) {
+    throw new Error(
+      `captureRun checkpoint names must be unique: ${names.join(", ")}`,
+    );
+  }
+
+  const build = await api.createBuild(input.pat, input.projectId, {
+    branchName: input.branchName,
+    ...(input.buildName ? { name: input.buildName } : {}),
+  });
+  const run = await api.createRun(input.pat, {
+    projectId: input.projectId,
+    buildId: build.id,
+    name: first.name,
+    branchName: input.branchName,
+    ...(input.parentBranchName
+      ? { parentBranchName: input.parentBranchName }
+      : {}),
+  });
+  const viewport = input.viewport ?? "400x300";
+  const browser = input.browser ?? "chromium";
+  const checkpointIds: Record<string, string> = {};
+  for (const checkpoint of input.checkpoints) {
+    const uploaded = await api.uploadScreenshotBase64(input.pat, run.runId, {
+      pngBase64: pngBase64(checkpoint.fixture),
+      name: checkpoint.name,
+      viewport,
+      browser,
+      ...(input.domHtml ? { domHtml: input.domHtml } : {}),
+      ...(input.elementMapJson ? { elementMapJson: input.elementMapJson } : {}),
+    });
+    checkpointIds[checkpoint.name] = uploaded.checkpointId;
+  }
+  await api.completeRun(input.pat, run.runId);
+  await pollRunStatus(api, input.pat, run.runId);
+  // Every step must be diffed before the caller acts on the run, whatever
+  // status it reads: wait for each step's verdict, then read the status again
+  // so the result reflects the settled run.
+  await waitForCheckpointVerdicts(
+    api,
+    input.pat,
+    run.runId,
+    Object.values(checkpointIds),
+  );
+  const settled = await pollRunStatus(api, input.pat, run.runId);
+  return {
+    buildId: build.id,
+    runId: run.runId,
+    status: settled.status,
+    autoApproved: settled.autoApproved,
+    checkpointIds,
   };
 }

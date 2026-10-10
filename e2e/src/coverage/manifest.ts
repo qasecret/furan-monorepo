@@ -44,6 +44,9 @@ export const CAPABILITIES: Capability[] = [
   { id: "branch.cross_merge", area: "branch", label: "cross-branch merge fan-out" },
   { id: "branch.auto_rule", area: "branch", label: "auto-rule resolves known diff" },
   { id: "branch.retention", area: "branch", label: "retention TTL + orphan reconcile" },
+  // review
+  { id: "review.partial_approval", area: "review", label: "approving some steps of a multi-step test leaves the run unresolved" },
+  { id: "review.undo", area: "review", label: "undoing an approval restores the step and the run" },
   // storage
   { id: "storage.s3_roundtrip", area: "storage", label: "S3 serve screenshot through UI/proxy" },
   { id: "storage.hdd_roundtrip", area: "storage", label: "HDD serve screenshot through UI/proxy" },
