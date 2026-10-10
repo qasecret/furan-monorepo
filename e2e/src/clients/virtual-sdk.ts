@@ -53,6 +53,27 @@ export interface CaptureResult {
   autoApproved: boolean;
 }
 
+/**
+ * A run of several checkpoints (steps) captured under one build. Takes every
+ * `CaptureInput` option except the per-checkpoint ones, which `checkpoints`
+ * carries.
+ */
+export interface CaptureRunInput extends Omit<
+  CaptureInput,
+  "checkpointName" | "fixture"
+> {
+  checkpoints: Array<{ name: string; fixture: Fixture }>;
+}
+
+export interface CaptureRunResult {
+  buildId: string;
+  runId: string;
+  status: string;
+  autoApproved: boolean;
+  /** Each checkpoint's id (the id `review.approve` takes), keyed by its name. */
+  checkpointIds: Record<string, string>;
+}
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
@@ -83,7 +104,9 @@ export async function pollRunStatus(
     }
     await sleep(1_000);
   }
-  throw new Error(`run ${runId} did not settle within ${timeoutMs}ms (last=${last})`);
+  throw new Error(
+    `run ${runId} did not settle within ${timeoutMs}ms (last=${last})`,
+  );
 }
 
 export async function capture(
@@ -140,5 +163,63 @@ export async function capture(
     runId: run.runId,
     status: settled.status,
     autoApproved: settled.autoApproved,
+  };
+}
+
+/**
+ * Capture one run with several checkpoints: ONE build and ONE run, one upload
+ * per checkpoint in the order given, then complete and wait for the verdict —
+ * the flow of a multi-step test. The run is named after the first checkpoint.
+ * Every checkpoint is uploaded with the base64 endpoint; `matchLevel` /
+ * accessibility options (multipart only) are not supported here, use `capture`.
+ */
+export async function captureRun(
+  api: ApiClient,
+  input: CaptureRunInput,
+): Promise<CaptureRunResult> {
+  const first = input.checkpoints[0];
+  if (!first) throw new Error("captureRun needs at least one checkpoint");
+  const names = input.checkpoints.map((c) => c.name);
+  if (new Set(names).size !== names.length) {
+    throw new Error(
+      `captureRun checkpoint names must be unique: ${names.join(", ")}`,
+    );
+  }
+
+  const build = await api.createBuild(input.pat, input.projectId, {
+    branchName: input.branchName,
+    ...(input.buildName ? { name: input.buildName } : {}),
+  });
+  const run = await api.createRun(input.pat, {
+    projectId: input.projectId,
+    buildId: build.id,
+    name: first.name,
+    branchName: input.branchName,
+    ...(input.parentBranchName
+      ? { parentBranchName: input.parentBranchName }
+      : {}),
+  });
+  const viewport = input.viewport ?? "400x300";
+  const browser = input.browser ?? "chromium";
+  const checkpointIds: Record<string, string> = {};
+  for (const checkpoint of input.checkpoints) {
+    const uploaded = await api.uploadScreenshotBase64(input.pat, run.runId, {
+      pngBase64: pngBase64(checkpoint.fixture),
+      name: checkpoint.name,
+      viewport,
+      browser,
+      ...(input.domHtml ? { domHtml: input.domHtml } : {}),
+      ...(input.elementMapJson ? { elementMapJson: input.elementMapJson } : {}),
+    });
+    checkpointIds[checkpoint.name] = uploaded.checkpointId;
+  }
+  await api.completeRun(input.pat, run.runId);
+  const settled = await pollRunStatus(api, input.pat, run.runId);
+  return {
+    buildId: build.id,
+    runId: run.runId,
+    status: settled.status,
+    autoApproved: settled.autoApproved,
+    checkpointIds,
   };
 }
