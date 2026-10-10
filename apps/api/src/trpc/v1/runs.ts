@@ -558,7 +558,7 @@ export const runsRouter = t.router({
       );
       // Each checkpoint's review (verdict, state, decision, newer capture):
       // one batched read for the run, not one per checkpoint.
-      const review = await loadCheckpointReview(ctx.db, run.id);
+      const review = await loadCheckpointReview(ctx.db, run.id, ctx.user);
       const checkpointContexts: Record<
         string,
         CheckpointContext & CheckpointReviewView
@@ -1205,7 +1205,7 @@ export const runsRouter = t.router({
         .where(eq(testRuns.id, input.runId))
         .limit(1);
       const lifecycle = run?.status ?? "running";
-      const review = await loadCheckpointReview(ctx.db, input.runId);
+      const review = await loadCheckpointReview(ctx.db, input.runId, ctx.user);
 
       const items = rows.map((r) => {
         // An entry per row unless a checkpoint was added since the first read;

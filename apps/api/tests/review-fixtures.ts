@@ -93,6 +93,8 @@ export interface ReviewSeed extends ReviewRun {
   baselineBuildId: string | null;
   /** Every run seeded into this build (the first one and `addReviewRun`'s). */
   runIds: string[];
+  /** Editors `addProjectEditor` added to the project, besides `editor`. */
+  peers: ReviewUser[];
   tag: string;
 }
 
@@ -308,9 +310,27 @@ export async function seedReviewRun(
     baselineRunId,
     baselineBuildId,
     runIds: [run.runId],
+    peers: [],
     tag,
   };
   return seeded;
+}
+
+/**
+ * Adds another editor to the seed's project: a member who is not the seed's
+ * `editor`, for "someone else decided this" cases. Removed with the seed.
+ */
+export async function addProjectEditor(
+  h: TestApp,
+  seed: ReviewSeed,
+): Promise<ReviewUser> {
+  const label = `peer${seed.peers.length + 1}`;
+  const peer = await seedUser(h, seed.tag, label, "editor");
+  await h.db
+    .insert(projectMembers)
+    .values({ userId: peer.id, projectId: seed.projectId });
+  seed.peers.push(peer);
+  return peer;
 }
 
 /**
@@ -354,7 +374,10 @@ export async function cleanupReviewSeeds(
     ...(s.baselineRunId ? [s.baselineRunId] : []),
     ...(s.baselineBuildId ? [s.baselineBuildId] : []),
   ]);
-  const userIds = seeds.flatMap((s) => Object.values(s.users).map((u) => u.id));
+  const userIds = seeds.flatMap((s) => [
+    ...Object.values(s.users).map((u) => u.id),
+    ...s.peers.map((u) => u.id),
+  ]);
   await h.db
     .delete(auditLog)
     .where(

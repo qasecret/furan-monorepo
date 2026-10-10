@@ -1,12 +1,16 @@
+import { asc, inArray, testRuns } from "@furan/db";
 import type { ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
 import {
+  announceRuns,
   auditBuildAction,
   decideGroup,
   decideSelection,
+  requireActionProject,
   requireBuildProject,
   requireRunProject,
+  resolveActionProject,
   resolveBuildProject,
   resolveRunProject,
   trpcActionCtx,
@@ -14,7 +18,9 @@ import {
   type Selection,
 } from "../../lib/review/actions.js";
 import { selectPendingTargets } from "../../lib/review/decide.js";
+import { enqueueRunDiff } from "../../lib/review/enqueue.js";
 import { reviewError } from "../../lib/review/errors.js";
+import { revertAction, type RevertResult } from "../../lib/review/revert.js";
 import {
   lockBuildRuns,
   selectUndecidedTargets,
@@ -28,6 +34,9 @@ import { ignoreRegionElementSchema, MAX_IGNORE_REGIONS } from "./runs.js";
 
 export type { ReviewResult };
 
+/** What `review.revert` returns: the core's result without the re-diffs it queued. */
+export type RevertOutput = Omit<RevertResult, "rediffRunIds">;
+
 /**
  * The `review` router (spec §5.2): the per-checkpoint approve / reject, the
  * group actions and the build-wide "approve pending", all on top of the one
@@ -35,8 +44,8 @@ export type { ReviewResult };
  * announces the result; the core decides whether it is legal, writes it
  * atomically and recomputes the run status.
  *
- * Every procedure resolves its project from the run or build (resolve-then-gate,
- * like `runs.getById`): admins bypass the membership check, guests are refused,
+ * Every procedure resolves its project from the run, build or action
+ * (resolve-then-gate, like `runs.getById`): admins bypass the membership check, guests are refused,
  * anyone else must be a member. An admin skips the gate's resolver, so each
  * handler resolves the project again and answers NOT_FOUND for an unknown id.
  */
@@ -73,6 +82,7 @@ const groupInput = z.object({
   actionId: actionIdSchema,
 });
 const buildInput = z.object({ buildId: uuid });
+const revertInput = z.object({ actionId: actionIdSchema });
 const approveBuildInput = z.object({
   buildId: uuid,
   actionId: actionIdSchema,
@@ -334,6 +344,61 @@ export const reviewRouter = t.router({
         result,
         { expectedCount: input.expectedCount },
       );
+      return result;
+    }),
+
+  /**
+   * Undoes review action `actionId` (spec §5.3): the decider or an admin, until
+   * something newer has built on top of it. Skips are reported per checkpoint,
+   * not fatal. The gate's project is the one of the action's oldest decision,
+   * and the core acts in that project only (an action id may exist in two).
+   *
+   * After commit: the project is told which runs changed, then a re-diff is
+   * queued for every run in `rediffRunIds` (with the run's parent branch like
+   * the upload that first diffed it). A retry announces again, and queues
+   * again a run that still waits for its diff (R30); the events are
+   * idempotent refresh hints.
+   */
+  revert: publicProcedure
+    .input(revertInput)
+    .use(authed)
+    .use(
+      projectMember<{ actionId: string }>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveActionProject(ctx.db, input.actionId),
+        },
+      }),
+    )
+    .mutation(async ({ ctx, input }): Promise<RevertOutput> => {
+      const actx = trpcActionCtx(ctx);
+      const projectId = await requireActionProject(actx.tx, input.actionId);
+      const { rediffRunIds, ...result } = await revertAction(
+        actx.tx,
+        { actor: actx.actor, actionId: input.actionId, projectId },
+        actx.deps,
+      );
+      // Announce first: the after-commit effects run in order, and a failing
+      // `enqueue` (queue down) stops the ones behind it. Publishing never
+      // throws (the broadcaster swallows its errors), so announcing first
+      // costs nothing and viewers still refresh when only the queue fails.
+      await announceRuns(
+        actx,
+        projectId,
+        result.runs.map((r) => r.runId),
+      );
+      if (rediffRunIds.length > 0) {
+        const rediffs = await actx.tx
+          .select({
+            id: testRuns.id,
+            projectId: testRuns.projectId,
+            parentBranchName: testRuns.parentBranchName,
+          })
+          .from(testRuns)
+          .where(inArray(testRuns.id, rediffRunIds))
+          .orderBy(asc(testRuns.id));
+        for (const run of rediffs) enqueueRunDiff(ctx, run);
+      }
       return result;
     }),
 });
