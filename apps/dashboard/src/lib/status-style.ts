@@ -13,9 +13,11 @@ import {
 } from "lucide-react";
 
 /**
- * The ONLY status -> presentation map in the dashboard. Every surface that
- * shows a run/build status (badge, list rows, batch header, result rows,
- * sparkline) reads from here, so a status looks the same everywhere.
+ * The status -> presentation map for a run's status. Every surface that shows
+ * a run/build status (badge, list rows, batch header, result rows, sparkline)
+ * reads from here, so a status looks the same everywhere. A single
+ * checkpoint's review state (approved and rejected steps included) has its own
+ * map, `REVIEW_STATE_STYLE`, further down this file.
  *
  * Colours come from the `status-*` design tokens (`tokens.css`). Every class is
  * a full literal string: Tailwind's scanner cannot see class names assembled at

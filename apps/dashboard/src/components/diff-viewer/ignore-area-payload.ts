@@ -1,8 +1,8 @@
 import type { DraftIgnoreArea, IgnoreArea } from "./useViewerStore";
 
 /**
- * The wire shape sent to `runs.setIgnoreAreas` / `runs.approve` /
- * `runs.approveCheckpoint`. Mirrors the server's `ignoreRegionElementSchema`.
+ * The wire shape sent to `runs.setIgnoreAreas` / `review.approve`. Mirrors the
+ * server's `ignoreRegionElementSchema`.
  */
 export interface IgnoreAreaWire {
   x: number;
