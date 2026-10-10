@@ -35,6 +35,7 @@ import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
+  addProjectEditor,
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
@@ -1458,6 +1459,316 @@ d("review router", () => {
         replayed: false,
       });
       expect(await decisionsOfRun(b.runId)).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // revert
+  // -------------------------------------------------------------------------
+
+  describe("revert", () => {
+    /** A run whose two checkpoints `editor` approved in one action. */
+    async function approved(opts: { parent?: string } = {}) {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "new" },
+        ],
+      });
+      if (opts.parent) {
+        await h.db
+          .update(testRuns)
+          .set({ parentBranchName: opts.parent })
+          .where(eq(testRuns.id, s.runId));
+      }
+      const actionId = newAction();
+      await as(s.editor).review.approve.mutate({ runId: s.runId, actionId });
+      h.broadcasterPublish.mockClear();
+      h.diffQueueAdd.mockClear();
+      return { s, actionId };
+    }
+
+    const revertedRows = async (actionId: string) =>
+      (await decisionsOfAction(actionId)).filter((r) => r.revertedAt !== null);
+
+    describe("gate", () => {
+      test("the member who decided the action may undo it; the result has no rediffRunIds", async () => {
+        const { s, actionId } = await approved();
+
+        const res = await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(res).toEqual({
+          actionId,
+          reverted: 2,
+          skipped: [],
+          runs: [{ runId: s.runId, status: "unresolved" }],
+        });
+        expect(res).not.toHaveProperty("rediffRunIds");
+        expect(await revertedRows(actionId)).toHaveLength(2);
+        expect(await runStatus(s.runId)).toBe("unresolved");
+      });
+
+      test("an admin who is not a member may undo it", async () => {
+        const { s, actionId } = await approved();
+        const res = await as(s.admin).review.revert.mutate({ actionId });
+        expect(res.reverted).toBe(2);
+        expect((await revertedRows(actionId))[0]!.revertedBy).toBe(s.admin.id);
+      });
+
+      test("an outsider and a guest are FORBIDDEN, and nothing is undone, enqueued or announced", async () => {
+        const { s, actionId } = await approved();
+        for (const who of [s.outsider, s.guest]) {
+          const f = await failure(as(who).review.revert.mutate({ actionId }));
+          expect(f.code).toBe("FORBIDDEN");
+        }
+        expect(await revertedRows(actionId)).toHaveLength(0);
+        expect(h.diffQueueAdd).not.toHaveBeenCalled();
+        expect(h.broadcasterPublish).not.toHaveBeenCalled();
+      });
+
+      test("another editor of the project is FORBIDDEN not_decider, and nothing is undone, enqueued or announced", async () => {
+        const { s, actionId } = await approved();
+        const peer = await addProjectEditor(h, s);
+
+        const f = await failure(as(peer).review.revert.mutate({ actionId }));
+
+        expect(f).toMatchObject({ code: "FORBIDDEN", message: "not_decider" });
+        expect(await revertedRows(actionId)).toHaveLength(0);
+        expect(await runStatus(s.runId)).toBe("passed");
+        expect(h.diffQueueAdd).not.toHaveBeenCalled();
+        expect(h.broadcasterPublish).not.toHaveBeenCalled();
+      });
+
+      test("an anonymous caller is UNAUTHORIZED", async () => {
+        const { actionId } = await approved();
+        expect(
+          (await failure(as(null).review.revert.mutate({ actionId }))).code,
+        ).toBe("UNAUTHORIZED");
+      });
+
+      test("an unknown action is NOT_FOUND for a member and for an admin", async () => {
+        const { s } = await approved();
+        const unknown = newAction();
+        expect(
+          (
+            await failure(
+              as(s.editor).review.revert.mutate({ actionId: unknown }),
+            )
+          ).code,
+        ).toBe("NOT_FOUND");
+        expect(
+          await failure(
+            as(s.admin).review.revert.mutate({ actionId: unknown }),
+          ),
+        ).toMatchObject({ code: "NOT_FOUND", message: "action_not_found" });
+      });
+
+      test("a malformed actionId is BAD_REQUEST", async () => {
+        const { s } = await approved();
+        expect(
+          (await failure(as(s.editor).review.revert.mutate({ actionId: "x" })))
+            .code,
+        ).toBe("BAD_REQUEST");
+      });
+    });
+
+    describe("re-diffs", () => {
+      test("an undo of an approve enqueues a re-diff after commit, forwarding the run's parent branch", async () => {
+        const { s, actionId } = await approved({ parent: "main" });
+        const seen: number[] = [];
+        h.diffQueueAdd.mockImplementation(async () => {
+          // h.db is another connection: it sees committed rows only.
+          seen.push((await revertedRows(actionId)).length);
+        });
+
+        await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+          runId: s.runId,
+          projectId: s.projectId,
+          parentPrBaseBranch: "main",
+        });
+        expect(seen).toEqual([2]);
+        h.diffQueueAdd.mockReset();
+      });
+
+      test("a run without a parent branch is enqueued without parentPrBaseBranch", async () => {
+        const { s, actionId } = await approved();
+        await as(s.editor).review.revert.mutate({ actionId });
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
+          runId: s.runId,
+          projectId: s.projectId,
+        });
+      });
+
+      test("every run of a multi-run action is enqueued once, even with no checkpoint re-diffed since (R28)", async () => {
+        const { s } = await approved();
+        const run2 = await addReviewRun(h, s, {
+          checkpoints: [{ name: "c", verdict: "unresolved" }],
+        });
+        const actionId = newAction();
+        await as(s.editor).review.approveBuild.mutate({
+          buildId: s.buildId,
+          actionId,
+          expectedCount: 1,
+        });
+        h.diffQueueAdd.mockClear();
+
+        const res = await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(res.reverted).toBe(1);
+        expect(h.diffQueueAdd.mock.calls.map(([, p]) => p.runId)).toEqual([
+          run2.runId,
+        ]);
+      });
+
+      test("undoing a reject, a refused undo and a retry enqueue nothing", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const rejected = newAction();
+        await as(s.editor).review.reject.mutate({
+          runId: s.runId,
+          actionId: rejected,
+        });
+        h.diffQueueAdd.mockClear();
+
+        expect(
+          (await as(s.editor).review.revert.mutate({ actionId: rejected }))
+            .reverted,
+        ).toBe(1);
+        // A retry finds it already undone.
+        expect(
+          await as(s.editor).review.revert.mutate({ actionId: rejected }),
+        ).toMatchObject({
+          reverted: 0,
+          skipped: [{ reason: "already_undone" }],
+        });
+        expect(h.diffQueueAdd).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("broadcasts", () => {
+      const calls = () =>
+        h.broadcasterPublish.mock.calls as Array<
+          [string, { event: string; data: { id: string } }]
+        >;
+
+      test("announces the run and its build for the project, only after the undo is committed", async () => {
+        const { s, actionId } = await approved();
+        const seen: number[] = [];
+        h.broadcasterPublish.mockImplementation(async () => {
+          seen.push((await revertedRows(actionId)).length);
+        });
+
+        await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(calls()).toEqual([
+          [s.projectId, { event: "testRun_updated", data: { id: s.runId } }],
+          [s.projectId, { event: "build_updated", data: { id: s.buildId } }],
+        ]);
+        expect(seen).toEqual([2, 2]);
+      });
+
+      test("a multi-run action announces every run and the build once", async () => {
+        const { s } = await approved();
+        const run2 = await addReviewRun(h, s, {
+          checkpoints: [{ name: "c", verdict: "unresolved" }],
+        });
+        const actionId = newAction();
+        await as(s.editor).review.approveBuild.mutate({
+          buildId: s.buildId,
+          actionId,
+          expectedCount: 1,
+        });
+        h.broadcasterPublish.mockClear();
+
+        await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(
+          calls()
+            .filter(([, ev]) => ev.event === "testRun_updated")
+            .map(([, ev]) => ev.data.id),
+        ).toEqual([run2.runId]);
+        expect(
+          calls().filter(([, ev]) => ev.event === "build_updated"),
+        ).toHaveLength(1);
+      });
+
+      test("a retry announces again (the events are idempotent refresh hints)", async () => {
+        const { s, actionId } = await approved();
+        await as(s.editor).review.revert.mutate({ actionId });
+        h.broadcasterPublish.mockClear();
+
+        await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(calls().map(([, ev]) => ev.event)).toEqual([
+          "testRun_updated",
+          "build_updated",
+        ]);
+      });
+    });
+
+    describe("an action id that exists in two projects", () => {
+      test("acts only within the project of the oldest row; the other project's decisions stay", async () => {
+        const a = await twoPending();
+        const b = await twoPending();
+        const actionId = newAction();
+        await as(a.editor).review.approve.mutate({ runId: a.runId, actionId });
+        await as(b.editor).review.approve.mutate({ runId: b.runId, actionId });
+        h.broadcasterPublish.mockClear();
+        h.diffQueueAdd.mockClear();
+
+        // The oldest row is A's, so A's editor is the one who may undo it.
+        const res = await as(a.editor).review.revert.mutate({ actionId });
+
+        expect(res.reverted).toBe(2);
+        expect(res.runs.map((r) => r.runId)).toEqual([a.runId]);
+        const rows = await decisionsOfAction(actionId);
+        expect(
+          rows.filter((r) => r.revertedAt !== null).map((r) => r.projectId),
+        ).toEqual([a.projectId, a.projectId]);
+        expect(rows.filter((r) => r.projectId === b.projectId)).toMatchObject([
+          { revertedAt: null },
+          { revertedAt: null },
+        ]);
+        expect(await runStatus(b.runId)).toBe("passed");
+        // Only A's run is re-diffed and announced.
+        expect(h.diffQueueAdd.mock.calls.map(([, p]) => p.runId)).toEqual([
+          a.runId,
+        ]);
+        expect(
+          h.broadcasterPublish.mock.calls.every(
+            ([project]) => project === a.projectId,
+          ),
+        ).toBe(true);
+      });
+
+      test("an admin acts in the same project (never action_spans_projects); the other project's editor is refused, deterministically", async () => {
+        const a = await twoPending();
+        const b = await twoPending();
+        const actionId = newAction();
+        await as(a.editor).review.approve.mutate({ runId: a.runId, actionId });
+        await as(b.editor).review.approve.mutate({ runId: b.runId, actionId });
+
+        // The oldest row names project A, whoever asks: B's editor is not a
+        // member of A.
+        expect(
+          (await failure(as(b.editor).review.revert.mutate({ actionId }))).code,
+        ).toBe("FORBIDDEN");
+
+        const res = await as(a.admin).review.revert.mutate({ actionId });
+        expect(res.runs.map((r) => r.runId)).toEqual([a.runId]);
+        expect(
+          (await decisionsOfAction(actionId))
+            .filter((r) => r.projectId === b.projectId)
+            .every((r) => r.revertedAt === null),
+        ).toBe(true);
+      });
     });
   });
 

@@ -276,6 +276,8 @@ export function actorDisplayName(u: {
 /** A checkpoint's active decision, with who made it. */
 export interface ActiveDecision {
   id: string;
+  /** The decision's project (an action id is unique per project, not globally). */
+  projectId: string;
   actionId: string;
   kind: CheckpointDecisionKind;
   /** NULL for a legacy/system decision (`actor_id IS NULL`). */
@@ -301,6 +303,7 @@ export async function loadActiveDecisionDetails(
     .select({
       screenshotId: checkpointDecisions.screenshotId,
       id: checkpointDecisions.id,
+      projectId: checkpointDecisions.projectId,
       actionId: checkpointDecisions.actionId,
       kind: checkpointDecisions.decision,
       source: checkpointDecisions.source,
@@ -326,6 +329,7 @@ export async function loadActiveDecisionDetails(
       r.screenshotId,
       {
         id: r.id,
+        projectId: r.projectId,
         actionId: r.actionId,
         kind: r.kind,
         actor:

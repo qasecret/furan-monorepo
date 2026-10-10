@@ -1,4 +1,13 @@
-import { builds, eq, inArray, testRuns, type DB, type Tx } from "@furan/db";
+import {
+  asc,
+  builds,
+  checkpointDecisions,
+  eq,
+  inArray,
+  testRuns,
+  type DB,
+  type Tx,
+} from "@furan/db";
 import type {
   CheckpointDecisionKind,
   DecisionSource,
@@ -93,6 +102,26 @@ export async function resolveBuildProject(
 }
 
 /**
+ * The project a review action belongs to, or null when there is no such
+ * action. An action id is unique per project, not globally (the client
+ * generates it), so one that appears in two projects resolves, deterministically,
+ * to the project of its oldest decision (`created_at, id`): `review.revert`
+ * then acts there and only there.
+ */
+export async function resolveActionProject(
+  db: DB | Tx,
+  actionId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ projectId: checkpointDecisions.projectId })
+    .from(checkpointDecisions)
+    .where(eq(checkpointDecisions.actionId, actionId))
+    .orderBy(asc(checkpointDecisions.createdAt), asc(checkpointDecisions.id))
+    .limit(1);
+  return rows[0]?.projectId ?? null;
+}
+
+/**
  * `resolveRunProject`, NOT_FOUND when there is no such run. An admin skips the
  * membership gate's resolver, so every handler resolves the project again.
  */
@@ -102,6 +131,16 @@ export async function requireRunProject(
 ): Promise<string> {
   const projectId = await resolveRunProject(db, runId);
   if (!projectId) throw reviewError("NOT_FOUND", "run_not_found");
+  return projectId;
+}
+
+/** `resolveActionProject`, NOT_FOUND when there is no such action. */
+export async function requireActionProject(
+  db: DB | Tx,
+  actionId: string,
+): Promise<string> {
+  const projectId = await resolveActionProject(db, actionId);
+  if (!projectId) throw reviewError("NOT_FOUND", "action_not_found");
   return projectId;
 }
 

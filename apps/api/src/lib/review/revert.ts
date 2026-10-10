@@ -15,7 +15,6 @@ import {
   screenshots,
   sql,
   testVariations,
-  variationIdentityWhere,
   type CheckpointDecisionRow,
   type DB,
   type Tx,
@@ -450,27 +449,34 @@ async function loadApproveFacts(
     facts.variations.set(v.id, fieldsOf(v));
     identities.set(identityKey(v), v);
   }
-  const siblingRows = await db
-    .select({
-      id: testVariations.id,
-      projectId: testVariations.projectId,
-      name: testVariations.name,
-      viewport: testVariations.viewport,
-      browser: testVariations.browser,
-      os: testVariations.os,
-      device: testVariations.device,
-    })
-    .from(testVariations)
-    .where(
-      or(
-        ...[...identities.values()].map((i) =>
-          and(
-            eq(testVariations.projectId, i.projectId),
-            variationIdentityWhere(i),
-          ),
+  // The database narrows by project and name; the exact ADR-054 identity is
+  // matched here. One `IN` each keeps the statement cheap however many
+  // identities there are: an OR of five-column matches per identity costs the
+  // client far more to build and bind than the database does to run (about
+  // 25 ms of the 500-decision case).
+  const siblingRows = (
+    await db
+      .select({
+        id: testVariations.id,
+        projectId: testVariations.projectId,
+        name: testVariations.name,
+        viewport: testVariations.viewport,
+        browser: testVariations.browser,
+        os: testVariations.os,
+        device: testVariations.device,
+      })
+      .from(testVariations)
+      .where(
+        and(
+          inArray(testVariations.projectId, [
+            ...new Set(decided.map((v) => v.projectId)),
+          ]),
+          inArray(testVariations.name, [
+            ...new Set(decided.map((v) => v.name)),
+          ]),
         ),
-      ),
-    );
+      )
+  ).filter((v) => identities.has(identityKey(v)));
   const siblingsByIdentity = new Map<string, Set<string>>();
   for (const s of siblingRows) {
     const key = identityKey(s);
@@ -651,14 +657,17 @@ function judgeApprove(
  * reverts: the rest of the action is loaded too, and its decisions are undone
  * newest first, so a decision whose only "newer baseline" is a later approve
  * in the same action stays undoable. The decisions are re-read, so the
- * answer reflects the database, not the rows passed in; a decision that no
- * longer exists (retention) has no entry.
+ * answer reflects the database, not the rows passed in (only their identity,
+ * project and action are used); a decision that no longer exists (retention)
+ * has no entry.
  *
  * Reads only; it neither locks nor writes.
  */
 export async function assessRevert(
   db: DB | Tx,
-  decisions: ReadonlyArray<CheckpointDecisionRow>,
+  decisions: ReadonlyArray<
+    Pick<CheckpointDecisionRow, "id" | "projectId" | "actionId">
+  >,
 ): Promise<Map<string, RevertSkipReason | null>> {
   const out = new Map<string, RevertSkipReason | null>();
   if (decisions.length === 0) return out;
