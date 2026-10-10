@@ -39,11 +39,11 @@ version`); older versions don't support it. Output: `e2e-coverage.md` /
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
 full-page PNG at a 1440×900 viewport, plus the interaction states in
-`STATES` (⌘K open, a menu open, a dialog open), and runs axe `color-contrast`
-on each. The dashboard scrolls inside its own containers, never the document,
-so before capturing, `src/visual/unclip.ts` lets those containers grow to
-their content: the PNG and axe cover the whole page, not just the first
-900px. It fails the route if any part of the page is still clipped
+`STATES` (⌘K open, a menu open, a dialog open, a step card hovered), and runs
+axe `color-contrast` on each. The dashboard scrolls inside its own containers,
+never the document, so before capturing, `src/visual/unclip.ts` lets those
+containers grow to their content: the PNG and axe cover the whole page, not
+just the first 900px. It fails the route if any part of the page is still clipped
 afterwards, so a dashboard layout change can't quietly shrink the shot.
 
 It is the before/after safety net for dashboard UI changes. A contrast
@@ -111,9 +111,11 @@ means every screenshot test passed.
 - **The project, builds, build and runs screens as such.** `project`,
   `builds`, `build` and `runs` all redirect to the fixture's batch page, so
   those four shots are the same screen.
-- **States the fixture never renders:** multi-checkpoint step arrows, empty
-  and error states, a selected region, menus opened from the keyboard,
-  settings tabs other than the default, and toasts.
+- **States the fixture never renders:** empty and error states, a selected
+  region, menus opened from the keyboard, settings tabs other than the
+  default, and toasts. (The multi-step run covers step arrows and the
+  approved, rejected and pending-`new` steps; `state-step-hover` covers a
+  step card's hover toolbar.)
 - **Contrast axe cannot decide.** axe `incomplete` results (text over an
   image or gradient, overlapped or pseudo-element backgrounds, …) are counted
   by reason (`messageKey`) per shot in `color-contrast.json` and annotated

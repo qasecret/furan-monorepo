@@ -3,6 +3,16 @@ import { expect, type Page } from "@playwright/test";
 import type { VisualFixture } from "./fixture.js";
 
 /**
+ * Where a route or state goes: a fixed path, or one built from the fixture
+ * (whose ids are only known once `beforeAll` has made it). Resolve with
+ * {@link resolvePath}.
+ */
+export type VisualPath = string | ((f: VisualFixture) => string);
+
+export const resolvePath = (path: VisualPath, f: VisualFixture): string =>
+  typeof path === "function" ? path(f) : path;
+
+/**
  * Every dashboard route the visual sweep captures (spec §7.1).
  *
  * Every shot — route, discovered route and state — is also checked with axe
@@ -13,7 +23,7 @@ import type { VisualFixture } from "./fixture.js";
  */
 export interface VisualRoute {
   name: string;
-  path: string;
+  path: VisualPath;
   /**
    * Capture from a seeded editor session instead of the admin one: admins are
    * redirected from these routes to their `/admin/*` counterparts, so the
@@ -48,8 +58,14 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
     { name: "project", path: P },
     { name: "builds", path: `${P}/builds` },
     { name: "build", path: `${P}/builds/${f.buildId}` },
+    // The multi-step run's build and run: result rows of several steps, with
+    // an approved, a rejected and a pending step.
+    { name: "build-multi", path: (x) => `${P}/builds/${x.multiBuildId}` },
     { name: "runs", path: `${P}/runs` },
     { name: "run", path: `${P}/runs/${f.unresolvedRunId}` },
+    // `/runs/:id` redirects to its first checkpoint, whose viewer shows the
+    // step arrows between the run's steps.
+    { name: "run-multi", path: (x) => `${P}/runs/${x.multiRunId}` },
     { name: "settings", path: `${P}/settings` },
     { name: "variations", path: `${P}/variations` },
   ];
@@ -96,11 +112,38 @@ export const DISCOVERED: ReadonlyArray<{
  */
 export interface VisualState {
   name: string;
-  path: string;
+  path: VisualPath;
   /** Capture from the seeded editor's session (see {@link VisualRoute.as}). */
   as?: "editor";
   /** Put the settled page into the state; resolves once the state shows. */
   open: (p: Page) => Promise<void>;
+  /**
+   * For a state the POINTER holds (a hover): runs after the page is un-clipped,
+   * just before the shot. The sweep parks the pointer in a corner first, and
+   * un-clipping re-lays the page out, so either would undo a hover `open` made.
+   */
+  hold?: (p: Page) => Promise<void>;
+}
+
+/**
+ * Hover the first step card of the multi-step build's result row, so its
+ * action toolbar (quick-approve, open) shows. Looked up from the page rather
+ * than by id: step ids are different on every stack. A collapsed row is
+ * expanded first.
+ */
+async function hoverFirstStep(p: Page): Promise<void> {
+  const row = p.locator('[data-testid^="result-row-"]').first();
+  await expect(row).toBeVisible();
+  if ((await row.getAttribute("aria-expanded")) === "false") await row.click();
+  const card = p.locator('[data-testid^="step-card-"]').first();
+  await expect(card).toBeVisible();
+  await card.hover();
+  // The toolbar (the "open in the viewer" button's parent) is `opacity-0`
+  // until the card is hovered.
+  const toolbar = card
+    .getByRole("button", { name: /^Open .+ in the viewer$/ })
+    .locator("..");
+  await expect(toolbar).toHaveCSS("opacity", "1");
 }
 
 export const STATES: ReadonlyArray<VisualState> = [
@@ -137,5 +180,12 @@ export const STATES: ReadonlyArray<VisualState> = [
       await p.getByRole("button", { name: /token/i }).first().click();
       await expect(p.getByRole("dialog")).toBeVisible();
     },
+  },
+  {
+    // The multi-step build, first step hovered: the card's toolbar shows.
+    name: "state-step-hover",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: hoverFirstStep,
+    hold: hoverFirstStep,
   },
 ];
