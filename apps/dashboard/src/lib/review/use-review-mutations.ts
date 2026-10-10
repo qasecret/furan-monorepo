@@ -311,6 +311,18 @@ export function useReviewMutations() {
 
   const revert = trpc.review.revert.useMutation({
     ...settle,
+    onError: (err: ReviewError, vars: { actionId: string }) => {
+      // An undo that can never succeed is forgotten. Any other failure keeps
+      // its place on the stack, so the next ⌘Z retries the same action.
+      const code = err.data?.code;
+      if (
+        code === "NOT_FOUND" ||
+        (code === "FORBIDDEN" && err.message === "not_decider")
+      ) {
+        useUndoStore.getState().drop(vars.actionId);
+      }
+      onError(err, vars);
+    },
     onSuccess: ({ reverted, skipped }: RevertResult, { actionId }) => {
       useUndoStore.getState().drop(actionId);
       if (skipped.length === 0) {
@@ -329,16 +341,21 @@ export function useReviewMutations() {
     },
   });
 
-  /** Takes back an action: the one named, or the newest this session made. */
+  /**
+   * Takes back an action: the one named, or the newest this session made. The
+   * entry stays on the stack until the undo succeeds (or can never succeed),
+   * so a failed undo can be retried and the stack keeps its order.
+   */
   const undo = useCallback(
     (actionId?: string) => {
-      const store = useUndoStore.getState();
+      const { stack } = useUndoStore.getState();
       const entry =
         actionId === undefined
-          ? store.take()
-          : store.stack.find((e) => e.actionId === actionId);
+          ? stack.at(-1)
+          : stack.find((e) => e.actionId === actionId);
       const id = actionId ?? entry?.actionId;
-      // Nothing to undo, or this action is still in flight (a second click).
+      // Nothing to undo, or this action is still in flight (a second click):
+      // leave the stack exactly as it is.
       if (id === undefined || ACTIONS.has(id)) return;
       ACTIONS.set(id, {
         label: entry?.label ?? "",

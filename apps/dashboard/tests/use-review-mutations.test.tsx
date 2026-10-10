@@ -859,6 +859,86 @@ describe("useReviewMutations: undo", () => {
     ]);
   });
 
+  it("keeps a failed undo on top of the stack, so the next undo retries the same action", async () => {
+    useUndoStore
+      .getState()
+      .push({ actionId: OLDER, label: "Older", runIds: [RUN] });
+    useUndoStore
+      .getState()
+      .push({ actionId: ACTION, label: "Newest", runIds: [RUN] });
+    server.revert.mockRejectedValueOnce(new Error("offline"));
+    const { result, run } = setup();
+
+    await run(() => result.current.undo());
+    expect(toast.error).toHaveBeenCalledWith(
+      "Couldn't save your review. Try again.",
+    );
+    expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+      OLDER,
+      ACTION,
+    ]);
+
+    await run(() => result.current.undo());
+    expect(server.revert).toHaveBeenCalledTimes(2);
+    expect(server.revert).toHaveBeenNthCalledWith(1, { actionId: ACTION });
+    expect(server.revert).toHaveBeenNthCalledWith(2, { actionId: ACTION });
+    expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+      OLDER,
+    ]);
+  });
+
+  it("forgets an undo that can never succeed", async () => {
+    for (const refusal of [
+      trpcError("not_decider", "FORBIDDEN"),
+      trpcError("NOT_FOUND", "NOT_FOUND"),
+    ]) {
+      useUndoStore.setState({ stack: [] });
+      useUndoStore
+        .getState()
+        .push({ actionId: OLDER, label: "Older", runIds: [RUN] });
+      useUndoStore
+        .getState()
+        .push({ actionId: ACTION, label: "Newest", runIds: [RUN] });
+      server.revert.mockRejectedValueOnce(refusal);
+      const { result, run } = setup();
+
+      await run(() => result.current.undo());
+
+      expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+        OLDER,
+      ]);
+      cleanup();
+    }
+  });
+
+  it("leaves the stack alone when the newest action's undo is already in flight", async () => {
+    useUndoStore
+      .getState()
+      .push({ actionId: OLDER, label: "Older", runIds: [RUN] });
+    useUndoStore
+      .getState()
+      .push({ actionId: ACTION, label: "Newest", runIds: [RUN] });
+    const pending = deferred();
+    server.revert.mockReturnValueOnce(pending.promise);
+    const { result, run } = setup();
+
+    // The toast's Undo button, then ⌘Z while that is still out.
+    await run(() => result.current.undo(ACTION));
+    await run(() => result.current.undo());
+
+    expect(server.revert).toHaveBeenCalledTimes(1);
+    expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+      OLDER,
+      ACTION,
+    ]);
+
+    pending.resolve(reverted());
+    await run();
+    expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+      OLDER,
+    ]);
+  });
+
   it("does nothing when there is nothing to undo", async () => {
     const { result, run } = setup();
 
