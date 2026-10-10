@@ -21,7 +21,7 @@ export type RunsListPage = RouterOutputs["runs"]["list"];
 export type BuildDetail = RouterOutputs["builds"]["getById"];
 
 /** The review fields a checkpoint has in every cached view of it. */
-type Review = Pick<CheckpointItem, "verdict" | "state" | "decision">;
+export type Review = Pick<CheckpointItem, "verdict" | "state" | "decision">;
 
 export interface Actor {
   id: string;

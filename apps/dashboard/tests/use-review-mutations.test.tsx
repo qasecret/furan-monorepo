@@ -210,6 +210,52 @@ function seed(
   }
 }
 
+/** The seed, with step A already approved under `actionId` in every cache. */
+function seedApproved(actionId: string) {
+  seed();
+  const decision = { actionId, kind: "approved" };
+  qc.setQueryData(keyOf(["runs", "listCheckpoints"], { runId: RUN }), {
+    items: seedItems().map((i) =>
+      i.id === A ? { ...i, state: "approved", status: "passed", decision } : i,
+    ),
+  });
+  qc.setQueryData(keyOf(["runs", "getById"], { runId: RUN }), {
+    id: RUN,
+    buildId: BUILD,
+    status: "new",
+    statusOverride: null,
+    checkpointContexts: Object.fromEntries(
+      seedItems().map((i) => [
+        i.id,
+        contextOf(i.id === A ? { ...i, state: "approved", decision } : i),
+      ]),
+    ),
+  });
+  qc.setQueryData(
+    keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
+    {
+      items: [
+        { id: RUN, buildId: BUILD, status: "new", statusOverride: null },
+        { id: RUN_2, buildId: BUILD, status: "failed", statusOverride: null },
+      ],
+      nextCursor: null,
+    },
+  );
+}
+
+/**
+ * Makes the run detail the patch reads come back without its checkpoint
+ * contexts. The first read is the hook noting what it is about to overwrite,
+ * so it gets the real cache; the second is the patch itself.
+ */
+function breakNextPatchRead() {
+  utils.runs.getById.getData
+    .mockReturnValueOnce(
+      qc.getQueryData(keyOf(["runs", "getById"], { runId: RUN })),
+    )
+    .mockReturnValueOnce({ status: "unresolved" });
+}
+
 const itemsCache = () =>
   qc.getQueryData<{ items: Item[] }>(
     keyOf(["runs", "listCheckpoints"], { runId: RUN }),
@@ -517,7 +563,7 @@ describe("useReviewMutations: optimistic decide", () => {
     seed();
     const before = snapshotCaches();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    utils.runs.getById.getData.mockReturnValueOnce({ status: "unresolved" });
+    breakNextPatchRead();
     const { result, run } = setup();
 
     await run(() =>
@@ -543,7 +589,7 @@ describe("useReviewMutations: optimistic decide", () => {
     seed();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.stubEnv("NODE_ENV", "production");
-    utils.runs.getById.getData.mockReturnValueOnce({ status: "unresolved" });
+    breakNextPatchRead();
     const { result, run } = setup();
 
     await run(() =>
@@ -945,6 +991,40 @@ describe("useReviewMutations: errors", () => {
     expect(useUndoStore.getState().stack).toEqual([]);
   });
 
+  it("keeps a decision the cache already showed when the decide is refused as already_decided", async () => {
+    const PRIOR = "55555555-5555-4555-8555-555555555555";
+    seedApproved(PRIOR);
+    const before = snapshotCaches();
+    server.reject.mockRejectedValueOnce(
+      trpcError("already_decided", "CONFLICT", {
+        reasons: [{ checkpointId: A, reason: "already_decided" }],
+        winner: { checkpointId: A, kind: "approved", actorName: "Grace" },
+      }),
+    );
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "rejected",
+        label: "Rejected home",
+      }),
+    );
+
+    // The step still shows the approval it had, not a blank "unresolved".
+    expect(itemState(A)).toBe("approved");
+    expect(itemsCache()?.find((i) => i.id === A)?.decision).toMatchObject({
+      actionId: PRIOR,
+      kind: "approved",
+    });
+    expect(runCache()?.checkpointContexts[A]).toMatchObject({
+      state: "approved",
+      decision: { actionId: PRIOR },
+    });
+    expect(snapshotCaches()).toEqual(before);
+  });
+
   it("falls back to the refusal text when the server names no winner", async () => {
     seed();
     server.approve.mockRejectedValueOnce(
@@ -1031,37 +1111,7 @@ describe("useReviewMutations: undo", () => {
   const OLDER = "44444444-4444-4444-8444-444444444444";
 
   function seedDecided() {
-    seed();
-    const decision = { actionId: ACTION, kind: "approved" };
-    qc.setQueryData(keyOf(["runs", "listCheckpoints"], { runId: RUN }), {
-      items: seedItems().map((i) =>
-        i.id === A
-          ? { ...i, state: "approved", status: "passed", decision }
-          : i,
-      ),
-    });
-    qc.setQueryData(keyOf(["runs", "getById"], { runId: RUN }), {
-      id: RUN,
-      buildId: BUILD,
-      status: "new",
-      statusOverride: null,
-      checkpointContexts: Object.fromEntries(
-        seedItems().map((i) => [
-          i.id,
-          contextOf(i.id === A ? { ...i, state: "approved", decision } : i),
-        ]),
-      ),
-    });
-    qc.setQueryData(
-      keyOf(["runs", "list"], { projectId: "p-1", buildId: BUILD }),
-      {
-        items: [
-          { id: RUN, buildId: BUILD, status: "new", statusOverride: null },
-          { id: RUN_2, buildId: BUILD, status: "failed", statusOverride: null },
-        ],
-        nextCursor: null,
-      },
-    );
+    seedApproved(ACTION);
     useUndoStore
       .getState()
       .push({ actionId: ACTION, label: "Approved home", runIds: [RUN] });
@@ -1116,7 +1166,10 @@ describe("useReviewMutations: undo", () => {
   it("forgets an undo that can never succeed", async () => {
     for (const refusal of [
       trpcError("not_decider", "FORBIDDEN"),
+      // Membership removed since the action was made.
+      trpcError("FORBIDDEN", "FORBIDDEN"),
       trpcError("NOT_FOUND", "NOT_FOUND"),
+      trpcError("action_spans_projects", "BAD_REQUEST"),
     ]) {
       useUndoStore.setState({ stack: [] });
       useUndoStore
@@ -1132,6 +1185,33 @@ describe("useReviewMutations: undo", () => {
 
       expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
         OLDER,
+      ]);
+      cleanup();
+    }
+  });
+
+  it("keeps an undo that failed for a reason that may pass", async () => {
+    for (const failure of [
+      trpcError("boom", "INTERNAL_SERVER_ERROR"),
+      trpcError("slow", "TIMEOUT"),
+      trpcError("already_decided", "CONFLICT"),
+      new Error("offline"),
+    ]) {
+      useUndoStore.setState({ stack: [] });
+      useUndoStore
+        .getState()
+        .push({ actionId: OLDER, label: "Older", runIds: [RUN] });
+      useUndoStore
+        .getState()
+        .push({ actionId: ACTION, label: "Newest", runIds: [RUN] });
+      server.revert.mockRejectedValueOnce(failure);
+      const { result, run } = setup();
+
+      await run(() => result.current.undo());
+
+      expect(useUndoStore.getState().stack.map((e) => e.actionId)).toEqual([
+        OLDER,
+        ACTION,
       ]);
       cleanup();
     }

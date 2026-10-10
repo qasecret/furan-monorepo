@@ -13,6 +13,7 @@ import { create } from "zustand";
 import {
   cancelRun,
   loadedDecisions,
+  loadedFields,
   patchRun,
   runsDecidedBy,
   type Caches,
@@ -170,6 +171,15 @@ function rollBack(caches: Caches, action: Action): void {
 }
 
 /**
+ * Whether a refusal will repeat however often the call is retried: the action
+ * is gone, the reviewer may not undo it (or no longer belongs to the project),
+ * or it cannot be reverted as one call.
+ */
+function isPermanent(code: string | undefined): boolean {
+  return code === "NOT_FOUND" || code === "FORBIDDEN" || code === "BAD_REQUEST";
+}
+
+/**
  * A v4 UUID. `crypto.randomUUID` only exists in secure contexts, and a
  * self-hosted dashboard is often opened over plain http on a LAN address.
  */
@@ -266,13 +276,10 @@ export function useReviewMutations() {
   const revert = trpc.review.revert.useMutation({
     ...settle,
     onError: (err: ReviewError, vars: { actionId: string }) => {
-      // An undo that can never succeed is forgotten. Any other failure keeps
-      // its place on the stack, so the next ⌘Z retries the same action.
-      const code = err.data?.code;
-      if (
-        code === "NOT_FOUND" ||
-        (code === "FORBIDDEN" && err.message === "not_decider")
-      ) {
+      // An undo that can never succeed is forgotten. A failure that may pass
+      // (network, 5xx, a timeout, a conflict) keeps its place on the stack, so
+      // the next ⌘Z retries the same action.
+      if (isPermanent(err.data?.code)) {
         useUndoStore.getState().drop(vars.actionId);
       }
       onError(err, vars);
@@ -390,8 +397,11 @@ export function useReviewMutations() {
             OPTIMISTIC_ACTOR,
             actionId,
           ),
-          // Only this action's own decisions are taken back on a failure.
-          inverse: () => revertChange(actionId),
+          // A failure puts each target back as it is now, which may already
+          // be a decision the server refuses to overwrite. The targets are
+          // held in flight, so nothing else changes them meanwhile.
+          inverse: (c) =>
+            restoreChange(loadedFields(c, [runId], new Set(targets))),
           held: targets,
         },
         () => {

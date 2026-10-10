@@ -8,6 +8,7 @@ import {
   runStatusFor,
   withPendingDelta,
   type CheckpointItem,
+  type Review,
   type ReviewChange,
   type ReviewFields,
   type RunsListPage,
@@ -102,26 +103,47 @@ export function patchRun(
   }
 }
 
+/** The review fields of every loaded checkpoint of `runIds`, from both views of it. */
+function loadedRows(
+  { utils }: Caches,
+  runIds: readonly string[],
+): Array<readonly [string, Review]> {
+  const rows: Array<readonly [string, Review]> = [];
+  for (const runId of runIds) {
+    const items = utils.runs.listCheckpoints.getData({ runId })?.items ?? [];
+    const contexts = utils.runs.getById.getData({ runId })?.checkpointContexts;
+    rows.push(
+      ...items.map((i) => [i.id, i] as const),
+      ...Object.entries(contexts ?? {}),
+    );
+  }
+  return rows;
+}
+
 /**
  * The state and decision of every loaded checkpoint of `runIds` that was
  * decided under `actionId`, by checkpoint id: what an undo of it would clear.
  */
 export function loadedDecisions(
-  { utils }: Caches,
+  caches: Caches,
   runIds: readonly string[],
   actionId: string,
 ): Map<string, ReviewFields> {
+  return decidedBy(loadedRows(caches, runIds), actionId);
+}
+
+/**
+ * The state and decision the loaded caches hold for the checkpoints `ids`,
+ * decided or not: what a decision on them would overwrite.
+ */
+export function loadedFields(
+  caches: Caches,
+  runIds: readonly string[],
+  ids: ReadonlySet<string>,
+): Map<string, ReviewFields> {
   const found = new Map<string, ReviewFields>();
-  for (const runId of runIds) {
-    const items = utils.runs.listCheckpoints.getData({ runId })?.items ?? [];
-    const contexts = utils.runs.getById.getData({ runId })?.checkpointContexts;
-    const rows = [
-      ...items.map((i) => [i.id, i] as const),
-      ...Object.entries(contexts ?? {}),
-    ];
-    for (const [id, fields] of decidedBy(rows, actionId)) {
-      found.set(id, fields);
-    }
+  for (const [id, { state, decision }] of loadedRows(caches, runIds)) {
+    if (ids.has(id)) found.set(id, { state, decision });
   }
   return found;
 }
