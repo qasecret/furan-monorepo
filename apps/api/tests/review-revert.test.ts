@@ -355,7 +355,7 @@ d("revertAction", () => {
   async function captureNow(
     s: ReviewSeed,
     opts: { branch: string; viewport?: string },
-  ): Promise<{ runId: string; variationId: string }> {
+  ): Promise<{ runId: string; variationId: string; screenshotId: string }> {
     const viewport = opts.viewport ?? VIEWPORT;
     const [v] = await h.db
       .insert(testVariations)
@@ -404,7 +404,9 @@ d("revertAction", () => {
         browser: BROWSER,
         imageKey: `later-${randomUUID()}.png`,
         verdict: "unresolved",
-        verdictAt: new Date(),
+        // The database's clock, like the decision's `created_at` it is
+        // compared with (R24): never the host's, which may drift from it.
+        verdictAt: sql`clock_timestamp()`,
       })
       .returning({ id: screenshots.id });
     return { runId: r!.id, variationId: v!.id, screenshotId: shot!.id };
@@ -1132,6 +1134,68 @@ d("revertAction", () => {
       );
     });
 
+    test.each([
+      [
+        "replaces the regions",
+        [{ x: 7, y: 8, width: 90, height: 100, viewport: VIEWPORT }],
+      ],
+      ["clears the regions", null],
+    ])(
+      "an approve whose reviewer-drawn ignore areas %s records them as written, and the undo restores the variation",
+      async (_label, ignoreAreas) => {
+        const s = await seed({
+          checkpoints: [
+            { name: "home", verdict: "unresolved", withBaseline: true },
+          ],
+        });
+        const home = s.shots.home!;
+        await h.db
+          .update(testVariations)
+          .set({
+            ignoreRegions: [{ x: 1, y: 2, width: 3, height: 4 }],
+            updatedAt: new Date(),
+          })
+          .where(eq(testVariations.id, home.variationId));
+        const before = await variationRow(home.variationId);
+        const actionId = randomUUID();
+        await h.db.transaction((tx) =>
+          decideCheckpoints(
+            tx,
+            {
+              actor: actorOf(s.editor),
+              projectId: s.projectId,
+              actionId,
+              source: "viewer",
+              decision: "approved",
+              targets: [target(s.runId, home.id)],
+              ignoreAreas,
+            },
+            deps(),
+          ),
+        );
+
+        const promoted = await variationRow(home.variationId);
+        expect(promoted.ignoreRegions).toEqual(ignoreAreas);
+        const [decision] = await decisionsOfAction(actionId);
+        const snapshot = decision!.before as {
+          variation: { ignoreRegions: unknown };
+          variationAfter: { ignoreRegions: unknown };
+        };
+        expect(snapshot.variationAfter).toEqual(writtenFields(promoted));
+        expect(snapshot.variationAfter.ignoreRegions).toEqual(ignoreAreas);
+        expect(snapshot.variation.ignoreRegions).toEqual(before.ignoreRegions);
+
+        // Untouched since: not an edit, so the undo goes through.
+        const res = await revert(s.editor, actionId);
+
+        expect(res.reverted).toBe(1);
+        expect(res.skipped).toEqual([]);
+        expect(stable(await variationRow(home.variationId))).toEqual(
+          stable(before),
+        );
+      },
+    );
+
     test("a snapshot without variationAfter (written before it existed) keeps the unchecked undo", async () => {
       const s = await seed({
         checkpoints: [
@@ -1330,7 +1394,7 @@ d("revertAction", () => {
           .select({ id: testRuns.id })
           .from(testRuns)
           .where(eq(testRuns.id, s.runId))
-          .for("update");
+          .for("no key update");
         locked();
         await gate;
       });
