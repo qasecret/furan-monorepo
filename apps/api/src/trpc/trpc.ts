@@ -1,4 +1,4 @@
-import { withUserScope } from "@furan/db";
+import { withUserScope, type DB } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
 import { createDeferredSink } from "../lib/deferred-sink.js";
@@ -6,6 +6,18 @@ import { createDeferredSink } from "../lib/deferred-sink.js";
 import type { Context } from "./context.js";
 
 export const t = initTRPC.context<Context>().create();
+
+/**
+ * Thrown inside {@link scopeToUser}'s transaction to roll it back when the
+ * procedure failed. Carries tRPC's `{ ok: false }` result out of the
+ * transaction so the middleware can return it unchanged. Never escapes the
+ * middleware.
+ */
+class ProcedureFailed extends Error {
+  constructor(readonly result: unknown) {
+    super("procedure failed; rolling back its request transaction");
+  }
+}
 
 /**
  * Runs each procedure inside a user-scoped transaction (ADR-058): pins
@@ -23,6 +35,12 @@ export const t = initTRPC.context<Context>().create();
  * this and inherit the scoped `ctx.db`, so their own membership lookups are
  * covered too. Nested `ctx.db.transaction(...)` inside a procedure becomes a
  * savepoint on the outer transaction (supported by postgres.js).
+ *
+ * The transaction COMMITS only when the procedure succeeds. tRPC's `next()`
+ * never throws — a failing procedure comes back as `{ ok: false, error }` — so
+ * the callback throws {@link ProcedureFailed} to force a ROLLBACK, then the
+ * middleware returns that same result, leaving the error (code, message,
+ * `cause`) exactly as thrown.
  */
 const scopeToUser = t.middleware(async ({ ctx, next }) => {
   // The sink lives in the middleware closure (not on the Context), so
@@ -33,13 +51,22 @@ const scopeToUser = t.middleware(async ({ ctx, next }) => {
   const scopedCtx = { ...ctx, onCommit: sink.onCommit };
   if (!ctx.user) return next({ ctx: scopedCtx });
   const { id, role } = ctx.user;
-  const result = await withUserScope(ctx.db, { userId: id, role }, (tx) =>
-    next({ ctx: { ...scopedCtx, db: tx } }),
-  );
-  // Drain post-commit effects (diff enqueues) only when the procedure
-  // succeeded — on error the transaction is rolled back / committed empty, so
-  // enqueuing a job for rows that aren't there would be wrong.
-  if (result.ok) await sink.drain();
+  const run = (tx: DB) => next({ ctx: { ...scopedCtx, db: tx } });
+  let result: Awaited<ReturnType<typeof run>>;
+  try {
+    result = await withUserScope(ctx.db, { userId: id, role }, async (tx) => {
+      const outcome = await run(tx);
+      if (!outcome.ok) throw new ProcedureFailed(outcome);
+      return outcome;
+    });
+  } catch (err) {
+    // Rolled back: nothing the procedure wrote survives, and its deferred
+    // effects are dropped (they would reference rows that aren't there).
+    if (err instanceof ProcedureFailed) return err.result as typeof result;
+    throw err;
+  }
+  // Committed: now run post-commit effects (diff enqueues).
+  await sink.drain();
   return result;
 });
 
