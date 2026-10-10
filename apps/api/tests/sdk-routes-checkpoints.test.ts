@@ -270,4 +270,90 @@ d("POST /runs/:id/screenshots checkpoint tests (ADR-038)", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  describe("run status while a checkpoint has no verdict (R31)", () => {
+    const upload = async (name: string): Promise<{ screenshotId: string }> => {
+      const form = new FormData();
+      form.append("name", name);
+      form.append("viewport", "1280x720");
+      form.append("browser", "chromium");
+      form.append(
+        "pngBytes",
+        new Blob([TINY_PNG], { type: "image/png" }),
+        "snap.png",
+      );
+      const res = await fetch(
+        `http://127.0.0.1:${port}/runs/${s.runId}/screenshots`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${s.memberJwt}` },
+          body: form,
+        },
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as { screenshotId: string };
+    };
+    const runStatus = async (): Promise<string | undefined> =>
+      (
+        await h.db
+          .select({ status: testRuns.status })
+          .from(testRuns)
+          .where(eq(testRuns.id, s.runId))
+          .limit(1)
+      )[0]?.status;
+    /** What the diff pipeline leaves behind once it has settled a checkpoint. */
+    const settle = async (
+      screenshotId: string,
+      status: "passed" | "aborted",
+    ): Promise<void> => {
+      await h.db
+        .update(screenshots)
+        .set({ verdict: "passed", verdictAt: new Date() })
+        .where(eq(screenshots.id, screenshotId));
+      await h.db
+        .update(testRuns)
+        .set({ status })
+        .where(eq(testRuns.id, s.runId));
+    };
+
+    test("an uploaded checkpoint keeps a run whose other checkpoints all have verdicts running", async () => {
+      // Step 1 is diffed and the run rolled up to passed before step 2 arrives
+      // (the SDK uploads a multi-step test one step at a time).
+      const first = await upload("step-1");
+      await settle(first.screenshotId, "passed");
+      expect(await runStatus()).toBe("passed");
+
+      await upload("step-2");
+
+      // Step 2 has no verdict yet, so an SDK poll must not read a final status.
+      expect(await runStatus()).toBe("running");
+    });
+
+    test("the first checkpoint leaves a running run running", async () => {
+      await upload("step-1");
+      expect(await runStatus()).toBe("running");
+    });
+
+    test("an aborted run stays aborted when a checkpoint is uploaded", async () => {
+      const first = await upload("step-1");
+      await settle(first.screenshotId, "aborted");
+
+      await upload("step-2");
+
+      expect(await runStatus()).toBe("aborted");
+    });
+
+    test("a run-level override survives an uploaded checkpoint", async () => {
+      const first = await upload("step-1");
+      await settle(first.screenshotId, "passed");
+      await h.db
+        .update(testRuns)
+        .set({ statusOverride: "failed", status: "failed" })
+        .where(eq(testRuns.id, s.runId));
+
+      await upload("step-2");
+
+      expect(await runStatus()).toBe("failed");
+    });
+  });
 });
