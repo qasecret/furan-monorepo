@@ -50,6 +50,15 @@ export interface ReviewCheckpointSpec {
    * passed baseline run, and the variation's `baseline_name` pointing at it.
    */
   withBaseline?: boolean;
+  /**
+   * The step's environment (ADR-038), also its variation's. Defaults: viewport
+   * `1280x720`, browser `chromium`, no os, no device. The same `name` at two
+   * viewports (or browsers, ...) is two steps of one run.
+   */
+  viewport?: string;
+  browser?: string;
+  os?: string;
+  device?: string;
 }
 
 export interface ReviewRunSpec {
@@ -66,11 +75,20 @@ export interface ReviewShot {
   id: string;
   variationId: string;
   imageKey: string;
+  name: string;
+  viewport: string;
+  browser: string;
 }
 
 export interface ReviewRun {
   runId: string;
+  /**
+   * The run's steps by name. When one name is seeded at several environments
+   * the first wins; use `shotsInOrder` for all of them.
+   */
   shots: Record<string, ReviewShot>;
+  /** Every step, in the spec's (capture) order. */
+  shotsInOrder: ReviewShot[];
 }
 
 export interface ReviewSeed extends ReviewRun {
@@ -93,6 +111,10 @@ export interface ReviewSeed extends ReviewRun {
   baselineBuildId: string | null;
   /** Every run seeded into this build (the first one and `addReviewRun`'s). */
   runIds: string[];
+  /** The branch the seed's build and runs were created on. */
+  branch: string;
+  /** The builds `addReviewBuild` added to the project, with their runs. */
+  extraBuilds: Array<{ buildId: string; runIds: string[] }>;
   /** Editors `addProjectEditor` added to the project, besides `editor`. */
   peers: ReviewUser[];
   tag: string;
@@ -142,7 +164,7 @@ async function seedUser(
 
 async function insertRun(
   h: TestApp,
-  ctx: { projectId: string; buildId: string; tag: string },
+  ctx: { projectId: string; buildId: string; tag: string; branch: string },
   spec: ReviewRunSpec,
   baselineRunId: () => Promise<string>,
 ): Promise<ReviewRun> {
@@ -165,14 +187,19 @@ async function insertRun(
       name: `run-${ctx.tag}`,
       status: lifecycle,
       statusOverride: override,
-      branchName: BRANCH,
+      branchName: ctx.branch,
       createdAt: nextCaptureTime(),
     })
     .returning({ id: testRuns.id });
   const runId = run!.id;
 
   const shots: Record<string, ReviewShot> = {};
+  const shotsInOrder: ReviewShot[] = [];
   for (const c of spec.checkpoints) {
+    const viewport = c.viewport ?? VIEWPORT;
+    const browser = c.browser ?? BROWSER;
+    const os = c.os ?? null;
+    const device = c.device ?? null;
     const baselineName = c.withBaseline
       ? `baseline-${c.name}-${ctx.tag}.png`
       : null;
@@ -183,9 +210,11 @@ async function insertRun(
       .values({
         projectId: ctx.projectId,
         name: c.name,
-        branchName: BRANCH,
-        browser: BROWSER,
-        viewport: VIEWPORT,
+        branchName: ctx.branch,
+        browser,
+        viewport,
+        os,
+        device,
         baselineName,
       })
       .onConflictDoUpdate({
@@ -207,7 +236,7 @@ async function insertRun(
         baselineName,
         testVariationId: variationId,
         testRunId: await baselineRunId(),
-        branchName: BRANCH,
+        branchName: ctx.branch,
       });
     }
     const imageKey = `cap-${c.name}-${randomUUID()}.png`;
@@ -219,29 +248,43 @@ async function insertRun(
         projectId: ctx.projectId,
         testVariationId: variationId,
         name: c.name,
-        viewport: VIEWPORT,
-        browser: BROWSER,
+        viewport,
+        browser,
+        os,
+        device,
         imageKey,
         verdict: c.verdict,
         verdictAt: c.verdict === null ? null : capturedAt,
         createdAt: capturedAt,
       })
       .returning({ id: screenshots.id });
-    shots[c.name] = { id: shot!.id, variationId, imageKey };
+    const reviewShot: ReviewShot = {
+      id: shot!.id,
+      variationId,
+      imageKey,
+      name: c.name,
+      viewport,
+      browser,
+    };
+    shots[c.name] ??= reviewShot;
+    shotsInOrder.push(reviewShot);
   }
-  return { runId, shots };
+  return { runId, shots, shotsInOrder };
 }
 
 /**
  * Seeds one project with four users, a build and one run whose checkpoints are
  * `spec.checkpoints` (in capture order). Each checkpoint gets its own
  * variation; `withBaseline` ones also get a baseline row on an earlier, passed
- * baseline run.
+ * baseline run. `opts.branch` sets the branch of the build and its runs
+ * (default `feature/review`).
  */
 export async function seedReviewRun(
   h: TestApp,
   spec: ReviewRunSpec,
+  opts: { branch?: string } = {},
 ): Promise<ReviewSeed> {
+  const branch = opts.branch ?? BRANCH;
   const tag = randomUUID().slice(0, 8);
   const [project] = await h.db
     .insert(projects)
@@ -260,7 +303,7 @@ export async function seedReviewRun(
 
   const [build] = await h.db
     .insert(builds)
-    .values({ projectId, userId: editor.id, branchName: BRANCH })
+    .values({ projectId, userId: editor.id, branchName: branch })
     .returning({ id: builds.id });
   const buildId = build!.id;
 
@@ -272,7 +315,7 @@ export async function seedReviewRun(
     if (baselineRunId) return baselineRunId;
     const [b] = await h.db
       .insert(builds)
-      .values({ projectId, branchName: BRANCH })
+      .values({ projectId, branchName: branch })
       .returning({ id: builds.id });
     baselineBuildId = b!.id;
     const [r] = await h.db
@@ -283,7 +326,7 @@ export async function seedReviewRun(
         name: `baseline-${tag}`,
         status: "passed",
         merge: true,
-        branchName: BRANCH,
+        branchName: branch,
         createdAt: nextCaptureTime(),
       })
       .returning({ id: testRuns.id });
@@ -294,7 +337,7 @@ export async function seedReviewRun(
 
   const run = await insertRun(
     h,
-    { projectId, buildId, tag },
+    { projectId, buildId, tag, branch },
     spec,
     ensureBaselineRun,
   );
@@ -310,6 +353,8 @@ export async function seedReviewRun(
     baselineRunId,
     baselineBuildId,
     runIds: [run.runId],
+    branch,
+    extraBuilds: [],
     peers: [],
     tag,
   };
@@ -348,12 +393,52 @@ export async function addReviewRun(
   }
   const run = await insertRun(
     h,
-    { projectId: seed.projectId, buildId: seed.buildId, tag: seed.tag },
+    {
+      projectId: seed.projectId,
+      buildId: seed.buildId,
+      tag: seed.tag,
+      branch: seed.branch,
+    },
     spec,
     () => Promise.reject(new Error("unreachable")),
   );
   seed.runIds.push(run.runId);
   return run;
+}
+
+/**
+ * Adds another build to the seed's project (created after every earlier one),
+ * on `opts.branch` (default: the seed's branch), holding one run built from
+ * `opts.spec`. Like `addReviewRun`, `withBaseline` is not supported and names
+ * already seeded in the project reuse their variation (same branch only: a
+ * variation's identity includes its branch). Removed with the seed.
+ */
+export async function addReviewBuild(
+  h: TestApp,
+  seed: ReviewSeed,
+  opts: { branch?: string; spec: ReviewRunSpec },
+): Promise<ReviewRun & { buildId: string }> {
+  if (opts.spec.checkpoints.some((c) => c.withBaseline)) {
+    throw new Error("addReviewBuild: seed baselines with seedReviewRun");
+  }
+  const branch = opts.branch ?? seed.branch;
+  const [build] = await h.db
+    .insert(builds)
+    .values({
+      projectId: seed.projectId,
+      userId: seed.editor.id,
+      branchName: branch,
+    })
+    .returning({ id: builds.id });
+  const buildId = build!.id;
+  const run = await insertRun(
+    h,
+    { projectId: seed.projectId, buildId, tag: seed.tag, branch },
+    opts.spec,
+    () => Promise.reject(new Error("unreachable")),
+  );
+  seed.extraBuilds.push({ buildId, runIds: [run.runId] });
+  return { ...run, buildId };
 }
 
 /**
@@ -371,6 +456,7 @@ export async function cleanupReviewSeeds(
   const targetIds = seeds.flatMap((s) => [
     ...s.runIds,
     s.buildId,
+    ...s.extraBuilds.flatMap((b) => [b.buildId, ...b.runIds]),
     ...(s.baselineRunId ? [s.baselineRunId] : []),
     ...(s.baselineBuildId ? [s.baselineBuildId] : []),
   ]);
