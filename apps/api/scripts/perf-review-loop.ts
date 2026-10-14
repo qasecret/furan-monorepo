@@ -73,6 +73,29 @@ const KEEP = flags.has("--keep");
 const REUSE = flags.has("--reuse");
 const RLS = flags.has("--rls");
 
+/**
+ * An error this script raises itself. Its message is fixed text that names no
+ * connection detail, so it is printed as it is; any other error is not (see
+ * `main`'s handler).
+ */
+class PerfError extends Error {}
+
+/**
+ * What is printed for an error that is not a `PerfError`: a driver or server
+ * message can name the host, the port or a role, so only the error's class and
+ * its code (a SQLSTATE such as `28P01`, or a system code such as
+ * `ECONNREFUSED`) are shown.
+ */
+function fixedMessage(e: unknown): string {
+  const name = e instanceof Error ? e.constructor.name : typeof e;
+  const code = (e as { code?: unknown } | null)?.code;
+  const shown =
+    typeof code === "string" && /^[A-Z0-9_]{2,32}$/.test(code)
+      ? ` ${code}`
+      : "";
+  return `perf-review-loop failed (${name}${shown})`;
+}
+
 function freeGiB(): number {
   const s = statfsSync("/");
   return (s.bavail * s.bsize) / 2 ** 30;
@@ -94,7 +117,7 @@ function migrate(url: string): void {
   } catch (e) {
     // The child's output may name the connection; show the exit status only.
     const status = (e as { status?: number }).status;
-    throw new Error(`drizzle-kit migrate failed (exit ${status ?? "?"})`);
+    throw new PerfError(`drizzle-kit migrate failed (exit ${status ?? "?"})`);
   }
 }
 
@@ -277,7 +300,12 @@ interface Spots {
   bigBuildId: string;
   mid: { buildId: string; runId: string; checkpointId: string };
   last: { buildId: string; runId: string; checkpointId: string };
-  /** The only pending step of a mid-aged small build: the batch ends there. */
+  /**
+   * The only pending step of a mid-aged small build. `findNext` finds nothing
+   * after it in its batch, wraps and finds nothing before it either, so it
+   * opens the next batch: the longest path, 5 statements (6 when no other
+   * batch on its branch has a pending step and the any-branch probe runs too).
+   */
   exhausted: { buildId: string; runId: string; checkpointId: string };
   pendingInBig: number;
   pendingBuilds: number;
@@ -329,7 +357,7 @@ async function findSpots(db: DB, projectId: string): Promise<Spots> {
     checkpointId: p.checkpointId,
   });
   if (inBig.length < 3 || singles.length === 0) {
-    throw new Error("the seed has no usable pending steps");
+    throw new PerfError("the seed has no usable pending steps");
   }
   return {
     bigBuildId,
@@ -372,7 +400,7 @@ async function timeAll(
     ["no at", {}],
     ["at the batch's last pending step", { at: spots.last }],
     [
-      "at the only pending step of a batch (6 statements)",
+      "at the only pending step of a batch (findNext: 5 statements)",
       { at: spots.exhausted },
     ],
   ] as const;
@@ -433,7 +461,7 @@ async function main(): Promise<void> {
     return;
   }
   const raw = process.env.DATABASE_URL;
-  if (!raw) throw new Error("DATABASE_URL is not set");
+  if (!raw) throw new PerfError("DATABASE_URL is not set");
   const base = new URL(raw);
   const scratchUrl = urlFor(base, SCRATCH_DB);
 
@@ -458,7 +486,7 @@ async function main(): Promise<void> {
           .from(users)
           .where(eq(users.email, "editor@perf.example"));
         if (!p || !u)
-          throw new Error("--reuse: the scratch database is not seeded");
+          throw new PerfError("--reuse: the scratch database is not seeded");
         seeded = { projectId: p.id, editorId: u.id };
       } else {
         const t0 = performance.now();
@@ -492,7 +520,7 @@ async function main(): Promise<void> {
 
       if (RLS) {
         const password = process.env.PERF_APP_PASSWORD;
-        if (!password) throw new Error("--rls needs PERF_APP_PASSWORD");
+        if (!password) throw new PerfError("--rls needs PERF_APP_PASSWORD");
         const appUrl = new URL(scratchUrl);
         appUrl.username = "furan_app";
         appUrl.password = password;
@@ -523,7 +551,7 @@ async function main(): Promise<void> {
 main().then(
   () => process.exit(process.exitCode ?? 0),
   (e: unknown) => {
-    console.error(e instanceof Error ? e.message : e);
+    console.error(e instanceof PerfError ? e.message : fixedMessage(e));
     process.exit(1);
   },
 );
