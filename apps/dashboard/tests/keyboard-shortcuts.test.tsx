@@ -327,6 +327,56 @@ describe("useDiffViewerShortcuts", () => {
     );
     expect(useViewerStore.getState().draftIgnoreAreas).toHaveLength(0);
   });
+
+  it("Ctrl+Z invokes onUndo and prevents the browser default", () => {
+    const onUndo = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onUndo }));
+    const ev = new KeyboardEvent("keydown", {
+      key: "z",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      window.dispatchEvent(ev);
+    });
+    expect(onUndo).toHaveBeenCalledOnce();
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("Ctrl+Shift+Z (redo) does not invoke onUndo", () => {
+    const onUndo = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onUndo }));
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Z",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+Z ignores auto-repeat and leaves the event alone", () => {
+    const onUndo = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onUndo }));
+    const ev = new KeyboardEvent("keydown", {
+      key: "z",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      window.dispatchEvent(ev);
+    });
+    expect(onUndo).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
+  });
 });
 
 // Regression: single-key shortcuts used to fire while the reviewer was
@@ -364,6 +414,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   const callbacks = {
     onApprove: vi.fn(),
     onReject: vi.fn(),
+    onUndo: vi.fn(),
     onHelpToggle: vi.fn(),
     onNextDiff: vi.fn(),
     onPrevDiff: vi.fn(),
@@ -492,6 +543,37 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
       expectNothingFired(before);
     });
   }
+
+  // Ctrl+Z (⌘Z) carries a modifier, so the single-key table above never sends
+  // it: each owner gets its own check, through the same guard.
+  const pressCtrlZ = () =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+
+  for (const [label, html, selector] of OWNERS) {
+    it(`Ctrl+Z is ignored while focus is in ${label}`, () => {
+      armEveryShortcut();
+      mountHook();
+      focusInto(html, selector);
+      const before = snapshot();
+      pressCtrlZ();
+      expectNothingFired(before);
+    });
+  }
+
+  it("still fires Ctrl+Z while focus sits on an ordinary toolbar button", () => {
+    mountHook();
+    focusInto(`<button>Overlay</button>`, "button");
+    pressCtrlZ();
+    expect(callbacks.onUndo).toHaveBeenCalledOnce();
+  });
 
   it("still fires while focus sits on a non-text input (checkbox)", () => {
     mountHook();

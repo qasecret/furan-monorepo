@@ -28,6 +28,8 @@ interface ShortcutOptions {
   projectId?: string;
   onApprove?: () => void; // T11 supplies these
   onReject?: () => void;
+  /** ⌘Z / Ctrl+Z: takes back the newest review action. */
+  onUndo?: () => void;
   prevDiffHref?: string | null;
   nextDiffHref?: string | null;
   onHelpToggle?: () => void;
@@ -256,6 +258,14 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
           id: crypto.randomUUID(),
           viewport: store.viewport || clipboard.viewport,
         });
+        e.preventDefault();
+      },
+      // ⌘Z takes back the newest review action. Auto-repeat is ignored, like
+      // approve and reject, so holding the keys cannot walk the stack back.
+      // Shift is not matched, so ⇧⌘Z (redo) passes through untouched.
+      "$mod+Z": (e) => {
+        if (e.repeat) return;
+        optsRef.current.onUndo?.();
         e.preventDefault();
       },
       // Zoom shortcuts. `=` is the unshifted key labeled "+" on US layouts —

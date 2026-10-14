@@ -31,6 +31,8 @@ import { ViewportSwitcher } from "./ViewportSwitcher";
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
+import { useReviewMutations } from "@/lib/review/use-review-mutations";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -228,6 +230,11 @@ export function DiffViewer({
     status: data?.status,
     onResolved: advanceToNextPending,
   });
+  // ⌘Z takes back the newest review action, with no action id. This is the
+  // hook's own call rather than `review.undo`, which is typed to take one.
+  // Never call a hook inside the shortcut callback.
+  const { undo } = useReviewMutations();
+  const undoCount = useUndoStore((s) => s.stack.length);
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
   // viewer picks up freshly written diff regions, baselineSource, etc.
@@ -474,6 +481,7 @@ export function DiffViewer({
       : null,
     onApprove: review.approve,
     onReject: review.reject,
+    onUndo: () => undo(),
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
@@ -765,7 +773,8 @@ export function DiffViewer({
                 />
               )}
               {/* Keyboard hint bar (reference TestStep): floats over the
-                  canvas; ←/→ navigate steps, A approve, R reject. */}
+                  canvas; ←/→ navigate steps, A approve, R reject, and ⌘Z
+                  undo while there is an action to take back. */}
               <div
                 className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
                 data-testid="diff-viewer-shortcut-hints"
@@ -794,6 +803,20 @@ export function DiffViewer({
                     </kbd>
                     reject
                   </span>
+                  {undoCount > 0 && (
+                    <>
+                      <span className="h-3 w-px bg-edge-strong" aria-hidden />
+                      <span
+                        className="flex items-center gap-1.5"
+                        data-testid="shortcut-hint-undo"
+                      >
+                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                          ⌘Z
+                        </kbd>
+                        Undo
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

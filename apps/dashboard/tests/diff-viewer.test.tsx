@@ -212,6 +212,7 @@ class StubEventSource {
 
 import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { useUndoStore } from "../src/lib/review/use-undo-store";
 
 describe("DiffViewer", () => {
   beforeEach(() => {
@@ -918,5 +919,81 @@ describe("DiffViewer auto-advance", () => {
     press("A");
     expect(reviewSpies.decide).not.toHaveBeenCalled();
     expect(routerSpies.replace).not.toHaveBeenCalled();
+  });
+});
+
+// ⌘Z undoes the newest review action through the review hook, and the hint bar
+// shows the shortcut only while there is something to undo.
+describe("DiffViewer undo shortcut and hint", () => {
+  const pressCtrlZ = () =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
+    resetReviewSpies();
+    useUndoStore.setState({ stack: [] });
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      draftIgnoreAreas: [],
+      markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
+      kindOverrides: new Map(),
+      selectedIgnoreId: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useUndoStore.setState({ stack: [] });
+  });
+
+  test("the hint bar shows ⌘Z Undo only while there is an action to undo", () => {
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    expect(r.queryByTestId("shortcut-hint-undo")).toBeNull();
+
+    act(() => {
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
+    });
+    const hint = r.getByTestId("shortcut-hint-undo");
+    expect(hint.querySelector("kbd")?.textContent).toBe("⌘Z");
+    expect(hint.textContent).toContain("Undo");
+
+    act(() => {
+      useUndoStore.getState().drop("a1");
+    });
+    expect(r.queryByTestId("shortcut-hint-undo")).toBeNull();
+  });
+
+  test("⌘Z undoes through the review hook, with no action id (the newest)", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    pressCtrlZ();
+    expect(reviewSpies.undo).toHaveBeenCalledOnce();
+    expect(reviewSpies.undo.mock.calls[0]).toEqual([]);
+  });
+
+  test("⌘Z while typing in a text field does not undo", () => {
+    render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    pressCtrlZ();
+    input.remove();
+    expect(reviewSpies.undo).not.toHaveBeenCalled();
   });
 });
