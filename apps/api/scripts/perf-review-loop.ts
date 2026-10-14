@@ -26,6 +26,12 @@
  * pending, 40% were decided (they keep verdict `new` / `unresolved` and have an
  * active approval) and 55% passed; 3% of the runs are `running` (one undiffed
  * step) or `aborted`, so they are not reviewable.
+ *
+ * Worst case: a second project of the same shape where every pending step was
+ * then decided except in the 10 oldest batches that had one. No recent batch
+ * is pending, while every resolved batch still holds decided `new` /
+ * `unresolved` steps, so a probe for "the newest batch with a pending step"
+ * has to look past nearly all of them.
  */
 import { execFileSync } from "node:child_process";
 import { statfsSync } from "node:fs";
@@ -34,6 +40,7 @@ import {
   and,
   asc,
   builds,
+  desc,
   createDb,
   eq,
   projectMembers,
@@ -47,7 +54,10 @@ import {
 } from "@furan/db";
 import { Registry } from "@furan/telemetry";
 
-import { pendingStepCondition } from "../src/lib/review/pending.js";
+import {
+  buildHasPendingStep,
+  pendingStepCondition,
+} from "../src/lib/review/pending.js";
 import { findNext, type NextInput } from "../src/lib/review/queue.js";
 import type { Context } from "../src/trpc/context.js";
 import { appRouter } from "../src/trpc/v1/router.js";
@@ -67,6 +77,11 @@ const BRANCHES = 40;
 /** Hash buckets of 100: [0,5) pending, [5,45) decided, [45,100) passed. */
 const PENDING_PCT = 5;
 const DECIDED_PCT = 40;
+/** The worst-case project keeps this many old batches pending. */
+const KEPT_PENDING_BUILDS = 10;
+
+const PROJECT = "perf-review-loop";
+const RESOLVED_PROJECT = "perf-review-loop-resolved";
 
 const flags = new Set(process.argv.slice(2));
 const KEEP = flags.has("--keep");
@@ -137,15 +152,12 @@ async function dropScratch(admin: DB): Promise<void> {
 
 interface Seeded {
   projectId: string;
+  /** The worst-case project (see the header). */
+  resolvedProjectId: string;
   editorId: string;
 }
 
 async function seed(db: DB): Promise<Seeded> {
-  const [project] = await db
-    .insert(projects)
-    .values({ name: "perf-review-loop" })
-    .returning({ id: projects.id });
-  const projectId = project!.id;
   const [editor] = await db
     .insert(users)
     .values({
@@ -158,6 +170,25 @@ async function seed(db: DB): Promise<Seeded> {
     })
     .returning({ id: users.id });
   const editorId = editor!.id;
+  const projectId = await seedProject(db, editorId, PROJECT);
+  const resolvedProjectId = await seedProject(db, editorId, RESOLVED_PROJECT);
+  await resolveAllButOldest(db, resolvedProjectId, editorId);
+
+  await db.execute(sql`vacuum analyze`);
+  return { projectId, resolvedProjectId, editorId };
+}
+
+/** One project of the shape in the header, with `editorId` as its member. */
+async function seedProject(
+  db: DB,
+  editorId: string,
+  name: string,
+): Promise<string> {
+  const [project] = await db
+    .insert(projects)
+    .values({ name })
+    .returning({ id: projects.id });
+  const projectId = project!.id;
   await db.insert(projectMembers).values({ userId: editorId, projectId });
 
   // 60 variations (20 names x 3 viewports); steps pick one at random.
@@ -237,8 +268,43 @@ async function seed(db: DB): Promise<Seeded> {
           and not exists (select 1 from checkpoint_decisions d
                           where d.screenshot_id = s.id and d.reverted_at is null))`);
 
-  await db.execute(sql`vacuum analyze`);
-  return { projectId, editorId };
+  await db.execute(sql`drop table perf_variations, perf_steps`);
+  return projectId;
+}
+
+/**
+ * Turns `projectId` into the worst case: an approval for every pending step
+ * outside the `KEPT_PENDING_BUILDS` oldest batches with one, and the runs left
+ * with no pending step `passed`.
+ */
+async function resolveAllButOldest(
+  db: DB,
+  projectId: string,
+  editorId: string,
+): Promise<void> {
+  await db.execute(sql`
+    insert into checkpoint_decisions (project_id, run_id, screenshot_id, action_id, decision, actor_id, source)
+    select ${screenshots.projectId}, ${screenshots.runId}, ${screenshots.id},
+           gen_random_uuid(), 'approved', ${editorId}::uuid, 'viewer'
+    from ${screenshots}
+    join ${testRuns} on ${testRuns.id} = ${screenshots.runId}
+    where ${testRuns.projectId} = ${projectId}
+      and ${screenshots.projectId} = ${projectId}
+      and ${pendingStepCondition()}
+      and ${testRuns.buildId} not in (
+        select b.id from ${builds} b
+        where b.project_id = ${projectId}
+          and ${buildHasPendingStep(projectId, sql`b.id`)}
+        order by b.created_at, b.id
+        limit ${KEPT_PENDING_BUILDS}::int)`);
+  await db.execute(sql`
+    update test_runs r set status = 'passed'
+    where r.project_id = ${projectId}::uuid and r.status = 'unresolved'
+      and not exists (
+        select 1 from screenshots s
+        where s.run_id = r.id and s.verdict in ('new', 'unresolved')
+          and not exists (select 1 from checkpoint_decisions d
+                          where d.screenshot_id = s.id and d.reverted_at is null))`);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,22 +436,72 @@ async function findSpots(db: DB, projectId: string): Promise<Spots> {
   };
 }
 
-async function timeAll(
+interface ResolvedSpots {
+  /** The last pending step, in capture order, of the newest pending batch. */
+  oldest: { buildId: string; runId: string; checkpointId: string };
+  pendingBuilds: number;
+  pendingSteps: number;
+}
+
+async function findResolvedSpots(
   db: DB,
-  seeded: Seeded,
-  spots: Spots,
-  scoped: boolean,
-): Promise<Row[]> {
-  const { projectId, editorId } = seeded;
+  projectId: string,
+): Promise<ResolvedSpots> {
+  const pending = await db
+    .select({
+      buildId: testRuns.buildId,
+      runId: testRuns.id,
+      checkpointId: screenshots.id,
+    })
+    .from(screenshots)
+    .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+    .innerJoin(builds, eq(builds.id, testRuns.buildId))
+    .where(
+      and(
+        eq(testRuns.projectId, projectId),
+        eq(screenshots.projectId, projectId),
+        pendingStepCondition(),
+      ),
+    )
+    .orderBy(
+      desc(builds.createdAt),
+      desc(builds.id),
+      desc(testRuns.createdAt),
+      desc(testRuns.id),
+      desc(screenshots.createdAt),
+      desc(screenshots.id),
+    );
+  const [last] = pending;
+  if (!last) throw new PerfError("the worst-case seed has no pending step");
+  return {
+    oldest: {
+      buildId: last.buildId,
+      runId: last.runId,
+      checkpointId: last.checkpointId,
+    },
+    pendingBuilds: new Set(pending.map((p) => p.buildId)).size,
+    pendingSteps: pending.length,
+  };
+}
+
+/** A tRPC caller as the seed's editor, on `db`. */
+function callerFor(db: DB, editorId: string) {
   const ctx = {
     user: { id: editorId, role: "editor", via: "jwt" },
     db,
     telemetry: { metrics: new Registry() },
   } as unknown as Context;
-  const api = appRouter.createCaller(ctx);
+  return appRouter.createCaller(ctx);
+}
 
-  /** `findNext` on the plain handle, or in a user-scoped transaction (RLS). */
-  const direct = (input: Omit<NextInput, "projectId">) =>
+/** `findNext` on the plain handle, or in a user-scoped transaction (RLS). */
+function directFor(
+  db: DB,
+  editorId: string,
+  projectId: string,
+  scoped: boolean,
+) {
+  return (input: Omit<NextInput, "projectId">) =>
     scoped
       ? withUserScope(
           db,
@@ -393,6 +509,60 @@ async function timeAll(
           (tx) => findNext(tx, { projectId, ...input }),
         )
       : findNext(db, { projectId, ...input });
+}
+
+/** The worst-case project's queries (see the header). */
+async function timeResolved(
+  db: DB,
+  seeded: Seeded,
+  spots: ResolvedSpots,
+  scoped: boolean,
+): Promise<Row[]> {
+  const projectId = seeded.resolvedProjectId;
+  const api = callerFor(db, seeded.editorId);
+  const direct = directFor(db, seeded.editorId, projectId, scoped);
+  const cases = [
+    ["no at", {}],
+    ["at the newest pending batch's last pending step", { at: spots.oldest }],
+  ] as const;
+  const rows: Row[] = [];
+  for (const [name, input] of cases) {
+    rows.push(
+      await measure(`worst case: findNext, ${name}`, () => direct(input)),
+    );
+  }
+  for (const [name, input] of cases) {
+    rows.push(
+      await measure(`worst case: review.next, ${name}`, () =>
+        api.review.next({ projectId, ...input }),
+      ),
+    );
+  }
+  rows.push(
+    await measure(`worst case: builds.list needsReview`, () =>
+      api.builds.list({ projectId, needsReview: true }),
+    ),
+    await measure(`worst case: builds.pendingCount`, () =>
+      api.builds.pendingCount({ projectId }),
+    ),
+    await measure(
+      `worst case: builds.list, no filter`,
+      () => api.builds.list({ projectId }),
+      false,
+    ),
+  );
+  return rows;
+}
+
+async function timeAll(
+  db: DB,
+  seeded: Seeded,
+  spots: Spots,
+  scoped: boolean,
+): Promise<Row[]> {
+  const { projectId, editorId } = seeded;
+  const api = callerFor(db, editorId);
+  const direct = directFor(db, editorId, projectId, scoped);
 
   const rows: Row[] = [];
   const cases = [
@@ -477,17 +647,22 @@ async function main(): Promise<void> {
     const scratch = createDb({ url: scratchUrl });
     try {
       if (REUSE) {
-        const [p] = await scratch.db
-          .select({ id: projects.id })
-          .from(projects)
-          .where(eq(projects.name, "perf-review-loop"));
+        const projectNamed = async (name: string) =>
+          (
+            await scratch.db
+              .select({ id: projects.id })
+              .from(projects)
+              .where(eq(projects.name, name))
+          )[0];
+        const p = await projectNamed(PROJECT);
+        const r = await projectNamed(RESOLVED_PROJECT);
         const [u] = await scratch.db
           .select({ id: users.id })
           .from(users)
           .where(eq(users.email, "editor@perf.example"));
-        if (!p || !u)
+        if (!p || !r || !u)
           throw new PerfError("--reuse: the scratch database is not seeded");
-        seeded = { projectId: p.id, editorId: u.id };
+        seeded = { projectId: p.id, resolvedProjectId: r.id, editorId: u.id };
       } else {
         const t0 = performance.now();
         seeded = await seed(scratch.db);
@@ -496,10 +671,17 @@ async function main(): Promise<void> {
         );
       }
       const spots = await findSpots(scratch.db, seeded.projectId);
+      const resolvedSpots = await findResolvedSpots(
+        scratch.db,
+        seeded.resolvedProjectId,
+      );
       console.log(
         `shape: ${BUILDS} builds, big batch ${BIG_RUNS} runs x ${BIG_STEPS} steps; ` +
           `pending: ${spots.pendingSteps} steps in ${spots.pendingBuilds} builds ` +
           `(${spots.pendingInBig} in the big batch)`,
+      );
+      console.log(
+        `worst case: pending: ${resolvedSpots.pendingSteps} steps in ${resolvedSpots.pendingBuilds} old builds`,
       );
       const [counts] = await scratch.db.execute<{
         runs: number;
@@ -513,10 +695,10 @@ async function main(): Promise<void> {
         `rows: ${counts!.runs} runs, ${counts!.steps} steps, ${counts!.decisions} decisions`,
       );
 
-      print(
-        "owner connection (no RLS)",
-        await timeAll(scratch.db, seeded, spots, false),
-      );
+      print("owner connection (no RLS)", [
+        ...(await timeAll(scratch.db, seeded, spots, false)),
+        ...(await timeResolved(scratch.db, seeded, resolvedSpots, false)),
+      ]);
 
       if (RLS) {
         const password = process.env.PERF_APP_PASSWORD;
@@ -526,10 +708,10 @@ async function main(): Promise<void> {
         appUrl.password = password;
         const app = createDb({ url: appUrl.toString() });
         try {
-          print(
-            "furan_app connection (row-level security on)",
-            await timeAll(app.db, seeded, spots, true),
-          );
+          print("furan_app connection (row-level security on)", [
+            ...(await timeAll(app.db, seeded, spots, true)),
+            ...(await timeResolved(app.db, seeded, resolvedSpots, true)),
+          ]);
         } finally {
           await app.close();
         }
