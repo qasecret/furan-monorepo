@@ -162,6 +162,15 @@ const renderBar = (
 const button = (testId: string) =>
   screen.getByTestId(testId) as HTMLButtonElement;
 
+/**
+ * Whether a control is unavailable: natively disabled, or `aria-disabled`
+ * (a disabled control that explains itself stays focusable, so it is the
+ * latter; it is still one element).
+ */
+const unavailable = (el: HTMLElement): boolean =>
+  (el as HTMLButtonElement).disabled ||
+  el.getAttribute("aria-disabled") === "true";
+
 // Radix DropdownMenu trigger fires on pointerdown rather than `click`, so a
 // synthetic click doesn't open the menu in jsdom. Pressing Enter on the
 // focused trigger does.
@@ -314,7 +323,7 @@ describe("ApprovalBar: a step that needs review", () => {
       "reject-button",
       "mark-as-bug-button",
     ]) {
-      expect(button(id).disabled, id).toBe(true);
+      expect(unavailable(button(id)), id).toBe(true);
     }
     fireEvent.click(button("approve-checkpoint-button"));
     expect(review.decide).not.toHaveBeenCalled();
@@ -418,7 +427,7 @@ describe("ApprovalBar: a decided step", () => {
       items: [step({ state: "approved", decision: decisionOf() })],
     });
     renderBar();
-    expect(button("decision-undo").disabled).toBe(true);
+    expect(unavailable(button("decision-undo"))).toBe(true);
   });
 });
 
@@ -492,14 +501,14 @@ describe("ApprovalBar: a run with a status override", () => {
       "reject-button",
       "mark-as-bug-button",
     ]) {
-      expect(button(id).disabled, id).toBe(true);
+      expect(unavailable(button(id)), id).toBe(true);
     }
-    // The disabled button sits in a focusable wrapper that carries the reason.
-    const wrapper = screen.getByTestId(
-      "approve-checkpoint-button-disabled-wrapper",
-    );
+    // The unavailable button stays focusable and carries the reason itself.
+    const approve = button("approve-checkpoint-button");
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(approve.getAttribute("aria-disabled")).toBe("true");
     await act(async () => {
-      wrapper.focus();
+      approve.focus();
     });
     const reason = await screen.findByTestId(
       "approve-checkpoint-button-disabled-reason",
@@ -516,7 +525,7 @@ describe("ApprovalBar: a run with a status override", () => {
     });
     renderBar({ status: "failed" });
     expect(screen.getByTestId("override-chip")).toBeDefined();
-    expect(button("reset-override").disabled).toBe(false);
+    expect(unavailable(button("reset-override"))).toBe(false);
   });
 });
 
@@ -651,7 +660,7 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
         "reject-button",
         "mark-as-bug-button",
       ]) {
-        expect(button(id).disabled, id).toBe(true);
+        expect(unavailable(button(id)), id).toBe(true);
       }
       expect(screen.queryByTestId("approval-more-menu")).toBeNull();
       fireEvent.click(button("approve-checkpoint-button"));
@@ -664,13 +673,13 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
       items: [step(), step({ id: OTHER, verdict: null, state: null })],
     });
     renderBar();
-    expect(button("approve-checkpoint-button").disabled).toBe(true);
+    expect(unavailable(button("approve-checkpoint-button"))).toBe(true);
     expect(screen.queryByTestId("approval-more-menu")).toBeNull();
   });
 
   const reasonFor = async (testId: string) => {
     await act(async () => {
-      screen.getByTestId(`${testId}-disabled-wrapper`).focus();
+      button(testId).focus();
     });
     return (await screen.findByTestId(`${testId}-disabled-reason`)).textContent;
   };
@@ -715,7 +724,7 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
         "reject-button",
         "mark-as-bug-button",
       ]) {
-        expect(button(id).disabled, id).toBe(true);
+        expect(unavailable(button(id)), id).toBe(true);
       }
       expect(screen.queryByTestId("approval-more-menu")).toBeNull();
       expect(await reasonFor("approve-checkpoint-button")).toBe(
@@ -727,7 +736,7 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
   it("shows the loading state for a selected step that has not been diffed", async () => {
     arrange({ items: [step({ verdict: null, state: null })] });
     renderBar();
-    expect(button("reject-button").disabled).toBe(true);
+    expect(unavailable(button("reject-button"))).toBe(true);
     expect(await reasonFor("reject-button")).toBe(
       "This run is still processing",
     );
@@ -737,8 +746,8 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
     "enables the actions when the run status is '%s' and the step is pending",
     (status) => {
       renderBar({ status });
-      expect(button("approve-checkpoint-button").disabled).toBe(false);
-      expect(button("reject-button").disabled).toBe(false);
+      expect(unavailable(button("approve-checkpoint-button"))).toBe(false);
+      expect(unavailable(button("reject-button"))).toBe(false);
     },
   );
 });

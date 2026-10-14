@@ -32,6 +32,11 @@ vi.mock("next/navigation", () => ({
 
 import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
 
+/** Natively disabled, or `aria-disabled` (an unavailable action that explains itself). */
+const unavailable = (el: HTMLElement): boolean =>
+  (el as HTMLButtonElement).disabled ||
+  el.getAttribute("aria-disabled") === "true";
+
 afterEach(() => {
   cleanup();
   reviewSpies.decide.mockReset();
@@ -265,9 +270,7 @@ describe("RunResults review calls", () => {
 describe("RunResults review gating", () => {
   test("a pending step can be approved while the run takes decisions", () => {
     renderRun([cp({ id: "c1", verdict: "new", state: "new" })], "new");
-    expect(
-      (screen.getByTestId("step-approve-c1") as HTMLButtonElement).disabled,
-    ).toBe(false);
+    expect(unavailable(screen.getByTestId("step-approve-c1"))).toBe(false);
   });
 
   test("an overridden run holds its steps' actions back", () => {
@@ -276,9 +279,7 @@ describe("RunResults review gating", () => {
       "passed",
       "passed",
     );
-    expect(
-      (screen.getByTestId("step-approve-c1") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect(unavailable(screen.getByTestId("step-approve-c1"))).toBe(true);
   });
 
   test("a step cannot be decided while another step of its run has no verdict", () => {
@@ -287,8 +288,6 @@ describe("RunResults review gating", () => {
       cp({ id: "c1", verdict: "unresolved", state: "unresolved", os: "linux" }),
       cp({ id: "c2", verdict: null, state: null, os: "windows" }),
     ]);
-    expect(
-      (screen.getByTestId("step-approve-c1") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect(unavailable(screen.getByTestId("step-approve-c1"))).toBe(true);
   });
 });

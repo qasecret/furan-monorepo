@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type MouseEvent, type ReactNode } from "react";
+import { forwardRef, useId, type MouseEvent, type ReactNode } from "react";
 
 import { Button, type ButtonProps } from "./button";
 import {
@@ -10,14 +10,13 @@ import {
   TooltipTrigger,
 } from "./tooltip";
 
+import { cn } from "@/lib/cn";
+
 export interface DisabledAwareButtonProps {
   disabled: boolean;
   /** Why the button is disabled; without one, a disabled button just is. */
   reason: string | null;
-  /**
-   * Test id of the button. A disabled button with a reason also gets
-   * `${testId}-disabled-wrapper` and `${testId}-disabled-reason`.
-   */
+  /** Test id of the button. A disabled button's reason is `${testId}-disabled-reason`. */
   testId: string;
   variant: NonNullable<ButtonProps["variant"]>;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -32,69 +31,81 @@ export interface DisabledAwareButtonProps {
  * A button whose disabled state explains itself (spec §3.5): a reviewer should
  * see *why* an action is unavailable, not have the control vanish.
  *
- * A disabled `<button>` can be neither focused nor hovered (the browser
- * swallows the events), so a disabled button with a reason sits in a focusable
- * wrapper that opens the tooltip on hover and on focus. The wrapper is a
- * disabled button to assistive technology, named like the button, and
- * described by the reason (also present as hidden text, so it is read whether
- * or not the tooltip has opened). An enabled button, or a disabled one with no
- * reason to give, is a plain button.
+ * A natively `disabled` button can be neither focused nor hovered, so it can
+ * show no reason. A disabled button *with* a reason is therefore left
+ * focusable and marked `aria-disabled` instead: still one control, one tab
+ * stop, announced as unavailable and described by the reason, with a tooltip
+ * for hover and focus. Its click does nothing. The reason is hidden text that
+ * `aria-describedby` still reads, so it is not read a second time in place.
+ * A disabled button with no reason to give is a plain native `disabled` one.
+ *
+ * The button is the same element in every state, so it keeps focus as it
+ * becomes unavailable (the last pending step was just approved).
  */
-export function DisabledAwareButton({
-  disabled,
-  reason,
-  testId,
-  variant,
-  onClick,
-  children,
-  title,
-  className,
-  label,
-}: DisabledAwareButtonProps) {
+export const DisabledAwareButton = forwardRef<
+  HTMLButtonElement,
+  DisabledAwareButtonProps
+>(function DisabledAwareButton(
+  {
+    disabled,
+    reason,
+    testId,
+    variant,
+    onClick,
+    children,
+    title,
+    className,
+    label,
+  },
+  ref,
+) {
   const reasonId = useId();
-  const button = (
-    <Button
-      type="button"
-      variant={variant}
-      className={className}
-      onClick={onClick}
-      disabled={disabled}
-      data-testid={testId}
-      title={title}
-      aria-label={label}
-    >
-      {children}
-    </Button>
-  );
-  if (!disabled || !reason) return button;
+  // Unavailable, and able to say why.
+  const explained = disabled && !!reason;
   return (
-    <>
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              tabIndex={0}
-              role="button"
-              aria-disabled="true"
-              aria-label={label}
-              aria-describedby={reasonId}
-              data-testid={`${testId}-disabled-wrapper`}
-              className="inline-flex rounded-md focus-ring"
-            >
-              {button}
-            </span>
-          </TooltipTrigger>
+    // The same tree whatever the state, so the button is never remounted.
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            ref={ref}
+            type="button"
+            variant={variant}
+            className={cn(
+              // No press, no pointer: it is unavailable, not just quiet.
+              "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:active:scale-100",
+              className,
+            )}
+            // Natively disabled only when there is nothing to explain.
+            disabled={disabled && !explained}
+            aria-disabled={explained ? true : undefined}
+            aria-describedby={explained ? reasonId : undefined}
+            aria-label={label}
+            // The tooltip replaces a native title on an explained button.
+            title={explained ? undefined : title}
+            data-testid={testId}
+            onClick={(event) => {
+              if (explained) return;
+              onClick(event);
+            }}
+          >
+            {children}
+          </Button>
+        </TooltipTrigger>
+        {explained && (
           <TooltipContent
             sideOffset={4}
             data-testid={`${testId}-disabled-reason`}
           >
             {reason}
           </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <span id={reasonId} className="sr-only">
-        {reason}
-      </span>
-    </>
+        )}
+      </Tooltip>
+      {explained && (
+        <span id={reasonId} hidden>
+          {reason}
+        </span>
+      )}
+    </TooltipProvider>
   );
-}
+});

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { ReactNode, Ref } from "react";
 
-import { Button } from "@/components/ui/button";
+import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
+import { describeRefusal } from "@/lib/review/review-copy";
 
 export type Chip = "needs-review" | "all" | "passed";
 export type ResultView = "list" | "grid";
@@ -170,17 +171,21 @@ export function ContextualToolbar({
         <>
           <Divider />
           <Segment label="Maintenance">
-            <Button
+            {/* Unavailable at 0, not natively disabled: it stays focusable, so
+                focus is not lost when the last pending step was just approved,
+                and it says why. */}
+            <DisabledAwareButton
               ref={approveRef}
               variant="secondary"
               className="h-7 gap-1.5 px-3 text-xs"
-              data-testid="batch-approve-all"
+              testId="batch-approve-all"
               disabled={pendingCount === 0}
+              reason={describeRefusal("nothing_to_approve")}
               onClick={onApprovePending}
             >
               <CheckCheck className="h-3.5 w-3.5" aria-hidden />
               {`Approve pending (${pendingCount})`}
-            </Button>
+            </DisabledAwareButton>
           </Segment>
         </>
       )}

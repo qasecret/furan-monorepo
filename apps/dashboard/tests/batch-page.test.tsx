@@ -294,7 +294,7 @@ describe("BatchPage", () => {
     render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
     const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
     expect(button.textContent).toContain("Approve pending (0)");
-    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
   });
 
   test("Approve pending asks first, with the preview's counts, and approves only on confirm", async () => {
@@ -406,6 +406,48 @@ describe("BatchPage", () => {
     fireEvent.click(screen.getByTestId("approve-pending-cancel"));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  test("after the last pending step is approved the toolbar button keeps focus and reports itself unavailable", async () => {
+    const withPending = (n: number) => ({
+      data: { ...build, pendingCheckpoints: n },
+      isLoading: false,
+      isError: false,
+    });
+    getByIdMock.mockReturnValue(withPending(2));
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const view = render(
+      <BatchPage projectId="p1" buildId="b1" canReview={true} />,
+    );
+    const trigger = screen.getByTestId("batch-approve-all");
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("approve-pending-confirm"));
+    act(() => {
+      const call = reviewSpies.approveBuild.mock.calls[0]![0] as {
+        onSuccess?: () => void;
+        onSettled?: () => void;
+      };
+      call.onSuccess?.();
+      call.onSettled?.();
+    });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+    // The refetch of the build brings the count down to nothing.
+    getByIdMock.mockReturnValue(withPending(0));
+    view.rerender(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+
+    const after = screen.getByTestId("batch-approve-all");
+    expect(after).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
+    expect(after.getAttribute("aria-disabled")).toBe("true");
+    expect(after.textContent).toContain("Approve pending (0)");
   });
 
   test("a run's hand-set status reaches its result rows", async () => {

@@ -54,9 +54,10 @@ describe("ContextualToolbar", () => {
     const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
     expect(button.textContent).toContain("Approve pending (37)");
     expect(button.disabled).toBe(false);
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
   });
 
-  test("the approve button is disabled when nothing is pending", async () => {
+  test("the approve button is unavailable when nothing is pending, and says why", async () => {
     const user = userEvent.setup();
     const onApprovePending = vi.fn();
     render(
@@ -68,9 +69,23 @@ describe("ContextualToolbar", () => {
     );
     const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
     expect(button.textContent).toContain("Approve pending (0)");
-    expect(button.disabled).toBe(true);
+    // Unavailable but not natively disabled, so it can keep focus (and be
+    // reached) when the last pending step has just been approved.
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.disabled).toBe(false);
+    const reason = document.getElementById(
+      button.getAttribute("aria-describedby") ?? "",
+    );
+    expect(reason?.textContent).toBe("Nothing pending to approve");
     await user.click(button);
     expect(onApprovePending).not.toHaveBeenCalled();
+  });
+
+  test("the approve button is available while steps are pending", () => {
+    render(<ContextualToolbar {...baseProps} pendingCount={3} />);
+    const button = screen.getByTestId("batch-approve-all");
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+    expect(button.hasAttribute("aria-describedby")).toBe(false);
   });
 
   test("hides the approve button when the reader may not review", () => {

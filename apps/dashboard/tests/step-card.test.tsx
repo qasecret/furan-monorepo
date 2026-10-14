@@ -5,6 +5,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // The card is handed `decide` and `undo` by its run list (one review-mutations
@@ -94,6 +95,14 @@ function renderCard(
 const button = (testId: string) =>
   screen.getByTestId(testId) as HTMLButtonElement;
 
+/**
+ * Whether an action is unavailable: natively disabled, or `aria-disabled` (an
+ * unavailable action that can say why stays focusable, so it is the latter).
+ */
+const unavailable = (el: HTMLElement): boolean =>
+  (el as HTMLButtonElement).disabled ||
+  el.getAttribute("aria-disabled") === "true";
+
 describe("StepCard review actions", () => {
   test.each(["new", "unresolved"] as const)(
     "a %s step offers Approve and Reject, named after the step",
@@ -104,8 +113,8 @@ describe("StepCard review actions", () => {
       ).toBeDefined();
       expect(screen.getByRole("button", { name: "Reject home" })).toBeDefined();
       expect(screen.queryByTestId("step-undo-c1")).toBeNull();
-      expect(button("step-approve-c1").disabled).toBe(false);
-      expect(button("step-reject-c1").disabled).toBe(false);
+      expect(unavailable(button("step-approve-c1"))).toBe(false);
+      expect(unavailable(button("step-reject-c1"))).toBe(false);
     },
   );
 
@@ -201,8 +210,8 @@ describe("StepCard review actions", () => {
   test("the buttons wait while this step has a decision on its way", () => {
     inFlight.add("c1");
     renderCard(cp());
-    expect(button("step-approve-c1").disabled).toBe(true);
-    expect(button("step-reject-c1").disabled).toBe(true);
+    expect(unavailable(button("step-approve-c1"))).toBe(true);
+    expect(unavailable(button("step-reject-c1"))).toBe(true);
     fireEvent.click(button("step-approve-c1"));
     expect(reviewSpies.decide).not.toHaveBeenCalled();
   });
@@ -210,88 +219,92 @@ describe("StepCard review actions", () => {
   test("Undo waits while its step has a decision on its way", () => {
     inFlight.add("c1");
     renderCard(cp({ state: "approved", decision: decision("approved") }));
-    expect(button("step-undo-c1").disabled).toBe(true);
+    expect(unavailable(button("step-undo-c1"))).toBe(true);
   });
 
   test("a step in another card's flight is not held up by it", () => {
     inFlight.add("other");
     renderCard(cp());
-    expect(button("step-approve-c1").disabled).toBe(false);
+    expect(unavailable(button("step-approve-c1"))).toBe(false);
   });
 
   /**
-   * A disabled action sits in a focusable wrapper that carries its reason: the
-   * wrapper is named after the action, and is described by the reason, so a
-   * keyboard or screen-reader user gets it, not only a mouse hover.
+   * An unavailable action says why: it stays one focusable button, marked
+   * `aria-disabled`, named after the action and described by the reason, which
+   * a tooltip also shows on focus. No second element stands in for it.
    */
-  const reasonOf = async (id: string) => {
-    const wrapper = screen.getByTestId(`${id}-disabled-wrapper`);
-    expect(wrapper.tabIndex).toBe(0);
-    expect(wrapper.getAttribute("role")).toBe("button");
-    expect(wrapper.getAttribute("aria-disabled")).toBe("true");
-    const described = wrapper.getAttribute("aria-describedby");
+  const reasonOf = async (id: string, name: string) => {
+    expect(screen.getAllByRole("button", { name })).toHaveLength(1);
+    const control = button(id);
+    expect(control.getAttribute("aria-disabled")).toBe("true");
+    expect(control.disabled).toBe(false);
+    const described = control.getAttribute("aria-describedby");
     expect(described).toBeTruthy();
     const text = document.getElementById(described!)?.textContent;
-    // Focusing it also shows the reason as a tooltip.
     await act(async () => {
-      wrapper.focus();
+      control.focus();
     });
     const tooltip = await screen.findByTestId(`${id}-disabled-reason`);
     expect(tooltip.textContent).toBe(text);
-    return { wrapper, text };
+    return { control, text };
   };
 
-  test("an overridden run disables the step actions and says why, to the keyboard too", async () => {
+  test("an overridden run makes the step actions unavailable and says why, to the keyboard too", async () => {
     renderCard(cp(), {
       run: { ...RUN, status: "passed", statusOverride: "passed" },
     });
-    for (const id of ["step-approve-c1", "step-reject-c1"]) {
-      expect(button(id).disabled).toBe(true);
-      const { text } = await reasonOf(id);
-      expect(text).toBe(describeRefusal("run_overridden"));
-    }
-    const { wrapper } = await reasonOf("step-approve-c1");
-    expect(wrapper.getAttribute("aria-label")).toBe("Approve home");
-    expect(button("step-approve-c1").getAttribute("aria-label")).toBe(
-      "Approve home",
-    );
+    const approve = await reasonOf("step-approve-c1", "Approve home");
+    expect(approve.text).toBe(describeRefusal("run_overridden"));
+    const reject = await reasonOf("step-reject-c1", "Reject home");
+    expect(reject.text).toBe(describeRefusal("run_overridden"));
+  });
+
+  test("an unavailable action does nothing when it is used", async () => {
+    const user = userEvent.setup();
+    renderCard(cp(), {
+      run: { ...RUN, status: "passed", statusOverride: "passed" },
+    });
+    fireEvent.click(button("step-approve-c1"));
+    button("step-reject-c1").focus();
+    await user.keyboard("{Enter}");
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
   });
 
   test("an overridden run keeps a decision's Undo off, and says why", async () => {
     renderCard(cp({ state: "approved", decision: decision("approved") }), {
       run: { ...RUN, status: "failed", statusOverride: "failed" },
     });
-    expect(button("step-undo-c1").disabled).toBe(true);
-    const { wrapper, text } = await reasonOf("step-undo-c1");
-    expect(text).toBe(DECISIONS_LOCKED_BY_OVERRIDE);
-    expect(wrapper.getAttribute("aria-label")).toBe("Undo approval of home");
+    const undo = await reasonOf("step-undo-c1", "Undo approval of home");
+    expect(undo.text).toBe(DECISIONS_LOCKED_BY_OVERRIDE);
+    fireEvent.click(undo.control);
+    expect(reviewSpies.undo).not.toHaveBeenCalled();
   });
 
-  test("a run that is not reviewable disables the step actions and says why", async () => {
+  test("a run that is not reviewable makes the step actions unavailable and says why", async () => {
     renderCard(cp(), {
       run: { ...RUN, status: "aborted", undiffed: true },
     });
-    expect(button("step-approve-c1").disabled).toBe(true);
-    const { text } = await reasonOf("step-approve-c1");
-    expect(text).toBe(describeBlockedRun("aborted"));
+    const approve = await reasonOf("step-approve-c1", "Approve home");
+    expect(approve.text).toBe(describeBlockedRun("aborted"));
   });
 
-  test("an enabled action has no wrapper and no reason", () => {
+  test("an available action carries no reason", () => {
     renderCard(cp());
-    expect(screen.queryByTestId("step-approve-c1-disabled-wrapper")).toBeNull();
-    expect(button("step-approve-c1").title).toBe("");
+    expect(button("step-approve-c1").hasAttribute("aria-disabled")).toBe(false);
+    expect(button("step-approve-c1").hasAttribute("aria-describedby")).toBe(
+      false,
+    );
   });
 
   test("a step whose own decision is on its way waits without giving a reason", () => {
     // Held only until the server answers: nothing to explain, so the buttons
-    // are plain disabled buttons, not reason-carrying wrappers.
+    // are plain natively disabled buttons, not explained ones.
     inFlight.add("c1");
     renderCard(cp());
-    expect(button("step-approve-c1").disabled).toBe(true);
-    expect(button("step-reject-c1").disabled).toBe(true);
-    expect(screen.queryByTestId("step-approve-c1-disabled-wrapper")).toBeNull();
-    expect(screen.queryByTestId("step-reject-c1-disabled-wrapper")).toBeNull();
-    expect(button("step-approve-c1").title).toBe("");
+    expect(unavailable(button("step-approve-c1"))).toBe(true);
+    expect(unavailable(button("step-reject-c1"))).toBe(true);
+    expect(button("step-approve-c1").hasAttribute("aria-disabled")).toBe(false);
+    expect(button("step-reject-c1").hasAttribute("aria-disabled")).toBe(false);
   });
 });
 
