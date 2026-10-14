@@ -413,4 +413,88 @@ desc("sweepStaleRuns — per checkpoint on the shared rollup", () => {
     const order = spy.mock.calls.map((call) => call[1]);
     expect(order).toEqual(ids);
   });
+  // Ruling R47 (fail closed): an undo cleared the verdict of a step that was
+  // re-diffed against its own (now removed) baseline, so it has no counted
+  // region. If the R28 re-diff is lost, the sweep must not call it `passed`.
+  it("a reverted approve with a NULL verdict is finalised unresolved, not passed", async () => {
+    const runId = await seedStaleRun();
+    const undone = await seedCheckpoint(runId, "undone-step", null);
+    await db.insert(checkpointDecisions).values({
+      projectId,
+      runId,
+      screenshotId: undone,
+      actionId: randomUUID(),
+      decision: "approved",
+      actorId: userId,
+      source: "viewer",
+      revertedAt: new Date("2026-05-29T11:50:00Z"),
+      revertedBy: userId,
+    });
+
+    await sweepStaleRuns({ db, now, thresholdMs: 5 * 60_000 });
+
+    expect(await verdictOf(undone)).toBe("unresolved");
+    expect((await runRow(runId)).status).toBe("unresolved");
+  });
+
+  it("a step decided again after an undo is judged by its regions as usual", async () => {
+    // The newest decision is active: the reviewer has looked again.
+    const runId = await seedStaleRun();
+    const redecided = await seedCheckpoint(runId, "redecided", null);
+    await db.insert(checkpointDecisions).values([
+      {
+        projectId,
+        runId,
+        screenshotId: redecided,
+        actionId: randomUUID(),
+        decision: "approved",
+        actorId: userId,
+        source: "viewer",
+        revertedAt: new Date("2026-05-29T11:50:00Z"),
+        revertedBy: userId,
+      },
+      {
+        projectId,
+        runId,
+        screenshotId: redecided,
+        actionId: randomUUID(),
+        decision: "approved",
+        actorId: userId,
+        source: "viewer",
+      },
+    ]);
+
+    await sweepStaleRuns({ db, now, thresholdMs: 5 * 60_000 });
+
+    expect(await verdictOf(redecided)).toBe("passed");
+    expect((await runRow(runId)).status).toBe("passed");
+  });
+
+  it("one run failing inside the sweep does not starve the runs after it", async () => {
+    const { recomputeRunStatus } = await import("@furan/db");
+    const spy = vi.mocked(recomputeRunStatus);
+    const ids = [randomUUID(), randomUUID(), randomUUID()].sort();
+    for (const id of ids) {
+      const runId = await seedStaleRun(id);
+      await seedCheckpoint(runId, "home", null);
+    }
+    spy.mockRejectedValueOnce(new Error("recompute_boom"));
+    const logger = { error: vi.fn() };
+
+    const result = await sweepStaleRuns({
+      db,
+      now,
+      thresholdMs: 5 * 60_000,
+      logger,
+    });
+
+    expect(result).toEqual({ finalized: 2, failed: 1 });
+    // The first run (ascending id) failed and rolled back; the others swept.
+    expect((await runRow(ids[0]!)).status).toBe("running");
+    expect((await runRow(ids[1]!)).status).toBe("passed");
+    expect((await runRow(ids[2]!)).status).toBe("passed");
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(logger.error.mock.calls[0]![0]).toMatchObject({ runId: ids[0] });
+    expect(logger.error.mock.calls[0]![1]).toBe("sweeper_run_failed");
+  });
 });

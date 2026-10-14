@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   // Every 30 s, finalize any "running" run whose updatedAt is older than
   // 5 minutes. Covers SDK 1.0.x callers that never send POST /runs/:id/complete.
   const sweeperInterval = setInterval(() => {
-    sweepStaleRuns({ db }).catch((e) =>
+    sweepStaleRuns({ db, logger: telemetry.logger }).catch((e) =>
       telemetry.logger.warn({ err: e }, "sweeper_failed"),
     );
   }, 30_000);
