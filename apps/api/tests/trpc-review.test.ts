@@ -25,11 +25,12 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 
 import { decideCheckpoints } from "../src/lib/review/decide.js";
 import { GROUP_APPROVE_CAP, groupScope } from "../src/lib/review/groups.js";
-import { lockRuns } from "../src/lib/review/targets.js";
+import { lockBuildRuns, lockRuns } from "../src/lib/review/targets.js";
 import { APPROVE_BUILD_CAP } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
@@ -43,6 +44,14 @@ import {
   type ReviewSeed,
   type ReviewUser,
 } from "./review-fixtures.js";
+
+// `lockBuildRuns` runs as it is, except where a test makes something happen
+// right after approveBuild has taken its locks (the R48 conflict test).
+vi.mock("../src/lib/review/targets.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/lib/review/targets.js")>();
+  return { ...actual, lockBuildRuns: vi.fn(actual.lockBuildRuns) };
+});
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -1303,6 +1312,56 @@ d("review router", () => {
       } finally {
         release();
         await Promise.allSettled([sideDone, call]);
+        await side.close();
+      }
+    }, 30_000);
+
+    // R48: approveBuild locks only the runs that can be targets. A run that
+    // turns reviewable right after that holds no lock of ours; the selection
+    // reaches it, and locking it now would break the ascending order. The
+    // reviewer re-confirms instead, even when the count happens to match.
+    test("a run that turns reviewable after the lock is a conflict (batch_changed), and nothing is decided", async () => {
+      const { s, run3 } = await seedBuild();
+      const side = createDb();
+      const actual = await vi.importActual<
+        typeof import("../src/lib/review/targets.js")
+      >("../src/lib/review/targets.js");
+      vi.mocked(lockBuildRuns).mockImplementationOnce(async (...args) => {
+        const locked = await actual.lockBuildRuns(...args);
+        // Committed by another connection right after the locks: the running
+        // run's diff lands, so the run and its step become reviewable.
+        await side.db
+          .update(screenshots)
+          .set({ verdict: "unresolved", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, run3.shots.e!.id));
+        await side.db
+          .update(testRuns)
+          .set({ status: "unresolved" })
+          .where(eq(testRuns.id, run3.runId));
+        return locked;
+      });
+      try {
+        const actionId = newAction();
+        const f = await failure(
+          as(s.editor).review.approveBuild.mutate({
+            buildId: s.buildId,
+            actionId,
+            // a, b, c and now e: the count matches, the locks do not.
+            expectedCount: 4,
+          }),
+        );
+        expect(vi.mocked(lockBuildRuns)).toHaveBeenCalled();
+        expect(f.code).toBe("CONFLICT");
+        expect(f.message).toBe("batch_changed");
+        expect(f.details?.preview?.pendingCheckpoints).toBe(4);
+        expect(await decisionsOfAction(actionId)).toHaveLength(0);
+        for (const runId of [s.runId, run3.runId]) {
+          const approved = (await decisionsOfRun(runId)).filter(
+            (r) => r.decision === "approved",
+          );
+          expect(approved).toHaveLength(0);
+        }
+      } finally {
         await side.close();
       }
     }, 30_000);
