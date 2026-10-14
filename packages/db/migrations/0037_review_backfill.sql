@@ -16,10 +16,12 @@
 --   0. 'passed' on EVERY checkpoint of a run that passed without review
 --      (status 'passed' AND merge = false: the diff passed it, or an operator
 --      forced it to passed; it was never approved or promoted), whatever its
---      regions. The per-checkpoint diff-worker judges a sub-threshold step
---      'passed'; marking a step 'unresolved' would need a synthetic approval
---      (step 2) that, as decisions survive re-diffs, would mask a later
---      re-diff of the step.
+--      regions. Either way no approval stands behind that status, so parity
+--      needs each step to roll up to 'passed' on its verdict alone: marking a
+--      step 'unresolved' would need a synthetic approval (step 2) that, as
+--      decisions survive re-diffs, would mask a later re-diff of the step.
+--      (Where the diff passed the run, it is also what the per-checkpoint
+--      diff-worker says: it judges a sub-threshold step 'passed'.)
 --   1. else 'unresolved' if the checkpoint has a qualifying diff region: a
 --      diff_regions row with severity <> 'none' AND resolved_by_application_id
 --      IS NULL, matched by screenshot_id, or — for a legacy pre-v1.1.20 row
@@ -67,10 +69,17 @@
 -- one. On data written before the review model none of these exist, so the
 -- guards change nothing there.
 --
--- Idempotent: step 1 writes only NULL verdicts, and leaves none in its scope;
--- step 2 writes only for runs with no decision, and a run it wrote to has
--- one. A second execution writes nothing (verdict_at and decision rows
--- included).
+-- Safe to re-apply, and a no-op on data the review model wrote: step 1 writes
+-- only NULL verdicts outside running / aborted / empty / overridden runs, and
+-- the review model leaves none there (a NULL verdict rolls a run up to
+-- `running`); step 2 writes only for passed / failed runs with no decision
+-- row and a checkpoint to decide, and the review model reaches those
+-- statuses only through a verdict, a decision or an override. A second
+-- execution over its own output writes nothing either (verdict_at and
+-- decision rows included). Only this file is meant to be re-applied by hand
+-- (runbook review-model-upgrade.md §5). 0035, the schema migration, must
+-- never be re-applied: it is plain DDL (CREATE TYPE / TABLE, ADD COLUMN) and
+-- fails on a database that already has it.
 --
 -- Data-only (no schema change), so drizzle-kit emitted an empty custom
 -- migration; one DO block, executable by drizzle-kit migrate and by

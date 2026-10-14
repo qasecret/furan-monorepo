@@ -12,11 +12,18 @@
 --
 -- Rule, set-based, per (variation V, branch B):
 --   * Candidate runs are those on branch B with `status = 'passed' AND
---     merge = true` that have a screenshot of V. In data written before this
---     release that pair is the only marker that a run was approved or promoted;
---     any other status (unresolved, new, failed, aborted, empty, running) or
---     `merge = false` is never a source. A run with no branch cannot be matched
---     to a baseline branch and is skipped.
+--     merge = true` that have a screenshot of V and NO checkpoint with a
+--     verdict. In data written before this release that pair is the only
+--     marker that a run was approved or promoted; any other status
+--     (unresolved, new, failed, aborted, empty, running) or `merge = false` is
+--     never a source. After the upgrade the pair no longer means "approved as
+--     a whole" (a run with one approved step and one step its diff passed is
+--     passed + merged too), and every run the new pipeline diffed has
+--     verdicts, which no pre-upgrade row has (0035 adds the column). So a run
+--     with any verdict is never a source: on first application the condition
+--     is always true, and re-applying the file after the upgrade leaves the
+--     new review model's baselines alone. A run with no branch cannot be
+--     matched to a baseline branch and is skipped.
 --   * "Newer" means newer ACCEPTANCE, not newer run creation: a run created
 --     earlier can be approved later, and a reviewer can deliberately re-approve
 --     one step of an older run after a newer run was approved. The acceptance
@@ -41,9 +48,13 @@
 --     (created_at DESC, id DESC — the order resolveBaseline reads, ADR-068).
 --     Repair only when V has none, or when R's acceptance time is later than
 --     that row's created_at. If the current baseline already points at R,
---     nothing is written. Together with the acceptance rule above this makes a
---     re-run a no-op: a repaired variation's newest row points at its source
---     run, and no variation's source or current baseline changes between passes.
+--     nothing is written. Together with the acceptance rule above, a re-run
+--     writes nothing in practice: a repaired variation's newest row points at
+--     its source run, and its source and current baseline do not change
+--     between passes. One exotic case takes a second pass to settle: moving a
+--     row stranded on branch B' onto B can leave B' with no current row, so a
+--     second candidate on B' is inserted by the next pass, after which passes
+--     write nothing.
 --   * The repair upserts baselines(V, R) on the (test_variation_id, test_run_id)
 --     key. baseline_name is R's screenshot image_key; user_id is any approver
 --     already recorded on R's baselines (else NULL); branch_name is B.
@@ -66,8 +77,9 @@
 -- test_variations.baseline_name (the denormalized copy) is deliberately NOT
 -- touched: nothing authoritative reads it, and the review flow reads `baselines`.
 --
--- Idempotent (see above; covered by tests) and data-only: no schema change, so
--- drizzle-kit did not emit it — it is hand-authored (precedent: 0026). The
+-- Safe to re-apply (see above; covered by tests) and data-only: no schema
+-- change, so drizzle-kit did not emit it — it is hand-authored (precedent:
+-- 0026). The
 -- NOTICE reports how many baselines were written; `verify-review-rollup
 -- --repairs` lists them later.
 
@@ -99,6 +111,12 @@ BEGIN
     WHERE r."status" = 'passed'
       AND r."merge" = true
       AND r."branch_name" IS NOT NULL
+      -- Pre-upgrade runs only: the new pipeline writes a verdict on every
+      -- checkpoint it diffs (see the header).
+      AND NOT EXISTS (
+        SELECT 1 FROM "screenshots" v
+        WHERE v."run_id" = r."id" AND v."verdict" IS NOT NULL
+      )
     GROUP BY r."id"
   ),
   approved_source AS (
