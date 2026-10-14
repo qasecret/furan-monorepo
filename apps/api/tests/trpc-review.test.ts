@@ -903,10 +903,25 @@ d("review router", () => {
       expect(await decisionsOfRun(s.runId)).toHaveLength(0);
     });
 
-    test("a checkpoint outside the run is BAD_REQUEST, an unknown one NOT_FOUND", async () => {
+    test("a checkpoint in another run of the project is BAD_REQUEST", async () => {
+      const s = await seedGroup();
+      const run2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "z", verdict: "unresolved" }],
+      });
+      const wrongRun = await failure(
+        as(s.editor).review.approveGroup.mutate({
+          runId: s.runId,
+          checkpointId: run2.shots.z!.id,
+          actionId: newAction(),
+        }),
+      );
+      expect(wrongRun.code).toBe("BAD_REQUEST");
+    });
+
+    test("another project's checkpoint reads as unknown: NOT_FOUND, no existence leak", async () => {
       const s = await seedGroup();
       const other = await seedGroup();
-      const wrongRun = await failure(
+      const elsewhere = await failure(
         as(s.editor).review.approveGroup.mutate({
           runId: s.runId,
           checkpointId: other.shots.a!.id,
@@ -920,10 +935,14 @@ d("review router", () => {
           actionId: newAction(),
         }),
       );
-      expect([wrongRun.code, unknown.code]).toEqual([
-        "BAD_REQUEST",
+      // Same answer with or without RLS (TEST_RLS=1): the seed lookup is
+      // pinned to the run's project, so a foreign id is indistinguishable
+      // from one that doesn't exist.
+      expect([elsewhere.code, unknown.code]).toEqual([
+        "NOT_FOUND",
         "NOT_FOUND",
       ]);
+      expect(await decisionsOfRun(other.runId)).toHaveLength(0);
     });
 
     test("a retry of a group action replays", async () => {
