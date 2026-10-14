@@ -306,37 +306,42 @@ function MoreMenu({ actions }: { actions: ReviewActions }) {
         >
           Approve pending steps ({pendingSteps})
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Run status</DropdownMenuLabel>
-        <p
-          id={explainerId}
-          className="px-2 pb-1.5 text-xs text-fg-muted"
-          data-testid="override-explainer"
-        >
-          Sets the run's status directly. Step decisions are kept.
-        </p>
-        <DropdownMenuItem
-          data-testid="override-set-passed"
-          aria-describedby={explainerId}
-          onSelect={() => actions.override("passed")}
-        >
-          Force passed (run override)
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          data-testid="override-set-failed"
-          aria-describedby={explainerId}
-          onSelect={() => actions.override("failed")}
-        >
-          Force failed (run override)
-        </DropdownMenuItem>
-        {statusOverride !== null && (
-          <DropdownMenuItem
-            data-testid="override-set-default"
-            aria-describedby={explainerId}
-            onSelect={() => actions.override("default")}
-          >
-            Reset to computed
-          </DropdownMenuItem>
+        {/* Only where the server accepts an override (not on a `new` run). */}
+        {actions.canOverride && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Run status</DropdownMenuLabel>
+            <p
+              id={explainerId}
+              className="px-2 pb-1.5 text-xs text-fg-muted"
+              data-testid="override-explainer"
+            >
+              Sets the run's status directly. Step decisions are kept.
+            </p>
+            <DropdownMenuItem
+              data-testid="override-set-passed"
+              aria-describedby={explainerId}
+              onSelect={() => actions.override("passed")}
+            >
+              Force passed (run override)
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="override-set-failed"
+              aria-describedby={explainerId}
+              onSelect={() => actions.override("failed")}
+            >
+              Force failed (run override)
+            </DropdownMenuItem>
+            {statusOverride !== null && (
+              <DropdownMenuItem
+                data-testid="override-set-default"
+                aria-describedby={explainerId}
+                onSelect={() => actions.override("default")}
+              >
+                Reset to computed
+              </DropdownMenuItem>
+            )}
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

@@ -8,9 +8,10 @@ import {
 } from "@furan/shared-types";
 import { Maximize2, Star, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
+import { StaleStepConfirm } from "@/components/diff-viewer/StaleStepCallout";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
@@ -33,6 +34,11 @@ export interface StepCheckpoint {
   /** The active decision on the step, or null. */
   decision: CheckpointItem["decision"];
   imageKey: string | null;
+  /**
+   * A later run captured this step again: approving it here would make the
+   * older image the baseline, so Approve asks first. Absent or null: none.
+   */
+  newerCapture?: CheckpointItem["newerCapture"];
 }
 
 /**
@@ -153,15 +159,42 @@ export const StepCard = memo(function StepCard({
     (decision !== null && canUndo ? undoButton : openButton).current?.focus();
   }, [inFlight, decision, canUndo]);
 
-  const decideStep = (kind: "approved" | "rejected") => {
-    followFocus.current =
-      toolbar.current?.contains(document.activeElement) === true;
+  const decideStep = (
+    kind: "approved" | "rejected",
+    fromToolbar = toolbar.current?.contains(document.activeElement) === true,
+  ) => {
+    followFocus.current = fromToolbar;
     decide({
       runId,
       checkpointIds: [id],
       kind,
       label: `${kind === "approved" ? "Approved" : "Rejected"} '${name}'`,
     });
+  };
+
+  // An older capture is approved only after the viewer's stale-step question
+  // (StaleStepConfirm, the same dialog and copy). `staleOpener` is the Approve
+  // button while it is open; focus goes back to it on Cancel, and follows the
+  // decision on Confirm as a plain Approve's would.
+  const newerCapture = checkpoint.newerCapture ?? null;
+  const [staleOpener, setStaleOpener] = useState<HTMLElement | null>(null);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (staleOpener) {
+      returnFocusTo.current = staleOpener;
+      return;
+    }
+    const target = returnFocusTo.current;
+    returnFocusTo.current = null;
+    if (target?.isConnected) target.focus();
+  }, [staleOpener]);
+
+  const approveStep = (opener: HTMLElement) => {
+    if (newerCapture) {
+      setStaleOpener(opener);
+      return;
+    }
+    decideStep("approved");
   };
 
   // The icon buttons share one look; only the hover hue says which is which.
@@ -213,7 +246,7 @@ export const StepCard = memo(function StepCard({
                   reason={header.disabledReason}
                   onClick={(e) => {
                     e.stopPropagation();
-                    decideStep("approved");
+                    approveStep(e.currentTarget);
                   }}
                   className={cn(actionClass, "hover:text-status-passed-text")}
                 >
@@ -234,6 +267,26 @@ export const StepCard = memo(function StepCard({
                   <ThumbsDown className="h-4 w-4" aria-hidden />
                 </DisabledAwareButton>
               </>
+            )}
+            {canReview && needsReviewer && newerCapture && (
+              <StaleStepConfirm
+                buildName={newerCapture.buildName}
+                open={staleOpener !== null}
+                onCancel={() => setStaleOpener(null)}
+                onConfirm={() => {
+                  const opener = staleOpener;
+                  setStaleOpener(null);
+                  // The step may have changed under the dialog: approve only
+                  // what is still approvable.
+                  if (header.canApprove) {
+                    decideStep(
+                      "approved",
+                      opener !== null &&
+                        toolbar.current?.contains(opener) === true,
+                    );
+                  }
+                }}
+              />
             )}
             {canReview && decision !== null && canUndo && (
               <DisabledAwareButton

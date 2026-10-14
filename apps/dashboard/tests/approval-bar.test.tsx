@@ -765,11 +765,16 @@ describe("ApprovalBar: the More menu", () => {
     expect(item.textContent).toBe("Approve pending steps (2)");
     fireEvent.click(item);
     expect(review.decide).toHaveBeenCalledTimes(1);
-    expect(review.decide).toHaveBeenCalledWith({
-      runId: RUN_ID,
-      kind: "approved",
-      label: "Approved 2 steps",
-    });
+    const args = review.decide.mock.calls[0]![0] as {
+      label: (r: { decided: unknown[] }) => string;
+    };
+    expect(args).toMatchObject({ runId: RUN_ID, kind: "approved" });
+    expect(args).not.toHaveProperty("checkpointIds");
+    // Worded from what the server decided, not from the count shown: a step
+    // decided elsewhere meanwhile is not claimed.
+    expect(typeof args.label).toBe("function");
+    expect(args.label({ decided: [{}] })).toBe("Approved 1 step");
+    expect(args.label({ decided: [{}, {}, {}] })).toBe("Approved 3 steps");
   });
 
   it("is disabled when no step is pending", async () => {
@@ -814,6 +819,19 @@ describe("ApprovalBar: the More menu", () => {
     expect(screen.getByTestId("override-explainer").textContent).toBe(
       "Sets the run's status directly. Step decisions are kept.",
     );
+  });
+
+  it("offers no override on a new run, which the server would refuse", async () => {
+    arrange({
+      items: [step({ verdict: "new", state: "new" })],
+      runOver: { status: "new" },
+    });
+    renderBar({ status: "new" });
+    await openMoreMenu();
+    await screen.findByTestId("approve-pending-steps");
+    expect(screen.queryByTestId("override-set-passed")).toBeNull();
+    expect(screen.queryByTestId("override-set-failed")).toBeNull();
+    expect(screen.queryByTestId("override-explainer")).toBeNull();
   });
 
   it("ties the explanation to every override item, so a screen reader reads it", async () => {

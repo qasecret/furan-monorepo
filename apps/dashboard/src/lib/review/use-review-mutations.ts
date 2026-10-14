@@ -121,6 +121,8 @@ export function useIsInFlight(checkpointId: string): boolean {
  */
 interface Action {
   label: ReviewLabel;
+  /** What a decide action decides; none for an undo. */
+  kind?: CheckpointDecisionKind;
   /**
    * What the toast says should `label` be a function that throws: the review
    * is already committed, so a bug in how it is worded must not undo it.
@@ -389,6 +391,17 @@ export function useReviewMutations() {
   ) => {
     const action = ACTIONS.get(actionId);
     if (!action) return;
+    // Nothing was decided (an empty action, or a replay of one): there is
+    // nothing to undo, so no undo entry and no Undo button.
+    if (result.decided.length === 0) {
+      toast.info(
+        action.kind === "rejected"
+          ? "Nothing left to reject"
+          : "Nothing left to approve",
+      );
+      action.onSuccess?.();
+      return;
+    }
     // Group and build actions learn which runs they touched from the answer.
     const runIds =
       action.runIds.length > 0
@@ -439,6 +452,7 @@ export function useReviewMutations() {
         actionId,
         {
           label,
+          kind,
           plainLabel: plainLabelOf(kind),
           runIds: [runId],
           change: decisionChange(
@@ -480,6 +494,7 @@ export function useReviewMutations() {
         actionId,
         {
           label,
+          kind,
           plainLabel: plainLabelOf(kind),
           runIds: [],
           held: [checkpointId],
@@ -509,6 +524,7 @@ export function useReviewMutations() {
         actionId,
         {
           label,
+          kind: "approved",
           plainLabel: plainLabelOf("approved"),
           runIds: [],
           held: [],

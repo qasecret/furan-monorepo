@@ -251,3 +251,25 @@ describe("deriveReviewHeader: approve pending steps", () => {
     expect(header.canApprovePendingSteps).toBe(false);
   });
 });
+
+// M6: the More menu offers Force passed / Force failed only where the server's
+// overrideStatus accepts them (REVIEWER_LEGAL_FROM: passed, unresolved,
+// failed), or to reset a run that is already overridden.
+describe("deriveReviewHeader: the run override follows the server", () => {
+  it.each(["passed", "unresolved", "failed"] as const)(
+    "a %s run may be overridden",
+    (status) => {
+      const header = deriveReviewHeader(
+        input(status === "passed" ? "passed" : "unresolved", { status }),
+      );
+      expect(header.canOverride).toBe(true);
+    },
+  );
+
+  it("a new run may not: the server refuses it, though its steps can be approved", () => {
+    const header = deriveReviewHeader(input("new", { status: "new" }));
+    expect(header.canOverride).toBe(false);
+    expect(header.showRunMenu).toBe(true);
+    expect(header.canApprovePendingSteps).toBe(true);
+  });
+});

@@ -62,7 +62,10 @@ export interface ReviewHeader {
   pendingSteps: number;
   /** Approve pending steps is available: some are pending, none in flight. */
   canApprovePendingSteps: boolean;
-  /** The run's status may be set by hand, or cleared if it was. */
+  /**
+   * The run's status may be set by hand (where the server accepts it), or
+   * cleared if it was.
+   */
   canOverride: boolean;
 }
 
@@ -72,6 +75,16 @@ const NOT_REVIEWABLE: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "running",
   "aborted",
   "empty",
+]);
+
+// The statuses `runs.overrideStatus` accepts an override from, mirroring the
+// server's REVIEWER_LEGAL_FROM (apps/api/src/trpc/v1/runs.ts): Force passed /
+// Force failed are offered nowhere the server would refuse them (a `new` run).
+// An overridden run's status is its override, so it can always be reset.
+const OVERRIDE_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "passed",
+  "unresolved",
+  "failed",
 ]);
 
 const isPendingState = (state: CheckpointReviewState | null): boolean =>
@@ -140,6 +153,6 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
     pendingSteps,
     canApprovePendingSteps:
       reviewable && pendingSteps > 0 && !input.runInFlight,
-    canOverride: overridden || !blocked,
+    canOverride: overridden || (!blocked && OVERRIDE_LEGAL_FROM.has(status)),
   };
 }

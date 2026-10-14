@@ -300,9 +300,11 @@ function deferred<T = unknown>() {
   return { promise, resolve, reject };
 }
 
+// One step decided by default: an action that decided nothing has nothing to
+// undo, and the tests for that case say so explicitly.
 const decided = (runs: string[] = [RUN]) => ({
   actionId: "server-echo",
-  decided: [],
+  decided: [{ checkpointId: A, runId: runs[0] ?? RUN, state: "approved" }],
   runs: runs.map((runId) => ({ runId, status: "passed" })),
   replayed: false,
   capped: false,
@@ -1007,6 +1009,58 @@ describe("useReviewMutations: success", () => {
         runIds: [RUN],
       },
     ]);
+  });
+
+  // M4: an action that decided nothing (an empty action, or a replay of one)
+  // has nothing to undo: no undo entry, no Undo button, an info toast.
+  it.each([
+    ["approved", "Nothing left to approve"],
+    ["rejected", "Nothing left to reject"],
+  ] as const)(
+    "an action that decided nothing (%s) says so, with nothing to undo",
+    async (kind, message) => {
+      seed();
+      const mock = kind === "approved" ? server.approve : server.reject;
+      mock.mockResolvedValueOnce({ ...decided(), decided: [] });
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.decide({
+          runId: RUN,
+          kind,
+          label: (r) => `Decided ${r.decided.length} steps`,
+        }),
+      );
+
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(toast.info).mock.calls[0]).toEqual([message]);
+      expect(useUndoStore.getState().stack).toEqual([]);
+    },
+  );
+
+  it("a build approval that decided nothing still ends the call for its caller", async () => {
+    seed();
+    server.approveBuild.mockResolvedValueOnce({
+      ...decided([]),
+      decided: [],
+    });
+    const onSuccess = vi.fn();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 0,
+        label: "Approved",
+        onConflict: vi.fn(),
+        onSuccess,
+      }),
+    );
+
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith("Nothing left to approve");
+    expect(useUndoStore.getState().stack).toEqual([]);
   });
 
   describe("a label function that throws", () => {
