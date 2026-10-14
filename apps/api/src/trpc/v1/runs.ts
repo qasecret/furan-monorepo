@@ -199,7 +199,9 @@ const listInput = z.object({
   /**
    * `newest` (default): newest first. `capture`: oldest first, the order the
    * runs were captured, which is how a reviewer works through a batch; the
-   * keyset cursor then runs ascending.
+   * keyset cursor then runs ascending. Keep `order` constant while paging: a
+   * cursor replayed under the other order continues from that row in the new
+   * direction.
    */
   order: z.enum(["capture", "newest"]).default("newest"),
 });
@@ -311,16 +313,8 @@ function rediffAndAnnounce(
   );
 }
 
-/** The environment filters of a `list` input. */
-interface ListFacetInput {
-  browser?: string | undefined;
-  viewport?: string | undefined;
-  os?: string | undefined;
-  device?: string | undefined;
-}
-
 /** The environment facets of a `list` input, as `StepFacets`. */
-function listFacets(input: ListFacetInput): StepFacets {
+function listFacets(input: StepFacets): StepFacets {
   return {
     browser: input.browser,
     viewport: input.viewport,
@@ -359,7 +353,8 @@ function runListBaseConditions(
     buildId?: string | undefined;
     customTags?: string | undefined;
     pending?: boolean | undefined;
-  } & ListFacetInput,
+  },
+  facets: StepFacets,
 ) {
   const conditions = [eq(testRuns.projectId, input.projectId)];
   if (input.branch) conditions.push(eq(testRuns.branchName, input.branch));
@@ -372,7 +367,6 @@ function runListBaseConditions(
   // "At least one of the run's steps matches", the facets on the same step.
   // With `pending`, that step must also be pending: pending steps count only
   // inside the facets (a pending step elsewhere does not qualify the run).
-  const facets = listFacets(input);
   const facetsOnly = facetCondition(facets);
   if (input.pending) {
     conditions.push(runHasStep(input.projectId, pendingStepCondition(facets)));
@@ -433,7 +427,8 @@ export const runsRouter = t.router({
     .query(async ({ input, ctx }) => {
       // ADR-038: browser/viewport/os/device live on screenshots; the base
       // conditions filter runs by their steps (and by pending steps).
-      const conditions = runListBaseConditions(input);
+      const facets = listFacets(input);
+      const conditions = runListBaseConditions(input, facets);
       const capture = input.order === "capture";
       const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
       if (cursor) {
@@ -480,7 +475,7 @@ export const runsRouter = t.router({
       const pendingByRun = await pendingCountsByRun(ctx.db, {
         projectId: input.projectId,
         runIds,
-        facets: listFacets(input),
+        facets,
       });
       const stepsByRun = await stepCountsByRun(ctx.db, {
         projectId: input.projectId,

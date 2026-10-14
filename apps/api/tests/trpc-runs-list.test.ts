@@ -6,6 +6,7 @@ import {
   builds,
   checkpointDecisions,
   diffRegions,
+  eq,
   inArray,
   projectMembers,
   projects,
@@ -887,7 +888,11 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
     ).toEqual([r1.runId]);
 
     // Runs sharing a created_at are not skipped or repeated: the id breaks the tie.
-    const tie = new Date(Date.now() - 60_000);
+    const [r1Row] = await h.db
+      .select({ createdAt: testRuns.createdAt })
+      .from(testRuns)
+      .where(eq(testRuns.id, r1.runId));
+    const tie = new Date(r1Row!.createdAt.getTime() + 60_000);
     await h.db
       .update(testRuns)
       .set({ createdAt: tie })
