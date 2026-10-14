@@ -36,6 +36,14 @@ const listInput = z.object({
    * with the other filters by AND.
    */
   needsReview: z.boolean().optional(),
+  /**
+   * `true` keeps the builds with at least one failed run (`failedCount > 0`),
+   * whatever else they hold: a build with a failed run and a pending one is
+   * `unresolved` in the rollup and still listed here. The Failed chip on the
+   * Batches page (spec §3.1: the chips are filters, not a partition). `false`
+   * or omitted is no filter. Combines with the other filters by AND.
+   */
+  anyFailed: z.boolean().optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -73,7 +81,8 @@ export const buildsRouter = t.router({
    * Cursor-paginated listing for the Builds tab. Joins child runs as a CTE
    * to compute the aggregate status + counts in one query.
    *
-   * `needsReview` keeps the builds with a pending step. Each item carries
+   * `needsReview` keeps the builds with a pending step; `anyFailed` keeps
+   * those with at least one failed run. Each item carries
    * `pendingCheckpoints` (the pending steps in the build, the number
    * `getById` reports), filled by one grouped query per page.
    */
@@ -162,6 +171,7 @@ export const buildsRouter = t.router({
           AND (${propertyJson}::jsonb IS NULL OR b.properties @> ${propertyJson}::jsonb)
           AND (${input.status ?? null}::text IS NULL OR ${aggregateStatusExpr} = ${input.status ?? null})
           ${input.needsReview ? sql`AND ${hasPendingStep(input.projectId)}` : sql``}
+          ${input.anyFailed ? sql`AND coalesce(r.failed_count, 0) > 0` : sql``}
           AND (
             ${cursorPayload?.createdAt ?? null}::timestamptz IS NULL
             OR (b.created_at, b.id) < (${cursorPayload?.createdAt ?? null}::timestamptz, ${cursorPayload?.id ?? null}::uuid)

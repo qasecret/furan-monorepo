@@ -617,6 +617,82 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     expect(walked).toEqual([b5.buildId, b3.buildId, b2.buildId, s.buildId]);
   });
 
+  test("anyFailed keeps batches with at least one failed run, whatever else they hold", async () => {
+    // A: one rejected run and one pending run. The batch rolls up to
+    // `unresolved`, yet it has a failed test and a step to review.
+    const s = await seed({
+      lifecycle: "failed",
+      checkpoints: [{ name: "a-rejected", verdict: "unresolved" }],
+    });
+    await decide(s, s.runId, s.shots["a-rejected"]!.id, {
+      decision: "rejected",
+    });
+    await addReviewRun(h, s, {
+      checkpoints: [{ name: "a-pending", verdict: "unresolved" }],
+    });
+    const a = s.buildId;
+    // B: only a rejected run: failed, nothing left to review.
+    const b = await addReviewBuild(h, s, {
+      spec: {
+        lifecycle: "failed",
+        checkpoints: [{ name: "b-rejected", verdict: "unresolved" }],
+      },
+    });
+    await decide(s, b.runId, b.shots["b-rejected"]!.id, {
+      decision: "rejected",
+    });
+    // C: only a pending run: to review, no failure.
+    const c = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
+    });
+    // D: only passed steps.
+    const dBuild = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "d1", verdict: "passed" }] },
+    });
+    // E: no runs at all.
+    const [e] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch })
+      .returning({ id: builds.id });
+
+    const client = as(s.editor);
+    const list = (extra: {
+      anyFailed?: boolean;
+      needsReview?: boolean;
+      status?: "failed" | "unresolved";
+    }) => client.builds.list.query({ projectId: s.projectId, ...extra });
+
+    const failing = await list({ anyFailed: true });
+    expect(sorted(idsOf(failing))).toEqual(sorted([a, b.buildId]));
+    // A is `unresolved` in the rollup, so `status: "failed"` would miss it.
+    expect(failing.items.find((i) => i.id === a)?.aggregateStatus).toBe(
+      "unresolved",
+    );
+    expect(failing.items.find((i) => i.id === a)?.failedCount).toBe(1);
+
+    // The same batch is under Needs review as well: the chips are filters,
+    // not a partition.
+    const needing = await list({ needsReview: true });
+    expect(sorted(idsOf(needing))).toEqual(sorted([a, c.buildId]));
+
+    // It combines with the other filters by AND.
+    expect(
+      sorted(idsOf(await list({ anyFailed: true, needsReview: true }))),
+    ).toEqual([a]);
+    expect(
+      sorted(idsOf(await list({ anyFailed: true, status: "failed" }))),
+    ).toEqual([b.buildId]);
+
+    // `false` is no filter, like leaving it out.
+    const all = await list({});
+    expect(sorted(idsOf(await list({ anyFailed: false })))).toEqual(
+      sorted(idsOf(all)),
+    );
+    expect(sorted(idsOf(all))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId, e!.id]),
+    );
+  });
+
   test("pendingCheckpoints per row equals builds.getById.pendingCheckpoints", async () => {
     // A: three steps, two pending (one decided).
     const s = await seed({
