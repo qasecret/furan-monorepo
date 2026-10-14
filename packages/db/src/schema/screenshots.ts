@@ -63,14 +63,21 @@ export const screenshots = pgTable(
     // the diff-worker; a reviewer's decision lives in `checkpoint_decisions`.
     verdict: checkpointVerdictEnum("verdict"),
     verdictAt: timestamp("verdict_at", { withTimezone: true }),
-    // ADR-074 (migration 0041): true exactly when the step has an active
+    // ADR-074 (migration 0040): true exactly when the step has an active
     // decision (a `checkpoint_decisions` row with `reverted_at IS NULL`).
     // A decision never rewrites the verdict, so without it every scan for
     // pending steps had to probe `checkpoint_decisions` for all of a project's
     // history. Maintained ONLY by the trigger
-    // `checkpoint_decisions_sync_active_flag`; never write it from the app. It
-    // is an index-usable pre-filter: `pendingStepCondition` still decides with
-    // its `NOT EXISTS` on `checkpoint_decisions`.
+    // `checkpoint_decisions_sync_active_flag` on `checkpoint_decisions`
+    // (insert, update of `reverted_at` / `screenshot_id`, delete); never write
+    // it from the app. It is an index-usable pre-filter: `pendingStepCondition`
+    // still decides with its `NOT EXISTS` on `checkpoint_decisions`.
+    //
+    // Not visible to Drizzle, so drizzle-kit neither creates nor drops them:
+    // the trigger and its function `checkpoint_decisions_sync_active_flag()`,
+    // and the MCV statistics object `screenshots_verdict_decision_stats` on
+    // (`verdict`, `has_active_decision`), which keeps the planner's estimate of
+    // the open steps right. They live only in migration 0040's SQL.
     hasActiveDecision: boolean("has_active_decision").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -89,13 +96,6 @@ export const screenshots = pgTable(
     diffSignatureIdx: index("screenshots_diff_signature_idx").on(
       t.diffSignature,
     ),
-    // The steps the review queue and the "needs review" filters look at: a
-    // pending step has verdict `new` or `unresolved` (a `passed` or undiffed
-    // one never is), in capture order within its run. Partial, so the index
-    // leaves out the passed steps.
-    pendingIdx: index("screenshots_pending_idx")
-      .on(t.runId, t.createdAt)
-      .where(sql`${t.verdict} IN ('new', 'unresolved')`),
     // ADR-074: the open steps, those a verdict makes candidates for review
     // and no active decision has settled. It holds only the work still to do,
     // so the project-wide pending scans (the queue's next batch and counts,

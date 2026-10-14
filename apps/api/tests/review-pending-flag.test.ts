@@ -27,7 +27,7 @@ import {
 } from "./review-fixtures.js";
 
 /**
- * `screenshots.has_active_decision` (migration 0041, ADR-074): true exactly
+ * `screenshots.has_active_decision` (migration 0040, ADR-074): true exactly
  * when the step has an active decision (`checkpoint_decisions.reverted_at IS
  * NULL`), kept so by the trigger on `checkpoint_decisions` and nothing else.
  * These tests drive it through the real decision and undo cores, as the

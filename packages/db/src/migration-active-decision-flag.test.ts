@@ -20,10 +20,11 @@ import {
 } from "./index.js";
 
 /**
- * Migration `0041_active_decision_flag` (ADR-074): `screenshots.
+ * Migration `0040_active_decision_flag` (ADR-074): `screenshots.
  * has_active_decision`, true exactly when the step has a `checkpoint_decisions`
  * row with `reverted_at IS NULL`; the trigger on `checkpoint_decisions` that is
- * its only maintainer; the backfill; and the partial index of open steps.
+ * its only maintainer; the backfill, under a SHARE lock on
+ * `checkpoint_decisions`; and the partial indexes and statistics.
  *
  * Like the other data-migration tests, this seeds rows on the already-migrated
  * database, executes the migration file from disk and asserts. The file is
@@ -36,13 +37,13 @@ const RUN_INTEGRATION = !!process.env.DATABASE_URL;
 const MIGRATION_SQL = RUN_INTEGRATION
   ? readFileSync(
       fileURLToPath(
-        new URL("../migrations/0041_active_decision_flag.sql", import.meta.url),
+        new URL("../migrations/0040_active_decision_flag.sql", import.meta.url),
       ),
       "utf8",
     )
   : "";
 
-describe.runIf(RUN_INTEGRATION)("0041_active_decision_flag migration", () => {
+describe.runIf(RUN_INTEGRATION)("0040_active_decision_flag migration", () => {
   let db: DB;
   let close: () => Promise<void>;
 
@@ -51,12 +52,15 @@ describe.runIf(RUN_INTEGRATION)("0041_active_decision_flag migration", () => {
   let buildId: string;
   let userId: string;
 
-  /** The migration file, split and executed as drizzle's migrator does. */
-  async function runMigration(): Promise<void> {
-    const statements = MIGRATION_SQL.split("--> statement-breakpoint")
+  /** The migration file's statements, split as drizzle's migrator does. */
+  const statements = (): string[] =>
+    MIGRATION_SQL.split("--> statement-breakpoint")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    for (const stmt of statements) {
+
+  /** The migration file, executed statement by statement. */
+  async function runMigration(): Promise<void> {
+    for (const stmt of statements()) {
       await db.execute(sql.raw(stmt));
     }
   }
@@ -355,5 +359,129 @@ describe.runIf(RUN_INTEGRATION)("0041_active_decision_flag migration", () => {
         .where(inArray(checkpointDecisions.screenshotId, doomedSteps)),
     ).toEqual([]);
     expect(await flagsOf({ keptStep })).toEqual({ keptStep: true });
+  });
+
+  it("re-pointing a decision to another step updates both steps' flags", async () => {
+    const runId = await seedRun("repoint");
+    const from = await seedStep(runId, "repoint-from");
+    const to = await seedStep(runId, "repoint-to");
+    const decision = await seedDecision(runId, from);
+    expect(await flagsOf({ from, to })).toEqual({ from: true, to: false });
+
+    await db
+      .update(checkpointDecisions)
+      .set({ screenshotId: to })
+      .where(eq(checkpointDecisions.id, decision));
+    expect(await flagsOf({ from, to })).toEqual({ from: false, to: true });
+  });
+
+  /**
+   * The race the backfill's SHARE lock closes. Under an autocommit runner
+   * (`psql -f`), an undo that commits while the backfill's UPDATE runs finds
+   * the step's flag still `false` (the legacy value) and writes nothing; the
+   * UPDATE, working from a snapshot in which the decision was still active,
+   * then sets `true`: a pending step hidden.
+   *
+   * Made deterministic with an undo held open on a second connection (B)
+   * while the backfill runs on a third (A), both in the READ COMMITTED mode
+   * both runners use:
+   * - the bare UPDATE, without the lock, does not wait for B and leaves the
+   *   stale `true` once B commits (the race is real);
+   * - the migration's locked block waits for B's write (its SHARE lock request
+   *   shows in `pg_locks`, not granted), then sees the undo and leaves `false`.
+   */
+  it("the backfill takes a SHARE lock on checkpoint_decisions, so an undo committing meanwhile leaves no stale true", async () => {
+    // The backfill statement, found by what it does (not by its lock), so
+    // that dropping the lock fails the behaviour below rather than the lookup.
+    const block = statements().find((s) =>
+      s.includes('UPDATE "screenshots" AS s'),
+    );
+    expect(block).toBeDefined();
+    const bare = /UPDATE "screenshots" AS s[\s\S]*?;/.exec(block!)?.[0];
+    expect(bare).toBeDefined();
+
+    const a = createDb();
+    const b = createDb();
+    // Undos still held open when the test fails, released before closing B.
+    const held: Array<() => Promise<void>> = [];
+    try {
+      /** A step whose decision is active but whose flag is still the legacy false. */
+      async function legacyActive(label: string) {
+        const runId = await seedRun(label);
+        const step = await seedStep(runId, label);
+        const decision = await seedDecision(runId, step);
+        await db
+          .update(screenshots)
+          .set({ hasActiveDecision: false })
+          .where(eq(screenshots.id, step));
+        return { step, decision };
+      }
+
+      /** An undo of `decision` on B, written but not committed until `commit`. */
+      async function holdUndo(decision: string) {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        let written!: () => void;
+        const isWritten = new Promise<void>((r) => (written = r));
+        const done = b.db.transaction(async (tx) => {
+          await tx
+            .update(checkpointDecisions)
+            .set({ revertedAt: new Date(), revertedBy: userId })
+            .where(eq(checkpointDecisions.id, decision));
+          written();
+          await gate;
+        });
+        await Promise.race([isWritten, done]);
+        const commit = async () => {
+          held.splice(held.indexOf(commit), 1);
+          release();
+          await done;
+        };
+        held.push(commit);
+        return commit;
+      }
+
+      const waitingShareLocks = async () => {
+        const [row] = await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from pg_locks
+              where locktype = 'relation'
+                and relation = 'checkpoint_decisions'::regclass
+                and mode = 'ShareLock' and not granted`,
+        );
+        return Number(row!.n);
+      };
+
+      // Without the lock: the race reproduces.
+      const control = await legacyActive("race-control");
+      const commitControl = await holdUndo(control.decision);
+      await a.db.execute(sql.raw(bare!));
+      await commitControl();
+      expect(await flagsOf({ step: control.step })).toEqual({ step: true });
+
+      // The migration's block: it waits for the undo, then gets it right.
+      const locked = await legacyActive("race-locked");
+      const commitLocked = await holdUndo(locked.decision);
+      let finished = false;
+      const backfill = a.db.execute(sql.raw(block!)).then(() => {
+        finished = true;
+      });
+      const deadline = Date.now() + 5_000;
+      while ((await waitingShareLocks()) === 0) {
+        if (finished || Date.now() > deadline) {
+          throw new Error("the backfill did not wait for the SHARE lock");
+        }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(finished).toBe(false);
+      await commitLocked();
+      await backfill;
+      expect(await flagsOf({ step: locked.step })).toEqual({ step: false });
+      // The block also corrected the control's stale flag.
+      expect(await flagsOf({ step: control.step })).toEqual({ step: false });
+    } finally {
+      for (const commit of [...held]) await commit().catch(() => {});
+      await a.close();
+      await b.close();
+    }
   });
 });

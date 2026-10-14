@@ -1,4 +1,4 @@
--- 0041: screenshots.has_active_decision, kept by a trigger on checkpoint_decisions (ADR-074).
+-- 0040: screenshots.has_active_decision, kept by a trigger on checkpoint_decisions (ADR-074).
 --
 -- A pending review step (spec 2026-10-14-review-loop §3.1) has verdict `new`
 -- or `unresolved`, no active decision and a reviewable run. A decision never
@@ -19,8 +19,25 @@
 -- adds `NOT has_active_decision` (which the open-steps index can use) and
 -- keeps its canonical `NOT EXISTS (active decision)`.
 --
--- Idempotent: re-applying this file is a no-op (the backfill rewrites no row
--- whose flag is already right).
+-- Re-applying this file is safe and leaves the data as it is: the column,
+-- indexes and statistics are created only if missing, and the backfill
+-- rewrites no row whose flag is already right. The function and the trigger
+-- are replaced in place (never dropped, so no decision write can slip through
+-- without the trigger) and `ANALYZE` runs again.
+--
+-- Locks, by runner:
+-- - drizzle-kit (`drizzle-kit migrate`: every pending file in ONE
+--   transaction): `ADD COLUMN`'s ACCESS EXCLUSIVE lock on `screenshots` is
+--   held until commit, through the backfill, both index builds and `ANALYZE`,
+--   so reads and writes of `screenshots` wait for the whole migration; the
+--   trigger replacement and the backfill also hold `checkpoint_decisions`
+--   against writes until commit.
+-- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
+--   statement its own transaction): `ADD COLUMN` is a brief metadata change;
+--   the backfill block holds SHARE on `checkpoint_decisions` (decision writes
+--   wait, reads do not) while it runs; each `CREATE INDEX` holds SHARE on
+--   `screenshots` (writes wait, reads do not) while it builds; `ANALYZE`
+--   blocks neither.
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "has_active_decision" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
 -- Invoker rights (no SECURITY DEFINER): the UPDATE runs as whoever wrote the
@@ -61,25 +78,39 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
-DROP TRIGGER IF EXISTS "checkpoint_decisions_sync_active_flag" ON "checkpoint_decisions";
---> statement-breakpoint
-CREATE TRIGGER "checkpoint_decisions_sync_active_flag"
+-- CREATE OR REPLACE (PostgreSQL 14+), not DROP + CREATE: under an autocommit
+-- runner there is never a moment without the trigger.
+CREATE OR REPLACE TRIGGER "checkpoint_decisions_sync_active_flag"
   AFTER INSERT OR UPDATE OF "reverted_at", "screenshot_id" OR DELETE ON "checkpoint_decisions"
   FOR EACH ROW EXECUTE FUNCTION checkpoint_decisions_sync_active_flag();
 --> statement-breakpoint
 -- Backfill, after the trigger exists: every step whose flag differs from its
 -- decisions. At most one active decision per step (the partial unique index
 -- `checkpoint_decisions_active_uniq`), so the join yields one row per step.
-UPDATE "screenshots" AS s
-   SET "has_active_decision" = c."active"
-  FROM (
-    SELECT x."id", d."id" IS NOT NULL AS "active"
-    FROM "screenshots" AS x
-    LEFT JOIN "checkpoint_decisions" AS d
-      ON d."screenshot_id" = x."id" AND d."reverted_at" IS NULL
-  ) AS c
- WHERE c."id" = s."id"
-   AND s."has_active_decision" IS DISTINCT FROM c."active";
+--
+-- The SHARE lock makes it exact under any runner. It waits for every decision
+-- write in flight to commit, and holds off new ones until the backfill
+-- commits, so the UPDATE (whose snapshot is taken after the lock) sees every
+-- decision as it is when it runs. Without it, under autocommit, an undo
+-- committing during the UPDATE would find the flag still `false` and write
+-- nothing, and the UPDATE would then set `true` from its older snapshot,
+-- hiding a pending step. Inside drizzle-kit's single transaction it is
+-- harmless.
+DO $$
+BEGIN
+  LOCK TABLE "checkpoint_decisions" IN SHARE MODE;
+  UPDATE "screenshots" AS s
+     SET "has_active_decision" = c."active"
+    FROM (
+      SELECT x."id", d."id" IS NOT NULL AS "active"
+      FROM "screenshots" AS x
+      LEFT JOIN "checkpoint_decisions" AS d
+        ON d."screenshot_id" = x."id" AND d."reverted_at" IS NULL
+    ) AS c
+   WHERE c."id" = s."id"
+     AND s."has_active_decision" IS DISTINCT FROM c."active";
+END
+$$;
 --> statement-breakpoint
 -- The open steps: a candidate verdict and no active decision, the work still
 -- to do. `id` makes it covering for the project-wide scans, which need only a

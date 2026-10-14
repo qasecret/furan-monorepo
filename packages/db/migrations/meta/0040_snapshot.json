@@ -1,5 +1,5 @@
 {
-  "id": "486283bf-5098-412d-9b77-75d6f0f9c6a3",
+  "id": "8b3d56cf-d5aa-4037-b830-408a1a209243",
   "prevId": "01589547-c74a-4767-bf26-13c9a2874d22",
   "version": "7",
   "dialect": "postgresql",
@@ -1624,6 +1624,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "has_active_decision": {
+          "name": "has_active_decision",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1678,9 +1685,15 @@
           "method": "btree",
           "with": {}
         },
-        "screenshots_pending_idx": {
-          "name": "screenshots_pending_idx",
+        "screenshots_pending_open_idx": {
+          "name": "screenshots_pending_open_idx",
           "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "run_id",
               "isExpression": false,
@@ -1692,10 +1705,32 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": false,
-          "where": "\"screenshots\".\"verdict\" IN ('new', 'unresolved')",
+          "where": "\"screenshots\".\"verdict\" IN ('new', 'unresolved') AND NOT \"screenshots\".\"has_active_decision\"",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "screenshots_undiffed_idx": {
+          "name": "screenshots_undiffed_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"screenshots\".\"verdict\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
