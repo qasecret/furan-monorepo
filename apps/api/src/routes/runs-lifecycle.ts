@@ -172,9 +172,15 @@ export async function registerRunLifecycleRoutes(
       if (!params.success) return sendError(reply, 400, "invalid_id");
 
       return withRequestScope(app, req, async (db, onCommit) => {
+        // `abortedByDiff: false`: the SDK's abort is final. A later diff job
+        // heals only an abort the diff pipeline wrote (Ruling R46).
         await db
           .update(testRuns)
-          .set({ status: "aborted", completedAt: new Date() })
+          .set({
+            status: "aborted",
+            abortedByDiff: false,
+            completedAt: new Date(),
+          })
           .where(eq(testRuns.id, params.data.id));
 
         onCommit(() =>

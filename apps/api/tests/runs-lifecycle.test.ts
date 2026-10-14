@@ -274,6 +274,32 @@ d("POST /runs/:id/complete + /abort", () => {
     expect(persisted[0]?.completedAt).not.toBeNull();
   });
 
+  test("abort of a run the diff pipeline aborted makes it the SDK's: it stays aborted", async () => {
+    // Ruling R46: only an abort the diff pipeline wrote is healed by a later
+    // successful diff. An SDK abort clears the flag, whatever wrote before it.
+    const { runId, headers } = await seedAuthedRunNoCheckpoints(h);
+    await h.db
+      .update(testRuns)
+      .set({ status: "aborted", abortedByDiff: true })
+      .where(eq(testRuns.id, runId));
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/runs/${runId}/abort`,
+      headers,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const [persisted] = await h.db
+      .select({
+        status: testRuns.status,
+        abortedByDiff: testRuns.abortedByDiff,
+      })
+      .from(testRuns)
+      .where(eq(testRuns.id, runId));
+    expect(persisted).toEqual({ status: "aborted", abortedByDiff: false });
+  });
+
   test("complete without auth → 401", async () => {
     const { runId } = await seedAuthedRunNoCheckpoints(h);
     const res = await h.app.inject({

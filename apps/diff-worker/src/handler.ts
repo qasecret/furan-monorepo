@@ -396,12 +396,14 @@ export async function handleDiffJob(
     // not hang in `running` indefinitely. Per spec §3.2 worker exceptions land
     // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
     // own try/catch so a status-write failure does not mask the original
-    // error — the worker's error visibility is unchanged.
+    // error — the worker's error visibility is unchanged. `abortedByDiff`
+    // marks it as the pipeline's abort, which a later successful diff of the
+    // whole run heals (Ruling R46, `healPipelineAbort`).
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
           .update(testRuns)
-          .set({ status: "aborted" })
+          .set({ status: "aborted", abortedByDiff: true })
           .where(eq(testRuns.id, data.runId));
       });
     } catch (statusErr) {
@@ -440,6 +442,41 @@ export async function handleDiffJob(
     );
     throw err;
   }
+}
+
+/**
+ * Ruling R46: each upload enqueues a whole-run diff, and a job that fails its
+ * final attempt writes `aborted`, a lifecycle state the rollup keeps. When a
+ * later job leaves EVERY checkpoint of the run with a verdict, an abort the
+ * pipeline wrote (`aborted_by_diff`) is reset to the lifecycle value `running`
+ * so the `recomputeRunStatus` that follows yields the real rollup. An SDK
+ * `/abort` or a capture-worker abort leaves the flag false and stays.
+ *
+ * Runs in the core transaction under the run's row lock, `FOR NO KEY UPDATE`
+ * (R8; the transaction already holds it from the aggregate UPDATE), so a
+ * concurrent abort or upload is either seen here or waits for this commit.
+ * Returns true when it healed the run.
+ */
+async function healPipelineAbort(tx: DB, runId: string): Promise<boolean> {
+  const [run] = await tx
+    .select({ status: testRuns.status, abortedByDiff: testRuns.abortedByDiff })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .for("no key update");
+  if (run?.status !== "aborted" || !run.abortedByDiff) return false;
+
+  const [pending] = await tx
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(and(eq(screenshots.runId, runId), isNull(screenshots.verdict)))
+    .limit(1);
+  if (pending) return false;
+
+  await tx
+    .update(testRuns)
+    .set({ status: "running", abortedByDiff: false })
+    .where(eq(testRuns.id, runId));
+  return true;
 }
 
 /** What `handleDiffJobInner` has durably done so far; read by the failure path. */
@@ -1526,6 +1563,12 @@ async function handleDiffJobInner(
     );
     if (auditValues.length > 0) {
       await tx.insert(diffRegions).values(auditValues);
+    }
+
+    // A pipeline abort (an earlier job's final attempt) heals once this job
+    // leaves every checkpoint with a verdict (Ruling R46).
+    if (await healPipelineAbort(tx, data.runId)) {
+      logger.info({ runId: data.runId }, "diff_pipeline_abort_healed");
     }
 
     // Last, after every child-row write: derive the run status.
