@@ -155,10 +155,6 @@ vi.mock("../src/lib/trpc", () => {
         getCheckpointGroup: {
           useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
-        approveCheckpointGroup: { useMutation: noopMutation },
-        rejectCheckpointGroup: {
-          useMutation: () => ({ mutate: () => undefined, isPending: false }),
-        },
       },
       projects: {
         getById: {
@@ -522,11 +518,11 @@ describe("DiffViewer", () => {
   });
 });
 
-// Regression: the A/R hotkeys used to call their own `runs.approve` /
-// `runs.reject` mutations — approving the WHOLE run, skipping the
-// review-legal status gate, dropping unsaved ignore regions, and firing
-// while the reviewer typed into a field. They must now go through the exact
-// action the ApprovalBar buttons use.
+// Regression: the A/R hotkeys used to call their own whole-run approve /
+// reject mutations — approving the WHOLE run, skipping the review-legal status
+// gate, dropping unsaved ignore regions, and firing while the reviewer typed
+// into a field. They must now go through the exact action the ApprovalBar
+// buttons use.
 const RUN_ID = "00000000-0000-0000-0000-000000000000";
 
 interface StepFixture {

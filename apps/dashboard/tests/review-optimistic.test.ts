@@ -34,10 +34,6 @@ function item(id: string, over: Partial<CheckpointItem> = {}): CheckpointItem {
     state: "unresolved",
     decision: null,
     newerCapture: null,
-    status: "unresolved",
-    // The legacy alias follows what the item says about itself.
-    ...(over.verdict && !over.status && { status: over.verdict }),
-    ...(over.state === "approved" && !over.status && { status: "passed" }),
     ...over,
   };
 }
@@ -105,35 +101,6 @@ describe("applyDecision", () => {
 
     expect(items[0]?.state).toBe("unresolved");
     expect(items[0]?.decision).toBeNull();
-  });
-});
-
-describe("the legacy status alias", () => {
-  it("follows the patched state, and goes back to the verdict on a revert", () => {
-    const items = [item("a"), item("b", { verdict: "new", state: "new" })];
-
-    const approved = applyDecision(
-      items,
-      new Set(["a"]),
-      "approved",
-      ACTOR,
-      ACTION,
-    );
-    expect(approved.map((i) => i.status)).toEqual(["passed", "new"]);
-
-    const rejected = applyDecision(
-      items,
-      new Set(["a", "b"]),
-      "rejected",
-      ACTOR,
-      ACTION,
-    );
-    expect(rejected.map((i) => i.status)).toEqual(["failed", "failed"]);
-
-    expect(revertDecision(rejected, ACTION).map((i) => i.status)).toEqual([
-      "unresolved",
-      "new",
-    ]);
   });
 });
 

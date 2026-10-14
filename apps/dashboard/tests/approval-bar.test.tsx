@@ -77,12 +77,6 @@ vi.mock("@/lib/trpc", () => ({
           error: null,
         }),
       },
-      approveCheckpointGroup: {
-        useMutation: () => ({ mutate: vi.fn(), isPending: false }),
-      },
-      rejectCheckpointGroup: {
-        useMutation: () => ({ mutate: () => undefined, isPending: false }),
-      },
     },
   },
 }));

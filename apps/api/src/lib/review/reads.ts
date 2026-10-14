@@ -17,7 +17,6 @@ import {
   type CheckpointVerdict,
   type DecisionSource,
   type RevertSkipReason,
-  type RunStatus,
 } from "@furan/shared-types";
 
 import type { AuthedUser } from "../../plugins/auth.js";
@@ -82,35 +81,6 @@ export interface CheckpointReviewView {
     /** The build's display name, computed like the dashboard's `buildDisplayName`. */
     buildName: string;
   } | null;
-}
-
-/** The statuses `runs.listCheckpoints` reports per checkpoint. */
-export type CheckpointStatusAlias =
-  "new" | "unresolved" | "passed" | "failed" | "running" | "aborted" | "empty";
-
-/**
- * `listCheckpoints.status`, kept until the dashboard reads `state`:
- * `approved` is shown as `passed`, `rejected` as `failed`. A checkpoint that
- * is not diffed yet (no state) shows its run's lifecycle when the run ended
- * without diffing it (`aborted` / `empty`: no diff is coming), otherwise
- * `running` (R20).
- */
-export function checkpointStatusAlias(
-  state: CheckpointReviewState | null,
-  lifecycle: RunStatus,
-): CheckpointStatusAlias {
-  switch (state) {
-    case null:
-      return lifecycle === "aborted" || lifecycle === "empty"
-        ? lifecycle
-        : "running";
-    case "approved":
-      return "passed";
-    case "rejected":
-      return "failed";
-    default:
-      return state;
-  }
 }
 
 export interface BuildIdentity {

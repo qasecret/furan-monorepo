@@ -6,14 +6,13 @@ import type { SelectionScope } from "./targets.js";
 /**
  * A checkpoint's "group": the checkpoints of its build that share its diff
  * signature (ADR-042). The group read (`runs.getCheckpointGroup`) and every
- * group action (`review.approveGroup` / `rejectGroup` and their legacy
- * wrappers) derive it here, so "this checkpoint's group" has one definition.
+ * group action (`review.approveGroup` / `rejectGroup`) derive it here, so
+ * "this checkpoint's group" has one definition.
  */
 
 /**
  * Cap on how many checkpoints a single group action ("Accept all N like
- * this") decides. Mirrors the legacy bulk-approve cap; a build with more
- * matches needs a second "run again" click.
+ * this") decides. A build with more matches needs a second "run again" click.
  */
 export const GROUP_APPROVE_CAP = 200;
 

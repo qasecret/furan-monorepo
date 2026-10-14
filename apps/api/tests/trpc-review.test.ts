@@ -991,6 +991,44 @@ d("review router", () => {
       });
     });
 
+    test("a rejectGroup writes its own build-level audit row", async () => {
+      const s = await seedGroup();
+      const actionId = newAction();
+      await as(s.editor).review.rejectGroup.mutate({
+        runId: s.runId,
+        checkpointId: s.shots.a!.id,
+        actionId,
+      });
+      const rows = (await auditOf(s.buildId)).filter(
+        (a) => a.action === "run.reject_group",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actorId: s.editor.id,
+        targetType: "build",
+      });
+      expect(rows[0]!.metadata).toMatchObject({
+        projectId: s.projectId,
+        actionId,
+        source: "group",
+        seedRunId: s.runId,
+        seedCheckpointId: s.shots.a!.id,
+        count: 2,
+        runIds: [s.runId],
+        capped: false,
+      });
+      const meta = rows[0]!.metadata as { checkpointIds: string[] };
+      expect(new Set(meta.checkpointIds)).toEqual(
+        new Set([s.shots.a!.id, s.shots.b!.id]),
+      );
+      // Rejecting never touches a baseline, and the per-run rows are there too.
+      expect(
+        (await auditOf(s.runId)).filter(
+          (a) => a.action === "run.reject_checkpoints",
+        ),
+      ).toHaveLength(1);
+    });
+
     test("caps a group at GROUP_APPROVE_CAP in capture order; running it again drains the rest", async () => {
       const s = await seed({ checkpoints: [], lifecycle: "unresolved" });
       const sig = `sig-${s.tag}`;
@@ -1429,6 +1467,100 @@ d("review router", () => {
       ]);
       await expectForeignUntouched(foreign);
       await expectForeignUntouched(other.foreign);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Legality: a run that is not reviewable, or whose status is overridden.
+  // -------------------------------------------------------------------------
+
+  describe("a run that is not reviewable", () => {
+    test.each(["running", "aborted", "empty"] as const)(
+      "naming a checkpoint of a %s run is PRECONDITION_FAILED not_reviewable, for approve and reject, and writes nothing",
+      async (lifecycle) => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+          ],
+          lifecycle,
+        });
+        const c = as(s.editor);
+        const calls = [
+          c.review.approve.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+          c.review.reject.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+        ];
+        for (const call of calls) {
+          const f = await failure(call);
+          expect(f.code).toBe("PRECONDITION_FAILED");
+          expect(f.message).toBe("not_reviewable");
+          expect(f.details?.reasons).toEqual([
+            { checkpointId: s.shots.a!.id, reason: "not_reviewable" },
+          ]);
+        }
+        expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+        expect(await runStatus(s.runId)).toBe(lifecycle);
+        expect(h.broadcasterPublish).not.toHaveBeenCalled();
+      },
+    );
+
+    test("without ids a run that is not reviewable has nothing pending: an empty success that writes nothing", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+        lifecycle: "running",
+      });
+      const res = await as(s.editor).review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+      });
+      expect(res).toMatchObject({ decided: [], runs: [] });
+      expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+      expect(await runStatus(s.runId)).toBe("running");
+      expect(h.broadcasterPublish).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("an overridden run", () => {
+    test("is not reviewable per checkpoint until its override is reset", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const c = as(s.editor);
+      await c.runs.overrideStatus.mutate({ runId: s.runId, status: "passed" });
+
+      for (const decide of [c.review.approve, c.review.reject]) {
+        const f = await failure(
+          decide.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+        );
+        expect(f.code).toBe("PRECONDITION_FAILED");
+        expect(f.message).toBe("run_overridden");
+      }
+      // Without ids nothing is pending in an overridden run.
+      const none = await c.review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+      });
+      expect(none.decided).toEqual([]);
+      expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+
+      await c.runs.overrideStatus.mutate({ runId: s.runId, status: "default" });
+      await c.review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+        checkpointIds: [s.shots.a!.id],
+      });
+      expect(await runStatus(s.runId)).toBe("passed");
     });
   });
 

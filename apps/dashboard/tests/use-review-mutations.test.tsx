@@ -144,20 +144,18 @@ const review = (verdict: string, state = verdict) => ({
 interface Item {
   id: string;
   name: string;
-  /** The legacy alias of the state; the patches keep it in step. */
-  status: string;
   verdict: string;
   state: string;
   decision: { actionId: string; kind: string } | null;
 }
 
 const seedItems = (): Item[] => [
-  { id: A, name: "home", status: "unresolved", ...review("unresolved") },
-  { id: B, name: "pricing", status: "new", ...review("new") },
-  { id: C, name: "footer", status: "passed", ...review("passed") },
+  { id: A, name: "home", ...review("unresolved") },
+  { id: B, name: "pricing", ...review("new") },
+  { id: C, name: "footer", ...review("passed") },
 ];
 
-/** What `runs.getById` carries per checkpoint: the review fields, no name or alias. */
+/** What `runs.getById` carries per checkpoint: the review fields, no name. */
 const contextOf = ({ verdict, state, decision }: Item) => ({
   verdict,
   state,
@@ -221,7 +219,7 @@ function seedApproved(actionId: string) {
   const decision = { actionId, kind: "approved" };
   qc.setQueryData(keyOf(["runs", "listCheckpoints"], { runId: RUN }), {
     items: seedItems().map((i) =>
-      i.id === A ? { ...i, state: "approved", status: "passed", decision } : i,
+      i.id === A ? { ...i, state: "approved", decision } : i,
     ),
   });
   qc.setQueryData(keyOf(["runs", "getById"], { runId: RUN }), {
@@ -1578,7 +1576,6 @@ describe("useReviewMutations: undo", () => {
         {
           id: "cp-d",
           name: "settings",
-          status: "passed",
           ...review("unresolved", "approved"),
           decision: { actionId: ACTION, kind: "approved" },
         },

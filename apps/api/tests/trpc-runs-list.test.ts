@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -327,10 +328,10 @@ d("tRPC runs.list", () => {
     expect(page.nextCursor).toBeNull();
   });
 
-  test("bulkApproveByBuild: approves every run that needs review, skipping already-passed runs", async () => {
+  test("review.approveBuild: approves every run that needs review, skipping already-passed runs", async () => {
     // Seed build: 24 `new` runs (a first capture: verdict `new`), 1 `passed`
     // (nothing to approve) and 1 `failed`, here a reviewer's reject of its
-    // unresolved step. "Approve all" decides PENDING checkpoints (`new` or
+    // unresolved step. "Approve pending" decides PENDING checkpoints (`new` or
     // `unresolved`, undecided; spec §5.4): the 24 first captures are approved,
     // the passed run has nothing to approve and the rejected step stays
     // rejected (a decision changes only through undo, R19).
@@ -338,13 +339,20 @@ d("tRPC runs.list", () => {
     await addCheckpoints(h, s, [s.runIdsAsc[24]!], () => "passed");
     await addCheckpoints(h, s, [s.runIdsAsc[25]!], () => "unresolved");
     const client = makeClient(baseUrl, s.memberJwt);
-    await client.runs.reject.mutate({ runId: s.runIdsAsc[25]! });
-
-    const res = await client.runs.bulkApproveByBuild.mutate({
-      buildId: s.buildId,
+    await client.review.reject.mutate({
+      runId: s.runIdsAsc[25]!,
+      actionId: randomUUID(),
     });
-    expect(res.approved).toBe(24);
-    expect(res.runIds).toEqual(s.runIdsAsc.slice(0, 24));
+
+    const res = await client.review.approveBuild.mutate({
+      buildId: s.buildId,
+      actionId: randomUUID(),
+      expectedCount: 24,
+    });
+    expect(res.decided).toHaveLength(24);
+    expect(res.runs.map((r) => r.runId).sort()).toEqual(
+      s.runIdsAsc.slice(0, 24).sort(),
+    );
     expect(res.capped).toBe(false);
     // The 24 approved runs + the already-passed one; the rejected run is not.
     const passed = await client.runs.list.query({
@@ -359,82 +367,6 @@ d("tRPC runs.list", () => {
       status: ["failed"],
     });
     expect(failed.items.map((r) => r.id)).toEqual([s.runIdsAsc[25]]);
-  });
-
-  test("bulkApproveByBuild: a capped approve is progressive — the next call approves the rest", async () => {
-    // A fresh build with one already-passed run (the OLDEST, so an unordered
-    // or passed-inclusive selection would pick it first) followed by 201
-    // runs that need review: each has one unresolved checkpoint.
-    const [b2] = await h.db
-      .insert(builds)
-      .values({ projectId: s.projectId, ciBuildId: "build-cap" })
-      .returning();
-    if (!b2) throw new Error("cap build not seeded");
-    const t0 = Date.now() - 300_000;
-    const rows = await h.db
-      .insert(testRuns)
-      .values(
-        Array.from({ length: 202 }, (_, i) => ({
-          projectId: s.projectId,
-          buildId: b2.id,
-          name: `cap-${i}`,
-          branchName: "main",
-          status: i === 0 ? "passed" : "unresolved",
-          createdAt: new Date(t0 + i * 1000),
-          updatedAt: new Date(t0 + i * 1000),
-        })),
-      )
-      .returning({ id: testRuns.id, name: testRuns.name });
-    const byName = new Map(rows.map((r) => [r.name, r.id]));
-    const needsReviewAsc = Array.from({ length: 201 }, (_, i) => {
-      const id = byName.get(`cap-${i + 1}`);
-      if (!id) throw new Error(`cap-${i + 1} not seeded`);
-      return id;
-    });
-    await addCheckpoints(h, s, [byName.get("cap-0")!], () => "passed");
-    await addCheckpoints(h, s, needsReviewAsc, () => "unresolved");
-
-    const client = makeClient(baseUrl, s.memberJwt);
-
-    // First click: the 200 oldest runs that need review, in createdAt order.
-    const first = await client.runs.bulkApproveByBuild.mutate({
-      buildId: b2.id,
-    });
-    expect(first.approved).toBe(200);
-    expect(first.capped).toBe(true);
-    expect(first.runIds).toEqual(needsReviewAsc.slice(0, 200));
-
-    // Second click: only the one run left — not the 200 just approved.
-    const second = await client.runs.bulkApproveByBuild.mutate({
-      buildId: b2.id,
-    });
-    expect(second.approved).toBe(1);
-    expect(second.capped).toBe(false);
-    expect(second.runIds).toEqual([needsReviewAsc[200]]);
-
-    // Nothing left to review.
-    const third = await client.runs.bulkApproveByBuild.mutate({
-      buildId: b2.id,
-    });
-    expect(third.approved).toBe(0);
-    const remaining = await client.runs.list.query({
-      projectId: s.projectId,
-      buildId: b2.id,
-      status: ["unresolved", "failed"],
-    });
-    expect(remaining.items).toHaveLength(0);
-  });
-
-  test("bulkApproveByBuild: non-member editor receives FORBIDDEN", async () => {
-    const client = makeClient(baseUrl, s.nonMemberJwt);
-    let err: TRPCClientError<AppRouter> | undefined;
-    try {
-      await client.runs.bulkApproveByBuild.mutate({ buildId: s.buildId });
-    } catch (e) {
-      err = e as TRPCClientError<AppRouter>;
-    }
-    expect(err).toBeDefined();
-    expect(err?.data?.code).toBe("FORBIDDEN");
   });
 
   describe("device/environment filters (parity with legacy DataGrid)", () => {

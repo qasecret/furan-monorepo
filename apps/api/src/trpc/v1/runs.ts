@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import {
   and,
   asc,
@@ -33,13 +31,7 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
-import {
-  announceRuns,
-  decideGroup,
-  decideSelection,
-  resolveBuildProject,
-  trpcActionCtx,
-} from "../../lib/review/actions.js";
+import { announceRuns, trpcActionCtx } from "../../lib/review/actions.js";
 import { enqueueRunDiff } from "../../lib/review/enqueue.js";
 import {
   GROUP_APPROVE_CAP,
@@ -47,12 +39,6 @@ import {
   loadGroupSeed,
 } from "../../lib/review/groups.js";
 import {
-  approveBuildRuns,
-  approveRunPending,
-  rejectRunPendingElseUndecided,
-} from "../../lib/review/legacy.js";
-import {
-  checkpointStatusAlias,
   loadCheckpointReview,
   NO_REVIEW,
   type CheckpointReviewView,
@@ -212,12 +198,6 @@ const REVIEWER_LEGAL_FROM: ReadonlySet<RunStatus> = new Set<RunStatus>([
 
 /** `selectPendingTargets` with no cap: the caller applies its own limit. */
 const NO_SELECTION_CAP = Number.MAX_SAFE_INTEGER;
-
-// The approve / reject procedures below are thin wrappers over the decision
-// core (`lib/review/legacy.ts`, spec §5.7): the core's legality (spec §5.4)
-// replaced their run-status gates, each call gets a server-side `actionId`,
-// and their response shapes are unchanged for the current dashboard. They go
-// away once the dashboard calls `review.*`.
 
 async function resolveRunProjectId(
   input: RunIdInput,
@@ -880,95 +860,6 @@ export const runsRouter = t.router({
     }),
 
   /**
-   * Approves every pending checkpoint of the run as one action (source
-   * `viewer`). Nothing pending is a successful no-op (spec §5.7); a run that
-   * isn't reviewable is PRECONDITION_FAILED. `ignoreAreas` go to the run's
-   * first checkpoint (ADR-036/067; see `approveRunPending`).
-   */
-  approve: publicProcedure
-    .input(
-      z.object({
-        runId: z.string().uuid(),
-        // ADR-036: optional reviewer-drawn ignore regions to persist onto the
-        // variation as part of approval (the "draw → Save as baseline" flow).
-        // Omitted by the inbox/bulk callers, which leave regions untouched.
-        ignoreAreas: z
-          .array(ignoreRegionElementSchema)
-          .max(MAX_IGNORE_REGIONS)
-          .nullable()
-          .optional(),
-      }),
-    )
-    .use(authed)
-    .use(
-      projectMember<RunIdInput>("write", {
-        from: {
-          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
-        },
-      }),
-    )
-    .mutation(async ({ input, ctx }) => {
-      const { runId } = await approveRunPending(trpcActionCtx(ctx), {
-        runId: input.runId,
-        source: "viewer",
-        ...(input.ignoreAreas !== undefined
-          ? { ignoreAreas: input.ignoreAreas }
-          : {}),
-      });
-      return { runId, approved: true as const };
-    }),
-
-  /**
-   * "Approve all" for a build: approves the pending checkpoints of up to 200
-   * of its runs (oldest first) as one action, `source: "batch"`. A capped call
-   * drains: approved checkpoints stop being pending, so the next call takes
-   * the next runs (`approveBuildRuns`). The whole build, not just the page the
-   * dashboard loaded, and atomically. `approved` counts the runs touched.
-   *
-   * (The variation-wide sibling, `bulkApproveByVariation`, was removed in
-   * ADR-067: it approved up to 200 reviewer-legal runs across the whole
-   * project, not just runs of the seed's variations.)
-   */
-  bulkApproveByBuild: publicProcedure
-    .input(z.object({ buildId: z.string().uuid() }))
-    .use(authed)
-    .use(
-      projectMember<{ buildId: string }>("write", {
-        from: {
-          resolver: ({ input, ctx }) =>
-            resolveBuildProject(ctx.db, input.buildId),
-        },
-      }),
-    )
-    .mutation(({ input, ctx }) =>
-      approveBuildRuns(trpcActionCtx(ctx), input.buildId),
-    ),
-
-  /**
-   * Rejects the run's pending checkpoints, else every undecided one (spec
-   * §5.2), as one action, `source: "viewer"`. Also the viewer's "Mark as bug"
-   * until the dashboard moves to `review.reject`. A run that isn't reviewable
-   * is PRECONDITION_FAILED; nothing left to reject is a no-op.
-   */
-  reject: publicProcedure
-    .input(runIdInput)
-    .use(authed)
-    .use(
-      projectMember<RunIdInput>("write", {
-        from: {
-          resolver: ({ input, ctx }) => resolveRunProjectId(input, ctx),
-        },
-      }),
-    )
-    .mutation(async ({ input, ctx }) => {
-      const { runId } = await rejectRunPendingElseUndecided(
-        trpcActionCtx(ctx),
-        { runId: input.runId, source: "viewer" },
-      );
-      return { runId, approved: false };
-    }),
-
-  /**
    * "Force passed / Force failed / Reset to computed" (ADR-070): writes the
    * run's `status_override` (`"default"` clears it), then recomputes the
    * status with `recomputeRunStatus`, where an override wins over the
@@ -1047,116 +938,9 @@ export const runsRouter = t.router({
     }),
 
   // ---------------------------------------------------------------------------
-  // ADR-038: per-checkpoint approval + checkpoint listing
+  // ADR-038: checkpoint listing and the group lookup (the decisions themselves
+  // are `review.*`)
   // ---------------------------------------------------------------------------
-
-  /**
-   * Approves one checkpoint (source `viewer`); its run's status is the rollup
-   * of all its checkpoints (ADR-070), so approving 1 of N leaves the others'
-   * state. The core refuses a checkpoint that is not legal to approve
-   * (`PRECONDITION_FAILED` not_reviewable / run_overridden /
-   * nothing_to_approve) and one already decided (`CONFLICT already_decided`:
-   * a decision changes only through undo, R19).
-   */
-  approveCheckpoint: publicProcedure
-    .input(
-      z.object({
-        runId: z.string().uuid(),
-        checkpointId: z.string().uuid(),
-        // ADR-036: optional reviewer-drawn ignore regions to persist onto the
-        // checkpoint's variation, replacing the captured ones (draw → approve).
-        ignoreAreas: z
-          .array(ignoreRegionElementSchema)
-          .max(MAX_IGNORE_REGIONS)
-          .nullable()
-          .optional(),
-      }),
-    )
-    .use(authed)
-    .use(
-      projectMember<{ runId: string; checkpointId: string }>("write", {
-        from: {
-          resolver: async ({ ctx, input }) => {
-            const row = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return row[0]?.projectId ?? "";
-          },
-        },
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const rows = await ctx.db
-        .select({
-          id: screenshots.id,
-          runId: screenshots.runId,
-          projectId: testRuns.projectId,
-        })
-        .from(screenshots)
-        .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-        .where(eq(screenshots.id, input.checkpointId))
-        .limit(1);
-      const s = rows[0];
-      if (!s) throw new TRPCError({ code: "NOT_FOUND" });
-      if (s.runId !== input.runId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "checkpoint not in run",
-        });
-      }
-
-      await decideSelection(
-        trpcActionCtx(ctx),
-        {
-          projectId: s.projectId,
-          actionId: randomUUID(),
-          source: "viewer",
-          decision: "approved",
-          ...(input.ignoreAreas !== undefined
-            ? { ignoreAreas: input.ignoreAreas }
-            : {}),
-        },
-        {
-          targets: [{ runId: s.runId, screenshotId: s.id }],
-          capped: false,
-          cap: 1,
-        },
-      );
-
-      return { checkpointId: input.checkpointId };
-    }),
-
-  /**
-   * Approves every pending checkpoint of the run as one action (source
-   * `viewer`); `approved` counts the checkpoints decided (0 when nothing is
-   * pending).
-   */
-  approveAllCheckpoints: publicProcedure
-    .input(z.object({ runId: z.string().uuid() }))
-    .use(authed)
-    .use(
-      projectMember<{ runId: string }>("write", {
-        from: {
-          resolver: async ({ ctx, input }) => {
-            const row = await ctx.db
-              .select({ projectId: testRuns.projectId })
-              .from(testRuns)
-              .where(eq(testRuns.id, input.runId))
-              .limit(1);
-            return row[0]?.projectId ?? "";
-          },
-        },
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const { decided } = await approveRunPending(trpcActionCtx(ctx), {
-        runId: input.runId,
-        source: "viewer",
-      });
-      return { approved: decided.length };
-    }),
 
   listCheckpoints: publicProcedure
     .input(z.object({ runId: z.string().uuid() }))
@@ -1197,14 +981,6 @@ export const runsRouter = t.router({
 
       if (rows.length === 0) return { items: [] };
 
-      // The run's lifecycle names an undiffed checkpoint of a run that ended
-      // without diffing it (R20).
-      const [run] = await ctx.db
-        .select({ status: testRuns.status })
-        .from(testRuns)
-        .where(eq(testRuns.id, input.runId))
-        .limit(1);
-      const lifecycle = run?.status ?? "running";
       const review = await loadCheckpointReview(ctx.db, input.runId, ctx.user);
 
       const items = rows.map((r) => {
@@ -1222,10 +998,6 @@ export const runsRouter = t.router({
           testVariationId: r.testVariationId,
           createdAt: r.createdAt,
           ...view,
-          // Kept until the dashboard reads `state`: an alias of it
-          // (approved -> passed, rejected -> failed, no verdict -> running,
-          // or the run's lifecycle when it ended aborted / empty).
-          status: checkpointStatusAlias(view.state, lifecycle),
         };
       });
       return { items };
@@ -1317,73 +1089,6 @@ export const runsRouter = t.router({
         checkpointCount: shown.length,
         runCount: new Set(shown.map((c) => c.runId)).size,
         capped,
-      };
-    }),
-
-  /**
-   * "Accept all N like this": approves the pending members of the
-   * checkpoint's group (its build's checkpoints with the same diff signature,
-   * re-derived on the server) as one action, `source: "group"`, capped at
-   * `GROUP_APPROVE_CAP` checkpoints in capture order; re-running drains the
-   * rest. `approved` counts checkpoints, `runCount` their runs.
-   */
-  approveCheckpointGroup: publicProcedure
-    .input(
-      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
-    )
-    .use(authed)
-    .use(
-      projectMember<{ runId: string; checkpointId: string }>("write", {
-        from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
-        },
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const result = await decideGroup(
-        trpcActionCtx(ctx),
-        { ...input, actionId: randomUUID() },
-        "approved",
-      );
-      return {
-        approved: result.decided.length,
-        runCount: result.runs.length,
-        capped: result.capped,
-        cap: result.cap,
-      };
-    }),
-
-  /**
-   * "Reject all N like this": rejects the pending members of the checkpoint's
-   * group as one action, `source: "group"` (same selection and cap as
-   * `approveCheckpointGroup`). `rejected` and `runCount` both count the runs
-   * the action touched, as the dashboard reports them.
-   */
-  rejectCheckpointGroup: publicProcedure
-    .input(
-      z.object({ runId: z.string().uuid(), checkpointId: z.string().uuid() }),
-    )
-    .use(authed)
-    .use(
-      projectMember<{ runId: string; checkpointId: string }>("write", {
-        from: {
-          resolver: ({ input, ctx }) =>
-            resolveRunProjectId({ runId: input.runId }, ctx),
-        },
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const result = await decideGroup(
-        trpcActionCtx(ctx),
-        { ...input, actionId: randomUUID() },
-        "rejected",
-      );
-      return {
-        rejected: result.runs.length,
-        runCount: result.runs.length,
-        capped: result.capped,
-        cap: result.cap,
       };
     }),
 });

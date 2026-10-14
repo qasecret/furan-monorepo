@@ -35,8 +35,8 @@ import {
 
 /**
  * What every review action shares around the decision core, whichever surface
- * calls it: the `review` router, the legacy `runs.*` / `inbox.*` wrappers and
- * the SDK's REST approve. The router or wrapper chooses WHAT to decide; these
+ * calls it: the `review` router, the `inbox.*` wrappers and the SDK's REST
+ * approve. The router or wrapper chooses WHAT to decide; these
  * helpers run the core, announce the result after commit and write the
  * build-level audit summaries.
  */
@@ -286,8 +286,8 @@ export async function auditBuildAction(
 
 /**
  * Decides the pending members of `checkpointId`'s group as one action
- * (`GROUP_APPROVE_CAP`, capture order): `review.approveGroup` / `rejectGroup`
- * and the legacy `runs.approveCheckpointGroup` / `rejectCheckpointGroup`.
+ * (`GROUP_APPROVE_CAP`, capture order): `review.approveGroup` /
+ * `review.rejectGroup`.
  *
  * The group is re-derived on the server (never a client list): the build's
  * checkpoints with the seed's diff signature, filtered by the core's own
