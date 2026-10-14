@@ -56,6 +56,15 @@ export const builds = pgTable(
   },
   (t) => ({
     projectIdx: index("builds_project_id_idx").on(t.projectId),
+    // The project's builds newest first (the order every list and the review
+    // queue read them in), so a `LIMIT n` over them can stop early. DESC NULLS
+    // FIRST is what `ORDER BY ... DESC` asks for; the default DESC NULLS LAST
+    // would not match it.
+    projectCreatedIdx: index("builds_project_created_idx").on(
+      t.projectId,
+      t.createdAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
     /**
      * Partial UNIQUE on (project_id, ci_build_id) WHERE ci_build_id IS NOT NULL.
      * Replaces the v0.x non-unique compound `builds_ci_build_id_idx`. Makes the
