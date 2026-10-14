@@ -938,6 +938,64 @@ describe("useReviewMutations: success", () => {
     ]);
   });
 
+  it("evaluates a function label on the server's result, for the toast and for the undo entry", async () => {
+    seed();
+    server.approve.mockResolvedValueOnce({
+      ...decided(),
+      decided: [
+        { checkpointId: A, runId: RUN, state: "approved" },
+        { checkpointId: B, runId: RUN, state: "approved" },
+      ],
+    });
+    const label = vi.fn(
+      (r: { decided: unknown[] }) => `Approved ${r.decided.length} steps`,
+    );
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        kind: "approved",
+        label: label as DecideArgs["label"],
+      }),
+    );
+
+    expect(label).toHaveBeenCalledTimes(1);
+    expect(label.mock.calls[0]?.[0]).toMatchObject({
+      actionId: "server-echo",
+      decided: [{ checkpointId: A }, { checkpointId: B }],
+    });
+    expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe(
+      "Approved 2 steps",
+    );
+    expect(useUndoStore.getState().stack).toEqual([
+      {
+        actionId: sentActionId(server.approve),
+        label: "Approved 2 steps",
+        runIds: [RUN],
+      },
+    ]);
+  });
+
+  it("does not evaluate a function label when the call fails", async () => {
+    seed();
+    server.approve.mockRejectedValueOnce(new Error("offline"));
+    const label = vi.fn(() => "never");
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label,
+      }),
+    );
+
+    expect(label).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it("calls review.revert with the same action id when Undo is clicked", async () => {
     seed();
     const { result, run } = setup();
@@ -1598,6 +1656,53 @@ describe("useReviewMutations: group and build actions", () => {
       },
     ]);
     expect(utils.builds.getById.invalidate).toHaveBeenCalled();
+  });
+
+  it("words a group's toast from what the server decided", async () => {
+    seed();
+    server.rejectGroup.mockResolvedValueOnce({
+      ...decided([RUN, RUN_2]),
+      decided: [{ checkpointId: A, runId: RUN, state: "rejected" }],
+    });
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decideGroup({
+        runId: RUN,
+        checkpointId: A,
+        kind: "rejected",
+        label: (r) => `Rejected ${r.decided.length} steps`,
+      }),
+    );
+
+    expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe(
+      "Rejected 1 steps",
+    );
+    expect(useUndoStore.getState().stack[0]?.label).toBe("Rejected 1 steps");
+  });
+
+  it("words a build approval's toast from what the server decided", async () => {
+    seed();
+    server.approveBuild.mockResolvedValueOnce({
+      ...decided([RUN, RUN_2]),
+      decided: [
+        { checkpointId: A, runId: RUN, state: "approved" },
+        { checkpointId: B, runId: RUN_2, state: "approved" },
+      ],
+    });
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 5,
+        label: (r) => `Approved ${r.decided.length} in ${r.runs.length}`,
+        onConflict: vi.fn(),
+      }),
+    );
+
+    expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe("Approved 2 in 2");
+    expect(useUndoStore.getState().stack[0]?.label).toBe("Approved 2 in 2");
   });
 
   it("hands the fresh preview to onConflict on batch_changed, with no toast", async () => {

@@ -37,13 +37,20 @@ import { trpc, type RouterInputs, type RouterOutputs } from "@/lib/trpc";
 type DecideResult = RouterOutputs["review"]["approve"];
 type RevertResult = RouterOutputs["review"]["revert"];
 
+/**
+ * The success toast, which is also the undo entry's name. A function words it
+ * from what the server decided, so it says what happened (steps decided
+ * elsewhere meanwhile are not claimed); it runs on success only.
+ */
+export type ReviewLabel = string | ((result: DecideResult) => string);
+
 export interface DecideArgs {
   runId: string;
   /** Omit to decide every pending step of the run. */
   checkpointIds?: string[];
   kind: CheckpointDecisionKind;
-  /** The success toast, e.g. "Approved home". It is also the undo entry's name. */
-  label: string;
+  /** The success toast, e.g. "Approved 'home'". It is also the undo entry's name. */
+  label: ReviewLabel;
   /** Only with exactly one checkpoint id, and only for an approval. */
   ignoreAreas?: RouterInputs["review"]["approve"]["ignoreAreas"];
   /** Only for a rejection. */
@@ -55,14 +62,14 @@ export interface DecideGroupArgs {
   /** The checkpoint the group was built around. */
   checkpointId: string;
   kind: CheckpointDecisionKind;
-  label: string;
+  label: ReviewLabel;
 }
 
 export interface ApproveBuildArgs {
   buildId: string;
   /** The pending count the reviewer confirmed. */
   expectedCount: number;
-  label: string;
+  label: ReviewLabel;
   /** The batch changed since `expectedCount` was read; here is the new preview. */
   onConflict(preview: ApproveBuildPreview): void;
   /** The server approved the batch; its Undo toast is already up. */
@@ -113,7 +120,7 @@ export function useIsInFlight(checkpointId: string): boolean {
  * made the call has unmounted.
  */
 interface Action {
-  label: string;
+  label: ReviewLabel;
   /** Runs to patch before the answer, and (when known) the undo entry's runs. */
   runIds: string[];
   /** The optimistic change; none for group and build actions (the server picks the members). */
@@ -350,16 +357,20 @@ export function useReviewMutations() {
   );
 
   const decided = (
-    { runs }: DecideResult,
+    result: DecideResult,
     { actionId }: { actionId: string },
   ) => {
     const action = ACTIONS.get(actionId);
     if (!action) return;
     // Group and build actions learn which runs they touched from the answer.
     const runIds =
-      action.runIds.length > 0 ? action.runIds : runs.map((r) => r.runId);
-    useUndoStore.getState().push({ actionId, label: action.label, runIds });
-    toast.success(action.label, {
+      action.runIds.length > 0
+        ? action.runIds
+        : result.runs.map((r) => r.runId);
+    const label =
+      typeof action.label === "function" ? action.label(result) : action.label;
+    useUndoStore.getState().push({ actionId, label, runIds });
+    toast.success(label, {
       action: { label: "Undo", onClick: () => undo(actionId) },
       duration: UNDO_TOAST_MS,
     });

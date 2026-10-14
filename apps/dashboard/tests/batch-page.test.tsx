@@ -325,11 +325,7 @@ describe("BatchPage", () => {
     fireEvent.click(screen.getByTestId("approve-pending-confirm"));
     expect(reviewSpies.approveBuild).toHaveBeenCalledOnce();
     expect(reviewSpies.approveBuild).toHaveBeenCalledWith(
-      expect.objectContaining({
-        buildId: "b1",
-        expectedCount: 2,
-        label: "Approved 2 steps in 2 tests",
-      }),
+      expect.objectContaining({ buildId: "b1", expectedCount: 2 }),
     );
   });
 

@@ -88,6 +88,28 @@ function renderDialog(over: { open?: boolean; onApproved?: () => void } = {}) {
   return { onOpenChange, ...view };
 }
 
+/** What the server answers an approval with: `steps` decided across `runs`. */
+function serverResult(steps: number, runs: string[]) {
+  return {
+    actionId: "a1",
+    decided: Array.from({ length: steps }, (_, i) => ({
+      checkpointId: `c${i}`,
+      runId: runs[i % runs.length]!,
+      state: "approved" as const,
+    })),
+    runs: runs.map((runId) => ({ runId, status: "passed" as const })),
+    replayed: false,
+    capped: false,
+    cap: 500,
+  };
+}
+
+/** The toast text of an approval, from what the server decided. */
+function labelFor(call: ApproveBuildArgs, steps: number, runs: string[]) {
+  expect(typeof call.label).toBe("function");
+  return (call.label as (r: unknown) => string)(serverResult(steps, runs));
+}
+
 /** The arguments of the one `approveBuild` call, to answer the way the hook would. */
 function approveCall(): ApproveBuildArgs {
   expect(reviewSpies.approveBuild).toHaveBeenCalledOnce();
@@ -288,24 +310,41 @@ describe("ApprovePendingDialog confirm", () => {
     const call = approveCall();
     expect(call.buildId).toBe("b1");
     expect(call.expectedCount).toBe(37);
-    expect(call.label).toBe("Approved 37 steps in 12 tests");
     expect(typeof call.onConflict).toBe("function");
   });
 
-  test("a capped batch confirms the whole pending count and labels what it approves", () => {
+  test("a capped batch confirms the whole pending count", () => {
     answer({ ...PREVIEW, pendingCheckpoints: 812, capped: true, cap: 500 });
     renderDialog();
     fireEvent.click(confirm());
-    const call = approveCall();
-    expect(call.expectedCount).toBe(812);
-    expect(call.label).toBe("Approved 500 steps in 12 tests");
+    expect(approveCall().expectedCount).toBe(812);
   });
 
-  test("labels a single step in the singular", () => {
-    answer({ ...PREVIEW, pendingCheckpoints: 1, tests: 1 });
+  test("words the toast from what the server decided, not from what was shown", () => {
     renderDialog();
     fireEvent.click(confirm());
-    expect(approveCall().label).toBe("Approved 1 step in 1 test");
+    const call = approveCall();
+    // The preview said 37 steps in 12 tests; the server decided fewer, because
+    // some were decided meanwhile, and the toast says what happened.
+    expect(labelFor(call, 35, ["r1", "r2", "r3"])).toBe(
+      "Approved 35 steps in 3 tests",
+    );
+  });
+
+  test("counts a test once however many of its steps were decided", () => {
+    renderDialog();
+    fireEvent.click(confirm());
+    expect(labelFor(approveCall(), 6, ["r1", "r2"])).toBe(
+      "Approved 6 steps in 2 tests",
+    );
+  });
+
+  test("words one step in one test in the singular", () => {
+    renderDialog();
+    fireEvent.click(confirm());
+    expect(labelFor(approveCall(), 1, ["r1"])).toBe(
+      "Approved 1 step in 1 test",
+    );
   });
 
   test("waits for the answer: the button is off and a second click asks nothing", () => {
@@ -427,7 +466,6 @@ describe("ApprovePendingDialog when the batch changed", () => {
     fireEvent.click(confirm());
     const call = approveCall();
     expect(call.expectedCount).toBe(40);
-    expect(call.label).toBe("Approved 40 steps in 13 tests");
   });
 
   test("a notice is not carried into the next time it opens", () => {

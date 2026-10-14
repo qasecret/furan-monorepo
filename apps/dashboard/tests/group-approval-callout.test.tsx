@@ -101,18 +101,42 @@ describe("GroupApprovalCallout (container)", () => {
     expect(reviewSpies.decideGroup).not.toHaveBeenCalled();
   });
 
+  /** The one `decideGroup` call, and the toast text it words from a result. */
+  const decideGroupCall = () => {
+    expect(reviewSpies.decideGroup).toHaveBeenCalledOnce();
+    const args = reviewSpies.decideGroup.mock.calls[0]![0] as {
+      label: (result: unknown) => string;
+    } & Record<string, unknown>;
+    expect(typeof args.label).toBe("function");
+    const { label, ...rest } = args;
+    const toast = (decided: number) =>
+      label({
+        actionId: "a1",
+        decided: Array.from({ length: decided }, (_, i) => ({
+          checkpointId: `c${i}`,
+          runId: "r1",
+          state: "approved",
+        })),
+        runs: [{ runId: "r1", status: "passed" }],
+        replayed: false,
+        capped: false,
+        cap: 200,
+      });
+    return { args: rest, toast };
+  };
+
   it("Accept all confirm approves the group through the review hook", () => {
     getCheckpointGroupData.mockReturnValue(GROUP);
     render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
     fireEvent.click(screen.getByTestId("group-approval-accept-all"));
     fireEvent.click(confirmButton());
-    expect(reviewSpies.decideGroup).toHaveBeenCalledOnce();
-    expect(reviewSpies.decideGroup).toHaveBeenCalledWith({
+    const { args, toast } = decideGroupCall();
+    expect(args).toEqual({
       runId: "run-1",
       checkpointId: "c0",
       kind: "approved",
-      label: "Approved 2 similar steps",
     });
+    expect(toast(3)).toBe("Approved 3 steps");
   });
 
   it("Reject all confirm rejects the group through the review hook", () => {
@@ -120,28 +144,31 @@ describe("GroupApprovalCallout (container)", () => {
     render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
     fireEvent.click(screen.getByTestId("group-approval-reject-all"));
     fireEvent.click(confirmButton());
-    expect(reviewSpies.decideGroup).toHaveBeenCalledOnce();
-    expect(reviewSpies.decideGroup).toHaveBeenCalledWith({
+    const { args, toast } = decideGroupCall();
+    expect(args).toEqual({
       runId: "run-1",
       checkpointId: "c0",
       kind: "rejected",
-      label: "Rejected 2 similar steps",
     });
+    expect(toast(2)).toBe("Rejected 2 steps");
   });
 
-  it("labels a group of one in the singular", () => {
-    getCheckpointGroupData.mockReturnValue({
-      ...GROUP,
-      checkpoints: GROUP.checkpoints.slice(0, 1),
-      checkpointCount: 1,
-      runCount: 1,
-    });
+  it("words the toast from what the server decided, the seed step included", () => {
+    // The callout counts 2 other steps in the group; the server decided those
+    // and the step in view too, and the toast says 3.
+    getCheckpointGroupData.mockReturnValue(GROUP);
     render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
     fireEvent.click(screen.getByTestId("group-approval-accept-all"));
     fireEvent.click(confirmButton());
-    expect(reviewSpies.decideGroup).toHaveBeenCalledWith(
-      expect.objectContaining({ label: "Approved 1 similar step" }),
-    );
+    expect(decideGroupCall().toast(3)).toBe("Approved 3 steps");
+  });
+
+  it("words one step in the singular", () => {
+    getCheckpointGroupData.mockReturnValue(GROUP);
+    render(<GroupApprovalCallout runId="run-1" checkpointId="c0" />);
+    fireEvent.click(screen.getByTestId("group-approval-reject-all"));
+    fireEvent.click(confirmButton());
+    expect(decideGroupCall().toast(1)).toBe("Rejected 1 step");
   });
 
   it("stays open, busy, until the call ends, then closes", () => {

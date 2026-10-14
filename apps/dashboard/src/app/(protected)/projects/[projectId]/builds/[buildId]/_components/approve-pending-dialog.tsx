@@ -167,7 +167,12 @@ function PendingBody({
         // The pending count the reviewer saw, whole: the server compares it with
         // what is pending now, however many of them it will approve.
         expectedCount: shown.pendingCheckpoints,
-        label: `Approved ${approveN} step${plural(approveN)} in ${shown.tests} test${plural(shown.tests)}`,
+        // What the server decided, not what was shown: steps decided elsewhere
+        // meanwhile are not claimed.
+        label: ({ decided, runs }) => {
+          const tests = new Set(runs.map((r) => r.runId)).size;
+          return `Approved ${decided.length} step${plural(decided.length)} in ${tests} test${plural(tests)}`;
+        },
         onConflict: (fresh) => setChanged(fresh),
         onSuccess: () => {
           onClose();

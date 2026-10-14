@@ -58,13 +58,16 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
 
   const confirm = () => {
     if (action === null) return;
-    const n = group.checkpointCount;
     const kind = action === "accept" ? "approved" : "rejected";
+    const verb = kind === "approved" ? "Approved" : "Rejected";
     decideGroup({
       runId,
       checkpointId,
       kind,
-      label: `${kind === "approved" ? "Approved" : "Rejected"} ${n} similar step${plural(n)}`,
+      // The server picks the members (the step in view among them, when it is
+      // pending), so the toast counts what it decided, not what was offered.
+      label: ({ decided }) =>
+        `${verb} ${decided.length} step${plural(decided.length)}`,
     });
     setConfirmed(true);
   };
