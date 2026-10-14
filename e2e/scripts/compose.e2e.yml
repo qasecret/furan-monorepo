@@ -1,0 +1,76 @@
+# E2E overlay, layered on compose.yml + compose.local-all.yml (from-HEAD images).
+#
+# Ports: the stack sits on a dedicated host port range so it coexists with a
+# developer's `pnpm dev` api/dashboard on 3000/3001. `!override` / `!reset`
+# REPLACE compose.yml's `3000:3000` / `3001:3001` mappings; a plain `ports:`
+# list would be merged (appended) and still bind 3000/3001.
+#
+#   3010 → api      the test clients (ApiClient, the virtual SDK) call it directly
+#   3011 → nginx    the browser's ONLY origin: the dashboard, plus the api under
+#                   /api/ — the same single-origin shape as furan-compose.yml
+#
+# Single origin is what lets the browser fetch data. The dashboard image is the
+# `-proxy` variant (`:local-proxy`, built with NEXT_PUBLIC_API_URL=/api), so its
+# client bundle calls the relative /api/... on whatever origin served the page;
+# SSR and Server Actions keep reaching the api over the compose network
+# (API_INTERNAL_URL). A baked absolute URL can't serve both the host browser and
+# the remapped port.
+services:
+  api:
+    ports: !override ["3010:3000"]
+  dashboard:
+    image: qasecret/furan-dashboard:local-proxy
+    ports: !reset []
+    environment:
+      # Inert for the browser (the -proxy image bakes /api); stated for clarity.
+      NEXT_PUBLIC_API_URL: /api
+      API_INTERNAL_URL: http://api:3000
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - dashboard
+    ports: ["3011:80"]
+    configs:
+      - source: e2e_nginx_conf
+        target: /etc/nginx/conf.d/default.conf
+    restart: unless-stopped
+
+# Mirrors furan-compose.yml's nginx_conf, so the suite drives the routing that
+# ships: keep the two in step. `$` is doubled because Compose interpolates
+# `content:`.
+configs:
+  e2e_nginx_conf:
+    content: |
+      server {
+        listen 80;
+        # The api's unauthenticated /metrics stays off the public origin.
+        location ^~ /api/metrics {
+          return 404;
+        }
+        # /api/* → api, prefix stripped (/api/trpc → /trpc).
+        location /api/ {
+          proxy_pass http://api:3000/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-For $$remote_addr;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_buffering off;
+          proxy_read_timeout 3600s;
+        }
+        # Everything else → dashboard. Forwarding the original host:port
+        # ($$http_host) keeps Next's Server Actions (login) working: they abort
+        # when the forwarded host doesn't match the browser's Origin.
+        location / {
+          proxy_pass http://dashboard:3001;
+          proxy_http_version 1.1;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Forwarded-Host $$http_host;
+          proxy_set_header X-Forwarded-For $$remote_addr;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_set_header Upgrade $$http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_buffering off;
+          proxy_read_timeout 3600s;
+        }
+      }

@@ -1,4 +1,4 @@
-import { API_URL as API } from "../src/env.js";
+import { API_URL as API, DASH_URL as DASH } from "../src/env.js";
 
 interface ReadyBody {
   checks?: Record<string, string>;
@@ -35,7 +35,11 @@ export async function waitHealthy(timeoutMs = 180_000): Promise<void> {
       const { status, body } = await get("/readyz");
       const checks = (body as ReadyBody)?.checks ?? {};
       const values = Object.values(checks);
-      if (status === 200 && values.length > 0 && values.every((v) => v === "ok")) {
+      if (
+        status === 200 &&
+        values.length > 0 &&
+        values.every((v) => v === "ok")
+      ) {
         return;
       }
     } catch {
@@ -45,4 +49,30 @@ export async function waitHealthy(timeoutMs = 180_000): Promise<void> {
   }
 
   throw new Error(`api did not become healthy within ${timeoutMs}ms`);
+}
+
+/**
+ * Block until the browser's origin serves both halves (compose.e2e.yml's
+ * nginx): the dashboard's login page, and the api under `/api/`. An origin
+ * that serves the dashboard but not the api fails here, by name, rather than
+ * as a diff viewer that never draws.
+ */
+export async function waitDashboard(timeoutMs = 120_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const ok = async (url: string): Promise<boolean> => {
+    try {
+      return (await fetch(url)).status === 200;
+    } catch {
+      return false; // nginx or the dashboard not accepting connections yet
+    }
+  };
+
+  while (Date.now() < deadline) {
+    if ((await ok(`${DASH}/login`)) && (await ok(`${DASH}/api/livez`))) return;
+    await sleep(2_000);
+  }
+
+  throw new Error(
+    `${DASH} did not serve /login and /api/livez within ${timeoutMs}ms`,
+  );
 }

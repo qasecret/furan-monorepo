@@ -40,19 +40,6 @@ const PROJECT_NAME = "review-flow-ui";
  * Serial: every step builds on the state the previous one left.
  */
 test.describe.serial("ui: review flow", () => {
-  // Opt-in, like `ui.diff_viewer` in dashboard.spec.ts: this flow reads and
-  // writes through the dashboard's CLIENT-side calls, and the dashboard image
-  // bakes NEXT_PUBLIC_API_URL (localhost:3000) into its browser bundle at build
-  // time, which the stack's remapped api port (3010) cannot satisfy. Against
-  // such a stack it can only fail, and the capability gate would go red. Set
-  // E2E_BROWSER_DATA=1 when the dashboard under test reaches the api from the
-  // browser (a dev server pointed at it: see e2e/README.md). Declared at
-  // describe scope so `beforeAll` (and its data setup) does not run either.
-  test.skip(
-    process.env["E2E_BROWSER_DATA"] !== "1",
-    "needs a dashboard whose browser bundle reaches the api (the stack's image bakes localhost:3000); set E2E_BROWSER_DATA=1 against a dev dashboard",
-  );
-
   const api = new ApiClient(API);
   let context: BrowserContext;
   let page: Page;

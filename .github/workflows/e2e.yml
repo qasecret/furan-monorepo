@@ -56,12 +56,10 @@ jobs:
           FURAN_DASHBOARD_ORIGIN=http://localhost:3011
           EOF
 
-      - name: Build :local images from HEAD
-        run: |
-          for app in api capture-worker diff-worker integrations dashboard; do
-            DOCKER_BUILDKIT=1 docker build -f "apps/$app/Dockerfile" \
-              -t "qasecret/furan-$app:local" . || exit 1
-          done
+      # The image list (incl. the single-origin `:local-proxy` dashboard) lives
+      # in e2e/scripts/compose.ts; on a fresh runner every image is missing.
+      - name: Build images from HEAD
+        run: pnpm --filter @furan/e2e e2e:images
 
       # Orchestrator: compose up (S3) → wait health → seed → playwright → down.
       - name: Run E2E (S3 stack)

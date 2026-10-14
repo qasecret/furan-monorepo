@@ -12,12 +12,64 @@ const PROJECT = "furan-e2e";
 const COMPOSE_FILES = [
   "-f",
   "infra/docker/compose.yml",
+  // The five app services on images built from HEAD (`:local`)…
   "-f",
   "infra/docker/compose.local-all.yml",
-  // Isolate the e2e stack on 3010/3011 so it coexists with a dev `pnpm dev`.
+  // …then the e2e overlay: host ports 3010/3011 (coexists with a dev `pnpm
+  // dev`), the single-origin dashboard image, and nginx in front of both.
   "-f",
-  "e2e/scripts/compose.e2e-ports.yml",
+  "e2e/scripts/compose.e2e.yml",
 ];
+
+/**
+ * The app images the stack runs, built from HEAD. The dashboard is the `-proxy`
+ * variant, as released for furan-compose.yml: its browser bundle calls the
+ * relative `/api`, which nginx serves on the dashboard's own origin.
+ */
+export const IMAGES: ReadonlyArray<{
+  app: string;
+  tag: string;
+  buildArgs?: string[];
+}> = [
+  { app: "api", tag: "qasecret/furan-api:local" },
+  { app: "capture-worker", tag: "qasecret/furan-capture-worker:local" },
+  { app: "diff-worker", tag: "qasecret/furan-diff-worker:local" },
+  { app: "integrations", tag: "qasecret/furan-integrations:local" },
+  {
+    app: "dashboard",
+    tag: "qasecret/furan-dashboard:local-proxy",
+    buildArgs: ["NEXT_PUBLIC_API_URL=/api"],
+  },
+];
+
+/**
+ * Build any of IMAGES not present locally, from the current checkout. Present
+ * images are reused as they are: rebuild (or `docker image rm`) to pick up new
+ * code.
+ */
+export async function buildMissingImages(): Promise<void> {
+  for (const { app, tag, buildArgs = [] } of IMAGES) {
+    const inspect = await execa("docker", ["image", "inspect", tag], {
+      reject: false,
+      stdio: "ignore",
+    });
+    if (inspect.exitCode === 0) continue;
+    console.log(`[e2e] building ${tag} from HEAD`);
+    await execa(
+      "docker",
+      [
+        "build",
+        "-f",
+        `apps/${app}/Dockerfile`,
+        ...buildArgs.flatMap((a) => ["--build-arg", a]),
+        "-t",
+        tag,
+        ".",
+      ],
+      { cwd: ROOT, stdio: "inherit", env: { DOCKER_BUILDKIT: "1" } },
+    );
+  }
+}
 
 /** Host URLs the e2e stack is reachable at — single source of truth in env.ts. */
 export { API_URL, DASH_URL } from "../src/env.js";
@@ -55,8 +107,9 @@ export function writeEnv(mode: StorageMode): string {
   const extra = [
     `FURAN_BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_EMAIL}`,
     `FURAN_BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_PASSWORD}`,
-    // CORS: the stack's own dashboard (3011) plus the visual sweep's dashboard
-    // dev server (3012), which calls this api from the browser.
+    // CORS: the stack's origin (3011; same-origin there, but browsers still
+    // send Origin on POSTs) plus the visual sweep's dashboard dev server
+    // (3012), which calls this api cross-origin from the browser.
     "FURAN_DASHBOARD_ORIGIN=http://localhost:3011,http://localhost:3012",
     "",
   ].join("\n");

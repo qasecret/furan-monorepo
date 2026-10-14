@@ -14,6 +14,9 @@ Design/plan: `furan-design/specs/2026-07-02-e2e-suite-design.md`,
 # One shot: build images (if missing) → compose up (S3) → seed → test → down
 pnpm --filter @furan/e2e e2e
 
+# Build the stack's images from HEAD (only those missing):
+pnpm --filter @furan/e2e e2e:images
+
 # Keep the stack up between iterations, then run Playwright directly:
 pnpm --filter @furan/e2e e2e:up
 E2E_API_URL=http://localhost:3010 E2E_DASH_URL=http://localhost:3011 \
@@ -27,11 +30,22 @@ pnpm --filter @furan/e2e e2e:hdd
 pnpm --filter @furan/e2e coverage      # reads e2e-coverage.json
 ```
 
-The stack is isolated on host ports **3010** (api) / **3011** (dashboard) via
-`scripts/compose.e2e-ports.yml` so it coexists with a dev `pnpm dev` on
-3000/3001. The overlay replaces the base port mappings with Compose's
-`!override` YAML tag, which needs **Docker Compose ≥ 2.24.4** (`docker compose
-version`); older versions don't support it. Output: `e2e-coverage.md` /
+The stack is isolated on host ports **3010** / **3011** via
+`scripts/compose.e2e.yml` so it coexists with a dev `pnpm dev` on 3000/3001:
+
+- **3010** is the api, which the test clients (`ApiClient`, the virtual SDK)
+  call directly.
+- **3011** is the browser's **single origin**: nginx serving the dashboard,
+  with the api under `/api/`, the same shape as `infra/docker/furan-compose.yml`.
+  The dashboard image is the `-proxy` variant (`:local-proxy`, built with
+  `NEXT_PUBLIC_API_URL=/api`), so its browser bundle fetches the relative
+  `/api/...` and client-side data (the diff viewer's run and screenshots, the
+  review flow's decisions) works on the remapped port. SSR and Server Actions
+  reach the api over the compose network (`API_INTERNAL_URL`).
+
+The overlay replaces the base port mappings with Compose's `!override` /
+`!reset` YAML tags, which need **Docker Compose ≥ 2.24.4** (`docker compose
+version`); older versions don't support them. Output: `e2e-coverage.md` /
 `e2e-coverage.json` + `playwright-report/`.
 
 ## Visual sweep
@@ -60,9 +74,9 @@ theme with that theme's whole list. Uncaught page errors are annotated `pageerro
 `/account/tokens`, `/projects`) are captured from the seeded editor's
 session.
 
-The dashboard runs as a **dev server** rather than the stack's dashboard image:
-the image bakes `localhost:3000` for client-side calls, so the diff viewer's
-images would not load on the remapped ports. A dev server compiles each route
+The dashboard runs as a **dev server** rather than the stack's dashboard image,
+so a checkout switch between `before` and `after` shows up without rebuilding
+the image. A dev server compiles each route
 on its first visit, so `beforeAll` visits every static route once before the
 theme passes, and a navigation that times out (90s) is retried once
 (annotated `nav-retry`). Every browser context sets
@@ -153,7 +167,11 @@ The other states never confirm or change anything.
 
 - A healthy **Docker daemon** (the from-HEAD image build is heavy). If a build
   fails with a BuildKit I/O error, `docker builder prune -f` / restart Docker.
-- The 5 `qasecret/furan-*:local` images (the orchestrator builds any missing).
+- The stack's images, listed in `IMAGES` (`scripts/compose.ts`): four
+  `qasecret/furan-*:local` (as in `infra/docker/compose.local-all.yml`) and the
+  single-origin `qasecret/furan-dashboard:local-proxy`. The orchestrator builds
+  any that are missing; present ones are reused as they are, so rebuild (or
+  `docker image rm`) after pulling new code.
 - `playwright install chromium` (once) for the UI tests.
 - Optional: a JDK (real Kotlin-SDK smoke) and a local **ollama** (VLM layer) —
   absent → those capabilities are marked _config-gated_, not failed.
@@ -162,7 +180,7 @@ The other states never confirm or change anything.
 
 ```
 scripts/    e2e.ts (orchestrator) · compose.ts · wait-health.ts · global-setup.ts
-            check-coverage.ts · compose.e2e-ports.yml
+            check-coverage.ts · compose.e2e.yml
 src/        env.ts (canonical URLs) · clients/{api-client,virtual-sdk} ·
             seed/{seed,load-seed} · coverage/{manifest,reporter} · fixtures/*.png ·
             visual/{fixture,routes,masks,unclip,upload}
@@ -180,35 +198,19 @@ capability by adding it to the manifest and tagging a test.
 drives the review flow in a real browser on data of its own: a project
 `review-flow-ui` and, per run, a branch of its own. It approves a step with `A`,
 takes it back with Ctrl+Z / ⌘Z, then confirms "Approve pending" on the batch
-page. It never touches the visual sweep's fixture. It is in `s3-full` but runs
-only with `E2E_BROWSER_DATA=1` (it needs a dashboard whose browser bundle
-reaches the api; see Known constraints); without it the spec is skipped, and the
-capability reads _config-gated_, so the nightly coverage gate is not affected.
+page. It never touches the visual sweep's fixture. It runs in `s3-full`: like
+the diff viewer, it reads and writes through the dashboard's client-side calls,
+which reach the api through the stack's single origin (3011).
 
 ## Known constraints
 
-- **`ui.diff_viewer` is skipped on the coexistence ports.** The dashboard
-  browser bundle bakes `NEXT_PUBLIC_API_URL` at build time (default
-  `localhost:3000`) for _client-side_ fetches, while SSR reads it from the
-  runtime env. With the api remapped to 3010, no single baked URL serves both.
-  Server-rendered pages (login, builds, admin) work; client-data pages (the
-  pixi diff viewer) need the api on the standard port **3000** — a
-  dedicated-ports run (stop dev servers) or CI.
-- **`review-flow.spec.ts` needs the same thing, so it is opt-in.** It reads
-  and writes through the dashboard's _client-side_ calls, so it can pass only
-  against a dashboard whose browser bundle reaches this stack's api (a dev
-  server, as for the visual sweep), never against the stack's stock `:local`
-  image on the coexistence ports. It is skipped unless `E2E_BROWSER_DATA=1`. To
-  run it against a dev stack with such a dashboard:
-
-  ```bash
-  E2E_BROWSER_DATA=1 E2E_API_URL=http://localhost:3210 E2E_DASH_URL=http://localhost:3012 \
-    pnpm --filter @furan/e2e exec playwright test --project=s3-full tests/ui/review-flow.spec.ts
-  ```
-
-  A follow-up will make the Docker e2e stack single-origin, so the browser
-  reaches the api through the dashboard and this gate can come off.
-
+- **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
+  per-account login brake, ADR-063). A run signs in 4 times (the seeder, then
+  the login, dashboard and review-flow specs), so repeated Playwright runs
+  against a kept stack trip it after a few iterations: the login form then
+  reads "Invalid email or password" and the api logs
+  `login_account_rate_limited` (429). Wait out the window, or recreate the
+  stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
   (an identical feature-branch capture returns `new`, not `passed`).
 - **Element-map-dependent** diff capabilities (ignore/layout regions, axe a11y,
@@ -220,5 +222,5 @@ capability reads _config-gated_, so the nightly coverage gate is not affected.
 `.github/workflows/e2e.yml` runs this suite on `workflow_dispatch` + a nightly
 schedule — never on push/PR (too heavy, and needs a full compose stack). It
 synthesizes an ephemeral `infra/docker/.env` with runtime-random secrets,
-builds the images, runs `e2e:s3`, gates on coverage, and uploads the matrix +
-report.
+builds the images (`e2e:images`), runs `e2e:s3`, gates on coverage, and uploads
+the matrix + report.

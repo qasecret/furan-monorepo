@@ -61,6 +61,9 @@ CLAUDE.md
 skills-lock.json
 infra/docker/compose.*-local.yml
 infra/docker/compose.local-*.yml
+# …except the shared from-HEAD overlay: deploy.sh --mode from-head and the e2e
+# suite both load it, so a clean checkout must have it.
+!infra/docker/compose.local-all.yml
 infra/docker/compose.pin-*.yml
 infra/docker/compose.main-images.yml
 
