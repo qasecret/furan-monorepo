@@ -279,6 +279,7 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
   let job: DiffJob;
   let candidateRunId: string;
   let projectId: string;
+  let variation375Id: string;
 
   beforeAll(async () => {
     const created = createDb();
@@ -322,6 +323,19 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
         viewport: "1280x720",
       })
       .returning();
+    // A variation's identity includes its viewport (ADR-054), so the new
+    // 375x812 checkpoint is its own, never-baselined variation.
+    const [v375] = await db
+      .insert(testVariations)
+      .values({
+        name: "v",
+        projectId: p.id,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "375x812",
+      })
+      .returning();
+    variation375Id = v375.id;
 
     const [baselineRun] = await db
       .insert(testRuns)
@@ -348,9 +362,9 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     candidateRunId = candidateRun.id;
 
     // Two viewports on the candidate run: 1280x720 has a paired baseline
-    // (diff-heavy fixture pair) and will fail. 375x812 has NO matching
-    // baseline screenshot — exercising the "new viewport since baseline"
-    // first-baseline-for-this-viewport branch in the handler. This sidesteps
+    // (diff-heavy fixture pair) and will fail. 375x812 is a variation with NO
+    // baseline — exercising the "new viewport since baseline" path (verdict
+    // `new`) in the handler. This sidesteps
     // the global UNIQUE constraint on screenshots.image_key (synthesizing
     // distinct per-viewport PNG bytes without sharp would require fixture
     // engineering beyond T12's scope).
@@ -395,7 +409,7 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     });
 
     // Candidate run has TWO screenshots: 1280x720 (paired baseline exists)
-    // + 375x812 (no paired baseline — exercises first-baseline-per-viewport).
+    // + 375x812 (its own variation, never baselined — verdict `new`).
     // 375x812 reuses key1280Baseline bytes; insert with onConflictDoNothing
     // so the duplicate image_key still creates the row reference logically
     // (skipping inserts on conflict). The handler reads candidate
@@ -405,7 +419,7 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       await db.insert(screenshots).values({
         runId: candidateRun.id,
         projectId: p.id,
-        testVariationId: v.id,
+        testVariationId: v375.id,
         name: "checkpoint-1",
         imageKey: key375Candidate,
         viewport: "375x812",
@@ -422,7 +436,7 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       await db.insert(screenshots).values({
         runId: candidateRun.id,
         projectId: p.id,
-        testVariationId: v.id,
+        testVariationId: v375.id,
         name: "checkpoint-1",
         imageKey: suffixedKey,
         viewport: "375x812",
@@ -480,12 +494,25 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       where: eq(testRuns.id, candidateRunId),
     });
     expect(updatedRun).toBeDefined();
-    // 1280x720 viewport has a substantial diff; 375x812 viewport is identical
-    // bytes (or no baseline for that viewport — first-baseline pass). Either
-    // way the aggregate must be "unresolved" because the 1280x720 viewport
-    // fails. Per spec §3.2 the diff-worker writes "unresolved", not "failed".
+    // 1280x720 has a substantial diff (verdict `unresolved`); 375x812 has no
+    // baseline (verdict `new`). The run rolls up to the worst: "unresolved".
+    // Per spec §3.2 the diff-worker writes "unresolved", not "failed".
     expect(updatedRun!.status).toBe("unresolved");
     expect(updatedRun!.diffPercent!).toBeGreaterThan(10);
+    const shots = await db
+      .select({
+        testVariationId: screenshots.testVariationId,
+        viewport: screenshots.viewport,
+        verdict: screenshots.verdict,
+      })
+      .from(screenshots)
+      .where(eq(screenshots.runId, candidateRunId));
+    expect(
+      Object.fromEntries(shots.map((s) => [s.viewport, s.verdict])),
+    ).toEqual({ "1280x720": "unresolved", "375x812": "new" });
+    expect(shots.find((s) => s.viewport === "375x812")!.testVariationId).toBe(
+      variation375Id,
+    );
 
     // Image-first (ADR-047): L2 no longer runs. The 100x100 fixture pair
     // produces only 2 dirty tiles (col=1, rows 0-1), below minClusterTiles=3,
@@ -631,6 +658,11 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     expect(updated!.merge).toBe(true);
     // ADR-043: first-baseline runs have no diff comparison → primary_signature stays NULL.
     expect(updated!.primarySignature).toBeNull();
+    const [shot] = await db
+      .select({ verdict: screenshots.verdict })
+      .from(screenshots)
+      .where(eq(screenshots.runId, run.id));
+    expect(shot!.verdict).toBe("new");
 
     const seededBaselines = await db.query.baselines.findMany({
       where: eq(baselines.testRunId, run.id),
@@ -641,7 +673,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     expect(seededBaselines[0]!.userId).toBeNull();
   }, 60_000);
 
-  test("first-baseline path (autoApproveFeature=false): no prior baseline → status='new', merge=true, NO baselines row inserted (ADR-036)", async () => {
+  test("first-baseline path (autoApproveFeature=false): no prior baseline → status='new', merge=false, NO baselines row inserted (ADR-036)", async () => {
     const uniq = Date.now() + 100;
     const [u] = await db
       .insert(users)
@@ -712,9 +744,16 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       where: eq(testRuns.id, run.id),
     });
     expect(updated!.status).toBe("new");
-    expect(updated!.merge).toBe(true);
+    // `merge` means "the run owns a baselines row" (spec §4.3, written by
+    // recomputeRunStatus). No row is seeded here, so the run is not promoted.
+    expect(updated!.merge).toBe(false);
     // ADR-043: first-baseline runs have no diff comparison → primary_signature stays NULL.
     expect(updated!.primarySignature).toBeNull();
+    const [shot] = await db
+      .select({ verdict: screenshots.verdict })
+      .from(screenshots)
+      .where(eq(screenshots.runId, run.id));
+    expect(shot!.verdict).toBe("new");
 
     // ADR-036: with autoApproveFeature=false, the handler must NOT
     // auto-seed a baseline. The reviewer's `runs.approve` mutation is

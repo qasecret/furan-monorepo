@@ -3,6 +3,7 @@ import { createDb, projects } from "@furan/db";
 import {
   createRedisConnection,
   createWorker,
+  isFinalAttempt,
   isTerminalFailure,
 } from "@furan/queue";
 import { createStorage } from "@furan/storage";
@@ -52,12 +53,19 @@ async function main(): Promise<void> {
         { jobId: job.id, projectId: job.data.projectId },
         "capture_job_received",
       );
-      return handleCaptureJob(job.data, telemetry.logger, {
-        db,
-        storage,
-        redis,
-        blockPrivateIps: env.CAPTURE_BLOCK_PRIVATE_IPS,
-      });
+      // Only the final attempt may mark the run `aborted` (ruling R10); an
+      // earlier failure is retried by BullMQ and the retry carries on.
+      return handleCaptureJob(
+        job.data,
+        telemetry.logger,
+        {
+          db,
+          storage,
+          redis,
+          blockPrivateIps: env.CAPTURE_BLOCK_PRIVATE_IPS,
+        },
+        { finalAttempt: isFinalAttempt(job) },
+      );
     },
     { concurrency: env.CAPTURE_CONCURRENCY },
   );

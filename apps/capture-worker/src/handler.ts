@@ -27,6 +27,15 @@ export interface HandlerDeps {
   blockPrivateIps?: boolean;
 }
 
+/** Where this call sits in the job's BullMQ retry budget. */
+export interface CaptureAttempt {
+  /**
+   * True when no retry follows if this attempt throws (`isFinalAttempt` from
+   * `@furan/queue`). Only the final attempt marks the run `aborted`.
+   */
+  finalAttempt: boolean;
+}
+
 const DEFAULT_VIEWPORT: Viewport = { width: 1280, height: 720 };
 
 /**
@@ -43,12 +52,21 @@ export async function handleCaptureJob(
   data: CaptureJob,
   logger: Logger,
   deps: HandlerDeps,
+  // Callers that don't track retries (tests, scripts) get the safe default: a
+  // failure is terminal and the run is marked `aborted`.
+  attempt: CaptureAttempt = { finalAttempt: true },
 ): Promise<void> {
   try {
     await handleCaptureJobInner(data, logger, deps);
   } catch (err) {
-    // Best-effort terminal status write so a crashed capture does not
-    // hang the run in `running` indefinitely. Per spec §3.2 worker
+    // Ruling R10: BullMQ retries a non-final attempt, so leave the run as it
+    // is (`running`) and let the retry carry it forward. `aborted` is a
+    // lifecycle state `recomputeRunStatus` keeps, so writing it here would
+    // stick even after the retry captures successfully. Rethrow so BullMQ
+    // schedules the retry (server.ts logs the failure at warn).
+    if (!attempt.finalAttempt) throw err;
+    // Final attempt: best-effort terminal status write so a crashed capture
+    // does not hang the run in `running` indefinitely. Per spec §3.2 worker
     // exceptions land as `aborted` (distinct from reviewer-rejected
     // `failed`). Wrap in its own try/catch so a status-write failure
     // does not mask the original error.

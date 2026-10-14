@@ -4,6 +4,7 @@ import {
   createRedisConnection,
   createRetentionQueue,
   createWorker,
+  isFinalAttempt,
   isTerminalFailure,
 } from "@furan/queue";
 import { createStorage } from "@furan/storage";
@@ -63,12 +64,14 @@ async function main(): Promise<void> {
       { jobId: job.id, projectId: job.data.projectId },
       "diff_job_received",
     );
-    return handleDiffJob(job.data, telemetry.logger, {
-      db,
-      storage,
-      redis,
-      metrics: diffMetrics,
-    });
+    // Only the final attempt may mark the run `aborted` (ruling R9); an
+    // earlier failure is retried by BullMQ and the retry derives the status.
+    return handleDiffJob(
+      job.data,
+      telemetry.logger,
+      { db, storage, redis, metrics: diffMetrics },
+      { finalAttempt: isFinalAttempt(job) },
+    );
   });
 
   // Dead-letter signal: a diff that exhausts its retries leaves a run stuck
