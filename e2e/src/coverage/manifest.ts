@@ -19,6 +19,7 @@ export const CAPABILITIES: Capability[] = [
   { id: "deploy.readyz", area: "deploy", label: "deep readiness all-ok" },
   { id: "deploy.openapi", area: "deploy", label: "openapi shape sane" },
   { id: "deploy.metrics", area: "deploy", label: "metrics scrape has hardening series" },
+  { id: "deploy.proxy_large_upload", area: "deploy", label: ">1 MiB screenshot uploads through the single-origin proxy (/api/)" },
   // sdk
   { id: "sdk.virtual.happy", area: "sdk", label: "virtual-SDK create→upload→complete→verdict" },
   { id: "sdk.kotlin.smoke", area: "sdk", label: "real Kotlin SDK smoke", configGated: true },

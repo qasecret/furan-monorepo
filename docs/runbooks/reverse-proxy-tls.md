@@ -154,6 +154,12 @@ tighter surface.)
 > While `3000` stays published (the base `compose.yml` default), `/metrics` is
 > reachable on that port — another reason to drop the mapping.
 
+> **Let screenshot uploads through.** SDK and CI clients upload screenshots to
+> the api through this proxy, up to the api's own 50 MiB body limit. Caddy sets
+> no request-body limit by default. With nginx, set `client_max_body_size 50m;`
+> on the api's `location`: its 1 MB default answers `413` to a full-page
+> screenshot before the api sees it.
+
 ## 4. Align the runtime env
 
 In `.env`, set the API's CORS allowlist and the dashboard's **runtime** (SSR)

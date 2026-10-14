@@ -48,8 +48,10 @@ configs:
         location ^~ /api/metrics {
           return 404;
         }
-        # /api/* → api, prefix stripped (/api/trpc → /trpc).
+        # /api/* → api, prefix stripped (/api/trpc → /trpc). Uploads may be as
+        # large as the api's own 50 MiB body limit (nginx defaults to 1m).
         location /api/ {
+          client_max_body_size 50m;
           proxy_pass http://api:3000/;
           proxy_http_version 1.1;
           proxy_set_header Host $$http_host;
