@@ -7,6 +7,7 @@
     "e2e": "tsx scripts/e2e.ts",
     "e2e:s3": "tsx scripts/e2e.ts --storage=s3 --project=s3-full",
     "e2e:hdd": "tsx scripts/e2e.ts --storage=hdd --project=hdd-smoke",
+    "e2e:images": "tsx scripts/e2e.ts --images-only",
     "e2e:up": "tsx scripts/e2e.ts --up-only",
     "e2e:down": "tsx scripts/e2e.ts --down-only",
     "coverage": "tsx scripts/check-coverage.ts",

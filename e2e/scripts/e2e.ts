@@ -5,13 +5,14 @@ import { seedAll } from "../src/seed/seed.js";
 import {
   API_URL,
   DASH_URL,
+  buildMissingImages,
   down,
   logs,
   up,
   ROOT,
   type StorageMode,
 } from "./compose.js";
-import { waitHealthy } from "./wait-health.js";
+import { waitDashboard, waitHealthy } from "./wait-health.js";
 
 // Point the test client + Playwright at the isolated e2e host ports (3010/3011)
 // before any of them read the env. Downstream (wait-health, tests,
@@ -33,18 +34,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  await buildMissingImages();
+  if (has("--images-only")) return;
+
   await up(mode);
   try {
     await waitHealthy();
+    await waitDashboard();
     await seedAll();
     if (has("--up-only")) {
       console.log(`stack up (${mode}) + seeded — leaving running`);
       return;
     }
-    await execa("pnpm", ["exec", "playwright", "test", `--project=${project}`], {
-      cwd: `${ROOT}e2e`,
-      stdio: "inherit",
-    });
+    await execa(
+      "pnpm",
+      ["exec", "playwright", "test", `--project=${project}`],
+      {
+        cwd: `${ROOT}e2e`,
+        stdio: "inherit",
+      },
+    );
   } catch (err) {
     console.error("e2e run failed — dumping compose logs");
     await logs(mode).catch(() => undefined);

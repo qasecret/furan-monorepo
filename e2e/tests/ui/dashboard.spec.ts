@@ -10,9 +10,8 @@ import { BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD } from "../../scripts/compose.js";
 import { ApiClient } from "../../src/clients/api-client.js";
 import { capture } from "../../src/clients/virtual-sdk.js";
 import { coverAnnotations } from "../../src/coverage/reporter.js";
-import { API_URL as API } from "../../src/env.js";
+import { API_URL as API, DASH_URL as DASH } from "../../src/env.js";
 import { loadSeed, principal } from "../../src/seed/load-seed.js";
-
 
 /**
  * Dashboard surfaces driven in a real browser. One shared authenticated context
@@ -79,17 +78,18 @@ test.describe.serial("ui: dashboard surfaces", () => {
     });
   });
 
-  // DEFERRED (infra constraint): the diff viewer loads its baseline/candidate
-  // images via CLIENT-side fetch, which hits the browser bundle's baked
-  // NEXT_PUBLIC_API_URL (default localhost:3000). The E2E stack runs the api on
-  // a remapped host port (3010) to coexist with a dev server holding 3000, and
-  // no single baked URL satisfies BOTH the browser (needs localhost:<hostport>)
-  // and the container's SSR (needs api:3000). A full browser-data run needs the
-  // api on the standard port 3000 (dedicated environment / stop dev servers).
-  // Server-rendered pages (login, builds, admin shell) work regardless.
-  test.skip("diff viewer opens the pixi canvas", async ({}, testInfo) => {
+  // The viewer loads everything from the BROWSER: the run over tRPC, then the
+  // screenshots from the api's storage proxy, both through the stack's single
+  // origin (`${DASH}/api/...`, compose.e2e.yml). A canvas alone would draw with
+  // no images, so wait for the screenshots to arrive as well.
+  test("diff viewer opens the pixi canvas", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["ui.diff_viewer"]));
+    const screenshot = page.waitForResponse(
+      (res) => res.url().startsWith(`${DASH}/api/api/v1/storage/`) && res.ok(),
+      { timeout: 30_000 },
+    );
     await page.goto(`/projects/${projectId}/runs/${changedRunId}`);
+    await screenshot;
     await expect(page.locator("canvas").first()).toBeVisible({
       timeout: 30_000,
     });

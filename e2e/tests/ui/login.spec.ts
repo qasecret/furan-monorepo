@@ -5,8 +5,8 @@ import { coverAnnotations } from "../../src/coverage/reporter.js";
 
 /**
  * Drive the real dashboard login form (Next server action → /auth/login →
- * furan_jwt cookie → redirect to the landing view). baseURL is the dashboard
- * (E2E_DASH_URL / 3011).
+ * furan_jwt cookie → redirect to the landing view). baseURL is the stack's
+ * single origin (E2E_DASH_URL / 3011: nginx in front of the dashboard).
  */
 test("dashboard login lands the user in the app shell", async ({
   page,
