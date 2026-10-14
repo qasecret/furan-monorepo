@@ -151,9 +151,16 @@ function normalize(ctx: Partial<ReviewContext>): ReviewContext {
 // An entry that fails to decode, has no `:` or an empty key, or exceeds the
 // API's limits is dropped.
 
+/**
+ * `encodeURIComponent` throws a `URIError` on a lone surrogate, which a value
+ * the API accepts may contain; the write side must never throw, so each side
+ * is made well-formed first (a lone surrogate becomes U+FFFD).
+ */
+const encodePart = (s: string): string => encodeURIComponent(s.toWellFormed());
+
 function encodeProps(props: Record<string, string>): string {
   return Object.entries(props)
-    .map(([k, v]) => `${encodeURIComponent(k)}:${encodeURIComponent(v)}`)
+    .map(([k, v]) => `${encodePart(k)}:${encodePart(v)}`)
     .join(",");
 }
 
@@ -184,6 +191,11 @@ function readParam(sp: ParamSource, name: string): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+function parseStatus(raw: string | undefined): ReviewStatus | undefined {
+  const parsed = statusSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /**
  * Read the context from search params (a `URLSearchParams`, or the record Next
  * hands a page as `searchParams`). Anything unknown or invalid is dropped;
@@ -197,7 +209,7 @@ export function parseReviewContext(sp: ParamSource): ReviewContext {
   }
   const props = readParam(sp, "props");
   return normalize({
-    status: readParam(sp, "status") as ReviewStatus | undefined,
+    status: parseStatus(readParam(sp, "status")),
     facets,
     branch: readParam(sp, "branch"),
     q: readParam(sp, "q"),
@@ -252,15 +264,16 @@ export function serializeReviewContext(
 // ---------- API filters ----------
 
 /**
- * The run statuses each chip stands for on a batch's run list. `passed` also
- * takes `new` (a passed run whose baseline was just created), the same set the
- * batch rollup counts as passed.
+ * The run statuses each chip stands for on a batch's run list (spec §3.1: the
+ * Failed / Running / Passed chips are the rollup status of the same name).
+ * `passed` is only `passed`: a run that rolls up to `new` still has an
+ * undecided step, so it belongs under Needs review, not under Passed.
  */
 const RUN_STATUS_BY_CHIP: Record<"failed" | "running" | "passed", RunStatus[]> =
   {
     failed: ["failed"],
     running: ["running"],
-    passed: ["passed", "new"],
+    passed: ["passed"],
   };
 
 /**

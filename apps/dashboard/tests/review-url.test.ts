@@ -62,6 +62,24 @@ describe("parseReviewContext", () => {
     ).toEqual(clean({ status: "passed", facets: { browser: "firefox" } }));
   });
 
+  it("a repeated param counts once, by its first value (even if invalid)", () => {
+    expect(
+      parseReviewContext(new URLSearchParams("status=failed&status=passed"))
+        .status,
+    ).toBe("failed");
+    expect(
+      parseReviewContext(new URLSearchParams("browser=a&browser=b")).facets,
+    ).toEqual({ browser: "a" });
+    // The first value wins even when it is bad: there is no fallback to a later one.
+    expect(
+      parseReviewContext(new URLSearchParams("status=bogus&status=failed"))
+        .status,
+    ).toBe("needs-review");
+    expect(parseReviewContext({ status: ["bogus", "failed"] }).status).toBe(
+      "needs-review",
+    );
+  });
+
   it("drops an unknown status without erroring", () => {
     expect(parseReviewContext(new URLSearchParams("status=bogus"))).toEqual(
       clean(),
@@ -261,6 +279,47 @@ describe("props encoding", () => {
     expect(parseReviewContext(sp).props).toBeUndefined();
   });
 
+  it("never throws on write: a lone surrogate in a value is made well-formed", () => {
+    const props = { note: "a\uD800b" };
+    let qs = "";
+    expect(() => {
+      qs = serializeReviewContext({ props });
+    }).not.toThrow();
+    expect(parseReviewContext(new URLSearchParams(qs)).props).toEqual({
+      note: "a\uFFFDb",
+    });
+  });
+
+  it("round-trips __proto__ and constructor keys as plain own properties, polluting nothing", () => {
+    // JSON.parse makes a real own `__proto__` property; an object literal would not.
+    const props = JSON.parse(
+      '{"__proto__":"x","constructor":"y","ok":"z"}',
+    ) as Record<string, string>;
+    const qs = serializeReviewContext({ props });
+    const parsed = parseReviewContext(new URLSearchParams(qs)).props;
+
+    expect(parsed).toBeDefined();
+    expect(Object.keys(parsed ?? {}).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "ok",
+    ]);
+    expect(Object.getOwnPropertyDescriptor(parsed, "__proto__")?.value).toBe(
+      "x",
+    );
+    expect(Object.getOwnPropertyDescriptor(parsed, "constructor")?.value).toBe(
+      "y",
+    );
+    // Still an ordinary object: the data did not become its prototype.
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+    // And nothing leaked onto Object.prototype.
+    expect(Object.keys(Object.prototype)).toEqual([]);
+    expect(({} as Record<string, unknown>)["x"]).toBeUndefined();
+    expect(({} as Record<string, unknown>)["ok"]).toBeUndefined();
+    // It serializes back to the same query.
+    expect(serializeReviewContext({ props: parsed })).toBe(qs);
+  });
+
   it("an absent props param leaves props undefined", () => {
     expect(
       parseReviewContext(new URLSearchParams("status=all")).props,
@@ -273,8 +332,9 @@ describe("toRunsListFilter", () => {
     ["needs-review", { pending: true }],
     ["failed", { status: ["failed"] }],
     ["running", { status: ["running"] }],
-    // "new" is a passed run with a baseline created; the batch rollup counts it.
-    ["passed", { status: ["passed", "new"] }],
+    // Spec §3.1: the run Passed chip is rollup status `passed`. A run that
+    // rolls up to `new` has an undecided step, so it is not passed here.
+    ["passed", { status: ["passed"] }],
     ["all", {}],
   ];
   it.each(cases)("%s", (status, expected) => {
@@ -372,6 +432,7 @@ describe("useReviewContext", () => {
     replaceMock.mockReset();
     currentParams = new URLSearchParams();
     currentPath = "/inbox";
+    window.history.replaceState(null, "", "/");
   });
   afterEach(() => cleanup());
 
@@ -429,6 +490,49 @@ describe("useReviewContext", () => {
     const { result } = renderHook(() => useReviewContext());
     act(() => result.current[1]({ status: "passed" }));
     expect(replaceMock).toHaveBeenCalledWith("/inbox?expand=b1&status=passed", {
+      scroll: false,
+    });
+  });
+
+  it("keeps the order of the params already in the URL, changing the context's in place", () => {
+    currentParams = new URLSearchParams(
+      "expand=b1&status=failed&foo=bar&browser=chrome&baz=1",
+    );
+    const { result } = renderHook(() => useReviewContext());
+    act(() => result.current[1]({ status: "passed" }));
+    expect(replaceMock).toHaveBeenLastCalledWith(
+      "/inbox?expand=b1&status=passed&foo=bar&browser=chrome&baz=1",
+      { scroll: false },
+    );
+    // A cleared context param is removed where it stood; the rest keep their order.
+    act(() => result.current[1]({ facets: {} }));
+    expect(replaceMock).toHaveBeenLastCalledWith(
+      "/inbox?expand=b1&status=passed&foo=bar&baz=1",
+      { scroll: false },
+    );
+  });
+
+  it("appends a context param that was not in the URL after the others", () => {
+    currentParams = new URLSearchParams("expand=b1");
+    const { result } = renderHook(() => useReviewContext());
+    act(() => result.current[1]({ status: "failed" }));
+    expect(replaceMock).toHaveBeenCalledWith("/inbox?expand=b1&status=failed", {
+      scroll: false,
+    });
+  });
+
+  it("keeps the hash, so a #run-<id> anchor survives a filter change", () => {
+    window.history.replaceState(null, "", "/inbox#run-r1");
+    const { result } = renderHook(() => useReviewContext());
+    act(() => result.current[1]({ status: "failed" }));
+    expect(replaceMock).toHaveBeenCalledWith("/inbox?status=failed#run-r1", {
+      scroll: false,
+    });
+    // Also when the patch leaves a clean query.
+    currentParams = new URLSearchParams("status=failed");
+    const again = renderHook(() => useReviewContext());
+    act(() => again.result.current[1]({ status: "needs-review" }));
+    expect(replaceMock).toHaveBeenLastCalledWith("/inbox#run-r1", {
       scroll: false,
     });
   });
