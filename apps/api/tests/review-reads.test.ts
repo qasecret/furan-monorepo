@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
+  baselines,
   builds,
   checkpointDecisions,
   eq,
@@ -28,10 +29,12 @@ import {
   checkpointStatusAlias,
   loadCheckpointReview,
 } from "../src/lib/review/reads.js";
+import type { AuthedUser } from "../src/plugins/auth.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
 import {
+  addProjectEditor,
   addReviewRun,
   cleanupReviewSeeds,
   seedReviewRun,
@@ -55,6 +58,20 @@ function makeClient(baseUrl: string, jwt?: string) {
 }
 
 const newAction = () => randomUUID();
+
+/**
+ * The most statements one `loadCheckpointReview` may issue for a run with
+ * decisions: the 4 of the review view plus the undo assessment (the action
+ * rows and the 5 queries behind them).
+ */
+const UNDO_READ_STATEMENTS = 10;
+
+/** A user as the read model's `viewer`. */
+const viewerOf = (u: ReviewUser): AuthedUser => ({
+  id: u.id,
+  role: u.role,
+  via: "jwt",
+});
 
 /** Counts the statements a read issues (`select*` / `execute` on the handle). */
 function countingDb(db: DB): { db: DB; count: () => number } {
@@ -282,6 +299,7 @@ d("review read model", () => {
         at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
         source: "viewer",
         legacy: false,
+        undo: { allowed: true },
       });
       expect(b!.decision).toBeNull();
       expect(c!.decision).toBeNull();
@@ -429,6 +447,22 @@ d("review read model", () => {
         actor: { id: s.admin.id, name: s.admin.name },
         source: "inbox",
       });
+      // No snapshot, so no one can undo these, whoever asks (an admin
+      // included): the reason names the decision, not the viewer.
+      const asAdmin = await as(s.admin).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+      for (const list of [items, asAdmin.items]) {
+        expect(list[1]!.decision!.undo).toEqual({
+          allowed: false,
+          reason: "not_undoable_legacy",
+        });
+        expect(list[2]!.decision!.undo).toEqual({
+          allowed: false,
+          reason: "not_undoable_legacy",
+        });
+      }
+      expect(items[0]!.decision!.undo).toEqual({ allowed: true });
     });
 
     test("an undone decision is gone from the read: the checkpoint is back to its verdict", async () => {
@@ -651,6 +685,225 @@ d("review read model", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Undo availability (`decision.undo`)
+  // -------------------------------------------------------------------------
+
+  describe("decision.undo", () => {
+    /** `name`'s decision as `viewer` reads it from the checkpoint list. */
+    async function undoOf(
+      s: ReviewSeed,
+      viewer: ReviewUser,
+      name: string,
+      runId: string = s.runId,
+    ) {
+      const { items } = await as(viewer).runs.listCheckpoints.query({ runId });
+      const item = items.find((i) => i.name === name);
+      expect(item?.decision).not.toBeNull();
+      return item!.decision!.undo;
+    }
+
+    /** A capture of `name`'s variation made now, in a later run. */
+    async function captureAfterDecision(s: ReviewSeed, name: string) {
+      const run = await addReviewRun(h, s, {
+        checkpoints: [{ name, verdict: "unresolved" }],
+      });
+      await h.db
+        .update(screenshots)
+        .set({ createdAt: sql`clock_timestamp()` })
+        .where(eq(screenshots.id, run.shots[name]!.id));
+      return run;
+    }
+
+    test("the decider and an admin may undo; another editor of the project may not (not_decider)", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const peer = await addProjectEditor(h, s);
+      await approve(s, s.runId, [s.shots.a!.id]);
+      await reject(s, s.runId, [s.shots.b!.id]);
+
+      for (const name of ["a", "b"]) {
+        expect(await undoOf(s, s.editor, name)).toEqual({ allowed: true });
+        expect(await undoOf(s, s.admin, name)).toEqual({ allowed: true });
+        expect(await undoOf(s, peer, name)).toEqual({
+          allowed: false,
+          reason: "not_decider",
+        });
+      }
+    });
+
+    test("a capture of the variation made after the decision refuses it (superseded_newer_capture); one made before does not", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const peer = await addProjectEditor(h, s);
+      // The fixture's runs are captured in the past: before the decisions.
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "b", verdict: "unresolved" }],
+      });
+      await approve(s, s.runId, [s.shots.a!.id, s.shots.b!.id]);
+      expect(await undoOf(s, s.editor, "a")).toEqual({ allowed: true });
+      expect(await undoOf(s, s.editor, "b")).toEqual({ allowed: true });
+
+      await captureAfterDecision(s, "a");
+
+      expect(await undoOf(s, s.editor, "a")).toEqual({
+        allowed: false,
+        reason: "superseded_newer_capture",
+      });
+      expect(await undoOf(s, s.editor, "b")).toEqual({ allowed: true });
+      // Who is asking is judged first: it is not the peer's to undo at all.
+      expect(await undoOf(s, peer, "a")).toEqual({
+        allowed: false,
+        reason: "not_decider",
+      });
+    });
+
+    test("a variation edited after the approve refuses it (superseded_variation_edit)", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      await approve(s, s.runId, [s.shots.a!.id]);
+      expect(await undoOf(s, s.editor, "a")).toEqual({ allowed: true });
+
+      await as(s.editor).runs.setIgnoreAreas.mutate({
+        runId: s.runId,
+        scope: "variation",
+        checkpointId: s.shots.a!.id,
+        ignoreAreas: [
+          { x: 3, y: 4, width: 50, height: 60, viewport: "1280x720" },
+        ],
+      });
+
+      expect(await undoOf(s, s.editor, "a")).toEqual({
+        allowed: false,
+        reason: "superseded_variation_edit",
+      });
+    });
+
+    test("a newer baseline for the variation refuses the older decision (superseded_newer_baseline)", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const run2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      await approve(s, s.runId, [s.shots.a!.id]);
+      expect(await undoOf(s, s.editor, "a")).toEqual({ allowed: true });
+      await approve(s, run2.runId, [run2.shots.a!.id]);
+
+      expect(await undoOf(s, s.editor, "a")).toEqual({
+        allowed: false,
+        reason: "superseded_newer_baseline",
+      });
+      expect(await undoOf(s, s.editor, "a", run2.runId)).toEqual({
+        allowed: true,
+      });
+    });
+
+    test("one action that approved the same variation in two runs stays undoable: the action is judged as a whole", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const run2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      await as(s.editor).review.approveBuild.mutate({
+        buildId: s.buildId,
+        actionId: newAction(),
+        expectedCount: 2,
+      });
+
+      expect(await undoOf(s, s.editor, "a")).toEqual({ allowed: true });
+      expect(await undoOf(s, s.editor, "a", run2.runId)).toEqual({
+        allowed: true,
+      });
+    });
+
+    test("a baseline row that is gone (history_expired) or a snapshot that does not parse (history_corrupt)", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      await approve(s, s.runId, [s.shots.a!.id, s.shots.b!.id]);
+      // Retention removed `a`'s baseline rows, the approve's among them.
+      await h.db
+        .delete(baselines)
+        .where(eq(baselines.testVariationId, s.shots.a!.variationId));
+      await h.db
+        .update(checkpointDecisions)
+        .set({ before: sql`'{"unexpected": true}'::jsonb` })
+        .where(eq(checkpointDecisions.screenshotId, s.shots.b!.id));
+
+      const { items } = await as(s.editor).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+
+      expect(items.map((i) => i.decision!.undo)).toEqual([
+        { allowed: false, reason: "history_expired" },
+        { allowed: false, reason: "history_corrupt" },
+      ]);
+    });
+
+    test("an undone decision has no decision to undo", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const actionId = await approve(s, s.runId, [s.shots.a!.id]);
+      await as(s.editor).review.revert.mutate({ actionId });
+
+      const { items } = await as(s.editor).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+      expect(items[0]).toMatchObject({ state: "unresolved", decision: null });
+    });
+
+    test("loadCheckpointReview judges the viewer it is given; a checkpoint without a decision has none", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      const peer = await addProjectEditor(h, s);
+      await approve(s, s.runId, [s.shots.a!.id]);
+
+      const asEditor = await loadCheckpointReview(
+        h.db,
+        s.runId,
+        viewerOf(s.editor),
+      );
+      const asPeer = await loadCheckpointReview(h.db, s.runId, viewerOf(peer));
+      const asGuest = await loadCheckpointReview(
+        h.db,
+        s.runId,
+        viewerOf(s.guest),
+      );
+
+      expect(asEditor.get(s.shots.a!.id)!.decision!.undo).toEqual({
+        allowed: true,
+      });
+      expect(asPeer.get(s.shots.a!.id)!.decision!.undo).toEqual({
+        allowed: false,
+        reason: "not_decider",
+      });
+      expect(asGuest.get(s.shots.a!.id)!.decision!.undo).toEqual({
+        allowed: false,
+        reason: "not_decider",
+      });
+      expect(asEditor.get(s.shots.b!.id)!.decision).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // loadCheckpointReview
   // -------------------------------------------------------------------------
 
@@ -677,24 +930,41 @@ d("review read model", () => {
           { name: "s1", verdict: "new" },
         ],
       });
+      await approve(small, small.runId, [small.shots.a!.id]);
       await addReviewRun(h, small, {
         checkpoints: [{ name: "a", verdict: "unresolved" }],
       });
 
+      const viewer = viewerOf(small.editor);
       const a = countingDb(h.db);
-      const smallView = await loadCheckpointReview(a.db, small.runId);
+      const smallView = await loadCheckpointReview(a.db, small.runId, viewer);
       const b = countingDb(h.db);
-      const bigView = await loadCheckpointReview(b.db, big.runId);
+      const bigView = await loadCheckpointReview(
+        b.db,
+        big.runId,
+        viewerOf(big.editor),
+      );
 
       expect(smallView.size).toBe(2);
       expect(bigView.size).toBe(40);
+      // The same statements for one decision as for many, whoever decided
+      // them: the undo assessment is batched per run, not asked per checkpoint.
       expect(a.count()).toBe(b.count());
-      expect(b.count()).toBeLessThanOrEqual(4);
+      expect(b.count()).toBeLessThanOrEqual(UNDO_READ_STATEMENTS);
       // A run with no checkpoints costs one statement.
       const empty = await seed({ checkpoints: [], lifecycle: "empty" });
       const c = countingDb(h.db);
-      expect((await loadCheckpointReview(c.db, empty.runId)).size).toBe(0);
+      expect((await loadCheckpointReview(c.db, empty.runId, viewer)).size).toBe(
+        0,
+      );
       expect(c.count()).toBe(1);
+      // A run with nothing decided asks nothing about undo.
+      const undecided = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      const e = countingDb(h.db);
+      await loadCheckpointReview(e.db, undecided.runId, viewer);
+      expect(e.count()).toBeLessThanOrEqual(3);
     });
 
     test("has an entry for every checkpoint, decided or not", async () => {
@@ -706,7 +976,11 @@ d("review read model", () => {
         ],
         lifecycle: "running",
       });
-      const view = await loadCheckpointReview(h.db, s.runId);
+      const view = await loadCheckpointReview(
+        h.db,
+        s.runId,
+        viewerOf(s.editor),
+      );
       expect([...view.keys()].sort()).toEqual(
         Object.values(s.shots)
           .map((x) => x.id)
@@ -760,6 +1034,7 @@ d("review read model", () => {
           actor: { id: s.editor.id, name: s.editor.name },
           legacy: false,
           source: "viewer",
+          undo: { allowed: true },
         },
         newerCapture: null,
       });

@@ -16,10 +16,19 @@ import {
   type CheckpointReviewState,
   type CheckpointVerdict,
   type DecisionSource,
+  type RevertSkipReason,
   type RunStatus,
 } from "@furan/shared-types";
 
-import { loadActiveDecisionDetails, selectPendingTargets } from "./targets.js";
+import type { AuthedUser } from "../../plugins/auth.js";
+import { isAtLeastAdmin } from "../roles.js";
+
+import { assessRevert } from "./revert.js";
+import {
+  loadActiveDecisionDetails,
+  selectPendingTargets,
+  type ActiveDecision,
+} from "./targets.js";
 
 /**
  * The review read model: what `runs.listCheckpoints`, `runs.getById` and
@@ -31,6 +40,16 @@ import { loadActiveDecisionDetails, selectPendingTargets } from "./targets.js";
  * whatever `selectPendingTargets` selects. Nothing here re-derives a state
  * from the run's status.
  */
+
+/**
+ * Whether the viewer can undo a decision now (spec §5.5), and if not why: a
+ * reason `assessRevert` gives, or `not_decider` when the viewer is neither
+ * who decided it nor an admin.
+ */
+export interface UndoAvailability {
+  allowed: boolean;
+  reason?: RevertSkipReason | "not_decider";
+}
 
 /** What the dashboard shows about one checkpoint's review (spec §5.5). */
 export interface CheckpointReviewView {
@@ -50,6 +69,8 @@ export interface CheckpointReviewView {
     source: DecisionSource;
     /** No undo snapshot (`before IS NULL`). */
     legacy: boolean;
+    /** Whether `viewer` can undo it now; mirrors what `review.revert` would do. */
+    undo: UndoAvailability;
   } | null;
   /**
    * A later run captured the same variation (spec §5.6): approving this older
@@ -188,14 +209,65 @@ async function loadNewerCaptures(
 }
 
 /**
- * The review view of every checkpoint of a run, keyed by checkpoint id. A
- * constant number of statements (at most four) however many checkpoints the
- * run has: the checkpoints, their active decisions, the newer captures and
- * those captures' builds.
+ * `undo` for each of a run's active decisions, keyed by decision id, as
+ * `review.revert` would answer `viewer` now.
+ *
+ * - Judged first: a decision with no snapshot is never undoable, whoever asks
+ *   (`not_undoable_legacy`, a reason about the decision, not the viewer).
+ *   Spec §5.3: legacy rows with a NULL actor are only ever refused as not
+ *   undoable, so every viewer is told that. (`review.revert` itself answers a
+ *   non-admin `not_decider` first; `allowed` is false either way.)
+ * - Then only the decider or an admin may undo (`not_decider`), judged before
+ *   the assessment, as `revertAction` authorises before it assesses.
+ * - The rest go through `assessRevert` in ONE call, which is itself a fixed
+ *   number of statements however many decisions there are. It judges each
+ *   decision as part of its whole action, so a decision that only a later one
+ *   of the same action supersedes stays undoable.
+ */
+async function loadUndoAvailability(
+  db: DB | Tx,
+  decisions: ReadonlyArray<ActiveDecision>,
+  viewer: AuthedUser,
+): Promise<Map<string, UndoAvailability>> {
+  const out = new Map<string, UndoAvailability>();
+  const admin = isAtLeastAdmin(viewer.role);
+  const toAssess: ActiveDecision[] = [];
+  for (const d of decisions) {
+    if (d.legacy) {
+      out.set(d.id, { allowed: false, reason: "not_undoable_legacy" });
+    } else if (!admin && d.actor?.id !== viewer.id) {
+      out.set(d.id, { allowed: false, reason: "not_decider" });
+    } else {
+      toAssess.push(d);
+    }
+  }
+  const verdicts = await assessRevert(db, toAssess);
+  for (const d of toAssess) {
+    const reason = verdicts.get(d.id);
+    // No entry: the decision was deleted (retention) since it was read.
+    out.set(
+      d.id,
+      reason === null
+        ? { allowed: true }
+        : reason === undefined
+          ? { allowed: false }
+          : { allowed: false, reason },
+    );
+  }
+  return out;
+}
+
+/**
+ * The review view of every checkpoint of a run, keyed by checkpoint id, with
+ * `decision.undo` as `viewer` would find it. A constant number of statements
+ * however many checkpoints the run has: the checkpoints, their active
+ * decisions, the newer captures and those captures' builds (at most four), and
+ * for the undo availability of the decisions one batched `assessRevert`.
  */
 export async function loadCheckpointReview(
   db: DB | Tx,
   runId: string,
+  viewer: AuthedUser,
 ): Promise<Map<string, CheckpointReviewView>> {
   const shots = await db
     .select({
@@ -211,6 +283,7 @@ export async function loadCheckpointReview(
   const newer = await loadNewerCaptures(db, runId, [
     ...new Set(shots.map((s) => s.testVariationId)),
   ]);
+  const undo = await loadUndoAvailability(db, [...decisions.values()], viewer);
 
   return new Map(
     shots.map((s) => {
@@ -229,6 +302,7 @@ export async function loadCheckpointReview(
           at: d.at.toISOString(),
           source: d.source,
           legacy: d.legacy,
+          undo: undo.get(d.id) ?? { allowed: false },
         },
         newerCapture: newer.get(s.testVariationId) ?? null,
       };

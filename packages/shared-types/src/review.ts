@@ -59,6 +59,7 @@ export const revertSkipReasonSchema = z.enum([
   "superseded_newer_capture",
   "superseded_newer_baseline",
   "history_expired",
+  "superseded_variation_edit",
 ]);
 export type RevertSkipReason = z.infer<typeof revertSkipReasonSchema>;
 
@@ -149,6 +150,17 @@ const jsonColumn = z.custom<NonNullable<unknown> | null>(
   { message: "required" },
 );
 
+/** The variation fields an approve writes, and an undo puts back. */
+const variationFields = {
+  baselineName: z.string().nullable(),
+  matchLevel: z.string(),
+  ignoreRegions: jsonColumn,
+  layoutRegions: jsonColumn,
+  floatingRegions: jsonColumn,
+  contentRegions: jsonColumn,
+  accessibilityRegions: jsonColumn,
+};
+
 /**
  * The undo snapshot stored in `checkpoint_decisions.before`: what a decision
  * overwrote, so a revert can put it back. Written and read through this one
@@ -179,18 +191,14 @@ export const decisionSnapshotSchema = z.object({
       }),
     ])
     .nullable(),
-  variation: z
-    .object({
-      id: z.string(),
-      baselineName: z.string().nullable(),
-      matchLevel: z.string(),
-      ignoreRegions: jsonColumn,
-      layoutRegions: jsonColumn,
-      floatingRegions: jsonColumn,
-      contentRegions: jsonColumn,
-      accessibilityRegions: jsonColumn,
-    })
-    .nullable(),
+  variation: z.object({ id: z.string(), ...variationFields }).nullable(),
+  /**
+   * The same fields exactly as the approve wrote them. An undo is refused
+   * (`superseded_variation_edit`) when the variation no longer matches, so a
+   * later reviewer edit is never silently wiped. Absent on rejects, and on
+   * snapshots written before it existed (those keep the unchecked undo).
+   */
+  variationAfter: z.object(variationFields).optional(),
 });
 export type DecisionSnapshot = z.infer<typeof decisionSnapshotSchema>;
 

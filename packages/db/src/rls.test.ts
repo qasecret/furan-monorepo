@@ -316,5 +316,47 @@ describe.runIf(RUN)("RLS tenant isolation (integration, as furan_app)", () => {
         (caught as { code?: string }).code;
       expect(code).toBe("42501");
     });
+
+    test("UPDATE isolation: a member of A cannot mark project B's decision reverted (0 rows)", async () => {
+      // An undo stamps reverted_at/reverted_by. Under RLS the policy's USING
+      // clause hides B's row from A's UPDATE, so it matches nothing.
+      const updated = await withUserScope(
+        app,
+        { userId: uidA, role: "editor" },
+        (tx) =>
+          tx
+            .update(checkpointDecisions)
+            .set({ revertedAt: sql`clock_timestamp()`, revertedBy: uidA })
+            .where(eq(checkpointDecisions.id, decB))
+            .returning({ id: checkpointDecisions.id }),
+      );
+      expect(updated).toEqual([]);
+      const [b] = await owner
+        .select({
+          revertedAt: checkpointDecisions.revertedAt,
+          revertedBy: checkpointDecisions.revertedBy,
+        })
+        .from(checkpointDecisions)
+        .where(eq(checkpointDecisions.id, decB));
+      expect(b).toEqual({ revertedAt: null, revertedBy: null });
+
+      // Control: the same statement on A's own decision does match (so the
+      // empty result above is the policy, not a missing grant).
+      const own = await withUserScope(
+        app,
+        { userId: uidA, role: "editor" },
+        (tx) =>
+          tx
+            .update(checkpointDecisions)
+            .set({ revertedAt: sql`clock_timestamp()`, revertedBy: uidA })
+            .where(eq(checkpointDecisions.id, decA))
+            .returning({ id: checkpointDecisions.id }),
+      );
+      expect(own).toEqual([{ id: decA }]);
+      await owner
+        .update(checkpointDecisions)
+        .set({ revertedAt: null, revertedBy: null })
+        .where(eq(checkpointDecisions.id, decA));
+    });
   });
 });

@@ -70,6 +70,7 @@ describe("review enums", () => {
       "superseded_newer_capture",
       "superseded_newer_baseline",
       "history_expired",
+      "superseded_variation_edit",
     ]);
   });
 });
@@ -480,5 +481,54 @@ describe("decisionSnapshotSchema", () => {
         variation: noMatchLevel,
       }).success,
     ).toBe(false);
+  });
+
+  describe("variationAfter", () => {
+    const { id: _id, ...after } = variation;
+    const approve = { baseline: { op: "inserted", id: "b1" }, variation };
+
+    test("is optional: snapshots written before it existed still parse", () => {
+      const parsed = decisionSnapshotSchema.safeParse(approve);
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.variationAfter).toBeUndefined();
+    });
+
+    test("is kept, values untouched, when present", () => {
+      const parsed = decisionSnapshotSchema.safeParse({
+        ...approve,
+        variationAfter: after,
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.variationAfter).toStrictEqual(after);
+      }
+    });
+
+    test("needs every field, region keys included (null is a value)", () => {
+      for (const key of [...REGION_KEYS, "matchLevel"] as const) {
+        const without: Record<string, unknown> = { ...after };
+        delete without[key];
+        expect(
+          decisionSnapshotSchema.safeParse({
+            ...approve,
+            variationAfter: without,
+          }).success,
+          key,
+        ).toBe(false);
+      }
+      expect(
+        decisionSnapshotSchema.safeParse({
+          ...approve,
+          variationAfter: { ...after, layoutRegions: null },
+        }).success,
+      ).toBe(true);
+    });
+
+    test("is not nullable", () => {
+      expect(
+        decisionSnapshotSchema.safeParse({ ...approve, variationAfter: null })
+          .success,
+      ).toBe(false);
+    });
   });
 });
