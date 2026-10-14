@@ -174,8 +174,7 @@ export function DiffViewer({
 
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
   // `state` is the review state (new / passed / unresolved / approved /
-  // rejected), null until the step has been diffed. The legacy `status` alias
-  // is not read: the optimistic review patches move `state`.
+  // rejected), null until the step has been diffed.
   // diffPercent stays null until diff_regions gains a screenshot_id column
   // (deferred — see runs.ts listCheckpoints comment).
   const checkpointSummaries: CheckpointSummary[] = useMemo(() => {

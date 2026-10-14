@@ -40,9 +40,8 @@ const NO_CAP = Number.MAX_SAFE_INTEGER;
  * reviewable, with the core's own reason (`assessRun`, spec §5.4):
  * `not_reviewable` (running / aborted / empty, or a checkpoint not diffed yet)
  * or `run_overridden`, as PRECONDITION_FAILED. This is the run-level form of
- * the refusal the core gives an explicit target, and replaces the legacy
- * status gate (`assertApprovable`). NOT_FOUND when the run is not in the
- * project.
+ * the refusal the core gives an explicit target. NOT_FOUND when the run is not
+ * in the project.
  */
 async function lockReviewableRun(
   tx: Tx,

@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
-import { approveRunPending } from "../lib/review/legacy.js";
+import { approveRunPending } from "../lib/review/run-level.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });

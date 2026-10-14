@@ -33,7 +33,7 @@ import { GROUP_APPROVE_CAP } from "../../lib/review/groups.js";
 import {
   approveRunPending,
   rejectPendingInRuns,
-} from "../../lib/review/legacy.js";
+} from "../../lib/review/run-level.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { AuthedUser } from "../../plugins/auth.js";
 import { assertAdminSurface } from "../middlewares/admin.js";

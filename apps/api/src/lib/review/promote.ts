@@ -116,7 +116,7 @@ export async function promoteCheckpointInTx(
   s: ApprovableCheckpoint & { id: string },
   run: ApprovableRun,
   userId: string,
-  ignoreAreasOverride?: readonly unknown[] | null,
+  ignoreAreasOverride?: readonly unknown[],
 ): Promise<DecisionSnapshot> {
   const [v] = await tx
     .select({
