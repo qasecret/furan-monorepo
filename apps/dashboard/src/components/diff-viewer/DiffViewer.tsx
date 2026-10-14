@@ -272,7 +272,13 @@ export function DiffViewer({
   // `checkpointContexts` keyed by screenshot id. Top-level fields on
   // `data` are kept for back-compat (and as a fallback) but only carry
   // the FIRST checkpoint's resolution.
-  const currentContext = useMemo(() => {
+  //
+  // The context is the SELECTED step's (the one Save writes to), not the
+  // displayed candidate's, which falls back to the first screenshot. Its
+  // saved regions come only from its own context: until that has loaded they
+  // are empty, never step 1's, and Save waits (`stepContextLoaded`).
+  const contextKey = activeCheckpointId ?? candidateScreenshot?.id;
+  const { currentContext, stepContextLoaded } = useMemo(() => {
     const ctxs =
       (
         data as {
@@ -286,15 +292,18 @@ export function DiffViewer({
           >;
         } | null
       )?.checkpointContexts ?? {};
-    if (candidateScreenshot?.id && ctxs[candidateScreenshot.id]) {
-      return ctxs[candidateScreenshot.id]!;
-    }
+    const own = contextKey ? ctxs[contextKey] : undefined;
+    if (own) return { currentContext: own, stepContextLoaded: true };
     return {
-      baselineScreenshot: data?.baselineScreenshot ?? null,
-      baselineSource: data?.baselineSource ?? null,
-      variationIgnoreAreas: data?.variationIgnoreAreas ?? null,
+      currentContext: {
+        baselineScreenshot: data?.baselineScreenshot ?? null,
+        baselineSource: data?.baselineSource ?? null,
+        // Never the run-level (step 1) regions for another step.
+        variationIgnoreAreas: null,
+      },
+      stepContextLoaded: false,
     };
-  }, [data, candidateScreenshot]);
+  }, [data, contextKey]);
 
   const baselineScreenshot = currentContext.baselineScreenshot;
 
@@ -654,7 +663,11 @@ export function DiffViewer({
             <div id="diff-viewer-toolbar">
               <ViewerToolbar
                 runId={runId}
-                checkpointId={activeCheckpointId}
+                // No step to save to until its own context (and so its saved
+                // regions) has loaded: Save stays disabled meanwhile.
+                checkpointId={
+                  stepContextLoaded ? activeCheckpointId : undefined
+                }
                 projectId={data?.projectId ?? ""}
                 project={{
                   dynamicTextEnabled: project?.dynamicTextEnabled ?? false,

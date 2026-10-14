@@ -389,6 +389,29 @@ describe("StepCard approve of an older capture", () => {
     expect(document.activeElement).toBe(button("step-approve-c1"));
   });
 
+  test("a question left open when the step is decided elsewhere does not come back", async () => {
+    const card = renderCard(stale());
+    fireEvent.click(button("step-approve-c1"));
+    await screen.findByTestId("stale-step-dialog");
+
+    // Another reviewer decides the step: the question goes away with it...
+    card.show(
+      cp({
+        state: "approved",
+        decision: decision("approved"),
+        newerCapture: NEWER,
+      } as Partial<StepCheckpoint>),
+    );
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    // ...and the undo makes it pending again: nobody asked, so nothing opens.
+    card.show(stale());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
   test("Reject asks nothing: a rejection never makes the older image the baseline", () => {
     renderCard(stale());
     fireEvent.click(button("step-reject-c1"));

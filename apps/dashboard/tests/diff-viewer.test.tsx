@@ -92,6 +92,7 @@ interface MockData {
   statusOverride?: "passed" | "failed" | null;
   prevRunId: string | null;
   nextRunId: string | null;
+  checkpointContexts?: Record<string, unknown>;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -1038,6 +1039,17 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
   afterEach(() => cleanup());
 
   test("Save on step 2 sends step 2's checkpoint id", () => {
+    // The run payload carries step 2's own context, as the server sends it.
+    mockGetByIdData = {
+      ...defaultMockData,
+      checkpointContexts: {
+        "cp-2": {
+          baselineScreenshot: null,
+          baselineSource: null,
+          variationIgnoreAreas: null,
+        },
+      },
+    };
     const r = render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
     );
@@ -1052,6 +1064,54 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
     expect(setIgnoreAreasSpy.mock.calls[0]![0]).toEqual(
       expect.objectContaining({ runId: RUN_ID, checkpointId: "cp-2" }),
     );
+  });
+
+  // The hydration window: the selected step is in the list, but the run
+  // payload carries no context for it yet. Its saved regions must not fall
+  // back to step 1's (the run-level fields), and Save waits for its own.
+  test("a step without its own context hydrates no step-1 regions and holds Save", () => {
+    const step1Region = {
+      x: 5,
+      y: 5,
+      width: 10,
+      height: 10,
+      viewport: "1280x720",
+      paddingPx: 0,
+      kind: "ignore",
+    };
+    mockGetByIdData = {
+      ...defaultMockData,
+      screenshots: [
+        { id: "cp-1", viewport: "1280x720" },
+        { id: "cp-2", viewport: "1280x720" },
+      ],
+      variationIgnoreAreas: [step1Region],
+      checkpointContexts: {
+        "cp-1": {
+          baselineScreenshot: null,
+          baselineSource: null,
+          variationIgnoreAreas: [step1Region],
+        },
+      },
+    };
+    useViewerStore.setState({
+      savedRunIgnoreAreas: [],
+      savedVariationIgnoreAreas: [],
+    });
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+    );
+    expect(useViewerStore.getState().savedVariationIgnoreAreas).toEqual([]);
+    act(() => {
+      useViewerStore.setState({
+        ignoreEditMode: "variation",
+        draftIgnoreAreas: [draft],
+      });
+    });
+    const save = r.getByTestId("ignore-save-button") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(setIgnoreAreasSpy).not.toHaveBeenCalled();
   });
 
   test("Save waits for the first step to resolve: no write without a checkpoint", () => {

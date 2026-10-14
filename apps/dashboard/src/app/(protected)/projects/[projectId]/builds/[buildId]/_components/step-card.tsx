@@ -177,7 +177,14 @@ export const StepCard = memo(function StepCard({
   // button while it is open; focus goes back to it on Cancel, and follows the
   // decision on Confirm as a plain Approve's would.
   const newerCapture = checkpoint.newerCapture ?? null;
+  // The question exists only while this step can be approved here; once it
+  // is decided elsewhere (or loses its newer capture) a question left open
+  // ends with it, and never comes back by itself.
+  const canAskStale = canReview && needsReviewer && newerCapture !== null;
   const [staleOpener, setStaleOpener] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!canAskStale) setStaleOpener(null);
+  }, [canAskStale]);
   const returnFocusTo = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (staleOpener) {
@@ -268,7 +275,7 @@ export const StepCard = memo(function StepCard({
                 </DisabledAwareButton>
               </>
             )}
-            {canReview && needsReviewer && newerCapture && (
+            {canAskStale && newerCapture && (
               <StaleStepConfirm
                 buildName={newerCapture.buildName}
                 open={staleOpener !== null}
