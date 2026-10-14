@@ -8,21 +8,20 @@ import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
-import { batchHref, type ReviewContext } from "@/lib/review-url";
-
-/**
- * What a link in the panel carries from the review context. The panel is
- * beside every batch page, so the status and facets travel to the next batch
- * and `props` (the panel's own filter) stays on the URL. Branch and search
- * belong to the Batches page.
- */
-const PANEL_LINK_KEYS = ["status", "facets", "props"] as const;
+import {
+  batchHref,
+  PANEL_LINK_KEYS,
+  type ReviewContext,
+} from "@/lib/review-url";
 
 interface Props {
   build: BuildRowData;
   projectId: string;
   selected: boolean;
-  /** The review context in the URL; the link carries it (see above). */
+  /**
+   * The review context in the URL. The link carries the status, facets and
+   * `props` of it (`PANEL_LINK_KEYS`); branch and search belong to Batches.
+   */
   context?: ReviewContext;
 }
 

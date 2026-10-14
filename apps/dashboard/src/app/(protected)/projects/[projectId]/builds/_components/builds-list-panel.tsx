@@ -60,7 +60,7 @@ export function BuildsListPanel({ projectId }: Props) {
     setPaging(page);
   }
 
-  const { data, isLoading, error, refetch, isFetching } =
+  const { data, isLoading, error, refetch, isFetching, isPlaceholderData } =
     trpc.builds.list.useQuery(
       {
         projectId,
@@ -89,7 +89,10 @@ export function BuildsListPanel({ projectId }: Props) {
   }
 
   const onLoadMore = () => {
-    if (!data?.nextCursor) return;
+    // While the previous filter's page is still showing (`placeholderData`), its
+    // cursor is not this filter's: appending it would page the new filter from
+    // the old one's place.
+    if (isPlaceholderData || !data?.nextCursor) return;
     setPaging({
       key: propsKey,
       cursor: data.nextCursor,
@@ -203,6 +206,7 @@ export function BuildsListPanel({ projectId }: Props) {
           <Button
             variant="secondary"
             onClick={onLoadMore}
+            disabled={isPlaceholderData}
             className="h-8 w-full text-xs"
           >
             Load more

@@ -86,6 +86,12 @@ const ALL_KEYS: ReadonlyArray<keyof ReviewContext> = [
 /** What travels along the loop: batch and viewer links carry these two. */
 const LOOP_KEYS: ReadonlyArray<keyof ReviewContext> = ["status", "facets"];
 
+/**
+ * What a link in the builds panel carries: the loop keys, plus `props` (the
+ * panel's own filter, which stays on the URL beside every batch page).
+ */
+export const PANEL_LINK_KEYS = [...LOOP_KEYS, "props"] as const;
+
 // ---------- normalization ----------
 
 function cleanFacets(raw: unknown): StepFacets {

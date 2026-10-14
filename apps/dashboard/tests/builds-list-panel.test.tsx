@@ -265,13 +265,69 @@ describe("BuildsListPanel", () => {
       isLoading: false,
       error: null,
     });
+    const before = listMock.mock.calls.length;
     urlState.search = "props=env%3Astaging";
     rerender(<BuildsListPanel projectId="p1" />);
+    // No query asked after the change, not only the last, carries the old
+    // filter's cursor (it would page the new filter from the old one's place).
+    const after = listMock.mock.calls.slice(before);
+    expect(after.length).toBeGreaterThan(0);
+    for (const [input] of after) {
+      expect((input as { cursor?: string }).cursor).toBeUndefined();
+    }
     expect(lastInput().cursor).toBeUndefined();
     expect(lastInput().properties).toEqual({ env: "staging" });
     expect(screen.getByTestId("build-list-item-b7")).toBeDefined();
     expect(screen.queryByTestId("build-list-item-b1")).toBeNull();
     expect(screen.queryByTestId("build-list-item-b3")).toBeNull();
+  });
+
+  test("Load more is held back while the previous filter's page is still showing", () => {
+    const mk = (id: string) => ({ ...item, id });
+    listMock.mockReturnValue({
+      data: { items: [mk("b1")], nextCursor: "cur-old" },
+      isLoading: false,
+      isPlaceholderData: false,
+      error: null,
+    });
+    const { rerender } = render(<BuildsListPanel projectId="p1" />);
+
+    // The filter changes, and the query keeps the previous filter's data in
+    // view until the new one answers. Its cursor belongs to the old filter.
+    urlState.search = "props=env%3Astaging";
+    listMock.mockReturnValue({
+      data: { items: [mk("b1")], nextCursor: "cur-old" },
+      isLoading: false,
+      isPlaceholderData: true,
+      error: null,
+    });
+    rerender(<BuildsListPanel projectId="p1" />);
+    const button = screen.getByRole("button", {
+      name: /load more/i,
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const before = listMock.mock.calls.length;
+    fireEvent.click(button);
+    // Nothing was appended, and no query was asked for the old cursor.
+    const asked = listMock.mock.calls.slice(before);
+    for (const [input] of asked) {
+      expect((input as { cursor?: string }).cursor).toBeUndefined();
+    }
+
+    // The new filter has answered: Load more works, with the new cursor.
+    listMock.mockReturnValue({
+      data: { items: [mk("b7")], nextCursor: "cur-new" },
+      isLoading: false,
+      isPlaceholderData: false,
+      error: null,
+    });
+    rerender(<BuildsListPanel projectId="p1" />);
+    const ready = screen.getByRole("button", {
+      name: /load more/i,
+    }) as HTMLButtonElement;
+    expect(ready.disabled).toBe(false);
+    fireEvent.click(ready);
+    expect(lastInput().cursor).toBe("cur-new");
   });
 
   test("build links keep the review context", () => {

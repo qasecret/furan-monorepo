@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   batchHref,
+  PANEL_LINK_KEYS,
   parseReviewContext,
   serializeReviewContext,
   toBuildsListFilter,
@@ -475,6 +476,10 @@ describe("batchHref", () => {
     expect(batchHref("p1", "b1", ctx)).toBe(
       "/projects/p1/builds/b1?status=failed&browser=chrome",
     );
+  });
+
+  it("the panel's link keys are the loop keys plus props", () => {
+    expect(PANEL_LINK_KEYS).toEqual(["status", "facets", "props"]);
   });
 
   it("anchors on a run, after the query", () => {
