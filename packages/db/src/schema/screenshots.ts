@@ -63,6 +63,15 @@ export const screenshots = pgTable(
     // the diff-worker; a reviewer's decision lives in `checkpoint_decisions`.
     verdict: checkpointVerdictEnum("verdict"),
     verdictAt: timestamp("verdict_at", { withTimezone: true }),
+    // ADR-074 (migration 0041): true exactly when the step has an active
+    // decision (a `checkpoint_decisions` row with `reverted_at IS NULL`).
+    // A decision never rewrites the verdict, so without it every scan for
+    // pending steps had to probe `checkpoint_decisions` for all of a project's
+    // history. Maintained ONLY by the trigger
+    // `checkpoint_decisions_sync_active_flag`; never write it from the app. It
+    // is an index-usable pre-filter: `pendingStepCondition` still decides with
+    // its `NOT EXISTS` on `checkpoint_decisions`.
+    hasActiveDecision: boolean("has_active_decision").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -87,5 +96,23 @@ export const screenshots = pgTable(
     pendingIdx: index("screenshots_pending_idx")
       .on(t.runId, t.createdAt)
       .where(sql`${t.verdict} IN ('new', 'unresolved')`),
+    // ADR-074: the open steps, those a verdict makes candidates for review
+    // and no active decision has settled. It holds only the work still to do,
+    // so the project-wide pending scans (the queue's next batch and counts,
+    // the badge, the "needs review" list) stay proportional to it rather than
+    // to the project's history. `id` makes it covering: those scans need only
+    // the step's id, run and project, so they read the index alone.
+    pendingOpenIdx: index("screenshots_pending_open_idx")
+      .on(t.projectId, t.runId, t.createdAt, t.id)
+      .where(
+        sql`${t.verdict} IN ('new', 'unresolved') AND NOT ${t.hasActiveDecision}`,
+      ),
+    // ADR-074: the steps not diffed yet (a NULL verdict), which make their
+    // run non-reviewable (`reviewableRunCondition`). Every pending scan asks
+    // that of each candidate step's run; this answers from a tiny index
+    // instead of reading every step of the run.
+    undiffedIdx: index("screenshots_undiffed_idx")
+      .on(t.runId)
+      .where(sql`${t.verdict} IS NULL`),
   }),
 );

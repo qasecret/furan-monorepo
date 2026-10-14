@@ -29,6 +29,11 @@ import { UNREVIEWABLE_LIFECYCLE_LIST } from "./legality.js";
  * - it has no active decision, and
  * - its run is reviewable (`reviewableRunCondition`).
  *
+ * "No active decision" is the `NOT EXISTS` on `checkpoint_decisions`, with
+ * `NOT screenshots.has_active_decision` beside it as a pre-filter (ADR-074):
+ * a decided step keeps its verdict, so without the flag every pending scan
+ * would probe the decisions of the project's whole history.
+ *
  * The conditions are over `screenshots` joined to `test_runs` on
  * `screenshots.run_id = test_runs.id`; the caller does the join and adds its
  * own explicit `project_id` filter (the queries here do).
@@ -102,6 +107,12 @@ export function pendingStepCondition(facets?: StepFacets): SQL {
   const activeDecision = sql`(select 1 from ${checkpointDecisions} where ${checkpointDecisions.screenshotId} = ${screenshots.id} and ${isNull(checkpointDecisions.revertedAt)})`;
   return and(
     inArray(screenshots.verdict, ["new", "unresolved"]),
+    // ADR-074: a pre-filter the partial index `screenshots_pending_open_idx`
+    // can serve (a literal, not a bound parameter, so its predicate is
+    // provably implied). The trigger on `checkpoint_decisions` keeps the flag
+    // exact, but correctness never rests on it: the `NOT EXISTS` below stays
+    // the definition, so a flag left false would still be filtered there.
+    sql`not ${screenshots.hasActiveDecision}`,
     notExists(activeDecision),
     reviewableRunCondition(),
     facetCondition(facets),
