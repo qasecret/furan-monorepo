@@ -27,7 +27,12 @@ import {
   type VisualFixture,
 } from "../../src/visual/fixture.js";
 import { timeMasks } from "../../src/visual/masks.js";
-import { DISCOVERED, STATES, staticRoutes } from "../../src/visual/routes.js";
+import {
+  DISCOVERED,
+  resolvePath,
+  STATES,
+  staticRoutes,
+} from "../../src/visual/routes.js";
 import { unclip } from "../../src/visual/unclip.js";
 import { uploadShots } from "../../src/visual/upload.js";
 
@@ -78,6 +83,8 @@ const STATIC_NAMES = staticRoutes({
   projectId: "",
   buildId: "",
   unresolvedRunId: "",
+  multiRunId: "",
+  multiBuildId: "",
 }).map((r) => r.name);
 
 /**
@@ -317,12 +324,13 @@ test.describe.serial("visual sweep @visual", () => {
     // compiles. Best effort: a route that fails here is still visited, and
     // judged, by its own test.
     for (const r of staticRoutes(fixture)) {
+      const path = resolvePath(r.path, fixture);
       try {
-        await visit(page, r.path);
+        await visit(page, path);
         await page.waitForLoadState("networkidle", { timeout: NAV_TIMEOUT });
       } catch (err) {
         console.warn(
-          `[visual] pre-warm ${r.path}: ${String(err).split("\n")[0]}`,
+          `[visual] pre-warm ${path}: ${String(err).split("\n")[0]}`,
         );
       }
     }
@@ -448,6 +456,10 @@ test.describe.serial("visual sweep @visual", () => {
    * (`landed-elsewhere`), not failed — several routes redirect by design.
    * Contrast problems are annotated and also collected for the theme's
    * `contrast-enforced` check.
+   *
+   * `hold` is for a state the pointer holds (a hover): it runs after the page is
+   * un-clipped, since both the corner park below and the un-clipping re-layout
+   * would otherwise undo it.
    */
   async function shoot(
     p: Page,
@@ -455,6 +467,7 @@ test.describe.serial("visual sweep @visual", () => {
     theme: Theme,
     name: string,
     testInfo: TestInfo,
+    hold?: (p: Page) => Promise<void>,
   ): Promise<void> {
     // No response = a same-document navigation, which is fine.
     const status = v.response?.status() ?? 200;
@@ -471,6 +484,7 @@ test.describe.serial("visual sweep @visual", () => {
       });
     }
     await unclip(p);
+    await hold?.(p);
     const png = await stableScreenshot(p);
     const file = join(OUT, theme, `${name}.png`);
     mkdirSync(dirname(file), { recursive: true });
@@ -532,12 +546,13 @@ test.describe.serial("visual sweep @visual", () => {
       for (const name of STATIC_NAMES) {
         test(name, async ({}, testInfo) => {
           const route = staticRoutes(fixture).find((r) => r.name === name)!;
-          const p = PUBLIC_PATHS.has(route.path)
+          const path = resolvePath(route.path, fixture);
+          const p = PUBLIC_PATHS.has(path)
             ? anonPage
             : route.as === "editor"
               ? editorPage
               : page;
-          const v = await visit(p, route.path);
+          const v = await visit(p, path);
           await shoot(p, v, theme, route.name, testInfo);
         });
       }
@@ -557,10 +572,10 @@ test.describe.serial("visual sweep @visual", () => {
       for (const s of STATES) {
         test(s.name, async ({}, testInfo) => {
           const p = s.as === "editor" ? editorPage : page;
-          const v = await visit(p, s.path);
+          const v = await visit(p, resolvePath(s.path, fixture));
           await settle(p);
           await s.open(p);
-          await shoot(p, v, theme, s.name, testInfo);
+          await shoot(p, v, theme, s.name, testInfo, s.hold);
         });
       }
     });
