@@ -1,9 +1,11 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -18,28 +20,36 @@ vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
 const getByIdMock = vi.fn();
 const listMock = vi.fn();
 const listCheckpointsMock = vi.fn();
-const bulkApproveMock = vi.fn();
-const invalidateMock = vi.fn();
+const previewMock = vi.fn();
 vi.mock("@/lib/trpc", () => ({
   trpc: {
-    useUtils: () => ({
-      runs: {
-        list: { invalidate: invalidateMock },
-        listCheckpoints: { invalidate: invalidateMock },
-      },
-      builds: { getById: { invalidate: invalidateMock } },
-    }),
     builds: { getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) } },
     runs: {
       list: { useQuery: (...a: unknown[]) => listMock(...a) },
       listCheckpoints: {
         useQuery: (...a: unknown[]) => listCheckpointsMock(...a),
       },
-      bulkApproveByBuild: {
-        useMutation: () => ({ mutate: bulkApproveMock, isPending: false }),
+    },
+    review: {
+      previewApproveBuild: {
+        useQuery: (...a: unknown[]) => previewMock(...a),
       },
     },
   },
+}));
+
+// The review hook is mocked: its own suite covers what a decision does. The
+// page's job is to ask, with the right counts, and to react to the answer.
+const reviewSpies = vi.hoisted(() => ({
+  decide: vi.fn(),
+  undo: vi.fn(),
+  approveBuild: vi.fn(),
+  decideGroup: vi.fn(),
+  isInFlight: vi.fn(() => false),
+}));
+vi.mock("@/lib/review/use-review-mutations", () => ({
+  useReviewMutations: () => reviewSpies,
+  useIsInFlight: () => false,
 }));
 
 const replaceMock = vi.fn();
@@ -57,6 +67,13 @@ import { BatchPage } from "@/app/(protected)/projects/[projectId]/builds/[buildI
 
 afterEach(cleanup);
 beforeEach(() => {
+  reviewSpies.approveBuild.mockReset();
+  previewMock.mockReturnValue({
+    data: PREVIEW,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
   // Default: runs have no resolvable checkpoints yet, so each renders as a
   // single fallback result row carrying the test name.
   listCheckpointsMock.mockReturnValue({
@@ -64,6 +81,15 @@ beforeEach(() => {
     isLoading: false,
   });
 });
+
+const PREVIEW = {
+  pendingCheckpoints: 2,
+  tests: 2,
+  rejectedLeftAsIs: 0,
+  notReviewableTests: 0,
+  capped: false,
+  cap: 500,
+};
 
 const build = {
   id: "b1",
@@ -79,6 +105,7 @@ const build = {
   abortedCount: 0,
   newCount: 0,
   stepsTotal: 4,
+  pendingCheckpoints: 2,
   runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
@@ -234,7 +261,43 @@ describe("BatchPage", () => {
     expect(screen.getByText("Page1Card")).toBeDefined(); // page 1 still present
   });
 
-  test("Approve all calls bulkApproveByBuild and invalidates the lists on success", async () => {
+  test("the toolbar counts the build's pending steps", () => {
+    getByIdMock.mockReturnValue({
+      data: { ...build, pendingCheckpoints: 37 },
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
+    expect(button.textContent).toContain("Approve pending (37)");
+    expect(button.disabled).toBe(false);
+  });
+
+  test("Approve pending is disabled when no step of the build is pending", () => {
+    getByIdMock.mockReturnValue({
+      data: { ...build, pendingCheckpoints: 0, unresolvedCount: 3 },
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
+    expect(button.textContent).toContain("Approve pending (0)");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  test("Approve pending asks first, with the preview's counts, and approves only on confirm", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -246,25 +309,193 @@ describe("BatchPage", () => {
       isError: false,
       refetch: vi.fn(),
     });
-    bulkApproveMock.mockClear();
-    invalidateMock.mockClear();
-    // Fire the mutation's success path so the post-approve invalidate runs —
-    // this is what flips the just-approved rows out of "Unresolved".
-    bulkApproveMock.mockImplementationOnce(
-      (_input: unknown, opts: { onSuccess?: (r: unknown) => void }) =>
-        opts?.onSuccess?.({ approved: 3, capped: false, cap: 200 }),
-    );
     render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
     fireEvent.click(screen.getByTestId("batch-approve-all"));
-    expect(bulkApproveMock).toHaveBeenCalledWith(
+    expect(
+      screen.getByRole("heading", { name: "Approve 2 pending steps?" }),
+    ).toBeDefined();
+    expect(previewMock).toHaveBeenLastCalledWith(
       { buildId: "b1" },
-      expect.anything(),
+      expect.objectContaining({ enabled: true }),
     );
-    // runs.list + runs.listCheckpoints + builds.getById all invalidated.
-    expect(invalidateMock).toHaveBeenCalledTimes(3);
+    expect(reviewSpies.approveBuild).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("approve-pending-confirm"));
+    expect(reviewSpies.approveBuild).toHaveBeenCalledOnce();
+    expect(reviewSpies.approveBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ buildId: "b1", expectedCount: 2 }),
+    );
   });
 
-  test("canReview=false hides the Approve-all button but still lists the test rows", async () => {
+  test("after the batch is approved the dialog closes and the list starts over from its first page", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    const page = (cursor: string | undefined) => ({
+      data: cursor
+        ? {
+            items: [{ id: "r2", name: "Page2Card", status: "unresolved" }],
+            nextCursor: null,
+          }
+        : {
+            items: [{ id: "r1", name: "Page1Card", status: "unresolved" }],
+            nextCursor: "cur1",
+          },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    listMock.mockImplementation((args: { cursor?: string }) =>
+      page(args.cursor),
+    );
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    await waitFor(() => expect(screen.getByText("Page1Card")).toBeDefined());
+    fireEvent.click(screen.getByText("Load more"));
+    await waitFor(() => expect(screen.getByText("Page2Card")).toBeDefined());
+    expect(listMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "cur1" }),
+    );
+
+    fireEvent.click(screen.getByTestId("batch-approve-all"));
+    fireEvent.click(screen.getByTestId("approve-pending-confirm"));
+    act(() => {
+      const call = reviewSpies.approveBuild.mock.calls[0]![0] as {
+        onSuccess?: () => void;
+        onSettled?: () => void;
+      };
+      call.onSuccess?.();
+      call.onSettled?.();
+    });
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // Back on page one: approved tests drop out of a filtered list instead of
+    // lingering in the pages already loaded.
+    expect(listMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: undefined }),
+    );
+    expect(screen.queryByText("Page2Card")).toBeNull();
+  });
+
+  test("closing the Approve-pending question returns focus to its toolbar button", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    const trigger = screen.getByTestId("batch-approve-all");
+    // A click that leaves focus elsewhere (it does not focus the button in
+    // every browser): the button is still where focus must come back to.
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("approve-pending-cancel"),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("approve-pending-cancel"));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  test("after the last pending step is approved the toolbar button keeps focus and reports itself unavailable", async () => {
+    const withPending = (n: number) => ({
+      data: { ...build, pendingCheckpoints: n },
+      isLoading: false,
+      isError: false,
+    });
+    getByIdMock.mockReturnValue(withPending(2));
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const view = render(
+      <BatchPage projectId="p1" buildId="b1" canReview={true} />,
+    );
+    const trigger = screen.getByTestId("batch-approve-all");
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("approve-pending-confirm"));
+    act(() => {
+      const call = reviewSpies.approveBuild.mock.calls[0]![0] as {
+        onSuccess?: () => void;
+        onSettled?: () => void;
+      };
+      call.onSuccess?.();
+      call.onSettled?.();
+    });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+    // The refetch of the build brings the count down to nothing.
+    getByIdMock.mockReturnValue(withPending(0));
+    view.rerender(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+
+    const after = screen.getByTestId("batch-approve-all");
+    expect(after).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
+    expect(after.getAttribute("aria-disabled")).toBe("true");
+    expect(after.textContent).toContain("Approve pending (0)");
+  });
+
+  test("a run's hand-set status reaches its result rows", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "r1",
+            name: "Checkout",
+            status: "passed",
+            statusOverride: "failed",
+          },
+        ],
+        nextCursor: null,
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    listCheckpointsMock.mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "c1",
+            name: "home",
+            verdict: "passed",
+            state: "passed",
+            decision: null,
+            viewport: "1280x720",
+            browser: "chromium",
+            os: "linux",
+            imageKey: null,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    const row = await screen.findByTestId("result-row-r1");
+    expect(within(row).getByText("Failed")).toBeDefined();
+  });
+
+  test("canReview=false hides the Approve-pending button but still lists the test rows", async () => {
     getByIdMock.mockReturnValue({
       data: build,
       isLoading: false,
@@ -290,8 +521,7 @@ describe("BatchPage", () => {
     render(<BatchPage projectId="p1" buildId="b1" canReview={false} />);
     await waitFor(() => expect(screen.getByText("Checkout")).toBeDefined());
     expect(screen.queryByTestId("batch-approve-all")).toBeNull();
-    // Review (approve/reject) now lives in the diff viewer, opened from a row's
-    // step cards — there are no inline approve/reject controls on the rows.
+    // The rows stay; a reader who may not review gets no review controls.
     expect(screen.getByTestId("result-row-r1")).toBeDefined();
   });
 });

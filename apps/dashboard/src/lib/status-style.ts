@@ -1,5 +1,6 @@
-import type { RunStatus } from "@furan/shared-types";
+import type { CheckpointReviewState, RunStatus } from "@furan/shared-types";
 import {
+  BadgeCheck,
   Ban,
   CircleAlert,
   CircleCheck,
@@ -8,12 +9,15 @@ import {
   CircleX,
   LoaderCircle,
   type LucideIcon,
+  ThumbsDown,
 } from "lucide-react";
 
 /**
- * The ONLY status -> presentation map in the dashboard. Every surface that
- * shows a run/build status (badge, list rows, batch header, result rows,
- * sparkline) reads from here, so a status looks the same everywhere.
+ * The status -> presentation map for a run's status. Every surface that shows
+ * a run/build status (badge, list rows, batch header, result rows, sparkline)
+ * reads from here, so a status looks the same everywhere. A single
+ * checkpoint's review state (approved and rejected steps included) has its own
+ * map, `REVIEW_STATE_STYLE`, further down this file.
  *
  * Colours come from the `status-*` design tokens (`tokens.css`). Every class is
  * a full literal string: Tailwind's scanner cannot see class names assembled at
@@ -116,5 +120,35 @@ export const STATUS_STYLE = {
 export function statusStyle(status: string): StatusStyle {
   return Object.hasOwn(STATUS_STYLE, status)
     ? STATUS_STYLE[status as RunStatus]
+    : STATUS_STYLE.empty;
+}
+
+/**
+ * Per-checkpoint review state. A reviewer's decision replaces the diff verdict,
+ * so `approved` keeps the `passed` colours and `rejected` keeps the `failed`
+ * colours, each with its own icon, label and tooltip.
+ */
+export const REVIEW_STATE_STYLE = {
+  new: STATUS_STYLE.new,
+  passed: STATUS_STYLE.passed,
+  unresolved: STATUS_STYLE.unresolved,
+  approved: {
+    ...STATUS_STYLE.passed,
+    icon: BadgeCheck,
+    label: "Approved",
+    tooltip: "Approved by a reviewer",
+  },
+  rejected: {
+    ...STATUS_STYLE.failed,
+    icon: ThumbsDown,
+    label: "Rejected",
+    tooltip: "Rejected by a reviewer",
+  },
+} as const satisfies Record<CheckpointReviewState, StatusStyle>;
+
+/** Style for a review state; anything unrecognised renders as `empty`. */
+export function reviewStateStyle(state: string): StatusStyle {
+  return Object.hasOwn(REVIEW_STATE_STYLE, state)
+    ? REVIEW_STATE_STYLE[state as CheckpointReviewState]
     : STATUS_STYLE.empty;
 }

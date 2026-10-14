@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import {
-  nextUnresolvedCheckpointId,
+  nextPendingCheckpointId,
   type CheckpointSummary,
 } from "./checkpoint-nav";
 import { ContextualHeader } from "./ContextualHeader";
@@ -18,6 +18,7 @@ import type { DiffRegion } from "./layers/regionTypes";
 import { useReviewActions } from "./review-actions";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
+import { StaleStepCallout } from "./StaleStepCallout";
 import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
@@ -30,6 +31,7 @@ import { ViewportSwitcher } from "./ViewportSwitcher";
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -170,24 +172,25 @@ export function DiffViewer({
     [projectId, runId, router],
   );
 
-  // ADR-038: map checkpoint items to CheckpointSummary[] for the rail.
-  // listCheckpoints now returns a derived per-checkpoint status:
-  //   "new"        if the variation has no baseline yet
-  //   "unresolved" if any diff_regions exist for the (run_id, viewport)
-  //   "passed"     otherwise
+  // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
+  // `state` is the review state (new / passed / unresolved / approved /
+  // rejected), null until the step has been diffed. The legacy `status` alias
+  // is not read: the optimistic review patches move `state`.
   // diffPercent stays null until diff_regions gains a screenshot_id column
   // (deferred — see runs.ts listCheckpoints comment).
   const checkpointSummaries: CheckpointSummary[] = useMemo(() => {
     return (checkpointsQuery.data?.items ?? []).map((item) => ({
       id: item.id,
       name: item.name ?? item.id,
-      status: item.status,
+      state: item.state,
       diffPercent: null,
     }));
   }, [checkpointsQuery.data]);
 
-  const advanceToNextUnresolved = useCallback(() => {
-    const nextId = nextUnresolvedCheckpointId(
+  // After a decision the viewer moves to the next step that still needs a
+  // reviewer (wrapping within the run), or stays when none does.
+  const advanceToNextPending = useCallback(() => {
+    const nextId = nextPendingCheckpointId(
       checkpointSummaries,
       selectedCheckpointId,
     );
@@ -217,14 +220,16 @@ export function DiffViewer({
 
   // One set of review actions shared by the <ApprovalBar> buttons and the
   // A / R keyboard shortcuts, so a keypress always takes the button's path:
-  // per-checkpoint approve, the review-legal status gate, unsaved ignore
-  // regions folded in, toast + auto-advance to the next unresolved step.
+  // per-checkpoint decision, the step-state and run gates, unsaved ignore
+  // regions folded in, the older-capture question, and auto-advance to the
+  // next pending step.
   const review = useReviewActions({
     runId,
     checkpointId: activeCheckpointId,
     status: data?.status,
-    onResolved: advanceToNextUnresolved,
+    onResolved: advanceToNextPending,
   });
+  const undoCount = useUndoStore((s) => s.stack.length);
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
   // viewer picks up freshly written diff regions, baselineSource, etc.
@@ -471,6 +476,8 @@ export function DiffViewer({
       : null,
     onApprove: review.approve,
     onReject: review.reject,
+    // ⌘Z takes back the newest review action: no id.
+    onUndo: () => review.undo(),
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
@@ -613,7 +620,6 @@ export function DiffViewer({
               diffRegions={regions}
               inline
               showStatus={false}
-              checkpointCount={checkpointSummaries.length}
             />
           }
         />
@@ -625,6 +631,19 @@ export function DiffViewer({
             runId={runId}
             checkpointId={activeCheckpointId}
           />
+          {/* An older run's step: approving it would put its image back as
+              the baseline. Only a step that still needs a reviewer asks. */}
+          {review.view === "pending" && review.newerCapture && (
+            <div className="border-b border-edge px-3 py-2">
+              <StaleStepCallout
+                newer={{
+                  buildName: review.newerCapture.buildName,
+                  runId: review.newerCapture.runId,
+                  projectId: data.projectId,
+                }}
+              />
+            </div>
+          )}
         </div>
         {isEmpty ? (
           <EmptyRunCard
@@ -750,7 +769,8 @@ export function DiffViewer({
                 />
               )}
               {/* Keyboard hint bar (reference TestStep): floats over the
-                  canvas; ←/→ navigate steps, A approve, R reject. */}
+                  canvas; ←/→ navigate steps, A approve, R reject, and ⌘Z
+                  undo while there is an action to take back. */}
               <div
                 className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
                 data-testid="diff-viewer-shortcut-hints"
@@ -779,6 +799,20 @@ export function DiffViewer({
                     </kbd>
                     reject
                   </span>
+                  {undoCount > 0 && (
+                    <>
+                      <span className="h-3 w-px bg-edge-strong" aria-hidden />
+                      <span
+                        className="flex items-center gap-1.5"
+                        data-testid="shortcut-hint-undo"
+                      >
+                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                          ⌘Z
+                        </kbd>
+                        undo
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

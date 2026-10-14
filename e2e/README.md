@@ -39,8 +39,9 @@ version`); older versions don't support it. Output: `e2e-coverage.md` /
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
 full-page PNG at a 1440×900 viewport, plus the interaction states in
-`STATES` (⌘K open, a menu open, a dialog open, a step card hovered), and runs
-axe `color-contrast` on each. The dashboard scrolls inside its own containers,
+`STATES` (⌘K open, a menu open, a dialog open, a step card hovered, a decided
+step, the Approve-pending question, the Undo toast), and runs axe
+`color-contrast` on each. The dashboard scrolls inside its own containers,
 never the document, so before capturing, `src/visual/unclip.ts` lets those
 containers grow to their content: the PNG and axe cover the whole page, not
 just the first 900px. It fails the route if any part of the page is still clipped
@@ -114,14 +115,27 @@ means every screenshot test passed.
   build.
 - **States the fixture never renders:** empty and error states, a selected
   region, menus opened from the keyboard, settings tabs other than the
-  default, and toasts. (The multi-step run covers step arrows and the
-  approved, rejected and pending-`new` steps; `state-step-hover` covers a
-  step card's hover toolbar.)
+  default, and toasts other than the review Undo toast. (The multi-step run
+  covers step arrows and the approved, rejected and pending-`new` steps;
+  `state-step-hover` covers a step card's hover toolbar; `state-decided-step`
+  the decision chip; `state-approve-pending` the Approve-pending question;
+  `state-undo-toast` the toast with its Undo action.)
 - **Contrast axe cannot decide.** axe `incomplete` results (text over an
   image or gradient, overlapped or pseudo-element backgrounds, …) are counted
   by reason (`messageKey`) per shot in `color-contrast.json` and annotated
   `color-contrast-incomplete`. They are reported, not enforced: only
   `outsideViewport` counts toward `contrast-enforced`.
+
+**A state that changes the fixture** (`state-undo-toast` approves the pending
+`profile` step to raise its toast) gives its `VisualState` a `cleanup`. The
+sweep runs it after the shot, in a `finally`, whether or not the shot
+succeeded: if the state clicked Approve it first waits (up to 15s) for that
+request to land or answer, so it cannot look before the approval commits; it
+then takes the decision back through the API and waits (up to 60s: an undo
+queues a re-diff) until every step has a verdict and `profile` reads `new`
+again, or fails the state. Such states are kept last in `STATES`, and the
+fixture must be left as it was found: every state, and both themes, share it.
+The other states never confirm or change anything.
 
 **Reviewing in Furan:**
 
@@ -152,7 +166,7 @@ scripts/    e2e.ts (orchestrator) · compose.ts · wait-health.ts · global-setu
 src/        env.ts (canonical URLs) · clients/{api-client,virtual-sdk} ·
             seed/{seed,load-seed} · coverage/{manifest,reporter} · fixtures/*.png ·
             visual/{fixture,routes,masks,unclip,upload}
-tests/      deploy · sdk · diff · rbac · branch · storage · ui
+tests/      deploy · sdk · diff · rbac · branch · review · storage · ui
 ```
 
 ## Coverage matrix
@@ -161,6 +175,15 @@ tests/      deploy · sdk · diff · rbac · branch · storage · ui
 IDs it covers via `coverAnnotations([...])`; the reporter renders
 `area → capability → state` (passed / failed / config-gated / MISSING). Add a
 capability by adding it to the manifest and tagging a test.
+
+`tests/ui/review-flow.spec.ts` (capability `review.ui_flow`, not `@visual`)
+drives the review flow in a real browser on data of its own: a project
+`review-flow-ui` and, per run, a branch of its own. It approves a step with `A`,
+takes it back with Ctrl+Z / ⌘Z, then confirms "Approve pending" on the batch
+page. It never touches the visual sweep's fixture. It is in `s3-full` but runs
+only with `E2E_BROWSER_DATA=1` (it needs a dashboard whose browser bundle
+reaches the api; see Known constraints); without it the spec is skipped, and the
+capability reads _config-gated_, so the nightly coverage gate is not affected.
 
 ## Known constraints
 
@@ -171,6 +194,21 @@ capability by adding it to the manifest and tagging a test.
   Server-rendered pages (login, builds, admin) work; client-data pages (the
   pixi diff viewer) need the api on the standard port **3000** — a
   dedicated-ports run (stop dev servers) or CI.
+- **`review-flow.spec.ts` needs the same thing, so it is opt-in.** It reads
+  and writes through the dashboard's _client-side_ calls, so it can pass only
+  against a dashboard whose browser bundle reaches this stack's api (a dev
+  server, as for the visual sweep), never against the stack's stock `:local`
+  image on the coexistence ports. It is skipped unless `E2E_BROWSER_DATA=1`. To
+  run it against a dev stack with such a dashboard:
+
+  ```bash
+  E2E_BROWSER_DATA=1 E2E_API_URL=http://localhost:3210 E2E_DASH_URL=http://localhost:3012 \
+    pnpm --filter @furan/e2e exec playwright test --project=s3-full tests/ui/review-flow.spec.ts
+  ```
+
+  A follow-up will make the Docker e2e stack single-origin, so the browser
+  reaches the api through the dashboard and this gate can come off.
+
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
   (an identical feature-branch capture returns `new`, not `passed`).
 - **Element-map-dependent** diff capabilities (ignore/layout regions, axe a11y,

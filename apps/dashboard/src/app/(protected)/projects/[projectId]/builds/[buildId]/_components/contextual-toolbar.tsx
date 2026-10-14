@@ -7,9 +7,9 @@ import {
   ListFilter,
   RefreshCw,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
-import { Button } from "@/components/ui/button";
+import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
+import { describeRefusal } from "@/lib/review/review-copy";
 
 export type Chip = "needs-review" | "all" | "passed";
 export type ResultView = "list" | "grid";
@@ -34,9 +35,14 @@ interface Props {
   onViewChange: (v: ResultView) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
-  canApproveAll: boolean;
-  onApproveAll: () => void;
-  isApproving: boolean;
+  /** The reader may review: shows the approve control. */
+  canApprovePending: boolean;
+  /** Steps in the build that still need a reviewer. */
+  pendingCount: number;
+  /** Opens the confirmation; nothing is approved before it is answered. */
+  onApprovePending: () => void;
+  /** The approve button, for the confirmation to return focus to. */
+  approveRef?: Ref<HTMLButtonElement>;
 }
 
 /** A labelled toolbar segment — uppercase micro-label over its controls. */
@@ -90,7 +96,7 @@ function Divider() {
 /**
  * Segmented action toolbar above the result table — mirrors the reference's
  * uppercase-labelled icon groups: View (list / grid), Test Results (refresh +
- * filter), and the bulk-approve maintenance action.
+ * filter), and the approve-pending maintenance action.
  */
 export function ContextualToolbar({
   chip,
@@ -99,9 +105,10 @@ export function ContextualToolbar({
   onViewChange,
   onRefresh,
   isRefreshing,
-  canApproveAll,
-  onApproveAll,
-  isApproving,
+  canApprovePending,
+  pendingCount,
+  onApprovePending,
+  approveRef,
 }: Props) {
   return (
     <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
@@ -160,20 +167,25 @@ export function ContextualToolbar({
         </DropdownMenu>
       </Segment>
 
-      {canApproveAll && (
+      {canApprovePending && (
         <>
           <Divider />
           <Segment label="Maintenance">
-            <Button
+            {/* Unavailable at 0, not natively disabled: it stays focusable, so
+                focus is not lost when the last pending step was just approved,
+                and it says why. */}
+            <DisabledAwareButton
+              ref={approveRef}
               variant="secondary"
               className="h-7 gap-1.5 px-3 text-xs"
-              data-testid="batch-approve-all"
-              disabled={isApproving}
-              onClick={onApproveAll}
+              testId="batch-approve-all"
+              disabled={pendingCount === 0}
+              reason={describeRefusal("nothing_to_approve")}
+              onClick={onApprovePending}
             >
               <CheckCheck className="h-3.5 w-3.5" aria-hidden />
-              Approve all
-            </Button>
+              {`Approve pending (${pendingCount})`}
+            </DisabledAwareButton>
           </Segment>
         </>
       )}

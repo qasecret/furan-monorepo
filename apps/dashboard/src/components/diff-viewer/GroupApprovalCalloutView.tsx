@@ -61,7 +61,7 @@ export function GroupApprovalCalloutView({
   const dialogCopy = isReject
     ? {
         title: "Reject this change everywhere it recurs?",
-        description: `The ${rejectRunCount}${capped ? "+" : ""} run${plural(rejectRunCount)} showing this change — including the one you're viewing — will be marked failed. Each whole run is failed (not just this checkpoint), heavier than approving.`,
+        description: `The ${rejectRunCount}${capped ? "+" : ""} run${plural(rejectRunCount)} showing this change — including the one you're viewing — will be marked failed. Only the steps with this change are rejected; the rest of each run is left as it is.`,
         confirmVariant: "destructive" as const,
         confirmLabel: isPending ? "Rejecting…" : "Reject all",
       }
