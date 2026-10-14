@@ -344,18 +344,29 @@ export function toBuildsListFilter(
  * The batch page for a build, optionally anchored on one of its runs. Carries
  * the status and facets (the context that travels the loop, §3.3); branch,
  * search and props belong to Batches and are not carried.
+ *
+ * `keep` names the context keys the link carries instead of that default. The
+ * builds panel sits beside every batch page, so it also keeps `props` (its
+ * filter) on each link.
  */
 export function batchHref(
   projectId: string,
   buildId: string,
   ctx?: Partial<ReviewContext>,
   runId?: string,
+  keep?: ReadonlyArray<keyof ReviewContext>,
 ): string {
   const anchor = runId ? `#run-${encodeURIComponent(runId)}` : "";
-  return `/projects/${encodeURIComponent(projectId)}/builds/${encodeURIComponent(buildId)}${loopQuery(ctx)}${anchor}`;
+  return `/projects/${encodeURIComponent(projectId)}/builds/${encodeURIComponent(buildId)}${loopQuery(ctx, keep)}${anchor}`;
 }
 
-/** The query a batch or viewer link carries: the status and facets. */
-export function loopQuery(ctx?: Partial<ReviewContext>): string {
-  return ctx ? serializeReviewContext(ctx, LOOP_KEYS) : "";
+/**
+ * The query a batch or viewer link carries: the status and facets, or the
+ * `keep` keys when a link needs more.
+ */
+export function loopQuery(
+  ctx?: Partial<ReviewContext>,
+  keep: ReadonlyArray<keyof ReviewContext> = LOOP_KEYS,
+): string {
+  return ctx ? serializeReviewContext(ctx, keep) : "";
 }

@@ -454,6 +454,29 @@ describe("batchHref", () => {
     ).toBe("/projects/p1/builds/b1");
   });
 
+  it("`keep` widens what the link carries (the builds panel keeps props)", () => {
+    const ctx = clean({
+      status: "failed",
+      facets: { browser: "chrome" },
+      branch: "main",
+      q: "x",
+      props: { env: "staging", team: "web" },
+    });
+    expect(
+      batchHref("p1", "b1", ctx, undefined, ["status", "facets", "props"]),
+    ).toBe(
+      "/projects/p1/builds/b1?status=failed&browser=chrome&props=env%3Astaging%2Cteam%3Aweb",
+    );
+    // The anchor still follows the query.
+    expect(batchHref("p1", "b1", ctx, "r1", ["props"])).toBe(
+      "/projects/p1/builds/b1?props=env%3Astaging%2Cteam%3Aweb#run-r1",
+    );
+    // Without `keep` nothing changes: status and facets only.
+    expect(batchHref("p1", "b1", ctx)).toBe(
+      "/projects/p1/builds/b1?status=failed&browser=chrome",
+    );
+  });
+
   it("anchors on a run, after the query", () => {
     expect(batchHref("p1", "b1", undefined, "r1")).toBe(
       "/projects/p1/builds/b1#run-r1",

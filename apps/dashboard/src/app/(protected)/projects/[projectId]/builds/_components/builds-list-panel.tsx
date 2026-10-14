@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { cn } from "@/lib/cn";
 import { browserEnv } from "@/lib/env";
+import { serializeReviewContext, useReviewContext } from "@/lib/review-url";
 import { FURAN_SDK_VERSION } from "@/lib/sdk-version";
 import { trpc } from "@/lib/trpc";
 
@@ -22,34 +23,59 @@ interface Props {
   projectId: string;
 }
 
+/** The pages of the list loaded so far, and the filter they were loaded under. */
+interface Paging {
+  key: string;
+  cursor: string | undefined;
+  accumulated: BuildRowData[];
+}
+
+const firstPage = (key: string): Paging => ({
+  key,
+  cursor: undefined,
+  accumulated: [],
+});
+
 /** Persistent context panel: filter + builds list. */
 export function BuildsListPanel({ projectId }: Props) {
   useProjectEvents(projectId);
   const pathname = usePathname();
   const selectedId = pathname?.split("/builds/")[1]?.split("/")[0];
 
-  const [properties, setProperties] = useState<Record<string, string>>({});
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [accumulated, setAccumulated] = useState<BuildRowData[]>([]);
+  // The properties filter lives in the URL (`?props=`), so it survives a
+  // reload and Back, and the batch links below carry it.
+  const [context, setContext] = useReviewContext();
+  const properties = context.props ?? {};
+  const hasActiveFilter = Object.keys(properties).length > 0;
+  const propsKey = serializeReviewContext(context, ["props"]);
+
   const [filterOpen, setFilterOpen] = useState(false);
+  // The pages loaded so far, for the filter they were loaded under: any change
+  // of `props` (a chip, or Back / Forward) starts the pages over.
+  const [paging, setPaging] = useState<Paging>(() => firstPage(propsKey));
+  let page = paging;
+  if (paging.key !== propsKey) {
+    // Adjusting state while rendering: React re-renders at once, before paint.
+    page = firstPage(propsKey);
+    setPaging(page);
+  }
 
   const { data, isLoading, error, refetch, isFetching } =
     trpc.builds.list.useQuery(
       {
         projectId,
-        cursor,
+        cursor: page.cursor,
         limit: 25,
-        properties: Object.keys(properties).length > 0 ? properties : undefined,
+        properties: hasActiveFilter ? properties : undefined,
       },
       { placeholderData: keepPreviousData },
     );
 
-  const hasActiveFilter = Object.keys(properties).length > 0;
   const showFilter = filterOpen || hasActiveFilter;
 
   const items: BuildRowData[] = [];
   const seen = new Set<string>();
-  for (const b of accumulated) {
+  for (const b of page.accumulated) {
     if (!seen.has(b.id)) {
       seen.add(b.id);
       items.push(b);
@@ -64,14 +90,16 @@ export function BuildsListPanel({ projectId }: Props) {
 
   const onLoadMore = () => {
     if (!data?.nextCursor) return;
-    setAccumulated((prev) => [...prev, ...data.items]);
-    setCursor(data.nextCursor);
+    setPaging({
+      key: propsKey,
+      cursor: data.nextCursor,
+      accumulated: [...page.accumulated, ...data.items],
+    });
   };
 
+  // Writes the URL; the list follows it (and starts over) on the next render.
   const onPropertiesChange = (next: Record<string, string>) => {
-    setProperties(next);
-    setAccumulated([]);
-    setCursor(undefined);
+    setContext({ props: Object.keys(next).length > 0 ? next : undefined });
   };
 
   return (
@@ -164,6 +192,7 @@ export function BuildsListPanel({ projectId }: Props) {
                 build={b}
                 projectId={projectId}
                 selected={b.id === selectedId}
+                context={context}
               />
             ))}
           </div>

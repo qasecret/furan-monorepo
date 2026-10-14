@@ -8,19 +8,30 @@ import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
+import { batchHref, type ReviewContext } from "@/lib/review-url";
+
+/**
+ * What a link in the panel carries from the review context. The panel is
+ * beside every batch page, so the status and facets travel to the next batch
+ * and `props` (the panel's own filter) stays on the URL. Branch and search
+ * belong to the Batches page.
+ */
+const PANEL_LINK_KEYS = ["status", "facets", "props"] as const;
 
 interface Props {
   build: BuildRowData;
   projectId: string;
   selected: boolean;
+  /** The review context in the URL; the link carries it (see above). */
+  context?: ReviewContext;
 }
 
 /** Full-bleed build entry in the history panel → opens the batch page. */
-export function BuildListItem({ build, projectId, selected }: Props) {
+export function BuildListItem({ build, projectId, selected, context }: Props) {
   const meta = buildStatusMeta(build.aggregateStatus);
   return (
     <Link
-      href={`/projects/${projectId}/builds/${build.id}`}
+      href={batchHref(projectId, build.id, context, undefined, PANEL_LINK_KEYS)}
       aria-current={selected ? "page" : undefined}
       data-testid={`build-list-item-${build.id}`}
       className={cn(
@@ -47,8 +58,18 @@ export function BuildListItem({ build, projectId, selected }: Props) {
       <div className="mt-1 text-xs tabular-nums text-fg-muted">
         {formatBatchDateTime(build.createdAt)}
       </div>
-      <div className={cn("mt-0.5 text-xs font-medium", meta.text)}>
-        {meta.word}
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className={cn("text-xs font-medium", meta.text)}>
+          {meta.word}
+        </span>
+        {build.pendingCheckpoints > 0 && (
+          <span
+            className="text-2xs tabular-nums text-fg-muted"
+            data-testid={`build-list-item-pending-${build.id}`}
+          >
+            {build.pendingCheckpoints} pending
+          </span>
+        )}
       </div>
     </Link>
   );
