@@ -1135,39 +1135,57 @@ d("review queue: findNext", () => {
     expect(back).toEqual(walk.map((w) => w.checkpointId).reverse());
   });
 
-  test("a constant number of statements however many runs the batch has", async () => {
-    async function statements(runs: number): Promise<number> {
-      const s = await seed({
-        checkpoints: [{ name: "first", verdict: "unresolved" }],
+  /**
+   * The statements `findNext` issues from the last pending step of a batch of
+   * `runs` runs, with a newer batch next to it. `onlyAt`: the batch's only
+   * pending step is `at` itself, so neither the keyset nor the wrap finds
+   * anything and the next batch is opened (`nextBatch`, one more statement);
+   * otherwise the wrap finds the first run's step (`batch`).
+   */
+  async function statements(runs: number, onlyAt: boolean): Promise<number> {
+    const s = await seed({
+      checkpoints: [{ name: "first", verdict: "unresolved" }],
+    });
+    let last = s.shots.first!;
+    let lastRun = s.runId;
+    for (let i = 1; i < runs; i++) {
+      const r = await addReviewRun(h, s, {
+        checkpoints: [
+          { name: `x${i}`, verdict: "passed" },
+          { name: `y${i}`, verdict: onlyAt ? "passed" : "unresolved" },
+        ],
       });
-      let last = s.shots.first!;
-      let lastRun = s.runId;
-      for (let i = 1; i < runs; i++) {
-        const r = await addReviewRun(h, s, {
-          checkpoints: [
-            { name: `x${i}`, verdict: "passed" },
-            { name: `y${i}`, verdict: "unresolved" },
-          ],
-        });
+      if (!onlyAt) {
         last = r.shotsInOrder[1]!;
         lastRun = r.runId;
       }
-      await addReviewBuild(h, s, {
-        spec: { checkpoints: [{ name: "other", verdict: "new" }] },
-      });
-      const counting = { n: () => 0 };
-      // The worst case: the keyset finds nothing, the wrap does, and the
-      // next batch is looked up too.
-      const r = await next(s, { at: at(s.buildId, lastRun, last) }, (db) => {
-        const c = countingDb(db);
-        counting.n = c.count;
-        return c.db;
-      });
-      expect(r.scope).toBe(runs > 1 ? "batch" : "nextBatch");
-      return counting.n();
     }
-    const small = await statements(2);
-    const large = await statements(12);
+    await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "other", verdict: "new" }] },
+    });
+    const counting = { n: () => 0 };
+    const r = await next(s, { at: at(s.buildId, lastRun, last) }, (db) => {
+      const c = countingDb(db);
+      counting.n = c.count;
+      return c.db;
+    });
+    expect(r.scope).toBe(onlyAt || runs === 1 ? "nextBatch" : "batch");
+    return counting.n();
+  }
+
+  test("a constant number of statements however many runs the batch has", async () => {
+    // The worst case with a pending step left in the batch: the keyset finds
+    // nothing, the wrap does, and the next batch is looked up too.
+    const small = await statements(2, false);
+    const large = await statements(12, false);
+    expect(large).toBe(small);
+    expect(small).toBeLessThanOrEqual(6);
+  });
+
+  test("the same bound holds when the batch's only pending step is `at`", async () => {
+    // The longest path: keyset, wrap, next batch, its first step, the counts.
+    const small = await statements(2, true);
+    const large = await statements(12, true);
     expect(large).toBe(small);
     expect(small).toBeLessThanOrEqual(6);
   });

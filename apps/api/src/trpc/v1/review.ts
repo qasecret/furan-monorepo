@@ -1,4 +1,14 @@
-import { asc, inArray, testRuns } from "@furan/db";
+import {
+  and,
+  asc,
+  builds,
+  eq,
+  inArray,
+  screenshots,
+  testRuns,
+  type DB,
+  type Tx,
+} from "@furan/db";
 import type { ApproveBuildPreview } from "@furan/shared-types";
 import { z } from "zod";
 
@@ -20,6 +30,12 @@ import {
 import { selectPendingTargets } from "../../lib/review/decide.js";
 import { enqueueRunDiff } from "../../lib/review/enqueue.js";
 import { reviewError } from "../../lib/review/errors.js";
+import { recordReviewNext } from "../../lib/review/metrics.js";
+import {
+  findNext,
+  type NextResult,
+  type QueueAt,
+} from "../../lib/review/queue.js";
 import { revertAction, type RevertResult } from "../../lib/review/revert.js";
 import {
   lockBuildRuns,
@@ -44,10 +60,12 @@ export type RevertOutput = Omit<RevertResult, "rediffRunIds">;
  * announces the result; the core decides whether it is legal, writes it
  * atomically and recomputes the run status.
  *
- * Every procedure resolves its project from the run, build or action
+ * Every procedure but `next` resolves its project from the run, build or action
  * (resolve-then-gate, like `runs.getById`): admins bypass the membership check, guests are refused,
  * anyone else must be a member. An admin skips the gate's resolver, so each
  * handler resolves the project again and answers NOT_FOUND for an unknown id.
+ * `next` is the read of the queue: the caller names the project, and the
+ * handler checks that the ids it names belong to it.
  */
 
 /** "Approve pending in a build" decides at most this many checkpoints per call. */
@@ -83,6 +101,29 @@ const groupInput = z.object({
 });
 const buildInput = z.object({ buildId: uuid });
 const revertInput = z.object({ actionId: actionIdSchema });
+/** At most this many batches may be skipped in one `review.next` call. */
+const EXCLUDE_BUILDS_MAX = 50;
+const nextInput = z.object({
+  projectId: uuid,
+  /** Where the reviewer is. Absent: start at the newest batch with a pending step. */
+  at: z
+    .object({
+      buildId: uuid,
+      runId: uuid.optional(),
+      checkpointId: uuid.optional(),
+    })
+    .optional(),
+  direction: z.enum(["next", "prev"]).optional(),
+  facets: z
+    .object({
+      browser: z.string().min(1).max(64).optional(),
+      viewport: z.string().min(1).max(32).optional(),
+      os: z.string().min(1).max(64).optional(),
+      device: z.string().min(1).max(64).optional(),
+    })
+    .optional(),
+  excludeBuildIds: z.array(uuid).max(EXCLUDE_BUILDS_MAX).optional(),
+});
 const approveBuildInput = z.object({
   buildId: uuid,
   actionId: actionIdSchema,
@@ -99,11 +140,93 @@ const explicitSelection = (
   cap: CHECKPOINT_IDS_MAX,
 });
 
+/**
+ * `findNext` trusts its `at` (spec §4.2), so the procedure checks it first:
+ * the build is the project's, the run is that build's, the step is that run's.
+ * One small lookup per id, each pinned to the project. Any mismatch (another
+ * project's id, an unknown id, a step without its run) is the same NOT_FOUND,
+ * so an id from another project is no different from one that does not exist.
+ */
+async function requireAtInProject(
+  db: DB | Tx,
+  projectId: string,
+  at: QueueAt,
+): Promise<void> {
+  const { buildId, runId, checkpointId } = at;
+  const [build] = await db
+    .select({ id: builds.id })
+    .from(builds)
+    .where(and(eq(builds.id, buildId), eq(builds.projectId, projectId)))
+    .limit(1);
+  if (!build) throw reviewError("NOT_FOUND", "build_not_found");
+  if (runId === undefined) {
+    // A step is named through its run.
+    if (checkpointId !== undefined) {
+      throw reviewError("NOT_FOUND", "run_not_found");
+    }
+    return;
+  }
+  const [run] = await db
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(
+      and(
+        eq(testRuns.id, runId),
+        eq(testRuns.buildId, buildId),
+        eq(testRuns.projectId, projectId),
+      ),
+    )
+    .limit(1);
+  if (!run) throw reviewError("NOT_FOUND", "run_not_found");
+  if (checkpointId === undefined) return;
+  const [step] = await db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.id, checkpointId),
+        eq(screenshots.runId, runId),
+        eq(screenshots.projectId, projectId),
+      ),
+    )
+    .limit(1);
+  if (!step) throw reviewError("NOT_FOUND", "checkpoint_not_found");
+}
+
 // ---------------------------------------------------------------------------
 // The router.
 // ---------------------------------------------------------------------------
 
 export const reviewRouter = t.router({
+  /**
+   * Where the reviewer goes next (spec §4.2): the next pending step after
+   * `at` in its batch (wrapping to the ones skipped), else the next batch's
+   * first pending step; `direction: "prev"` walks backwards. Read-only,
+   * takes no locks: the answer is a hint, and a decision it leads to is
+   * checked by the decide paths. The gate is the project's, named by the
+   * input (admins bypass membership; a guest is refused, as for every
+   * project-scoped read); `at` must belong to it (`requireAtInProject`).
+   */
+  next: publicProcedure
+    .input(nextInput)
+    .use(authed)
+    .use(
+      projectMember<{ projectId: string }>("read", {
+        from: { resolver: async ({ input }) => input.projectId },
+      }),
+    )
+    .query(async ({ ctx, input }): Promise<NextResult> => {
+      if (input.at) await requireAtInProject(ctx.db, input.projectId, input.at);
+      const started = performance.now();
+      const result = await findNext(ctx.db, input);
+      recordReviewNext(
+        ctx.telemetry.metrics,
+        result.scope,
+        (performance.now() - started) / 1000,
+      );
+      return result;
+    }),
+
   /**
    * Approves `checkpointIds`, or every pending checkpoint of the run when none
    * are given. Explicit ids go to the core as they are: it refuses an illegal
