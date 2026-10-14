@@ -45,6 +45,13 @@ interface Props {
   /** The current run id — needed for the setIgnoreAreas mutation. */
   runId: string;
   /**
+   * The selected step's checkpoint id. A saved region goes to THIS step's
+   * variation (the diff-worker masks each step with its own variation's
+   * regions), so Save stays disabled until the step is known: without it the
+   * server would write the run's first step.
+   */
+  checkpointId?: string | undefined;
+  /**
    * Project id — keys the per-project region clipboard. Optional so
    * existing call sites (and tests) that haven't threaded it yet still
    * compile; when empty the clipboard read/write is a no-op.
@@ -80,6 +87,7 @@ interface Props {
 
 export function ViewerToolbar({
   runId,
+  checkpointId,
   projectId = "",
   project,
   runDiffThresholdOverride = null,
@@ -171,6 +179,8 @@ export function ViewerToolbar({
     selectorOverrides.size > 0 ||
     thresholdOverrides.size > 0 ||
     geometryOverrides.size > 0;
+  // A temporary region lives on the run; a saved one needs the step.
+  const saveTargetMissing = !isTemporaryMode && !checkpointId;
 
   const handleSave = () => {
     const scope = ignoreEditMode === "off" ? "run" : ignoreEditMode;
@@ -191,8 +201,13 @@ export function ViewerToolbar({
 
     if (isTemporaryMode) {
       setTempIgnoreAreas.mutate({ runId, tempIgnoreAreas: payload });
-    } else {
-      setIgnoreAreas.mutate({ runId, scope, ignoreAreas: payload });
+    } else if (checkpointId) {
+      setIgnoreAreas.mutate({
+        runId,
+        scope,
+        checkpointId,
+        ignoreAreas: payload,
+      });
     }
   };
 
@@ -433,6 +448,7 @@ export function ViewerToolbar({
             data-testid="ignore-save-button"
             disabled={
               !hasPendingChanges ||
+              saveTargetMissing ||
               setIgnoreAreas.isPending ||
               setTempIgnoreAreas.isPending
             }

@@ -655,6 +655,7 @@ export function DiffViewer({
             <div id="diff-viewer-toolbar">
               <ViewerToolbar
                 runId={runId}
+                checkpointId={activeCheckpointId}
                 projectId={data?.projectId ?? ""}
                 project={{
                   dynamicTextEnabled: project?.dynamicTextEnabled ?? false,

@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 // must reach the server through the SAME call (see the hotkey parity block at
 // the bottom of this file). The review hook is mocked: its own suite covers
 // what a decision does to the caches and the server.
-const { reviewSpies, routerSpies } = vi.hoisted(() => ({
+const { reviewSpies, routerSpies, setIgnoreAreasSpy } = vi.hoisted(() => ({
+  // The ignore-region Save's wire input, so a test can see which step's
+  // variation it targets.
+  setIgnoreAreasSpy: vi.fn(),
   reviewSpies: {
     decide: vi.fn(),
     undo: vi.fn(),
@@ -148,7 +151,9 @@ vi.mock("../src/lib/trpc", () => {
         },
         overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
-        setIgnoreAreas: { useMutation: noopMutation },
+        setIgnoreAreas: {
+          useMutation: () => ({ mutate: setIgnoreAreasSpy, isPending: false }),
+        },
         setTempIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
         // ADR-042: group-approval callout — data:undefined fires null-guard → renders nothing
@@ -991,5 +996,79 @@ describe("DiffViewer undo shortcut and hint", () => {
     pressCtrlZ();
     input.remove();
     expect(reviewSpies.undo).not.toHaveBeenCalled();
+  });
+});
+
+// C1: a region drawn on step N is saved to step N's variation. The toolbar
+// used to send no checkpoint, so the server wrote the run's FIRST step.
+describe("DiffViewer ignore-region save targets the selected step", () => {
+  const draft = {
+    id: "draft-1",
+    x: 1,
+    y: 2,
+    width: 30,
+    height: 40,
+    viewport: "1280x720",
+    paddingPx: 0,
+    kind: "ignore" as const,
+  };
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = {
+      items: [
+        stepFixture("cp-1", "unresolved"),
+        stepFixture("cp-2", "unresolved"),
+      ],
+    };
+    resetReviewSpies();
+    setIgnoreAreasSpy.mockReset();
+    useViewerStore.setState({
+      ignoreEditMode: "off",
+      isTemporaryMode: false,
+      draftIgnoreAreas: [],
+      markedForDeletion: new Set(),
+      paddingOverrides: new Map(),
+      kindOverrides: new Map(),
+      selectorOverrides: new Map(),
+      thresholdOverrides: new Map(),
+      geometryOverrides: new Map(),
+      selectedIgnoreId: null,
+    });
+  });
+  afterEach(() => cleanup());
+
+  test("Save on step 2 sends step 2's checkpoint id", () => {
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+    );
+    act(() => {
+      useViewerStore.setState({
+        ignoreEditMode: "variation",
+        draftIgnoreAreas: [draft],
+      });
+    });
+    fireEvent.click(r.getByTestId("ignore-save-button"));
+    expect(setIgnoreAreasSpy).toHaveBeenCalledOnce();
+    expect(setIgnoreAreasSpy.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({ runId: RUN_ID, checkpointId: "cp-2" }),
+    );
+  });
+
+  test("Save waits for the first step to resolve: no write without a checkpoint", () => {
+    // The route's `_first` placeholder, before the checkpoint list lands.
+    mockCheckpoints = { items: [] };
+    const r = render(
+      <DiffViewer runId={RUN_ID} initialCheckpointId="_first" />,
+    );
+    act(() => {
+      useViewerStore.setState({
+        ignoreEditMode: "variation",
+        draftIgnoreAreas: [draft],
+      });
+    });
+    const save = r.getByTestId("ignore-save-button") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(setIgnoreAreasSpy).not.toHaveBeenCalled();
   });
 });
