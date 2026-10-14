@@ -138,6 +138,8 @@ export const StepCard = memo(function StepCard({
   // focus would drop to the page. So when the card held focus at the time, it
   // follows the decision: to Undo, or failing that to opening the step. It
   // moves once the call has answered, since Undo cannot take focus before.
+  // It only moves focus that is still lost (on the page) or on this card: a
+  // user who has tabbed or clicked elsewhere meanwhile keeps their place.
   const toolbar = useRef<HTMLDivElement>(null);
   const undoButton = useRef<HTMLButtonElement>(null);
   const openButton = useRef<HTMLButtonElement>(null);
@@ -145,6 +147,9 @@ export const StepCard = memo(function StepCard({
   useEffect(() => {
     if (!followFocus.current || inFlight) return;
     followFocus.current = false;
+    const active = document.activeElement;
+    const lost = active === null || active === document.body;
+    if (!lost && toolbar.current?.contains(active) !== true) return;
     (decision !== null && canUndo ? undoButton : openButton).current?.focus();
   }, [inFlight, decision, canUndo]);
 
@@ -160,8 +165,10 @@ export const StepCard = memo(function StepCard({
   };
 
   // The icon buttons share one look; only the hover hue says which is which.
+  // One that is unavailable (`aria-disabled`) does not react to hover: it
+  // keeps its resting colours.
   const actionClass =
-    "rounded p-1.5 text-fg-muted transition-colors hover:bg-edge";
+    "rounded p-1.5 text-fg-muted transition-colors hover:bg-edge aria-disabled:hover:bg-transparent aria-disabled:hover:text-fg-muted";
 
   return (
     <div

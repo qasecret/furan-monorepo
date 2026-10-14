@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import {
   Tooltip,
   TooltipContent,
@@ -14,6 +14,9 @@ import { describeSkip } from "@/lib/review/review-copy";
 import { reviewStateStyle } from "@/lib/status-style";
 
 type Decision = NonNullable<CheckpointItem["decision"]>;
+
+/** Why Undo waits: its own call is on its way. */
+const UNDOING = "Undoing…";
 
 interface Props {
   decision: Decision;
@@ -105,16 +108,19 @@ export function DecisionChip({
           </span>
         )}
         {canUndo && (
-          <Button
+          // Busy is `aria-disabled`, not natively disabled: a keyboard user
+          // who triggered Undo keeps focus on it while the call is out.
+          <DisabledAwareButton
             variant="secondary"
             className="px-3 py-1 text-xs"
-            data-testid="decision-undo"
-            aria-label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"}`}
+            testId="decision-undo"
+            label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"}`}
             disabled={busy}
+            reason={UNDOING}
             onClick={onUndo}
           >
             Undo
-          </Button>
+          </DisabledAwareButton>
         )}
       </span>
     </TooltipProvider>

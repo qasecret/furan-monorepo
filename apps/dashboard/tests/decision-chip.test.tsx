@@ -100,15 +100,35 @@ describe("DecisionChip", () => {
     expect(r.queryByTestId("decision-undo")).toBeNull();
   });
 
-  it("disables Undo while busy", () => {
+  it("makes Undo unavailable while busy, saying why", () => {
     const onUndo = vi.fn();
     const r = render(
       <DecisionChip decision={decisionOf()} onUndo={onUndo} busy />,
     );
     const undo = r.getByTestId("decision-undo") as HTMLButtonElement;
-    expect(undo.disabled).toBe(true);
+    expect(undo.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      document.getElementById(undo.getAttribute("aria-describedby")!)
+        ?.textContent,
+    ).toBe("Undoing…");
     fireEvent.click(undo);
     expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it("keeps focus on Undo as it goes busy, for a keyboard user who just used it", () => {
+    const onUndo = vi.fn();
+    const r = render(<DecisionChip decision={decisionOf()} onUndo={onUndo} />);
+    const undo = r.getByTestId("decision-undo");
+    undo.focus();
+    fireEvent.click(undo);
+    expect(onUndo).toHaveBeenCalledTimes(1);
+
+    r.rerender(<DecisionChip decision={decisionOf()} onUndo={onUndo} busy />);
+    // The same button, still focused: natively disabled would have dropped
+    // focus to the page.
+    expect(r.getByTestId("decision-undo")).toBe(undo);
+    expect(document.activeElement).toBe(undo);
+    expect((undo as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("explains a refused undo in a tooltip, reachable by keyboard", async () => {

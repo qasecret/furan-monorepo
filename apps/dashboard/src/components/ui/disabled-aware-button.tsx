@@ -12,6 +12,28 @@ import {
 
 import { cn } from "@/lib/cn";
 
+/**
+ * What each variant looks like at rest, spelled as `aria-disabled:hover:`
+ * utilities. An unavailable button is left hoverable (it must be, to show its
+ * reason), and the variant's own hover colours would make it look pressable.
+ * These win over them on specificity, whatever the order, and only while the
+ * button is `aria-disabled`. A caller that restyles a variant's rest or hover
+ * restyles these the same way (`cn` merges them like any other modifier set).
+ * Every class is a full literal string so Tailwind can see it.
+ */
+const RESTING_WHILE_UNAVAILABLE: Record<
+  NonNullable<ButtonProps["variant"]>,
+  string
+> = {
+  default: "aria-disabled:hover:bg-brand",
+  glow: "aria-disabled:hover:bg-brand",
+  secondary:
+    "aria-disabled:hover:bg-raised aria-disabled:hover:text-fg-secondary",
+  destructive: "aria-disabled:hover:bg-status-failed/10",
+  ghost:
+    "aria-disabled:hover:bg-transparent aria-disabled:hover:text-fg-secondary",
+};
+
 export interface DisabledAwareButtonProps {
   disabled: boolean;
   /** Why the button is disabled; without one, a disabled button just is. */
@@ -35,7 +57,8 @@ export interface DisabledAwareButtonProps {
  * show no reason. A disabled button *with* a reason is therefore left
  * focusable and marked `aria-disabled` instead: still one control, one tab
  * stop, announced as unavailable and described by the reason, with a tooltip
- * for hover and focus. Its click does nothing. The reason is hidden text that
+ * for hover and focus. Its click does nothing, and it does not react to hover
+ * as a pressable control would. The reason is hidden text that
  * `aria-describedby` still reads, so it is not read a second time in place.
  * A disabled button with no reason to give is a plain native `disabled` one.
  *
@@ -74,6 +97,7 @@ export const DisabledAwareButton = forwardRef<
             className={cn(
               // No press, no pointer: it is unavailable, not just quiet.
               "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:active:scale-100",
+              RESTING_WHILE_UNAVAILABLE[variant],
               className,
             )}
             // Natively disabled only when there is nothing to explain.

@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { Button } from "@/components/ui/button";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 
 afterEach(cleanup);
@@ -137,6 +138,60 @@ describe("DisabledAwareButton", () => {
       expect(
         (await screen.findByTestId("act-disabled-reason")).textContent,
       ).toBe(REASON);
+    });
+
+    // An unavailable button stays hoverable (to show its reason), so the
+    // variant's hover colours must not make it look pressable. jsdom has no
+    // Tailwind, so this pins the classes that do it: for each hover utility the
+    // variant has, an `aria-disabled:hover:` one of the same property that
+    // keeps the resting token colour.
+    test.each(["default", "secondary", "destructive", "ghost"] as const)(
+      "a %s button keeps its resting colours on hover while unavailable",
+      (variant) => {
+        const { container } = render(
+          <Button variant={variant} type="button">
+            x
+          </Button>,
+        );
+        const hovers = (container.firstElementChild!.className.match(
+          /(?:^|\s)hover:(bg|text)-\S+/g,
+        ) ?? []) as string[];
+        expect(hovers.length).toBeGreaterThan(0);
+        cleanup();
+
+        renderButton({ variant, disabled: true, reason: REASON });
+        const classes = screen.getByTestId("act").className.split(/\s+/);
+        for (const hover of hovers) {
+          const property = hover.trim().split(":")[1]!.split("-")[0];
+          const resting = classes.filter((c) =>
+            c.startsWith(`aria-disabled:hover:${property}-`),
+          );
+          expect(resting.length, `${variant} ${hover}`).toBeGreaterThan(0);
+        }
+        // Tokens only: no palette colours, no arbitrary values.
+        for (const c of classes.filter((c) =>
+          c.startsWith("aria-disabled:hover:"),
+        )) {
+          expect(c).not.toMatch(
+            /\b(zinc|gray|slate|neutral|stone)-\d|\[|#[0-9a-f]{3}/,
+          );
+        }
+      },
+    );
+
+    test("a caller's own resting hover colours replace the variant's", () => {
+      renderButton({
+        variant: "ghost",
+        disabled: true,
+        reason: REASON,
+        className:
+          "hover:bg-edge aria-disabled:hover:bg-edge-strong aria-disabled:hover:text-fg-muted",
+      });
+      const classes = screen.getByTestId("act").className.split(/\s+/);
+      expect(classes).toContain("aria-disabled:hover:text-fg-muted");
+      expect(classes).not.toContain("aria-disabled:hover:text-fg-secondary");
+      expect(classes).toContain("aria-disabled:hover:bg-edge-strong");
+      expect(classes).not.toContain("aria-disabled:hover:bg-transparent");
     });
 
     test("drops its native title, which the tooltip replaces", () => {

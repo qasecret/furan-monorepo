@@ -424,6 +424,44 @@ describe("StepCard focus after a decision", () => {
   });
 });
 
+describe("StepCard focus after a decision, when the user moves on", () => {
+  const approved = () =>
+    cp({ state: "approved", decision: decision("approved") });
+
+  test("focus moved elsewhere during the roundtrip stays where the user put it", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+
+    // The user Tabs on to another control while the call is out.
+    card.show(approved());
+    other.focus();
+    inFlight.delete("c1");
+    card.show(approved());
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+
+  test("focus on another control of this card's toolbar is still followed to Undo", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+
+    card.show(approved());
+    // Still inside the card's own toolbar (the user pressed Tab once).
+    screen.getByRole("button", { name: "Open home in the viewer" }).focus();
+    inFlight.delete("c1");
+    card.show(approved());
+    expect(document.activeElement).toBe(button("step-undo-c1"));
+  });
+});
+
 describe("StepCard state", () => {
   test.each([
     ["new", null],
