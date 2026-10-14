@@ -50,7 +50,7 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
   });
   const nextSeconds = new Histogram({
     name: "furan_review_next_seconds",
-    help: "Time review.next took to find the next pending review step",
+    help: "Time review.next took to answer, including the check of its at position",
     buckets: NEXT_SECONDS_BUCKETS,
     registers: [registry],
   });

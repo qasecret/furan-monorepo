@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
+import type { DB } from "@furan/db";
 import { Registry } from "@furan/telemetry";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { recordReviewNext } from "../src/lib/review/metrics.js";
+import type { Context } from "../src/trpc/context.js";
+import { reviewRouter } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
@@ -41,6 +44,20 @@ async function refusedWith(p: Promise<unknown>): Promise<string> {
   } catch (e) {
     expect(e).toBeInstanceOf(TRPCClientError);
     return (e as TRPCClientError<AppRouter>).data?.code ?? "";
+  }
+  throw new Error("expected the call to be refused");
+}
+
+/** The code and message an HTTP call was refused with. */
+async function refusal(
+  p: Promise<unknown>,
+): Promise<{ code: string; message: string }> {
+  try {
+    await p;
+  } catch (e) {
+    expect(e).toBeInstanceOf(TRPCClientError);
+    const err = e as TRPCClientError<AppRouter>;
+    return { code: err.data?.code ?? "", message: err.message };
   }
   throw new Error("expected the call to be refused");
 }
@@ -252,39 +269,42 @@ d("review.next", () => {
   });
 
   describe("`at` must belong to the project", () => {
+    /** Every mismatch is this one answer: a caller cannot tell which link failed. */
+    const AT_NOT_FOUND = { code: "NOT_FOUND", message: "at_not_found" };
+
     test("an at.buildId from another project is NOT_FOUND", async () => {
       const mine = await abc();
       const theirs = await abc();
       expect(
-        await refusedWith(
+        await refusal(
           as(mine.editor).review.next.query({
             projectId: mine.projectId,
             at: { buildId: theirs.buildId },
           }),
         ),
-      ).toBe("NOT_FOUND");
+      ).toEqual(AT_NOT_FOUND);
       // An unknown build looks the same.
       expect(
-        await refusedWith(
+        await refusal(
           as(mine.editor).review.next.query({
             projectId: mine.projectId,
             at: { buildId: randomUUID() },
           }),
         ),
-      ).toBe("NOT_FOUND");
+      ).toEqual(AT_NOT_FOUND);
     });
 
     test("an admin gets the same NOT_FOUND for a build of another project", async () => {
       const mine = await abc();
       const theirs = await abc();
       expect(
-        await refusedWith(
+        await refusal(
           as(mine.admin).review.next.query({
             projectId: mine.projectId,
             at: { buildId: theirs.buildId },
           }),
         ),
-      ).toBe("NOT_FOUND");
+      ).toEqual(AT_NOT_FOUND);
     });
 
     test("an at.runId from another project, or from another build, is NOT_FOUND", async () => {
@@ -294,23 +314,23 @@ d("review.next", () => {
         spec: { checkpoints: [{ name: "z", verdict: "unresolved" }] },
       });
       const query = (at: { buildId: string; runId: string }) =>
-        refusedWith(
+        refusal(
           as(mine.editor).review.next.query({
             projectId: mine.projectId,
             at,
           }),
         );
       // The run is real but belongs to another project.
-      expect(await query({ buildId: mine.buildId, runId: theirs.runId })).toBe(
-        "NOT_FOUND",
-      );
+      expect(
+        await query({ buildId: mine.buildId, runId: theirs.runId }),
+      ).toEqual(AT_NOT_FOUND);
       // The run is in the project but not in `at.buildId`.
-      expect(await query({ buildId: mine.buildId, runId: other.runId })).toBe(
-        "NOT_FOUND",
-      );
-      expect(await query({ buildId: mine.buildId, runId: randomUUID() })).toBe(
-        "NOT_FOUND",
-      );
+      expect(
+        await query({ buildId: mine.buildId, runId: other.runId }),
+      ).toEqual(AT_NOT_FOUND);
+      expect(
+        await query({ buildId: mine.buildId, runId: randomUUID() }),
+      ).toEqual(AT_NOT_FOUND);
     });
 
     test("a checkpointId not in at.runId is NOT_FOUND", async () => {
@@ -320,29 +340,37 @@ d("review.next", () => {
       });
       const foreign = await abc();
       const query = (checkpointId: string) =>
-        refusedWith(
+        refusal(
           as(s.editor).review.next.query({
             projectId: s.projectId,
             at: { buildId: s.buildId, runId: s.runId, checkpointId },
           }),
         );
       // A step of the same build, but of the other run.
-      expect(await query(second.shotsInOrder[0]!.id)).toBe("NOT_FOUND");
+      expect(await query(second.shotsInOrder[0]!.id)).toEqual(AT_NOT_FOUND);
       // A step of another project, and an unknown one.
-      expect(await query(foreign.shotsInOrder[0]!.id)).toBe("NOT_FOUND");
-      expect(await query(randomUUID())).toBe("NOT_FOUND");
+      expect(await query(foreign.shotsInOrder[0]!.id)).toEqual(AT_NOT_FOUND);
+      expect(await query(randomUUID())).toEqual(AT_NOT_FOUND);
     });
 
-    test("a checkpointId without a runId is NOT_FOUND, even when the step is real", async () => {
+    test("a checkpointId without a runId is BAD_REQUEST, even when the step is real", async () => {
       const s = await abc();
-      expect(
-        await refusedWith(
-          as(s.editor).review.next.query({
-            projectId: s.projectId,
-            at: { buildId: s.buildId, checkpointId: s.shotsInOrder[0]!.id },
-          }),
-        ),
-      ).toBe("NOT_FOUND");
+      const r = await refusal(
+        as(s.editor).review.next.query({
+          projectId: s.projectId,
+          at: { buildId: s.buildId, checkpointId: s.shotsInOrder[0]!.id },
+        }),
+      );
+      expect(r.code).toBe("BAD_REQUEST");
+      expect(r.message).toContain("checkpoint_requires_run");
+      // The same for an admin, and the build is not even looked up.
+      const a = await refusal(
+        as(s.admin).review.next.query({
+          projectId: s.projectId,
+          at: { buildId: randomUUID(), checkpointId: randomUUID() },
+        }),
+      );
+      expect(a.code).toBe("BAD_REQUEST");
     });
 
     test("a build and a run alone are valid positions", async () => {
@@ -488,6 +516,64 @@ d("review.next", () => {
       expect(skipped.target).toBeNull();
       expect(skipped.nextBatch).toBeNull();
     });
+  });
+
+  test("the seconds histogram covers the check of `at`, not just the queue", async () => {
+    const s = await abc();
+    const registry = new Registry();
+    // The handler's first `select` is the `at` lookup (an admin skips the
+    // gate's lookups): hold it for 60 ms.
+    const SLOW_MS = 60;
+    const slow = (tx: DB): DB => {
+      let held = false;
+      return new Proxy(tx, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          if (prop !== "select" || typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            if (!held) {
+              held = true;
+              Atomics.wait(
+                new Int32Array(new SharedArrayBuffer(4)),
+                0,
+                0,
+                SLOW_MS,
+              );
+            }
+            return (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        },
+      });
+    };
+    const db = new Proxy(h.app.db, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== "transaction" || typeof value !== "function") return value;
+        return (cb: (tx: DB) => unknown, ...rest: unknown[]) =>
+          (value as (...a: unknown[]) => unknown).call(
+            target,
+            (tx: DB) => cb(slow(tx)),
+            ...rest,
+          );
+      },
+    });
+    const caller = reviewRouter.createCaller({
+      user: { id: s.admin.id, role: "admin", via: "jwt" },
+      db,
+      telemetry: { metrics: registry },
+    } as unknown as Context);
+
+    const r = await caller.next({
+      projectId: s.projectId,
+      at: { buildId: s.buildId, runId: s.runId },
+    });
+    expect(r.scope).toBe("run");
+    const hist = samples(
+      await registry.getMetricsAsJSON(),
+      "furan_review_next_seconds",
+    );
+    const sum = hist.find((x) => x.name === "furan_review_next_seconds_sum");
+    expect(sum?.value).toBeGreaterThanOrEqual(SLOW_MS / 1000 - 0.005);
   });
 
   test("metrics count by scope", async () => {

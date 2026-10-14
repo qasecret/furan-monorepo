@@ -112,6 +112,10 @@ const nextInput = z.object({
       runId: uuid.optional(),
       checkpointId: uuid.optional(),
     })
+    // A step is named through its run.
+    .refine((at) => at.checkpointId === undefined || at.runId !== undefined, {
+      message: "checkpoint_requires_run",
+    })
     .optional(),
   direction: z.enum(["next", "prev"]).optional(),
   facets: z
@@ -140,12 +144,17 @@ const explicitSelection = (
   cap: CHECKPOINT_IDS_MAX,
 });
 
+/** Every `at` mismatch answers with this one message (see `requireAtInProject`). */
+const AT_NOT_FOUND = "at_not_found";
+
 /**
  * `findNext` trusts its `at` (spec §4.2), so the procedure checks it first:
  * the build is the project's, the run is that build's, the step is that run's.
  * One small lookup per id, each pinned to the project. Any mismatch (another
- * project's id, an unknown id, a step without its run) is the same NOT_FOUND,
- * so an id from another project is no different from one that does not exist.
+ * project's id, an unknown id, a step of another run) is the same NOT_FOUND
+ * with the same message, so an id from another project is no different from one
+ * that does not exist, and a caller cannot tell which link of the chain failed.
+ * (A step without its run never gets here: the input schema refuses it.)
  */
 async function requireAtInProject(
   db: DB | Tx,
@@ -153,17 +162,15 @@ async function requireAtInProject(
   at: QueueAt,
 ): Promise<void> {
   const { buildId, runId, checkpointId } = at;
+  const notFound = () => reviewError("NOT_FOUND", AT_NOT_FOUND);
   const [build] = await db
     .select({ id: builds.id })
     .from(builds)
     .where(and(eq(builds.id, buildId), eq(builds.projectId, projectId)))
     .limit(1);
-  if (!build) throw reviewError("NOT_FOUND", "build_not_found");
+  if (!build) throw notFound();
   if (runId === undefined) {
-    // A step is named through its run.
-    if (checkpointId !== undefined) {
-      throw reviewError("NOT_FOUND", "run_not_found");
-    }
+    if (checkpointId !== undefined) throw notFound();
     return;
   }
   const [run] = await db
@@ -177,7 +184,7 @@ async function requireAtInProject(
       ),
     )
     .limit(1);
-  if (!run) throw reviewError("NOT_FOUND", "run_not_found");
+  if (!run) throw notFound();
   if (checkpointId === undefined) return;
   const [step] = await db
     .select({ id: screenshots.id })
@@ -190,7 +197,7 @@ async function requireAtInProject(
       ),
     )
     .limit(1);
-  if (!step) throw reviewError("NOT_FOUND", "checkpoint_not_found");
+  if (!step) throw notFound();
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +223,9 @@ export const reviewRouter = t.router({
       }),
     )
     .query(async ({ ctx, input }): Promise<NextResult> => {
-      if (input.at) await requireAtInProject(ctx.db, input.projectId, input.at);
+      // The timer covers the whole handler, what the caller waits for.
       const started = performance.now();
+      if (input.at) await requireAtInProject(ctx.db, input.projectId, input.at);
       const result = await findNext(ctx.db, input);
       recordReviewNext(
         ctx.telemetry.metrics,
