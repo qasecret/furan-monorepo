@@ -109,12 +109,51 @@ export function pendingStepCondition(facets?: StepFacets): SQL {
 }
 
 /**
+ * The build has at least one pending step inside `facets`, other than
+ * `exceptStepId` when given (the step a reviewer is deciding). `buildId` is
+ * the enclosing query's build id: `sql\`b.id\`` in a raw query over
+ * `builds b`, or `sql\`${builds.id}\`` in the `where` of a drizzle select
+ * from `builds` (drizzle prints a one-table select's own columns bare in its
+ * select list, so keep this condition out of that list).
+ *
+ * The step conditions reference the unaliased `screenshots` / `test_runs`, so
+ * they go in a fresh EXISTS over those tables; the only link to the enclosing
+ * query is `buildId`.
+ */
+export function buildHasPendingStep(
+  projectId: string,
+  buildId: SQL,
+  opts: {
+    facets?: StepFacets | undefined;
+    exceptStepId?: string | undefined;
+  } = {},
+): SQL {
+  const except =
+    opts.exceptStepId === undefined
+      ? sql``
+      : sql`and ${screenshots.id} <> ${opts.exceptStepId}`;
+  return sql`exists (
+    select 1 from ${testRuns}
+    join ${screenshots} on ${screenshots.runId} = ${testRuns.id}
+    where ${testRuns.buildId} = ${buildId}
+      and ${testRuns.projectId} = ${projectId}
+      and ${screenshots.projectId} = ${projectId}
+      and ${pendingStepCondition(opts.facets)}
+      ${except}
+  )`;
+}
+
+/**
  * The pending steps in each of `runIds` (the project's runs only). A run with
  * no pending step is absent from the map.
  */
 export async function pendingCountsByRun(
   db: DB | Tx,
-  args: { projectId: string; runIds: string[]; facets?: StepFacets },
+  args: {
+    projectId: string;
+    runIds: string[];
+    facets?: StepFacets | undefined;
+  },
 ): Promise<Map<string, number>> {
   if (args.runIds.length === 0) return new Map();
   const rows = await db
@@ -139,7 +178,11 @@ export async function pendingCountsByRun(
  */
 export async function pendingCountsByBuild(
   db: DB | Tx,
-  args: { projectId: string; buildIds: string[]; facets?: StepFacets },
+  args: {
+    projectId: string;
+    buildIds: string[];
+    facets?: StepFacets | undefined;
+  },
 ): Promise<Map<string, number>> {
   if (args.buildIds.length === 0) return new Map();
   const rows = await db

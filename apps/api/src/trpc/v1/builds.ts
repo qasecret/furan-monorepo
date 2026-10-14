@@ -1,12 +1,4 @@
-import {
-  and,
-  builds,
-  eq,
-  screenshots,
-  sql,
-  testRuns,
-  type SQL,
-} from "@furan/db";
+import { and, builds, eq, sql, type SQL } from "@furan/db";
 import {
   buildAggregateStatusSchema,
   type BuildAggregateStatus,
@@ -20,8 +12,8 @@ import {
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
 import {
+  buildHasPendingStep,
   pendingCountsByBuild,
-  pendingStepCondition,
 } from "../../lib/review/pending.js";
 import { countPendingCheckpoints } from "../../lib/review/reads.js";
 import { authed } from "../middlewares/authed.js";
@@ -71,21 +63,9 @@ const aggregateStatusExpr = sql<string>`
   END
 `;
 
-/**
- * The build (`builds b`, aliased `b` in the enclosing raw query) has at least
- * one pending step. `pending.ts`'s step conditions reference the **unaliased**
- * `screenshots` / `test_runs`, so they go in a fresh EXISTS over those tables;
- * the only link to the enclosing query is `b.id`.
- */
-function buildHasPendingStep(projectId: string): SQL {
-  return sql`EXISTS (
-    SELECT 1 FROM ${testRuns}
-    JOIN ${screenshots} ON ${screenshots.runId} = ${testRuns.id}
-    WHERE ${testRuns.buildId} = b.id
-      AND ${testRuns.projectId} = ${projectId}
-      AND ${screenshots.projectId} = ${projectId}
-      AND ${pendingStepCondition()}
-  )`;
+/** The build (`builds b` in the enclosing raw query) has a pending step. */
+function hasPendingStep(projectId: string): SQL {
+  return buildHasPendingStep(projectId, sql`b.id`);
 }
 
 export const buildsRouter = t.router({
@@ -181,7 +161,7 @@ export const buildsRouter = t.router({
           AND (${input.branch ?? null}::text IS NULL OR b.branch_name = ${input.branch ?? null})
           AND (${propertyJson}::jsonb IS NULL OR b.properties @> ${propertyJson}::jsonb)
           AND (${input.status ?? null}::text IS NULL OR ${aggregateStatusExpr} = ${input.status ?? null})
-          ${input.needsReview ? sql`AND ${buildHasPendingStep(input.projectId)}` : sql``}
+          ${input.needsReview ? sql`AND ${hasPendingStep(input.projectId)}` : sql``}
           AND (
             ${cursorPayload?.createdAt ?? null}::timestamptz IS NULL
             OR (b.created_at, b.id) < (${cursorPayload?.createdAt ?? null}::timestamptz, ${cursorPayload?.id ?? null}::uuid)
@@ -248,7 +228,7 @@ export const buildsRouter = t.router({
         SELECT count(*)::int AS total
         FROM builds b
         WHERE b.project_id = ${input.projectId}
-          AND ${buildHasPendingStep(input.projectId)}
+          AND ${hasPendingStep(input.projectId)}
       `);
       return { total: Number(rows[0]?.total ?? 0) };
     }),
