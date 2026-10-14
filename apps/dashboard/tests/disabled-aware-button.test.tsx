@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 
 afterEach(cleanup);
@@ -142,38 +142,73 @@ describe("DisabledAwareButton", () => {
 
     // An unavailable button stays hoverable (to show its reason), so the
     // variant's hover colours must not make it look pressable. jsdom has no
-    // Tailwind, so this pins the classes that do it: for each hover utility the
-    // variant has, an `aria-disabled:hover:` one of the same property that
-    // keeps the resting token colour.
-    test.each(["default", "secondary", "destructive", "ghost"] as const)(
+    // Tailwind, so this pins the classes that do it: exactly the
+    // `aria-disabled:hover:` utilities below for each variant, each of which
+    // restates what that variant looks like AT REST (a value Button itself
+    // carries), and one for every hover property the variant changes.
+    const RESTING_ON_HOVER = {
+      default: ["bg-brand"],
+      glow: ["bg-brand", "shadow-[0_8px_30px_-10px_rgba(168,255,83,0.7)]"],
+      secondary: ["bg-raised", "text-fg-secondary"],
+      destructive: ["bg-status-failed/10"],
+      ghost: ["bg-transparent", "text-fg-secondary"],
+    } as const satisfies Record<
+      NonNullable<ButtonProps["variant"]>,
+      readonly string[]
+    >;
+
+    test.each(
+      Object.keys(RESTING_ON_HOVER) as Array<keyof typeof RESTING_ON_HOVER>,
+    )(
       "a %s button keeps its resting colours on hover while unavailable",
       (variant) => {
+        // What Button itself puts on this variant: its resting and hover classes.
         const { container } = render(
           <Button variant={variant} type="button">
             x
           </Button>,
         );
-        const hovers = (container.firstElementChild!.className.match(
-          /(?:^|\s)hover:(bg|text)-\S+/g,
-        ) ?? []) as string[];
-        expect(hovers.length).toBeGreaterThan(0);
+        const plain = container.firstElementChild!.className.split(/\s+/);
         cleanup();
+        const hovers = plain.filter((c) => /^hover:(bg|text|shadow)-/.test(c));
+        expect(hovers.length).toBeGreaterThan(0);
 
         renderButton({ variant, disabled: true, reason: REASON });
         const classes = screen.getByTestId("act").className.split(/\s+/);
-        for (const hover of hovers) {
-          const property = hover.trim().split(":")[1]!.split("-")[0];
-          const resting = classes.filter((c) =>
-            c.startsWith(`aria-disabled:hover:${property}-`),
-          );
-          expect(resting.length, `${variant} ${hover}`).toBeGreaterThan(0);
-        }
-        // Tokens only: no palette colours, no arbitrary values.
-        for (const c of classes.filter((c) =>
+        const counterparts = classes.filter((c) =>
           c.startsWith("aria-disabled:hover:"),
-        )) {
+        );
+
+        // Exactly these, with exactly these values.
+        expect([...counterparts].sort()).toEqual(
+          RESTING_ON_HOVER[variant]
+            .map((v) => `aria-disabled:hover:${v}`)
+            .sort(),
+        );
+        // Each value is the variant's own resting look. A ghost button has no
+        // resting background, so it rests transparent.
+        for (const resting of RESTING_ON_HOVER[variant]) {
+          if (variant === "ghost" && resting === "bg-transparent") {
+            expect(plain.some((c) => /^bg-/.test(c))).toBe(false);
+          } else {
+            expect(plain, `${variant} rests as ${resting}`).toContain(resting);
+          }
+        }
+        // And every property a hover changes is restated.
+        for (const hover of hovers) {
+          const property = hover.slice("hover:".length).split("-")[0];
+          expect(
+            counterparts.some((c) =>
+              c.startsWith(`aria-disabled:hover:${property}-`),
+            ),
+            `${variant} ${hover}`,
+          ).toBe(true);
+        }
+        // Tokens only: no palette colours or raw hex. (The glow's own shadow
+        // literal is the one arbitrary value, and is Button's.)
+        for (const c of counterparts) {
           expect(c).not.toMatch(
-            /\b(zinc|gray|slate|neutral|stone)-\d|\[|#[0-9a-f]{3}/,
+            /\b(zinc|gray|slate|neutral|stone)-\d|#[0-9a-f]{3}/,
           );
         }
       },

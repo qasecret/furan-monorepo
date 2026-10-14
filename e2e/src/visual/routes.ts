@@ -171,13 +171,20 @@ async function hoverFirstStep(p: Page): Promise<void> {
  */
 async function openStep(p: Page, name: string): Promise<void> {
   const stepRow = p.getByTestId("test-info-sidebar").getByText(/^\d+\/\d+ \S/);
+  const next = p.getByTestId("contextual-header-next");
+  let current = "";
   for (let hops = 0; hops < 8; hops++) {
-    const current = (await stepRow.innerText()).trim();
+    current = (await stepRow.innerText()).trim();
     if (current.replace(/^\d+\/\d+ /, "") === name) return;
-    await p.getByTestId("contextual-header-next").click();
+    // On the last step the arrow is natively disabled: say so, not "timed out
+    // waiting for it to be enabled".
+    if (!(await next.isEnabled())) break;
+    await next.click();
     await expect(stepRow).not.toHaveText(current);
   }
-  throw new Error(`visual: no step "${name}" within 8 steps of the first`);
+  throw new Error(
+    `visual: no step named "${name}" within 8 steps of the first (stopped at "${current}")`,
+  );
 }
 
 /** The toast a review decision raised, which carries the Undo action. */
@@ -203,20 +210,52 @@ async function multiRunSteps({ api, admin, fixture }: VisualStateEnv): Promise<
 }
 
 /**
+ * The Approve click `state-undo-toast` made, until its request has answered.
+ * Set just before the click, read and cleared by the cleanup: a click is a
+ * request in flight, and an `open` that fails after it (the toast never shows)
+ * leaves the approval free to land AFTER the cleanup looked.
+ */
+let profileApprove: { answered: boolean } | null = null;
+
+/**
  * Put the multi-step run's `profile` step back to pending `new`, and wait
- * until the run is whole again. Takes back whatever decision `profile` holds
- * (the fixture never has one: it is the pending step), through the API with
- * the decision's own action id, so it works whatever the page is doing. Undoing
+ * until the run is whole again.
+ *
+ * First, if the state clicked Approve, wait (up to 15s) until that decision has
+ * landed (a `profile` decision exists) or its request has answered without one
+ * (it was refused, or never went out), so the check below cannot run before
+ * the approval commits. Then take back whatever decision `profile` holds (the
+ * fixture never has one: it is the pending step), through the API with the
+ * decision's own action id, so it works whatever the page is doing. Undoing
  * an approval queues a re-diff of the run (it reads `running` for a moment), so
- * this waits, up to 60s, for every step to have a verdict and `profile` to read
- * `new` again. Throws if it does not: a fixture left changed would corrupt
- * every shot after it.
+ * finally wait, up to 60s, for every step to have a verdict and `profile` to
+ * read `new` again. Throws if it does not: a fixture left changed would
+ * corrupt every shot after it.
  */
 async function restoreProfile(_p: Page, env: VisualStateEnv): Promise<void> {
-  const profile = (await multiRunSteps(env)).find((c) => c.name === "profile");
-  if (profile?.decision) {
+  const profileDecision = async (): Promise<{ actionId: string } | null> =>
+    (await multiRunSteps(env)).find((c) => c.name === "profile")?.decision ??
+    null;
+
+  const clicked = profileApprove;
+  profileApprove = null;
+  if (clicked) {
+    await expect
+      .poll(
+        async () => clicked.answered || (await profileDecision()) !== null,
+        {
+          message: "the profile approval neither landed nor answered",
+          intervals: [250, 500, 1_000],
+          timeout: 15_000,
+        },
+      )
+      .toBe(true);
+  }
+
+  const decision = await profileDecision();
+  if (decision) {
     await env.api.trpcMutate(env.admin, "review.revert", {
-      actionId: profile.decision.actionId,
+      actionId: decision.actionId,
     });
   }
   await expect
@@ -321,6 +360,21 @@ export const STATES: ReadonlyArray<VisualState> = [
       await openStep(p, "profile");
       const approve = p.getByTestId("approve-checkpoint-button");
       await expect(approve).toBeEnabled();
+      // Note the request before it goes out, for `cleanup` (which must not
+      // look at the fixture while an approval is still on its way).
+      const sent = { answered: false };
+      profileApprove = sent;
+      void p
+        .waitForResponse((r) => r.url().includes("review.approve"), {
+          timeout: 10_000,
+        })
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .then(() => {
+          sent.answered = true;
+        });
       await approve.click();
       await expect(
         decisionToast(p, "Approved 'profile'").getByRole("button", {

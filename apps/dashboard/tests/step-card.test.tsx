@@ -262,6 +262,39 @@ describe("StepCard review actions", () => {
     expect(reject.text).toBe(describeRefusal("run_overridden"));
   });
 
+  test("an unavailable step action keeps its resting colours on hover", () => {
+    // jsdom has no Tailwind: pin the classes. Each icon button rests on
+    // `text-fg-muted` and no background, whatever its own hover hue.
+    renderCard(cp(), {
+      run: { ...RUN, status: "passed", statusOverride: "passed" },
+    });
+    for (const id of ["step-approve-c1", "step-reject-c1"]) {
+      const classes = button(id).className.split(/\s+/);
+      expect(classes, id).toContain("aria-disabled:hover:bg-transparent");
+      expect(classes, id).toContain("aria-disabled:hover:text-fg-muted");
+      // The card's own rest colour replaces the variant's.
+      expect(classes, id).not.toContain(
+        "aria-disabled:hover:text-fg-secondary",
+      );
+    }
+    // Their hover hues are still there for the available state.
+    expect(button("step-approve-c1").className).toContain(
+      "hover:text-status-passed-text",
+    );
+    expect(button("step-reject-c1").className).toContain(
+      "hover:text-status-failed-text",
+    );
+  });
+
+  test("an unavailable Undo keeps its resting colours on hover", () => {
+    renderCard(cp({ state: "approved", decision: decision("approved") }), {
+      run: { ...RUN, status: "failed", statusOverride: "failed" },
+    });
+    const classes = button("step-undo-c1").className.split(/\s+/);
+    expect(classes).toContain("aria-disabled:hover:bg-transparent");
+    expect(classes).toContain("aria-disabled:hover:text-fg-muted");
+  });
+
   test("an unavailable action does nothing when it is used", async () => {
     const user = userEvent.setup();
     renderCard(cp(), {

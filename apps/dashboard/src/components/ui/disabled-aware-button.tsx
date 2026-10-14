@@ -26,7 +26,8 @@ const RESTING_WHILE_UNAVAILABLE: Record<
   string
 > = {
   default: "aria-disabled:hover:bg-brand",
-  glow: "aria-disabled:hover:bg-brand",
+  // The resting glow is button.tsx's own literal: a shadow has no token.
+  glow: "aria-disabled:hover:bg-brand aria-disabled:hover:shadow-[0_8px_30px_-10px_rgba(168,255,83,0.7)]",
   secondary:
     "aria-disabled:hover:bg-raised aria-disabled:hover:text-fg-secondary",
   destructive: "aria-disabled:hover:bg-status-failed/10",

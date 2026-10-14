@@ -129,8 +129,10 @@ means every screenshot test passed.
 **A state that changes the fixture** (`state-undo-toast` approves the pending
 `profile` step to raise its toast) gives its `VisualState` a `cleanup`. The
 sweep runs it after the shot, in a `finally`, whether or not the shot
-succeeded: it takes the decision back through the API and waits (up to 60s: an
-undo queues a re-diff) until every step has a verdict and `profile` reads `new`
+succeeded: if the state clicked Approve it first waits (up to 15s) for that
+request to land or answer, so it cannot look before the approval commits; it
+then takes the decision back through the API and waits (up to 60s: an undo
+queues a re-diff) until every step has a verdict and `profile` reads `new`
 again, or fails the state. Such states are kept last in `STATES`, and the
 fixture must be left as it was found: every state, and both themes, share it.
 The other states never confirm or change anything.
@@ -174,11 +176,14 @@ IDs it covers via `coverAnnotations([...])`; the reporter renders
 `area → capability → state` (passed / failed / config-gated / MISSING). Add a
 capability by adding it to the manifest and tagging a test.
 
-`tests/ui/review-flow.spec.ts` (capability `review.ui_flow`, part of `s3-full`,
-not `@visual`) drives the review flow in a real browser on data of its own: a
-project `review-flow-ui` and, per run, a branch of its own. It approves a step
-with `A`, takes it back with Ctrl+Z / ⌘Z, then confirms "Approve pending" on the
-batch page. It never touches the visual sweep's fixture.
+`tests/ui/review-flow.spec.ts` (capability `review.ui_flow`, not `@visual`)
+drives the review flow in a real browser on data of its own: a project
+`review-flow-ui` and, per run, a branch of its own. It approves a step with `A`,
+takes it back with Ctrl+Z / ⌘Z, then confirms "Approve pending" on the batch
+page. It never touches the visual sweep's fixture. It is in `s3-full` but runs
+only with `E2E_BROWSER_DATA=1` (it needs a dashboard whose browser bundle
+reaches the api; see Known constraints); without it the spec is skipped, and the
+capability reads _config-gated_, so the nightly coverage gate is not affected.
 
 ## Known constraints
 
@@ -189,12 +194,21 @@ batch page. It never touches the visual sweep's fixture.
   Server-rendered pages (login, builds, admin) work; client-data pages (the
   pixi diff viewer) need the api on the standard port **3000** — a
   dedicated-ports run (stop dev servers) or CI.
-- **`review-flow.spec.ts` needs the same thing.** It reads and writes through
-  the dashboard's _client-side_ calls, so it passes against a dashboard whose
-  browser bundle points at this stack's api (a dev server, as for the visual
-  sweep; or an image built with
-  `--build-arg NEXT_PUBLIC_API_URL=http://localhost:3010`), and not against a
-  stock `:local` image on the coexistence ports.
+- **`review-flow.spec.ts` needs the same thing, so it is opt-in.** It reads
+  and writes through the dashboard's _client-side_ calls, so it can pass only
+  against a dashboard whose browser bundle reaches this stack's api (a dev
+  server, as for the visual sweep), never against the stack's stock `:local`
+  image on the coexistence ports. It is skipped unless `E2E_BROWSER_DATA=1`. To
+  run it against a dev stack with such a dashboard:
+
+  ```bash
+  E2E_BROWSER_DATA=1 E2E_API_URL=http://localhost:3210 E2E_DASH_URL=http://localhost:3012 \
+    pnpm --filter @furan/e2e exec playwright test --project=s3-full tests/ui/review-flow.spec.ts
+  ```
+
+  A follow-up will make the Docker e2e stack single-origin, so the browser
+  reaches the api through the dashboard and this gate can come off.
+
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
   (an identical feature-branch capture returns `new`, not `passed`).
 - **Element-map-dependent** diff capabilities (ignore/layout regions, axe a11y,

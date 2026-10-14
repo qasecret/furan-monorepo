@@ -47,7 +47,7 @@ export const CAPABILITIES: Capability[] = [
   // review
   { id: "review.partial_approval", area: "review", label: "approving some steps of a multi-step test leaves the run unresolved" },
   { id: "review.undo", area: "review", label: "undoing an approval restores the step and the run" },
-  { id: "review.ui_flow", area: "review", label: "dashboard: A approves a step, Ctrl+Z undoes it, Approve pending confirms and approves the rest" },
+  { id: "review.ui_flow", area: "review", label: "dashboard: A approves a step, Ctrl+Z undoes it, Approve pending confirms and approves the rest", configGated: true },
   // storage
   { id: "storage.s3_roundtrip", area: "storage", label: "S3 serve screenshot through UI/proxy" },
   { id: "storage.hdd_roundtrip", area: "storage", label: "HDD serve screenshot through UI/proxy" },
