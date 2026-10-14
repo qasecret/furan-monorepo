@@ -7,6 +7,7 @@ import {
   screen,
 } from "@testing-library/react";
 import type { ComponentProps } from "react";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The review hook is mocked, not the review.* procedures: its own suite
@@ -32,6 +33,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 let checkpoints: unknown[] | undefined;
 let runData: Record<string, unknown> | undefined;
 let overrideState = { isPending: false };
+let overrideOnError: ((e: unknown) => void) | undefined;
 
 vi.mock("@/lib/trpc", () => ({
   trpc: {
@@ -56,8 +58,10 @@ vi.mock("@/lib/trpc", () => ({
         useMutation: (opts?: {
           onMutate?: () => void;
           onSuccess?: () => void;
+          onError?: (e: unknown) => void;
         }) => ({
           mutate: (input: { runId: string; status: string }) => {
+            overrideOnError = opts?.onError;
             opts?.onMutate?.();
             overrideMutate(input);
             opts?.onSuccess?.();
@@ -93,11 +97,14 @@ import { useUndoStore } from "../src/lib/review/use-undo-store";
 
 // ApprovalBar renders the actions it's handed; wire them the way DiffViewer
 // does — one useReviewActions instance (which the hotkeys also share).
+let latestActions: ReturnType<typeof useReviewActions> | undefined;
 function Bar(
   props: UseReviewActionsArgs &
     Omit<ComponentProps<typeof ApprovalBar>, "actions">,
 ) {
   const actions = useReviewActions(props);
+  // What a keyboard shortcut would call, for the tests that stand in for one.
+  latestActions = actions;
   return <ApprovalBar {...props} actions={actions} />;
 }
 
@@ -176,6 +183,8 @@ beforeEach(() => {
   getCheckpointGroupData.mockReset();
   getCheckpointGroupData.mockReturnValue(undefined);
   overrideState = { isPending: false };
+  overrideOnError = undefined;
+  vi.mocked(toast.error).mockClear();
   useUndoStore.setState({ stack: [] });
   useViewerStore.setState({ commentPanelOpen: false, commentPrefill: null });
   arrange();
@@ -244,7 +253,10 @@ describe("ApprovalBar: a step that needs review", () => {
       label: "Marked 'home' as a bug",
     });
     expect(useViewerStore.getState().commentPanelOpen).toBe(true);
-    expect(useViewerStore.getState().commentPrefill).toContain("Marked as bug");
+    // The note is run-scoped, so the prefill names the step it is about.
+    expect(useViewerStore.getState().commentPrefill).toBe(
+      "Marked 'home' as a bug: ",
+    );
   });
 
   it("folds the viewer's unsaved ignore regions into the approval (ADR-036)", () => {
@@ -306,11 +318,6 @@ describe("ApprovalBar: a step that needs review", () => {
     }
     fireEvent.click(button("approve-checkpoint-button"));
     expect(review.decide).not.toHaveBeenCalled();
-  });
-
-  it("does not render the old inline error text: errors arrive as toasts", () => {
-    renderBar();
-    expect(screen.queryByTestId("approval-error")).toBeNull();
   });
 });
 
@@ -806,6 +813,45 @@ describe("ApprovalBar: the More menu", () => {
     );
   });
 
+  it("ties the explanation to every override item, so a screen reader reads it", async () => {
+    arrange({ runOver: { status: "failed", statusOverride: "failed" } });
+    renderBar({ status: "failed" });
+    await openMoreMenu();
+    const explainer = await screen.findByTestId("override-explainer");
+    expect(explainer.id).not.toBe("");
+    for (const id of [
+      "override-set-passed",
+      "override-set-failed",
+      "override-set-default",
+    ]) {
+      expect(screen.getByTestId(id).getAttribute("aria-describedby"), id).toBe(
+        explainer.id,
+      );
+    }
+  });
+
+  it("shows an override that failed in plain words, not the server's message", async () => {
+    renderBar();
+    await openMoreMenu();
+    fireEvent.click(await screen.findByTestId("override-set-passed"));
+    expect(overrideOnError).toBeTypeOf("function");
+
+    act(() =>
+      overrideOnError?.({
+        message: "Cannot override status from 'running'.",
+        data: { code: "BAD_REQUEST" },
+      }),
+    );
+    expect(toast.error).toHaveBeenLastCalledWith(
+      "The run's status can't be changed from where it is.",
+    );
+
+    act(() => overrideOnError?.(new Error("socket hang up")));
+    expect(toast.error).toHaveBeenLastCalledWith(
+      "Couldn't change the run status. Try again.",
+    );
+  });
+
   it("'Force passed' and 'Force failed' set the run override", async () => {
     renderBar();
     await openMoreMenu();
@@ -886,6 +932,46 @@ describe("ApprovalBar: approving an older capture", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
     expect(document.activeElement).toBe(approve);
+  });
+
+  it("returns focus to Approve even where a click does not focus the button", async () => {
+    // Safari leaves focus on the page for a button click.
+    renderBar();
+    const approve = button("approve-checkpoint-button");
+    expect(document.activeElement).not.toBe(approve);
+    fireEvent.click(approve);
+    fireEvent.click(await screen.findByTestId("stale-step-cancel"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.activeElement).toBe(approve);
+  });
+
+  it("opened by a key, returns focus to whatever had it", async () => {
+    renderBar();
+    const more = button("approval-more-menu");
+    more.focus();
+    // What the `a` shortcut does: call approve, with no button involved.
+    act(() => latestActions?.approve());
+    fireEvent.click(await screen.findByTestId("stale-step-cancel"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
+  it("a click that did not open the question does not claim focus later", async () => {
+    arrange();
+    const r = renderBar();
+    const approve = button("approve-checkpoint-button");
+    fireEvent.click(approve);
+    expect(review.decide).toHaveBeenCalledTimes(1);
+    // Later the question is opened by a key, with focus elsewhere.
+    arrange({ items: [step({ newerCapture: NEWER })] });
+    r.rerender(<Bar runId={RUN_ID} checkpointId={CP} status="unresolved" />);
+    const more = button("approval-more-menu");
+    more.focus();
+    act(() => latestActions?.approve());
+    fireEvent.click(await screen.findByTestId("stale-step-cancel"));
+    await new Promise((res) => setTimeout(res, 0));
+    expect(document.activeElement).toBe(more);
   });
 
   it("Escape also decides nothing", async () => {
@@ -1054,15 +1140,19 @@ describe("useReviewActions", () => {
     expect(order).toEqual(["decide", "advance"]);
   });
 
-  it("moves on after a rejection and after Mark as Bug, but not after a run-wide approval", () => {
+  it("moves on after a rejection, but not after Mark as Bug or a run-wide approval", () => {
     arrange({ items: [step(), step({ id: OTHER })] });
     const onResolved = vi.fn();
     const a = actionsFor({ onResolved });
     a.reject();
+    expect(onResolved).toHaveBeenCalledTimes(1);
+    // The reviewer is about to write about the step on screen.
     a.markAsBug();
-    expect(onResolved).toHaveBeenCalledTimes(2);
+    expect(review.decide).toHaveBeenCalledTimes(2);
+    expect(onResolved).toHaveBeenCalledTimes(1);
     a.approveAllCheckpoints();
-    expect(onResolved).toHaveBeenCalledTimes(2);
+    expect(review.decide).toHaveBeenCalledTimes(3);
+    expect(onResolved).toHaveBeenCalledTimes(1);
   });
 
   it("does not move on when it decided nothing", () => {
@@ -1121,6 +1211,9 @@ describe("useReviewActions", () => {
     act(() => result.current.approve());
     expect(result.current.staleConfirm.open).toBe(true);
     rerender({ id: OTHER });
+    expect(result.current.staleConfirm.open).toBe(false);
+    // Coming back to the step must not re-open the question unprompted.
+    rerender({ id: CP });
     expect(result.current.staleConfirm.open).toBe(false);
   });
 

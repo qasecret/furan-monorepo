@@ -759,7 +759,22 @@ describe("DiffViewer stale-capture guard", () => {
     expect(reviewSpies.decide).toHaveBeenCalledOnce();
   });
 
-  test("A is ignored while the confirm is open", async () => {
+  // Every review key yields to the open question; R and X would reject the
+  // step outright if one leaked through, since a rejection asks nothing.
+  test("review keys are ignored while the confirm is open", async () => {
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    press("A");
+    await r.findByTestId("stale-step-dialog");
+    for (const key of ["A", "R", "X", "a", "r"]) press(key);
+
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(r.getAllByTestId("stale-step-dialog")).toHaveLength(1);
+    expect(r.getAllByRole("alertdialog")).toHaveLength(1);
+  });
+
+  test("Confirm is the only way the question decides", async () => {
     const r = render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
     );
@@ -767,6 +782,26 @@ describe("DiffViewer stale-capture guard", () => {
     await r.findByTestId("stale-step-dialog");
     press("A");
     expect(reviewSpies.decide).not.toHaveBeenCalled();
+    fireEvent.click(r.getByTestId("stale-step-confirm"));
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ checkpointIds: ["cp-1"], kind: "approved" }),
+    );
+  });
+
+  test("opened by the A key, Cancel gives focus back to what had it", async () => {
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+    );
+    const more = r.getByTestId("approval-more-menu");
+    more.focus();
+    press("A");
+    fireEvent.click(await r.findByTestId("stale-step-cancel"));
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 0));
+    });
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(more);
   });
 
   test("shows the callout, linking to the newer capture", () => {

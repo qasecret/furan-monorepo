@@ -94,3 +94,23 @@ export function describeReviewError(
   }
   return GENERIC_ERROR;
 }
+
+const OVERRIDE_ERROR = "Couldn't change the run status. Try again.";
+
+/**
+ * The toast for a failed run-status override. The server's own message names
+ * internals (a lifecycle, a procedure), so only the code is read; anything
+ * unrecognised gets one plain sentence.
+ */
+export function describeOverrideError(err: ReviewError): string {
+  switch (err.data?.code) {
+    case "BAD_REQUEST":
+      return "The run's status can't be changed from where it is.";
+    case "FORBIDDEN":
+      return "You don't have permission to change this run's status.";
+    case "NOT_FOUND":
+      return "This run no longer exists.";
+    default:
+      return OVERRIDE_ERROR;
+  }
+}

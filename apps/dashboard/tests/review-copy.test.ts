@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   DECISIONS_LOCKED_BY_OVERRIDE,
   describeBlockedRun,
+  describeOverrideError,
   describeRefusal,
   describeReviewError,
   describeSkip,
@@ -70,6 +71,41 @@ describe("describeBlockedRun", () => {
     expect(DECISIONS_LOCKED_BY_OVERRIDE).toBe(
       "Clear the run override to change decisions",
     );
+  });
+});
+
+describe("describeOverrideError", () => {
+  it.each([
+    ["BAD_REQUEST", "The run's status can't be changed from where it is."],
+    ["FORBIDDEN", "You don't have permission to change this run's status."],
+    ["NOT_FOUND", "This run no longer exists."],
+  ] as const)("explains a %s refusal", (code, text) => {
+    expect(
+      describeOverrideError({
+        message: "whatever the server said",
+        data: { code },
+      }),
+    ).toBe(text);
+  });
+
+  it("never passes the server's own message through", () => {
+    const text = describeOverrideError({
+      message: "Cannot override status from 'running'.",
+      data: { code: "BAD_REQUEST" },
+    });
+    expect(text).not.toContain("running");
+  });
+
+  it("falls back to a plain sentence for anything else", () => {
+    for (const err of [
+      { message: "socket hang up" },
+      { message: "boom", data: { code: "INTERNAL_SERVER_ERROR" } },
+      { message: "slow", data: null },
+    ]) {
+      expect(describeOverrideError(err)).toBe(
+        "Couldn't change the run status. Try again.",
+      );
+    }
   });
 });
 

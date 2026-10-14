@@ -2,7 +2,13 @@
 
 import type { RunStatusOverride } from "@furan/shared-types";
 import { Bug } from "lucide-react";
-import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { DecisionChip } from "./DecisionChip";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -98,15 +104,21 @@ export function ApprovalBar({
     newerCapture,
   } = actions;
 
-  // Where focus goes back to when the older-capture question closes. The
-  // dialog is driven by state, so Radix has no trigger to return it to.
-  const approveTrigger = useRef<HTMLElement | null>(null);
-  const confirmOpen = staleConfirm.open;
+  // Focus goes back to the control that opened the older-capture question
+  // once it closes: the Approve button, or whatever held focus when the `a`
+  // key opened it. The dialog is driven by state, so Radix has no trigger to
+  // return it to; the opener is remembered here while it is open.
+  const { open: confirmOpen, opener } = staleConfirm;
+  const returnFocusTo = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (confirmOpen) return;
-    approveTrigger.current?.focus();
-    approveTrigger.current = null;
-  }, [confirmOpen]);
+    if (confirmOpen) {
+      returnFocusTo.current = opener;
+      return;
+    }
+    const target = returnFocusTo.current;
+    returnFocusTo.current = null;
+    if (target?.isConnected) target.focus();
+  }, [confirmOpen, opener]);
 
   // The three step actions are the pending view's; a run that cannot take
   // them (override, still processing) shows them disabled, with the reason.
@@ -222,12 +234,9 @@ export function ApprovalBar({
                 reason={disabledReason}
                 testId="approve-checkpoint-button"
                 variant="default"
-                onClick={(e) => {
-                  // The older-capture question, if it opens, hands focus back
-                  // here when it closes.
-                  approveTrigger.current = e.currentTarget;
-                  actions.approve();
-                }}
+                // The older-capture question, if it opens, hands focus back to
+                // this button when it closes.
+                onClick={(e) => actions.approve(e.currentTarget)}
                 title={
                   state === "new"
                     ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
@@ -276,6 +285,8 @@ function OverrideChip({ override }: { override: RunStatusOverride }) {
  */
 function MoreMenu({ actions }: { actions: ReviewActions }) {
   const { view, pending, pendingSteps, statusOverride } = actions;
+  // The line that says what the override does, read out with each override item.
+  const explainerId = useId();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -308,6 +319,7 @@ function MoreMenu({ actions }: { actions: ReviewActions }) {
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Run status</DropdownMenuLabel>
         <p
+          id={explainerId}
           className="px-2 pb-1.5 text-xs text-fg-muted"
           data-testid="override-explainer"
         >
@@ -315,12 +327,14 @@ function MoreMenu({ actions }: { actions: ReviewActions }) {
         </p>
         <DropdownMenuItem
           data-testid="override-set-passed"
+          aria-describedby={explainerId}
           onSelect={() => actions.override("passed")}
         >
           Force passed (run override)
         </DropdownMenuItem>
         <DropdownMenuItem
           data-testid="override-set-failed"
+          aria-describedby={explainerId}
           onSelect={() => actions.override("failed")}
         >
           Force failed (run override)
@@ -328,6 +342,7 @@ function MoreMenu({ actions }: { actions: ReviewActions }) {
         {statusOverride !== null && (
           <DropdownMenuItem
             data-testid="override-set-default"
+            aria-describedby={explainerId}
             onSelect={() => actions.override("default")}
           >
             Reset to computed
