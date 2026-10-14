@@ -65,6 +65,10 @@ export interface ApproveBuildArgs {
   label: string;
   /** The batch changed since `expectedCount` was read; here is the new preview. */
   onConflict(preview: ApproveBuildPreview): void;
+  /** The server approved the batch; its Undo toast is already up. */
+  onSuccess?(): void;
+  /** The call is over, however it ended: the caller may ask again. */
+  onSettled?(): void;
 }
 
 const UNDO_TOAST_MS = 10_000;
@@ -125,6 +129,9 @@ interface Action {
   /** Checkpoints held in flight until the call settles. */
   held: string[];
   onConflict?: (preview: ApproveBuildPreview) => void;
+  /** Called once the server has approved, and once the call is over. */
+  onSuccess?: () => void;
+  onSettled?: () => void;
 }
 
 const ACTIONS = new Map<string, Action>();
@@ -269,6 +276,10 @@ export function useReviewMutations() {
     void utils.runs.getById.invalidate();
     void utils.runs.list.invalidate();
     void utils.builds.getById.invalidate();
+    // A group's members change with every decision (and undo) of any of them,
+    // so the callout that offers the group must not keep what was decided.
+    void utils.runs.getCheckpointGroup.invalidate();
+    action?.onSettled?.();
   };
 
   const settle = { onMutate, onError, onSettled };
@@ -352,6 +363,7 @@ export function useReviewMutations() {
       action: { label: "Undo", onClick: () => undo(actionId) },
       duration: UNDO_TOAST_MS,
     });
+    action.onSuccess?.();
   };
 
   const decideOptions = { ...settle, onSuccess: decided };
@@ -438,10 +450,19 @@ export function useReviewMutations() {
   );
 
   const approveBuild = useCallback(
-    ({ buildId, expectedCount, label, onConflict }: ApproveBuildArgs) => {
+    ({
+      buildId,
+      expectedCount,
+      label,
+      onConflict,
+      onSuccess,
+      onSettled,
+    }: ApproveBuildArgs) => {
       const actionId = newActionId();
-      start(actionId, { label, runIds: [], held: [], onConflict }, () =>
-        approveBuildMutation.mutate({ buildId, actionId, expectedCount }),
+      start(
+        actionId,
+        { label, runIds: [], held: [], onConflict, onSuccess, onSettled },
+        () => approveBuildMutation.mutate({ buildId, actionId, expectedCount }),
       );
     },
     [approveBuildMutation.mutate],

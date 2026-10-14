@@ -3,8 +3,8 @@
 import type { RunStatus } from "@furan/shared-types";
 import { notFound } from "next/navigation";
 import { useState } from "react";
-import { toast } from "sonner";
 
+import { ApprovePendingDialog } from "./approve-pending-dialog";
 import { BatchHeader } from "./batch-header";
 import {
   ContextualToolbar,
@@ -18,7 +18,6 @@ import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { cn } from "@/lib/cn";
-import { plural } from "@/lib/format";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type RunRow = RouterOutputs["runs"]["list"]["items"][number];
@@ -50,38 +49,8 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
     cursor,
   });
 
-  const utils = trpc.useUtils();
-  const bulkApprove = trpc.runs.bulkApproveByBuild.useMutation({
-    onError: (e) => toast.error(e.message),
-  });
-
-  const onApproveAll = () =>
-    bulkApprove.mutate(
-      { buildId },
-      {
-        onSuccess: (res: {
-          approved: number;
-          capped: boolean;
-          cap: number;
-        }) => {
-          // Refetch the rows + build aggregate so the just-approved runs flip
-          // out of "Unresolved" immediately — the row badge is derived from
-          // runs.listCheckpoints, not the toast. (Mirrors ApprovalBar's
-          // post-approve invalidate; we can't rely on the SSE alone.)
-          void utils.runs.list.invalidate();
-          void utils.runs.listCheckpoints.invalidate();
-          void utils.builds.getById.invalidate({ buildId });
-          // Re-page from the top so approved runs drop out of "Needs review"
-          // instead of lingering in the accumulated set.
-          setAccumulated([]);
-          setCursor(undefined);
-          toast.success(
-            `Approved ${res.approved} run${plural(res.approved)}` +
-              (res.capped ? ` (capped at ${res.cap})` : ""),
-          );
-        },
-      },
-    );
+  // The question asked before every pending step of the build is approved.
+  const [approveOpen, setApproveOpen] = useState(false);
 
   const build = buildQ.data;
 
@@ -118,11 +87,6 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
     setCursor(list.data.nextCursor);
   };
 
-  const canApproveAll =
-    canReview &&
-    !!build &&
-    (build.unresolvedCount > 0 || build.failedCount > 0);
-
   return (
     <PageContainer fullBleed>
       {build && <BatchHeader build={build} />}
@@ -144,9 +108,9 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           void buildQ.refetch();
         }}
         isRefreshing={list.isFetching || buildQ.isFetching}
-        canApproveAll={canApproveAll}
-        onApproveAll={onApproveAll}
-        isApproving={bulkApprove.isPending}
+        canApprovePending={canReview}
+        pendingCount={build?.pendingCheckpoints ?? 0}
+        onApprovePending={() => setApproveOpen(true)}
       />
       <div className="flex-1 overflow-y-auto">
         <ResultsColumnHeader />
@@ -174,6 +138,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
                 testName={row.name}
                 branchName={build?.branchName ?? null}
                 fallbackStatus={row.status}
+                statusOverride={row.statusOverride}
                 view={view}
                 canReview={canReview}
               />
@@ -192,6 +157,18 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
           </div>
         )}
       </div>
+      <ApprovePendingDialog
+        buildId={buildId}
+        open={approveOpen}
+        onOpenChange={setApproveOpen}
+        onApproved={() => {
+          // Re-page from the top so approved runs drop out of "Needs review"
+          // instead of lingering in the pages already loaded. (The refetch of
+          // the lists and the build's counts is the review hook's.)
+          setAccumulated([]);
+          setCursor(undefined);
+        }}
+      />
     </PageContainer>
   );
 }

@@ -85,6 +85,12 @@ describe("GroupApprovalCalloutView", () => {
     // understated, and it calls out the run currently on screen.
     expect(dialog.textContent).toContain("3 runs");
     expect(dialog.textContent).toContain("including the one you're viewing");
+    // A rejection decides the steps with this change, not whole runs (a run
+    // only reads as failed because one of its steps was rejected).
+    expect(dialog.textContent).toContain(
+      "Only the steps with this change are rejected; the rest of each run is left as it is.",
+    );
+    expect(dialog.textContent).not.toContain("Each whole run is failed");
     expect(screen.getByTestId("group-approval-confirm").textContent).toContain(
       "Reject all",
     );

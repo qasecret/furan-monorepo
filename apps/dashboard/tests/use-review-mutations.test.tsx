@@ -36,6 +36,7 @@ const utils = {
     listCheckpoints: procedureUtils(["runs", "listCheckpoints"]),
     getById: procedureUtils(["runs", "getById"]),
     list: procedureUtils(["runs", "list"]),
+    getCheckpointGroup: procedureUtils(["runs", "getCheckpointGroup"]),
   },
   builds: { getById: procedureUtils(["builds", "getById"]) },
 };
@@ -675,6 +676,22 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(utils.runs.getById.invalidate).toHaveBeenCalled();
     expect(utils.runs.list.invalidate).toHaveBeenCalled();
     expect(utils.builds.getById.invalidate).toHaveBeenCalled();
+  });
+
+  it("refreshes the similar-steps group too, so its callout stops offering what was decided", async () => {
+    seed();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decideGroup({
+        runId: RUN,
+        checkpointId: A,
+        kind: "approved",
+        label: "Approved 3 similar steps",
+      }),
+    );
+
+    expect(utils.runs.getCheckpointGroup.invalidate).toHaveBeenCalled();
   });
 });
 
@@ -1613,6 +1630,80 @@ describe("useReviewMutations: group and build actions", () => {
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(useUndoStore.getState().stack).toEqual([]);
+  });
+
+  it("tells the caller the batch was approved, then that the call is over", async () => {
+    seed();
+    const order: string[] = [];
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 5,
+        label: "Approved 5 steps",
+        onConflict: vi.fn(),
+        onSuccess: () => order.push("success"),
+        onSettled: () => order.push("settled"),
+      }),
+    );
+
+    expect(order).toEqual(["success", "settled"]);
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("tells the caller the call is over after a conflict, without calling it a success", async () => {
+    seed();
+    const preview: ApproveBuildPreview = {
+      pendingCheckpoints: 7,
+      tests: 3,
+      rejectedLeftAsIs: 0,
+      notReviewableTests: 0,
+      capped: false,
+      cap: 500,
+    };
+    server.approveBuild.mockRejectedValueOnce(
+      trpcError("batch_changed", "CONFLICT", { preview }),
+    );
+    const onSuccess = vi.fn();
+    const onSettled = vi.fn();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 5,
+        label: "Approved 5 steps",
+        onConflict: vi.fn(),
+        onSuccess,
+        onSettled,
+      }),
+    );
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the caller the call is over after a failure, without calling it a success", async () => {
+    seed();
+    server.approveBuild.mockRejectedValueOnce(new Error("offline"));
+    const onSuccess = vi.fn();
+    const onSettled = vi.fn();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 5,
+        label: "Approved 5 steps",
+        onConflict: vi.fn(),
+        onSuccess,
+        onSettled,
+      }),
+    );
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledTimes(1);
   });
 
   it("shows the generic message when approving a build fails for another reason", async () => {

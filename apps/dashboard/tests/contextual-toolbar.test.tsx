@@ -13,23 +13,23 @@ const baseProps = {
   onViewChange: vi.fn(),
   onRefresh: vi.fn(),
   isRefreshing: false,
-  canApproveAll: true,
-  onApproveAll: vi.fn(),
-  isApproving: false,
+  canApprovePending: true,
+  pendingCount: 37,
+  onApprovePending: vi.fn(),
 };
 
 describe("ContextualToolbar", () => {
-  test("switches view, refreshes, and fires approve-all", async () => {
+  test("switches view, refreshes, and asks to approve the pending steps", async () => {
     const user = userEvent.setup();
     const onViewChange = vi.fn();
     const onRefresh = vi.fn();
-    const onApproveAll = vi.fn();
+    const onApprovePending = vi.fn();
     render(
       <ContextualToolbar
         {...baseProps}
         onViewChange={onViewChange}
         onRefresh={onRefresh}
-        onApproveAll={onApproveAll}
+        onApprovePending={onApprovePending}
       />,
     );
     await user.click(screen.getByTestId("batch-view-grid"));
@@ -37,7 +37,7 @@ describe("ContextualToolbar", () => {
     await user.click(screen.getByTestId("batch-refresh"));
     expect(onRefresh).toHaveBeenCalled();
     await user.click(screen.getByTestId("batch-approve-all"));
-    expect(onApproveAll).toHaveBeenCalled();
+    expect(onApprovePending).toHaveBeenCalledOnce();
   });
 
   test("changes the status filter through the filter dropdown", async () => {
@@ -49,8 +49,32 @@ describe("ContextualToolbar", () => {
     expect(onChipChange).toHaveBeenCalledWith("passed");
   });
 
-  test("hides approve-all when not allowed", () => {
-    render(<ContextualToolbar {...baseProps} canApproveAll={false} />);
+  test("names the number of pending steps on the approve button", () => {
+    render(<ContextualToolbar {...baseProps} pendingCount={37} />);
+    const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
+    expect(button.textContent).toContain("Approve pending (37)");
+    expect(button.disabled).toBe(false);
+  });
+
+  test("the approve button is disabled when nothing is pending", async () => {
+    const user = userEvent.setup();
+    const onApprovePending = vi.fn();
+    render(
+      <ContextualToolbar
+        {...baseProps}
+        pendingCount={0}
+        onApprovePending={onApprovePending}
+      />,
+    );
+    const button = screen.getByTestId("batch-approve-all") as HTMLButtonElement;
+    expect(button.textContent).toContain("Approve pending (0)");
+    expect(button.disabled).toBe(true);
+    await user.click(button);
+    expect(onApprovePending).not.toHaveBeenCalled();
+  });
+
+  test("hides the approve button when the reader may not review", () => {
+    render(<ContextualToolbar {...baseProps} canApprovePending={false} />);
     expect(screen.queryByTestId("batch-approve-all")).toBeNull();
   });
 });

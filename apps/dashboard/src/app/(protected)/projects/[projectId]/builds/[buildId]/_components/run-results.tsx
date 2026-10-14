@@ -1,12 +1,17 @@
 "use client";
 
-import type { RunStatus } from "@furan/shared-types";
+import {
+  isPending,
+  type RunStatus,
+  type RunStatusOverride,
+} from "@furan/shared-types";
 import { ChevronDown, ChevronRight, Server } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { StepCard } from "./step-card";
+import { StepCard, type StepRun } from "./step-card";
 
 import { cn } from "@/lib/cn";
+import { runStatusFor } from "@/lib/review/optimistic";
 import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -19,31 +24,6 @@ type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
  */
 export const RESULT_GRID =
   "grid items-center gap-3 grid-cols-[132px_116px_minmax(104px,1fr)_84px_72px_100px_84px]";
-
-// Worst-wins ordering so a result's env-level status reflects its most severe
-// step (a single failed checkpoint makes the whole environment "failed").
-const SEVERITY: RunStatus[] = [
-  "failed",
-  "unresolved",
-  "new",
-  "running",
-  "passed",
-  "aborted",
-  "empty",
-];
-
-function aggregateStatus(checkpoints: { status: RunStatus }[]): RunStatus {
-  let best: RunStatus = "empty";
-  let bestRank = Infinity;
-  for (const c of checkpoints) {
-    const rank = SEVERITY.indexOf(c.status);
-    if (rank >= 0 && rank < bestRank) {
-      best = c.status;
-      bestRank = rank;
-    }
-  }
-  return best;
-}
 
 interface EnvGroup {
   key: string;
@@ -61,8 +41,16 @@ interface EnvGroup {
  * captured in that environment. Furan stores environment per checkpoint
  * (ADR-038), so the grouping happens client-side here. Insertion order is
  * preserved, so rows and steps follow capture order.
+ *
+ * A row's status is the run rollup of its own steps (`runStatusFor`, the rule
+ * the server stores the run's status with), so a row, the run and an
+ * optimistic patch all agree. `lifecycle` and `override` are the run's own.
  */
-function groupByEnv(checkpoints: Checkpoint[]): EnvGroup[] {
+function groupByEnv(
+  checkpoints: Checkpoint[],
+  lifecycle: RunStatus,
+  override: RunStatusOverride | null,
+): EnvGroup[] {
   const map = new Map<string, EnvGroup>();
   for (const c of checkpoints) {
     const key = `${c.os ?? ""}|${c.browser}|${c.viewport}`;
@@ -81,7 +69,9 @@ function groupByEnv(checkpoints: Checkpoint[]): EnvGroup[] {
     }
   }
   const groups = [...map.values()];
-  for (const g of groups) g.status = aggregateStatus(g.checkpoints);
+  for (const g of groups) {
+    g.status = runStatusFor(g.checkpoints, lifecycle, override);
+  }
   return groups;
 }
 
@@ -90,11 +80,13 @@ interface Props {
   runId: string;
   testName: string;
   branchName: string | null;
-  /** Run-level status, used when the run has no checkpoints to group yet. */
+  /** The run's status as the list reports it. */
   fallbackStatus: RunStatus;
+  /** The run's hand-set status, or null when it is computed. */
+  statusOverride?: RunStatusOverride | null;
   /** Step layout: "list" scrolls horizontally, "grid" wraps. */
   view: "list" | "grid";
-  /** Gates the per-step quick-approve action. */
+  /** Gates the per-step review actions (approve, reject, undo). */
   canReview: boolean;
 }
 
@@ -109,13 +101,24 @@ export function RunResults({
   testName,
   branchName,
   fallbackStatus,
+  statusOverride = null,
   view,
   canReview,
 }: Props) {
   const q = trpc.runs.listCheckpoints.useQuery({ runId });
+  const items = q.data?.items;
   const groups = useMemo(
-    () => groupByEnv(q.data?.items ?? []),
-    [q.data?.items],
+    () => groupByEnv(items ?? [], fallbackStatus, statusOverride),
+    [items, fallbackStatus, statusOverride],
+  );
+  // What every step card needs to know about the whole run, not just its row.
+  const run: StepRun = useMemo(
+    () => ({
+      status: runStatusFor(items ?? [], fallbackStatus, statusOverride),
+      statusOverride,
+      stepStates: (items ?? []).map((i) => i.state),
+    }),
+    [items, fallbackStatus, statusOverride],
   );
 
   if (q.isLoading) {
@@ -136,8 +139,9 @@ export function RunResults({
         os={null}
         browser="—"
         viewport="—"
-        status={fallbackStatus}
+        status={run.status}
         checkpoints={[]}
+        run={run}
         view={view}
         canReview={canReview}
       />
@@ -158,6 +162,7 @@ export function RunResults({
           viewport={g.viewport}
           status={g.status}
           checkpoints={g.checkpoints}
+          run={run}
           view={view}
           canReview={canReview}
         />
@@ -176,6 +181,7 @@ interface RowProps {
   viewport: string;
   status: RunStatus;
   checkpoints: Checkpoint[];
+  run: StepRun;
   view: "list" | "grid";
   canReview: boolean;
 }
@@ -190,11 +196,15 @@ function ResultRow({
   viewport,
   status,
   checkpoints,
+  run,
   view,
   canReview,
 }: RowProps) {
   const sm = statusStyle(status);
   const hasSteps = checkpoints.length > 0;
+  const pending = checkpoints.filter(
+    (c) => c.state !== null && isPending(c.state),
+  ).length;
   const [open, setOpen] = useState(true);
   return (
     <div className="border-b border-edge-subtle last:border-b-0">
@@ -229,8 +239,18 @@ function ResultRow({
             aria-hidden
             className={cn("h-3.5 w-1 shrink-0 rounded-full", sm.dot)}
           />
-          <span className={cn("truncate text-xs font-medium", sm.text)}>
-            {sm.label}
+          <span className="flex min-w-0 flex-col">
+            <span className={cn("truncate text-xs font-medium", sm.text)}>
+              {sm.label}
+            </span>
+            {pending > 0 && (
+              <span
+                data-testid={`result-pending-${runId}`}
+                className="truncate text-2xs text-fg-muted"
+              >
+                {`${pending} of ${checkpoints.length} pending`}
+              </span>
+            )}
           </span>
         </span>
         <span className="inline-flex items-center gap-1 truncate text-xs text-fg-secondary">
@@ -263,10 +283,12 @@ function ResultRow({
                 canReview={canReview}
                 index={i}
                 total={checkpoints.length}
+                run={run}
                 checkpoint={{
                   id: c.id,
                   name: c.name,
-                  status: c.status,
+                  state: c.state,
+                  decision: c.decision,
                   imageKey: c.imageKey,
                 }}
               />

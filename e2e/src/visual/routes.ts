@@ -127,9 +127,9 @@ export interface VisualState {
 
 /**
  * Hover the first step card of the multi-step build's result row, so its
- * action toolbar (quick-approve, open) shows. Looked up from the page rather
- * than by id: step ids are different on every stack. A collapsed row is
- * expanded first.
+ * action toolbar (approve, reject or undo, and open) shows. Looked up from
+ * the page rather than by id: step ids are different on every stack. A
+ * collapsed row is expanded first.
  */
 async function hoverFirstStep(p: Page): Promise<void> {
   const row = p.locator('[data-testid^="result-row-"]').first();
@@ -138,11 +138,9 @@ async function hoverFirstStep(p: Page): Promise<void> {
   const card = p.locator('[data-testid^="step-card-"]').first();
   await expect(card).toBeVisible();
   await card.hover();
-  // The toolbar (the "open in the viewer" button's parent) is `opacity-0`
-  // until the card is hovered.
-  const toolbar = card
-    .getByRole("button", { name: /^Open .+ in the viewer$/ })
-    .locator("..");
+  // The toolbar is `opacity-0` until the card is hovered. It is found by its
+  // test id, not by a neighbouring button, so the buttons in it can change.
+  const toolbar = card.locator('[data-testid^="step-toolbar-"]');
   await expect(toolbar).toHaveCSS("opacity", "1");
 }
 

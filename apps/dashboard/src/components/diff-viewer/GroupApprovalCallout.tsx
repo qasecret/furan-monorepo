@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
 
 import { GroupApprovalCalloutView } from "./GroupApprovalCalloutView";
 
 import { plural } from "@/lib/format";
+import { useReviewMutations } from "@/lib/review/use-review-mutations";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -13,56 +13,32 @@ interface Props {
   checkpointId?: string;
 }
 
+/**
+ * The offer to decide a step's whole group at once, behind a confirmation.
+ * The decision itself is `useReviewMutations().decideGroup`: the server picks
+ * the members, the hook toasts the result with an Undo, and it refreshes the
+ * caches (this callout's group query included).
+ */
 export function GroupApprovalCallout({ runId, checkpointId }: Props) {
   const [action, setAction] = useState<"accept" | "reject" | null>(null);
-  const utils = trpc.useUtils();
+  // The reviewer has confirmed and the call has not ended yet.
+  const [confirmed, setConfirmed] = useState(false);
+  const { decideGroup, isInFlight } = useReviewMutations();
+  // The hook holds the step the group was built around from the call until
+  // the server answers, so that is when this is busy.
+  const busy = checkpointId !== undefined && isInFlight(checkpointId);
 
   const groupQuery = trpc.runs.getCheckpointGroup.useQuery(
     { runId, checkpointId: checkpointId ?? "" },
     { enabled: !!checkpointId, staleTime: 30_000 },
   );
 
-  // Accept-all + reject-all both span many runs; invalidate broadly so every
-  // affected run's views and this callout's group query refresh.
-  const invalidateAll = () => {
-    void utils.runs.getById.invalidate();
-    void utils.runs.listCheckpoints.invalidate();
-    void utils.runs.getCheckpointGroup.invalidate();
-  };
-
-  const approveGroup = trpc.runs.approveCheckpointGroup.useMutation({
-    onSuccess: (res: {
-      approved: number;
-      runCount: number;
-      capped: boolean;
-      cap: number;
-    }) => {
-      invalidateAll();
-      toast.success(
-        `Approved ${res.approved} checkpoint${plural(res.approved)} across ${res.runCount} run${plural(res.runCount)}` +
-          (res.capped ? ` (capped at ${res.cap} — run again for more)` : ""),
-      );
-      setAction(null);
-    },
-    onError: (e: { message: string }) => toast.error(e.message),
-  });
-
-  const rejectGroup = trpc.runs.rejectCheckpointGroup.useMutation({
-    onSuccess: (res: {
-      rejected: number;
-      runCount: number;
-      capped: boolean;
-      cap: number;
-    }) => {
-      invalidateAll();
-      toast.success(
-        `Rejected ${res.rejected} run${plural(res.rejected)}` +
-          (res.capped ? ` (capped at ${res.cap} runs)` : ""),
-      );
-      setAction(null);
-    },
-    onError: (e: { message: string }) => toast.error(e.message),
-  });
+  // The call has ended, one way or the other (the hook says which, in a
+  // toast): the question has been answered.
+  if (confirmed && !busy) {
+    setConfirmed(false);
+    setAction(null);
+  }
 
   const group = groupQuery.data;
   if (!checkpointId || !group || group.checkpointCount === 0) return null;
@@ -72,19 +48,26 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
     new Map(group.checkpoints.map((c) => [c.runId, c.testName])).entries(),
   ).map(([id, testName]) => ({ id, testName }));
 
-  // Reject is run-level and fails the seed's OWN run too, but getCheckpointGroup
-  // excludes the seed checkpoint — so add the seed run unless one of the other
-  // matched checkpoints already belongs to it. (The accept dialog instead says
-  // "current checkpoint plus N other" and needs no adjustment.)
+  // Reject marks every run holding a member of the group as failed, the seed's
+  // own run included — but getCheckpointGroup excludes the seed checkpoint, so
+  // add the seed run unless one of the other matched checkpoints already
+  // belongs to it. (The accept dialog instead says "current checkpoint plus N
+  // other" and needs no adjustment.)
   const rejectRunCount =
     group.runCount + (runs.some((r) => r.id === runId) ? 0 : 1);
 
-  const isPending =
-    action === "accept"
-      ? approveGroup.isPending
-      : action === "reject"
-        ? rejectGroup.isPending
-        : false;
+  const confirm = () => {
+    if (action === null) return;
+    const n = group.checkpointCount;
+    const kind = action === "accept" ? "approved" : "rejected";
+    decideGroup({
+      runId,
+      checkpointId,
+      kind,
+      label: `${kind === "approved" ? "Approved" : "Rejected"} ${n} similar step${plural(n)}`,
+    });
+    setConfirmed(true);
+  };
 
   return (
     <GroupApprovalCalloutView
@@ -93,18 +76,17 @@ export function GroupApprovalCallout({ runId, checkpointId }: Props) {
       rejectRunCount={rejectRunCount}
       capped={group.capped}
       runs={runs}
-      isPending={isPending}
+      isPending={action !== null && busy}
       action={action}
       onAccept={() => setAction("accept")}
       onReject={() => setAction("reject")}
       onOpenChange={(open) => {
-        if (!open) setAction(null);
+        if (!open) {
+          setAction(null);
+          setConfirmed(false);
+        }
       }}
-      onConfirm={() => {
-        if (action === "accept") approveGroup.mutate({ runId, checkpointId });
-        else if (action === "reject")
-          rejectGroup.mutate({ runId, checkpointId });
-      }}
+      onConfirm={confirm}
     />
   );
 }

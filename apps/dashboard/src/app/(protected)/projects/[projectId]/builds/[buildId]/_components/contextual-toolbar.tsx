@@ -34,9 +34,12 @@ interface Props {
   onViewChange: (v: ResultView) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
-  canApproveAll: boolean;
-  onApproveAll: () => void;
-  isApproving: boolean;
+  /** The reader may review: shows the approve control. */
+  canApprovePending: boolean;
+  /** Steps in the build that still need a reviewer. */
+  pendingCount: number;
+  /** Opens the confirmation; nothing is approved before it is answered. */
+  onApprovePending: () => void;
 }
 
 /** A labelled toolbar segment — uppercase micro-label over its controls. */
@@ -90,7 +93,7 @@ function Divider() {
 /**
  * Segmented action toolbar above the result table — mirrors the reference's
  * uppercase-labelled icon groups: View (list / grid), Test Results (refresh +
- * filter), and the bulk-approve maintenance action.
+ * filter), and the approve-pending maintenance action.
  */
 export function ContextualToolbar({
   chip,
@@ -99,9 +102,9 @@ export function ContextualToolbar({
   onViewChange,
   onRefresh,
   isRefreshing,
-  canApproveAll,
-  onApproveAll,
-  isApproving,
+  canApprovePending,
+  pendingCount,
+  onApprovePending,
 }: Props) {
   return (
     <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
@@ -160,7 +163,7 @@ export function ContextualToolbar({
         </DropdownMenu>
       </Segment>
 
-      {canApproveAll && (
+      {canApprovePending && (
         <>
           <Divider />
           <Segment label="Maintenance">
@@ -168,11 +171,11 @@ export function ContextualToolbar({
               variant="secondary"
               className="h-7 gap-1.5 px-3 text-xs"
               data-testid="batch-approve-all"
-              disabled={isApproving}
-              onClick={onApproveAll}
+              disabled={pendingCount === 0}
+              onClick={onApprovePending}
             >
               <CheckCheck className="h-3.5 w-3.5" aria-hidden />
-              Approve all
+              {`Approve pending (${pendingCount})`}
             </Button>
           </Segment>
         </>
