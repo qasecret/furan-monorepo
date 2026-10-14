@@ -6,7 +6,6 @@ import {
   desc,
   eq,
   ne,
-  notInArray,
   screenshots,
   sql,
   testRuns,
@@ -17,8 +16,8 @@ import {
 
 import {
   buildHasPendingStep,
+  buildPendingCount,
   facetCondition,
-  pendingCountsByBuild,
   pendingStepCondition,
   type StepFacets,
 } from "./pending.js";
@@ -77,7 +76,7 @@ export interface NextResult {
 
 type Target = NonNullable<NextResult["target"]>;
 type Direction = "next" | "prev";
-type BatchRow = Omit<NonNullable<NextResult["nextBatch"]>, "pending">;
+type BatchRow = NonNullable<NextResult["nextBatch"]>;
 
 /** Leaves out the step at hand, when `at` names one. */
 function notAt(at: QueueAt): SQL | undefined {
@@ -157,9 +156,11 @@ async function stepInBatch(
 
 /**
  * The newest batch with a pending step inside `facets`, none of `exclude`,
- * among those matching `onBranch` (any when undefined). One `LIMIT 1` probe in
- * `created_at DESC, id DESC`, so it can stop at the first hit. Ties on
- * `created_at` go to the greater id.
+ * among those matching `onBranch` (a condition over `builds b`; any when
+ * undefined), with its pending steps (inside `facets`; `pending` is 0 unless
+ * `countPending`). One statement with a `LIMIT 1` probe in `created_at DESC,
+ * id DESC`, so it can stop at the first hit; the count is taken from the picked
+ * row alone, outside the probe. Ties on `created_at` go to the greater id.
  */
 async function newestBatchWhere(
   db: DB | Tx,
@@ -167,43 +168,58 @@ async function newestBatchWhere(
     projectId: string;
     exclude: string[];
     facets?: StepFacets | undefined;
+    countPending: boolean;
   },
   onBranch: SQL | undefined,
 ): Promise<BatchRow | null> {
-  const [row] = await db
-    .select({
-      id: builds.id,
-      name: builds.name,
-      number: builds.number,
-      ciBuildId: builds.ciBuildId,
-      branch: builds.branchName,
-      // The builds list's rule: the test name only when every run shares one.
-      // Qualified by hand: drizzle prints a one-table select's columns bare,
-      // and a bare "id" would bind to the subquery's own `r.id`.
-      testName: sql<string | null>`(
-        select case when count(distinct r.name) = 1 then min(r.name) end
-        from ${testRuns} r
-        where r.build_id = ${builds}.id and r.project_id = ${a.projectId})`,
-    })
-    .from(builds)
-    .where(
-      and(
-        eq(builds.projectId, a.projectId),
-        a.exclude.length > 0 ? notInArray(builds.id, a.exclude) : undefined,
-        onBranch,
-        buildHasPendingStep(a.projectId, sql`${builds.id}`, {
-          facets: a.facets,
-        }),
-      ),
-    )
-    .orderBy(desc(builds.createdAt), desc(builds.id))
-    .limit(1);
+  const notExcluded =
+    a.exclude.length > 0
+      ? sql`and b.id not in (${sql.join(
+          a.exclude.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
+  const pending = a.countPending
+    ? buildPendingCount(a.projectId, sql`p.id`, a.facets)
+    : sql`0`;
+  const [row] = await db.execute<{
+    id: string;
+    name: string | null;
+    number: number | null;
+    ci_build_id: string | null;
+    branch_name: string | null;
+    test_name: string | null;
+    pending: number | string;
+  }>(sql`
+    select p.id, p.name, p.number, p.ci_build_id, p.branch_name, p.test_name,
+           ${pending} as pending
+    from (
+      select b.id, b.name, b.number, b.ci_build_id, b.branch_name,
+             -- The builds list's rule: the test name only when every run shares one.
+             (select case when count(distinct r.name) = 1 then min(r.name) end
+              from ${testRuns} r
+              where r.build_id = b.id and r.project_id = ${a.projectId}) as test_name
+      from ${builds} b
+      where b.project_id = ${a.projectId}
+        ${notExcluded}
+        ${onBranch ? sql`and ${onBranch}` : sql``}
+        and ${buildHasPendingStep(a.projectId, sql`b.id`, { facets: a.facets })}
+      order by b.created_at desc, b.id desc
+      limit 1
+    ) p`);
   if (!row) return null;
   return {
     buildId: row.id,
-    name: buildDisplayName(row),
+    name: buildDisplayName({
+      id: row.id,
+      name: row.name,
+      number: row.number,
+      ciBuildId: row.ci_build_id,
+      testName: row.test_name,
+    }),
     number: row.number,
-    branch: row.branch,
+    branch: row.branch_name,
+    pending: Number(row.pending),
   };
 }
 
@@ -221,13 +237,14 @@ async function newestBatch(
     exclude: string[];
     facets?: StepFacets | undefined;
     branchOf?: string;
+    countPending: boolean;
   },
 ): Promise<BatchRow | null> {
   if (a.branchOf !== undefined) {
     const sameBranch = await newestBatchWhere(
       db,
       a,
-      sql`${builds.branchName} is not distinct from (select cur.branch_name from ${builds} cur where cur.id = ${a.branchOf} and cur.project_id = ${a.projectId})`,
+      sql`b.branch_name is not distinct from (select cur.branch_name from ${builds} cur where cur.id = ${a.branchOf} and cur.project_id = ${a.projectId})`,
     );
     if (sameBranch) return sameBranch;
   }
@@ -295,7 +312,13 @@ export async function findNext(
   const { projectId, facets } = input;
   const exclude = input.excludeBuildIds ?? [];
   const start =
-    input.at ?? (await newestBatch(db, { projectId, exclude, facets }));
+    input.at ??
+    (await newestBatch(db, {
+      projectId,
+      exclude,
+      facets,
+      countPending: false,
+    }));
   if (!start) {
     const [row] = await db.execute<{ n: number }>(
       sql`select ${pendingBatches(projectId, facets)} as n`,
@@ -318,6 +341,7 @@ export async function findNext(
     projectId,
     exclude: [at.buildId, ...exclude],
     facets,
+    countPending: true,
     ...(input.at ? { branchOf: at.buildId } : {}),
   });
   if (!target && next) {
@@ -327,14 +351,5 @@ export async function findNext(
   }
 
   const remaining = await remainingIn(db, projectId, at, facets);
-  const pending = await pendingCountsByBuild(db, {
-    projectId,
-    buildIds: next ? [next.buildId] : [],
-    facets,
-  });
-  const nextBatch = next && {
-    ...next,
-    pending: pending.get(next.buildId) ?? 0,
-  };
-  return { target, scope, remaining, nextBatch };
+  return { target, scope, remaining, nextBatch: next };
 }

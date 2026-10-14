@@ -1184,15 +1184,17 @@ d("review queue: findNext", () => {
     const small = await statements(2, false);
     const large = await statements(12, false);
     expect(large).toBe(small);
-    expect(small).toBeLessThanOrEqual(6);
+    // Keyset, wrap, next batch (with its pending count), the counts.
+    expect(small).toBeLessThanOrEqual(4);
   });
 
   test("the same bound holds when the batch's only pending step is `at`", async () => {
-    // The longest path: keyset, wrap, next batch, its first step, the counts.
+    // The longest path: keyset, wrap, next batch (with its pending count), its
+    // first step, the counts.
     const small = await statements(2, true);
     const large = await statements(12, true);
     expect(large).toBe(small);
-    expect(small).toBeLessThanOrEqual(6);
+    expect(small).toBeLessThanOrEqual(5);
   });
 
   test("a next batch on another branch costs one more probe, however many runs", async () => {
@@ -1203,6 +1205,6 @@ d("review queue: findNext", () => {
     const large = await statements(12, true, "feature/elsewhere");
     expect(small).toBe(sameBranch + 1);
     expect(large).toBe(small);
-    expect(small).toBeLessThanOrEqual(7);
+    expect(small).toBeLessThanOrEqual(6);
   });
 });

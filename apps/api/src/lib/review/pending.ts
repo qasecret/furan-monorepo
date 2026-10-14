@@ -144,6 +144,34 @@ export function buildHasPendingStep(
 }
 
 /**
+ * The number of the build's pending steps inside `facets`, as a scalar
+ * subquery: `buildId` is the enclosing query's build id, as for
+ * `buildHasPendingStep`. A query that picks a build (`LIMIT 1`) and wants its
+ * count in the same statement computes this over the picked row only, so pick
+ * the build in a subquery and select this from it.
+ *
+ * Every column sits inside a nested fragment, so it keeps its table name even
+ * in the select list of a drizzle one-table select (which prints a direct
+ * column chunk of a select-list expression bare).
+ */
+export function buildPendingCount(
+  projectId: string,
+  buildId: SQL,
+  facets?: StepFacets | undefined,
+): SQL<number> {
+  const joined = sql`${screenshots.runId} = ${testRuns.id}`;
+  const inBuild = and(
+    sql`${testRuns.buildId} = ${buildId}`,
+    eq(testRuns.projectId, projectId),
+    eq(screenshots.projectId, projectId),
+    pendingStepCondition(facets),
+  );
+  return sql<number>`(select count(*) from ${testRuns} join ${screenshots} on ${joined} where ${inBuild})`.mapWith(
+    Number,
+  );
+}
+
+/**
  * The pending steps in each of `runIds` (the project's runs only). A run with
  * no pending step is absent from the map.
  */
