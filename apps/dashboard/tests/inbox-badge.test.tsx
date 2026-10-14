@@ -41,6 +41,12 @@ describe("InboxBadge (batches that need review)", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  test("names a single batch in the singular", () => {
+    countMock.mockReturnValue({ data: { total: 1 } });
+    render(<InboxBadge />);
+    expect(screen.getByLabelText("1 batch needs review").textContent).toBe("1");
+  });
+
   test("hides while the count has not loaded", () => {
     countMock.mockReturnValue({ data: undefined });
     const { container } = render(<InboxBadge />);

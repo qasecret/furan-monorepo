@@ -29,6 +29,7 @@ import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatBatchDateTime } from "@/lib/format";
 import {
   batchHref,
+  DEFAULT_REVIEW_STATUS,
   toBuildsListFilter,
   useReviewContext,
   type ReviewContext,
@@ -165,8 +166,13 @@ export function InboxPage({ context }: Props) {
   const clearFilters = () => {
     search.reset();
     branch.reset();
-    // The chip is a filter too, so what is left is every batch.
-    setContext({ status: "all", branch: undefined, q: undefined });
+    // Back to the page's default view (the Needs review chip, no branch, no
+    // search); if nothing is pending that shows its own empty state.
+    setContext({
+      status: DEFAULT_REVIEW_STATUS,
+      branch: undefined,
+      q: undefined,
+    });
   };
 
   const startReviewing = async () => {
@@ -373,8 +379,11 @@ export function InboxPage({ context }: Props) {
                         </tr>
                       ))
                     : rows.map((b) => {
-                        // The link carries the status along the loop.
-                        const href = batchHref(b.projectId, b.id, context);
+                        // Only the status travels: the Batches page has no facets
+                        // (the same as Start reviewing).
+                        const href = batchHref(b.projectId, b.id, {
+                          status: context.status,
+                        });
                         const meta = buildStatusMeta(b.aggregateStatus);
                         return (
                           <tr

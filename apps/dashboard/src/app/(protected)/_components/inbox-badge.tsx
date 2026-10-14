@@ -25,7 +25,7 @@ export function InboxBadge() {
   return (
     <span
       className="ml-auto rounded-full bg-edge px-1.5 py-0.5 text-2xs font-medium tabular-nums text-fg-secondary"
-      aria-label={`${total} batches need review`}
+      aria-label={`${total} ${total === 1 ? "batch needs" : "batches need"} review`}
     >
       <span aria-hidden="true">{total > 99 ? "99+" : total}</span>
     </span>

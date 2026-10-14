@@ -410,6 +410,22 @@ describe("Batches: rows", () => {
     );
   });
 
+  test("a row link carries the status only: Batches has no facets to carry", () => {
+    render(
+      <InboxPage
+        context={ctxOf("status=failed&browser=firefox&os=linux&branch=main")}
+      />,
+    );
+    const row = screen.getByTestId("inbox-batch-row-b1");
+    expect(within(row).getByRole("link").getAttribute("href")).toBe(
+      "/projects/p1/builds/b1?status=failed",
+    );
+    fireEvent.click(row);
+    expect(routerMock.push).toHaveBeenLastCalledWith(
+      "/projects/p1/builds/b1?status=failed",
+    );
+  });
+
   test("shows skeleton rows while loading", () => {
     serve({ main: result([], { data: undefined, isLoading: true }) });
     render(<InboxPage context={ctxOf()} />);
@@ -673,8 +689,9 @@ describe("Batches: empty states name a next action", () => {
 
     expect(screen.getByText("No batches match these filters.")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    // Every filter goes, the chip too: what is left is every batch.
-    expect(routerMock.replace).toHaveBeenCalledWith("/inbox?status=all", {
+    // Branch and search go, and the chip returns to its default (Needs review,
+    // which is omitted from the URL): the page's own default view.
+    expect(routerMock.replace).toHaveBeenCalledWith("/inbox", {
       scroll: false,
     });
   });
@@ -684,7 +701,7 @@ describe("Batches: empty states name a next action", () => {
     expect(screen.getByText("No batches match these filters.")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(routerMock.replace).toHaveBeenCalledWith("/inbox?status=all", {
+    expect(routerMock.replace).toHaveBeenCalledWith("/inbox", {
       scroll: false,
     });
     expect(
