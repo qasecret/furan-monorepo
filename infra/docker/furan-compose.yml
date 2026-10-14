@@ -331,6 +331,10 @@ configs:
         }
         # /api/* → api (used by the browser in v1.1.29; harmless now).
         location /api/ {
+          # SDK/CI screenshot uploads come through here, and nginx's 1m default
+          # would 413 a full-page screenshot before the api sees it. Match the
+          # api's own ceiling (Fastify bodyLimit / multipart fileSize, 50 MiB).
+          client_max_body_size 50m;
           proxy_pass http://api:3000/;
           proxy_http_version 1.1;
           proxy_set_header Host $$http_host;
