@@ -1,4 +1,12 @@
-import { and, builds, eq, sql } from "@furan/db";
+import {
+  and,
+  builds,
+  eq,
+  screenshots,
+  sql,
+  testRuns,
+  type SQL,
+} from "@furan/db";
 import {
   buildAggregateStatusSchema,
   type BuildAggregateStatus,
@@ -11,6 +19,10 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
+import {
+  pendingCountsByBuild,
+  pendingStepCondition,
+} from "../../lib/review/pending.js";
 import { countPendingCheckpoints } from "../../lib/review/reads.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
@@ -26,6 +38,12 @@ const listInput = z.object({
   branch: z.string().min(1).max(200).optional(),
   status: buildAggregateStatusSchema.optional(),
   properties: z.record(z.string(), z.string()).optional(),
+  /**
+   * `true` keeps the builds that need review: at least one pending step (spec
+   * §3.1; `pendingStepCondition`). `false` or omitted is no filter. Combines
+   * with the other filters by AND.
+   */
+  needsReview: z.boolean().optional(),
 });
 type ListInput = z.infer<typeof listInput>;
 
@@ -53,10 +71,31 @@ const aggregateStatusExpr = sql<string>`
   END
 `;
 
+/**
+ * The build (`builds b`, aliased `b` in the enclosing raw query) has at least
+ * one pending step. `pending.ts`'s step conditions reference the **unaliased**
+ * `screenshots` / `test_runs`, so they go in a fresh EXISTS over those tables;
+ * the only link to the enclosing query is `b.id`.
+ */
+function buildHasPendingStep(projectId: string): SQL {
+  return sql`EXISTS (
+    SELECT 1 FROM ${testRuns}
+    JOIN ${screenshots} ON ${screenshots.runId} = ${testRuns.id}
+    WHERE ${testRuns.buildId} = b.id
+      AND ${testRuns.projectId} = ${projectId}
+      AND ${screenshots.projectId} = ${projectId}
+      AND ${pendingStepCondition()}
+  )`;
+}
+
 export const buildsRouter = t.router({
   /**
    * Cursor-paginated listing for the Builds tab. Joins child runs as a CTE
    * to compute the aggregate status + counts in one query.
+   *
+   * `needsReview` keeps the builds with a pending step. Each item carries
+   * `pendingCheckpoints` (the pending steps in the build, the number
+   * `getById` reports), filled by one grouped query per page.
    */
   list: publicProcedure
     .input(listInput)
@@ -142,6 +181,7 @@ export const buildsRouter = t.router({
           AND (${input.branch ?? null}::text IS NULL OR b.branch_name = ${input.branch ?? null})
           AND (${propertyJson}::jsonb IS NULL OR b.properties @> ${propertyJson}::jsonb)
           AND (${input.status ?? null}::text IS NULL OR ${aggregateStatusExpr} = ${input.status ?? null})
+          ${input.needsReview ? sql`AND ${buildHasPendingStep(input.projectId)}` : sql``}
           AND (
             ${cursorPayload?.createdAt ?? null}::timestamptz IS NULL
             OR (b.created_at, b.id) < (${cursorPayload?.createdAt ?? null}::timestamptz, ${cursorPayload?.id ?? null}::uuid)
@@ -152,6 +192,12 @@ export const buildsRouter = t.router({
 
       const hasMore = rows.length > input.limit;
       const sliced = hasMore ? rows.slice(0, input.limit) : rows;
+      // One grouped query for the whole page, never one per row. A build with
+      // no pending step is absent from the map.
+      const pendingByBuild = await pendingCountsByBuild(ctx.db, {
+        projectId: input.projectId,
+        buildIds: sliced.map((r) => r.id),
+      });
       const items = sliced.map((r) => ({
         id: r.id,
         ciBuildId: r.ci_build_id,
@@ -174,6 +220,7 @@ export const buildsRouter = t.router({
         abortedCount: Number(r.aborted_count),
         passedCount: Number(r.passed_count),
         emptyCount: Number(r.empty_count),
+        pendingCheckpoints: pendingByBuild.get(r.id) ?? 0,
         aggregateStatus: r.aggregate_status as BuildAggregateStatus,
       }));
       const last = sliced[sliced.length - 1];
@@ -182,6 +229,28 @@ export const buildsRouter = t.router({
           ? encodeKeysetCursor({ createdAt: last.cursor_at, id: last.id })
           : null;
       return { items, nextCursor };
+    }),
+
+  /**
+   * How many of the project's builds need review (have at least one pending
+   * step): the Batches badge. Counts builds, not steps.
+   */
+  pendingCount: publicProcedure
+    .input(projectIdInput)
+    .use(authed)
+    .use(
+      projectMember<ProjectIdInput>("read", {
+        from: { resolver: ({ input }) => Promise.resolve(input.projectId) },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const rows = await ctx.db.execute<{ total: number }>(sql`
+        SELECT count(*)::int AS total
+        FROM builds b
+        WHERE b.project_id = ${input.projectId}
+          AND ${buildHasPendingStep(input.projectId)}
+      `);
+      return { total: Number(rows[0]?.total ?? 0) };
     }),
 
   /**
