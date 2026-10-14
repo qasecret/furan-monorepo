@@ -20,6 +20,7 @@
     "start": "node dist/server.js",
     "cli:seed-admin": "tsx src/cli/seed-admin.ts",
     "cli:reset-password": "tsx src/cli/reset-password.ts",
+    "cli:verify-review-rollup": "tsx src/cli/verify-review-rollup.ts",
     "openapi:snapshot": "tsx scripts/snapshot.ts"
   },
   "dependencies": {

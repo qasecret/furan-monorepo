@@ -30,6 +30,7 @@ const data: BatchHeaderData = {
   emptyCount: 0,
   newCount: 0,
   stepsTotal: 24,
+  pendingCheckpoints: 5,
   runByName: "Jane Doe",
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),

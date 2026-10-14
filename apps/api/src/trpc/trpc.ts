@@ -2,10 +2,26 @@ import { withUserScope } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
 import { createDeferredSink } from "../lib/deferred-sink.js";
+import { ReviewRefusal } from "../lib/review/errors.js";
 
 import type { Context } from "./context.js";
 
-export const t = initTRPC.context<Context>().create();
+/**
+ * `errorFormatter` lifts a review refusal's structured payload onto
+ * `data.details` (per-checkpoint reasons, race winner, bulk preview) so the
+ * dashboard can render it. Every other error keeps its shape: `details` is
+ * `undefined` (dropped by JSON) unless the cause is a `ReviewRefusal`.
+ */
+export const t = initTRPC.context<Context>().create({
+  errorFormatter: ({ shape, error }) => ({
+    ...shape,
+    data: {
+      ...shape.data,
+      details:
+        error.cause instanceof ReviewRefusal ? error.cause.details : undefined,
+    },
+  }),
+});
 
 /**
  * Runs each procedure inside a user-scoped transaction (ADR-058): pins

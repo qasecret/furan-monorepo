@@ -1,7 +1,10 @@
 import type { AddressInfo } from "node:net";
 
 import {
+  and,
+  auditLog,
   builds,
+  checkpointDecisions,
   diffRegions,
   eq,
   inArray,
@@ -614,6 +617,23 @@ d("trpc inbox.list", () => {
       .returning();
     if (!run) throw new Error("run not seeded");
 
+    // The diff found a change on the run's one checkpoint (spec §5.4: only a
+    // diffed `new` / `unresolved` checkpoint is pending).
+    const [shot] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: run.id,
+        projectId: project.id,
+        testVariationId: variation.id,
+        name: variation.name,
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "inbox-approve-img",
+        verdict: "unresolved",
+      })
+      .returning();
+    if (!shot) throw new Error("screenshot not seeded");
+
     const caller = makeClient(jwt);
     const result = await caller.inbox.approve.mutate({ runId: run.id });
 
@@ -626,6 +646,15 @@ d("trpc inbox.list", () => {
       .from(testRuns)
       .where(eq(testRuns.id, run.id));
     expect(updated?.status).toBe("passed");
+
+    // Through the decision core, tagged as the inbox's.
+    const decisions = await h.db
+      .select()
+      .from(checkpointDecisions)
+      .where(eq(checkpointDecisions.runId, run.id));
+    expect(
+      decisions.map((d) => [d.screenshotId, d.decision, d.source, d.actorId]),
+    ).toEqual([[shot.id, "approved", "inbox", user.id]]);
   });
 
   test("reject inserts a runReviewerDecisions row and does NOT change run.status", async () => {
@@ -1604,6 +1633,46 @@ d("inbox.rejectCluster", () => {
       .returning();
     if (!projectBTargetRun) throw new Error("projectBTargetRun not seeded");
 
+    // Every run has diffed checkpoints; the target runs' unresolved ones are
+    // what the cluster reject decides (spec §5.7). targetRun1's passed step is
+    // not pending and stays undecided.
+    const [variationA] = await h.db
+      .insert(testVariations)
+      .values({ projectId: projectA.id, name: "rc-step" })
+      .returning();
+    const [variationB] = await h.db
+      .insert(testVariations)
+      .values({ projectId: projectB.id, name: "rc-step" })
+      .returning();
+    if (!variationA || !variationB) throw new Error("variations not seeded");
+    const shotOf = async (
+      run: { id: string; projectId: string },
+      variationId: string,
+      verdict: "unresolved" | "passed",
+      key: string,
+    ) => {
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: run.id,
+          projectId: run.projectId,
+          testVariationId: variationId,
+          name: `rc-step-${key}`,
+          viewport: "1280x720",
+          browser: "chromium",
+          imageKey: `rc-${key}`,
+          verdict,
+        })
+        .returning();
+      if (!shot) throw new Error("screenshot not seeded");
+      return shot.id;
+    };
+    const t1 = await shotOf(targetRun1, variationA.id, "unresolved", "t1");
+    const t1Passed = await shotOf(targetRun1, variationA.id, "passed", "t1p");
+    const t2 = await shotOf(targetRun2, variationA.id, "unresolved", "t2");
+    await shotOf(otherSigRun, variationA.id, "unresolved", "other");
+    await shotOf(projectBTargetRun, variationB.id, "unresolved", "xproj");
+
     const caller = makeClient(reviewerJwt);
     const res = await caller.inbox.rejectCluster.mutate({
       projectId: projectA.id,
@@ -1616,6 +1685,56 @@ d("inbox.rejectCluster", () => {
     expect(res.runCount).toBe(2);
     expect(res.buildCount).toBe(2);
     expect(res.capped).toBe(false);
+
+    // One action, source inbox, on the pending checkpoints only.
+    const decisions = await h.db
+      .select()
+      .from(checkpointDecisions)
+      .where(eq(checkpointDecisions.projectId, projectA.id));
+    expect(new Set(decisions.map((d) => d.screenshotId))).toEqual(
+      new Set([t1, t2]),
+    );
+    expect(decisions.map((d) => d.screenshotId)).not.toContain(t1Passed);
+    expect(
+      decisions.every(
+        (d) =>
+          d.decision === "rejected" &&
+          d.source === "inbox" &&
+          d.actorId === reviewerUser.id,
+      ),
+    ).toBe(true);
+    expect(new Set(decisions.map((d) => d.actionId)).size).toBe(1);
+
+    // The cluster-level summary row, plus the core's row per run.
+    const [summary] = await h.db
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, "run.reject_cluster"),
+          eq(auditLog.targetId, projectA.id),
+        ),
+      );
+    expect(summary?.metadata).toMatchObject({
+      signature: "v1:target",
+      rejected: 2,
+      buildCount: 2,
+      capped: false,
+      actionId: decisions[0]!.actionId,
+      source: "inbox",
+    });
+    const perRun = await h.db
+      .select({ targetId: auditLog.targetId })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.action, "run.reject_checkpoints"),
+          inArray(auditLog.targetId, [targetRun1.id, targetRun2.id]),
+        ),
+      );
+    expect(new Set(perRun.map((r) => r.targetId))).toEqual(
+      new Set([targetRun1.id, targetRun2.id]),
+    );
 
     // The two target runs are now failed.
     const failed = await h.db

@@ -28,15 +28,18 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
+import { trpcActionCtx } from "../../lib/review/actions.js";
+import { GROUP_APPROVE_CAP } from "../../lib/review/groups.js";
+import {
+  approveRunPending,
+  rejectPendingInRuns,
+} from "../../lib/review/legacy.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { AuthedUser } from "../../plugins/auth.js";
 import { assertAdminSurface } from "../middlewares/admin.js";
 import { authed } from "../middlewares/authed.js";
 import { projectMember } from "../middlewares/project-member.js";
 import { publicProcedure, t } from "../trpc.js";
-
-import { GROUP_APPROVE_CAP } from "./checkpoint-grouping.js";
-import { approveRun } from "./runs.js";
 
 /** Map the window filter to a Postgres interval literal, or null for "all". */
 const WINDOW_INTERVAL: Record<"24h" | "7d" | "30d" | "all", string | null> = {
@@ -388,9 +391,10 @@ export const inboxRouter = t.router({
     }),
 
   /**
-   * Approve a single test run from the inbox view. Delegates entirely to the
-   * shared `approveRun` helper (same side effects as `runs.approve`): status
-   * → passed, merge=true, baseline snapshot, broadcaster events.
+   * Approve a single test run from the inbox view: every pending checkpoint,
+   * as one action through the decision core (`approveRunPending`, the same
+   * path as `runs.approve`), `source: "inbox"`. Nothing pending is a no-op; a
+   * run that isn't reviewable is PRECONDITION_FAILED.
    *
    * Project membership is resolved from the run row so callers only need to
    * supply the runId — consistent with how the inbox list surfaces items
@@ -414,7 +418,11 @@ export const inboxRouter = t.router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      return approveRun({ ...ctx, log: ctx.req.log }, input.runId);
+      const { runId } = await approveRunPending(trpcActionCtx(ctx), {
+        runId: input.runId,
+        source: "inbox",
+      });
+      return { runId, approved: true as const };
     }),
 
   /**
@@ -422,13 +430,13 @@ export const inboxRouter = t.router({
    *
    * Given a (projectId, signature) cluster, re-derives the in-scope unresolved/
    * failed runs server-side (never trusts a client run list) under the same
-   * status+window filter and bulk-marks them `failed` (no baseline mutation).
-   * Mirrors `runs.rejectCheckpointGroup` but inbox-filter-scoped, cross-build,
-   * and signature-keyed.
-   *
-   * The inbox status filter (unresolved/failed) is already ⊆ reviewer-legal
-   * statuses, so no separate REVIEWER_LEGAL_FROM import is needed — every
-   * matched run is a legal reject target.
+   * status+window filter, and rejects their PENDING checkpoints as one action
+   * through the decision core, `source: "inbox"` (spec §5.7; no baseline
+   * mutation). At most `GROUP_APPROVE_CAP` runs, newest first; a run with
+   * nothing pending (already decided, overridden or not reviewable) is left
+   * alone, so a capped re-run drains the rest. `rejected` / `runCount` count
+   * the runs touched. A `run.reject_cluster` summary is audited next to the
+   * core's per-run rows.
    *
    * Cross-PROJECT is NOT crossed: `eq(testRuns.projectId, input.projectId)`
    * guarantees isolation. Cross-BUILD IS reached: no build filter.
@@ -469,34 +477,19 @@ export const inboxRouter = t.router({
         .orderBy(desc(testRuns.createdAt), desc(testRuns.id));
 
       const cap = GROUP_APPROVE_CAP;
-      const capped = matches.length > cap;
-      // slice(0, cap) already returns the whole array when length <= cap — no ternary.
-      const targets = matches.slice(0, cap);
-
-      if (targets.length === 0) {
+      const result = await rejectPendingInRuns(trpcActionCtx(ctx), {
+        projectId: input.projectId,
+        runIds: matches.map((m) => m.id),
+        runCap: cap,
+        source: "inbox",
+      });
+      const touchedRunIds = result.runs.map((r) => r.runId);
+      if (touchedRunIds.length === 0) {
         return { rejected: 0, runCount: 0, buildCount: 0, capped: false, cap };
       }
-
-      const targetRunIds = targets.map((t) => t.id);
-      const distinctBuildIds = [...new Set(targets.map((t) => t.buildId))];
-
-      await ctx.db
-        .update(testRuns)
-        .set({ status: "failed", merge: false })
-        .where(inArray(testRuns.id, targetRunIds));
-
-      for (const runId of targetRunIds) {
-        await ctx.broadcaster.publishProjectEvent(input.projectId, {
-          event: "testRun_updated",
-          data: { id: runId },
-        });
-      }
-      for (const buildId of distinctBuildIds) {
-        await ctx.broadcaster.publishProjectEvent(input.projectId, {
-          event: "build_updated",
-          data: { id: buildId },
-        });
-      }
+      const buildOf = new Map(matches.map((m) => [m.id, m.buildId]));
+      const buildCount = new Set(touchedRunIds.map((id) => buildOf.get(id)))
+        .size;
 
       await emitAudit(
         ctx.db,
@@ -507,19 +500,21 @@ export const inboxRouter = t.router({
           targetId: input.projectId,
           metadata: {
             signature: input.signature,
-            rejected: targetRunIds.length,
-            buildCount: distinctBuildIds.length,
-            capped,
+            rejected: touchedRunIds.length,
+            buildCount,
+            capped: result.capped,
+            actionId: result.actionId,
+            source: "inbox",
           },
         },
         ctx.req.log,
       );
 
       return {
-        rejected: targetRunIds.length,
-        runCount: targetRunIds.length,
-        buildCount: distinctBuildIds.length,
-        capped,
+        rejected: touchedRunIds.length,
+        runCount: touchedRunIds.length,
+        buildCount,
+        capped: result.capped,
         cap,
       };
     }),

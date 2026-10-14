@@ -152,8 +152,9 @@ type BaselineWriter = DB | Parameters<Parameters<DB["transaction"]>[0]>[0];
  * The single place both writes happen, so every approve / auto-seed path keeps
  * them in sync — the drift that previously left run-level approve, saveNewTests,
  * and diff-worker auto-seed baselines with a null `test_variations.baseline_name`
- * (`approveCheckpointInTx` is the per-checkpoint variant that already paired the
- * two writes). Run inside a transaction for atomicity.
+ * (`promoteCheckpointInTx` in the api's decision core is the per-checkpoint
+ * variant that already pairs the two writes). Run inside a transaction for
+ * atomicity.
  */
 export async function recordBaseline(
   writer: BaselineWriter,

@@ -9,6 +9,7 @@ import { inboxRouter } from "./inbox.js";
 import { installationsRouter } from "./installations.js";
 import { membersRouter } from "./members.js";
 import { projectsRouter } from "./projects.js";
+import { reviewRouter } from "./review.js";
 import { runsRouter } from "./runs.js";
 import { variationsRouter } from "./variations.js";
 
@@ -22,6 +23,7 @@ export const appRouter = t.router({
   installations: installationsRouter,
   members: membersRouter,
   projects: projectsRouter,
+  review: reviewRouter,
   runs: runsRouter,
   variations: variationsRouter,
 });

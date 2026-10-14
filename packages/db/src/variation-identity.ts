@@ -8,14 +8,13 @@ import { testVariations } from "./schema/index.js";
  * full identity MINUS `projectId` + `branchName` (which are scoping, applied
  * separately). This is the single source of truth for "the same checkpoint
  * across branches": the sibling resolution in `resolveBaseline`'s cross-branch
- * tiers and the checkpoint-badge derivation (`deriveCheckpointStatuses`) both
- * match on it, and `resolveOrCreateVariation` upserts on the same columns plus
- * project + branch.
+ * tiers matches on it, and `resolveOrCreateVariation` upserts on the same
+ * columns plus project + branch.
  *
  * If the ADR-054 identity gains a column, add it HERE (and to the
  * `test_variations_identity_unique` index + `resolveOrCreateVariation`'s
- * conflict target) — the two sibling-matchers pick it up automatically instead
- * of silently drifting onto a stale subset.
+ * conflict target) — the sibling matcher picks it up automatically instead of
+ * silently drifting onto a stale subset.
  */
 export interface VariationIdentity {
   name: string;
@@ -23,16 +22,6 @@ export interface VariationIdentity {
   browser: string | null;
   os: string | null;
   device: string | null;
-}
-
-/**
- * Stable string key for IN-MEMORY identity matching. Field order is fixed and
- * must not change (it is only ever compared against itself within a process).
- * Scope by project separately — this key intentionally omits `projectId` so
- * callers compose it explicitly and cannot accidentally match across projects.
- */
-export function variationIdentityKey(id: VariationIdentity): string {
-  return JSON.stringify([id.name, id.viewport, id.browser, id.os, id.device]);
 }
 
 /**

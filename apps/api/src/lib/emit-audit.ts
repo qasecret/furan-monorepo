@@ -1,4 +1,4 @@
-import { auditLog, type DB } from "@furan/db";
+import { auditLog, type DB, type Tx } from "@furan/db";
 
 export interface AuditEvent {
   /** Who performed the action (a user id), or null for a system action. */
@@ -20,13 +20,14 @@ export interface AuditEvent {
  * single record — but it is logged with the full event for reconstruction.
  *
  * The insert runs in its own savepoint. Callers pass the request-scoped
- * transaction (ADR-058), and a failed statement aborts the whole transaction,
+ * transaction (ADR-058) or a transaction of their own (a `Tx`), and a failed
+ * statement aborts the whole transaction,
  * so catching the error alone would still roll back the audited action.
  * Rolling back to the savepoint keeps the caller's transaction usable; on a
  * non-transactional handle it is just a one-statement transaction.
  */
 export async function emitAudit(
-  db: DB,
+  db: DB | Tx,
   event: AuditEvent,
   logger: { error: (obj: object, msg: string) => void },
 ): Promise<void> {

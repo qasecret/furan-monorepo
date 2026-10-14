@@ -148,6 +148,32 @@ async function seed(h: TestApp): Promise<Seeded> {
   };
 }
 
+/**
+ * Gives each of `runIds` one diffed checkpoint (on the seed's variation) with
+ * the verdict `verdictOf(index)`: "Approve all" decides pending checkpoints
+ * (spec §5.4), not run statuses.
+ */
+async function addCheckpoints(
+  h: TestApp,
+  s: Pick<Seeded, "projectId" | "variationId">,
+  runIds: string[],
+  verdictOf: (i: number) => "new" | "unresolved" | "passed",
+) {
+  if (runIds.length === 0) return;
+  await h.db.insert(screenshots).values(
+    runIds.map((runId, i) => ({
+      runId,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "home",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: `bulk-${runId}`,
+      verdict: verdictOf(i),
+    })),
+  );
+}
+
 function makeClient(baseUrl: string, jwt?: string) {
   return createTRPCClient<AppRouter>({
     links: [
@@ -302,28 +328,43 @@ d("tRPC runs.list", () => {
   });
 
   test("bulkApproveByBuild: approves every run that needs review, skipping already-passed runs", async () => {
+    // Seed build: 24 `new` runs (a first capture: verdict `new`), 1 `passed`
+    // (nothing to approve) and 1 `failed`, here a reviewer's reject of its
+    // unresolved step. "Approve all" decides PENDING checkpoints (`new` or
+    // `unresolved`, undecided; spec §5.4): the 24 first captures are approved,
+    // the passed run has nothing to approve and the rejected step stays
+    // rejected (a decision changes only through undo, R19).
+    await addCheckpoints(h, s, s.runIdsAsc.slice(0, 24), () => "new");
+    await addCheckpoints(h, s, [s.runIdsAsc[24]!], () => "passed");
+    await addCheckpoints(h, s, [s.runIdsAsc[25]!], () => "unresolved");
     const client = makeClient(baseUrl, s.memberJwt);
+    await client.runs.reject.mutate({ runId: s.runIdsAsc[25]! });
+
     const res = await client.runs.bulkApproveByBuild.mutate({
       buildId: s.buildId,
     });
-    // Seed build: 24 `new` (no baseline yet) + 1 `passed` (nothing to
-    // approve) + 1 `failed` → only the failed run is approved.
-    expect(res.approved).toBe(1);
-    expect(res.runIds).toEqual([s.runIdsAsc[25]]);
+    expect(res.approved).toBe(24);
+    expect(res.runIds).toEqual(s.runIdsAsc.slice(0, 24));
     expect(res.capped).toBe(false);
-    // Both are passed now; the 24 `new` are untouched.
+    // The 24 approved runs + the already-passed one; the rejected run is not.
     const passed = await client.runs.list.query({
       projectId: s.projectId,
       buildId: s.buildId,
       status: ["passed"],
     });
-    expect(passed.items).toHaveLength(2);
+    expect(passed.items).toHaveLength(25);
+    const failed = await client.runs.list.query({
+      projectId: s.projectId,
+      buildId: s.buildId,
+      status: ["failed"],
+    });
+    expect(failed.items.map((r) => r.id)).toEqual([s.runIdsAsc[25]]);
   });
 
   test("bulkApproveByBuild: a capped approve is progressive — the next call approves the rest", async () => {
     // A fresh build with one already-passed run (the OLDEST, so an unordered
     // or passed-inclusive selection would pick it first) followed by 201
-    // runs that need review, alternating unresolved / failed.
+    // runs that need review: each has one unresolved checkpoint.
     const [b2] = await h.db
       .insert(builds)
       .values({ projectId: s.projectId, ciBuildId: "build-cap" })
@@ -338,7 +379,7 @@ d("tRPC runs.list", () => {
           buildId: b2.id,
           name: `cap-${i}`,
           branchName: "main",
-          status: i === 0 ? "passed" : i % 2 === 0 ? "failed" : "unresolved",
+          status: i === 0 ? "passed" : "unresolved",
           createdAt: new Date(t0 + i * 1000),
           updatedAt: new Date(t0 + i * 1000),
         })),
@@ -350,6 +391,8 @@ d("tRPC runs.list", () => {
       if (!id) throw new Error(`cap-${i + 1} not seeded`);
       return id;
     });
+    await addCheckpoints(h, s, [byName.get("cap-0")!], () => "passed");
+    await addCheckpoints(h, s, needsReviewAsc, () => "unresolved");
 
     const client = makeClient(baseUrl, s.memberJwt);
 
