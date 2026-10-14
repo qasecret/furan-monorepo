@@ -9,6 +9,7 @@ import {
   fastifyTRPCPlugin,
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
+import { getHTTPStatusCodeFromError } from "@trpc/server/http";
 import Fastify, {
   type FastifyBaseLogger,
   type FastifyError,
@@ -19,6 +20,7 @@ import Fastify, {
 
 import type { Env } from "./env.js";
 import type { Broadcaster } from "./lib/broadcast.js";
+import { errorLogLevel } from "./lib/error-log-level.js";
 import { sendError } from "./lib/errors.js";
 import { loadActiveUserByPat } from "./lib/load-active-user.js";
 import type { MemberProjectsCache } from "./lib/member-projects-cache.js";
@@ -130,7 +132,12 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
         err.statusCode && err.statusCode >= 400 && err.statusCode < 600
           ? err.statusCode
           : 500;
-      req.log.error({ err, reqId: req.id, url: req.url }, "request_error");
+      // A 4xx is the client's (expected traffic) and logs at warn; a 5xx at
+      // error.
+      req.log[errorLogLevel(status)](
+        { err, reqId: req.id, url: req.url, statusCode: status },
+        "request_error",
+      );
       // Emit the canonical ApiErrorEnvelope. 5xx is scrubbed to a generic
       // code/message (never leak SQL / stack frames); 4xx keeps the thrown
       // error's code + message so validation detail still reaches the client.
@@ -252,8 +259,14 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
           diffQueue: deps.diffQueue,
           broadcaster: deps.broadcaster,
         }),
+      // A 4xx (a review refusal, a missing or forbidden row, bad input) is
+      // the client's and logs at warn; only a 5xx logs at error.
       onError: ({ error, path }) => {
-        app.log.error({ path, err: error }, "trpc_error");
+        const status = getHTTPStatusCodeFromError(error);
+        app.log[errorLogLevel(status)](
+          { path, err: error, statusCode: status },
+          "trpc_error",
+        );
       },
     } satisfies FastifyTRPCPluginOptions<typeof appRouter>["trpcOptions"],
   });

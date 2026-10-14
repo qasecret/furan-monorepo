@@ -26,11 +26,14 @@ export interface TargetFacts {
 }
 
 /** Lifecycles in which nothing may be decided: a diff is still out, or the run never finished. */
-const UNREVIEWABLE_LIFECYCLES: ReadonlySet<RunStatus> = new Set<RunStatus>([
+export const UNREVIEWABLE_LIFECYCLE_LIST = [
   "running",
   "aborted",
   "empty",
-]);
+] as const satisfies readonly RunStatus[];
+const UNREVIEWABLE_LIFECYCLES: ReadonlySet<RunStatus> = new Set<RunStatus>(
+  UNREVIEWABLE_LIFECYCLE_LIST,
+);
 
 /**
  * Why a run's checkpoints can't be reviewed right now, or null when they can.

@@ -1258,6 +1258,55 @@ d("review router", () => {
       ).toHaveLength(1);
     });
 
+    // M2: approveBuild locks only the runs that can be targets. Locking a
+    // running run too, then variations, inverted the upload path's
+    // variation → run order (40P01 risk), for a run it never decides.
+    test("approveBuild neither locks nor decides a running run of the build", async () => {
+      const { s, run3 } = await seedBuild();
+      const side = createDb();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked!: () => void;
+      const lockedP = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      // Another writer (an upload, say) holds the running run's row lock.
+      const sideDone = side.db.transaction(async (tx) => {
+        await lockRuns(tx, s.projectId, [run3.runId]);
+        locked();
+        await gate;
+      });
+      sideDone.catch(() => locked());
+
+      let call: Promise<unknown> = Promise.resolve();
+      try {
+        await lockedP;
+        const actionId = newAction();
+        call = as(s.editor).review.approveBuild.mutate({
+          buildId: s.buildId,
+          actionId,
+          expectedCount: 3,
+        });
+        call.catch(() => undefined);
+        const outcome = await Promise.race([
+          call.then(() => "done" as const),
+          new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 5_000)),
+        ]);
+        // It never waits on the running run's lock.
+        expect(outcome).toBe("done");
+        const res = (await call) as { decided: { checkpointId: string }[] };
+        expect(res.decided).toHaveLength(3);
+        expect(await decisionsOfRun(run3.runId)).toHaveLength(0);
+        expect(await runStatus(run3.runId)).toBe("running");
+      } finally {
+        release();
+        await Promise.allSettled([sideDone, call]);
+        await side.close();
+      }
+    }, 30_000);
+
     test("the count is taken after the runs are locked: a decision that lands while it waits changes the count (batch_changed)", async () => {
       const { s } = await seedBuild();
       const side = createDb();
