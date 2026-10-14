@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -79,5 +80,12 @@ export const screenshots = pgTable(
     diffSignatureIdx: index("screenshots_diff_signature_idx").on(
       t.diffSignature,
     ),
+    // The steps the review queue and the "needs review" filters look at: a
+    // pending step has verdict `new` or `unresolved` (a `passed` or undiffed
+    // one never is), in capture order within its run. Partial, so the index
+    // leaves out the passed steps.
+    pendingIdx: index("screenshots_pending_idx")
+      .on(t.runId, t.createdAt)
+      .where(sql`${t.verdict} IN ('new', 'unresolved')`),
   }),
 );
