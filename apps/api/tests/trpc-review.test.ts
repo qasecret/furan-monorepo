@@ -25,11 +25,12 @@ import {
   describe,
   expect,
   test,
+  vi,
 } from "vitest";
 
 import { decideCheckpoints } from "../src/lib/review/decide.js";
 import { GROUP_APPROVE_CAP, groupScope } from "../src/lib/review/groups.js";
-import { lockRuns } from "../src/lib/review/targets.js";
+import { lockBuildRuns, lockRuns } from "../src/lib/review/targets.js";
 import { APPROVE_BUILD_CAP } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
@@ -43,6 +44,14 @@ import {
   type ReviewSeed,
   type ReviewUser,
 } from "./review-fixtures.js";
+
+// `lockBuildRuns` runs as it is, except where a test makes something happen
+// right after approveBuild has taken its locks (the R48 conflict test).
+vi.mock("../src/lib/review/targets.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/lib/review/targets.js")>();
+  return { ...actual, lockBuildRuns: vi.fn(actual.lockBuildRuns) };
+});
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -991,6 +1000,44 @@ d("review router", () => {
       });
     });
 
+    test("a rejectGroup writes its own build-level audit row", async () => {
+      const s = await seedGroup();
+      const actionId = newAction();
+      await as(s.editor).review.rejectGroup.mutate({
+        runId: s.runId,
+        checkpointId: s.shots.a!.id,
+        actionId,
+      });
+      const rows = (await auditOf(s.buildId)).filter(
+        (a) => a.action === "run.reject_group",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        actorId: s.editor.id,
+        targetType: "build",
+      });
+      expect(rows[0]!.metadata).toMatchObject({
+        projectId: s.projectId,
+        actionId,
+        source: "group",
+        seedRunId: s.runId,
+        seedCheckpointId: s.shots.a!.id,
+        count: 2,
+        runIds: [s.runId],
+        capped: false,
+      });
+      const meta = rows[0]!.metadata as { checkpointIds: string[] };
+      expect(new Set(meta.checkpointIds)).toEqual(
+        new Set([s.shots.a!.id, s.shots.b!.id]),
+      );
+      // Rejecting never touches a baseline, and the per-run rows are there too.
+      expect(
+        (await auditOf(s.runId)).filter(
+          (a) => a.action === "run.reject_checkpoints",
+        ),
+      ).toHaveLength(1);
+    });
+
     test("caps a group at GROUP_APPROVE_CAP in capture order; running it again drains the rest", async () => {
       const s = await seed({ checkpoints: [], lifecycle: "unresolved" });
       const sig = `sig-${s.tag}`;
@@ -1220,6 +1267,105 @@ d("review router", () => {
       ).toHaveLength(1);
     });
 
+    // M2: approveBuild locks only the runs that can be targets. Locking a
+    // running run too, then variations, inverted the upload path's
+    // variation → run order (40P01 risk), for a run it never decides.
+    test("approveBuild neither locks nor decides a running run of the build", async () => {
+      const { s, run3 } = await seedBuild();
+      const side = createDb();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked!: () => void;
+      const lockedP = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      // Another writer (an upload, say) holds the running run's row lock.
+      const sideDone = side.db.transaction(async (tx) => {
+        await lockRuns(tx, s.projectId, [run3.runId]);
+        locked();
+        await gate;
+      });
+      sideDone.catch(() => locked());
+
+      let call: Promise<unknown> = Promise.resolve();
+      try {
+        await lockedP;
+        const actionId = newAction();
+        call = as(s.editor).review.approveBuild.mutate({
+          buildId: s.buildId,
+          actionId,
+          expectedCount: 3,
+        });
+        call.catch(() => undefined);
+        const outcome = await Promise.race([
+          call.then(() => "done" as const),
+          new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 5_000)),
+        ]);
+        // It never waits on the running run's lock.
+        expect(outcome).toBe("done");
+        const res = (await call) as { decided: { checkpointId: string }[] };
+        expect(res.decided).toHaveLength(3);
+        expect(await decisionsOfRun(run3.runId)).toHaveLength(0);
+        expect(await runStatus(run3.runId)).toBe("running");
+      } finally {
+        release();
+        await Promise.allSettled([sideDone, call]);
+        await side.close();
+      }
+    }, 30_000);
+
+    // R48: approveBuild locks only the runs that can be targets. A run that
+    // turns reviewable right after that holds no lock of ours; the selection
+    // reaches it, and locking it now would break the ascending order. The
+    // reviewer re-confirms instead, even when the count happens to match.
+    test("a run that turns reviewable after the lock is a conflict (batch_changed), and nothing is decided", async () => {
+      const { s, run3 } = await seedBuild();
+      const side = createDb();
+      const actual = await vi.importActual<
+        typeof import("../src/lib/review/targets.js")
+      >("../src/lib/review/targets.js");
+      vi.mocked(lockBuildRuns).mockImplementationOnce(async (...args) => {
+        const locked = await actual.lockBuildRuns(...args);
+        // Committed by another connection right after the locks: the running
+        // run's diff lands, so the run and its step become reviewable.
+        await side.db
+          .update(screenshots)
+          .set({ verdict: "unresolved", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, run3.shots.e!.id));
+        await side.db
+          .update(testRuns)
+          .set({ status: "unresolved" })
+          .where(eq(testRuns.id, run3.runId));
+        return locked;
+      });
+      try {
+        const actionId = newAction();
+        const f = await failure(
+          as(s.editor).review.approveBuild.mutate({
+            buildId: s.buildId,
+            actionId,
+            // a, b, c and now e: the count matches, the locks do not.
+            expectedCount: 4,
+          }),
+        );
+        expect(vi.mocked(lockBuildRuns)).toHaveBeenCalled();
+        expect(f.code).toBe("CONFLICT");
+        expect(f.message).toBe("batch_changed");
+        expect(f.details?.preview?.pendingCheckpoints).toBe(4);
+        expect(await decisionsOfAction(actionId)).toHaveLength(0);
+        for (const runId of [s.runId, run3.runId]) {
+          const approved = (await decisionsOfRun(runId)).filter(
+            (r) => r.decision === "approved",
+          );
+          expect(approved).toHaveLength(0);
+        }
+      } finally {
+        await side.close();
+      }
+    }, 30_000);
+
     test("the count is taken after the runs are locked: a decision that lands while it waits changes the count (batch_changed)", async () => {
       const { s } = await seedBuild();
       const side = createDb();
@@ -1429,6 +1575,100 @@ d("review router", () => {
       ]);
       await expectForeignUntouched(foreign);
       await expectForeignUntouched(other.foreign);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Legality: a run that is not reviewable, or whose status is overridden.
+  // -------------------------------------------------------------------------
+
+  describe("a run that is not reviewable", () => {
+    test.each(["running", "aborted", "empty"] as const)(
+      "naming a checkpoint of a %s run is PRECONDITION_FAILED not_reviewable, for approve and reject, and writes nothing",
+      async (lifecycle) => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+          ],
+          lifecycle,
+        });
+        const c = as(s.editor);
+        const calls = [
+          c.review.approve.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+          c.review.reject.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+        ];
+        for (const call of calls) {
+          const f = await failure(call);
+          expect(f.code).toBe("PRECONDITION_FAILED");
+          expect(f.message).toBe("not_reviewable");
+          expect(f.details?.reasons).toEqual([
+            { checkpointId: s.shots.a!.id, reason: "not_reviewable" },
+          ]);
+        }
+        expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+        expect(await runStatus(s.runId)).toBe(lifecycle);
+        expect(h.broadcasterPublish).not.toHaveBeenCalled();
+      },
+    );
+
+    test("without ids a run that is not reviewable has nothing pending: an empty success that writes nothing", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+        lifecycle: "running",
+      });
+      const res = await as(s.editor).review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+      });
+      expect(res).toMatchObject({ decided: [], runs: [] });
+      expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+      expect(await runStatus(s.runId)).toBe("running");
+      expect(h.broadcasterPublish).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("an overridden run", () => {
+    test("is not reviewable per checkpoint until its override is reset", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved", withBaseline: true }],
+      });
+      const c = as(s.editor);
+      await c.runs.overrideStatus.mutate({ runId: s.runId, status: "passed" });
+
+      for (const decide of [c.review.approve, c.review.reject]) {
+        const f = await failure(
+          decide.mutate({
+            runId: s.runId,
+            actionId: newAction(),
+            checkpointIds: [s.shots.a!.id],
+          }),
+        );
+        expect(f.code).toBe("PRECONDITION_FAILED");
+        expect(f.message).toBe("run_overridden");
+      }
+      // Without ids nothing is pending in an overridden run.
+      const none = await c.review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+      });
+      expect(none.decided).toEqual([]);
+      expect(await decisionsOfRun(s.runId)).toHaveLength(0);
+
+      await c.runs.overrideStatus.mutate({ runId: s.runId, status: "default" });
+      await c.review.approve.mutate({
+        runId: s.runId,
+        actionId: newAction(),
+        checkpointIds: [s.shots.a!.id],
+      });
+      expect(await runStatus(s.runId)).toBe("passed");
     });
   });
 

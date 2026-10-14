@@ -269,7 +269,7 @@ function bodyOf(p: ApproveBuildPreview | undefined, failed: boolean) {
       )}
       {p.notReviewableTests > 0 && (
         <p>
-          {`${p.notReviewableTests} test${plural(p.notReviewableTests)} ${be(p.notReviewableTests)} still running and ${be(p.notReviewableTests)} skipped.`}
+          {`${p.notReviewableTests} test${plural(p.notReviewableTests)} can't be reviewed right now (still running, aborted, empty or overridden) and ${be(p.notReviewableTests)} skipped.`}
         </p>
       )}
       {p.capped && (

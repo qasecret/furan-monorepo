@@ -69,8 +69,8 @@ Decisions recorded by the backfill:
    image tags in `compose.yml` (for the one-file install: set `FURAN_VERSION`,
    or download the new `furan-compose.yml`), as in
    [`production-deploy.md` §0](./production-deploy.md#0-the-one-rule-that-bites-everyone-image--migration-lockstep).
-   Otherwise `$P pull` fetches the old pinned images and `migrate` applies the
-   old migrations.
+   Otherwise `$P pull` fetches the old pinned images and `migrate` runs the
+   old migration set, so `0035`–`0037` are not applied.
 
    ```bash
    P="docker compose -p docker --env-file infra/docker/.env -f infra/docker/compose.yml"
@@ -166,9 +166,15 @@ exists to prevent that.
 **Reviews or diffs from the previous release during the rollout window** (the
 writers were not stopped, §2 step 2). This is the usual cause: the previous
 release wrote a status but no verdict or decision. Re-run the backfill. It is
-idempotent and fills only the gaps: verdicts that are still NULL, and
-decisions for `passed` / `failed` runs that have none. It never changes a
-verdict, a decision or a status that already exists.
+safe to re-apply and fills only the gaps: verdicts that are still NULL, and
+decisions for `passed` / `failed` runs that have none. On data the new release
+wrote it is a no-op, and it never changes a verdict, a decision or a status
+that already exists.
+
+Re-run **only** `0037`. Never re-apply `0035`: it is the schema migration
+(new types, a table, columns) and fails on a database that already has them.
+`0036` is also safe to re-apply (it never takes a run the new release diffed
+as a source), but nothing in this section needs it.
 
 ```bash
 $P run --rm --no-deps --entrypoint psql migrate \

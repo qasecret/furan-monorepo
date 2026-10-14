@@ -70,11 +70,13 @@ export async function handleCaptureJob(
     // exceptions land as `aborted` (distinct from reviewer-rejected
     // `failed`). Wrap in its own try/catch so a status-write failure
     // does not mask the original error.
+    // `abortedByDiff: false`: a capture abort is final; a later diff job heals
+    // only an abort the diff pipeline wrote (Ruling R46).
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
           .update(testRuns)
-          .set({ status: "aborted" })
+          .set({ status: "aborted", abortedByDiff: false })
           .where(eq(testRuns.id, data.runId));
       });
     } catch (statusErr) {

@@ -128,7 +128,9 @@ describe("ApprovePendingDialog copy", () => {
       "Across 12 tests. Each step's screenshot becomes its baseline.",
     );
     expect(text).toContain("2 rejected steps are left as is.");
-    expect(text).toContain("3 tests are still running and are skipped.");
+    expect(text).toContain(
+      "3 tests can't be reviewed right now (still running, aborted, empty or overridden) and are skipped.",
+    );
     expect(text).not.toContain("run it again for the rest");
     expect(confirm().textContent).toBe("Approve 37 steps");
   });
@@ -151,7 +153,9 @@ describe("ApprovePendingDialog copy", () => {
       "Across 1 test. Each step's screenshot becomes its baseline.",
     );
     expect(text).toContain("1 rejected step is left as is.");
-    expect(text).toContain("1 test is still running and is skipped.");
+    expect(text).toContain(
+      "1 test can't be reviewed right now (still running, aborted, empty or overridden) and is skipped.",
+    );
     expect(confirm().textContent).toBe("Approve 1 step");
   });
 
@@ -160,7 +164,7 @@ describe("ApprovePendingDialog copy", () => {
     renderDialog();
     const text = dialogText();
     expect(text).not.toContain("rejected");
-    expect(text).not.toContain("still running");
+    expect(text).not.toContain("can't be reviewed");
     expect(text).toContain("Across 12 tests.");
   });
 
@@ -462,7 +466,9 @@ describe("ApprovePendingDialog when the batch changed", () => {
     const text = dialogText();
     expect(text).toContain("Across 13 tests.");
     expect(text).not.toContain("rejected");
-    expect(text).toContain("1 test is still running and is skipped.");
+    expect(text).toContain(
+      "1 test can't be reviewed right now (still running, aborted, empty or overridden) and is skipped.",
+    );
     expect(confirm().textContent).toBe("Approve 40 steps");
     expect(
       screen.getByText(

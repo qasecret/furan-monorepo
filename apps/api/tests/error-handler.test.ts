@@ -1,4 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+
+import { errorLogLevel } from "../src/lib/error-log-level.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
 
@@ -69,5 +71,37 @@ describe("global error handler — 5xx body never leaks internals", () => {
       url: `/trpc/${path}?batch=1&input=${encodeURIComponent("{}")}`,
     });
     expect(res.body).not.toMatch(/Route GET:.*not found/i);
+  });
+});
+
+// T8/T10: a 4xx is the client's (a review refusal, a conflict, a missing row,
+// a validation failure): expected traffic, logged at warn so it never pages
+// anyone. Only a 5xx is an error.
+describe("error log level", () => {
+  test.each([400, 401, 403, 404, 409, 412, 429])("%i logs at warn", (s) => {
+    expect(errorLogLevel(s)).toBe("warn");
+  });
+  test.each([500, 502, 503])("%i logs at error", (s) => {
+    expect(errorLogLevel(s)).toBe("error");
+  });
+
+  test("a tRPC 4xx is logged at warn, not error", async () => {
+    const h = await createTestApp();
+    try {
+      const warn = vi.spyOn(h.app.log, "warn");
+      const error = vi.spyOn(h.app.log, "error");
+      // No credentials: the procedure answers 401.
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/trpc/inbox.count?input=${encodeURIComponent("{}")}`,
+      });
+      expect(res.statusCode).toBe(401);
+      const trpcLogs = (spy: typeof warn) =>
+        spy.mock.calls.filter((c) => c[1] === "trpc_error");
+      expect(trpcLogs(warn)).toHaveLength(1);
+      expect(trpcLogs(error)).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
   });
 });

@@ -33,7 +33,7 @@ import { GROUP_APPROVE_CAP } from "../../lib/review/groups.js";
 import {
   approveRunPending,
   rejectPendingInRuns,
-} from "../../lib/review/legacy.js";
+} from "../../lib/review/run-level.js";
 import { isAtLeastAdmin } from "../../lib/roles.js";
 import type { AuthedUser } from "../../plugins/auth.js";
 import { assertAdminSurface } from "../middlewares/admin.js";
@@ -393,8 +393,8 @@ export const inboxRouter = t.router({
   /**
    * Approve a single test run from the inbox view: every pending checkpoint,
    * as one action through the decision core (`approveRunPending`, the same
-   * path as `runs.approve`), `source: "inbox"`. Nothing pending is a no-op; a
-   * run that isn't reviewable is PRECONDITION_FAILED.
+   * path as the SDK's REST approve), `source: "inbox"`. Nothing pending is a
+   * no-op; a run that isn't reviewable is PRECONDITION_FAILED.
    *
    * Project membership is resolved from the run row so callers only need to
    * supply the runId — consistent with how the inbox list surfaces items

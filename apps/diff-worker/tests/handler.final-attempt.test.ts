@@ -411,4 +411,174 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       .where(eq(screenshots.runId, s.runId));
     expect(shot!.verdict).toBeNull();
   }, 60_000);
+  // Ruling R46: each upload enqueues a whole-run diff, so a pipeline abort
+  // (job k's final attempt) must not outlive a later job k+1 that diffs every
+  // checkpoint. Only an abort the diff pipeline wrote heals.
+  describe("a later successful diff heals a pipeline abort", () => {
+    async function runRow(runId: string) {
+      const [row] = await db
+        .select({
+          status: testRuns.status,
+          abortedByDiff: testRuns.abortedByDiff,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, runId));
+      return row!;
+    }
+
+    it("job k aborts, then job k+1 succeeds: the run takes its real rollup", async () => {
+      const s = await seedRun();
+      // Job k: the candidate image is missing, and it is the final attempt.
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      await expect(
+        handleDiffJob(
+          job,
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow();
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: true,
+      });
+
+      // Job k+1 (another upload's whole-run diff) diffs every checkpoint.
+      await storage.put(candidateKey, candidateImg, "image/png");
+      await handleDiffJob(
+        job,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      );
+
+      expect(await runRow(s.runId)).toEqual({
+        status: "unresolved",
+        abortedByDiff: false,
+      });
+    }, 60_000);
+
+    it("an SDK abort followed by a successful diff stays aborted", async () => {
+      const s = await seedRun();
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      await storage.put(candidateKey, candidateImg, "image/png");
+      // POST /runs/:id/abort writes `aborted` and leaves the flag false.
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: false })
+        .where(eq(testRuns.id, s.runId));
+
+      await handleDiffJob(
+        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      );
+
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: false,
+      });
+    }, 60_000);
+
+    // R50: an SDK (or capture) abort is final. A diff job in flight that then
+    // fails its final attempt must not re-flag it as the pipeline's, or the
+    // next successful diff would heal it: a CI false pass.
+    it("an SDK abort, then a final-attempt failure, then a successful diff stays aborted", async () => {
+      const s = await seedRun();
+      // The candidate image is missing: the in-flight job will fail.
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: false })
+        .where(eq(testRuns.id, s.runId));
+
+      await expect(
+        handleDiffJob(
+          job,
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow();
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: false,
+      });
+
+      await storage.put(candidateKey, candidateImg, "image/png");
+      await handleDiffJob(
+        job,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      );
+
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: false,
+      });
+    }, 60_000);
+
+    it("a job that leaves a checkpoint without a verdict does not heal", async () => {
+      // A checkpoint uploaded while job k+1 runs has no verdict when it
+      // commits: the run stays aborted until a job diffs that one too.
+      const s = await seedRun();
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      await storage.put(candidateKey, candidateImg, "image/png");
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: true })
+        .where(eq(testRuns.id, s.runId));
+      const [lateVariation] = await db
+        .insert(testVariations)
+        .values({
+          name: "late",
+          projectId: s.projectId,
+          branchName: "main",
+          browser: "chromium",
+          viewport: "400x400",
+        })
+        .returning();
+      let inserted = false;
+      const lateUpload = new Proxy(storage, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop !== "get") {
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+          return async (key: string) => {
+            if (!inserted && key === candidateKey) {
+              inserted = true;
+              await db.insert(screenshots).values({
+                runId: s.runId,
+                projectId: s.projectId,
+                testVariationId: lateVariation!.id,
+                name: "late",
+                imageKey: `late-${s.runId}`,
+                viewport: "400x400",
+                browser: "chromium",
+              });
+            }
+            return target.get(key);
+          };
+        },
+      });
+
+      await handleDiffJob(
+        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        mockLogger,
+        { db, storage: lateUpload, redis },
+        { finalAttempt: true },
+      );
+
+      expect(inserted).toBe(true);
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: true,
+      });
+    }, 60_000);
+  });
 });

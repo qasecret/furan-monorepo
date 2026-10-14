@@ -273,10 +273,11 @@ export const reviewRouter = t.router({
   /**
    * Approves every pending checkpoint of a build, at most `APPROVE_BUILD_CAP`
    * in capture order (running it again drains the rest). What the reviewer
-   * confirmed is what gets approved: the build's runs are locked FIRST, the
-   * pending set is counted under those locks, and a count that differs from
-   * `expectedCount` is `CONFLICT batch_changed` with the fresh preview. A
-   * rejected step stays rejected and a run that is not reviewable is skipped.
+   * confirmed is what gets approved: the build's reviewable runs are locked
+   * FIRST, the pending set is counted under those locks, and a count that
+   * differs from `expectedCount` is `CONFLICT batch_changed` with the fresh
+   * preview. A rejected step stays rejected and a run that is not reviewable
+   * is skipped (and never locked).
    */
   approveBuild: publicProcedure
     .input(approveBuildInput)
@@ -301,9 +302,10 @@ export const reviewRouter = t.router({
       } as const;
       const scope: SelectionScope = { projectId, buildId: input.buildId };
 
-      // 1. Lock the build's runs (ascending id, FOR NO KEY UPDATE). Everything
-      //    below sees the state no concurrent decision can change under us.
-      await lockBuildRuns(tx, projectId, input.buildId);
+      // 1. Lock the build's runs that can be targets (reviewable, not
+      //    overridden; ascending id, FOR NO KEY UPDATE). Everything below
+      //    sees the state no concurrent decision can change under us.
+      const lockedRuns = await lockBuildRuns(tx, projectId, input.buildId);
 
       // 2. A retry of an action that already ran replays its stored result,
       //    BEFORE the count is compared: pending is 0 now, which is not what
@@ -323,7 +325,13 @@ export const reviewRouter = t.router({
         scope,
         APPROVE_BUILD_CAP,
       );
-      if (preview.pendingCheckpoints !== input.expectedCount) {
+      // A run that became reviewable after step 1 holds no lock of ours, and
+      // locking it now would break the ascending order: the build changed
+      // under the reviewer, so they confirm again.
+      if (
+        preview.pendingCheckpoints !== input.expectedCount ||
+        targets.some((t) => !lockedRuns.has(t.runId))
+      ) {
         throw reviewError("CONFLICT", "batch_changed", { preview });
       }
 

@@ -7,6 +7,8 @@
  * with the server's response body attached.
  */
 
+import { randomUUID } from "node:crypto";
+
 export type Role = "owner" | "admin" | "editor" | "guest";
 
 export interface User {
@@ -425,8 +427,9 @@ export class ApiClient {
 
   /**
    * Approve a run AND persist reviewer-drawn ignore regions onto the variation
-   * (ADR-036), so future runs mask those boxes. Uses the tRPC runs.approve (the
-   * REST wrapper doesn't forward ignoreAreas).
+   * (ADR-036), so future runs mask those boxes. Goes through `review.approve`
+   * (the REST approve doesn't forward ignoreAreas), which takes regions for
+   * exactly one explicit checkpoint, so the run must have exactly one.
    */
   async approveRunWithIgnore(
     auth: string,
@@ -440,7 +443,22 @@ export class ApiClient {
       mode: "ignore" | "dynamic-text" | "strict";
     }[],
   ): Promise<void> {
-    await this.trpcMutate(auth, "runs.approve", { runId, ignoreAreas });
+    const { items } = await this.trpcQuery<{ items: Array<{ id: string }> }>(
+      auth,
+      "runs.listCheckpoints",
+      { runId },
+    );
+    if (items.length !== 1) {
+      throw new Error(
+        `approveRunWithIgnore: run ${runId} has ${items.length} checkpoints; ignoreAreas need exactly one explicit checkpoint`,
+      );
+    }
+    await this.trpcMutate(auth, "review.approve", {
+      runId,
+      actionId: randomUUID(),
+      checkpointIds: [items[0]!.id],
+      ignoreAreas,
+    });
   }
 
   async getRun(

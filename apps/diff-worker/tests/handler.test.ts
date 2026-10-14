@@ -756,7 +756,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
     expect(shot!.verdict).toBe("new");
 
     // ADR-036: with autoApproveFeature=false, the handler must NOT
-    // auto-seed a baseline. The reviewer's `runs.approve` mutation is
+    // auto-seed a baseline. The reviewer's approve (`review.approve`) is
     // responsible for materialising the baseline row.
     const seededBaselines = await db.query.baselines.findMany({
       where: eq(baselines.testRunId, run.id),

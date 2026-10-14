@@ -179,6 +179,12 @@ desc(
 
     it("the final failed attempt writes aborted and publishes it", async () => {
       const job = await seedJob(BLOCKED_URL);
+      // A capture abort is not the diff pipeline's: a later diff must not
+      // heal it (Ruling R46), so it clears a flag an earlier diff job set.
+      await db
+        .update(testRuns)
+        .set({ abortedByDiff: true })
+        .where(eq(testRuns.id, job.runId));
 
       const events = await eventsDuring(job.runId, async () => {
         await expect(
@@ -192,6 +198,11 @@ desc(
       });
 
       expect(await runStatus(job.runId)).toBe("aborted");
+      const [flag] = await db
+        .select({ abortedByDiff: testRuns.abortedByDiff })
+        .from(testRuns)
+        .where(eq(testRuns.id, job.runId));
+      expect(flag!.abortedByDiff).toBe(false);
       expect(events.find((e) => e.type === "run.completed")?.status).toBe(
         "aborted",
       );

@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import { sendError } from "../lib/errors.js";
-import { approveRunPending } from "../lib/review/legacy.js";
+import { approveRunPending } from "../lib/review/run-level.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
@@ -172,9 +172,15 @@ export async function registerRunLifecycleRoutes(
       if (!params.success) return sendError(reply, 400, "invalid_id");
 
       return withRequestScope(app, req, async (db, onCommit) => {
+        // `abortedByDiff: false`: the SDK's abort is final. A later diff job
+        // heals only an abort the diff pipeline wrote (Ruling R46).
         await db
           .update(testRuns)
-          .set({ status: "aborted", completedAt: new Date() })
+          .set({
+            status: "aborted",
+            abortedByDiff: false,
+            completedAt: new Date(),
+          })
           .where(eq(testRuns.id, params.data.id));
 
         onCommit(() =>

@@ -81,6 +81,8 @@ import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { ViewerToolbar } from "../src/components/diff-viewer/ViewerToolbar";
 
 const RUN_ID = "00000000-0000-0000-0000-000000000000";
+/** The selected step: a saved region goes to its variation. */
+const CHECKPOINT_ID = "11111111-1111-1111-1111-111111111111";
 const VP = "1280x720";
 
 describe("ViewerToolbar — ignore-regions controls", () => {
@@ -110,7 +112,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
   afterEach(() => cleanup());
 
   test("shows the Edit regions toggle, hides Save/Discard when off", () => {
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     expect(screen.getByTestId("edit-regions-toggle")).toBeDefined();
     expect(screen.queryByTestId("ignore-save-button")).toBeNull();
     expect(screen.queryByTestId("ignore-discard-button")).toBeNull();
@@ -120,14 +122,20 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     useViewerStore.setState({ ignoreEditMode: "variation" });
     // hasElementMap defaults to false → "Pick element" is impossible, so the
     // whole toggle is hidden (Drag is the implicit default).
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     expect(screen.queryByTestId("region-input-mode-toggle")).toBeNull();
     expect(screen.queryByTestId("region-input-mode-pick")).toBeNull();
   });
 
   test("shows the Drag/Pick toggle with Pick enabled when an element map exists", () => {
     useViewerStore.setState({ ignoreEditMode: "variation" });
-    render(<ViewerToolbar runId={RUN_ID} hasElementMap />);
+    render(
+      <ViewerToolbar
+        runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
+        hasElementMap
+      />,
+    );
     expect(screen.getByTestId("region-input-mode-toggle")).toBeDefined();
     const pick = screen.getByTestId(
       "region-input-mode-pick",
@@ -136,30 +144,53 @@ describe("ViewerToolbar — ignore-regions controls", () => {
   });
 
   test("selecting a scope from the dropdown sets ignoreEditMode and reveals Save/Discard", () => {
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     // Bypass Radix portal: directly call the store action that the dropdown
     // item's onClick would call, then verify the toolbar re-renders correctly.
     useViewerStore.getState().setIgnoreEditMode("run");
     expect(useViewerStore.getState().ignoreEditMode).toBe("run");
     // Re-render to pick up updated store state.
     cleanup();
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     expect(screen.getByTestId("ignore-save-button")).toBeDefined();
     expect(screen.getByTestId("ignore-discard-button")).toBeDefined();
   });
 
   test("clicking the toggle while editing exits to off", () => {
     useViewerStore.setState({ ignoreEditMode: "variation" });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("edit-regions-toggle"));
     expect(useViewerStore.getState().ignoreEditMode).toBe("off");
   });
 
   test("Save is disabled when there are no pending changes", () => {
     useViewerStore.setState({ ignoreEditMode: "run" });
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
+    const save = screen.getByTestId("ignore-save-button") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+  });
+
+  test("Save is disabled until the selected step is known (no checkpoint id)", () => {
+    useViewerStore.setState({
+      ignoreEditMode: "variation",
+      draftIgnoreAreas: [
+        {
+          id: "d1",
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          viewport: VP,
+          paddingPx: 0,
+          kind: "ignore",
+        },
+      ],
+    });
     render(<ViewerToolbar runId={RUN_ID} />);
     const save = screen.getByTestId("ignore-save-button") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(setIgnoreAreasMutate).not.toHaveBeenCalled();
   });
 
   test("Save fires setIgnoreAreas with the right scope + payload (run)", () => {
@@ -178,11 +209,12 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       draftIgnoreAreas: [draft],
     });
 
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("ignore-save-button"));
 
     expect(setIgnoreAreasMutate).toHaveBeenCalledWith({
       runId: RUN_ID,
+      checkpointId: CHECKPOINT_ID,
       scope: "run",
       ignoreAreas: [
         expect.objectContaining({
@@ -226,11 +258,12 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       markedForDeletion: new Set([ids[0]!]),
     });
 
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("ignore-save-button"));
 
     expect(setIgnoreAreasMutate).toHaveBeenCalledWith({
       runId: RUN_ID,
+      checkpointId: CHECKPOINT_ID,
       scope: "variation",
       ignoreAreas: [
         expect.objectContaining({
@@ -271,14 +304,14 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       markedForDeletion: new Set(["x"]),
     });
 
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("ignore-discard-button"));
     expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
     expect(useViewerStore.getState().markedForDeletion.size).toBe(0);
   });
 
   test("the single Edit-regions button enters edit mode at the variation (persist) scope", () => {
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     // Not editing → secondary "Edit regions" button; click enters edit mode.
     fireEvent.click(screen.getByTestId("edit-regions-toggle"));
     expect(useViewerStore.getState().ignoreEditMode).toBe("variation");
@@ -291,7 +324,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ignoreEditMode: "off",
       selectedIgnoreId: "some-id",
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     expect(screen.queryByTestId("padding-control")).toBeNull();
   });
 
@@ -300,7 +333,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ignoreEditMode: "run",
       selectedIgnoreId: null,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     expect(screen.queryByTestId("padding-control")).toBeNull();
   });
 
@@ -322,7 +355,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     expect(screen.queryByTestId("padding-control")).not.toBeNull();
     expect(screen.getByTestId("padding-value").textContent).toBe("0px");
@@ -346,7 +379,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     const slider = screen.getByTestId("padding-slider") as HTMLInputElement;
     fireEvent.change(slider, { target: { value: "12" } });
@@ -388,7 +421,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       paddingOverrides: overrides,
       selectedIgnoreId: null,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("ignore-save-button"));
     expect(setIgnoreAreasMutate).toHaveBeenCalled();
     const callArg = setIgnoreAreasMutate.mock.calls[0]![0] as {
@@ -419,7 +452,11 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: "d1",
     });
     render(
-      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: false }} />,
+      <ViewerToolbar
+        runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
+        project={{ dynamicTextEnabled: false }}
+      />,
     );
     expect(screen.queryByTestId("region-kind-control")).toBeNull();
   });
@@ -442,7 +479,11 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: "d1",
     });
     render(
-      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: true }} />,
+      <ViewerToolbar
+        runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
+        project={{ dynamicTextEnabled: true }}
+      />,
     );
     await openRegionSettings();
     expect(screen.queryByTestId("region-kind-control")).not.toBeNull();
@@ -515,7 +556,11 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectedIgnoreId: null,
     });
     render(
-      <ViewerToolbar runId={RUN_ID} project={{ dynamicTextEnabled: true }} />,
+      <ViewerToolbar
+        runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
+        project={{ dynamicTextEnabled: true }}
+      />,
     );
     fireEvent.click(screen.getByTestId("ignore-save-button"));
     expect(setIgnoreAreasMutate).toHaveBeenCalled();
@@ -542,6 +587,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: false }}
       />,
@@ -576,6 +622,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: true }}
       />,
@@ -600,6 +647,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: false }}
       />,
@@ -634,6 +682,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: false }}
       />,
@@ -673,6 +722,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: false }}
       />,
@@ -691,6 +741,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(
       <ViewerToolbar
         runId={RUN_ID}
+        checkpointId={CHECKPOINT_ID}
         projectId="p1"
         project={{ dynamicTextEnabled: false }}
       />,
@@ -727,7 +778,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ]),
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     expect(screen.getByTestId("pending-snap-row")).toBeDefined();
     expect(screen.getByTestId("pending-snap-selector").textContent).toBe(
@@ -763,7 +814,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ]),
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     fireEvent.click(screen.getByTestId("pending-snap-apply"));
     const state = useViewerStore.getState();
@@ -798,7 +849,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ]),
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     fireEvent.click(screen.getByTestId("pending-snap-dismiss"));
     const state = useViewerStore.getState();
@@ -825,7 +876,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     expect(screen.getByTestId("selector-row")).toBeDefined();
     expect(screen.getByTestId("selector-value").textContent).toBe("#login");
@@ -851,7 +902,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
       selectedIgnoreId: draftId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     fireEvent.click(screen.getByTestId("selector-clear"));
     expect(
@@ -878,7 +929,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       ],
       selectedIgnoreId: savedId,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     await openRegionSettings();
     fireEvent.click(screen.getByTestId("selector-clear"));
     expect(useViewerStore.getState().selectorOverrides.get(savedId)).toBeNull();
@@ -935,7 +986,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectorOverrides: new Map([[savedClearedId, null]]),
       selectedIgnoreId: null,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     fireEvent.click(screen.getByTestId("ignore-save-button"));
     expect(setIgnoreAreasMutate).toHaveBeenCalled();
     const payload = setIgnoreAreasMutate.mock.calls[0]![0] as {
@@ -969,7 +1020,7 @@ describe("ViewerToolbar — ignore-regions controls", () => {
       selectorOverrides: new Map([[savedId, null]]),
       selectedIgnoreId: null,
     });
-    render(<ViewerToolbar runId={RUN_ID} />);
+    render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     const btn = screen.getByTestId("ignore-save-button") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });

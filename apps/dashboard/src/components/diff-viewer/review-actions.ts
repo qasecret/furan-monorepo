@@ -81,6 +81,8 @@ export interface ReviewActions {
   canReject: boolean;
   /** Approve pending steps is available: some are pending, none in flight. */
   canApprovePendingSteps: boolean;
+  /** Force passed / Force failed / Reset to computed may be offered. */
+  canOverride: boolean;
   /**
    * The question asked before an older capture is approved. `confirm`
    * approves; `cancel` decides nothing. `opener` is the control to give focus
@@ -241,6 +243,7 @@ export function useReviewActions({
     canApprove: header.canApprove,
     canReject: header.canReject,
     canApprovePendingSteps: header.canApprovePendingSteps,
+    canOverride: header.canOverride,
     staleConfirm: {
       open: confirming !== null,
       opener: confirming?.opener ?? null,
@@ -286,11 +289,13 @@ export function useReviewActions({
     },
     approveAllCheckpoints: () => {
       if (!header.canApprovePendingSteps) return;
-      const count = header.pendingSteps;
       decide({
         runId,
         kind: "approved",
-        label: `Approved ${count} step${plural(count)}`,
+        // What the server decided, not the count shown: steps decided
+        // elsewhere meanwhile are not claimed.
+        label: ({ decided }) =>
+          `Approved ${decided.length} step${plural(decided.length)}`,
       });
     },
     undo,

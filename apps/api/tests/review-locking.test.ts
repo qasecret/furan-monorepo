@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import type { Broadcaster } from "../src/lib/broadcast.js";
 import type { ReviewActionCtx } from "../src/lib/review/actions.js";
-import { rejectPendingInRuns } from "../src/lib/review/legacy.js";
+import { rejectPendingInRuns } from "../src/lib/review/run-level.js";
 import { lockRuns } from "../src/lib/review/targets.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 

@@ -153,6 +153,9 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
     branchName?: string | null;
     /** Variations this run has a screenshot of (image keys come back keyed). */
     variationIds: string[];
+    /** A verdict on every screenshot: data written after the upgrade. Default
+     *  NULL, as on every pre-upgrade row. */
+    verdict?: "new" | "passed" | "unresolved";
   }): Promise<{ runId: string; keys: Record<string, string> }> {
     const [r] = await db
       .insert(testRuns)
@@ -182,6 +185,7 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
         browser: "chromium",
         imageKey,
         createdAt: opts.createdAt,
+        verdict: opts.verdict ?? null,
       });
     }
     return { runId, keys };
@@ -456,6 +460,47 @@ describe.runIf(RUN_INTEGRATION)("0036_baseline_repair migration", () => {
 
     // Nothing inserted, nothing re-stamped, no extra audit rows.
     expect(await snapshot()).toEqual(first);
+  });
+
+  it("re-applied after the upgrade, never takes a run the new review model wrote as a source", async () => {
+    // Post-upgrade, `passed` + `merge` no longer means "approved as a whole":
+    // a run whose `home` step was approved and whose `cart` step passed its
+    // own diff is passed + merged too. Its checkpoints carry verdicts, which
+    // no pre-upgrade row has, so a re-run must not promote `cart`.
+    const home = await seedVariation("post-home");
+    const cart = await seedVariation("post-cart");
+    const older = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(500),
+      variationIds: [cart],
+      verdict: "passed",
+    });
+    const cartBaseline = await seedBaseline({
+      variationId: cart,
+      runId: older.runId,
+      createdAt: at(501),
+      userId: approverId,
+    });
+    const run = await seedRun({
+      status: "passed",
+      merge: true,
+      createdAt: at(510),
+      variationIds: [home, cart],
+      verdict: "passed",
+    });
+    const homeBaseline = await seedBaseline({
+      variationId: home,
+      runId: run.runId,
+      createdAt: at(511),
+      userId: approverId,
+    });
+
+    await runMigration();
+
+    expect((await baselineRows(home)).map((r) => r.id)).toEqual([homeBaseline]);
+    expect((await baselineRows(cart)).map((r) => r.id)).toEqual([cartBaseline]);
+    expect(await repairAuditFor([homeBaseline, cartBaseline])).toHaveLength(0);
   });
 
   it("never uses a run that is not passed + merged as a source", async () => {

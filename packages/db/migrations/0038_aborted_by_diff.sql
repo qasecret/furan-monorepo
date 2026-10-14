@@ -1,0 +1,12 @@
+-- 0038: test_runs.aborted_by_diff (Ruling R46).
+--
+-- Each upload enqueues a whole-run diff. When one of those jobs fails its
+-- final attempt the diff-worker writes `aborted`, a lifecycle state the rollup
+-- keeps, so a later job that diffs every checkpoint could never recover the
+-- run. The flag marks an abort the diff pipeline wrote: the next diff job that
+-- leaves every checkpoint with a verdict resets such a run to `running` and
+-- recomputes its status. An SDK `/abort` or a capture-worker abort leaves it
+-- false, and stays `aborted`.
+--
+-- Additive and idempotent: re-applying this file is a no-op.
+ALTER TABLE "test_runs" ADD COLUMN IF NOT EXISTS "aborted_by_diff" boolean DEFAULT false NOT NULL;

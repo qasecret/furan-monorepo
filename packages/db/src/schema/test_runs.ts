@@ -45,6 +45,12 @@ export const testRuns = pgTable(
     // NULL = the status is the computed rollup of checkpoint verdicts and
     // decisions ("Reset to computed" clears it).
     statusOverride: runStatusOverrideEnum("status_override"),
+    // Migration 0038 (Ruling R46): true when the diff-worker's final failed
+    // attempt wrote `aborted`. A later diff job that leaves every checkpoint
+    // with a verdict heals such a run (back to `running`, then the rollup).
+    // An SDK `/abort` or a capture-worker abort leaves it false: those stay
+    // `aborted`.
+    abortedByDiff: boolean("aborted_by_diff").notNull().default(false),
     buildId: uuid("build_id")
       .notNull()
       .references(() => builds.id, { onDelete: "cascade" }),

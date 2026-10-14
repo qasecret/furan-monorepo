@@ -144,20 +144,18 @@ const review = (verdict: string, state = verdict) => ({
 interface Item {
   id: string;
   name: string;
-  /** The legacy alias of the state; the patches keep it in step. */
-  status: string;
   verdict: string;
   state: string;
   decision: { actionId: string; kind: string } | null;
 }
 
 const seedItems = (): Item[] => [
-  { id: A, name: "home", status: "unresolved", ...review("unresolved") },
-  { id: B, name: "pricing", status: "new", ...review("new") },
-  { id: C, name: "footer", status: "passed", ...review("passed") },
+  { id: A, name: "home", ...review("unresolved") },
+  { id: B, name: "pricing", ...review("new") },
+  { id: C, name: "footer", ...review("passed") },
 ];
 
-/** What `runs.getById` carries per checkpoint: the review fields, no name or alias. */
+/** What `runs.getById` carries per checkpoint: the review fields, no name. */
 const contextOf = ({ verdict, state, decision }: Item) => ({
   verdict,
   state,
@@ -221,7 +219,7 @@ function seedApproved(actionId: string) {
   const decision = { actionId, kind: "approved" };
   qc.setQueryData(keyOf(["runs", "listCheckpoints"], { runId: RUN }), {
     items: seedItems().map((i) =>
-      i.id === A ? { ...i, state: "approved", status: "passed", decision } : i,
+      i.id === A ? { ...i, state: "approved", decision } : i,
     ),
   });
   qc.setQueryData(keyOf(["runs", "getById"], { runId: RUN }), {
@@ -302,9 +300,11 @@ function deferred<T = unknown>() {
   return { promise, resolve, reject };
 }
 
+// One step decided by default: an action that decided nothing has nothing to
+// undo, and the tests for that case say so explicitly.
 const decided = (runs: string[] = [RUN]) => ({
   actionId: "server-echo",
-  decided: [],
+  decided: [{ checkpointId: A, runId: runs[0] ?? RUN, state: "approved" }],
   runs: runs.map((runId) => ({ runId, status: "passed" })),
   replayed: false,
   capped: false,
@@ -1011,6 +1011,58 @@ describe("useReviewMutations: success", () => {
     ]);
   });
 
+  // M4: an action that decided nothing (an empty action, or a replay of one)
+  // has nothing to undo: no undo entry, no Undo button, an info toast.
+  it.each([
+    ["approved", "Nothing left to approve"],
+    ["rejected", "Nothing left to reject"],
+  ] as const)(
+    "an action that decided nothing (%s) says so, with nothing to undo",
+    async (kind, message) => {
+      seed();
+      const mock = kind === "approved" ? server.approve : server.reject;
+      mock.mockResolvedValueOnce({ ...decided(), decided: [] });
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.decide({
+          runId: RUN,
+          kind,
+          label: (r) => `Decided ${r.decided.length} steps`,
+        }),
+      );
+
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(toast.info).mock.calls[0]).toEqual([message]);
+      expect(useUndoStore.getState().stack).toEqual([]);
+    },
+  );
+
+  it("a build approval that decided nothing still ends the call for its caller", async () => {
+    seed();
+    server.approveBuild.mockResolvedValueOnce({
+      ...decided([]),
+      decided: [],
+    });
+    const onSuccess = vi.fn();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 0,
+        label: "Approved",
+        onConflict: vi.fn(),
+        onSuccess,
+      }),
+    );
+
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith("Nothing left to approve");
+    expect(useUndoStore.getState().stack).toEqual([]);
+  });
+
   describe("a label function that throws", () => {
     const boom = () => {
       throw new Error("label bug");
@@ -1578,7 +1630,6 @@ describe("useReviewMutations: undo", () => {
         {
           id: "cp-d",
           name: "settings",
-          status: "passed",
           ...review("unresolved", "approved"),
           decision: { actionId: ACTION, kind: "approved" },
         },

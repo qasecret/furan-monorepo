@@ -5,6 +5,7 @@ import {
   eq,
   inArray,
   isNull,
+  notInArray,
   screenshots,
   sql,
   testRuns,
@@ -23,7 +24,11 @@ import type {
   RunStatusOverride,
 } from "@furan/shared-types";
 
-import { assessDecision, assessRun } from "./legality.js";
+import {
+  assessDecision,
+  assessRun,
+  UNREVIEWABLE_LIFECYCLE_LIST,
+} from "./legality.js";
 
 /**
  * The reads behind the decision core: the runs it locks, the checkpoints it
@@ -69,22 +74,30 @@ export async function lockRuns(
 }
 
 /**
- * `lockRuns` for every run of a build, chosen by the same statement that locks
- * them: a run that appears while the lock is being taken cannot slip between
- * "which runs" and "lock them".
+ * `lockRuns` for the runs of a build that can be decision targets: reviewable
+ * (lifecycle not `running` / `aborted` / `empty`) and not overridden. They are
+ * chosen by the same statement that locks them, so a run that appears while
+ * the lock is being taken cannot slip between "which runs" and "lock them".
+ *
+ * A run that cannot be a target is not locked: a `running` run is being
+ * written by the upload path, which locks a variation and then its run, so
+ * holding that run's lock while the core goes on to lock variations would
+ * invert that order (40P01). A run that becomes reviewable after this
+ * statement is therefore unlocked; `approveBuild` refuses a selection that
+ * reaches such a run.
  */
 export async function lockBuildRuns(
   tx: Tx,
   projectId: string,
   buildId: string,
 ): Promise<Map<string, LockedRun>> {
-  return lockRunsBy(tx, projectId, { buildId });
+  return lockRunsBy(tx, projectId, { buildId, reviewableOnly: true });
 }
 
 async function lockRunsBy(
   tx: Tx,
   projectId: string,
-  by: { runIds: string[] } | { buildId: string },
+  by: { runIds: string[] } | { buildId: string; reviewableOnly: true },
 ): Promise<Map<string, LockedRun>> {
   const rows = await tx
     .select({
@@ -101,7 +114,11 @@ async function lockRunsBy(
       and(
         "runIds" in by
           ? inArray(testRuns.id, by.runIds)
-          : eq(testRuns.buildId, by.buildId),
+          : and(
+              eq(testRuns.buildId, by.buildId),
+              notInArray(testRuns.status, [...UNREVIEWABLE_LIFECYCLE_LIST]),
+              isNull(testRuns.statusOverride),
+            ),
         eq(testRuns.projectId, projectId),
       ),
     )

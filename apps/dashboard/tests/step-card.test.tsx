@@ -344,6 +344,82 @@ describe("StepCard review actions", () => {
   });
 });
 
+// M3 (partial): approving an older capture from a step card asks first, with
+// the viewer's own stale-step question.
+describe("StepCard approve of an older capture", () => {
+  const NEWER = { runId: "run-newer", buildId: "build-2", buildName: "#42" };
+  const stale = () => cp({ newerCapture: NEWER } as Partial<StepCheckpoint>);
+
+  test("asks before approving, with the viewer's copy, and decides nothing yet", async () => {
+    renderCard(stale());
+    fireEvent.click(button("step-approve-c1"));
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    const dialog = await screen.findByTestId("stale-step-dialog");
+    expect(dialog.textContent).toContain("Approve an older capture?");
+    expect(dialog.textContent).toContain(
+      "A newer capture of this step exists in build #42. Approving here makes this older image the baseline.",
+    );
+  });
+
+  test("Confirm approves this step, once, as the plain Approve would", async () => {
+    renderCard(stale());
+    fireEvent.click(button("step-approve-c1"));
+    fireEvent.click(await screen.findByTestId("stale-step-confirm"));
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(reviewSpies.decide).toHaveBeenCalledWith({
+      runId: "r1",
+      checkpointIds: ["c1"],
+      kind: "approved",
+      label: "Approved 'home'",
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+  });
+
+  test("Cancel decides nothing and gives focus back to Approve", async () => {
+    renderCard(stale());
+    const approve = button("step-approve-c1");
+    approve.focus();
+    fireEvent.click(approve);
+    fireEvent.click(await screen.findByTestId("stale-step-cancel"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(document.activeElement).toBe(button("step-approve-c1"));
+  });
+
+  test("a question left open when the step is decided elsewhere does not come back", async () => {
+    const card = renderCard(stale());
+    fireEvent.click(button("step-approve-c1"));
+    await screen.findByTestId("stale-step-dialog");
+
+    // Another reviewer decides the step: the question goes away with it...
+    card.show(
+      cp({
+        state: "approved",
+        decision: decision("approved"),
+        newerCapture: NEWER,
+      } as Partial<StepCheckpoint>),
+    );
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    // ...and the undo makes it pending again: nobody asked, so nothing opens.
+    card.show(stale());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
+  test("Reject asks nothing: a rejection never makes the older image the baseline", () => {
+    renderCard(stale());
+    fireEvent.click(button("step-reject-c1"));
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+  });
+});
+
 describe("StepCard focus after a decision", () => {
   const approved = () =>
     cp({ state: "approved", decision: decision("approved") });

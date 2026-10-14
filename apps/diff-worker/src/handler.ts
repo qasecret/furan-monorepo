@@ -9,6 +9,7 @@ import {
   eq,
   inArray,
   isNull,
+  ne,
   projects,
   recomputeRunStatus,
   recordBaseline,
@@ -59,6 +60,7 @@ import type { Redis } from "ioredis";
 import sharp from "sharp";
 import { z } from "zod";
 
+import { autoApproveBaselineBlock } from "./auto-approve-guard.js";
 import { resolveAxeBboxes } from "./axe-bbox-resolver.js";
 import { resolveCheckpointBaseline } from "./checkpoint-baseline.js";
 import type { DiffMetrics } from "./diff-metrics.js";
@@ -395,13 +397,20 @@ export async function handleDiffJob(
     // not hang in `running` indefinitely. Per spec §3.2 worker exceptions land
     // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
     // own try/catch so a status-write failure does not mask the original
-    // error — the worker's error visibility is unchanged.
+    // error — the worker's error visibility is unchanged. `abortedByDiff`
+    // marks it as the pipeline's abort, which a later successful diff of the
+    // whole run heals (Ruling R46, `healPipelineAbort`). A run that is already
+    // `aborted` is left exactly as it is (R50): an SDK or capture abort is
+    // final, and re-flagging it as the pipeline's would let a later diff heal
+    // it (a CI false pass); a pipeline abort already carries the flag.
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
           .update(testRuns)
-          .set({ status: "aborted" })
-          .where(eq(testRuns.id, data.runId));
+          .set({ status: "aborted", abortedByDiff: true })
+          .where(
+            and(eq(testRuns.id, data.runId), ne(testRuns.status, "aborted")),
+          );
       });
     } catch (statusErr) {
       logger.error(
@@ -441,6 +450,41 @@ export async function handleDiffJob(
   }
 }
 
+/**
+ * Ruling R46: each upload enqueues a whole-run diff, and a job that fails its
+ * final attempt writes `aborted`, a lifecycle state the rollup keeps. When a
+ * later job leaves EVERY checkpoint of the run with a verdict, an abort the
+ * pipeline wrote (`aborted_by_diff`) is reset to the lifecycle value `running`
+ * so the `recomputeRunStatus` that follows yields the real rollup. An SDK
+ * `/abort` or a capture-worker abort leaves the flag false and stays.
+ *
+ * Runs in the core transaction under the run's row lock, `FOR NO KEY UPDATE`
+ * (R8; the transaction already holds it from the aggregate UPDATE), so a
+ * concurrent abort or upload is either seen here or waits for this commit.
+ * Returns true when it healed the run.
+ */
+async function healPipelineAbort(tx: DB, runId: string): Promise<boolean> {
+  const [run] = await tx
+    .select({ status: testRuns.status, abortedByDiff: testRuns.abortedByDiff })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .for("no key update");
+  if (run?.status !== "aborted" || !run.abortedByDiff) return false;
+
+  const [pending] = await tx
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(and(eq(screenshots.runId, runId), isNull(screenshots.verdict)))
+    .limit(1);
+  if (pending) return false;
+
+  await tx
+    .update(testRuns)
+    .set({ status: "running", abortedByDiff: false })
+    .where(eq(testRuns.id, runId));
+  return true;
+}
+
 /** What `handleDiffJobInner` has durably done so far; read by the failure path. */
 interface DiffProgress {
   /** True once the core transaction has committed (never set earlier). */
@@ -471,6 +515,7 @@ async function handleDiffJobInner(
   if (!run.branchName) {
     throw new Error(`run_missing_branch_name:${data.runId}`);
   }
+  const branchName = run.branchName;
 
   // Spec §3 (ADR-070): one baseline per checkpoint. Each candidate screenshot
   // (one checkpoint = one variation, ADR-038) resolves, pairs, auto-approves
@@ -563,6 +608,10 @@ async function handleDiffJobInner(
     ruleSelectors = [];
   }
 
+  // The run each checkpoint's paired baseline belongs to, for the
+  // auto-approve baseline guard in the core transaction.
+  const pairedBaselineRunIds = new Map<string, string>();
+
   for (const cs of candidateShots) {
     const viewportKey = cs.viewport ?? null;
 
@@ -575,6 +624,9 @@ async function handleDiffJobInner(
       defaultBranch: project.mainBranchName,
       parentPrBaseBranch: data.parentPrBaseBranch ?? null,
     });
+    if (pairing.kind === "paired") {
+      pairedBaselineRunIds.set(cs.id, pairing.baselineRunId);
+    }
 
     // 2. No baseline image → verdict `new`, no diff.
     //    - none: a first capture. With `autoApproveFeature` (ADR-036) it is
@@ -1444,6 +1496,12 @@ async function handleDiffJobInner(
     // concurrent jobs would deadlock if they locked those rows in different
     // (capture) orders. Writing in ascending variation-id order makes the lock
     // order the same everywhere.
+    //
+    // The verdict is the auto-approve's either way; the baseline is written
+    // only when no reviewer decided the checkpoint, its paired baseline is not
+    // its own row, and no baseline of the variation is newer than this run
+    // (`autoApproveBaselineBlock`), so a re-diff never rewrites a reviewer's
+    // baseline or puts an older image back as the current one.
     const autoApproved = results
       .filter((r) => r.autoApproved)
       .map((r) => candidateById.get(r.screenshotId)!)
@@ -1455,6 +1513,25 @@ async function handleDiffJobInner(
             : 0,
       );
     for (const cs of autoApproved) {
+      const blocked = await autoApproveBaselineBlock(tx, {
+        screenshotId: cs.id,
+        testVariationId: cs.testVariationId,
+        runId: run.id,
+        branchName,
+        pairedBaselineRunId: pairedBaselineRunIds.get(cs.id) ?? null,
+      });
+      if (blocked) {
+        logger.info(
+          {
+            runId: data.runId,
+            screenshotId: cs.id,
+            variationId: cs.testVariationId,
+            reason: blocked,
+          },
+          "diff_auto_approve_baseline_kept",
+        );
+        continue;
+      }
       await recordBaseline(tx, {
         testVariationId: cs.testVariationId,
         testRunId: run.id,
@@ -1492,6 +1569,12 @@ async function handleDiffJobInner(
     );
     if (auditValues.length > 0) {
       await tx.insert(diffRegions).values(auditValues);
+    }
+
+    // A pipeline abort (an earlier job's final attempt) heals once this job
+    // leaves every checkpoint with a verdict (Ruling R46).
+    if (await healPipelineAbort(tx, data.runId)) {
+      logger.info({ runId: data.runId }, "diff_pipeline_abort_healed");
     }
 
     // Last, after every child-row write: derive the run status.

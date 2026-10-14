@@ -13,7 +13,6 @@ import {
   users,
   type DB,
 } from "@furan/db";
-import type { CheckpointReviewState, RunStatus } from "@furan/shared-types";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import {
   afterAll,
@@ -26,7 +25,6 @@ import {
 
 import {
   buildDisplayName,
-  checkpointStatusAlias,
   loadCheckpointReview,
 } from "../src/lib/review/reads.js";
 import type { AuthedUser } from "../src/plugins/auth.js";
@@ -94,28 +92,6 @@ function countingDb(db: DB): { db: DB; count: () => number } {
   });
   return { db: proxy, count: () => n };
 }
-
-describe("checkpointStatusAlias", () => {
-  const cases: Array<[CheckpointReviewState | null, RunStatus, string]> = [
-    ["new", "new", "new"],
-    ["unresolved", "unresolved", "unresolved"],
-    ["passed", "passed", "passed"],
-    ["approved", "passed", "passed"],
-    ["rejected", "failed", "failed"],
-    [null, "running", "running"],
-    // R20: an undiffed checkpoint of a run that ended without diffing it shows
-    // the run's lifecycle, not a "Running" spinner that never stops.
-    [null, "aborted", "aborted"],
-    [null, "empty", "empty"],
-    // Any other lifecycle with an undiffed checkpoint: a diff is still due.
-    [null, "unresolved", "running"],
-    // A diffed checkpoint never takes the run's lifecycle.
-    ["unresolved", "aborted", "unresolved"],
-  ];
-  test.each(cases)("%s in a %s run -> %s", (state, lifecycle, status) => {
-    expect(checkpointStatusAlias(state, lifecycle)).toBe(status);
-  });
-});
 
 describe("buildDisplayName", () => {
   // Mirrors apps/dashboard/src/lib/build-display-name.ts tier for tier.
@@ -311,7 +287,7 @@ d("review read model", () => {
       expect(a!.decision!.id).toBe(row!.id);
     });
 
-    test("`status` stays as an alias of `state`: approved -> passed, rejected -> failed, no verdict -> running", async () => {
+    test("`state` follows the decision, else the verdict; an undiffed checkpoint reads null; there is no `status` alias", async () => {
       const s = await seed({
         checkpoints: [
           { name: "a", verdict: "unresolved", withBaseline: true },
@@ -326,12 +302,13 @@ d("review read model", () => {
       const { items } = await as(s.editor).runs.listCheckpoints.query({
         runId: s.runId,
       });
-      expect(items.map((i) => [i.state, i.status])).toEqual([
-        ["approved", "passed"],
-        ["rejected", "failed"],
-        ["new", "new"],
-        ["passed", "passed"],
+      expect(items.map((i) => i.state)).toEqual([
+        "approved",
+        "rejected",
+        "new",
+        "passed",
       ]);
+      for (const item of items) expect(item).not.toHaveProperty("status");
 
       const running = await seed({
         checkpoints: [{ name: "r", verdict: null }],
@@ -341,12 +318,12 @@ d("review read model", () => {
         runId: running.runId,
       });
       expect(res.items).toMatchObject([
-        { verdict: null, state: null, status: "running", decision: null },
+        { verdict: null, state: null, decision: null },
       ]);
     });
 
     test.each(["aborted", "empty"] as const)(
-      "an undiffed checkpoint of an %s run reads as that lifecycle, not running (R20)",
+      "an undiffed checkpoint of an %s run reads state null, whatever the run's lifecycle (R20)",
       async (lifecycle) => {
         const s = await seed({
           checkpoints: [
@@ -358,10 +335,7 @@ d("review read model", () => {
         const { items } = await as(s.editor).runs.listCheckpoints.query({
           runId: s.runId,
         });
-        expect(items.map((i) => [i.state, i.status])).toEqual([
-          ["unresolved", "unresolved"],
-          [null, lifecycle],
-        ]);
+        expect(items.map((i) => i.state)).toEqual(["unresolved", null]);
       },
     );
 
@@ -1215,29 +1189,43 @@ d("review read model", () => {
       ]);
     });
 
-    test("approveCheckpointGroup approves only the pending members, the seed included", async () => {
+    test("approveGroup approves only the pending members, the seed included", async () => {
       const { s, run2 } = await seedGroupBuild();
       await reject(s, s.runId, [s.shots.b!.id]);
       await approve(s, run2.runId, [run2.shots.h!.id]);
 
-      const res = await as(s.editor).runs.approveCheckpointGroup.mutate({
+      const res = await as(s.editor).review.approveGroup.mutate({
         runId: s.runId,
         checkpointId: s.shots.a!.id,
+        actionId: newAction(),
       });
       // a, c, g are pending; b is rejected, d passed, h approved, e other signature.
-      expect(res).toMatchObject({ approved: 3, runCount: 2, capped: false });
+      expect(res.decided.map((x) => x.checkpointId)).toEqual([
+        s.shots.a!.id,
+        s.shots.c!.id,
+        run2.shots.g!.id,
+      ]);
+      expect(res.runs).toHaveLength(2);
+      expect(res).toMatchObject({ capped: false });
     });
 
-    test("rejectCheckpointGroup fails only the runs that still have a pending member", async () => {
+    test("rejectGroup fails only the runs that still have a pending member", async () => {
       const { s, run2 } = await seedGroupBuild();
       // Every member of run 2 is already decided; run 1 still has pending ones.
       await approve(s, run2.runId, [run2.shots.g!.id, run2.shots.h!.id]);
 
-      const res = await as(s.editor).runs.rejectCheckpointGroup.mutate({
+      const res = await as(s.editor).review.rejectGroup.mutate({
         runId: s.runId,
         checkpointId: s.shots.a!.id,
+        actionId: newAction(),
       });
-      expect(res).toMatchObject({ rejected: 1, runCount: 1, capped: false });
+      expect(res.runs).toEqual([{ runId: s.runId, status: "failed" }]);
+      expect(res.decided.map((x) => x.runId)).toEqual([
+        s.runId,
+        s.runId,
+        s.runId,
+      ]);
+      expect(res).toMatchObject({ capped: false });
       const [r1] = await h.db
         .select({ status: testRuns.status })
         .from(testRuns)
