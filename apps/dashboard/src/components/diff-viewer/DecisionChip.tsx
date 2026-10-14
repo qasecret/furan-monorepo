@@ -24,6 +24,12 @@ interface Props {
   onUndo?: () => void;
   /** The decision is still on its way to the server: Undo waits. */
   busy?: boolean;
+  /**
+   * Why the screen withholds Undo although the server would allow it (the
+   * run's status is overridden, or the run is not reviewable). Shown as the
+   * chip's tooltip. The server's own refusal, when there is one, wins.
+   */
+  unavailable?: string;
 }
 
 /**
@@ -32,11 +38,24 @@ interface Props {
  * reviewer, and cannot be undone: the same tooltip that explains any other
  * refusal explains that one.
  */
-export function DecisionChip({ decision, onUndo, busy = false }: Props) {
+export function DecisionChip({
+  decision,
+  onUndo,
+  busy = false,
+  unavailable,
+}: Props) {
   const style = reviewStateStyle(decision.kind);
   const Icon = style.icon;
   const word = style.label;
-  const canUndo = decision.undo.allowed && onUndo !== undefined;
+  const canUndo =
+    decision.undo.allowed && unavailable === undefined && onUndo !== undefined;
+  // Why there is no Undo, if there is none to explain: the server's refusal
+  // first, then whatever the run says.
+  const whyNot = !decision.undo.allowed
+    ? decision.undo.reason
+      ? `Can't undo: ${describeSkip(decision.undo.reason)}`
+      : "Can't undo this decision"
+    : unavailable;
 
   const pill = (
     <span
@@ -57,7 +76,7 @@ export function DecisionChip({ decision, onUndo, busy = false }: Props) {
         className="inline-flex items-center gap-2"
         data-testid="decision-chip"
       >
-        {decision.undo.allowed ? (
+        {whyNot === undefined ? (
           pill
         ) : (
           <Tooltip>
@@ -68,9 +87,7 @@ export function DecisionChip({ decision, onUndo, busy = false }: Props) {
               </span>
             </TooltipTrigger>
             <TooltipContent sideOffset={4} data-testid="decision-undo-reason">
-              {decision.undo.reason
-                ? `Can't undo: ${describeSkip(decision.undo.reason)}`
-                : "Can't undo this decision"}
+              {whyNot}
             </TooltipContent>
           </Tooltip>
         )}

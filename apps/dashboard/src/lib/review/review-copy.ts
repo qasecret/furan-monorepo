@@ -1,6 +1,7 @@
 import {
   reviewRefusalReasonSchema,
   type RevertSkipReason,
+  type RunStatus,
   type ReviewErrorDetails,
   type ReviewRefusalReason,
 } from "@furan/shared-types";
@@ -29,6 +30,24 @@ const SKIP = {
   superseded_variation_edit: "the step's settings changed since",
   not_decider: "only the reviewer who decided or an admin can undo this",
 } as const satisfies Record<RevertSkipReason | "not_decider", string>;
+
+/** Why a run that will never be reviewable cannot be, in its own words. */
+const BLOCKED_RUN = {
+  aborted:
+    "This run was aborted before it finished. Re-run the test to review it.",
+  empty: "This run recorded no steps. Check the SDK integration.",
+} as const;
+
+/** Why a decided step cannot be undone while the run's status is overridden. */
+export const DECISIONS_LOCKED_BY_OVERRIDE =
+  "Clear the run override to change decisions";
+
+/** Why a run's steps cannot be reviewed: for a disabled control's tooltip. */
+export function describeBlockedRun(status: RunStatus): string {
+  if (status === "aborted" || status === "empty") return BLOCKED_RUN[status];
+  // Still running, or waiting on a step's diff: it will become reviewable.
+  return describeRefusal("not_reviewable");
+}
 
 /** Why a decision was refused, as a sentence for a toast. */
 export function describeRefusal(reason: ReviewRefusalReason): string {

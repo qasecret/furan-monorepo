@@ -5,6 +5,8 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  DECISIONS_LOCKED_BY_OVERRIDE,
+  describeBlockedRun,
   describeRefusal,
   describeReviewError,
   describeSkip,
@@ -41,6 +43,32 @@ describe("review copy", () => {
     }
     expect(describeSkip("not_decider")).toBe(
       "only the reviewer who decided or an admin can undo this",
+    );
+  });
+});
+
+describe("describeBlockedRun", () => {
+  it("says an aborted run never finished, and what to do about it", () => {
+    expect(describeBlockedRun("aborted")).toBe(
+      "This run was aborted before it finished. Re-run the test to review it.",
+    );
+  });
+
+  it("says an empty run recorded no steps", () => {
+    expect(describeBlockedRun("empty")).toBe(
+      "This run recorded no steps. Check the SDK integration.",
+    );
+  });
+
+  it("keeps the refusal text for a run that is still being processed", () => {
+    expect(describeBlockedRun("running")).toBe(
+      describeRefusal("not_reviewable"),
+    );
+  });
+
+  it("words the override lock as an instruction", () => {
+    expect(DECISIONS_LOCKED_BY_OVERRIDE).toBe(
+      "Clear the run override to change decisions",
     );
   });
 });

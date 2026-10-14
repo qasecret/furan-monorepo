@@ -17,7 +17,11 @@ import { useViewerStore } from "./useViewerStore";
 
 import { plural } from "@/lib/format";
 import type { CheckpointItem } from "@/lib/review/optimistic";
-import { describeRefusal } from "@/lib/review/review-copy";
+import {
+  DECISIONS_LOCKED_BY_OVERRIDE,
+  describeBlockedRun,
+  describeRefusal,
+} from "@/lib/review/review-copy";
 import { useReviewMutations } from "@/lib/review/use-review-mutations";
 import { trpc } from "@/lib/trpc";
 
@@ -27,10 +31,13 @@ type NewerCapture = NonNullable<CheckpointItem["newerCapture"]>;
 /**
  * Which header the viewer shows for the selected step (spec §6.2).
  *
+ * - `decided`: `approved` / `rejected`, with who and when. A decided step
+ *   always shows its decision (R41); a run that cannot take decisions only
+ *   takes the Undo away.
  * - `overridden`: the run's status was set by hand, so step decisions are off.
- * - `not-reviewable`: the run (or one of its steps) is still being processed.
+ * - `not-reviewable`: the run is not reviewable (processing, aborted, empty),
+ *   or the selected step is not known / not diffed yet.
  * - `pending`: `new` / `unresolved`, waiting for a reviewer.
- * - `decided`: `approved` / `rejected`, with who and when.
  * - `machine-passed`: the diff found nothing; no decision is asked for.
  */
 export type ReviewView =
@@ -73,6 +80,13 @@ export interface ReviewActions {
   status: RunStatus;
   /** Which header the selected step gets. */
   view: ReviewView;
+  /**
+   * Why a decided step cannot be undone right now, because of the run
+   * (overridden, or not reviewable); null when the run takes decisions.
+   */
+  decisionLockedReason: string | null;
+  /** The More menu applies: the run is overridden or can take decisions. */
+  showRunMenu: boolean;
   /** The run takes step decisions: it is reviewable and not overridden. */
   canReview: boolean;
   /** Why step decisions are unavailable, or null when they're available. */
@@ -177,13 +191,19 @@ export function useReviewActions({
   const blocked =
     NOT_REVIEWABLE.has(effectiveStatus) ||
     (items?.some((i) => i.state === null) ?? false);
+  // The selected step is not known (the `_first` placeholder, an id the run
+  // does not have, a list still loading) or has no verdict yet: there is
+  // nothing to act on, and it reads as still processing.
+  const loading = current === undefined || state === null;
 
-  const view: ReviewView = overridden
-    ? "overridden"
-    : blocked
-      ? "not-reviewable"
-      : state === "approved" || state === "rejected"
-        ? "decided"
+  const isDecided =
+    decision !== null && (state === "approved" || state === "rejected");
+  const view: ReviewView = isDecided
+    ? "decided"
+    : overridden
+      ? "overridden"
+      : blocked || loading
+        ? "not-reviewable"
         : state === "passed"
           ? "machine-passed"
           : "pending";
@@ -192,8 +212,16 @@ export function useReviewActions({
   const disabledReason = overridden
     ? describeRefusal("run_overridden")
     : blocked
-      ? describeRefusal("not_reviewable")
+      ? describeBlockedRun(effectiveStatus)
+      : loading
+        ? describeRefusal("not_reviewable")
+        : null;
+  const decisionLockedReason = overridden
+    ? DECISIONS_LOCKED_BY_OVERRIDE
+    : blocked
+      ? describeBlockedRun(effectiveStatus)
       : null;
+  const showRunMenu = overridden || !(blocked || loading);
 
   const stepInFlight = checkpointId ? isInFlight(checkpointId) : false;
   const actionable = canReview && current !== undefined && !stepInFlight;
@@ -262,6 +290,8 @@ export function useReviewActions({
   return {
     status: effectiveStatus,
     view,
+    decisionLockedReason,
+    showRunMenu,
     canReview,
     disabledReason,
     pending,

@@ -513,6 +513,126 @@ describe("ApprovalBar: a run with a status override", () => {
   });
 });
 
+// R41: a decided step always shows its decision, whatever state the run is in.
+// What the run takes away is the Undo, and the chip says why.
+describe("ApprovalBar: a decided step on a run that cannot take decisions", () => {
+  const approvedStep = (over: Record<string, unknown> = {}) =>
+    step({ state: "approved", decision: decisionOf(over) });
+
+  /** The chip's focusable tooltip trigger. */
+  const reasonOf = async () => {
+    const trigger = screen
+      .getByTestId("decision-chip")
+      .querySelector("[tabindex]") as HTMLElement;
+    await act(async () => {
+      trigger.focus();
+    });
+    return (await screen.findByTestId("decision-undo-reason")).textContent;
+  };
+
+  it("overridden run: the override chip, Reset and the decision, with no Undo", async () => {
+    arrange({
+      items: [approvedStep()],
+      runOver: { status: "failed", statusOverride: "failed" },
+    });
+    renderBar({ status: "failed" });
+
+    expect(screen.getByTestId("override-chip").textContent).toContain(
+      "Run overridden to Failed",
+    );
+    expect(button("reset-override").textContent).toBe("Reset to computed");
+    expect(screen.getByTestId("decision-chip").textContent).toContain(
+      "Approved",
+    );
+    expect(screen.queryByTestId("decision-undo")).toBeNull();
+    expect(await reasonOf()).toBe("Clear the run override to change decisions");
+    // The step buttons are not what a decided step shows.
+    expect(screen.queryByTestId("approve-checkpoint-button")).toBeNull();
+    expect(screen.queryByTestId("reject-button")).toBeNull();
+  });
+
+  it("overridden run: Reset still clears the override", () => {
+    arrange({
+      items: [approvedStep()],
+      runOver: { status: "failed", statusOverride: "failed" },
+    });
+    renderBar({ status: "failed" });
+    fireEvent.click(button("reset-override"));
+    expect(overrideMutate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      status: "default",
+    });
+  });
+
+  it("overridden run: a rejection keeps its chip too", () => {
+    arrange({
+      items: [
+        step({
+          state: "rejected",
+          decision: decisionOf({ kind: "rejected" }),
+        }),
+      ],
+      runOver: { status: "passed", statusOverride: "passed" },
+    });
+    renderBar({ status: "passed" });
+    expect(screen.getByTestId("decision-chip").textContent).toContain(
+      "Rejected",
+    );
+    expect(screen.queryByTestId("decision-undo")).toBeNull();
+  });
+
+  it.each([
+    ["running", "This run is still processing"],
+    [
+      "aborted",
+      "This run was aborted before it finished. Re-run the test to review it.",
+    ],
+    ["empty", "This run recorded no steps. Check the SDK integration."],
+  ] as const)(
+    "%s run: the decision with no Undo, and the run's own reason why",
+    async (status, reason) => {
+      arrange({ items: [approvedStep()], runOver: { status } });
+      renderBar({ status });
+
+      expect(screen.getByTestId("decision-chip").textContent).toContain(
+        "Approved",
+      );
+      expect(screen.queryByTestId("decision-undo")).toBeNull();
+      expect(await reasonOf()).toBe(reason);
+      expect(screen.queryByTestId("override-chip")).toBeNull();
+      expect(screen.queryByTestId("approval-more-menu")).toBeNull();
+    },
+  );
+
+  it("a run still waiting on another step's diff is a run still processing", async () => {
+    arrange({
+      items: [approvedStep(), step({ id: OTHER, verdict: null, state: null })],
+    });
+    renderBar();
+    expect(screen.queryByTestId("decision-undo")).toBeNull();
+    expect(await reasonOf()).toBe("This run is still processing");
+  });
+
+  it("the server's own refusal outranks the run's reason", async () => {
+    arrange({
+      items: [
+        approvedStep({ undo: { allowed: false, reason: "not_decider" } }),
+      ],
+      runOver: { status: "failed", statusOverride: "failed" },
+    });
+    renderBar({ status: "failed" });
+    expect(await reasonOf()).toBe(
+      "Can't undo: only the reviewer who decided or an admin can undo this",
+    );
+  });
+
+  it("Undo works again on a run that can take decisions", () => {
+    arrange({ items: [approvedStep()] });
+    renderBar();
+    expect(screen.getByTestId("decision-undo")).toBeDefined();
+  });
+});
+
 describe("ApprovalBar: a run that cannot be reviewed yet", () => {
   it.each([["running"], ["aborted"], ["empty"]] as const)(
     "disables the actions and hides More when the run is %s",
@@ -541,15 +661,69 @@ describe("ApprovalBar: a run that cannot be reviewed yet", () => {
     expect(screen.queryByTestId("approval-more-menu")).toBeNull();
   });
 
-  it("explains why on hover or focus", async () => {
-    arrange({ runOver: { status: "running" } });
-    renderBar({ status: "running" });
-    const wrapper = screen.getByTestId("reject-button-disabled-wrapper");
+  const reasonFor = async (testId: string) => {
     await act(async () => {
-      wrapper.focus();
+      screen.getByTestId(`${testId}-disabled-wrapper`).focus();
     });
-    const reason = await screen.findByTestId("reject-button-disabled-reason");
-    expect(reason.textContent).toBe("This run is still processing");
+    return (await screen.findByTestId(`${testId}-disabled-reason`)).textContent;
+  };
+
+  it.each([
+    ["running", "This run is still processing"],
+    [
+      "aborted",
+      "This run was aborted before it finished. Re-run the test to review it.",
+    ],
+    ["empty", "This run recorded no steps. Check the SDK integration."],
+  ] as const)(
+    "explains the %s state in its own words",
+    async (status, reason) => {
+      arrange({ runOver: { status } });
+      renderBar({ status });
+      expect(await reasonFor("reject-button")).toBe(reason);
+    },
+  );
+
+  it("calls a step without a verdict 'still processing', whatever the run says", async () => {
+    arrange({
+      items: [step(), step({ id: OTHER, verdict: null, state: null })],
+    });
+    renderBar();
+    expect(await reasonFor("reject-button")).toBe(
+      "This run is still processing",
+    );
+  });
+
+  // The step list has not resolved yet (the `_first` placeholder), or the
+  // selected id is not in the run: nothing to act on, and it says so.
+  it.each([
+    ["no step selected", undefined],
+    ["a step the run does not have", "not-in-the-run"],
+  ] as const)(
+    "shows the loading state when there is %s",
+    async (_name, checkpointId) => {
+      renderBar({ checkpointId });
+      for (const id of [
+        "approve-checkpoint-button",
+        "reject-button",
+        "mark-as-bug-button",
+      ]) {
+        expect(button(id).disabled, id).toBe(true);
+      }
+      expect(screen.queryByTestId("approval-more-menu")).toBeNull();
+      expect(await reasonFor("approve-checkpoint-button")).toBe(
+        "This run is still processing",
+      );
+    },
+  );
+
+  it("shows the loading state for a selected step that has not been diffed", async () => {
+    arrange({ items: [step({ verdict: null, state: null })] });
+    renderBar();
+    expect(button("reject-button").disabled).toBe(true);
+    expect(await reasonFor("reject-button")).toBe(
+      "This run is still processing",
+    );
   });
 
   it.each([["new"], ["passed"], ["unresolved"], ["failed"]] as const)(

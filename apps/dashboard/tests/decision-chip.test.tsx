@@ -154,6 +154,53 @@ describe("DecisionChip", () => {
     );
   });
 
+  describe("when the screen withholds Undo", () => {
+    it("shows the reason in the tooltip and offers no Undo, even with a handler", async () => {
+      vi.useRealTimers();
+      const onUndo = vi.fn();
+      const r = render(
+        <DecisionChip
+          decision={decisionOf()}
+          onUndo={onUndo}
+          unavailable="Clear the run override to change decisions"
+        />,
+      );
+      expect(r.queryByTestId("decision-undo")).toBeNull();
+      await act(async () => {
+        (
+          r
+            .getByTestId("decision-chip")
+            .querySelector("[tabindex]") as HTMLElement
+        ).focus();
+      });
+      expect((await r.findByTestId("decision-undo-reason")).textContent).toBe(
+        "Clear the run override to change decisions",
+      );
+    });
+
+    it("lets the server's own refusal speak first", async () => {
+      vi.useRealTimers();
+      const r = render(
+        <DecisionChip
+          decision={decisionOf({
+            undo: { allowed: false, reason: "superseded_newer_capture" },
+          })}
+          unavailable="Clear the run override to change decisions"
+        />,
+      );
+      await act(async () => {
+        (
+          r
+            .getByTestId("decision-chip")
+            .querySelector("[tabindex]") as HTMLElement
+        ).focus();
+      });
+      expect((await r.findByTestId("decision-undo-reason")).textContent).toBe(
+        "Can't undo: a newer capture of this step exists",
+      );
+    });
+  });
+
   describe("a decision from before review history", () => {
     const legacy = (kind: "approved" | "rejected" = "approved") =>
       decisionOf({

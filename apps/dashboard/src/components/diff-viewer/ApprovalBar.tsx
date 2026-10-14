@@ -88,6 +88,8 @@ export function ApprovalBar({
     state,
     decision,
     statusOverride,
+    decisionLockedReason,
+    showRunMenu,
     disabledReason,
     pending,
     canApprove,
@@ -149,9 +151,11 @@ export function ApprovalBar({
               stays the rightmost CTA (reference TestStep layout). Commenting
               lives in the sidebar's COMMENTS tab, so there's no separate
               Comment button here. */}
-          {view !== "not-reviewable" && <MoreMenu actions={actions} />}
+          {showRunMenu && <MoreMenu actions={actions} />}
 
-          {view === "overridden" && statusOverride && (
+          {/* The override cluster shows with whatever the step shows: a
+              decided step keeps its chip beside it. */}
+          {statusOverride && (
             <>
               <OverrideChip override={statusOverride} />
               <Button
@@ -170,10 +174,11 @@ export function ApprovalBar({
               decision={decision}
               busy={pending}
               onUndo={
-                decision.undo.allowed
+                decision.undo.allowed && !decisionLockedReason
                   ? () => actions.undo(decision.actionId)
                   : undefined
               }
+              unavailable={decisionLockedReason ?? undefined}
             />
           )}
 
