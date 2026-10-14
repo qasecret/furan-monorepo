@@ -1142,7 +1142,11 @@ d("review queue: findNext", () => {
    * anything and the next batch is opened (`nextBatch`, one more statement);
    * otherwise the wrap finds the first run's step (`batch`).
    */
-  async function statements(runs: number, onlyAt: boolean): Promise<number> {
+  async function statements(
+    runs: number,
+    onlyAt: boolean,
+    nextBranch?: string,
+  ): Promise<number> {
     const s = await seed({
       checkpoints: [{ name: "first", verdict: "unresolved" }],
     });
@@ -1161,6 +1165,7 @@ d("review queue: findNext", () => {
       }
     }
     await addReviewBuild(h, s, {
+      ...(nextBranch !== undefined ? { branch: nextBranch } : {}),
       spec: { checkpoints: [{ name: "other", verdict: "new" }] },
     });
     const counting = { n: () => 0 };
@@ -1188,5 +1193,16 @@ d("review queue: findNext", () => {
     const large = await statements(12, true);
     expect(large).toBe(small);
     expect(small).toBeLessThanOrEqual(6);
+  });
+
+  test("a next batch on another branch costs one more probe, however many runs", async () => {
+    // The next-batch lookup tries `at`'s branch first and then any branch: the
+    // second probe runs only when the first finds nothing.
+    const sameBranch = await statements(2, true);
+    const small = await statements(2, true, "feature/elsewhere");
+    const large = await statements(12, true, "feature/elsewhere");
+    expect(small).toBe(sameBranch + 1);
+    expect(large).toBe(small);
+    expect(small).toBeLessThanOrEqual(7);
   });
 });

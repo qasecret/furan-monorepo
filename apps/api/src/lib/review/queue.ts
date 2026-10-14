@@ -156,27 +156,20 @@ async function stepInBatch(
 }
 
 /**
- * The newest batch with a pending step inside `facets`, none of `exclude`;
- * with `branchOf`, the batches on that build's branch first (NULL matching
- * NULL). Ties on `created_at` go to the greater id.
+ * The newest batch with a pending step inside `facets`, none of `exclude`,
+ * among those matching `onBranch` (any when undefined). One `LIMIT 1` probe in
+ * `created_at DESC, id DESC`, so it can stop at the first hit. Ties on
+ * `created_at` go to the greater id.
  */
-async function newestBatch(
+async function newestBatchWhere(
   db: DB | Tx,
   a: {
     projectId: string;
     exclude: string[];
     facets?: StepFacets | undefined;
-    branchOf?: string;
   },
+  onBranch: SQL | undefined,
 ): Promise<BatchRow | null> {
-  const sameBranch =
-    a.branchOf === undefined
-      ? []
-      : [
-          desc(
-            sql`${builds.branchName} is not distinct from (select cur.branch_name from ${builds} cur where cur.id = ${a.branchOf} and cur.project_id = ${a.projectId})`,
-          ),
-        ];
   const [row] = await db
     .select({
       id: builds.id,
@@ -197,12 +190,13 @@ async function newestBatch(
       and(
         eq(builds.projectId, a.projectId),
         a.exclude.length > 0 ? notInArray(builds.id, a.exclude) : undefined,
+        onBranch,
         buildHasPendingStep(a.projectId, sql`${builds.id}`, {
           facets: a.facets,
         }),
       ),
     )
-    .orderBy(...sameBranch, desc(builds.createdAt), desc(builds.id))
+    .orderBy(desc(builds.createdAt), desc(builds.id))
     .limit(1);
   if (!row) return null;
   return {
@@ -211,6 +205,33 @@ async function newestBatch(
     number: row.number,
     branch: row.branch,
   };
+}
+
+/**
+ * The newest batch with a pending step inside `facets`, none of `exclude`;
+ * with `branchOf`, the batches on that build's branch first (NULL matching
+ * NULL). That is two probes, the branch's first and then any branch, each
+ * stopping at its first hit: a single `ORDER BY` over "is on the branch" would
+ * have to look at every batch of the project before it could answer.
+ */
+async function newestBatch(
+  db: DB | Tx,
+  a: {
+    projectId: string;
+    exclude: string[];
+    facets?: StepFacets | undefined;
+    branchOf?: string;
+  },
+): Promise<BatchRow | null> {
+  if (a.branchOf !== undefined) {
+    const sameBranch = await newestBatchWhere(
+      db,
+      a,
+      sql`${builds.branchName} is not distinct from (select cur.branch_name from ${builds} cur where cur.id = ${a.branchOf} and cur.project_id = ${a.projectId})`,
+    );
+    if (sameBranch) return sameBranch;
+  }
+  return newestBatchWhere(db, a, undefined);
 }
 
 /** The project's batches with a pending step inside `facets`, but `exceptStepId`. */
