@@ -32,14 +32,26 @@ import { UNREVIEWABLE_LIFECYCLE_LIST } from "./legality.js";
  * The conditions are over `screenshots` joined to `test_runs` on
  * `screenshots.run_id = test_runs.id`; the caller does the join and adds its
  * own explicit `project_id` filter (the queries here do).
+ *
+ * They reference the **unaliased** `"screenshots"` and `"test_runs"` tables by
+ * name. A caller must therefore embed them in a fresh `EXISTS` subquery over
+ * those tables (`... from screenshots join test_runs ...`), never against an
+ * aliased `test_runs` (e.g. `test_runs r`), where `"test_runs"` would not
+ * resolve (or would silently bind to another scope's `test_runs`). Raw-SQL
+ * callers (the build-level queue and counts) depend on this.
  */
 
-/** The environment a reviewer narrows to; each set field is an exact match. */
+/**
+ * The environment a reviewer narrows to; each set field is an exact match and
+ * an unset (or explicitly `undefined`) one is no filter. The fields accept
+ * `undefined` so zod-optional inputs can be passed in as they are under
+ * `exactOptionalPropertyTypes`.
+ */
 export interface StepFacets {
-  browser?: string;
-  viewport?: string;
-  os?: string;
-  device?: string;
+  browser?: string | undefined;
+  viewport?: string | undefined;
+  os?: string | undefined;
+  device?: string | undefined;
 }
 
 /**

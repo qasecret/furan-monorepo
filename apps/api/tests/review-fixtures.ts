@@ -114,7 +114,7 @@ export interface ReviewSeed extends ReviewRun {
   /** The branch the seed's build and runs were created on. */
   branch: string;
   /** The builds `addReviewBuild` added to the project, with their runs. */
-  extraBuilds: Array<{ buildId: string; runIds: string[] }>;
+  extraBuilds: Array<{ buildId: string; branch: string; runIds: string[] }>;
   /** Editors `addProjectEditor` added to the project, besides `editor`. */
   peers: ReviewUser[];
   tag: string;
@@ -379,30 +379,43 @@ export async function addProjectEditor(
 }
 
 /**
- * Adds another run (captured after every earlier one) to the seed's build.
- * Checkpoint names already seeded in the project reuse their variation.
- * `withBaseline` is not supported here: seed baselines with `seedReviewRun`.
+ * Adds another run (captured after every earlier one) to the seed's build, or
+ * to `opts.buildId`: a build `addReviewBuild` created (the run takes that
+ * build's branch). Checkpoint names already seeded in the project reuse their
+ * variation (same branch only). `withBaseline` is not supported here: seed
+ * baselines with `seedReviewRun`.
  */
 export async function addReviewRun(
   h: TestApp,
   seed: ReviewSeed,
   spec: ReviewRunSpec,
+  opts: { buildId?: string } = {},
 ): Promise<ReviewRun> {
   if (spec.checkpoints.some((c) => c.withBaseline)) {
     throw new Error("addReviewRun: seed baselines with seedReviewRun");
+  }
+  const buildId = opts.buildId ?? seed.buildId;
+  const extra =
+    buildId === seed.buildId
+      ? undefined
+      : seed.extraBuilds.find((b) => b.buildId === buildId);
+  if (buildId !== seed.buildId && !extra) {
+    throw new Error(
+      "addReviewRun: buildId is neither the seed's build nor one addReviewBuild created",
+    );
   }
   const run = await insertRun(
     h,
     {
       projectId: seed.projectId,
-      buildId: seed.buildId,
+      buildId,
       tag: seed.tag,
-      branch: seed.branch,
+      branch: extra?.branch ?? seed.branch,
     },
     spec,
     () => Promise.reject(new Error("unreachable")),
   );
-  seed.runIds.push(run.runId);
+  (extra?.runIds ?? seed.runIds).push(run.runId);
   return run;
 }
 
@@ -437,7 +450,7 @@ export async function addReviewBuild(
     opts.spec,
     () => Promise.reject(new Error("unreachable")),
   );
-  seed.extraBuilds.push({ buildId, runIds: [run.runId] });
+  seed.extraBuilds.push({ buildId, branch, runIds: [run.runId] });
   return { ...run, buildId };
 }
 

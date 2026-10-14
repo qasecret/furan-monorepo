@@ -45,19 +45,19 @@ d("the SQL definition of a pending review step", () => {
     return s;
   }
 
-  /** A decision row, active unless `reverted`. */
+  /** A decision row (an approve unless `decision`), active unless `reverted`. */
   async function decide(
     s: ReviewSeed,
     runId: string,
     shotId: string,
-    opts: { reverted?: boolean } = {},
+    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
   ): Promise<void> {
     await h.db.insert(checkpointDecisions).values({
       projectId: s.projectId,
       runId,
       screenshotId: shotId,
       actionId: randomUUID(),
-      decision: "approved",
+      decision: opts.decision ?? "approved",
       actorId: s.editor.id,
       source: "viewer",
       before: null,
@@ -115,6 +115,14 @@ d("the SQL definition of a pending review step", () => {
       checkpoints: [{ name: "c", verdict: "unresolved" }],
     });
     await decide(s, c.runId, c.shots.c!.id, { reverted: true });
+
+    // (b2) unresolved, with an active reject: any active decision excludes
+    // the step, not only an approve
+    const b2 = await addReviewRun(h, s, {
+      lifecycle: "failed",
+      checkpoints: [{ name: "b2", verdict: "unresolved" }],
+    });
+    await decide(s, b2.runId, b2.shots.b2!.id, { decision: "rejected" });
 
     // (d) lifecycle running, (e) aborted, (f) empty: not reviewable
     await addReviewRun(h, s, {
