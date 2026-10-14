@@ -9,6 +9,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import { checkpointVerdictEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testRuns } from "./test_runs.js";
 import { testVariations } from "./test_variations.js";
@@ -56,6 +57,11 @@ export const screenshots = pgTable(
     // no meaningful diff). Computed at diff-time by the diff-worker; powers
     // build-scoped similarity grouping. Legacy rows stay NULL ("ungrouped").
     diffSignature: text("diff_signature"),
+    // Review model (0035): what the diff found for this checkpoint against its
+    // own baseline. NULL = not diffed yet (the run stays `running`). Written by
+    // the diff-worker; a reviewer's decision lives in `checkpoint_decisions`.
+    verdict: checkpointVerdictEnum("verdict"),
+    verdictAt: timestamp("verdict_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

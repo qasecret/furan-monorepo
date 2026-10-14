@@ -42,3 +42,35 @@ export type AutoRuleAction = (typeof autoRuleActionEnum.enumValues)[number];
 
 export const resolutionSourceEnum = pgEnum("resolution_source", ["rule"]);
 export type ResolutionSource = (typeof resolutionSourceEnum.enumValues)[number];
+
+/**
+ * What the diff found for one checkpoint (`screenshots.verdict`). NULL on the
+ * column means "not diffed yet". Mirrors `checkpointVerdictSchema` in
+ * `@furan/shared-types` (`review.ts`).
+ */
+export const checkpointVerdictEnum = pgEnum("checkpoint_verdict", [
+  "new",
+  "passed",
+  "unresolved",
+]);
+export type CheckpointVerdict =
+  (typeof checkpointVerdictEnum.enumValues)[number];
+
+/**
+ * The run-level "Force passed / Force failed" override
+ * (`test_runs.status_override`). NULL = use the computed rollup.
+ */
+export const runStatusOverrideEnum = pgEnum("run_status_override", [
+  "passed",
+  "failed",
+]);
+export type RunStatusOverride =
+  (typeof runStatusOverrideEnum.enumValues)[number];
+
+/** What a reviewer decided for a checkpoint (`checkpoint_decisions.decision`). */
+export const checkpointDecisionEnum = pgEnum("checkpoint_decision", [
+  "approved",
+  "rejected",
+]);
+export type CheckpointDecision =
+  (typeof checkpointDecisionEnum.enumValues)[number];
