@@ -79,9 +79,8 @@
 --
 -- Safe to re-apply (see above; covered by tests) and data-only: no schema
 -- change, so drizzle-kit did not emit it — it is hand-authored (precedent:
--- 0026). The
--- NOTICE reports how many baselines were written; `verify-review-rollup
--- --repairs` lists them later.
+-- 0026). The NOTICE reports how many baselines were written;
+-- `verify-review-rollup --repairs` lists them later.
 
 DO $$
 DECLARE

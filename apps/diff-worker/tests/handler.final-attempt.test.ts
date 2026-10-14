@@ -482,6 +482,46 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       });
     }, 60_000);
 
+    // R50: an SDK (or capture) abort is final. A diff job in flight that then
+    // fails its final attempt must not re-flag it as the pipeline's, or the
+    // next successful diff would heal it: a CI false pass.
+    it("an SDK abort, then a final-attempt failure, then a successful diff stays aborted", async () => {
+      const s = await seedRun();
+      // The candidate image is missing: the in-flight job will fail.
+      const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
+      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: false })
+        .where(eq(testRuns.id, s.runId));
+
+      await expect(
+        handleDiffJob(
+          job,
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow();
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: false,
+      });
+
+      await storage.put(candidateKey, candidateImg, "image/png");
+      await handleDiffJob(
+        job,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      );
+
+      expect(await runRow(s.runId)).toEqual({
+        status: "aborted",
+        abortedByDiff: false,
+      });
+    }, 60_000);
+
     it("a job that leaves a checkpoint without a verdict does not heal", async () => {
       // A checkpoint uploaded while job k+1 runs has no verdict when it
       // commits: the run stays aborted until a job diffs that one too.

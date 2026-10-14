@@ -9,6 +9,7 @@ import {
   eq,
   inArray,
   isNull,
+  ne,
   projects,
   recomputeRunStatus,
   recordBaseline,
@@ -398,13 +399,18 @@ export async function handleDiffJob(
     // own try/catch so a status-write failure does not mask the original
     // error — the worker's error visibility is unchanged. `abortedByDiff`
     // marks it as the pipeline's abort, which a later successful diff of the
-    // whole run heals (Ruling R46, `healPipelineAbort`).
+    // whole run heals (Ruling R46, `healPipelineAbort`). A run that is already
+    // `aborted` is left exactly as it is (R50): an SDK or capture abort is
+    // final, and re-flagging it as the pipeline's would let a later diff heal
+    // it (a CI false pass); a pipeline abort already carries the flag.
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
           .update(testRuns)
           .set({ status: "aborted", abortedByDiff: true })
-          .where(eq(testRuns.id, data.runId));
+          .where(
+            and(eq(testRuns.id, data.runId), ne(testRuns.status, "aborted")),
+          );
       });
     } catch (statusErr) {
       logger.error(
