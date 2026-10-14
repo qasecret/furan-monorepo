@@ -104,8 +104,11 @@ export interface ReviewActions {
   markAsBug: () => void;
   /** Approve every step of the run that still needs a reviewer. */
   approveAllCheckpoints: () => void;
-  /** Take back an action; see `useReviewMutations().undo`. */
-  undo: (actionId: string) => void;
+  /**
+   * Take back an action: the one named, or the newest this session made when
+   * no id is given. See `useReviewMutations().undo`.
+   */
+  undo: (actionId?: string) => void;
   /** Set the run's status by hand, or `default` to compute it again. */
   override: (next: OverrideStatusInput) => void;
 }

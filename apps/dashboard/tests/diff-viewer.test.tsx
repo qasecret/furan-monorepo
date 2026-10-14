@@ -955,7 +955,7 @@ describe("DiffViewer undo shortcut and hint", () => {
     useUndoStore.setState({ stack: [] });
   });
 
-  test("the hint bar shows ⌘Z Undo only while there is an action to undo", () => {
+  test("the hint bar shows ⌘Z undo only while there is an action to undo", () => {
     const r = render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
     );
@@ -968,7 +968,7 @@ describe("DiffViewer undo shortcut and hint", () => {
     });
     const hint = r.getByTestId("shortcut-hint-undo");
     expect(hint.querySelector("kbd")?.textContent).toBe("⌘Z");
-    expect(hint.textContent).toContain("Undo");
+    expect(hint.textContent).toContain("undo");
 
     act(() => {
       useUndoStore.getState().drop("a1");
