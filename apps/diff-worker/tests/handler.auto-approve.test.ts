@@ -1,14 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  asc,
   baselines,
   builds,
+  checkpointDecisions,
   createDb,
   diffRegions,
   eq,
   projects,
+  sql,
   screenshots,
   testRuns,
   testVariations,
@@ -117,6 +121,16 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       })
       .returning();
 
+    // The baseline predates the candidate run, as in real use: auto-approve
+    // never writes a row above a baseline created after the candidate run.
+    await db.insert(baselines).values({
+      baselineName: "home",
+      testVariationId: v.id,
+      testRunId: br.id,
+      userId,
+      branchName: "main",
+    });
+
     const [cr] = await db
       .insert(testRuns)
       .values({
@@ -128,14 +142,6 @@ desc("handleDiffJob — auto-approve (integration)", () => {
         name: "home",
       })
       .returning();
-
-    await db.insert(baselines).values({
-      baselineName: "home",
-      testVariationId: v.id,
-      testRunId: br.id,
-      userId,
-      branchName: "main",
-    });
 
     return {
       projectId: p.id,
@@ -472,5 +478,186 @@ desc("handleDiffJob — auto-approve (integration)", () => {
       .where(eq(baselines.testRunId, cr.id));
     expect(auto.length).toBe(1);
     expect(auto[0]!.userId).toBeNull();
+  });
+  // I1: auto-approve sets the verdict `passed` but must never rewrite a
+  // reviewer's baseline, nor write one that sorts above a baseline created
+  // after the candidate run. One test per guard; each leaves `baselines`
+  // exactly as it was (row count, user, created_at).
+  describe("never rewrites a reviewer's or a newer baseline", () => {
+    /** Every baseline row of a variation, created_at at full µs precision. */
+    async function baselineRows(variationId: string) {
+      return db
+        .select({
+          id: baselines.id,
+          testRunId: baselines.testRunId,
+          userId: baselines.userId,
+          baselineName: baselines.baselineName,
+          createdAt: sql<string>`${baselines.createdAt}::text`,
+        })
+        .from(baselines)
+        .where(eq(baselines.testVariationId, variationId))
+        .orderBy(asc(baselines.id));
+    }
+
+    async function verdictsOf(runId: string) {
+      const rows = await db
+        .select({ verdict: screenshots.verdict })
+        .from(screenshots)
+        .where(eq(screenshots.runId, runId));
+      return rows.map((r) => r.verdict);
+    }
+
+    async function putImage(name: string): Promise<string> {
+      const bytes = FIXTURE(name);
+      const key = objectKey(bytes);
+      await storage.put(key, bytes, "image/png");
+      return key;
+    }
+
+    it("(a) an active decision on the checkpoint: verdict passed, no baseline write", async () => {
+      // A hash match whose checkpoint a reviewer has rejected: auto-seeding
+      // its image as the baseline would overrule the reviewer.
+      const ctx = await setupProject({ autoApproveFeature: true });
+      await seedMatchingScreenshots({ ...ctx, viewports: [VP_DESKTOP] });
+      const [shot] = await db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(eq(screenshots.runId, ctx.candidateRunId));
+      await db.insert(checkpointDecisions).values({
+        projectId: ctx.projectId,
+        runId: ctx.candidateRunId,
+        screenshotId: shot!.id,
+        actionId: randomUUID(),
+        decision: "rejected",
+        actorId: userId,
+        source: "viewer",
+      });
+      const before = await baselineRows(ctx.variationId);
+
+      await handleDiffJob(
+        { runId: ctx.candidateRunId, projectId: ctx.projectId },
+        mockLogger,
+        { db, storage, redis },
+      );
+
+      expect(await baselineRows(ctx.variationId)).toEqual(before);
+      expect(await verdictsOf(ctx.candidateRunId)).toEqual(["passed"]);
+    });
+
+    it("(b) the paired baseline is the checkpoint's own row: the approver and its time are kept", async () => {
+      // The candidate run was approved by a reviewer (no decision row: a
+      // legacy approval), so its own (variation, run) row is the current
+      // baseline and a re-diff hash-matches it. Its created_at is set before
+      // the run's so guard (c) cannot be what keeps it.
+      const ctx = await setupProject({ autoApproveFeature: true });
+      await seedMatchingScreenshots({ ...ctx, viewports: [VP_DESKTOP] });
+      await db.insert(baselines).values({
+        baselineName: "approved-by-reviewer",
+        testVariationId: ctx.variationId,
+        testRunId: ctx.candidateRunId,
+        userId,
+        branchName: "main",
+        createdAt: sql`(SELECT created_at - interval '1 second' FROM test_runs WHERE id = ${ctx.candidateRunId})`,
+      });
+      // ...and newest on the branch, so the pairing resolves to it.
+      await db
+        .update(baselines)
+        .set({ createdAt: sql`created_at - interval '1 hour'` })
+        .where(eq(baselines.testRunId, ctx.baselineRunId));
+      const before = await baselineRows(ctx.variationId);
+
+      await handleDiffJob(
+        { runId: ctx.candidateRunId, projectId: ctx.projectId },
+        mockLogger,
+        { db, storage, redis },
+      );
+
+      expect(await baselineRows(ctx.variationId)).toEqual(before);
+      const own = (await baselineRows(ctx.variationId)).find(
+        (b) => b.testRunId === ctx.candidateRunId,
+      );
+      expect(own!.userId).toBe(userId);
+      expect(await verdictsOf(ctx.candidateRunId)).toEqual(["passed"]);
+    });
+
+    it("(c) a baseline created after the candidate run: a past-baseline match writes nothing", async () => {
+      // r0 (image A) was the baseline; r1 (image A) was captured; then r2
+      // (image B) was approved. Re-diffing the OLDER r1 pairs with r2 (no hash
+      // match) and matches r0 among the past baselines. Writing r1's row would
+      // make A, an older image, the current baseline again.
+      const uniq = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+      const [p] = await db
+        .insert(projects)
+        .values({ name: `dw-aa-newer-${uniq}`, autoApproveFeature: true })
+        .returning();
+      const [b] = await db
+        .insert(builds)
+        .values({ projectId: p!.id, userId, isRunning: false })
+        .returning();
+      const [v] = await db
+        .insert(testVariations)
+        .values({ name: "home", projectId: p!.id })
+        .returning();
+      const newRun = async (status: "passed" | "running") => {
+        const [r] = await db
+          .insert(testRuns)
+          .values({
+            buildId: b!.id,
+            projectId: p!.id,
+            testVariationId: v!.id,
+            status,
+            branchName: "main",
+            name: "home",
+          })
+          .returning();
+        return r!;
+      };
+      const imageA = await putImage("baseline-a.png");
+      const imageB = await putImage("candidate-a-major.png");
+      const shot = async (runId: string, imageKey: string) => {
+        await db.insert(screenshots).values({
+          runId,
+          projectId: p!.id,
+          testVariationId: v!.id,
+          name: "home",
+          imageKey,
+          viewport: VP_DESKTOP,
+          browser: "chromium",
+        });
+      };
+
+      const r0 = await newRun("passed");
+      await shot(r0.id, imageA);
+      await db.insert(baselines).values({
+        baselineName: imageA,
+        testVariationId: v!.id,
+        testRunId: r0.id,
+        userId,
+        branchName: "main",
+        createdAt: sql`clock_timestamp()`,
+      });
+      const r1 = await newRun("running");
+      await shot(r1.id, imageA);
+      const r2 = await newRun("passed");
+      await shot(r2.id, imageB);
+      await db.insert(baselines).values({
+        baselineName: imageB,
+        testVariationId: v!.id,
+        testRunId: r2.id,
+        userId,
+        branchName: "main",
+        createdAt: sql`clock_timestamp()`,
+      });
+      const before = await baselineRows(v!.id);
+
+      await handleDiffJob({ runId: r1.id, projectId: p!.id }, mockLogger, {
+        db,
+        storage,
+        redis,
+      });
+
+      expect(await baselineRows(v!.id)).toEqual(before);
+      expect(await verdictsOf(r1.id)).toEqual(["passed"]);
+    });
   });
 });
