@@ -179,6 +179,16 @@ describe("ApprovePendingDialog loading", () => {
     );
   });
 
+  test("never re-reads the preview on its own while it is open", () => {
+    // A window-focus refetch would swap the counts under the reviewer with no
+    // notice; the server checks the confirmed count anyway.
+    renderDialog();
+    expect(previewQuery).toHaveBeenLastCalledWith(
+      { buildId: "b1" },
+      expect.objectContaining({ refetchOnWindowFocus: false }),
+    );
+  });
+
   test("cannot be confirmed before the preview has arrived", () => {
     answer(undefined, { isLoading: true, isFetching: true });
     renderDialog();
@@ -196,6 +206,30 @@ describe("ApprovePendingDialog loading", () => {
     expect(confirm().disabled).toBe(true);
     expect(dialogText()).toContain("Checking what is pending");
     expect(dialogText()).not.toContain("37");
+  });
+
+  test("a failed refresh does not bring back the counts of an earlier opening", () => {
+    const view = renderDialog();
+    expect(dialogText()).toContain("37");
+    view.rerender(
+      <ApprovePendingDialog
+        buildId="b1"
+        open={false}
+        onOpenChange={view.onOpenChange}
+      />,
+    );
+    // React Query keeps the old data when a refetch fails.
+    answer(PREVIEW, { isError: true });
+    view.rerender(
+      <ApprovePendingDialog
+        buildId="b1"
+        open={true}
+        onOpenChange={view.onOpenChange}
+      />,
+    );
+    expect(dialogText()).not.toContain("37");
+    expect(dialogText()).toContain("Couldn't check what is pending");
+    expect(confirm().disabled).toBe(true);
   });
 
   test("says so when the preview cannot be read, and cannot be confirmed", () => {
@@ -293,6 +327,28 @@ describe("ApprovePendingDialog confirm", () => {
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onApproved).toHaveBeenCalledOnce();
+  });
+
+  test("cannot be dismissed while the approval is out", () => {
+    const { onOpenChange } = renderDialog();
+    fireEvent.click(confirm());
+
+    expect(cancel().disabled).toBe(true);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.click(cancel());
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeDefined();
+    expect(confirm().textContent).toBe("Approving…");
+  });
+
+  test("can be dismissed again once the approval has failed", () => {
+    const { onOpenChange } = renderDialog();
+    fireEvent.click(confirm());
+    act(() => approveCall().onSettled?.());
+
+    expect(cancel().disabled).toBe(false);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   test("stays open and can be confirmed again after a failure", () => {

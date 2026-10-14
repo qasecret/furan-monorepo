@@ -54,16 +54,31 @@ export function ApprovePendingDialog({
 }: Props) {
   const query = trpc.review.previewApproveBuild.useQuery(
     { buildId },
-    // Never a stale preview: each opening asks again.
-    { enabled: open, staleTime: 0 },
+    // Never a stale preview: each opening asks again. And never again while
+    // it is open: a refetch on window focus would swap the counts under the
+    // reviewer with no notice, and the server checks the confirmed count anyway.
+    { enabled: open, staleTime: 0, refetchOnWindowFocus: false },
   );
+
+  // The approval is out: the dialog stays until the server has answered, so a
+  // late `batch_changed` is always seen.
+  const [submitting, setSubmitting] = useState(false);
+  // A dialog that is closed has nothing out.
+  if (!open && submitting) setSubmitting(false);
 
   // Radix returns focus to a Trigger, and this dialog has none: the toolbar
   // opens it. So remember what held focus as it opened, and give it back.
   const returnFocusTo = useRef<HTMLElement | null>(null);
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        // Esc and a click outside ask to close; not while the approval is out.
+        if (!next && submitting) return;
+        onOpenChange(next);
+      }}
+    >
       <AlertDialogContent
         data-testid="approve-pending-dialog"
         // Not prevented: Radix still moves focus to Cancel.
@@ -88,6 +103,9 @@ export function ApprovePendingDialog({
           preview={query.data}
           failed={query.isError && !query.isFetching}
           refreshing={query.isFetching}
+          submitting={submitting}
+          onSubmittingChange={setSubmitting}
+          // The approval itself closes the dialog, past the guard above.
           onClose={() => onOpenChange(false)}
           onApproved={onApproved}
         />
@@ -104,6 +122,9 @@ interface BodyProps {
   failed: boolean;
   /** A read of the preview is under way. */
   refreshing: boolean;
+  /** The approval is out. */
+  submitting: boolean;
+  onSubmittingChange: (submitting: boolean) => void;
   onClose: () => void;
   onApproved?: () => void;
 }
@@ -113,6 +134,8 @@ function PendingBody({
   preview,
   failed,
   refreshing,
+  submitting,
+  onSubmittingChange,
   onClose,
   onApproved,
 }: BodyProps) {
@@ -120,36 +143,43 @@ function PendingBody({
   // The counts the server gave when the batch changed under the dialog; they
   // replace the preview's until the dialog closes.
   const [changed, setChanged] = useState<ApproveBuildPreview | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // After a change the counts are new: put focus back on the safe answer.
+  // After a change the counts are new: put focus back on the safe answer (once
+  // the approval is no longer out, since Cancel cannot take focus before then).
   useEffect(() => {
-    if (changed) cancelRef.current?.focus();
-  }, [changed]);
+    if (changed && !submitting) cancelRef.current?.focus();
+  }, [changed, submitting]);
 
   // An answer from an earlier opening is never shown while a fresh one is on
-  // its way: those counts may be wrong by now.
-  const shown = changed ?? (refreshing ? undefined : preview);
+  // its way, nor after the fresh one failed (React Query keeps the old data
+  // through a failed refetch): those counts may be wrong by now.
+  const shown = changed ?? (refreshing || failed ? undefined : preview);
   const approveN = shown ? approveCount(shown) : 0;
   const canConfirm = shown !== undefined && approveN > 0 && !submitting;
 
   const confirm = () => {
     if (!shown || !canConfirm) return;
-    setSubmitting(true);
-    approveBuild({
-      buildId,
-      // The pending count the reviewer saw, whole: the server compares it with
-      // what is pending now, however many of them it will approve.
-      expectedCount: shown.pendingCheckpoints,
-      label: `Approved ${approveN} step${plural(approveN)} in ${shown.tests} test${plural(shown.tests)}`,
-      onConflict: (fresh) => setChanged(fresh),
-      onSuccess: () => {
-        onClose();
-        onApproved?.();
-      },
-      onSettled: () => setSubmitting(false),
-    });
+    onSubmittingChange(true);
+    try {
+      approveBuild({
+        buildId,
+        // The pending count the reviewer saw, whole: the server compares it with
+        // what is pending now, however many of them it will approve.
+        expectedCount: shown.pendingCheckpoints,
+        label: `Approved ${approveN} step${plural(approveN)} in ${shown.tests} test${plural(shown.tests)}`,
+        onConflict: (fresh) => setChanged(fresh),
+        onSuccess: () => {
+          onClose();
+          onApproved?.();
+        },
+        onSettled: () => onSubmittingChange(false),
+      });
+    } catch (error) {
+      // The call never went out: nothing will settle it.
+      onSubmittingChange(false);
+      throw error;
+    }
   };
 
   return (
@@ -171,7 +201,11 @@ function PendingBody({
         </div>
       )}
       <AlertDialogFooter>
-        <AlertDialogCancel ref={cancelRef} data-testid="approve-pending-cancel">
+        <AlertDialogCancel
+          ref={cancelRef}
+          data-testid="approve-pending-cancel"
+          disabled={submitting}
+        >
           Cancel
         </AlertDialogCancel>
         <Button
@@ -180,9 +214,11 @@ function PendingBody({
           disabled={!canConfirm}
           onClick={confirm}
         >
-          {shown
-            ? `Approve ${approveN} step${plural(approveN)}`
-            : "Approve steps"}
+          {submitting
+            ? "Approving…"
+            : shown
+              ? `Approve ${approveN} step${plural(approveN)}`
+              : "Approve steps"}
         </Button>
       </AlertDialogFooter>
     </>
