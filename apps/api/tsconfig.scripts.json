@@ -1,4 +1,7 @@
 {
+  // The typecheck config: `src` and `scripts` in one pass. The build
+  // (`tsconfig.json`, `rootDir: "src"`) still checks that `src` imports
+  // nothing from outside it, in `pnpm build`.
   "extends": "./tsconfig.json",
   "include": ["src", "scripts"],
   "compilerOptions": {

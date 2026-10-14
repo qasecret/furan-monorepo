@@ -103,12 +103,16 @@ class PerfError extends Error {}
  */
 function fixedMessage(e: unknown): string {
   const name = e instanceof Error ? e.constructor.name : typeof e;
-  const code = (e as { code?: unknown } | null)?.code;
-  const shown =
-    typeof code === "string" && /^[A-Z0-9_]{2,32}$/.test(code)
-      ? ` ${code}`
-      : "";
-  return `perf-review-loop failed (${name}${shown})`;
+  // A query error wraps the driver's error: take the first code down the
+  // `cause` chain.
+  let code: string | undefined;
+  let cur: unknown = e;
+  for (let depth = 0; cur && depth < 5 && !code; depth++) {
+    const c = (cur as { code?: unknown }).code;
+    if (typeof c === "string" && /^[A-Z0-9_]{2,32}$/.test(c)) code = c;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return `perf-review-loop failed (${name}${code ? ` ${code}` : ""})`;
 }
 
 function freeGiB(): number {
@@ -172,6 +176,10 @@ async function seed(db: DB): Promise<Seeded> {
   const editorId = editor!.id;
   const projectId = await seedProject(db, editorId, PROJECT);
   const resolvedProjectId = await seedProject(db, editorId, RESOLVED_PROJECT);
+  // Statistics before the first query that picks pending steps: on tables
+  // just bulk-loaded and never analysed, the planner can choose a per-build
+  // scan that runs past the 30 s statement timeout.
+  await db.execute(sql`vacuum analyze`);
   await resolveAllButOldest(db, resolvedProjectId, editorId);
 
   await db.execute(sql`vacuum analyze`);
@@ -437,8 +445,11 @@ async function findSpots(db: DB, projectId: string): Promise<Spots> {
 }
 
 interface ResolvedSpots {
-  /** The last pending step, in capture order, of the newest pending batch. */
-  oldest: { buildId: string; runId: string; checkpointId: string };
+  /**
+   * The last pending step, in capture order, of the newest of the batches
+   * kept pending (they are the project's oldest, so this is still old).
+   */
+  newestKept: { buildId: string; runId: string; checkpointId: string };
   pendingBuilds: number;
   pendingSteps: number;
 }
@@ -474,7 +485,7 @@ async function findResolvedSpots(
   const [last] = pending;
   if (!last) throw new PerfError("the worst-case seed has no pending step");
   return {
-    oldest: {
+    newestKept: {
       buildId: last.buildId,
       runId: last.runId,
       checkpointId: last.checkpointId,
@@ -523,7 +534,10 @@ async function timeResolved(
   const direct = directFor(db, seeded.editorId, projectId, scoped);
   const cases = [
     ["no at", {}],
-    ["at the newest pending batch's last pending step", { at: spots.oldest }],
+    [
+      "at the newest pending batch's last pending step",
+      { at: spots.newestKept },
+    ],
   ] as const;
   const rows: Row[] = [];
   for (const [name, input] of cases) {

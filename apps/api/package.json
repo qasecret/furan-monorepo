@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
+    "typecheck": "tsc -p tsconfig.scripts.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
