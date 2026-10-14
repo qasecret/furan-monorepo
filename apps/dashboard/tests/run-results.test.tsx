@@ -19,8 +19,9 @@ vi.mock("@/lib/trpc", () => ({
 }));
 // The review hook is mocked: its own suite covers the decisions. The step
 // cards below only need it to exist.
+const reviewSpies = vi.hoisted(() => ({ decide: vi.fn(), undo: vi.fn() }));
 vi.mock("@/lib/review/use-review-mutations", () => ({
-  useReviewMutations: () => ({ decide: vi.fn(), undo: vi.fn() }),
+  useReviewMutations: () => reviewSpies,
   useIsInFlight: () => false,
 }));
 vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
@@ -31,7 +32,11 @@ vi.mock("next/navigation", () => ({
 
 import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  reviewSpies.decide.mockReset();
+  reviewSpies.undo.mockReset();
+});
 
 type CP = {
   id: string;
@@ -236,6 +241,24 @@ describe("RunResults pending counts", () => {
     renderRun([cp({ id: "c1" }), decided("approved", { id: "c2" })]);
     expect(screen.queryByText(/pending/)).toBeNull();
     expect(screen.queryByTestId("result-pending-r1")).toBeNull();
+  });
+});
+
+describe("RunResults review calls", () => {
+  test("a card's actions go through the list's one review instance", () => {
+    renderRun([
+      cp({ id: "c1", name: "home", verdict: "new", state: "new" }),
+      decided("approved", { id: "c2", name: "cart" }),
+    ]);
+    fireEvent.click(screen.getByTestId("step-approve-c1"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith({
+      runId: "r1",
+      checkpointIds: ["c1"],
+      kind: "approved",
+      label: "Approved 'home'",
+    });
+    fireEvent.click(screen.getByTestId("step-undo-c2"));
+    expect(reviewSpies.undo).toHaveBeenCalledWith("a-approved");
   });
 });
 

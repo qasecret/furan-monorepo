@@ -6,12 +6,16 @@ import {
   type RunStatusOverride,
 } from "@furan/shared-types";
 import { ChevronDown, ChevronRight, Server } from "lucide-react";
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 
 import { StepCard, type StepRun } from "./step-card";
 
 import { cn } from "@/lib/cn";
 import { runStatusFor } from "@/lib/review/optimistic";
+import {
+  useReviewMutations,
+  type DecideArgs,
+} from "@/lib/review/use-review-mutations";
 import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -106,19 +110,26 @@ export function RunResults({
   canReview,
 }: Props) {
   const q = trpc.runs.listCheckpoints.useQuery({ runId });
+  // One review instance for the run's cards, not one per card: it subscribes
+  // to every checkpoint in flight, and the rows below are memoized so that
+  // only the card whose step changed is redrawn. Its functions are stable.
+  const { decide, undo } = useReviewMutations();
   const items = q.data?.items;
   const groups = useMemo(
     () => groupByEnv(items ?? [], fallbackStatus, statusOverride),
     [items, fallbackStatus, statusOverride],
   );
   // What every step card needs to know about the whole run, not just its row.
+  // Primitives, so the object below changes only when one of them does.
+  const status = runStatusFor(items ?? [], fallbackStatus, statusOverride);
+  const undiffed = (items ?? []).some((i) => i.state === null);
   const run: StepRun = useMemo(
     () => ({
-      status: runStatusFor(items ?? [], fallbackStatus, statusOverride),
+      status,
       statusOverride,
-      stepStates: (items ?? []).map((i) => i.state),
+      undiffed,
     }),
-    [items, fallbackStatus, statusOverride],
+    [status, statusOverride, undiffed],
   );
 
   if (q.isLoading) {
@@ -142,6 +153,8 @@ export function RunResults({
         status={run.status}
         checkpoints={[]}
         run={run}
+        decide={decide}
+        undo={undo}
         view={view}
         canReview={canReview}
       />
@@ -163,6 +176,8 @@ export function RunResults({
           status={g.status}
           checkpoints={g.checkpoints}
           run={run}
+          decide={decide}
+          undo={undo}
           view={view}
           canReview={canReview}
         />
@@ -182,11 +197,14 @@ interface RowProps {
   status: RunStatus;
   checkpoints: Checkpoint[];
   run: StepRun;
+  decide: (args: DecideArgs) => void;
+  undo: (actionId?: string) => void;
   view: "list" | "grid";
   canReview: boolean;
 }
 
-function ResultRow({
+/** Memoized, so a decision redraws the rows whose steps changed and no others. */
+const ResultRow = memo(function ResultRow({
   projectId,
   runId,
   testName,
@@ -197,6 +215,8 @@ function ResultRow({
   status,
   checkpoints,
   run,
+  decide,
+  undo,
   view,
   canReview,
 }: RowProps) {
@@ -284,13 +304,11 @@ function ResultRow({
                 index={i}
                 total={checkpoints.length}
                 run={run}
-                checkpoint={{
-                  id: c.id,
-                  name: c.name,
-                  state: c.state,
-                  decision: c.decision,
-                  imageKey: c.imageKey,
-                }}
+                decide={decide}
+                undo={undo}
+                // The item itself, not a copy: a card whose step is the
+                // object it was is not redrawn.
+                checkpoint={c}
               />
             ))}
           </div>
@@ -298,4 +316,4 @@ function ResultRow({
       )}
     </div>
   );
-}
+});

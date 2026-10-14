@@ -7,21 +7,14 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-// The review hook is mocked: its own suite covers what a decision does to the
-// caches and the server. The card's job is to pick the right call and to
-// disable it when the run, or an earlier click, says no.
+// The card is handed `decide` and `undo` by its run list (one review-mutations
+// instance per list, not per card); the hook module is only asked whether this
+// card's own step has a decision on its way.
 const { reviewSpies, inFlight } = vi.hoisted(() => ({
-  reviewSpies: {
-    decide: vi.fn(),
-    undo: vi.fn(),
-    approveBuild: vi.fn(),
-    decideGroup: vi.fn(),
-    isInFlight: vi.fn(() => false),
-  },
+  reviewSpies: { decide: vi.fn(), undo: vi.fn() },
   inFlight: new Set<string>(),
 }));
 vi.mock("@/lib/review/use-review-mutations", () => ({
-  useReviewMutations: () => reviewSpies,
   useIsInFlight: (id: string) => inFlight.has(id),
 }));
 vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
@@ -76,7 +69,7 @@ function cp(over: Partial<StepCheckpoint> = {}): StepCheckpoint {
 const RUN: StepRun = {
   status: "unresolved",
   statusOverride: null,
-  stepStates: ["unresolved"],
+  undiffed: false,
 };
 
 function renderCard(
@@ -92,6 +85,8 @@ function renderCard(
       index={0}
       total={3}
       run={over.run ?? RUN}
+      decide={reviewSpies.decide}
+      undo={reviewSpies.undo}
     />,
   );
 }
@@ -274,7 +269,7 @@ describe("StepCard review actions", () => {
 
   test("a run that is not reviewable disables the step actions and says why", async () => {
     renderCard(cp(), {
-      run: { ...RUN, status: "aborted", stepStates: ["unresolved", null] },
+      run: { ...RUN, status: "aborted", undiffed: true },
     });
     expect(button("step-approve-c1").disabled).toBe(true);
     const { text } = await reasonOf("step-approve-c1");
@@ -332,7 +327,7 @@ describe("StepCard state", () => {
 
   test("a step the run never diffed reads as the run's end, not as running", () => {
     renderCard(cp({ state: null }), {
-      run: { ...RUN, status: "aborted", stepStates: [null] },
+      run: { ...RUN, status: "aborted", undiffed: true },
     });
     expect(screen.getByTestId("step-status-c1").textContent).toBe(
       statusStyle("aborted").label,

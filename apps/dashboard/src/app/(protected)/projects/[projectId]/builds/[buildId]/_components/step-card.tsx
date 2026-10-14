@@ -8,6 +8,7 @@ import {
 } from "@furan/shared-types";
 import { Maximize2, Star, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { memo } from "react";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/cn";
 import type { CheckpointItem } from "@/lib/review/optimistic";
 import {
   useIsInFlight,
-  useReviewMutations,
+  type DecideArgs,
 } from "@/lib/review/use-review-mutations";
 import {
   reviewStateStyle,
@@ -36,15 +37,18 @@ export interface StepCheckpoint {
 
 /**
  * What the card needs to know about its run to tell whether the run takes
- * decisions: the same facts the viewer header reads (spec §5.4).
+ * decisions: the same facts the viewer header reads (spec §5.4). It holds
+ * nothing that changes with every decision (not the list of steps), so the
+ * run list can keep one object while its cards are decided one by one, and the
+ * other cards are not redrawn.
  */
 export interface StepRun {
   /** The run's status as its steps roll up. */
   status: RunStatus;
   /** The run's hand-set status, or null when it is computed. */
   statusOverride: RunStatusOverride | null;
-  /** The review state of every step of the run, not just of this row. */
-  stepStates: ReadonlyArray<CheckpointReviewState | null>;
+  /** Some step of the run has no verdict yet, so the run is not reviewable. */
+  undiffed: boolean;
 }
 
 interface Props {
@@ -56,6 +60,13 @@ interface Props {
   index: number;
   total: number;
   run: StepRun;
+  /**
+   * The review calls, from the run list's one `useReviewMutations()`. A card
+   * does not make its own: that hook subscribes to every checkpoint in flight,
+   * which would redraw every card on every decision. They must be stable.
+   */
+  decide: (args: DecideArgs) => void;
+  undo: (actionId?: string) => void;
 }
 
 /**
@@ -86,9 +97,10 @@ function lookOf(
  * offers Undo while the server says it can be taken back. They are the
  * viewer header's decisions, through the same hook, and are held back by the
  * same rules: a run that is overridden or not reviewable, or a decision still
- * on its way.
+ * on its way. It is memoized: it redraws for its own step, its run's state or
+ * its own in-flight state, not for its siblings'.
  */
-export function StepCard({
+export const StepCard = memo(function StepCard({
   projectId,
   runId,
   canReview,
@@ -96,9 +108,10 @@ export function StepCard({
   index,
   total,
   run,
+  decide,
+  undo,
 }: Props) {
   const router = useRouter();
-  const { decide, undo } = useReviewMutations();
   const inFlight = useIsInFlight(checkpoint.id);
   const thumb = useAuthedImage(checkpoint.imageKey);
   const { id, name, state, decision } = checkpoint;
@@ -109,7 +122,8 @@ export function StepCard({
     status: run.status,
     statusOverride: run.statusOverride,
     step: { state, hasDecision: decision !== null },
-    stepStates: run.stepStates,
+    // Only whether some step has no verdict reaches the derivation.
+    stepStates: run.undiffed ? [null] : [],
     stepInFlight: inFlight,
     runInFlight: false,
   });
@@ -252,4 +266,4 @@ export function StepCard({
       </div>
     </div>
   );
-}
+});
