@@ -2,7 +2,7 @@
 
 import type { RunStatus } from "@furan/shared-types";
 import { notFound } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ApprovePendingDialog } from "./approve-pending-dialog";
 import { BatchHeader } from "./batch-header";
@@ -51,6 +51,8 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
 
   // The question asked before every pending step of the build is approved.
   const [approveOpen, setApproveOpen] = useState(false);
+  // The toolbar button that opens it, which the question hands focus back to.
+  const approveButton = useRef<HTMLButtonElement>(null);
 
   const build = buildQ.data;
 
@@ -111,6 +113,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
         canApprovePending={canReview}
         pendingCount={build?.pendingCheckpoints ?? 0}
         onApprovePending={() => setApproveOpen(true)}
+        approveRef={approveButton}
       />
       <div className="flex-1 overflow-y-auto">
         <ResultsColumnHeader />
@@ -161,6 +164,7 @@ export function BatchPage({ projectId, buildId, canReview }: Props) {
         buildId={buildId}
         open={approveOpen}
         onOpenChange={setApproveOpen}
+        returnFocusTo={approveButton}
         onApproved={() => {
           // Re-page from the top so approved runs drop out of "Needs review"
           // instead of lingering in the pages already loaded. (The refetch of

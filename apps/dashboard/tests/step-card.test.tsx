@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // The review hook is mocked: its own suite covers what a decision does to the
@@ -218,35 +224,78 @@ describe("StepCard review actions", () => {
     expect(button("step-approve-c1").disabled).toBe(false);
   });
 
-  test("an overridden run disables the step actions and says why", () => {
+  /**
+   * A disabled action sits in a focusable wrapper that carries its reason: the
+   * wrapper is named after the action, and is described by the reason, so a
+   * keyboard or screen-reader user gets it, not only a mouse hover.
+   */
+  const reasonOf = async (id: string) => {
+    const wrapper = screen.getByTestId(`${id}-disabled-wrapper`);
+    expect(wrapper.tabIndex).toBe(0);
+    expect(wrapper.getAttribute("role")).toBe("button");
+    expect(wrapper.getAttribute("aria-disabled")).toBe("true");
+    const described = wrapper.getAttribute("aria-describedby");
+    expect(described).toBeTruthy();
+    const text = document.getElementById(described!)?.textContent;
+    // Focusing it also shows the reason as a tooltip.
+    await act(async () => {
+      wrapper.focus();
+    });
+    const tooltip = await screen.findByTestId(`${id}-disabled-reason`);
+    expect(tooltip.textContent).toBe(text);
+    return { wrapper, text };
+  };
+
+  test("an overridden run disables the step actions and says why, to the keyboard too", async () => {
     renderCard(cp(), {
       run: { ...RUN, status: "passed", statusOverride: "passed" },
     });
     for (const id of ["step-approve-c1", "step-reject-c1"]) {
       expect(button(id).disabled).toBe(true);
-      expect(button(id).title).toBe(describeRefusal("run_overridden"));
+      const { text } = await reasonOf(id);
+      expect(text).toBe(describeRefusal("run_overridden"));
     }
+    const { wrapper } = await reasonOf("step-approve-c1");
+    expect(wrapper.getAttribute("aria-label")).toBe("Approve home");
+    expect(button("step-approve-c1").getAttribute("aria-label")).toBe(
+      "Approve home",
+    );
   });
 
-  test("an overridden run keeps a decision's Undo off, and says why", () => {
+  test("an overridden run keeps a decision's Undo off, and says why", async () => {
     renderCard(cp({ state: "approved", decision: decision("approved") }), {
       run: { ...RUN, status: "failed", statusOverride: "failed" },
     });
     expect(button("step-undo-c1").disabled).toBe(true);
-    expect(button("step-undo-c1").title).toBe(DECISIONS_LOCKED_BY_OVERRIDE);
+    const { wrapper, text } = await reasonOf("step-undo-c1");
+    expect(text).toBe(DECISIONS_LOCKED_BY_OVERRIDE);
+    expect(wrapper.getAttribute("aria-label")).toBe("Undo approval of home");
   });
 
-  test("a run that is not reviewable disables the step actions and says why", () => {
+  test("a run that is not reviewable disables the step actions and says why", async () => {
     renderCard(cp(), {
       run: { ...RUN, status: "aborted", stepStates: ["unresolved", null] },
     });
     expect(button("step-approve-c1").disabled).toBe(true);
-    expect(button("step-approve-c1").title).toBe(describeBlockedRun("aborted"));
+    const { text } = await reasonOf("step-approve-c1");
+    expect(text).toBe(describeBlockedRun("aborted"));
   });
 
-  test("a step another reviewer is waiting on has no reason to give", () => {
+  test("an enabled action has no wrapper and no reason", () => {
+    renderCard(cp());
+    expect(screen.queryByTestId("step-approve-c1-disabled-wrapper")).toBeNull();
+    expect(button("step-approve-c1").title).toBe("");
+  });
+
+  test("a step whose own decision is on its way waits without giving a reason", () => {
+    // Held only until the server answers: nothing to explain, so the buttons
+    // are plain disabled buttons, not reason-carrying wrappers.
     inFlight.add("c1");
     renderCard(cp());
+    expect(button("step-approve-c1").disabled).toBe(true);
+    expect(button("step-reject-c1").disabled).toBe(true);
+    expect(screen.queryByTestId("step-approve-c1-disabled-wrapper")).toBeNull();
+    expect(screen.queryByTestId("step-reject-c1-disabled-wrapper")).toBeNull();
     expect(button("step-approve-c1").title).toBe("");
   });
 });

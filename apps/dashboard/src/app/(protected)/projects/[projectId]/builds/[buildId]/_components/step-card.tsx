@@ -10,6 +10,7 @@ import { Maximize2, Star, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
+import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
 import type { CheckpointItem } from "@/lib/review/optimistic";
@@ -127,8 +128,9 @@ export function StepCard({
       label: `${kind === "approved" ? "Approved" : "Rejected"} '${name}'`,
     });
 
+  // The icon buttons share one look; only the hover hue says which is which.
   const actionClass =
-    "rounded p-1.5 text-fg-muted transition-colors hover:bg-edge focus-ring disabled:opacity-50";
+    "rounded p-1.5 text-fg-muted transition-colors hover:bg-edge";
 
   return (
     <div
@@ -164,16 +166,12 @@ export function StepCard({
           <div className="flex items-center gap-1">
             {canReview && needsReviewer && (
               <>
-                <button
-                  type="button"
-                  aria-label={`Approve ${name}`}
-                  data-testid={`step-approve-${id}`}
+                <DisabledAwareButton
+                  variant="ghost"
+                  label={`Approve ${name}`}
+                  testId={`step-approve-${id}`}
                   disabled={!header.canApprove}
-                  title={
-                    header.canApprove
-                      ? undefined
-                      : (header.disabledReason ?? undefined)
-                  }
+                  reason={header.disabledReason}
                   onClick={(e) => {
                     e.stopPropagation();
                     decideStep("approved");
@@ -181,17 +179,13 @@ export function StepCard({
                   className={cn(actionClass, "hover:text-status-passed-text")}
                 >
                   <ThumbsUp className="h-4 w-4" aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Reject ${name}`}
-                  data-testid={`step-reject-${id}`}
+                </DisabledAwareButton>
+                <DisabledAwareButton
+                  variant="ghost"
+                  label={`Reject ${name}`}
+                  testId={`step-reject-${id}`}
                   disabled={!header.canReject}
-                  title={
-                    header.canReject
-                      ? undefined
-                      : (header.disabledReason ?? undefined)
-                  }
+                  reason={header.disabledReason}
                   onClick={(e) => {
                     e.stopPropagation();
                     decideStep("rejected");
@@ -199,16 +193,16 @@ export function StepCard({
                   className={cn(actionClass, "hover:text-status-failed-text")}
                 >
                   <ThumbsDown className="h-4 w-4" aria-hidden />
-                </button>
+                </DisabledAwareButton>
               </>
             )}
             {canReview && decision !== null && canUndo && (
-              <button
-                type="button"
-                aria-label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"} of ${name}`}
-                data-testid={`step-undo-${id}`}
+              <DisabledAwareButton
+                variant="ghost"
+                label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"} of ${name}`}
+                testId={`step-undo-${id}`}
                 disabled={undoLocked}
-                title={header.decisionLockedReason ?? undefined}
+                reason={header.decisionLockedReason}
                 onClick={(e) => {
                   e.stopPropagation();
                   undo(decision.actionId);
@@ -216,7 +210,7 @@ export function StepCard({
                 className={cn(actionClass, "hover:text-fg")}
               >
                 <Undo2 className="h-4 w-4" aria-hidden />
-              </button>
+              </DisabledAwareButton>
             )}
           </div>
           <button

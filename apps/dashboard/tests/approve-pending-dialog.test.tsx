@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // The review hook and the preview query are mocked: the hook's own suite
@@ -287,6 +287,38 @@ describe("ApprovePendingDialog focus", () => {
     render(<Harness />);
     const opener = screen.getByRole("button", { name: "Approve pending" });
     opener.focus();
+    fireEvent.click(opener);
+    await waitFor(() => expect(document.activeElement).toBe(cancel()));
+
+    fireEvent.click(cancel());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  test("closing hands focus to the target it was given, wherever focus was", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const target = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button ref={target} type="button" onClick={() => setOpen(true)}>
+            Approve pending
+          </button>
+          <button type="button">Somewhere else</button>
+          <ApprovePendingDialog
+            buildId="b1"
+            open={open}
+            onOpenChange={setOpen}
+            returnFocusTo={target}
+          />
+        </>
+      );
+    }
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Approve pending" });
+    // Focus is elsewhere when the dialog opens (a click that does not focus its
+    // button, as in Safari, or a menu that has already closed).
+    screen.getByRole("button", { name: "Somewhere else" }).focus();
     fireEvent.click(opener);
     await waitFor(() => expect(document.activeElement).toBe(cancel()));
 

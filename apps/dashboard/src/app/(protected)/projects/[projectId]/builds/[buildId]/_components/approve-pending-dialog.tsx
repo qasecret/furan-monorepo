@@ -1,7 +1,7 @@
 "use client";
 
 import type { ApproveBuildPreview } from "@furan/shared-types";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import {
   AlertDialog,
@@ -32,6 +32,12 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** The server approved the batch (after this has asked to close). */
   onApproved?: () => void;
+  /**
+   * Where focus goes when the dialog closes: the control that opens it. Without
+   * one, the dialog gives focus back to whatever held it as it opened, which is
+   * nothing for a click that does not focus its button.
+   */
+  returnFocusTo?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -51,6 +57,7 @@ export function ApprovePendingDialog({
   open,
   onOpenChange,
   onApproved,
+  returnFocusTo,
 }: Props) {
   const query = trpc.review.previewApproveBuild.useQuery(
     { buildId },
@@ -67,8 +74,9 @@ export function ApprovePendingDialog({
   if (!open && submitting) setSubmitting(false);
 
   // Radix returns focus to a Trigger, and this dialog has none: the toolbar
-  // opens it. So remember what held focus as it opened, and give it back.
-  const returnFocusTo = useRef<HTMLElement | null>(null);
+  // opens it. So focus goes to the target it is given, else to what held focus
+  // as it opened.
+  const opener = useRef<HTMLElement | null>(null);
 
   return (
     <AlertDialog
@@ -84,15 +92,15 @@ export function ApprovePendingDialog({
         // Not prevented: Radix still moves focus to Cancel.
         onOpenAutoFocus={() => {
           const active = document.activeElement;
-          returnFocusTo.current =
+          opener.current =
             active instanceof HTMLElement && active !== document.body
               ? active
               : null;
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          const target = returnFocusTo.current;
-          returnFocusTo.current = null;
+          const target = returnFocusTo?.current ?? opener.current;
+          opener.current = null;
           if (target?.isConnected) target.focus();
         }}
       >

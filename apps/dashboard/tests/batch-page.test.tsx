@@ -380,6 +380,34 @@ describe("BatchPage", () => {
     expect(screen.queryByText("Page2Card")).toBeNull();
   });
 
+  test("closing the Approve-pending question returns focus to its toolbar button", async () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+    });
+    listMock.mockReturnValue({
+      data: { items: [], nextCursor: null },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<BatchPage projectId="p1" buildId="b1" canReview={true} />);
+    const trigger = screen.getByTestId("batch-approve-all");
+    // A click that leaves focus elsewhere (it does not focus the button in
+    // every browser): the button is still where focus must come back to.
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("approve-pending-cancel"),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("approve-pending-cancel"));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   test("a run's hand-set status reaches its result rows", async () => {
     getByIdMock.mockReturnValue({
       data: build,

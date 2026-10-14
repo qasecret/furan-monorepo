@@ -7,7 +7,7 @@ import {
   ListFilter,
   RefreshCw,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +40,8 @@ interface Props {
   pendingCount: number;
   /** Opens the confirmation; nothing is approved before it is answered. */
   onApprovePending: () => void;
+  /** The approve button, for the confirmation to return focus to. */
+  approveRef?: Ref<HTMLButtonElement>;
 }
 
 /** A labelled toolbar segment — uppercase micro-label over its controls. */
@@ -105,6 +107,7 @@ export function ContextualToolbar({
   canApprovePending,
   pendingCount,
   onApprovePending,
+  approveRef,
 }: Props) {
   return (
     <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
@@ -168,6 +171,7 @@ export function ContextualToolbar({
           <Divider />
           <Segment label="Maintenance">
             <Button
+              ref={approveRef}
               variant="secondary"
               className="h-7 gap-1.5 px-3 text-xs"
               data-testid="batch-approve-all"

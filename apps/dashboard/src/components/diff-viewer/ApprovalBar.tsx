@@ -2,13 +2,7 @@
 
 import type { RunStatusOverride } from "@furan/shared-types";
 import { Bug } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useRef,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useId, useRef } from "react";
 
 import { DecisionChip } from "./DecisionChip";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -18,6 +12,7 @@ import { StaleStepConfirm } from "./StaleStepCallout";
 import { AggregateSeverityPill } from "@/components/aggregate-severity-pill";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
+import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,12 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { statusStyle } from "@/lib/status-style";
 
@@ -350,56 +340,5 @@ function MoreMenu({ actions }: { actions: ReviewActions }) {
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/**
- * Button + Radix tooltip wrapper. Renders the tooltip only when the
- * button is disabled AND a reason is supplied — per spec §3.5 we want
- * reviewers to see *why* an action is unavailable rather than hide the
- * control. When enabled, the tooltip is suppressed to avoid noise.
- */
-function DisabledAwareButton({
-  disabled,
-  reason,
-  testId,
-  variant,
-  onClick,
-  children,
-  title,
-}: {
-  disabled: boolean;
-  reason: string | null;
-  testId: string;
-  variant: "default" | "secondary" | "destructive";
-  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
-  children: ReactNode;
-  title?: string;
-}) {
-  const button = (
-    <Button
-      variant={variant}
-      onClick={onClick}
-      disabled={disabled}
-      data-testid={testId}
-      title={title}
-    >
-      {children}
-    </Button>
-  );
-  if (!disabled || !reason) return button;
-  return (
-    <Tooltip>
-      {/* span wrapper: Radix tooltips don't fire on a disabled <button>
-          because the browser swallows pointer events. */}
-      <TooltipTrigger asChild>
-        <span tabIndex={0} data-testid={`${testId}-disabled-wrapper`}>
-          {button}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent sideOffset={4} data-testid={`${testId}-disabled-reason`}>
-        {reason}
-      </TooltipContent>
-    </Tooltip>
   );
 }
