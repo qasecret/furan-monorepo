@@ -5,7 +5,8 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const listCheckpointsMock = vi.fn();
 vi.mock("@/lib/trpc", () => ({
@@ -31,6 +32,11 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
+import { parseReviewContext, type ReviewContext } from "@/lib/review-context";
+
+/** A review context from a query string: the status and the facets. */
+const ctxOf = (search = ""): ReviewContext =>
+  parseReviewContext(new URLSearchParams(search));
 
 /** Natively disabled, or `aria-disabled` (an unavailable action that explains itself). */
 const unavailable = (el: HTMLElement): boolean =>
@@ -88,9 +94,10 @@ function renderRun(
   items: CP[],
   fallbackStatus = "passed",
   statusOverride: "passed" | "failed" | null = null,
+  extra: Partial<ComponentProps<typeof RunResults>> = {},
 ) {
   listCheckpointsMock.mockReturnValue({ data: { items }, isLoading: false });
-  render(
+  return render(
     <RunResults
       projectId="p1"
       runId="r1"
@@ -98,8 +105,10 @@ function renderRun(
       branchName="main"
       fallbackStatus={fallbackStatus as never}
       statusOverride={statusOverride}
+      ctx={ctxOf()}
       view="list"
       canReview={true}
+      {...extra}
     />,
   );
 }
@@ -127,6 +136,21 @@ describe("RunResults", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Open Home" }));
     expect(pushMock).toHaveBeenCalledWith(
       "/projects/p1/runs/r1/checkpoints/cX",
+    );
+  });
+
+  test("a card opens the viewer with the page's status and facets", () => {
+    pushMock.mockClear();
+    renderRun([cp({ id: "cX", name: "Home" })], "passed", null, {
+      ctx: ctxOf("status=failed&browser=chromium"),
+    });
+    fireEvent.click(
+      within(screen.getByTestId("step-card-cX")).getByRole("button", {
+        name: "Open Home",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith(
+      "/projects/p1/runs/r1/checkpoints/cX?status=failed&browser=chromium",
     );
   });
 
@@ -289,5 +313,224 @@ describe("RunResults review gating", () => {
       cp({ id: "c2", verdict: null, state: null, os: "windows" }),
     ]);
     expect(unavailable(screen.getByTestId("step-approve-c1"))).toBe(true);
+  });
+});
+
+describe("RunResults environment facets", () => {
+  // One run that captured `home` at two viewports (Review Focus 1).
+  const TWO_VIEWPORTS = () => [
+    cp({
+      id: "c1",
+      name: "home",
+      verdict: "unresolved",
+      state: "unresolved",
+      viewport: "1280x720",
+    }),
+    cp({ id: "c2", name: "cart", viewport: "1280x720" }),
+    cp({
+      id: "c3",
+      name: "home",
+      verdict: "unresolved",
+      state: "unresolved",
+      viewport: "390x844",
+    }),
+  ];
+  const anchors = () => document.querySelectorAll('[id="run-r1"]');
+
+  test("a facet narrows the steps of a run to the ones that match", () => {
+    renderRun(TWO_VIEWPORTS(), "unresolved", null, {
+      ctx: ctxOf("viewport=1280x720"),
+    });
+    expect(screen.getByTestId("step-card-c1")).toBeDefined();
+    expect(screen.getByTestId("step-card-c2")).toBeDefined();
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+    // One row: the other viewport's row is gone with its steps.
+    expect(screen.getAllByTestId("result-row-r1")).toHaveLength(1);
+    expect(screen.queryByText("390x844")).toBeNull();
+  });
+
+  test("n of m counts the steps the facet leaves, per row", () => {
+    const view = renderRun(TWO_VIEWPORTS(), "unresolved", null, {
+      ctx: ctxOf("viewport=1280x720"),
+    });
+    // Inside the facet: c1 pending of c1 + c2.
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "1 of 2 pending",
+    );
+    view.unmount();
+
+    // No facet: a row per viewport, each counting its own steps.
+    renderRun(TWO_VIEWPORTS(), "unresolved");
+    const [wide, narrow] = screen.getAllByTestId("result-row-r1");
+    expect(within(wide!).getByText("1 of 2 pending")).toBeDefined();
+    expect(within(narrow!).getByText("1 of 1 pending")).toBeDefined();
+  });
+
+  test("a facet never changes what the run allows: a hidden step still holds the others back", () => {
+    // The 390x844 step has no verdict yet, so no step of the run can be
+    // decided (the same rule as without a facet), though that step is hidden.
+    renderRun(
+      [
+        cp({
+          id: "c1",
+          verdict: "unresolved",
+          state: "unresolved",
+          viewport: "1280x720",
+        }),
+        cp({ id: "c3", verdict: null, state: null, viewport: "390x844" }),
+      ],
+      "unresolved",
+      null,
+      { ctx: ctxOf("viewport=1280x720") },
+    );
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+    expect(unavailable(screen.getByTestId("step-approve-c1"))).toBe(true);
+  });
+
+  test("a facet matches the os of a step, and a step with none never matches", () => {
+    renderRun(
+      [
+        cp({ id: "c1", os: "linux" }),
+        cp({ id: "c2", os: "windows" }),
+        cp({ id: "c3", os: null }),
+      ],
+      "passed",
+      null,
+      { ctx: ctxOf("os=linux") },
+    );
+    expect(screen.getByTestId("step-card-c1")).toBeDefined();
+    expect(screen.queryByTestId("step-card-c2")).toBeNull();
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+  });
+
+  test("facets given together hold on the same step", () => {
+    renderRun(
+      [
+        cp({ id: "c1", browser: "chromium", viewport: "1280x720" }),
+        cp({ id: "c2", browser: "firefox", viewport: "1280x720" }),
+        cp({ id: "c3", browser: "chromium", viewport: "390x844" }),
+      ],
+      "passed",
+      null,
+      { ctx: ctxOf("browser=chromium&viewport=390x844") },
+    );
+    expect(screen.queryByTestId("step-card-c1")).toBeNull();
+    expect(screen.queryByTestId("step-card-c2")).toBeNull();
+    expect(screen.getByTestId("step-card-c3")).toBeDefined();
+  });
+
+  test("the run's #run anchor is on its first row only, however many rows it has", () => {
+    renderRun(TWO_VIEWPORTS(), "unresolved");
+    expect(screen.getAllByTestId("result-row-r1")).toHaveLength(2);
+    expect(anchors()).toHaveLength(1);
+    // It wraps the first row: the one that comes first in the page.
+    const [first, second] = screen.getAllByTestId("result-row-r1");
+    expect(anchors()[0]!.contains(first!)).toBe(true);
+    expect(anchors()[0]!.contains(second!)).toBe(false);
+  });
+
+  test("a run with a single row and a run with none each carry the anchor once", () => {
+    const one = renderRun([cp({ id: "c1" })]);
+    expect(anchors()).toHaveLength(1);
+    one.unmount();
+    renderRun([], "new");
+    expect(anchors()).toHaveLength(1);
+  });
+});
+
+describe("RunResults counts from the list", () => {
+  test("a run whose steps are not loaded says how many of its steps are pending, from the list", () => {
+    renderRun([], "unresolved", null, { pendingCount: 2, stepCount: 5 });
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "2 of 5 pending",
+    );
+  });
+
+  test("with nothing pending in the list it says nothing", () => {
+    renderRun([], "passed", null, { pendingCount: 0, stepCount: 5 });
+    expect(screen.queryByTestId("result-pending-r1")).toBeNull();
+  });
+
+  test("loaded steps win over the list: the row counts its own", () => {
+    renderRun(
+      [
+        cp({ id: "c1", verdict: "new", state: "new" }),
+        cp({ id: "c2", verdict: "new", state: "new" }),
+        cp({ id: "c3" }),
+      ],
+      "new",
+      null,
+      { pendingCount: 9, stepCount: 99 },
+    );
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "2 of 3 pending",
+    );
+  });
+});
+
+describe("RunResults reveal (Back to batch)", () => {
+  let scrolled: Element[];
+  let scrollSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    scrolled = [];
+    scrollSpy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+  });
+  afterEach(() => scrollSpy.mockRestore());
+
+  test("scrolls the first row to the middle and focuses its toggle, then says so", () => {
+    const onRevealed = vi.fn();
+    renderRun(
+      [
+        cp({ id: "c1", os: "linux" }),
+        cp({ id: "c2", os: "windows", browser: "firefox" }),
+      ],
+      "passed",
+      null,
+      { reveal: true, onRevealed },
+    );
+    const anchor = document.getElementById("run-r1")!;
+    expect(scrolled).toEqual([anchor]);
+    expect(scrollSpy).toHaveBeenCalledWith({ block: "center" });
+    const [first] = screen.getAllByTestId("result-row-r1");
+    expect(document.activeElement).toBe(first);
+    expect(onRevealed).toHaveBeenCalledOnce();
+  });
+
+  test("does nothing unless asked", () => {
+    renderRun([cp({ id: "c1" })]);
+    expect(scrolled).toHaveLength(0);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  test("moves focus without scrolling a second time", () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    renderRun([cp({ id: "c1" })], "passed", null, { reveal: true });
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  test("waits for the steps: nothing happens while they load", () => {
+    listCheckpointsMock.mockReturnValue({ data: undefined, isLoading: true });
+    const onRevealed = vi.fn();
+    render(
+      <RunResults
+        projectId="p1"
+        runId="r1"
+        testName="Login"
+        branchName="main"
+        fallbackStatus="passed"
+        ctx={ctxOf()}
+        view="list"
+        canReview={true}
+        reveal
+        onRevealed={onRevealed}
+      />,
+    );
+    expect(scrolled).toHaveLength(0);
+    expect(onRevealed).not.toHaveBeenCalled();
   });
 });

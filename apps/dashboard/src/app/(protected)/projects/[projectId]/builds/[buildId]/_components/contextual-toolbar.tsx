@@ -5,9 +5,10 @@ import {
   LayoutGrid,
   List,
   ListFilter,
+  Play,
   RefreshCw,
 } from "lucide-react";
-import type { ReactNode, Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import {
@@ -16,17 +17,49 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { describeRefusal } from "@/lib/review/review-copy";
+import type { ReviewStatus } from "@/lib/review-context";
 
-export type Chip = "needs-review" | "all" | "passed";
+/** The status chip: the same five values the URL's `?status=` takes. */
+export type Chip = ReviewStatus;
 export type ResultView = "list" | "grid";
 
-const CHIP_LABEL: Record<Chip, string> = {
-  "needs-review": "Needs review",
-  all: "All",
-  passed: "Passed",
-};
+/**
+ * The chips, in order, each with the rule it filters runs by (spec §3.1: the
+ * chips are filters, not a partition, so a run can be both Failed and Needs
+ * review, and each chip's tooltip says which rule it is).
+ */
+const CHIPS: ReadonlyArray<{ value: Chip; label: string; rule: string }> = [
+  {
+    value: "needs-review",
+    label: "Needs review",
+    rule: "Tests with at least one step waiting for review",
+  },
+  { value: "failed", label: "Failed", rule: "Tests whose rollup is Failed" },
+  { value: "running", label: "Running", rule: "Tests still running" },
+  { value: "passed", label: "Passed", rule: "Tests whose rollup is Passed" },
+  { value: "all", label: "All", rule: "Every test" },
+];
+
+const CHIP_LABEL = Object.fromEntries(
+  CHIPS.map((c) => [c.value, c.label]),
+) as Record<Chip, string>;
+
+/** The Start reviewing control: what it shows and what it does. */
+export interface StartControl {
+  /** Pending steps inside the filter; undefined until known. */
+  count: number | undefined;
+  /** Why it is unavailable, or null when it can be used. */
+  reason: string | null;
+  onClick: () => void;
+}
 
 interface Props {
   chip: Chip;
@@ -43,10 +76,20 @@ interface Props {
   onApprovePending: () => void;
   /** The approve button, for the confirmation to return focus to. */
   approveRef?: Ref<HTMLButtonElement>;
+  /** Opens the first pending step inside the filter. Absent: not shown. */
+  start?: StartControl;
+  /** The environment filters (`FacetSelects`), when the page has them. */
+  environment?: ReactNode;
 }
 
 /** A labelled toolbar segment — uppercase micro-label over its controls. */
-function Segment({ label, children }: { label: string; children: ReactNode }) {
+export function Segment({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
@@ -89,14 +132,50 @@ function IconButton({
   );
 }
 
-function Divider() {
+export function Divider() {
   return <div className="h-8 w-px self-end bg-edge" />;
+}
+
+/**
+ * One chip in the filter menu. Its rule is the tooltip (for a pointer or a
+ * focused item) and the description (for a screen reader, which gets no
+ * hover); the label alone names the item.
+ */
+function ChipItem({
+  chip,
+  active,
+  onSelect,
+}: {
+  chip: (typeof CHIPS)[number];
+  active: boolean;
+  onSelect: (c: Chip) => void;
+}) {
+  const ruleId = useId();
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <DropdownMenuItem
+          data-testid={`batch-chip-${chip.value}`}
+          aria-describedby={ruleId}
+          onSelect={() => onSelect(chip.value)}
+          className={cn(active && "font-semibold text-brand-text")}
+        >
+          <span>{chip.label}</span>
+          <span id={ruleId} hidden>
+            {chip.rule}
+          </span>
+        </DropdownMenuItem>
+      </TooltipTrigger>
+      <TooltipContent side="right">{chip.rule}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /**
  * Segmented action toolbar above the result table — mirrors the reference's
  * uppercase-labelled icon groups: View (list / grid), Test Results (refresh +
- * filter), and the approve-pending maintenance action.
+ * status filter), the environment filters, Start reviewing, and the
+ * approve-pending maintenance action.
  */
 export function ContextualToolbar({
   chip,
@@ -109,6 +188,8 @@ export function ContextualToolbar({
   pendingCount,
   onApprovePending,
   approveRef,
+  start,
+  environment,
 }: Props) {
   return (
     <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
@@ -153,19 +234,44 @@ export function ContextualToolbar({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            {(["needs-review", "all", "passed"] as Chip[]).map((c) => (
-              <DropdownMenuItem
-                key={c}
-                data-testid={`batch-chip-${c}`}
-                onSelect={() => onChipChange(c)}
-                className={cn(chip === c && "font-semibold text-brand-text")}
-              >
-                {CHIP_LABEL[c]}
-              </DropdownMenuItem>
-            ))}
+            <TooltipProvider delayDuration={200}>
+              {CHIPS.map((c) => (
+                <ChipItem
+                  key={c.value}
+                  chip={c}
+                  active={chip === c.value}
+                  onSelect={onChipChange}
+                />
+              ))}
+            </TooltipProvider>
           </DropdownMenuContent>
         </DropdownMenu>
       </Segment>
+
+      {environment}
+
+      {start && (
+        <>
+          <Divider />
+          <Segment label="Review">
+            <DisabledAwareButton
+              variant="default"
+              className="h-7 gap-1.5 px-3 text-xs"
+              testId="batch-start-reviewing"
+              // Nothing to press until the count is known; an explained
+              // refusal otherwise (it stays focusable and says why).
+              disabled={start.count === undefined || start.reason !== null}
+              reason={start.reason}
+              onClick={start.onClick}
+            >
+              <Play className="h-3.5 w-3.5" aria-hidden />
+              {start.count === undefined
+                ? "Start reviewing"
+                : `Start reviewing (${start.count})`}
+            </DisabledAwareButton>
+          </Segment>
+        </>
+      )}
 
       {canApprovePending && (
         <>

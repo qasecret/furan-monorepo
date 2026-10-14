@@ -75,7 +75,13 @@ const confirm = () =>
 const cancel = () =>
   screen.getByTestId("approve-pending-cancel") as HTMLButtonElement;
 
-function renderDialog(over: { open?: boolean; onApproved?: () => void } = {}) {
+function renderDialog(
+  over: {
+    open?: boolean;
+    onApproved?: () => void;
+    filtersActive?: boolean;
+  } = {},
+) {
   const onOpenChange = vi.fn();
   const view = render(
     <ApprovePendingDialog
@@ -83,6 +89,7 @@ function renderDialog(over: { open?: boolean; onApproved?: () => void } = {}) {
       open={over.open ?? true}
       onOpenChange={onOpenChange}
       onApproved={over.onApproved}
+      filtersActive={over.filtersActive}
     />,
   );
   return { onOpenChange, ...view };
@@ -178,6 +185,32 @@ describe("ApprovePendingDialog copy", () => {
       "Approves the first 500 of 812; run it again for the rest.",
     );
     expect(confirm().textContent).toBe("Approve 500 steps");
+  });
+
+  test("adds the filters note when facets are active: the approval is build-wide", () => {
+    renderDialog({ filtersActive: true });
+    expect(dialogText()).toContain(
+      "Filters don't apply: this approves every pending step in the build.",
+    );
+    // The counts are the build's, as ever.
+    expect(
+      screen.getByRole("heading", { name: "Approve 37 pending steps?" }),
+    ).toBeDefined();
+    expect(confirm().textContent).toBe("Approve 37 steps");
+  });
+
+  test("has no filters note when no facet is active", () => {
+    renderDialog();
+    expect(dialogText()).not.toContain("Filters don't apply");
+    cleanup();
+    renderDialog({ filtersActive: false });
+    expect(dialogText()).not.toContain("Filters don't apply");
+  });
+
+  test("the filters note is left out when there is nothing to approve", () => {
+    answer({ ...PREVIEW, pendingCheckpoints: 0, tests: 0 });
+    renderDialog({ filtersActive: true });
+    expect(dialogText()).not.toContain("Filters don't apply");
   });
 
   test("says so when nothing is left to approve, and cannot be confirmed", () => {

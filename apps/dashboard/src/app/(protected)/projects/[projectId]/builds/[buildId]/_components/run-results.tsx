@@ -6,7 +6,7 @@ import {
   type RunStatusOverride,
 } from "@furan/shared-types";
 import { ChevronDown, ChevronRight, Server } from "lucide-react";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { StepCard, type StepRun } from "./step-card";
 
@@ -16,6 +16,7 @@ import {
   useReviewMutations,
   type DecideArgs,
 } from "@/lib/review/use-review-mutations";
+import type { ReviewContext, StepFacets } from "@/lib/review-context";
 import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -79,6 +80,26 @@ function groupByEnv(
   return groups;
 }
 
+/**
+ * Whether a step is in the environment the facets name. The facets given
+ * together hold on the same step, as they do for `runs.list` (spec §4.1); a
+ * step with no OS never matches an OS facet.
+ *
+ * `device` is not here: `runs.listCheckpoints` does not return it, so the
+ * step cards cannot be narrowed by it (the list and its counts are, by the
+ * server).
+ */
+function inFacets(
+  step: Pick<Checkpoint, "browser" | "viewport" | "os">,
+  facets: StepFacets,
+): boolean {
+  return (
+    (facets.browser === undefined || step.browser === facets.browser) &&
+    (facets.viewport === undefined || step.viewport === facets.viewport) &&
+    (facets.os === undefined || step.os === facets.os)
+  );
+}
+
 interface Props {
   projectId: string;
   runId: string;
@@ -88,10 +109,27 @@ interface Props {
   fallbackStatus: RunStatus;
   /** The run's hand-set status, or null when it is computed. */
   statusOverride?: RunStatusOverride | null;
+  /**
+   * The page's review context: its facets narrow the steps shown, and the
+   * viewer opens with it. One object while the URL's filters stay the same.
+   */
+  ctx: ReviewContext;
+  /**
+   * The run's pending steps inside the facets, and all its steps, as the run
+   * list counts them. Said by a row that has no steps of its own to count.
+   */
+  pendingCount?: number;
+  stepCount?: number;
   /** Step layout: "list" scrolls horizontally, "grid" wraps. */
   view: "list" | "grid";
   /** Gates the per-step review actions (approve, reject, undo). */
   canReview: boolean;
+  /**
+   * "Back to batch" landed on this run: bring its first row to the middle of
+   * the page and focus it, once. `onRevealed` says it has; it must be stable.
+   */
+  reveal?: boolean;
+  onRevealed?: () => void;
 }
 
 /**
@@ -106,8 +144,13 @@ export function RunResults({
   branchName,
   fallbackStatus,
   statusOverride = null,
+  ctx,
+  pendingCount = 0,
+  stepCount = 0,
   view,
   canReview,
+  reveal = false,
+  onRevealed,
 }: Props) {
   const q = trpc.runs.listCheckpoints.useQuery({ runId });
   // One review instance for the run's cards, not one per card: it subscribes
@@ -115,9 +158,21 @@ export function RunResults({
   // only the card whose step changed is redrawn. Its functions are stable.
   const { decide, undo } = useReviewMutations();
   const items = q.data?.items;
+  // The steps the facets leave. The run itself (below) is judged by all of
+  // them: a facet changes what is shown, never what the run allows.
+  const { facets } = ctx;
+  const visible = useMemo(
+    () =>
+      facets.browser === undefined &&
+      facets.viewport === undefined &&
+      facets.os === undefined
+        ? items
+        : items?.filter((c) => inFacets(c, facets)),
+    [items, facets],
+  );
   const groups = useMemo(
-    () => groupByEnv(items ?? [], fallbackStatus, statusOverride),
-    [items, fallbackStatus, statusOverride],
+    () => groupByEnv(visible ?? [], fallbackStatus, statusOverride),
+    [visible, fallbackStatus, statusOverride],
   );
   // What every step card needs to know about the whole run, not just its row.
   // Primitives, so the object below changes only when one of them does.
@@ -152,18 +207,24 @@ export function RunResults({
         viewport="—"
         status={run.status}
         checkpoints={[]}
+        runPending={pendingCount}
+        runSteps={stepCount}
         run={run}
+        ctx={ctx}
         decide={decide}
         undo={undo}
         view={view}
         canReview={canReview}
+        anchorId={anchorIdOf(runId)}
+        reveal={reveal}
+        onRevealed={onRevealed}
       />
     );
   }
 
   return (
     <>
-      {groups.map((g) => (
+      {groups.map((g, i) => (
         <ResultRow
           key={`${runId}:${g.key}`}
           projectId={projectId}
@@ -175,16 +236,27 @@ export function RunResults({
           viewport={g.viewport}
           status={g.status}
           checkpoints={g.checkpoints}
+          runPending={pendingCount}
+          runSteps={stepCount}
           run={run}
+          ctx={ctx}
           decide={decide}
           undo={undo}
           view={view}
           canReview={canReview}
+          // The run's anchor is on its first row only, so it stays unique
+          // however many environments the run has.
+          anchorId={i === 0 ? anchorIdOf(runId) : undefined}
+          reveal={reveal && i === 0}
+          onRevealed={onRevealed}
         />
       ))}
     </>
   );
 }
+
+/** The id "Back to batch" links to (`#run-<runId>`). */
+const anchorIdOf = (runId: string): string => `run-${runId}`;
 
 interface RowProps {
   projectId: string;
@@ -196,11 +268,19 @@ interface RowProps {
   viewport: string;
   status: RunStatus;
   checkpoints: Checkpoint[];
+  /** The run's pending and total steps from the list: said when this row has no steps. */
+  runPending: number;
+  runSteps: number;
   run: StepRun;
+  ctx: ReviewContext;
   decide: (args: DecideArgs) => void;
   undo: (actionId?: string) => void;
   view: "list" | "grid";
   canReview: boolean;
+  /** The run's anchor id; on the run's first row only. */
+  anchorId?: string | undefined;
+  reveal?: boolean;
+  onRevealed?: (() => void) | undefined;
 }
 
 /** Memoized, so a decision redraws the rows whose steps changed and no others. */
@@ -214,21 +294,48 @@ const ResultRow = memo(function ResultRow({
   viewport,
   status,
   checkpoints,
+  runPending,
+  runSteps,
   run,
+  ctx,
   decide,
   undo,
   view,
   canReview,
+  anchorId,
+  reveal = false,
+  onRevealed,
 }: RowProps) {
   const sm = statusStyle(status);
   const hasSteps = checkpoints.length > 0;
-  const pending = checkpoints.filter(
-    (c) => c.state !== null && isPending(c.state),
-  ).length;
+  // A row counts its own steps, the ones the facets leave. A row with none
+  // loaded says what the run list counted for the run.
+  const pending = hasSteps
+    ? checkpoints.filter((c) => c.state !== null && isPending(c.state)).length
+    : runPending;
+  const total = hasSteps ? checkpoints.length : runSteps;
   const [open, setOpen] = useState(true);
+
+  // "Back to batch": once, bring this row to the middle of the page and focus
+  // it. No `behavior`: the jump is instant, which also honours a reduced-motion
+  // preference. Focus does not scroll a second time.
+  const wrapper = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!reveal) return;
+    wrapper.current?.scrollIntoView({ block: "center" });
+    toggle.current?.focus({ preventScroll: true });
+    onRevealed?.();
+  }, [reveal, onRevealed]);
+
   return (
-    <div className="border-b border-edge-subtle last:border-b-0">
+    <div
+      id={anchorId}
+      ref={wrapper}
+      className="border-b border-edge-subtle last:border-b-0"
+    >
       <button
+        ref={toggle}
         type="button"
         data-testid={`result-row-${runId}`}
         aria-expanded={hasSteps ? open : undefined}
@@ -268,7 +375,7 @@ const ResultRow = memo(function ResultRow({
                 data-testid={`result-pending-${runId}`}
                 className="truncate text-2xs text-fg-muted"
               >
-                {`${pending} of ${checkpoints.length} pending`}
+                {`${pending} of ${total} pending`}
               </span>
             )}
           </span>
@@ -300,6 +407,7 @@ const ResultRow = memo(function ResultRow({
                 key={c.id}
                 projectId={projectId}
                 runId={runId}
+                ctx={ctx}
                 canReview={canReview}
                 index={i}
                 total={checkpoints.length}

@@ -32,6 +32,7 @@ import {
   describeBlockedRun,
   describeRefusal,
 } from "@/lib/review/review-copy";
+import { parseReviewContext, type ReviewContext } from "@/lib/review-context";
 import { reviewStateStyle, statusStyle } from "@/lib/status-style";
 
 beforeEach(() => {
@@ -73,14 +74,18 @@ const RUN: StepRun = {
   undiffed: false,
 };
 
+/** The review context of a clean URL: Needs review, no facets. */
+const CLEAN: ReviewContext = parseReviewContext(new URLSearchParams());
+
 function renderCard(
   checkpoint: StepCheckpoint,
-  over: { canReview?: boolean; run?: StepRun } = {},
+  over: { canReview?: boolean; run?: StepRun; ctx?: ReviewContext } = {},
 ) {
   const card = (cp: StepCheckpoint) => (
     <StepCard
       projectId="p1"
       runId="r1"
+      ctx={over.ctx ?? CLEAN}
       canReview={over.canReview ?? true}
       checkpoint={cp}
       index={0}
@@ -630,6 +635,30 @@ describe("StepCard layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open home" }));
     expect(pushMock).toHaveBeenCalledWith(
       "/projects/p1/runs/r1/checkpoints/c1",
+    );
+  });
+
+  test("step cards open the viewer with the review context", () => {
+    pushMock.mockClear();
+    // The status and the environment facets travel with the card; the Batches
+    // page's branch and search do not (spec §3.3).
+    const ctx = parseReviewContext(
+      new URLSearchParams(
+        "status=failed&browser=firefox&viewport=390x844&branch=main&q=nav",
+      ),
+    );
+    renderCard(cp(), { ctx });
+    fireEvent.click(screen.getByRole("button", { name: "Open home" }));
+    expect(pushMock).toHaveBeenLastCalledWith(
+      "/projects/p1/runs/r1/checkpoints/c1?status=failed&browser=firefox&viewport=390x844",
+    );
+    // The hover toolbar's open action goes to the same place.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open home in the viewer" }),
+    );
+    expect(pushMock).toHaveBeenCalledTimes(2);
+    expect(pushMock).toHaveBeenLastCalledWith(
+      "/projects/p1/runs/r1/checkpoints/c1?status=failed&browser=firefox&viewport=390x844",
     );
   });
 

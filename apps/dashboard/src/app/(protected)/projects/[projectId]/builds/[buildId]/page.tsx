@@ -6,6 +6,9 @@ import { BatchPage } from "./_components/batch-page";
 import { Card } from "@/components/ui/card";
 import { getProject } from "@/lib/get-project";
 import { canReviewRole, getViewerRole } from "@/lib/get-viewer";
+// The pure module, never the `review-url` barrel: this is a server component,
+// and the barrel also re-exports the client hook.
+import { parseReviewContext } from "@/lib/review-context";
 
 export const metadata: Metadata = { title: "Build details" };
 export const dynamic = "force-dynamic";
@@ -15,14 +18,20 @@ export const dynamic = "force-dynamic";
  *
  * Server Component probes the project so non-members get a 404 instead of a
  * spinning client-side query. The `BatchPage` client island owns all query
- * state (build header + run cards + pagination).
+ * state (build header + run cards + pagination). It is handed the review
+ * context of the request (spec §3.3): the status chip (Needs review when
+ * absent or invalid) and the environment facets. Bad input is dropped
+ * silently; it never errors the page.
  */
 export default async function BuildDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; buildId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { projectId, buildId } = await params;
+  const context = parseReviewContext(await searchParams);
 
   const project = await getProject(projectId);
   if (project.status === 401) redirect("/login");
@@ -43,6 +52,11 @@ export default async function BuildDetailPage({
   const canReview = canReviewRole(await getViewerRole());
 
   return (
-    <BatchPage projectId={projectId} buildId={buildId} canReview={canReview} />
+    <BatchPage
+      projectId={projectId}
+      buildId={buildId}
+      canReview={canReview}
+      context={context}
+    />
   );
 }

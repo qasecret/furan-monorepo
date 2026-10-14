@@ -317,6 +317,8 @@ export function useReviewMutations() {
     void utils.builds.list.invalidate();
     void utils.builds.pendingCount.invalidate();
     void utils.review.next.invalidate();
+    // The batch page's environment filter shows each value's pending steps.
+    void utils.runs.facets.invalidate();
     // A group's members change with every decision (and undo) of any of them,
     // so the callout that offers the group must not keep what was decided.
     void utils.runs.getCheckpointGroup.invalidate();

@@ -37,6 +37,7 @@ const utils = {
     getById: procedureUtils(["runs", "getById"]),
     list: procedureUtils(["runs", "list"]),
     getCheckpointGroup: procedureUtils(["runs", "getCheckpointGroup"]),
+    facets: procedureUtils(["runs", "facets"]),
   },
   builds: {
     getById: procedureUtils(["builds", "getById"]),
@@ -733,6 +734,25 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(utils.builds.list.invalidate).toHaveBeenCalled();
     expect(utils.builds.pendingCount.invalidate).toHaveBeenCalled();
     expect(utils.review.next.invalidate).toHaveBeenCalled();
+  });
+
+  it("refreshes the batch page's environment filter counts after a decision and after an undo", async () => {
+    seed();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+    expect(utils.runs.facets.invalidate).toHaveBeenCalled();
+
+    utils.runs.facets.invalidate.mockClear();
+    await run(() => toastAction().action.onClick());
+    expect(utils.runs.facets.invalidate).toHaveBeenCalled();
   });
 
   it("refreshes the Batches list, the sidebar badge and the loop counts after an undo", async () => {

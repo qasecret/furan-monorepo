@@ -20,6 +20,10 @@ import { trpc } from "@/lib/trpc";
 const CONFLICT_NOTICE =
   "This batch changed since you opened this; review the new counts.";
 
+/** Said when the batch page is filtered: the approval is not (spec §5.3). */
+const FILTERS_NOTICE =
+  "Filters don't apply: this approves every pending step in the build.";
+
 const be = (n: number): string => (n === 1 ? "is" : "are");
 
 /** The steps an approval would decide: all of them, or the first `cap`. */
@@ -32,6 +36,11 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** The server approved the batch (after this has asked to close). */
   onApproved?: () => void;
+  /**
+   * An environment filter is active on the page. The approval is still the
+   * whole build's, so the dialog says that the filters do not apply to it.
+   */
+  filtersActive?: boolean;
   /**
    * Where focus goes when the dialog closes: the control that opens it. Without
    * one, the dialog gives focus back to whatever held it as it opened, which is
@@ -57,6 +66,7 @@ export function ApprovePendingDialog({
   open,
   onOpenChange,
   onApproved,
+  filtersActive = false,
   returnFocusTo,
 }: Props) {
   const query = trpc.review.previewApproveBuild.useQuery(
@@ -112,6 +122,7 @@ export function ApprovePendingDialog({
           failed={query.isError && !query.isFetching}
           refreshing={query.isFetching}
           submitting={submitting}
+          filtersActive={filtersActive}
           onSubmittingChange={setSubmitting}
           // The approval itself closes the dialog, past the guard above.
           onClose={() => onOpenChange(false)}
@@ -132,6 +143,8 @@ interface BodyProps {
   refreshing: boolean;
   /** The approval is out. */
   submitting: boolean;
+  /** Say that the page's filters do not apply to the approval. */
+  filtersActive: boolean;
   onSubmittingChange: (submitting: boolean) => void;
   onClose: () => void;
   onApproved?: () => void;
@@ -143,6 +156,7 @@ function PendingBody({
   failed,
   refreshing,
   submitting,
+  filtersActive,
   onSubmittingChange,
   onClose,
   onApproved,
@@ -200,7 +214,9 @@ function PendingBody({
       <AlertDialogHeader>
         <AlertDialogTitle>{titleOf(shown, failed)}</AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="space-y-1.5">{bodyOf(shown, failed)}</div>
+          <div className="space-y-1.5">
+            {bodyOf(shown, failed, filtersActive)}
+          </div>
         </AlertDialogDescription>
       </AlertDialogHeader>
       {changed && (
@@ -244,7 +260,11 @@ function titleOf(p: ApproveBuildPreview | undefined, failed: boolean): string {
   return `Approve ${p.pendingCheckpoints} pending step${plural(p.pendingCheckpoints)}?`;
 }
 
-function bodyOf(p: ApproveBuildPreview | undefined, failed: boolean) {
+function bodyOf(
+  p: ApproveBuildPreview | undefined,
+  failed: boolean,
+  filtersActive: boolean,
+) {
   if (!p) {
     return (
       <p>
@@ -277,6 +297,7 @@ function bodyOf(p: ApproveBuildPreview | undefined, failed: boolean) {
           {`Approves the first ${p.cap} of ${p.pendingCheckpoints}; run it again for the rest.`}
         </p>
       )}
+      {filtersActive && <p className="font-medium text-fg">{FILTERS_NOTICE}</p>}
     </>
   );
 }
