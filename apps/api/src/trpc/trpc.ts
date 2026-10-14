@@ -46,6 +46,8 @@ class ProcedureFailed extends Error {
  * to zero project rows — which is correct. RLS is still OFF today, so this is a
  * behavior-preserving change: queries simply run inside a transaction now (a
  * per-procedure atomic unit), which is why every existing tRPC test still holds.
+ * `ctx.onCommit` still works for them: with no transaction, its effects run
+ * once the procedure succeeds, and never when it fails.
  *
  * Downstream middlewares (`authed`, `projectMember`, `requireAdmin`) run AFTER
  * this and inherit the scoped `ctx.db`, so their own membership lookups are
@@ -65,7 +67,13 @@ const scopeToUser = t.middleware(async ({ ctx, next }) => {
   // shape (and its inferred type) is consistent for every procedure.
   const sink = createDeferredSink();
   const scopedCtx = { ...ctx, onCommit: sink.onCommit };
-  if (!ctx.user) return next({ ctx: scopedCtx });
+  if (!ctx.user) {
+    // No transaction to wait for, so effects run as soon as the procedure
+    // succeeds. A failed procedure's effects are dropped, as in the scoped path.
+    const result = await next({ ctx: scopedCtx });
+    if (result.ok) await sink.drain();
+    return result;
+  }
   const { id, role } = ctx.user;
   const run = (tx: DB) => next({ ctx: { ...scopedCtx, db: tx } });
   let result: Awaited<ReturnType<typeof run>>;
