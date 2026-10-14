@@ -77,19 +77,22 @@ function renderCard(
   checkpoint: StepCheckpoint,
   over: { canReview?: boolean; run?: StepRun } = {},
 ) {
-  return render(
+  const card = (cp: StepCheckpoint) => (
     <StepCard
       projectId="p1"
       runId="r1"
       canReview={over.canReview ?? true}
-      checkpoint={checkpoint}
+      checkpoint={cp}
       index={0}
       total={3}
       run={over.run ?? RUN}
       decide={reviewSpies.decide}
       undo={reviewSpies.undo}
-    />,
+    />
   );
+  const view = render(card(checkpoint));
+  /** Shows the same card with another checkpoint, as a cache patch would. */
+  return { ...view, show: (next: StepCheckpoint) => view.rerender(card(next)) };
 }
 
 const button = (testId: string) =>
@@ -305,6 +308,119 @@ describe("StepCard review actions", () => {
     expect(unavailable(button("step-reject-c1"))).toBe(true);
     expect(button("step-approve-c1").hasAttribute("aria-disabled")).toBe(false);
     expect(button("step-reject-c1").hasAttribute("aria-disabled")).toBe(false);
+  });
+});
+
+describe("StepCard focus after a decision", () => {
+  const approved = () =>
+    cp({ state: "approved", decision: decision("approved") });
+
+  test("keyboard Approve: focus follows to Undo once the decision is settled", async () => {
+    const user = userEvent.setup();
+    // The hook holds the step while the call is out.
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+
+    // The optimistic patch: approved, the call still out. Undo is there but
+    // waiting, and the button that held focus is gone.
+    card.show(approved());
+    expect(button("step-undo-c1")).toBeDefined();
+    expect(document.activeElement).not.toBe(button("step-undo-c1"));
+
+    // The answer is in: Undo can be used, and has focus.
+    inFlight.delete("c1");
+    card.show(approved());
+    expect(document.activeElement).toBe(button("step-undo-c1"));
+  });
+
+  test("keyboard Reject: focus follows to Undo rejection", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-reject-c1").focus();
+    await user.keyboard("{Enter}");
+
+    card.show(cp({ state: "rejected", decision: decision("rejected") }));
+    inFlight.delete("c1");
+    card.show(cp({ state: "rejected", decision: decision("rejected") }));
+    expect(document.activeElement).toBe(button("step-undo-c1"));
+    expect(button("step-undo-c1").getAttribute("aria-label")).toBe(
+      "Undo rejection of home",
+    );
+  });
+
+  test("when the decision cannot be undone, focus goes to opening the step instead", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+
+    inFlight.delete("c1");
+    card.show(
+      cp({
+        state: "approved",
+        decision: decision("approved", {
+          allowed: false,
+          reason: "superseded_newer_capture",
+        }),
+      }),
+    );
+    expect(screen.queryByTestId("step-undo-c1")).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Open home in the viewer" }),
+    );
+  });
+
+  test("when the server refuses, focus is not left on the page", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+
+    card.show(approved());
+    // Rolled back: the step is pending again and the call is over.
+    inFlight.delete("c1");
+    card.show(cp());
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Open home in the viewer" }),
+    );
+  });
+
+  test("a decision made while focus was elsewhere does not take focus", () => {
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    const card = renderCard(cp());
+    outside.focus();
+    fireEvent.click(button("step-approve-c1"));
+
+    card.show(approved());
+    inFlight.delete("c1");
+    card.show(approved());
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  test("a later change to the step, by someone else, does not take focus either", async () => {
+    const user = userEvent.setup();
+    reviewSpies.decide.mockImplementation(() => inFlight.add("c1"));
+    const card = renderCard(cp());
+    button("step-approve-c1").focus();
+    await user.keyboard("{Enter}");
+    inFlight.delete("c1");
+    card.show(approved());
+    expect(document.activeElement).toBe(button("step-undo-c1"));
+
+    // Focus moves on; the step is changed again from elsewhere.
+    (document.activeElement as HTMLElement).blur();
+    card.show(cp());
+    card.show(approved());
+    expect(document.activeElement).toBe(document.body);
   });
 });
 

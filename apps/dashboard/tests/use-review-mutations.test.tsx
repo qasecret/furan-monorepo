@@ -3,7 +3,7 @@ import { randomFillSync } from "node:crypto";
 import type { ApproveBuildPreview } from "@furan/shared-types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -80,13 +80,17 @@ const { server, mutationFor } = vi.hoisted(() => {
     }
   }
 
+  // Like TanStack's, `mutate` is the same function on every render and calls
+  // the lifecycle of the latest one.
   const mutationFor = (name: keyof typeof server) => ({
-    useMutation: (opts: Lifecycle) => ({
-      mutate: (vars: unknown) => {
-        void runMutation(name, opts, vars);
-      },
-      isPending: false,
-    }),
+    useMutation: (opts: Lifecycle) => {
+      const latest = useRef(opts);
+      latest.current = opts;
+      const mutate = useCallback((vars: unknown) => {
+        void runMutation(name, latest.current, vars);
+      }, []);
+      return { mutate, isPending: false };
+    },
   });
 
   return { server, mutationFor };
@@ -368,6 +372,36 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("useReviewMutations: identity", () => {
+  // The batch page memoizes its step cards on `decide` and `undo`, so a card
+  // is redrawn for its own step only if these never change.
+  it("hands out the very same callbacks on every render", () => {
+    const { result, rerender } = setup();
+    const first = result.current;
+
+    rerender();
+
+    expect(result.current.decide).toBe(first.decide);
+    expect(result.current.undo).toBe(first.undo);
+    expect(result.current.decideGroup).toBe(first.decideGroup);
+    expect(result.current.approveBuild).toBe(first.approveBuild);
+  });
+
+  it("keeps them when what is in flight changes, which does redraw the hook", () => {
+    const { result } = setup();
+    const first = result.current;
+
+    act(() => useInFlightStore.getState().hold([A]));
+    expect(result.current.isInFlight(A)).toBe(true);
+
+    expect(result.current.decide).toBe(first.decide);
+    expect(result.current.undo).toBe(first.undo);
+    expect(result.current.decideGroup).toBe(first.decideGroup);
+    expect(result.current.approveBuild).toBe(first.approveBuild);
+    act(() => useInFlightStore.getState().release([A]));
+  });
 });
 
 describe("useReviewMutations: optimistic decide", () => {
@@ -975,6 +1009,121 @@ describe("useReviewMutations: success", () => {
         runIds: [RUN],
       },
     ]);
+  });
+
+  describe("a label function that throws", () => {
+    const boom = () => {
+      throw new Error("label bug");
+    };
+
+    it("cannot turn a committed decision into an error: the toast, its Undo and the undo entry stay, worded plainly", async () => {
+      seed();
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.decide({
+          runId: RUN,
+          checkpointIds: [A],
+          kind: "approved",
+          label: boom,
+        }),
+      );
+
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe("Approved");
+      expect(toastAction().action.label).toBe("Undo");
+      expect(useUndoStore.getState().stack).toEqual([
+        {
+          actionId: sentActionId(server.approve),
+          label: "Approved",
+          runIds: [RUN],
+        },
+      ]);
+      // The decision stands: it was not rolled back as a failure.
+      expect(
+        (itemsCache() as { id: string; state: string }[]).find(
+          (i) => i.id === A,
+        )?.state,
+      ).toBe("approved");
+      // And the bug is not hidden outside production.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("label"),
+        expect.any(Error),
+      );
+      warn.mockRestore();
+    });
+
+    it("words a rejection plainly", async () => {
+      seed();
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.decide({
+          runId: RUN,
+          checkpointIds: [A],
+          kind: "rejected",
+          label: boom,
+        }),
+      );
+
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe("Rejected");
+      warn.mockRestore();
+    });
+
+    it("still tells the caller of a build approval that it succeeded", async () => {
+      seed();
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      const onSuccess = vi.fn();
+      const onSettled = vi.fn();
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.approveBuild({
+          buildId: BUILD,
+          expectedCount: 5,
+          label: boom,
+          onConflict: vi.fn(),
+          onSuccess,
+          onSettled,
+        }),
+      );
+
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe("Approved");
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSettled).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+
+    it("words a group rejection plainly", async () => {
+      seed();
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      const { result, run } = setup();
+
+      await run(() =>
+        result.current.decideGroup({
+          runId: RUN,
+          checkpointId: A,
+          kind: "rejected",
+          label: boom,
+        }),
+      );
+
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe("Rejected");
+      expect(useUndoStore.getState().stack[0]?.label).toBe("Rejected");
+      warn.mockRestore();
+    });
   });
 
   it("does not evaluate a function label when the call fails", async () => {

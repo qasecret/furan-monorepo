@@ -8,7 +8,7 @@ import {
 } from "@furan/shared-types";
 import { Maximize2, Star, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
@@ -134,13 +134,30 @@ export const StepCard = memo(function StepCard({
   const open = () =>
     router.push(`/projects/${projectId}/runs/${runId}/checkpoints/${id}`);
 
-  const decideStep = (kind: "approved" | "rejected") =>
+  // The button a keyboard user pressed is about to be replaced (by Undo), and
+  // focus would drop to the page. So when the card held focus at the time, it
+  // follows the decision: to Undo, or failing that to opening the step. It
+  // moves once the call has answered, since Undo cannot take focus before.
+  const toolbar = useRef<HTMLDivElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const openButton = useRef<HTMLButtonElement>(null);
+  const followFocus = useRef(false);
+  useEffect(() => {
+    if (!followFocus.current || inFlight) return;
+    followFocus.current = false;
+    (decision !== null && canUndo ? undoButton : openButton).current?.focus();
+  }, [inFlight, decision, canUndo]);
+
+  const decideStep = (kind: "approved" | "rejected") => {
+    followFocus.current =
+      toolbar.current?.contains(document.activeElement) === true;
     decide({
       runId,
       checkpointIds: [id],
       kind,
       label: `${kind === "approved" ? "Approved" : "Rejected"} '${name}'`,
     });
+  };
 
   // The icon buttons share one look; only the hover hue says which is which.
   const actionClass =
@@ -174,6 +191,7 @@ export const StepCard = memo(function StepCard({
           )}
         </button>
         <div
+          ref={toolbar}
           data-testid={`step-toolbar-${id}`}
           className="flex items-center justify-between border-t border-edge bg-sunken px-2 py-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
         >
@@ -212,6 +230,7 @@ export const StepCard = memo(function StepCard({
             )}
             {canReview && decision !== null && canUndo && (
               <DisabledAwareButton
+                ref={undoButton}
                 variant="ghost"
                 label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"} of ${name}`}
                 testId={`step-undo-${id}`}
@@ -228,6 +247,7 @@ export const StepCard = memo(function StepCard({
             )}
           </div>
           <button
+            ref={openButton}
             type="button"
             aria-label={`Open ${name} in the viewer`}
             onClick={(e) => {

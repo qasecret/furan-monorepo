@@ -121,6 +121,11 @@ export function useIsInFlight(checkpointId: string): boolean {
  */
 interface Action {
   label: ReviewLabel;
+  /**
+   * What the toast says should `label` be a function that throws: the review
+   * is already committed, so a bug in how it is worded must not undo it.
+   */
+  plainLabel: string;
   /** Runs to patch before the answer, and (when known) the undo entry's runs. */
   runIds: string[];
   /** The optimistic change; none for group and build actions (the server picks the members). */
@@ -166,6 +171,27 @@ function start(actionId: string, action: Action, send: () => void): void {
 function warnPatchFailed(what: string, error: unknown): void {
   if (process.env.NODE_ENV !== "production") {
     console.warn(`review: the optimistic ${what} failed`, error);
+  }
+}
+
+const plainLabelOf = (kind: CheckpointDecisionKind): string =>
+  kind === "approved" ? "Approved" : "Rejected";
+
+/** The wording of a toast failed: a bug to show outside production, no more. */
+function warnLabelFailed(error: unknown): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn("review: the label of a toast threw", error);
+  }
+}
+
+/** The toast and undo-entry text of a committed action; never throws. */
+function wordAction(action: Action, result: DecideResult): string {
+  if (typeof action.label === "string") return action.label;
+  try {
+    return action.label(result);
+  } catch (error) {
+    warnLabelFailed(error);
+    return action.plainLabel;
   }
 }
 
@@ -343,6 +369,7 @@ export function useReviewMutations() {
         id,
         {
           label: entry?.label ?? "",
+          plainLabel: "Undone",
           runIds,
           change: revertChange(id),
           // The decisions this undo clears, to put back if it fails.
@@ -367,8 +394,7 @@ export function useReviewMutations() {
       action.runIds.length > 0
         ? action.runIds
         : result.runs.map((r) => r.runId);
-    const label =
-      typeof action.label === "function" ? action.label(result) : action.label;
+    const label = wordAction(action, result);
     useUndoStore.getState().push({ actionId, label, runIds });
     toast.success(label, {
       action: { label: "Undo", onClick: () => undo(actionId) },
@@ -413,6 +439,7 @@ export function useReviewMutations() {
         actionId,
         {
           label,
+          plainLabel: plainLabelOf(kind),
           runIds: [runId],
           change: decisionChange(
             new Set(targets),
@@ -449,12 +476,20 @@ export function useReviewMutations() {
     ({ runId, checkpointId, kind, label }: DecideGroupArgs) => {
       if (useInFlightStore.getState().ids.has(checkpointId)) return;
       const actionId = newActionId();
-      start(actionId, { label, runIds: [], held: [checkpointId] }, () =>
-        (kind === "approved" ? approveGroup : rejectGroup).mutate({
-          runId,
-          checkpointId,
-          actionId,
-        }),
+      start(
+        actionId,
+        {
+          label,
+          plainLabel: plainLabelOf(kind),
+          runIds: [],
+          held: [checkpointId],
+        },
+        () =>
+          (kind === "approved" ? approveGroup : rejectGroup).mutate({
+            runId,
+            checkpointId,
+            actionId,
+          }),
       );
     },
     [approveGroup.mutate, rejectGroup.mutate],
@@ -472,7 +507,15 @@ export function useReviewMutations() {
       const actionId = newActionId();
       start(
         actionId,
-        { label, runIds: [], held: [], onConflict, onSuccess, onSettled },
+        {
+          label,
+          plainLabel: plainLabelOf("approved"),
+          runIds: [],
+          held: [],
+          onConflict,
+          onSuccess,
+          onSettled,
+        },
         () => approveBuildMutation.mutate({ buildId, actionId, expectedCount }),
       );
     },
