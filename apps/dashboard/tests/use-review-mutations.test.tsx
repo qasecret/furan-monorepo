@@ -38,7 +38,12 @@ const utils = {
     list: procedureUtils(["runs", "list"]),
     getCheckpointGroup: procedureUtils(["runs", "getCheckpointGroup"]),
   },
-  builds: { getById: procedureUtils(["builds", "getById"]) },
+  builds: {
+    getById: procedureUtils(["builds", "getById"]),
+    list: procedureUtils(["builds", "list"]),
+    pendingCount: procedureUtils(["builds", "pendingCount"]),
+  },
+  review: { next: procedureUtils(["review", "next"]) },
 };
 
 interface Lifecycle {
@@ -710,6 +715,47 @@ describe("useReviewMutations: optimistic decide", () => {
     expect(utils.runs.getById.invalidate).toHaveBeenCalled();
     expect(utils.runs.list.invalidate).toHaveBeenCalled();
     expect(utils.builds.getById.invalidate).toHaveBeenCalled();
+  });
+
+  it("refreshes the Batches list, the sidebar badge and the loop counts after a decision", async () => {
+    seed();
+    const { result, run } = setup();
+
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+
+    expect(utils.builds.list.invalidate).toHaveBeenCalled();
+    expect(utils.builds.pendingCount.invalidate).toHaveBeenCalled();
+    expect(utils.review.next.invalidate).toHaveBeenCalled();
+  });
+
+  it("refreshes the Batches list, the sidebar badge and the loop counts after an undo", async () => {
+    seed();
+    const { result, run } = setup();
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+    utils.builds.list.invalidate.mockClear();
+    utils.builds.pendingCount.invalidate.mockClear();
+    utils.review.next.invalidate.mockClear();
+
+    await run(() => toastAction().action.onClick());
+
+    expect(server.revert).toHaveBeenCalledTimes(1);
+    expect(utils.builds.list.invalidate).toHaveBeenCalled();
+    expect(utils.builds.pendingCount.invalidate).toHaveBeenCalled();
+    expect(utils.review.next.invalidate).toHaveBeenCalled();
   });
 
   it("refreshes the similar-steps group too, so its callout stops offering what was decided", async () => {

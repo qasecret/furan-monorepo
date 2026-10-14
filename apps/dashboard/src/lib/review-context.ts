@@ -155,8 +155,24 @@ function normalize(ctx: Partial<ReviewContext>): ReviewContext {
  * `encodeURIComponent` throws a `URIError` on a lone surrogate, which a value
  * the API accepts may contain; the write side must never throw, so each side
  * is made well-formed first (a lone surrogate becomes U+FFFD).
+ *
+ * `String.prototype.toWellFormed` needs Chrome 111, Safari 16.4 or Firefox
+ * 119; without it, the same result by hand. A valid surrogate pair (an emoji)
+ * is matched first and kept, so only the lone halves are replaced. No
+ * lookbehind: older Safari fails to parse a regex that has one.
  */
-const encodePart = (s: string): string => encodeURIComponent(s.toWellFormed());
+const LONE_OR_PAIRED_SURROGATE =
+  /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g;
+
+function toWellFormed(s: string): string {
+  return typeof s.toWellFormed === "function"
+    ? s.toWellFormed()
+    : s.replace(LONE_OR_PAIRED_SURROGATE, (m) =>
+        m.length === 2 ? m : "\uFFFD",
+      );
+}
+
+const encodePart = (s: string): string => encodeURIComponent(toWellFormed(s));
 
 function encodeProps(props: Record<string, string>): string {
   return Object.entries(props)
@@ -298,18 +314,24 @@ export function toRunsListFilter(
 }
 
 /**
- * The `builds.list` filter for a context. The chips are the batch rollup
- * statuses of the same name; Needs review is `needsReview`. Facets, search and
- * props are not part of it: search is applied by the caller, and facets are
- * per-batch.
+ * The `builds.list` filter for a context. On Batches the chips are filters,
+ * not a partition (§3.1): a batch can be under Needs review and Failed at
+ * once. Needs review is `needsReview` (a pending step) and Failed is
+ * `anyFailed` (at least one failed test); Running and Passed are the batch's
+ * rollup status of the same name. Facets, search and props are not part of it:
+ * search is applied by the caller, and facets are per-batch.
  */
 export function toBuildsListFilter(
   ctx: ReviewContext,
-): Pick<RouterInputs["builds"]["list"], "status" | "needsReview" | "branch"> {
+): Pick<
+  RouterInputs["builds"]["list"],
+  "status" | "needsReview" | "anyFailed" | "branch"
+> {
   const c = normalize(ctx);
   return {
     ...(c.status === "needs-review" ? { needsReview: true } : {}),
-    ...(c.status === "failed" || c.status === "running" || c.status === "passed"
+    ...(c.status === "failed" ? { anyFailed: true } : {}),
+    ...(c.status === "running" || c.status === "passed"
       ? { status: c.status }
       : {}),
     ...(c.branch !== undefined ? { branch: c.branch } : {}),

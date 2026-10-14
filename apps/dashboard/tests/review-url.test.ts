@@ -290,6 +290,41 @@ describe("props encoding", () => {
     });
   });
 
+  it("still writes where String.prototype.toWellFormed is missing (older browsers)", () => {
+    const proto = String.prototype as { toWellFormed?: () => string };
+    const original = proto.toWellFormed;
+    expect(typeof original).toBe("function"); // the guard is what is under test
+    try {
+      delete proto.toWellFormed;
+      const props = { note: "a\uD800b", plain: "c d" };
+      let qs = "";
+      expect(() => {
+        qs = serializeReviewContext({ props });
+      }).not.toThrow();
+      // The same result as with the method: a lone surrogate becomes U+FFFD.
+      expect(parseReviewContext(new URLSearchParams(qs)).props).toEqual({
+        note: "a\uFFFDb",
+        plain: "c d",
+      });
+    } finally {
+      proto.toWellFormed = original;
+    }
+  });
+
+  it("keeps a well-formed pair (an emoji) intact where toWellFormed is missing", () => {
+    const proto = String.prototype as { toWellFormed?: () => string };
+    const original = proto.toWellFormed;
+    try {
+      delete proto.toWellFormed;
+      const qs = serializeReviewContext({ props: { mood: "ok \u{1F600}" } });
+      expect(parseReviewContext(new URLSearchParams(qs)).props).toEqual({
+        mood: "ok \u{1F600}",
+      });
+    } finally {
+      proto.toWellFormed = original;
+    }
+  });
+
   it("round-trips __proto__ and constructor keys as plain own properties, polluting nothing", () => {
     // JSON.parse makes a real own `__proto__` property; an object literal would not.
     const props = JSON.parse(
@@ -368,7 +403,9 @@ describe("toRunsListFilter", () => {
 describe("toBuildsListFilter", () => {
   const cases: Array<[ReviewStatus, object]> = [
     ["needs-review", { needsReview: true }],
-    ["failed", { status: "failed" }],
+    // The chips are filters, not a partition (spec §3.1): Failed is "has a
+    // failed test", which a batch that also needs review still satisfies.
+    ["failed", { anyFailed: true }],
     ["running", { status: "running" }],
     ["passed", { status: "passed" }],
     ["all", {}],
