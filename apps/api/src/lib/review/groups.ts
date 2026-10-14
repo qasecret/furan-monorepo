@@ -1,4 +1,4 @@
-import { eq, screenshots, testRuns, type DB, type Tx } from "@furan/db";
+import { and, eq, screenshots, testRuns, type DB, type Tx } from "@furan/db";
 import { TRPCError } from "@trpc/server";
 
 import type { SelectionScope } from "./targets.js";
@@ -19,14 +19,18 @@ export const GROUP_APPROVE_CAP = 200;
 
 /**
  * Loads and validates the seed checkpoint of a group read or action. Throws
- * NOT_FOUND if the checkpoint is missing and BAD_REQUEST if it doesn't belong
- * to `runId`. Returns the seed including its `diffSignature` (which may be
- * null: the caller decides the empty-group shape, since each procedure's zero
- * result differs).
+ * NOT_FOUND if the checkpoint is missing or belongs to another project, and
+ * BAD_REQUEST if it is in `projectId` but not in `runId`. The lookup is pinned
+ * to `projectId` (the project the caller resolved for its membership gate), so
+ * another project's checkpoint reads as unknown with or without RLS: its
+ * existence never leaks. Returns the seed including its `diffSignature`
+ * (which may be null: the caller decides the empty-group shape, since each
+ * procedure's zero result differs).
  */
 export async function loadGroupSeed(
   db: DB | Tx,
   input: { runId: string; checkpointId: string },
+  projectId: string,
 ) {
   const seedRows = await db
     .select({
@@ -38,7 +42,12 @@ export async function loadGroupSeed(
     })
     .from(screenshots)
     .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
-    .where(eq(screenshots.id, input.checkpointId))
+    .where(
+      and(
+        eq(screenshots.id, input.checkpointId),
+        eq(testRuns.projectId, projectId),
+      ),
+    )
     .limit(1);
   const seed = seedRows[0];
   if (!seed) throw new TRPCError({ code: "NOT_FOUND" });

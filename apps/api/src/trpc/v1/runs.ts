@@ -1258,7 +1258,7 @@ export const runsRouter = t.router({
     )
     .query(async ({ ctx, input }) => {
       const projectId = await requireRunProjectId(input, ctx);
-      const seed = await loadGroupSeed(ctx.db, input);
+      const seed = await loadGroupSeed(ctx.db, input, projectId);
       // VLM / auto-approved / no-meaningful-diff checkpoints carry NULL -> no group.
       const scope = groupScope(seed, projectId);
       if (scope === null) {

@@ -263,7 +263,7 @@ export async function decideGroup(
   decision: CheckpointDecisionKind,
 ): Promise<ReviewResult> {
   const projectId = await requireRunProject(ctx.tx, input.runId);
-  const seed = await loadGroupSeed(ctx.tx, input);
+  const seed = await loadGroupSeed(ctx.tx, input, projectId);
 
   const scope = groupScope(seed, projectId) ?? undefined;
   const selected = scope
