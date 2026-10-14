@@ -496,6 +496,7 @@ d("review read model", () => {
       const [a, b, c] = older.items;
       expect(a!.newerCapture).toEqual({
         runId: run2.runId,
+        checkpointId: run2.shots.a!.id,
         buildId: s.buildId,
         buildName: `run-${s.tag}`,
       });
@@ -538,6 +539,7 @@ d("review read model", () => {
       });
       expect(first.items[0]!.newerCapture).toEqual({
         runId: run3.runId,
+        checkpointId: run3.shots.a!.id,
         buildId: other!.id,
         buildName: "Release 42",
       });
@@ -579,6 +581,48 @@ d("review read model", () => {
       const [low, high] = [s.runId, run2.runId].sort() as [string, string];
       expect(await newerOf(low)).toBe(high);
       expect(await newerOf(high)).toBeNull();
+    });
+
+    test("newerCapture names the newer step", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved", withBaseline: true },
+          { name: "b", verdict: "unresolved", withBaseline: true },
+        ],
+      });
+      // Run 2 recaptures `a` only. Run 3 recaptures `b`, then `a`, then a
+      // viewport of `a` that is a variation of its own: the step named is the
+      // newest capture of THIS variation, not another step of that run.
+      const run2 = await addReviewRun(h, s, {
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      const run3 = await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "b", verdict: "unresolved" },
+          { name: "a", verdict: "unresolved" },
+          { name: "a", verdict: "unresolved", viewport: "375x812" },
+        ],
+      });
+
+      const { items } = await as(s.editor).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+      const [a, b] = items;
+      expect(a!.newerCapture).toMatchObject({
+        runId: run3.runId,
+        checkpointId: run3.shots.a!.id,
+      });
+      expect(a!.newerCapture?.checkpointId).not.toBe(run2.shots.a!.id);
+      expect(b!.newerCapture).toMatchObject({
+        runId: run3.runId,
+        checkpointId: run3.shots.b!.id,
+      });
+      // The named step is a step of the named run.
+      const [row] = await h.db
+        .select({ runId: screenshots.runId })
+        .from(screenshots)
+        .where(eq(screenshots.id, a!.newerCapture!.checkpointId));
+      expect(row?.runId).toBe(run3.runId);
     });
 
     test("a capture in another project's run is never reported, even if it names this variation", async () => {

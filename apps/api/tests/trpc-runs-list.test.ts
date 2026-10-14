@@ -1133,4 +1133,190 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
       { items: [] },
     );
   });
+
+  describe("runs.facets", () => {
+    /** `runs.facets` for a build, as `user` (the seed's editor by default). */
+    function facets(
+      s: ReviewSeed,
+      buildId: string = s.buildId,
+      user: { jwt: string } = s.editor,
+    ) {
+      return makeClient(baseUrl, user.jwt).runs.facets.query({ buildId });
+    }
+
+    test("runs.facets lists the batch's values with pending counts", async () => {
+      // Run 1: a pending desktop chromium step, a passed phone step.
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", viewport: "1280x720" },
+          { name: "home", verdict: "passed", viewport: "375x812" },
+        ],
+      });
+      // Run 2: a new firefox step, and a webkit iPhone step that is pending
+      // too (an undecided one in a reviewable run).
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "about", verdict: "new", browser: "firefox" },
+          {
+            name: "about",
+            verdict: "unresolved",
+            browser: "webkit",
+            viewport: "390x844",
+            os: "iOS",
+            device: "iPhone 12",
+          },
+        ],
+      });
+      // Run 3: a pending step that is decided, so it is not pending.
+      const decided = await addReviewRun(h, s, {
+        lifecycle: "passed",
+        checkpoints: [
+          { name: "decided", verdict: "unresolved", browser: "firefox" },
+        ],
+      });
+      await decide(s, decided.runId, decided.shots.decided!.id);
+      // Run 4: still running (not reviewable), so its step is not pending,
+      // but its environment still counts as a value of the batch.
+      await addReviewRun(h, s, {
+        lifecycle: "running",
+        checkpoints: [
+          { name: "running", verdict: "unresolved", browser: "opera" },
+        ],
+      });
+      // Another build of the same project, and another project, do not leak in.
+      await addReviewBuild(h, s, {
+        spec: {
+          checkpoints: [
+            {
+              name: "elsewhere",
+              verdict: "unresolved",
+              browser: "edge",
+              viewport: "800x600",
+              os: "Linux",
+              device: "Pixel",
+            },
+          ],
+        },
+      });
+      await seed({
+        checkpoints: [
+          { name: "foreign", verdict: "unresolved", browser: "safari" },
+        ],
+      });
+
+      expect(await facets(s)).toEqual({
+        browser: [
+          { value: "chromium", pending: 1 },
+          { value: "firefox", pending: 1 },
+          { value: "opera", pending: 0 },
+          { value: "webkit", pending: 1 },
+        ],
+        viewport: [
+          { value: "1280x720", pending: 2 },
+          { value: "375x812", pending: 0 },
+          { value: "390x844", pending: 1 },
+        ],
+        // NULL os / device (the desktop steps) are omitted.
+        os: [{ value: "iOS", pending: 1 }],
+        device: [{ value: "iPhone 12", pending: 1 }],
+      });
+    });
+
+    test("a build with no step has no values; one with no os or device lists none", async () => {
+      const s = await seed({ checkpoints: [] });
+      expect(await facets(s)).toEqual({
+        browser: [],
+        viewport: [],
+        os: [],
+        device: [],
+      });
+
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "a", verdict: "passed" }],
+      });
+      expect(await facets(s)).toEqual({
+        browser: [{ value: "chromium", pending: 0 }],
+        viewport: [{ value: "1280x720", pending: 0 }],
+        os: [],
+        device: [],
+      });
+    });
+
+    test("a pending step counts once however many runs share the value; a sibling undiffed step makes the whole run non-pending", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved" },
+          { name: "b", verdict: "new" },
+        ],
+      });
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "c", verdict: "unresolved" }],
+      });
+      // An undiffed step blocks its run: neither of the run's steps is pending.
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "d", verdict: "unresolved" },
+          { name: "e", verdict: null },
+        ],
+      });
+      expect((await facets(s)).browser).toEqual([
+        { value: "chromium", pending: 3 },
+      ]);
+    });
+
+    test("values come back in ascending order", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "passed", browser: "webkit", viewport: "9x9" },
+          {
+            name: "b",
+            verdict: "passed",
+            browser: "chromium",
+            viewport: "1x1",
+          },
+          { name: "c", verdict: "passed", browser: "firefox", viewport: "5x5" },
+        ],
+      });
+      const res = await facets(s);
+      expect(res.browser.map((v) => v.value)).toEqual([
+        "chromium",
+        "firefox",
+        "webkit",
+      ]);
+      expect(res.viewport.map((v) => v.value)).toEqual(["1x1", "5x5", "9x9"]);
+    });
+
+    test("an admin who is not a member can read it; a guest, an outsider and another project's member cannot; an unknown build is NOT_FOUND", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      const expected = {
+        browser: [{ value: "chromium", pending: 1 }],
+        viewport: [{ value: "1280x720", pending: 1 }],
+        os: [],
+        device: [],
+      };
+      expect(await facets(s, s.buildId, s.admin)).toEqual(expected);
+      // The membership gate rejects a guest, member or not.
+      await expect(facets(s, s.buildId, s.guest)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      await expect(facets(s, s.buildId, s.outsider)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      // A member of another project is an outsider to this build.
+      const other = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      await expect(facets(s, s.buildId, other.editor)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      await expect(
+        facets(s, "00000000-0000-0000-0000-000000000000", s.admin),
+      ).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+      await expect(
+        facets(s, "00000000-0000-0000-0000-000000000000", s.editor),
+      ).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+    });
+  });
 });

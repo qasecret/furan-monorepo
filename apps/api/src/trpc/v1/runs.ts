@@ -34,7 +34,12 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
-import { announceRuns, trpcActionCtx } from "../../lib/review/actions.js";
+import {
+  announceRuns,
+  requireBuildProject,
+  resolveBuildProject,
+  trpcActionCtx,
+} from "../../lib/review/actions.js";
 import { enqueueRunDiff } from "../../lib/review/enqueue.js";
 import {
   GROUP_APPROVE_CAP,
@@ -43,6 +48,7 @@ import {
 } from "../../lib/review/groups.js";
 import {
   facetCondition,
+  facetValuesByBuild,
   pendingCountsByRun,
   pendingStepCondition,
   type StepFacets,
@@ -206,6 +212,9 @@ const listInput = z.object({
   order: z.enum(["capture", "newest"]).default("newest"),
 });
 type ListInput = z.infer<typeof listInput>;
+
+const facetsInput = z.object({ buildId: z.string().uuid() });
+type FacetsInput = z.infer<typeof facetsInput>;
 
 /**
  * The run statuses `overrideStatus` may act on (spec §3.3). Excludes
@@ -500,6 +509,29 @@ export const runsRouter = t.router({
           ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.run.id })
           : null;
       return { items, nextCursor };
+    }),
+
+  /**
+   * The environment values (browser, viewport, os, device) the batch's steps
+   * have, each with its pending steps: what the batch page's environment filter
+   * offers. Resolve-then-gate on the build's project (a bare `buildId`), like
+   * `builds.getById`.
+   */
+  facets: publicProcedure
+    .input(facetsInput)
+    .use(authed)
+    .use(
+      projectMember<FacetsInput>("read", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveBuildProject(ctx.db, input.buildId),
+        },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      // An admin skips the gate's resolver: resolve the project again here.
+      const projectId = await requireBuildProject(ctx.db, input.buildId);
+      return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
 
   getById: publicProcedure
