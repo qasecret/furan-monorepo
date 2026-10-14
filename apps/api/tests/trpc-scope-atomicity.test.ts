@@ -33,7 +33,9 @@ const d = skip ? describe.skip : describe;
  * `next()` reports a failing procedure as `{ ok: false }` instead of throwing,
  * so these probes pin the contract: a procedure that throws after writing
  * leaves nothing behind, its error reaches the caller untouched, and
- * `ctx.onCommit` effects fire only after a successful commit.
+ * `ctx.onCommit` effects fire only after a successful commit. Unauthenticated
+ * procedures run without a transaction, so their effects fire once the
+ * procedure succeeds, and never when it fails.
  */
 d("tRPC request scope atomicity", () => {
   let h: TestApp;
@@ -46,6 +48,7 @@ d("tRPC request scope atomicity", () => {
   let effects: Array<{ name: string; visibleToOtherConnection: boolean }>;
   let serverErrors: TRPCError[];
   let thrown: TRPCError | undefined;
+  let anonymousSteps: string[];
   const refusalCause = new Error("probe refusal detail");
 
   function uniqueName(): string {
@@ -94,14 +97,28 @@ d("tRPC request scope atomicity", () => {
         });
         return { name: input.name };
       }),
+    anonymousSucceed: publicProcedure.mutation(({ ctx }) => {
+      ctx.onCommit(() => {
+        anonymousSteps.push("effect");
+      });
+      anonymousSteps.push(ctx.user ? "resolved:authed" : "resolved:anonymous");
+      return { ok: true };
+    }),
+    anonymousThrow: publicProcedure.mutation(({ ctx }) => {
+      ctx.onCommit(() => {
+        anonymousSteps.push("effect");
+      });
+      anonymousSteps.push(ctx.user ? "resolved:authed" : "resolved:anonymous");
+      throw new TRPCError({ code: "CONFLICT", message: "probe_refused" });
+    }),
   });
 
-  function makeClient() {
+  function makeClient({ anonymous = false } = {}) {
     return createTRPCClient<typeof probeRouter>({
       links: [
         httpBatchLink({
           url: `${baseUrl}/trpc/probe`,
-          headers: { authorization: `Bearer ${jwt}` },
+          headers: anonymous ? {} : { authorization: `Bearer ${jwt}` },
         }),
       ],
     });
@@ -154,6 +171,7 @@ d("tRPC request scope atomicity", () => {
     effects = [];
     serverErrors = [];
     thrown = undefined;
+    anonymousSteps = [];
   });
 
   afterAll(async () => {
@@ -211,5 +229,21 @@ d("tRPC request scope atomicity", () => {
     ).rejects.toThrow("probe_refused");
 
     expect(effects).toEqual([]);
+  });
+
+  test("an unauthenticated procedure runs its onCommit effects after it succeeds", async () => {
+    await expect(
+      makeClient({ anonymous: true }).anonymousSucceed.mutate(),
+    ).resolves.toEqual({ ok: true });
+
+    expect(anonymousSteps).toEqual(["resolved:anonymous", "effect"]);
+  });
+
+  test("a failing unauthenticated procedure's onCommit effects never run", async () => {
+    await expect(
+      makeClient({ anonymous: true }).anonymousThrow.mutate(),
+    ).rejects.toThrow("probe_refused");
+
+    expect(anonymousSteps).toEqual(["resolved:anonymous"]);
   });
 });
