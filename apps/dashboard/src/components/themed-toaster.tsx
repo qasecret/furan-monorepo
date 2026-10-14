@@ -11,10 +11,20 @@ import { Toaster } from "sonner";
 // `--overlay` / `--fg` / `--edge` are raw per-theme vars (tokens.css), so the
 // surface follows the theme. `--border-radius` is the literal `10px` because
 // `--radius-overlay` lives in `@theme inline` and may not exist as a runtime var.
+//
+// The status toasts (`richColors`) keep sonner's tinted surface and border, but
+// not its text colour: in the light theme that sits at 3.1:1 (warning) to 4.4:1
+// against its own tint, under AA for 14px text. The text takes the status AA
+// text shades instead (tokens.css; they are per-theme and pinned there), which
+// read at 5.8:1 or better on those tints in light and stay AA in dark.
 const TOASTER_STYLE = {
   "--normal-bg": "var(--overlay)",
   "--normal-text": "var(--fg)",
   "--normal-border": "var(--edge)",
+  "--success-text": "var(--status-passed-text)",
+  "--error-text": "var(--status-failed-text)",
+  "--warning-text": "var(--status-unresolved-text)",
+  "--info-text": "var(--status-running-text)",
   "--border-radius": "10px",
 } as React.CSSProperties;
 
@@ -24,7 +34,8 @@ const TOASTER_STYLE = {
  * theme resolves; the default theme is `system`, i.e. the OS scheme. Normal
  * toasts take the overlay tokens
  * so they match menus and dialogs in both themes; `richColors` success /
- * error / warning / info toasts deliberately keep sonner's status colours.
+ * error / warning / info toasts deliberately keep sonner's status tints, with
+ * their text on the status AA text tokens (see TOASTER_STYLE).
  * The toast elevation and its keyboard focus ring are unlayered rules in
  * app/globals.css: an inline box-shadow here would hide the focus ring.
  */

@@ -39,7 +39,8 @@ function topLevelRules(source: string): Map<string, string> {
     const c = text[i];
     if (c === "{") {
       if (depth === 0) {
-        selector = text.slice(start, i).trim();
+        // A selector prettier wrapped over lines reads as one.
+        selector = text.slice(start, i).trim().replace(/\s+/g, " ");
         start = i + 1;
       }
       depth++;
@@ -55,6 +56,13 @@ function topLevelRules(source: string): Map<string, string> {
   }
   return rules;
 }
+
+/**
+ * The action button of a toast. The `[data-sonner-toaster]` ancestor is what
+ * makes the rule outrank sonner's own (equal specificity, loaded later).
+ */
+const ACTION_BUTTON =
+  '[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button]';
 
 beforeEach(() => {
   resolvedTheme = undefined;
@@ -115,6 +123,19 @@ describe("ThemedToaster", () => {
     expect(toaster.style.getPropertyValue("--border-radius")).toBe("10px");
   });
 
+  // Sonner's own light-theme text on its status tints is 3.1:1 to 4.4:1, under
+  // AA (the visual sweep's contrast gate caught the success one). The status
+  // toasts keep its tints and take the status AA text tokens for their text.
+  test("status toasts take their text from the status AA text tokens", async () => {
+    resolvedTheme = "light";
+    const { toaster } = await showToast("status toast");
+    const text = (name: string) => toaster.style.getPropertyValue(name);
+    expect(text("--success-text")).toBe("var(--status-passed-text)");
+    expect(text("--error-text")).toBe("var(--status-failed-text)");
+    expect(text("--warning-text")).toBe("var(--status-unresolved-text)");
+    expect(text("--info-text")).toBe("var(--status-running-text)");
+  });
+
   // An inline box-shadow would beat sonner's own `:focus-visible` ring and
   // leave a keyboard-focused toast with no focus indicator; the elevation and
   // the ring live in globals.css instead (next test).
@@ -133,6 +154,25 @@ describe("ThemedToaster", () => {
     expect(
       rules.get('[data-sonner-toast][data-styled="true"]:focus-visible'),
     ).toBe("box-shadow: var(--elevation-overlay), 0 0 0 2px var(--ring);");
+  });
+
+  // The "Undo" a review toast carries (`toast.success(label, { action })`) is
+  // sonner's `[data-button]`. Sonner paints it in its own inverted
+  // `--normal-text` on `--normal-bg`; it takes the overlay-highlight token
+  // instead, so it matches menus in both themes and reads at AA on the toast.
+  // Unlayered, like the rules above, or sonner's sheet wins.
+  test("globals.css themes the toast action button from tokens, unlayered", () => {
+    const rules = topLevelRules(globalsCss);
+    expect(rules.get(ACTION_BUTTON)).toBe(
+      "background: var(--overlay-hover); color: var(--fg); border-radius: 6px;",
+    );
+  });
+
+  test("globals.css gives the toast action button a visible keyboard focus ring", () => {
+    const rules = topLevelRules(globalsCss);
+    expect(rules.get(`${ACTION_BUTTON}:focus-visible`)).toBe(
+      "outline: 2px solid var(--ring); outline-offset: 2px;",
+    );
   });
 
   test("keeps richColors and the bottom-right position", async () => {

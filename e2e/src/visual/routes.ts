@@ -1,5 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 
+import type { ApiClient } from "../clients/api-client.js";
+
 import type { VisualFixture } from "./fixture.js";
 
 /**
@@ -123,6 +125,22 @@ export interface VisualState {
    * un-clipping re-lays the page out, so either would undo a hover `open` made.
    */
   hold?: (p: Page) => Promise<void>;
+  /**
+   * For a state that CHANGES the fixture: puts it back and waits until it is
+   * back. The sweep runs it after the shot whether or not the shot (or `open`)
+   * succeeded, and a failure of its own fails the state. A state that only
+   * looks, as every other does, has none. The fixture is shared by every state
+   * and both theme passes, so a state that leaves it changed corrupts the rest.
+   */
+  cleanup?: (p: Page, env: VisualStateEnv) => Promise<void>;
+}
+
+/** What a state's `cleanup` may use to read and restore the fixture. */
+export interface VisualStateEnv {
+  fixture: VisualFixture;
+  api: ApiClient;
+  /** The bootstrap admin's JWT: it may revert any decision. */
+  admin: string;
 }
 
 /**
@@ -142,6 +160,81 @@ async function hoverFirstStep(p: Page): Promise<void> {
   // test id, not by a neighbouring button, so the buttons in it can change.
   const toolbar = card.locator('[data-testid^="step-toolbar-"]');
   await expect(toolbar).toHaveCSS("opacity", "1");
+}
+
+/**
+ * Go to the step called `name` of the run in the viewer, with the header's
+ * "next step" arrow, starting from wherever the viewer opened (the run's first
+ * step). The header shows the run's name and a "2 / 3" count, not the step's
+ * name; the Info panel's "Step" row ("2/3 cart") does, so that is what is read.
+ * Found by name, never by id: step ids are different on every stack.
+ */
+async function openStep(p: Page, name: string): Promise<void> {
+  const stepRow = p.getByTestId("test-info-sidebar").getByText(/^\d+\/\d+ \S/);
+  for (let hops = 0; hops < 8; hops++) {
+    const current = (await stepRow.innerText()).trim();
+    if (current.replace(/^\d+\/\d+ /, "") === name) return;
+    await p.getByTestId("contextual-header-next").click();
+    await expect(stepRow).not.toHaveText(current);
+  }
+  throw new Error(`visual: no step "${name}" within 8 steps of the first`);
+}
+
+/** The toast a review decision raised, which carries the Undo action. */
+const decisionToast = (p: Page, label: string) =>
+  p.locator("[data-sonner-toast]").filter({ hasText: label });
+
+/** A multi-step run's steps as the reviewer reads them. */
+async function multiRunSteps({ api, admin, fixture }: VisualStateEnv): Promise<
+  Array<{
+    name: string;
+    state: string | null;
+    decision: { actionId: string } | null;
+  }>
+> {
+  const { items } = await api.trpcQuery<{
+    items: Array<{
+      name: string;
+      state: string | null;
+      decision: { actionId: string } | null;
+    }>;
+  }>(admin, "runs.listCheckpoints", { runId: fixture.multiRunId });
+  return items;
+}
+
+/**
+ * Put the multi-step run's `profile` step back to pending `new`, and wait
+ * until the run is whole again. Takes back whatever decision `profile` holds
+ * (the fixture never has one: it is the pending step), through the API with
+ * the decision's own action id, so it works whatever the page is doing. Undoing
+ * an approval queues a re-diff of the run (it reads `running` for a moment), so
+ * this waits, up to 60s, for every step to have a verdict and `profile` to read
+ * `new` again. Throws if it does not: a fixture left changed would corrupt
+ * every shot after it.
+ */
+async function restoreProfile(_p: Page, env: VisualStateEnv): Promise<void> {
+  const profile = (await multiRunSteps(env)).find((c) => c.name === "profile");
+  if (profile?.decision) {
+    await env.api.trpcMutate(env.admin, "review.revert", {
+      actionId: profile.decision.actionId,
+    });
+  }
+  await expect
+    .poll(
+      async () => {
+        const steps = await multiRunSteps(env);
+        return (
+          steps.every((c) => c.state !== null) &&
+          steps.find((c) => c.name === "profile")?.state === "new"
+        );
+      },
+      {
+        message: "the multi-step run's profile step did not come back to new",
+        intervals: [500, 1_000, 2_000],
+        timeout: 60_000,
+      },
+    )
+    .toBe(true);
 }
 
 export const STATES: ReadonlyArray<VisualState> = [
@@ -185,5 +278,62 @@ export const STATES: ReadonlyArray<VisualState> = [
     path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
     open: hoverFirstStep,
     hold: hoverFirstStep,
+  },
+  // ---- the review flow --------------------------------------------------
+  // Added at the END, in this order: the first two only look, the last one
+  // changes the fixture (and puts it back, see `cleanup`), so it must run last.
+  {
+    // The multi-step run opens on `home`, an approved step: the header shows
+    // who decided it, and when, with Undo.
+    name: "state-decided-step",
+    path: (f) => `/projects/${f.projectId}/runs/${f.multiRunId}`,
+    open: async (p) => {
+      await openStep(p, "home");
+      await expect(p.getByTestId("decision-chip")).toBeVisible();
+    },
+  },
+  {
+    // The multi-step build's "Approve pending" question, open on its counts.
+    // Never confirmed.
+    name: "state-approve-pending",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: async (p) => {
+      const approveAll = p.getByTestId("batch-approve-all");
+      await expect(approveAll).toBeVisible();
+      await expect(approveAll).not.toHaveAttribute("aria-disabled", "true");
+      await approveAll.click();
+      const dialog = p.getByTestId("approve-pending-dialog");
+      await expect(dialog).toBeVisible();
+      // Open on the counts, not on "Checking what is pending…".
+      await expect(
+        dialog.getByText(/^Approve \d+ pending steps?\?$/),
+      ).toBeVisible();
+      await expect(dialog.getByTestId("approve-pending-confirm")).toBeEnabled();
+    },
+  },
+  {
+    // Approve the pending `profile` step and shoot while the toast, with its
+    // Undo action, is up. The decision is taken back in `cleanup`, so the next
+    // state, and the other theme's pass, find the fixture as it was.
+    name: "state-undo-toast",
+    path: (f) => `/projects/${f.projectId}/runs/${f.multiRunId}`,
+    open: async (p) => {
+      await openStep(p, "profile");
+      const approve = p.getByTestId("approve-checkpoint-button");
+      await expect(approve).toBeEnabled();
+      await approve.click();
+      await expect(
+        decisionToast(p, "Approved 'profile'").getByRole("button", {
+          name: "Undo",
+        }),
+      ).toBeVisible();
+    },
+    // The toast goes after 10s, which a slow settle and unclip could use up;
+    // a pointer on it holds it open (the sweep parked the pointer in a corner,
+    // which let it go).
+    hold: async (p) => {
+      await decisionToast(p, "Approved 'profile'").hover();
+    },
+    cleanup: restoreProfile,
   },
 ];

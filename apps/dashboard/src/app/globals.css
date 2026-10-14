@@ -58,6 +58,27 @@ body {
     0 0 0 2px var(--ring);
 }
 
+/* The action a toast carries ("Undo" on a review decision) is sonner's
+ * [data-button], painted in sonner's inverted normal-text on normal-bg. It takes
+ * the overlay highlight instead, like a highlighted menu item, so it matches in
+ * both themes and reads at AA on the toast. Same mechanism as above: unlayered.
+ * Unlike the rules above, sonner's own rule for this one has no :where(), and
+ * its stylesheet is injected after this one, so an equally specific selector
+ * LOSES (seen: the radius stayed 4px). The [data-sonner-toaster] ancestor makes
+ * these more specific; tests/themed-toaster.test.tsx pins the selectors, and
+ * e2e/tests/ui/review-flow.spec.ts checks the computed result in a browser. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  background: var(--overlay-hover);
+  color: var(--fg);
+  border-radius: 6px;
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 /* Honor system motion preference. Resets animation + transition durations
  * to near-zero so users who request reduced motion don't get fade-ins,
  * slides, smooth scrolls, or Radix dialog/tooltip enter/exit animations.

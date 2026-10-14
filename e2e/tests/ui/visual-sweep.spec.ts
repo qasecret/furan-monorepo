@@ -574,8 +574,32 @@ test.describe.serial("visual sweep @visual", () => {
           const p = s.as === "editor" ? editorPage : page;
           const v = await visit(p, resolvePath(s.path, fixture));
           await settle(p);
-          await s.open(p);
-          await shoot(p, v, theme, s.name, testInfo, s.hold);
+          // A state that changes the fixture puts it back whatever happens,
+          // or every state after it (and the other theme) shoots a changed one.
+          let failed = false;
+          try {
+            await s.open(p);
+            await shoot(p, v, theme, s.name, testInfo, s.hold);
+          } catch (err) {
+            failed = true;
+            throw err;
+          } finally {
+            try {
+              await s.cleanup?.(p, {
+                fixture,
+                api,
+                admin: loadSeed().bootstrapAdminJwt,
+              });
+            } catch (err) {
+              // Don't hide why the state failed; but do say the fixture may
+              // be left changed.
+              if (!failed) throw err;
+              testInfo.annotations.push({
+                type: "cleanup-failed",
+                description: String(err),
+              });
+            }
+          }
         });
       }
     });
