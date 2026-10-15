@@ -12,6 +12,7 @@ import type { Command, KeyBinding, Platform } from "./types";
 export interface BindingOptions {
   focusWithin?: string;
   repeat?: boolean;
+  allowInText?: boolean;
   allowInDialog?: string;
   passesUndo?: boolean;
 }
@@ -22,22 +23,27 @@ export function bindingKey(b: KeyBinding): string {
 }
 
 /**
- * The options for one binding of `cmd`: a per-key `focusWithin` / `repeat`
- * overrides the command's own; the rest come from the command.
+ * The options for one binding of `cmd`: a per-key `focusWithin` / `repeat` /
+ * `allowInText` overrides the command's own; the rest come from the command.
  */
 export function bindingOptions(
-  cmd: Pick<Command, "focusWithin" | "repeat" | "allowInDialog" | "passesUndo">,
+  cmd: Pick<
+    Command,
+    "focusWithin" | "repeat" | "allowInText" | "allowInDialog" | "passesUndo"
+  >,
   b: KeyBinding,
 ): BindingOptions {
   const own: Exclude<KeyBinding, string> | undefined =
     typeof b === "string" ? undefined : b;
   const focusWithin = own?.focusWithin ?? cmd.focusWithin;
   const repeat = own?.repeat ?? cmd.repeat;
+  const allowInText = own?.allowInText ?? cmd.allowInText;
   const { allowInDialog, passesUndo } = cmd;
   // Only the options that are set, so a spread never adds `undefined`s.
   return {
     ...(focusWithin !== undefined ? { focusWithin } : {}),
     ...(repeat !== undefined ? { repeat } : {}),
+    ...(allowInText !== undefined ? { allowInText } : {}),
     ...(allowInDialog !== undefined ? { allowInDialog } : {}),
     ...(passesUndo !== undefined ? { passesUndo } : {}),
   };

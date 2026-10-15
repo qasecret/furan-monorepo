@@ -15,6 +15,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The global commands' ⌘Z: no review session in these probes.
+vi.mock("@/lib/review/use-review-mutations", () => ({
+  useReviewMutations: () => ({ undo: vi.fn() }),
+}));
 // The viewer's bindings, as it hands them to tinykeys (which still runs).
 vi.mock("tinykeys", async (importOriginal) => {
   const actual = await importOriginal<typeof import("tinykeys")>();
@@ -29,79 +33,16 @@ import {
 } from "@/components/diff-viewer/region-clipboard";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
-import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
+import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { ShortcutsDialog } from "@/components/triage/shortcuts-dialog";
+import { CommandDispatcher } from "@/lib/commands/dispatcher";
+import { GlobalCommands } from "@/lib/commands/global-commands";
+import {
+  CommandRoleProvider,
+  useCommandRegistry,
+} from "@/lib/commands/registry";
 
 afterEach(cleanup);
-
-function fireKey(key: string) {
-  document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-}
-
-describe("GlobalShortcuts", () => {
-  beforeEach(() => {
-    pushMock.mockReset();
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("opens shortcuts dialog on ?", () => {
-    render(<GlobalShortcuts />);
-    expect(screen.queryByText("Keyboard shortcuts")).toBeNull();
-    act(() => fireKey("?"));
-    expect(screen.getByText("Keyboard shortcuts")).toBeTruthy();
-  });
-
-  it("navigates to /inbox on g i sequence", () => {
-    render(<GlobalShortcuts />);
-    act(() => {
-      fireKey("g");
-      fireKey("i");
-    });
-    expect(pushMock).toHaveBeenCalledWith("/inbox");
-  });
-
-  it("navigates to /projects on g p sequence", () => {
-    render(<GlobalShortcuts />);
-    act(() => {
-      fireKey("g");
-      fireKey("p");
-    });
-    expect(pushMock).toHaveBeenCalledWith("/projects");
-  });
-
-  it("clears prefix after the sequence window", () => {
-    render(<GlobalShortcuts />);
-    act(() => fireKey("g"));
-    act(() => {
-      vi.advanceTimersByTime(1100);
-    });
-    act(() => fireKey("i"));
-    expect(pushMock).not.toHaveBeenCalled();
-  });
-
-  it("ignores g i typed into a form field", () => {
-    render(
-      <>
-        <input data-testid="probe" />
-        <GlobalShortcuts />
-      </>,
-    );
-    const input = screen.getByTestId("probe");
-    input.focus();
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "g", bubbles: true }),
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "i", bubbles: true }),
-      );
-    });
-    expect(pushMock).not.toHaveBeenCalled();
-  });
-});
 
 /** A key the dialog lists, and the part of it (a heading) that says where. */
 interface Listed {
@@ -234,21 +175,27 @@ function inTheViewer(): Probe {
   };
 }
 
-/** Any page: the layout's global keys and the command palette. */
+/**
+ * Any page: the layout's global commands through the one dispatcher, and the
+ * command palette. An admin, who has every global key (G P is admin-only).
+ */
 function everywhere(): Probe {
   usePaletteStore.setState({ open: false });
+  useShortcutsSheet.setState({ open: false });
+  useCommandRegistry.setState({ entries: [], role: "guest" });
   pushMock.mockReset();
   render(
-    <>
-      <GlobalShortcuts />
-      <CommandPalette userRole="editor" />
-    </>,
+    <CommandRoleProvider role="admin">
+      <GlobalCommands />
+      <CommandDispatcher />
+      <CommandPalette userRole="admin" />
+    </CommandRoleProvider>,
   );
   return {
     changed: () =>
       pushMock.mock.calls.length > 0 ||
       usePaletteStore.getState().open ||
-      screen.queryByRole("dialog", { name: "Keyboard shortcuts" }) !== null,
+      useShortcutsSheet.getState().open,
   };
 }
 

@@ -90,10 +90,12 @@ export function isTypingInInput(): boolean {
  * 3. focus is in a text field, a select or an editable region, or (for a
  *    character key) on a combobox, which types ahead. Typing "a" in the
  *    PatternEditor must not approve the run, "/" must not open the palette
- *    mid-regex. The one exception is a field inside the dialog
- *    `allowInDialog` names, and only for a binding that cannot type or edit
- *    (`isNonTypingBinding`: ⌘ / Ctrl / Alt chords, Esc): ⌘K closes the
- *    palette from its own search box, while "r" typed there stays typing;
+ *    mid-regex. Two exceptions, both only for a binding that cannot type or
+ *    edit (`isNonTypingBinding`: ⌘ / Ctrl / Alt chords, Esc): a field inside
+ *    the dialog `allowInDialog` names (⌘K closes the palette from its own
+ *    search box, while "r" typed there stays typing), and any page field
+ *    when the binding sets `allowInText` (⌘K opens the palette from the
+ *    Batches search box; ⌘Z does not set it, so it stays the field's undo);
  * 4. focus is inside a menu, listbox or dialog, unless it is the dialog
  *    `allowInDialog` names, or (`passesUndo`) a `[data-passes-undo]` one;
  * 5. the key is auto-repeating and the binding does not repeat;
@@ -128,9 +130,10 @@ export function keyIsOwnedElsewhere(
     opts.allowInDialog !== undefined &&
     owner.matches(opts.allowInDialog);
 
-  // The dialog a command names lets only a non-typing binding past a text
-  // field inside it: anything else typed there is typing.
-  const waived = inAllowedDialog && isNonTypingBinding(key);
+  // The dialog a command names, or `allowInText`, lets only a non-typing
+  // binding past a text field: anything else typed there is typing.
+  const waived =
+    (inAllowedDialog || opts.allowInText === true) && isNonTypingBinding(key);
   if (!waived) {
     if (isTypingInInput()) return true; // 3
     if (focus?.matches(TYPEAHEAD_CONTROLS) && isCharacterBinding(key)) {

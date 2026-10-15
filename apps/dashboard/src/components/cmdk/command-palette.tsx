@@ -47,12 +47,13 @@ interface Props {
 /**
  * Global cmdk command palette.
  *
- * Open state lives in `usePaletteStore` (zustand) so the diff viewer's
- * tinykeys `/` handler can call `setOpen(true)` from outside React.
+ * Open state lives in `usePaletteStore` (zustand) so commands can call
+ * `setOpen(true)` from outside React.
  *
- * Cmd+K / Ctrl+K is bound here at window level; we deliberately do NOT
- * delegate to tinykeys to avoid coupling to the diff-viewer-only
- * shortcut binding lifecycle.
+ * It has no key listener of its own: ⌘K / Ctrl+K is the global
+ * `palette.open` command, run by the layout's one key dispatcher, which
+ * never opens it over another dialog. `data-command-palette` marks its
+ * dialog, the one where ⌘K still fires (to close it).
  *
  * Projects are fetched lazily on open via the dashboard's `/projects`
  * REST endpoint (NOT tRPC) so the palette stays usable on Server-
@@ -62,20 +63,8 @@ export function CommandPalette({ userRole }: Props) {
   const router = useRouter();
   const open = usePaletteStore((s) => s.open);
   const setOpen = usePaletteStore((s) => s.setOpen);
-  const toggle = usePaletteStore((s) => s.toggle);
   const [projects, setProjects] = useState<Project[]>([]);
   const [recents, setRecents] = useState<RecentProject[]>([]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        toggle();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggle]);
 
   useEffect(() => {
     if (!open) return;
@@ -128,12 +117,19 @@ export function CommandPalette({ userRole }: Props) {
       <DialogContent
         className="rounded-overlay bg-overlay shadow-overlay p-0 overflow-hidden max-w-xl"
         data-testid="command-palette"
+        data-command-palette=""
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Search projects, settings, and account pages.
         </DialogDescription>
-        <Command label="Command palette" className="bg-overlay">
+        {/* No vim keys: cmdk's Ctrl+K ("previous item") would take the key
+            off a Mac, and ⌘K / Ctrl+K must close the palette. */}
+        <Command
+          label="Command palette"
+          className="bg-overlay"
+          vimBindings={false}
+        >
           <Command.Input
             placeholder="Jump to…"
             className="w-full border-b border-edge px-4 py-3 text-sm outline-none bg-transparent"

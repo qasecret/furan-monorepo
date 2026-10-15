@@ -22,7 +22,7 @@ import {
 } from "./keys";
 import { usePlatform } from "./platform";
 import { useSingleKeyShortcuts } from "./prefs";
-import type { Command, CommandCtx, CommandScope } from "./types";
+import type { Command, CommandCtx, CommandScope, KeyBinding } from "./types";
 
 import type { ViewerRole } from "@/lib/roles";
 
@@ -236,11 +236,12 @@ export function resolveCommands(): ResolvedCommand[] {
 }
 
 /**
- * Which command each key runs. On a key shared across scopes the most
+ * Which command each key runs, by `keyIdentity` ("A" and "a" are one key,
+ * "a", as tinykeys matches them). On a key shared across scopes the most
  * specific scope wins (`viewer` > `batch` > `batches` > `global`),
- * whatever the order of `cmds`. The map is only as fresh as `cmds`: at a
- * key press, build it from a fresh `resolveCommands()`, never from a list
- * memoised at render time.
+ * whatever the order of `cmds` or how each scope spelled the key. The map is
+ * only as fresh as `cmds`: at a key press, build it from a fresh
+ * `resolveCommands()`, never from a list memoised at render time.
  */
 export function resolveKeyMap(
   cmds: ResolvedCommand[],
@@ -248,7 +249,7 @@ export function resolveKeyMap(
   const map = new Map<string, ResolvedCommand>();
   for (const resolved of cmds) {
     for (const b of resolved.command.keys ?? []) {
-      const key = bindingKey(b);
+      const key = keyIdentity(bindingKey(b));
       const held = map.get(key);
       if (!held || SCOPE_RANK[resolved.scope] > SCOPE_RANK[held.scope]) {
         map.set(key, resolved);
@@ -256,6 +257,17 @@ export function resolveKeyMap(
     }
   }
   return map;
+}
+
+/**
+ * The binding of `command` that `key` (a `keyIdentity`, as `resolveKeyMap`
+ * gives it) names, for its options (`bindingOptions`).
+ */
+export function findBinding(
+  command: Command,
+  key: string,
+): KeyBinding | undefined {
+  return command.keys?.find((b) => keyIdentity(bindingKey(b)) === key);
 }
 
 /**

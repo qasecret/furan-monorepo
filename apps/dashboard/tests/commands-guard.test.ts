@@ -270,6 +270,62 @@ describe("keyIsOwnedElsewhere", () => {
     expect(owned("j")).toBe(false);
   });
 
+  it("allowInText never lets a letter fire from a text field", () => {
+    page(
+      `<input id="search" /><textarea id="reason"></textarea>` +
+        `<div id="rich" contenteditable="true"></div>` +
+        `<button id="sel" role="combobox">All</button>` +
+        `<div role="dialog"><input id="dlg" /></div>`,
+    );
+    const inText: Opts = { allowInText: true };
+
+    for (const id of ["#search", "#reason", "#rich"]) {
+      focus(id);
+      // ⌘K (and any ⌘ / Ctrl / Alt chord, or Esc) may fire from the field…
+      for (const key of ["$mod+k", "Control+k", "Alt+x", "Escape"]) {
+        expect(owned(key, inText), `${id} ${key}`).toBe(false);
+      }
+      // …but nothing that types or edits, whatever the binding asks.
+      for (const key of [
+        "a",
+        "r",
+        "/",
+        "?",
+        "Shift+?",
+        "g i",
+        "Backspace",
+        "Delete",
+        "Enter",
+        "Space",
+        "ArrowDown",
+        "Home",
+      ]) {
+        expect(owned(key, inText), `${id} ${key}`).toBe(true);
+      }
+      // Without the option, a field owns ⌘K as well: ⌘Z stays text undo.
+      expect(owned("$mod+k"), id).toBe(true);
+      expect(owned("$mod+z"), id).toBe(true);
+    }
+
+    // A combobox still types ahead on letters.
+    focus("#sel");
+    expect(owned("j", inText)).toBe(true);
+
+    // It is no way past a dialog: rule 4 still owns the key.
+    focus("#dlg");
+    expect(owned("$mod+k", inText)).toBe(true);
+
+    // A per-key option overrides the command's own.
+    const palette: Pick<Command, "allowInText"> = { allowInText: true };
+    expect(bindingOptions(palette, "$mod+k")).toEqual({ allowInText: true });
+    expect(
+      bindingOptions(palette, { key: "$mod+k", allowInText: false }),
+    ).toEqual({ allowInText: false });
+    expect(bindingOptions({}, { key: "$mod+k", allowInText: true })).toEqual({
+      allowInText: true,
+    });
+  });
+
   it("repeat is ignored unless the command allows it", () => {
     expect(owned("a", {}, ON, { repeat: true })).toBe(true);
     expect(owned("a", { repeat: false }, ON, { repeat: true })).toBe(true);

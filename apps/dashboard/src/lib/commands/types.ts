@@ -26,7 +26,13 @@ export type CommandGroup =
  * command bind `j` anywhere and `ArrowDown` only inside a list, on repeat.
  */
 export type KeyBinding =
-  string | { key: string; focusWithin?: string; repeat?: boolean };
+  | string
+  | {
+      key: string;
+      focusWithin?: string;
+      repeat?: boolean;
+      allowInText?: boolean;
+    };
 
 /** Which key glyphs to show: ⌘ ⇧ on macOS, Ctrl Shift elsewhere. */
 export type Platform = "mac" | "other";
@@ -67,6 +73,14 @@ export interface Command<C extends CommandCtx = CommandCtx> {
    * chords, Esc: `isNonTypingBinding`); anything else typed there stays typing.
    */
   allowInDialog?: string;
+  /**
+   * Fires while a page text field has focus (guard rule 3), as ⌘K does from
+   * the Batches search box. Only for a binding that cannot type or edit text
+   * (modifier chords, Esc: `isNonTypingBinding`); a letter stays typing. It
+   * is no way past a dialog or menu (rule 4). ⌘Z does not set it: in a field
+   * it is the field's own undo.
+   */
+  allowInText?: boolean;
   /** Selector: the key acts only while focus is inside it (list arrows, Home/End). */
   focusWithin?: string;
   /** Fires on auto-repeat (zoom, the list cursor). */

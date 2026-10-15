@@ -33,8 +33,8 @@ interface ShortcutGroup {
 
 /**
  * Exactly the keys that are bound, by where they work: the viewer's
- * (`useDiffViewerShortcuts`) and the ones on every page (`GlobalShortcuts`,
- * the command palette's ⌘K). A second key for the same thing (X for R, = for
+ * (`useDiffViewerShortcuts`) and the ones on every page (`GlobalCommands`,
+ * ⌘K included). A second key for the same thing (X for R, = for
  * +, Backspace for Delete) is not listed again. `/` is, though it is the
  * viewer's second way into the palette: this list used to teach it as "Focus
  * filter bar", so what it really does is shown. tests/global-shortcuts.test.tsx

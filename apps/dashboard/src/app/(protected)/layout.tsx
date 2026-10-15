@@ -7,9 +7,11 @@ import { CurrentProjectProvider } from "./_components/current-project-provider";
 import { Providers } from "@/app/providers";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { ThemedToaster } from "@/components/themed-toaster";
-import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
 import { apiGet } from "@/lib/api-client";
 import { requireJwt } from "@/lib/auth";
+import { CommandDispatcher } from "@/lib/commands/dispatcher";
+import { GlobalCommands } from "@/lib/commands/global-commands";
+import { CommandRoleProvider } from "@/lib/commands/registry";
 import { ReviewAnnouncer } from "@/lib/review/review-announcer";
 import type { ViewerRole } from "@/lib/roles";
 
@@ -29,7 +31,10 @@ interface ProjectApiItem {
 
 /**
  * Mounts the AppShell + cmdk palette + themed Toaster once at the
- * protected-layout level so they're available on every authed page.
+ * protected-layout level so they're available on every authed page, with
+ * the keyboard: the viewer's role for every command (`CommandRoleProvider`),
+ * the commands of every page (`GlobalCommands`) and the one key listener
+ * (`CommandDispatcher`).
  *
  * The `/users/me` lookup is fetched server-side and degrades to a "guest"
  * shape on miss so a transient auth-introspection failure can't broaden
@@ -73,24 +78,27 @@ export default async function ProtectedLayout({
 
   return (
     <Providers>
-      <CurrentProjectProvider
-        initialProjects={projects}
-        initialDefaultProjectId={me.data?.defaultProjectId ?? null}
-      >
-        <AppShell
-          userRole={userRole}
-          userEmail={userEmail}
-          userInitial={userInitial}
+      <CommandRoleProvider role={userRole}>
+        <CurrentProjectProvider
+          initialProjects={projects}
+          initialDefaultProjectId={me.data?.defaultProjectId ?? null}
         >
-          {children}
-        </AppShell>
-        <CommandPalette userRole={userRole} />
-        <GlobalShortcuts />
-        <ThemedToaster />
-        {/* The review loop's live region: here, because the loop's own moves
-            replace the page it speaks from. */}
-        <ReviewAnnouncer />
-      </CurrentProjectProvider>
+          <AppShell
+            userRole={userRole}
+            userEmail={userEmail}
+            userInitial={userInitial}
+          >
+            {children}
+          </AppShell>
+          <CommandPalette userRole={userRole} />
+          <GlobalCommands />
+          <CommandDispatcher />
+          <ThemedToaster />
+          {/* The review loop's live region: here, because the loop's own
+              moves replace the page it speaks from. */}
+          <ReviewAnnouncer />
+        </CurrentProjectProvider>
+      </CommandRoleProvider>
     </Providers>
   );
 }
