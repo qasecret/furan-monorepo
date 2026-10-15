@@ -489,12 +489,14 @@ describe("useDiffViewerShortcuts", () => {
   });
 
   it("Ctrl+Shift+Z (redo) does not invoke the review undo", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     press("Z", { ctrlKey: true, shiftKey: true });
     expect(undoMock).not.toHaveBeenCalled();
   });
 
   it("Ctrl+Z ignores auto-repeat and leaves the event alone", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     const ev = press("z", { ctrlKey: true, repeat: true });
     expect(undoMock).not.toHaveBeenCalled();
@@ -693,6 +695,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   });
 
   it("Ctrl+Z stays with a menu opened inside a dialog that lets it through", () => {
+    haveSomethingToUndo();
     mountHook();
     focusInto(
       `<div role="dialog" data-passes-undo=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,

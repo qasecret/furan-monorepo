@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { buildDisplayName, matchesBatchSearch } from "@/lib/build-display-name";
+import { batchHref } from "@/lib/review-context";
 import { trpc } from "@/lib/trpc";
 
 /** The fewest characters (spaces trimmed) that start a search. */
@@ -17,6 +18,14 @@ export const SEARCH_LIMIT = 8;
  * filters what it loaded in the browser, and so does the palette.
  */
 const BATCH_WINDOW = 100;
+/**
+ * How long the batch list stays fresh. It does not depend on what is typed,
+ * so it is fetched once and filtered as the typing goes on; the app's
+ * default (stale at once) would fetch it again at every pause.
+ */
+const BATCH_STALE_MS = 30_000;
+/** The most `variations.list` takes in `search`; a longer text is cut to it. */
+const TEST_SEARCH_MAX = 120;
 
 /** A batch the search found. */
 export interface BatchHit {
@@ -100,12 +109,18 @@ export function usePaletteSearch(
   // Asked for what is typed now, once it has settled.
   const live = project !== null && settled === query;
 
+  // The batch list is the same for any text: it is asked for as soon as a
+  // search can start, not at each pause, and kept fresh for a while.
   const builds = trpc.builds.list.useQuery(
     { projectId: projectId ?? "", limit: BATCH_WINDOW },
-    { enabled: live, retry: false },
+    { enabled: project !== null, retry: false, staleTime: BATCH_STALE_MS },
   );
   const variations = trpc.variations.list.useQuery(
-    { projectId: projectId ?? "", search: query, limit: SEARCH_LIMIT },
+    {
+      projectId: projectId ?? "",
+      search: query.slice(0, TEST_SEARCH_MAX),
+      limit: SEARCH_LIMIT,
+    },
     { enabled: live, retry: false },
   );
 
@@ -121,7 +136,7 @@ export function usePaletteSearch(
         name: buildDisplayName(b),
         branch: b.branchName,
         pending: b.pendingCheckpoints,
-        href: `/projects/${project}/builds/${b.id}`,
+        href: batchHref(project, b.id),
       }));
   }, [live, project, buildRows, query]);
 

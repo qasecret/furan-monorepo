@@ -280,6 +280,9 @@ describe("usePaletteSearch", () => {
     await advance(149);
     expect(asked()).toEqual([]);
     expect(result.current.pending).toBe(true);
+    // The batch list does not depend on the text: it is fetched once, from
+    // the second character, not once per pause.
+    expect(callsTo(backend, "builds.list")).toHaveLength(1);
     rerender({ projectId: "p1", text: "car" });
     await advance(149);
     expect(asked()).toEqual([]);
@@ -385,6 +388,50 @@ describe("usePaletteSearch", () => {
     await advance(100);
     expect(shown()).toEqual([["cart"], ["cart"]]);
     expect(result.current.pending).toBe(false);
+  });
+
+  test("three successive searches fetch the batch list once", async () => {
+    backend.answer = async ({ path }) =>
+      page(path === "builds.list" ? [build("b1", { name: "cart" })] : []);
+    const { result, rerender } = mountHook({ projectId: "p1", text: "" });
+    vi.useFakeTimers();
+
+    // Each text is typed and left to settle; one drops under the 2 characters
+    // and comes back. The list of batches is the same for all of them.
+    for (const text of ["ca", "car", "c", "cart"]) {
+      rerender({ projectId: "p1", text });
+      await advance(150);
+      await advance(10);
+    }
+    expect(result.current.batches.items.map((b) => b.name)).toEqual(["cart"]);
+    expect(callsTo(backend, "builds.list")).toHaveLength(1);
+    // The tests are asked about what is typed: once for each text.
+    expect(callsTo(backend, "variations.list").map((i) => i.search)).toEqual([
+      "ca",
+      "car",
+      "cart",
+    ]);
+  });
+
+  test("a 130-character query still searches tests", async () => {
+    // `variations.list` takes a `search` of 120 characters at most and refuses
+    // more (the server's zod bound).
+    const name = "a".repeat(125);
+    backend.answer = async ({ path, input }) => {
+      if (path === "builds.list") return page([]);
+      if (String(input.search).length > 120) throw new Error("too_big");
+      return page(
+        name.includes(String(input.search)) ? [{ id: "v1", name }] : [],
+      );
+    };
+    const { result } = mountHook({ projectId: "p1", text: "a".repeat(130) });
+    await waitFor(() => expect(result.current.pending).toBe(false));
+    // Its first 120 characters were searched, and nothing failed.
+    expect(callsTo(backend, "variations.list")).toEqual([
+      { projectId: "p1", search: "a".repeat(120), limit: 8 },
+    ]);
+    expect(result.current.tests.error).toBe(false);
+    expect(result.current.tests.items.map((t) => t.name)).toEqual([name]);
   });
 
   test("a failed search is its group's error, not a thrown one", async () => {
@@ -566,13 +613,44 @@ describe("the palette's Batches and Tests", () => {
     const other = await openPalette();
     typeSearch("checkout");
     await rows(other, "Batches", ["checkout · main · 0 pending"]);
-    expect(labels(other, "Tests")).toEqual(["Couldn't search tests"]);
+    await rows(other, "Tests", ["Couldn't search tests"]);
     // Again the error is not counted: the one batch is.
     await waitFor(
       () =>
         expect(within(other).getByRole("status").textContent).toBe("1 result"),
       { timeout: 2000 },
     );
+  });
+
+  test("a failed search is announced when nothing else matched, and No results is not shown over it", async () => {
+    const rounds: Array<[failing: string[], said: string]> = [
+      [["builds.list"], "Couldn't search batches"],
+      [["variations.list"], "Couldn't search tests"],
+      [
+        ["builds.list", "variations.list"],
+        "Couldn't search batches. Couldn't search tests",
+      ],
+    ];
+    for (const [failing, said] of rounds) {
+      backend = createBackend();
+      backend.answer = async ({ path }) => {
+        if (failing.includes(path)) throw new Error("down");
+        return page([]);
+      };
+      render(<Shell />);
+      const palette = await openPalette();
+      typeSearch("zzzz");
+      await waitFor(
+        () =>
+          expect(within(palette).getByRole("status").textContent).toBe(said),
+        { timeout: 2000 },
+      );
+      // The error rows say it; "No results" does not say it again above them.
+      expect(palette.querySelector("[cmdk-empty]")).toBeNull();
+      expect(within(palette).queryByText("No results")).toBeNull();
+      cleanup();
+      act(() => usePaletteStore.setState({ open: false }));
+    }
   });
 
   test("commands still work while search is failing", async () => {
@@ -590,7 +668,7 @@ describe("the palette's Batches and Tests", () => {
 
     // Both searches fail, each said where its rows would be.
     await rows(palette, "Batches", ["Couldn't search batches"]);
-    expect(labels(palette, "Tests")).toEqual(["Couldn't search tests"]);
+    await rows(palette, "Tests", ["Couldn't search tests"]);
     // The page's commands are there, in the spec's order (Actions first),
     // and run.
     expect(headings(palette)).toEqual(["Actions", "Batches", "Tests"]);

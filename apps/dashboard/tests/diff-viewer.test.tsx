@@ -2582,6 +2582,11 @@ describe("DiffViewer undo shortcut and hint", () => {
   });
 
   test("⌘Z while typing in a text field does not undo", () => {
+    act(() => {
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
+    });
     render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
     );

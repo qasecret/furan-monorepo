@@ -418,6 +418,7 @@ describe("GlobalCommands", () => {
 
   it("a guest has no ⌘Z binding and no undo row", () => {
     // R9: undo takes back a review decision, which a guest cannot make.
+    haveSomethingToUndo();
     render(<Layout role="guest" />);
     expect(find("review.undo")).toBeUndefined();
     const bound = boundKeys();
@@ -437,6 +438,7 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘Z in a text field is native undo, not review undo", () => {
+    haveSomethingToUndo();
     render(
       <Layout>
         <input aria-label="Branch" />

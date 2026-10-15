@@ -437,6 +437,73 @@ describe("CommandPalette", () => {
     ]);
   });
 
+  test("⌘K then Enter with something to undo and no page actions does not undo", async () => {
+    act(() =>
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+    );
+    /** The row Enter would choose. */
+    const selected = (palette: HTMLElement) =>
+      palette.querySelector('[role="option"][aria-selected="true"]')
+        ?.firstElementChild?.textContent;
+    const enter = () =>
+      fireEvent.keyDown(screen.getByTestId("command-input"), { key: "Enter" });
+
+    // On a page with no actions of its own, undo is the only one: it is not
+    // what is chosen. Enter goes to Batches, the first row after it.
+    render(<Shell role="editor" />);
+    press("k", { ctrlKey: true });
+    let palette = await screen.findByTestId("command-palette");
+    expect(labels(palette, "Actions")).toEqual(["Undo last review action"]);
+    expect(selected(palette)).toBe("Batches");
+    enter();
+    expect(pushMock).toHaveBeenCalledWith("/inbox");
+    await settle();
+    expect(undoMock).not.toHaveBeenCalled();
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // With page actions, the first of them is chosen.
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} />
+      </Shell>,
+    );
+    press("k", { ctrlKey: true });
+    palette = await screen.findByTestId("command-palette");
+    const actions = labels(palette, "Actions");
+    expect(actions.at(-1)).toBe("Undo last review action");
+    expect(selected(palette)).toBe(actions[0]);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // Undo is still one arrow key away, and one search away.
+    render(<Shell role="editor" />);
+    press("k", { ctrlKey: true });
+    palette = await screen.findByTestId("command-palette");
+    fireEvent.keyDown(screen.getByTestId("command-input"), {
+      key: "ArrowUp",
+    });
+    expect(selected(palette)).toBe("Undo last review action");
+    enter();
+    await settle();
+    expect(undoMock).toHaveBeenCalledTimes(1);
+    undoMock.mockReset();
+
+    press("k", { ctrlKey: true });
+    palette = await screen.findByTestId("command-palette");
+    fireEvent.change(screen.getByTestId("command-input"), {
+      target: { value: "undo last" },
+    });
+    expect(selected(palette)).toBe("Undo last review action");
+    enter();
+    await settle();
+    expect(undoMock).toHaveBeenCalledTimes(1);
+  });
+
   test("a guest never sees it", async () => {
     // Even with an action on the stack: a guest cannot have made one in this
     // session, and cannot take one back.

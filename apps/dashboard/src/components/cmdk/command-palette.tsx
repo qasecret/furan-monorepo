@@ -63,6 +63,12 @@ const GLOBAL_ACTIONS = new Set(["review.undo"]);
 /** The count is announced once typing has settled, not on every key. */
 const ANNOUNCE_DELAY_MS = 300;
 
+/** What a failed search says, on its row and to the live region (spec §8). */
+const SEARCH_ERROR = {
+  batches: "Couldn't search batches",
+  tests: "Couldn't search tests",
+} as const;
+
 /**
  * A page the palette goes to: its id (what Recent keeps), its name, and
  * where it is now.
@@ -217,11 +223,20 @@ function resultCount(count: number): string {
 /**
  * The polite live region: "1 result" / "‹N› results" for what the typed
  * search shows (cmdk's filtered count), said once the typing has settled.
- * Quiet until something is typed, and again when the search is cleared, and
- * quiet while the search of batches and tests is still out: the count is
- * not final until it is answered.
+ * When nothing matched and a search failed, it says what failed instead
+ * ("Couldn't search batches. Couldn't search tests"), as "No results" would
+ * be only half the story. Quiet until something is typed, and again when
+ * the search is cleared, and quiet while the search of batches and tests is
+ * still out: the count is not final until it is answered.
  */
-function ResultCount({ pending }: { pending: boolean }): JSX.Element {
+function ResultCount({
+  pending,
+  failures,
+}: {
+  pending: boolean;
+  /** What the failed searches say, joined; empty when none failed. */
+  failures: string;
+}): JSX.Element {
   const search = useCommandState((s) => s.search);
   const count = useCommandState((s) => s.filtered.count);
   const [settled, setSettled] = useState<{
@@ -230,12 +245,13 @@ function ResultCount({ pending }: { pending: boolean }): JSX.Element {
   } | null>(null);
   useEffect(() => {
     if (pending) return;
+    const text = count === 0 && failures !== "" ? failures : resultCount(count);
     const timer = setTimeout(
-      () => setSettled({ search, text: resultCount(count) }),
+      () => setSettled({ search, text }),
       ANNOUNCE_DELAY_MS,
     );
     return () => clearTimeout(timer);
-  }, [search, count, pending]);
+  }, [search, count, pending, failures]);
   // A count settled for another search is not this one's.
   const text =
     search.trim() !== "" && settled?.search === search ? settled.text : "";
@@ -392,6 +408,26 @@ function PaletteBody({
     )
     .map(row);
 
+  // What Enter chooses on a fresh palette: the page's first own action, else
+  // Go to Batches. Never undo, which would take back a decision at a ⌘K then
+  // Enter. (cmdk's own choice is the first row, which is undo on a page with
+  // no actions of its own.) The choice is only where it starts: undo stays
+  // one arrow key, or a search, away.
+  const [startsOn] = useState(() => {
+    const first = actions.find(
+      (a) => !GLOBAL_ACTIONS.has(a.resolved.command.id),
+    );
+    return first
+      ? `action:${first.resolved.scope}:${first.resolved.command.id}`
+      : `goto:${BATCHES.id}`;
+  });
+  const failures = [
+    found.batches.error && SEARCH_ERROR.batches,
+    found.tests.error && SEARCH_ERROR.tests,
+  ]
+    .filter(Boolean)
+    .join(". ");
+
   const commandItem = (
     prefix: string,
     { resolved, keys, ariaKeys }: CommandRow,
@@ -445,7 +481,7 @@ function PaletteBody({
       value={`${FOUND_PREFIX}error:${what}`}
       className="flex items-center px-2 py-1.5 text-sm text-fg-muted"
     >
-      <span className="min-w-0 truncate">Couldn&apos;t search {what}</span>
+      <span className="min-w-0 truncate">{SEARCH_ERROR[what]}</span>
     </Command.Item>
   );
 
@@ -457,6 +493,7 @@ function PaletteBody({
       className="bg-overlay"
       vimBindings={false}
       filter={byLabel}
+      defaultValue={startsOn}
     >
       <Command.Input
         onValueChange={setSearch}
@@ -465,8 +502,9 @@ function PaletteBody({
         data-testid="command-input"
       />
       <Command.List className="max-h-80 overflow-auto p-1">
-        {/* Not while batches and tests are still being searched for. */}
-        {!found.pending && (
+        {/* Not while batches and tests are still being searched for, nor
+            over the row that says a search failed. */}
+        {!found.pending && failures === "" && (
           <Command.Empty className="p-3 text-sm text-fg-muted">
             No results
           </Command.Empty>
@@ -532,7 +570,7 @@ function PaletteBody({
           {ACCOUNT_PAGES.map((p) => pageItem("account", p))}
         </Command.Group>
       </Command.List>
-      <ResultCount pending={found.pending} />
+      <ResultCount pending={found.pending} failures={failures} />
     </Command>
   );
 }
