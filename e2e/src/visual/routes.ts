@@ -32,7 +32,22 @@ export interface VisualRoute {
    * non-admin screen would otherwise never be captured.
    */
   as?: "editor";
+  /**
+   * For a route the dashboard redirects on the CLIENT (`/builds` and `/runs`
+   * through `LatestBuildRedirect`, `_first` to the first step), after the
+   * document has loaded: the pathname the page must reach before it is shot.
+   * Without it a shot taken between the redirect's first render and its
+   * landing is a blank right-hand pane that passes. The sweep waits for it
+   * (as long as a navigation) and fails, saying where the page stayed, if it
+   * is never reached. Routes that redirect on the server need none.
+   */
+  lands?: RegExp;
 }
+
+/** `/builds/:buildId`, the batch page a Builds index redirects to. */
+const LANDS_ON_BATCH = /\/builds\/[^/]+$/;
+/** A viewer on a real step: not still on the `_first` placeholder. */
+const LANDS_ON_STEP = /\/runs\/[^/]+\/checkpoints\/(?!_first$)[^/]+$/;
 
 const ADMIN_AREAS = [
   "api-keys",
@@ -57,17 +72,25 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
       path: `/admin/projects/${f.projectId}/members`,
     },
     { name: "projects", path: "/projects", as: "editor" },
-    { name: "project", path: P },
-    { name: "builds", path: `${P}/builds` },
+    { name: "project", path: P, lands: LANDS_ON_BATCH },
+    { name: "builds", path: `${P}/builds`, lands: LANDS_ON_BATCH },
     { name: "build", path: `${P}/builds/${f.buildId}` },
     // The multi-step run's build and run: result rows of several steps, with
     // an approved, a rejected and a pending step.
     { name: "build-multi", path: (x) => `${P}/builds/${x.multiBuildId}` },
-    { name: "runs", path: `${P}/runs` },
-    { name: "run", path: `${P}/runs/${f.unresolvedRunId}` },
+    { name: "runs", path: `${P}/runs`, lands: LANDS_ON_BATCH },
+    {
+      name: "run",
+      path: `${P}/runs/${f.unresolvedRunId}`,
+      lands: LANDS_ON_STEP,
+    },
     // `/runs/:id` redirects to its first checkpoint, whose viewer shows the
     // step arrows between the run's steps.
-    { name: "run-multi", path: (x) => `${P}/runs/${x.multiRunId}` },
+    {
+      name: "run-multi",
+      path: (x) => `${P}/runs/${x.multiRunId}`,
+      lands: LANDS_ON_STEP,
+    },
     { name: "settings", path: `${P}/settings` },
     { name: "variations", path: `${P}/variations` },
   ];
@@ -79,14 +102,15 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
  * `a[href]` whose pathname matches `href` and captures that page. Zero
  * matching links fails the test — a missing link is itself a regression.
  *
- * Where the links actually are (checked in the DOM, 2026-10-08):
- *  - `/runs/:runId/diffs/:diffId` is linked only from a variation's history
- *    table, so `diff` goes variations → variation → diff. (The run page and the
- *    diff viewer render no `/diffs/` or `/checkpoints/` anchors.)
- *  - `/runs/:runId/checkpoints/:checkpointId` has no anchor anywhere — it is
- *    reached by `router.push`/`replace` only — so it has no entry here. The
- *    `run` static route covers it: `/runs/:runId` redirects to the run's first
- *    checkpoint, which is what that screenshot shows.
+ * Where the links actually are (checked in the DOM, 2026-10-15):
+ *  - `/runs/:runId/checkpoints/:checkpointId` is linked from a variation's
+ *    history table ("View diff" opens the exact step of that run), so `diff`
+ *    goes variations → variation → that step. The legacy
+ *    `/runs/:runId/diffs/:diffId` is only a redirect to the same step now and
+ *    nothing links to it. (The run page and the viewer itself render no such
+ *    anchors; they reach a step by `router.push`/`replace`.)
+ *  - The `run` static route is the same viewer, reached by redirect:
+ *    `/runs/:runId` goes to the run's first checkpoint.
  */
 export const DISCOVERED: ReadonlyArray<{
   name: string;
@@ -99,7 +123,7 @@ export const DISCOVERED: ReadonlyArray<{
     name: "diff",
     from: (f) => `/projects/${f.projectId}/variations`,
     via: [/\/variations\/[^/]+$/],
-    href: /\/diffs\/[^/]+$/,
+    href: /\/runs\/[^/]+\/checkpoints\/[^/]+$/,
   },
   {
     name: "variation",
@@ -352,19 +376,28 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   {
-    // The multi-step batch with its Viewport filter open: "Any viewport" and the
-    // batch's viewport, with its pending count.
+    // The loop batch with its Viewport filter open: "Any viewport" and the
+    // batch's two viewports, each with its pending count, so the list is a real
+    // choice.
     name: "state-facets-open",
-    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    path: (f) => `/projects/${f.projectId}/builds/${f.loopBuildId}`,
     open: async (p) => {
       // The select is drawn only once the batch's values are known.
       const trigger = p.getByTestId("facet-select-viewport");
       await expect(trigger).toBeVisible();
+      // Radix Select closes itself on a window `resize` (and `blur`), and each
+      // full-page screenshot resizes the window: without this the list is shut
+      // by the time the sweep's first shot is taken, and the state passes with
+      // the select closed. Registered (capturing) before the list opens, so it
+      // runs before Radix's own listeners; it lasts until the next navigation.
+      await p.evaluate(
+        `(() => { const keep = (e) => e.stopImmediatePropagation(); for (const t of ["resize", "blur"]) window.addEventListener(t, keep, true); })()`,
+      );
       await trigger.click();
       await expect(p.getByRole("listbox")).toBeVisible();
       await expect(
-        p.getByRole("option", { name: /^\d+x\d+ · \d+ pending$/ }).first(),
-      ).toBeVisible();
+        p.getByRole("option", { name: /^\d+x\d+ · \d+ pending$/ }),
+      ).toHaveCount(2);
     },
   },
   {

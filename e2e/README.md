@@ -71,7 +71,10 @@ problems are reported as test annotations (also written to
 theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
 (hiding Next's dev overlay also hides its error dialog). A route answering
 4xx/5xx fails; a route that redirects elsewhere is annotated
-`landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
+`landed-elsewhere`. The routes the dashboard redirects on the client
+(`project`, `builds`, `runs`, `run`, `run-multi`) declare where they must
+land (`lands`), and the sweep waits for it before the shot, failing if the
+page stays put. Routes admins are redirected away from (`as: "editor"`:
 `/account/tokens`, `/projects`) are captured from the seeded editor's
 session.
 
@@ -132,15 +135,17 @@ means every screenshot test passed.
 
 - **The project, builds and runs screens as such.** `project`, `builds` and
   `runs` redirect to the latest batch (the loop batch), so those three shots
-  are the same screen, and the loop batch has no shot of its own; `build`
-  shows the single-step build and `build-multi` the multi-step one.
+  are the same screen. The loop batch has no dedicated route; those three
+  shots show it. `build` shows the single-step build and `build-multi` the
+  multi-step one.
 - **States the fixture never renders:** error states, empty states other
-  than a filter that matches nothing, a selected region, menus opened from the keyboard, settings tabs other than the
-  default, and toasts other than the review Undo toast. (The multi-step run
+  than a filter that matches nothing, a selected region, menus opened from
+  the keyboard, settings tabs other than the default, and toasts other than
+  the review Undo toast. (The multi-step run
   covers step arrows and the approved, rejected and pending-`new` steps;
   `state-step-hover` covers a step card's hover toolbar; `state-decided-step`
   the decision chip; `state-approve-pending` the Approve-pending question;
-  `state-facets-open` the batch's Viewport filter open;
+  `state-facets-open` the loop batch's Viewport filter open;
   `state-filtered-empty` a shared link whose filter matches nothing;
   `state-batch-done` the card J raises at a batch's end, here "Done with the
   filtered steps"; `state-undo-toast` the toast with its Undo action.) The

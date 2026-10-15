@@ -431,6 +431,11 @@ async function captureLoopBatch(
  * `changed` screenshot. Each of its two runs is left with one pending
  * `unresolved` step, which nothing in the sweep decides: the batch is the next
  * batch to continue to, and a second set of filter values, and stays pending.
+ *
+ * Not atomic: a failure after the candidate build exists (a capture or the
+ * check below) leaves it as an extra pending batch on {@link LOOP_BRANCH}, and
+ * since the fixture file has no `loopBuildId` yet the next run adds the loop
+ * batch again. Accepted: a stray pending batch costs nothing to the sweep.
  */
 async function addLoopBatch(
   api: ApiClient,
