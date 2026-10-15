@@ -229,6 +229,47 @@ function supersedeCues(): void {
 }
 
 /**
+ * What a decision left on a step whose viewer a step change is replacing
+ * (R37): the card it brought, or its move still waiting for an answer.
+ */
+interface LoopHandoff {
+  /** The step it was made on, and the only one that adopts it. */
+  atKey: string;
+  card: ReviewCard | null;
+  /** When the waiting decision started to wait; null when none waits. */
+  waitingSince: number | null;
+  /** When it was handed off. */
+  at: number;
+}
+
+/**
+ * The hand-off between the viewer a step change replaces and the one its
+ * route mounts at that step (R37). A step change (the arrows, the step list)
+ * shows the new step at once and asks the router for its URL; when the route
+ * commits, Next mounts a new viewer, and a decision made in between was heard
+ * by the old one. One slot, like the cue: the latest hand-off wins, and the
+ * next viewer to mount takes it, whatever its step. Exported for tests.
+ */
+export const loopHandoff: { slot: LoopHandoff | null } = { slot: null };
+
+/**
+ * Takes the hand-off for the step `atKey`, at most once: the slot is emptied
+ * whatever it held. A hand-off for another step, or older than a decision's
+ * 10 s wait (or a waiting decision past it), is dropped.
+ */
+function takeHandoff(atKey: string): LoopHandoff | null {
+  const h = loopHandoff.slot;
+  loopHandoff.slot = null;
+  if (h === null || h.atKey !== atKey) return null;
+  const now = Date.now();
+  if (now - h.at >= WAIT_LIMIT_MS) return null;
+  if (h.waitingSince !== null && now - h.waitingSince >= WAIT_LIMIT_MS) {
+    return null;
+  }
+  return h;
+}
+
+/**
  * The review loop (spec §3.4, §4.2): after a decision the viewer moves to the
  * next step that still needs a reviewer, on the answer of `review.next`.
  *
@@ -265,6 +306,11 @@ function supersedeCues(): void {
  * Every move also takes a place in the order of announcements, so a cue still
  * waiting for its test's name is not said after a later move; leaving the
  * page by hand does the same.
+ *
+ * A step change shows the new step at once, and Next mounts a new viewer
+ * there when its route commits. A decision made in between hands its card,
+ * or its move still waiting for an answer, to that viewer, once (R37; see
+ * `loopHandoff`).
  */
 export function useReviewLoop({
   projectId,
@@ -319,11 +365,13 @@ export function useReviewLoop({
     atKey: string | undefined;
   } | null>(null);
   // A decision (or J) that came before the answer: the step it waits on, the
-  // epoch when it started to wait, and which of the two it was.
+  // epoch when it started to wait, which of the two it was, and since when
+  // (its 10 s run from there, across a step-change remount too: R37).
   const [waiting, setWaiting] = useState<{
     atKey: string;
     epoch: number;
     by: Mover;
+    since: number;
   } | null>(null);
   // Continue or Clear filter on its way, from the card on this step.
   const [busy, setBusy] = useState<{ atKey: string | undefined } | null>(null);
@@ -364,6 +412,19 @@ export function useReviewLoop({
   stepPendingRef.current = stepPending;
   const stepInFilterRef = useRef(stepInFilter);
   stepInFilterRef.current = stepInFilter;
+  const decisionInFlightRef = useRef(decisionInFlight);
+  decisionInFlightRef.current = decisionInFlight;
+  // What a decision left on the step, for a hand-off when this instance goes.
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const waitingRef = useRef(waiting);
+  waitingRef.current = waiting;
+  // The step this instance opened on, and the step on screen. They differ
+  // after a step change whose route has not committed yet: when it does, Next
+  // mounts a new viewer at the step on screen (R37).
+  const openedOn = useRef(checkpointId);
+  const stepOnScreen = useRef(checkpointId);
+  stepOnScreen.current = checkpointId;
 
   // The step on screen right now, for answers that come back later. Set in a
   // layout effect, so no answer is checked against a step already replaced.
@@ -375,10 +436,14 @@ export function useReviewLoop({
   const moving = useRef(false);
   const movedAt = useRef(0);
   const lastHref = useRef<string | null>(null);
+  // This instance has sent the reviewer elsewhere itself (a move, or leave):
+  // it hands nothing off when it goes.
+  const departing = useRef(false);
   useLayoutEffect(() => {
     atKeyRef.current = atKey;
     prevPending.current = null;
     moving.current = false;
+    departing.current = false;
   }, [atKey]);
   /** A move is on its way to the screen, and not given up on yet. */
   const isMoving = useCallback(
@@ -392,11 +457,37 @@ export function useReviewLoop({
   // reviewer then left some other way. Development's strict mode runs this on
   // a remount as well; the page is back by the next microtask, and nothing is
   // dropped.
+  // Going because the route of a step change has committed (R37), a card on
+  // the step on screen, or a decision on it still waiting for its answer, is
+  // handed to the viewer Next mounts there. Not when this instance opened on
+  // the step on screen (the reviewer left it by hand, and coming back brings
+  // nothing back), nor when it moved the reviewer itself.
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      const key = atKeyRef.current;
+      if (
+        key !== undefined &&
+        !departing.current &&
+        stepOnScreen.current !== openedOn.current
+      ) {
+        const card = shownRef.current;
+        const wait = waitingRef.current;
+        const handoff: LoopHandoff = {
+          atKey: key,
+          card: card !== null && card.atKey === key ? card.card : null,
+          waitingSince:
+            wait !== null && wait.atKey === key && wait.by === "decision"
+              ? wait.since
+              : null,
+          at: Date.now(),
+        };
+        if (handoff.card !== null || handoff.waitingSince !== null) {
+          loopHandoff.slot = handoff;
+        }
+      }
       epoch.current += 1;
       prevPending.current = null;
       if (!isMoving()) {
@@ -406,6 +497,40 @@ export function useReviewLoop({
       }
     };
   }, [isMoving]);
+
+  // The hand-off a step change left for this step (R37), taken the first time
+  // this instance knows its step: a card, shown as the decision would have
+  // shown it, or a decision waiting for its answer, which waits on here and
+  // moves as it would have. Not when the step needs review again with no
+  // decision on it in flight (⌘Z, a refusal came first: R30). Kept for the
+  // instance's first step only, so strict mode's replayed mount applies it
+  // again (recording the epoch after the replayed unmount's bump) and coming
+  // back to the step later brings nothing back.
+  const adopted = useRef<LoopHandoff | null | undefined>(undefined);
+  useEffect(() => {
+    if (atKey === undefined) return;
+    if (adopted.current === undefined) adopted.current = takeHandoff(atKey);
+    const handoff = adopted.current;
+    if (handoff === null) return;
+    if (
+      handoff.atKey !== atKey ||
+      (stepPendingRef.current && !decisionInFlightRef.current)
+    ) {
+      adopted.current = null;
+      return;
+    }
+    const { card, waitingSince } = handoff;
+    if (card !== null) setShown({ card, atKey });
+    if (waitingSince !== null) {
+      epoch.current += 1;
+      setWaiting({
+        atKey,
+        epoch: epoch.current,
+        by: "decision",
+        since: waitingSince,
+      });
+    }
+  }, [atKey]);
 
   /**
    * Say which test the reviewer has been taken to, and what is left (`left`,
@@ -462,6 +587,9 @@ export function useReviewLoop({
       if (isMoving() && href === lastHref.current) return false;
       epoch.current += 1;
       moving.current = true;
+      // The reviewer goes where the loop sends them: nothing is handed off.
+      departing.current = true;
+      loopHandoff.slot = null;
       movedAt.current = Date.now();
       lastHref.current = href;
       supersedeCues();
@@ -558,7 +686,7 @@ export function useReviewLoop({
         transition(settled, by);
       } else {
         epoch.current += 1;
-        setWaiting({ atKey, epoch: epoch.current, by });
+        setWaiting({ atKey, epoch: epoch.current, by, since: Date.now() });
       }
     },
     [active, atKey, failed, settled, transition],
@@ -589,7 +717,10 @@ export function useReviewLoop({
   // ... and it is not waited for for ever.
   useEffect(() => {
     if (waiting === null) return;
-    const timer = setTimeout(() => setWaiting(null), WAIT_LIMIT_MS);
+    const timer = setTimeout(
+      () => setWaiting(null),
+      Math.max(0, waiting.since + WAIT_LIMIT_MS - Date.now()),
+    );
     return () => clearTimeout(timer);
   }, [waiting]);
 
@@ -660,6 +791,7 @@ export function useReviewLoop({
   const leave = useCallback(
     (href: string) => {
       epoch.current += 1;
+      departing.current = true;
       router.push(href);
     },
     [router],

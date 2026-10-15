@@ -12,6 +12,7 @@ import {
 import { useReviewAnnouncer } from "@/lib/review/review-announcer";
 import {
   leftInBatchLabel,
+  loopHandoff,
   useLoopCue,
   useReviewLoop,
 } from "@/lib/review/use-review-loop";
@@ -146,6 +147,7 @@ beforeEach(() => {
   utils.runs.getById.getData.mockReturnValue({ name: "Checkout" });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
   useLoopCue.setState({ cue: null });
+  loopHandoff.slot = null;
 });
 
 afterEach(() => {
@@ -1259,6 +1261,277 @@ describe("useReviewLoop: a stale read during a decision (R36)", () => {
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
     expect(waiting.result.current.card).toBeNull();
+  });
+});
+
+describe("useReviewLoop: across the step-change remount (R37)", () => {
+  // A step change (the arrows, the step list) shows the new step at once and
+  // asks the router for its URL; when the route commits, Next mounts a new
+  // viewer at that step. A decision made in between is heard by the old
+  // instance: its card, or its move still waiting for an answer, is handed to
+  // the new one.
+  const S = "step-4";
+  const intoNextBatch = () =>
+    answer({
+      target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+      scope: "nextBatch",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 2 },
+      nextBatch,
+    });
+  const intoOtherRun = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+  const OTHER_RUN_STEP = `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9`;
+  type Options = { strict?: boolean };
+  const mount = (over: Partial<Args>, { strict = false }: Options = {}) =>
+    renderHook((props: Args) => useReviewLoop(props), {
+      initialProps: args(over),
+      reactStrictMode: strict,
+    });
+  /**
+   * The viewer opened on STEP, and the reviewer stepped to S: the old
+   * instance shows S, and S's URL is still to commit.
+   */
+  function steppedToS(options: Options = {}) {
+    const hook = mount({}, options);
+    hook.rerender(args({ checkpointId: S }));
+    return hook;
+  }
+  /** The route commits: Next mounts a new viewer at `checkpointId`. */
+  const remountAt = (checkpointId = S, options: Options = {}) =>
+    mount({ checkpointId }, options);
+
+  test("a decision just before the step-change remount keeps its card", () => {
+    query.data = intoNextBatch();
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    expect(old.result.current.card).toBe("batch");
+    old.unmount();
+    const fresh = remountAt();
+    expect(fresh.result.current.card).toBe("batch");
+    // Once: the next viewer at S finds nothing.
+    fresh.unmount();
+    expect(remountAt().result.current.card).toBeNull();
+  });
+
+  test("a decision waiting across the remount still moves once", () => {
+    // The answer is being refetched when the decision is made: it waits.
+    query.isFetching = true;
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    expect(old.result.current.pending).toBe(true);
+    old.unmount();
+    const fresh = remountAt();
+    expect(fresh.result.current.pending).toBe(true);
+    // The answer comes: the decision moves, once.
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    fresh.rerender(args({ checkpointId: S }));
+    calledOnceWith(router.push, OTHER_RUN_STEP);
+    expect(fresh.result.current.pending).toBe(false);
+    fresh.rerender(args({ checkpointId: S }));
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("a remount at a different step adopts nothing", () => {
+    // A card, then a waiting decision, are handed off at S; the next viewer
+    // opens elsewhere, and S's viewer after it finds nothing either.
+    query.data = intoNextBatch();
+    const withCard = steppedToS();
+    act(() => withCard.result.current.afterDecision());
+    withCard.unmount();
+    const elsewhere = remountAt("step-7");
+    expect(elsewhere.result.current.card).toBeNull();
+    elsewhere.unmount();
+    expect(remountAt().result.current.card).toBeNull();
+    cleanup();
+
+    query.data = undefined;
+    query.isFetching = true;
+    const waiting = steppedToS();
+    act(() => waiting.result.current.afterDecision());
+    waiting.unmount();
+    const other = remountAt("step-7");
+    expect(other.result.current.pending).toBe(false);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    other.rerender(args({ checkpointId: "step-7" }));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("a hand-off older than the 10 s wait is not adopted", () => {
+    vi.useFakeTimers();
+    query.data = intoNextBatch();
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    old.unmount();
+    act(() => vi.advanceTimersByTime(10_001));
+    expect(remountAt().result.current.card).toBeNull();
+  });
+
+  test("an adopted decision still waits at most 10 s from when it was made", () => {
+    vi.useFakeTimers();
+    query.isFetching = true;
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    act(() => vi.advanceTimersByTime(6_000));
+    old.unmount();
+    const fresh = remountAt();
+    expect(fresh.result.current.pending).toBe(true);
+    act(() => vi.advanceTimersByTime(4_001));
+    expect(fresh.result.current.pending).toBe(false);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    fresh.rerender(args({ checkpointId: S }));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("a hand-off to a step that needs review again is dropped", () => {
+    // ⌘Z (or a refusal) came before the new viewer: it opens on S reading
+    // pending, with no decision on it in flight (R30). Nothing is adopted,
+    // then or once S settles.
+    query.data = intoNextBatch();
+    const again = steppedToS();
+    act(() => again.result.current.afterDecision());
+    again.unmount();
+    const pending = mount({ checkpointId: S, stepPending: true });
+    pending.rerender(args({ checkpointId: S }));
+    expect(pending.result.current.card).toBeNull();
+    // ...unless the decision on it is still in flight (R36).
+    cleanup();
+    const inFlight = steppedToS();
+    act(() => inFlight.result.current.afterDecision());
+    inFlight.unmount();
+    const flying = mount({
+      checkpointId: S,
+      stepPending: true,
+      decisionInFlight: true,
+    });
+    flying.rerender(args({ checkpointId: S, decisionInFlight: true }));
+    expect(flying.result.current.card).toBe("batch");
+  });
+
+  test("leaving the step on screen by hand hands nothing off", () => {
+    // Not a step change still committing: the viewer opened on this step.
+    // Coming back to it (Back) brings no card and no move (R19).
+    query.data = intoNextBatch();
+    const withCard = mount({});
+    act(() => withCard.result.current.afterDecision());
+    expect(withCard.result.current.card).toBe("batch");
+    withCard.unmount();
+    expect(remountAt(STEP).result.current.card).toBeNull();
+    cleanup();
+
+    query.data = undefined;
+    query.isFetching = true;
+    const waiting = mount({});
+    act(() => waiting.result.current.afterDecision());
+    waiting.unmount();
+    const back = remountAt(STEP);
+    expect(back.result.current.pending).toBe(false);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    back.rerender(args());
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("the loop's own move hands nothing off", () => {
+    // Continue leaves the card up, busy, until the route commits (R24): the
+    // instance unmounts with it, by its own move.
+    query.data = intoNextBatch();
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    act(() => old.result.current.continueToNextBatch());
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(old.result.current.card).toBe("batch");
+    old.unmount();
+    expect(remountAt().result.current.card).toBeNull();
+  });
+
+  test("leaving by the card hands nothing off", () => {
+    query.data = intoNextBatch();
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    act(() => old.result.current.leave(`/projects/${PROJECT}/builds/${BUILD}`));
+    old.unmount();
+    expect(remountAt().result.current.card).toBeNull();
+  });
+
+  test("J waiting across the remount is not handed off: only a decision is", () => {
+    query.isFetching = true;
+    const old = steppedToS();
+    act(() => old.result.current.goNext());
+    expect(old.result.current.pending).toBe(true);
+    old.unmount();
+    const fresh = remountAt();
+    expect(fresh.result.current.pending).toBe(false);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    fresh.rerender(args({ checkpointId: S }));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("an adopted card is dropped by an undo", () => {
+    query.data = intoNextBatch();
+    const old = steppedToS();
+    act(() => old.result.current.afterDecision());
+    old.unmount();
+    const fresh = remountAt();
+    expect(fresh.result.current.card).toBe("batch");
+    fresh.rerender(args({ checkpointId: S, stepPending: true })); // ⌘Z
+    expect(fresh.result.current.card).toBeNull();
+    // Settled again some other way (Mark as Bug): no card comes back.
+    fresh.rerender(args({ checkpointId: S }));
+    expect(fresh.result.current.card).toBeNull();
+    cleanup();
+
+    // An adopted waiting decision is called off the same way (R30).
+    query.data = undefined;
+    query.isFetching = true;
+    const waiting = steppedToS();
+    act(() => waiting.result.current.afterDecision());
+    waiting.unmount();
+    const adopted = remountAt();
+    expect(adopted.result.current.pending).toBe(true);
+    adopted.rerender(args({ checkpointId: S, stepPending: true })); // ⌘Z
+    expect(adopted.result.current.pending).toBe(false);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    adopted.rerender(args({ checkpointId: S, stepPending: true }));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("StrictMode replay neither loses nor double-adopts the hand-off", () => {
+    const strict = { strict: true };
+    query.data = intoNextBatch();
+    const old = steppedToS(strict);
+    act(() => old.result.current.afterDecision());
+    old.unmount();
+    const fresh = remountAt(S, strict);
+    expect(fresh.result.current.card).toBe("batch");
+    fresh.unmount();
+    expect(remountAt(S, strict).result.current.card).toBeNull();
+    cleanup();
+
+    // A waiting decision survives the replayed unmount's epoch bump, and
+    // moves once.
+    query.data = undefined;
+    query.isFetching = true;
+    const waiting = steppedToS(strict);
+    act(() => waiting.result.current.afterDecision());
+    waiting.unmount();
+    const adopted = remountAt(S, strict);
+    expect(adopted.result.current.pending).toBe(true);
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    adopted.rerender(args({ checkpointId: S }));
+    calledOnceWith(router.push, OTHER_RUN_STEP);
+    adopted.rerender(args({ checkpointId: S }));
+    expect(router.push).toHaveBeenCalledOnce();
   });
 });
 
