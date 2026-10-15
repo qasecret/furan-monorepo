@@ -1,16 +1,12 @@
 /**
- * Island-level tests for the global cmdk command palette.
+ * The ⌘K command palette (spec §5.2): its groups and their order, the page's
+ * actions from the command registry, human Go to labels, admin-only project
+ * jumps, Recent per user, the live result count, and the guard keeping the
+ * typed letters the search's (Review Focus 3).
  *
- * Spec D5.5-D5.8 acceptance:
- *  1. $mod+K (⌘K on a Mac, Ctrl+K elsewhere) toggles the palette, through
- *     the one key dispatcher (the global `palette.open` command).
- *  2. Escape closes the palette.
- *  3. The command list reflects the user's projects; admin-only commands
- *     render only when userRole === "admin".
- *  4. Selecting a project command calls router.push for the builds page.
- *
- * The palette uses Radix Dialog under the hood; the shared tests/setup.ts
- * shims (ResizeObserver, scrollIntoView, pointer-capture) keep jsdom happy.
+ * It is mounted as the protected layout mounts it: inside the role provider
+ * and the current project, with the global commands and the one dispatcher.
+ * The shared tests/setup.ts shims keep Radix Dialog happy in jsdom.
  */
 import {
   act,
@@ -19,7 +15,10 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const pushMock = vi.fn();
@@ -33,60 +32,138 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
   useReviewMutations: () => ({ undo: vi.fn() }),
 }));
 
-const fetchMock = vi.fn();
-
-import { CommandPalette } from "../src/components/cmdk/command-palette";
-import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
-
+import {
+  CurrentProjectProvider,
+  type ProjectListItem,
+} from "@/app/(protected)/_components/current-project-provider";
+import { CommandPalette } from "@/components/cmdk/command-palette";
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import {
+  useDiffViewerShortcuts,
+  type ShortcutOptions,
+} from "@/components/diff-viewer/useDiffViewerShortcuts";
+import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { CommandDispatcher } from "@/lib/commands/dispatcher";
 import { GlobalCommands } from "@/lib/commands/global-commands";
+import { useSingleKeyStore } from "@/lib/commands/prefs";
 import {
   CommandRoleProvider,
   useCommandRegistry,
+  useCommands,
 } from "@/lib/commands/registry";
+import type { Command } from "@/lib/commands/types";
+import type { ViewerRole } from "@/lib/roles";
+
+const PROJECTS: ProjectListItem[] = [
+  { id: "p1", name: "Acme" },
+  { id: "p2", name: "Beta" },
+];
+
+const RECENT_A = "furan:palette:recent:user-a";
+
+/** The protected layout's keyboard and palette, around a page. */
+function Shell({
+  role = "editor",
+  userId = "user-a",
+  projects = PROJECTS,
+  defaultProjectId = "p1",
+  children,
+}: {
+  role?: ViewerRole;
+  userId?: string;
+  projects?: ProjectListItem[];
+  defaultProjectId?: string | null;
+  children?: ReactNode;
+}) {
+  return (
+    <CommandRoleProvider role={role}>
+      <CurrentProjectProvider
+        initialProjects={projects}
+        initialDefaultProjectId={defaultProjectId}
+      >
+        <GlobalCommands />
+        <CommandDispatcher />
+        {children}
+        <CommandPalette userRole={role} userId={userId} />
+      </CurrentProjectProvider>
+    </CommandRoleProvider>
+  );
+}
+
+/** The diff viewer's page commands, registered as the viewer does. */
+function Viewer(opts: ShortcutOptions) {
+  useDiffViewerShortcuts(opts);
+  return null;
+}
+
+async function openPalette(): Promise<HTMLElement> {
+  act(() => usePaletteStore.getState().setOpen(true));
+  return screen.findByTestId("command-palette");
+}
+
+/** The group headings, in the order they render. */
+function headings(palette: HTMLElement): string[] {
+  return [...palette.querySelectorAll("[cmdk-group-heading]")].map(
+    (h) => h.textContent ?? "",
+  );
+}
+
+function group(palette: HTMLElement, heading: string): HTMLElement {
+  return within(palette).getByRole("group", { name: heading });
+}
+
+/** Each option's label (its keys are a separate, hidden part). */
+function labels(palette: HTMLElement, heading: string): string[] {
+  return within(group(palette, heading))
+    .queryAllByRole("option")
+    .map((o) => o.firstElementChild?.textContent ?? "");
+}
+
+/** The key caps shown on an option, one string per `kbd` cap. */
+function caps(option: HTMLElement): string[] {
+  return [...option.querySelectorAll("kbd kbd")].map(
+    (k) => k.textContent ?? "",
+  );
+}
+
+function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const e = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  act(() => {
+    window.dispatchEvent(e);
+  });
+  return e;
+}
 
 beforeEach(() => {
   pushMock.mockReset();
-  fetchMock.mockReset();
-  fetchMock.mockResolvedValue({
-    ok: true,
-    json: async () => [
-      { id: "p1", name: "Acme" },
-      { id: "p2", name: "Beta" },
-    ],
-  });
-  (globalThis as unknown as { fetch: typeof fetch }).fetch =
-    fetchMock as unknown as typeof fetch;
   usePaletteStore.setState({ open: false });
   useCommandRegistry.setState({ entries: [], role: "guest" });
+  useSingleKeyStore.setState({ on: true });
+  useShortcutsSheet.setState({ open: false });
+  localStorage.clear();
 });
 
 afterEach(() => {
   cleanup();
   usePaletteStore.setState({ open: false });
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
-
-function press(key: string, modifiers: Partial<KeyboardEventInit> = {}) {
-  window.dispatchEvent(
-    new KeyboardEvent("keydown", { key, bubbles: true, ...modifiers }),
-  );
-}
 
 describe("CommandPalette", () => {
   test("$mod+K opens it and, from its search box, closes it", async () => {
     // The palette has no key listener of its own: the layout's dispatcher
     // runs `palette.open`.
-    render(
-      <CommandRoleProvider role="editor">
-        <GlobalCommands />
-        <CommandDispatcher />
-        <CommandPalette userRole="editor" />
-      </CommandRoleProvider>,
-    );
+    render(<Shell />);
     expect(usePaletteStore.getState().open).toBe(false);
 
     // jsdom is not a Mac: $mod is Ctrl.
-    act(() => press("k", { ctrlKey: true }));
+    press("k", { ctrlKey: true });
     expect(usePaletteStore.getState().open).toBe(true);
 
     // Pressed in its search box, where cmdk's own key handling sees it first.
@@ -106,18 +183,24 @@ describe("CommandPalette", () => {
   });
 
   test("has no key listener of its own", () => {
-    render(<CommandPalette userRole="editor" />);
+    render(
+      <CurrentProjectProvider
+        initialProjects={[]}
+        initialDefaultProjectId={null}
+      >
+        <CommandPalette userRole="editor" userId="user-a" />
+      </CurrentProjectProvider>,
+    );
     // One press at a time: two would toggle it back.
-    act(() => press("k", { ctrlKey: true }));
+    press("k", { ctrlKey: true });
     expect(usePaletteStore.getState().open).toBe(false);
-    act(() => press("k", { metaKey: true }));
+    press("k", { metaKey: true });
     expect(usePaletteStore.getState().open).toBe(false);
   });
 
   test("closes on Escape", async () => {
-    render(<CommandPalette userRole="editor" />);
-    act(() => usePaletteStore.setState({ open: true }));
-    await screen.findByTestId("command-palette");
+    render(<Shell />);
+    await openPalette();
 
     // Radix Dialog handles Escape via its own keydown listener on the
     // content element. Dispatch on document so the listener picks it up.
@@ -131,38 +214,595 @@ describe("CommandPalette", () => {
     });
   });
 
-  test("admin-only commands render only when userRole is admin", async () => {
-    render(<CommandPalette userRole="editor" />);
-    act(() => usePaletteStore.setState({ open: true }));
-    await screen.findByTestId("command-palette");
-    expect(screen.queryByTestId("cmd-admin-members")).toBeNull();
-    // API Keys command is visible to all roles.
-    expect(screen.queryByTestId("cmd-api-keys")).not.toBeNull();
-
-    cleanup();
-    usePaletteStore.setState({ open: false });
-
-    render(<CommandPalette userRole="admin" />);
-    act(() => usePaletteStore.setState({ open: true }));
-    await screen.findByTestId("command-palette");
-    expect(screen.getByTestId("cmd-admin")).toBeDefined();
-    expect(screen.getByTestId("cmd-admin-members")).toBeDefined();
-    expect(screen.getByTestId("cmd-admin-installations")).toBeDefined();
+  test("shows the spec's placeholder", async () => {
+    render(<Shell />);
+    await openPalette();
+    expect(
+      screen.getByTestId("command-input").getAttribute("placeholder"),
+    ).toBe("Search batches and tests, or run a command…");
   });
 
-  test("selecting a project command calls router.push to that project's builds", async () => {
-    render(<CommandPalette userRole="editor" />);
-    act(() => usePaletteStore.setState({ open: true }));
-    await screen.findByTestId("command-palette");
+  test("groups appear in spec order", async () => {
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([{ label: "Members", href: "/admin/members" }]),
+    );
+    render(
+      <Shell role="admin">
+        <Viewer viewports={[]} onNextDiff={vi.fn()} />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    expect(headings(palette)).toEqual([
+      "Actions",
+      "Go to",
+      "Recent",
+      "Projects",
+      "Preferences",
+      "Account",
+    ]);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
 
-    // Wait for the projects fetch to populate the list.
-    await waitFor(() => {
-      expect(screen.queryByTestId("cmd-project-p1")).not.toBeNull();
-    });
+    // An editor on a page without commands, nothing recent: the empty and
+    // admin-only groups are left out, the rest keep their order.
+    localStorage.clear();
+    render(<Shell role="editor" />);
+    expect(headings(await openPalette())).toEqual([
+      "Go to",
+      "Preferences",
+      "Account",
+    ]);
+  });
 
-    fireEvent.click(screen.getByTestId("cmd-project-p1"));
-    await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith("/projects/p1/builds");
+  test("Actions lists the page's enabled commands with their keys and runs one", async () => {
+    // Whether the palette was still open when the command ran.
+    const openWhenRun: boolean[] = [];
+    const onApprove = vi.fn(() => {
+      openWhenRun.push(usePaletteStore.getState().open);
     });
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={onApprove} onPrevStep={vi.fn()} />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    const actions = labels(palette, "Actions");
+
+    // The page's commands whose `enabled` holds.
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        "Previous step",
+        "Approve step",
+        "Toggle difference view",
+        "Zoom in",
+      ]),
+    );
+    // Not enabled here: no reject handler, no next step, no viewports.
+    expect(actions).not.toContain("Reject step");
+    expect(actions).not.toContain("Next step");
+    expect(actions).not.toContain("Previous viewport");
+    // Every page's commands are not this page's actions.
+    for (const global of [
+      "Open command palette",
+      "Undo last review action",
+      "Go to Batches",
+      "Keyboard shortcuts",
+      "Toggle theme",
+    ]) {
+      expect(actions).not.toContain(global);
+    }
+
+    // Keys, right-aligned, and named for assistive technology.
+    const approve = within(group(palette, "Actions")).getByRole("option", {
+      name: "Approve step",
+    });
+    expect(caps(approve)).toEqual(["A"]);
+    expect(approve.getAttribute("aria-keyshortcuts")).toBe("A");
+    const zoom = within(group(palette, "Actions")).getByRole("option", {
+      name: "Zoom in",
+    });
+    expect(caps(zoom)).toEqual(["=", "+"]);
+    const prev = within(group(palette, "Actions")).getByRole("option", {
+      name: "Previous step",
+    });
+    expect(caps(prev)).toEqual(["←"]);
+
+    // Running one closes the palette first, then runs it.
+    fireEvent.click(approve);
+    expect(onApprove).toHaveBeenCalledOnce();
+    expect(openWhenRun).toEqual([false]);
+    expect(usePaletteStore.getState().open).toBe(false);
+  });
+
+  test("with single-key shortcuts off, an action shows no character key", async () => {
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} onPrevStep={vi.fn()} />
+      </Shell>,
+    );
+    act(() => useSingleKeyStore.setState({ on: false }));
+    const palette = await openPalette();
+    const actions = group(palette, "Actions");
+    // `a` does nothing now: no key shown. ← still works.
+    const approve = within(actions).getByRole("option", {
+      name: "Approve step",
+    });
+    expect(caps(approve)).toEqual([]);
+    expect(approve.hasAttribute("aria-keyshortcuts")).toBe(false);
+    expect(
+      caps(within(actions).getByRole("option", { name: "Previous step" })),
+    ).toEqual(["←"]);
+  });
+
+  test("an action no longer allowed or enabled when chosen does not run", async () => {
+    // State that changes without a re-render, between the list and the pick.
+    const live = { allowed: true, enabled: true };
+    const run = vi.fn();
+    const COMMANDS: Command[] = [
+      {
+        id: "test.act",
+        label: "Do the thing",
+        group: "Review",
+        scope: "viewer",
+        allowed: () => live.allowed,
+        enabled: () => live.enabled,
+        run,
+      },
+    ];
+    function Page() {
+      useCommands("viewer", COMMANDS, {});
+      return null;
+    }
+    render(
+      <Shell role="editor">
+        <Page />
+      </Shell>,
+    );
+    const pick = async () => {
+      const palette = await openPalette();
+      fireEvent.click(
+        within(group(palette, "Actions")).getByRole("option", {
+          name: "Do the thing",
+        }),
+      );
+      expect(usePaletteStore.getState().open).toBe(false);
+    };
+
+    await pick();
+    expect(run).toHaveBeenCalledOnce();
+
+    run.mockClear();
+    const palette = await openPalette();
+    const option = within(group(palette, "Actions")).getByRole("option", {
+      name: "Do the thing",
+    });
+    live.enabled = false;
+    fireEvent.click(option);
+    expect(run).not.toHaveBeenCalled();
+
+    live.enabled = true;
+    const again = within(await openPalette()).getByRole("option", {
+      name: "Do the thing",
+    });
+    live.allowed = false;
+    fireEvent.click(again);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test("a key another scope takes is not shown on the command", async () => {
+    // A page binding `?` itself: the global Keyboard shortcuts loses it.
+    const COMMANDS: Command[] = [
+      {
+        id: "test.help",
+        label: "Page help",
+        group: "Help",
+        keys: ["?"],
+        scope: "batches",
+        run: vi.fn(),
+      },
+    ];
+    function Page() {
+      useCommands("batches", COMMANDS, {});
+      return null;
+    }
+    render(
+      <Shell role="editor">
+        <Page />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    expect(
+      caps(within(palette).getByRole("option", { name: "Page help" })),
+    ).toEqual(["?"]);
+    expect(
+      caps(within(palette).getByRole("option", { name: "Keyboard shortcuts" })),
+    ).toEqual([]);
+  });
+
+  test("a guest sees no decision actions", async () => {
+    const handlers: ShortcutOptions = {
+      viewports: [],
+      onApprove: vi.fn(),
+      onReject: vi.fn(),
+      onNextDiff: vi.fn(),
+    };
+    render(
+      <Shell role="guest">
+        <Viewer {...handlers} />
+      </Shell>,
+    );
+    let actions = labels(await openPalette(), "Actions");
+    // Navigation is anyone's; deciding is not.
+    expect(actions).toContain("Next change");
+    expect(actions).not.toContain("Approve step");
+    expect(actions).not.toContain("Reject step");
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // A reviewer sees them, with the same handlers.
+    render(
+      <Shell role="editor">
+        <Viewer {...handlers} />
+      </Shell>,
+    );
+    actions = labels(await openPalette(), "Actions");
+    expect(actions).toEqual(
+      expect.arrayContaining(["Approve step", "Reject step", "Next change"]),
+    );
+  });
+
+  test("Jump to project is admin-only", async () => {
+    render(<Shell role="editor" />);
+    let palette = await openPalette();
+    expect(headings(palette)).not.toContain("Projects");
+    expect(within(palette).queryByText(/Jump to project/)).toBeNull();
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // Owners pass every admin gate.
+    for (const role of ["admin", "owner"] as const) {
+      pushMock.mockReset();
+      render(<Shell role={role} userId="" />);
+      palette = await openPalette();
+      expect(labels(palette, "Projects"), role).toEqual([
+        "Jump to project: Acme",
+        "Jump to project: Beta",
+      ]);
+      fireEvent.click(
+        within(group(palette, "Projects")).getByRole("option", {
+          name: "Jump to project: Beta",
+        }),
+      );
+      expect(pushMock).toHaveBeenCalledWith("/projects/p2/builds");
+      expect(usePaletteStore.getState().open).toBe(false);
+      cleanup();
+    }
+  });
+
+  test("labels are human (Members, not /admin/members)", async () => {
+    const destinations: [heading: string, label: string, href: string][] = [
+      ["Go to", "Batches", "/inbox"],
+      ["Go to", "Analytics", "/analytics"],
+      ["Go to", "Settings", "/projects/p1/settings"],
+      ["Go to", "Members", "/admin/members"],
+      ["Go to", "Projects", "/admin/projects"],
+      ["Go to", "Installations", "/admin/installations"],
+      ["Go to", "API keys", "/admin/api-keys"],
+      ["Go to", "Auto rules", "/admin/auto-rules"],
+      ["Go to", "Audit log", "/admin/audit-log"],
+      ["Account", "API tokens", "/account/tokens"],
+    ];
+    render(<Shell role="admin" userId="" />);
+    let palette = await openPalette();
+    expect(labels(palette, "Go to")).toEqual(
+      destinations.filter(([h]) => h === "Go to").map(([, label]) => label),
+    );
+    expect(labels(palette, "Account")).toEqual(["API tokens"]);
+    // No option reads as a path, or is found by one.
+    for (const option of within(palette).getAllByRole("option")) {
+      expect(option.firstElementChild?.textContent).not.toMatch(/\//);
+    }
+    await userEvent.setup().type(screen.getByTestId("command-input"), "admin");
+    expect(within(palette).queryAllByRole("option")).toHaveLength(0);
+    act(() => usePaletteStore.setState({ open: false }));
+
+    for (const [heading, label, href] of destinations) {
+      pushMock.mockReset();
+      palette = await openPalette();
+      fireEvent.click(
+        within(group(palette, heading)).getByRole("option", { name: label }),
+      );
+      expect(pushMock, label).toHaveBeenCalledWith(href);
+      expect(usePaletteStore.getState().open).toBe(false);
+    }
+    cleanup();
+
+    // An editor: Batches and their project's settings. Without a current
+    // project, Batches alone.
+    render(<Shell role="editor" userId="" />);
+    expect(labels(await openPalette(), "Go to")).toEqual([
+      "Batches",
+      "Settings",
+    ]);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    render(<Shell role="editor" userId="" defaultProjectId={null} />);
+    expect(labels(await openPalette(), "Go to")).toEqual(["Batches"]);
+  });
+
+  test("Preferences lists the enabled preference and help commands and runs one", async () => {
+    render(<Shell role="editor" />);
+    let palette = await openPalette();
+    // The switch's applicable half only; no tour on this page.
+    expect(labels(palette, "Preferences")).toEqual([
+      "Toggle theme",
+      "Turn single-key shortcuts off",
+      "Keyboard shortcuts",
+    ]);
+    expect(
+      caps(
+        within(group(palette, "Preferences")).getByRole("option", {
+          name: "Keyboard shortcuts",
+        }),
+      ),
+    ).toEqual(["?"]);
+
+    fireEvent.click(
+      within(group(palette, "Preferences")).getByRole("option", {
+        name: "Turn single-key shortcuts off",
+      }),
+    );
+    expect(useSingleKeyStore.getState().on).toBe(false);
+    expect(usePaletteStore.getState().open).toBe(false);
+
+    palette = await openPalette();
+    expect(labels(palette, "Preferences")).toEqual([
+      "Toggle theme",
+      "Turn single-key shortcuts on",
+      "Keyboard shortcuts",
+    ]);
+    fireEvent.click(
+      within(group(palette, "Preferences")).getByRole("option", {
+        name: "Keyboard shortcuts",
+      }),
+    );
+    expect(usePaletteStore.getState().open).toBe(false);
+    expect(useShortcutsSheet.getState().open).toBe(true);
+  });
+
+  test("no fetch on open", async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => [] }));
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<Shell role="admin" />);
+    const palette = await openPalette();
+    // The projects are already there: the layout's, through the provider.
+    expect(labels(palette, "Projects")).toEqual([
+      "Jump to project: Acme",
+      "Jump to project: Beta",
+    ]);
+    // Give a lazy fetch its chance.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("Recent is per user (user A's recent is absent for user B)", async () => {
+    // The old, un-keyed list is not read.
+    localStorage.setItem(
+      "furan:recent-projects",
+      JSON.stringify([{ id: "p9", name: "Old" }]),
+    );
+    const a = render(<Shell userId="user-a" />);
+    let palette = await openPalette();
+    expect(headings(palette)).not.toContain("Recent");
+    fireEvent.click(
+      within(group(palette, "Account")).getByRole("option", {
+        name: "API tokens",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/account/tokens");
+    a.unmount();
+
+    const b = render(<Shell userId="user-b" />);
+    palette = await openPalette();
+    expect(headings(palette)).not.toContain("Recent");
+    expect(
+      within(palette).queryAllByRole("option", { name: "API tokens" }),
+    ).toHaveLength(1);
+    b.unmount();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    render(<Shell userId="user-a" />);
+    palette = await openPalette();
+    expect(labels(palette, "Recent")).toEqual(["API tokens"]);
+    expect(JSON.parse(localStorage.getItem(RECENT_A) ?? "null")).toEqual([
+      { label: "API tokens", href: "/account/tokens" },
+    ]);
+    // A Recent entry goes where it went before.
+    pushMock.mockReset();
+    fireEvent.click(
+      within(group(palette, "Recent")).getByRole("option", {
+        name: "API tokens",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/account/tokens");
+  });
+
+  test("Recent keeps the 5 newest, each once, newest first", async () => {
+    render(<Shell role="admin" />);
+    // Six pages, Installations twice.
+    const picks = [
+      "Members",
+      "Projects",
+      "Installations",
+      "API keys",
+      "Auto rules",
+      "Installations",
+      "Audit log",
+    ];
+    for (const label of picks) {
+      const palette = await openPalette();
+      fireEvent.click(
+        within(group(palette, "Go to")).getByRole("option", { name: label }),
+      );
+    }
+    expect(labels(await openPalette(), "Recent")).toEqual([
+      "Audit log",
+      "Installations",
+      "Auto rules",
+      "API keys",
+      "Projects",
+    ]);
+  });
+
+  test("without a user id, or with storage blocked, Recent is not kept and the palette still works", async () => {
+    // Not even a list stored under an empty id is read, or written.
+    const underNoId = JSON.stringify([
+      { label: "API tokens", href: "/account/tokens" },
+    ]);
+    localStorage.setItem("furan:palette:recent:", underNoId);
+    render(<Shell userId="" />);
+    let palette = await openPalette();
+    expect(headings(palette)).not.toContain("Recent");
+    fireEvent.click(
+      within(group(palette, "Go to")).getByRole("option", { name: "Batches" }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/inbox");
+    expect(localStorage.length).toBe(1);
+    expect(localStorage.getItem("furan:palette:recent:")).toBe(underNoId);
+    palette = await openPalette();
+    expect(headings(palette)).not.toContain("Recent");
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // Blocked storage (privacy modes): the default, nothing.
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([{ label: "API tokens", href: "/account/tokens" }]),
+    );
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    pushMock.mockReset();
+    render(<Shell userId="user-a" />);
+    palette = await openPalette();
+    expect(headings(palette)).not.toContain("Recent");
+    fireEvent.click(
+      within(group(palette, "Go to")).getByRole("option", { name: "Batches" }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/inbox");
+  });
+
+  test("a non-admin's Recent leaves out the admin pages and project jumps", async () => {
+    // Kept from when this user was an admin.
+    const stored = [
+      { label: "Members", href: "/admin/members" },
+      { label: "Analytics", href: "/analytics" },
+      { label: "Jump to project: Beta", href: "/projects/p2/builds" },
+      { label: "API tokens", href: "/account/tokens" },
+    ];
+    localStorage.setItem(RECENT_A, JSON.stringify(stored));
+    render(<Shell role="editor" />);
+    expect(labels(await openPalette(), "Recent")).toEqual(["API tokens"]);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    render(<Shell role="admin" />);
+    expect(labels(await openPalette(), "Recent")).toEqual(
+      stored.map((e) => e.label),
+    );
+  });
+
+  test("a stored entry that is not a page of this app is not listed", async () => {
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([
+        { label: "Evil", href: "javascript:alert(1)" },
+        { label: "Away", href: "//elsewhere.test/x" },
+        { label: "Broken" },
+        { label: "Members", href: "/admin/members" },
+      ]),
+    );
+    render(<Shell role="admin" />);
+    expect(labels(await openPalette(), "Recent")).toEqual(["Members"]);
+  });
+
+  test("live region announces the result count", async () => {
+    render(<Shell role="editor" userId="" />);
+    const palette = await openPalette();
+    const status = within(palette).getByRole("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    // Quiet on open, also once the delay has passed: nothing was typed.
+    expect(status.textContent).toBe("");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    expect(status.textContent).toBe("");
+
+    const input = screen.getByTestId("command-input");
+    const user = userEvent.setup();
+    await user.type(input, "api");
+    // Not on every keystroke: once typing settles.
+    expect(status.textContent).toBe("");
+    await waitFor(() => expect(status.textContent).toBe("1 result"));
+    expect(within(palette).getAllByRole("option")).toHaveLength(1);
+
+    await user.clear(input);
+    await user.type(input, "t");
+    // The last search's count is not this one's.
+    expect(status.textContent).toBe("");
+    const shown = within(palette).getAllByRole("option").length;
+    expect(shown).toBeGreaterThan(1);
+    await waitFor(() => expect(status.textContent).toBe(`${shown} results`));
+
+    await user.type(input, "zzzz");
+    await waitFor(() => expect(status.textContent).toBe("No results"));
+    expect(palette.querySelector("[cmdk-empty]")?.textContent).toBe(
+      "No results",
+    );
+  });
+
+  test("typing a in the input filters, approves nothing", async () => {
+    // Review Focus 3, end to end: the layout's dispatcher, the viewer's
+    // decision keys, the palette opened by its key.
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={onApprove} onReject={onReject} />
+      </Shell>,
+    );
+    press("k", { ctrlKey: true });
+    const palette = await screen.findByTestId("command-palette");
+    const input = screen.getByTestId("command-input") as HTMLInputElement;
+    act(() => input.focus());
+    const before = within(palette).getAllByRole("option").length;
+    expect(
+      within(palette).getByRole("option", { name: "Toggle comments" }),
+    ).toBeTruthy();
+
+    const user = userEvent.setup();
+    await user.type(input, "a");
+    expect(onApprove).not.toHaveBeenCalled();
+    // The letter is the search's, and it filters.
+    expect(input.value).toBe("a");
+    expect(within(palette).getAllByRole("option").length).toBeLessThan(before);
+    expect(
+      within(palette).queryByRole("option", { name: "Toggle comments" }),
+    ).toBeNull();
+    expect(
+      within(palette).getByRole("option", { name: "Approve step" }),
+    ).toBeTruthy();
+
+    await user.type(input, "r");
+    expect(onReject).not.toHaveBeenCalled();
+    expect(input.value).toBe("ar");
+    expect(usePaletteStore.getState().open).toBe(true);
   });
 });

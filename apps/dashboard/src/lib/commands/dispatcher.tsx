@@ -1,17 +1,10 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { toast } from "sonner";
 import { tinykeys, type KeyBindingMap } from "tinykeys";
 
 import { keyIsOwnedElsewhere } from "./guard";
-import {
-  bindingKey,
-  bindingOptions,
-  keyIdentity,
-  lowerFirst,
-  shiftedTwin,
-} from "./keys";
+import { bindingKey, bindingOptions, keyIdentity, shiftedTwin } from "./keys";
 import { singleKeysOn } from "./prefs";
 import {
   findBinding,
@@ -21,7 +14,7 @@ import {
   useRegisteredCommands,
   type ResolvedCommand,
 } from "./registry";
-import type { Command } from "./types";
+import { runCommand } from "./run-command";
 
 /** "g i" is a sequence; "$mod+k", "?" and "Shift++" are one press. */
 function isSequence(key: string): boolean {
@@ -57,20 +50,6 @@ function sequencePrefixes(
   return [...prefixes].sort();
 }
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    value !== null &&
-    (typeof value === "object" || typeof value === "function") &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
-
-function failed(command: Command): void {
-  // The id only: an error's message or stack may carry data.
-  console.warn("command failed", command.id);
-  toast.error(`Couldn't ${lowerFirst(command.label)}`);
-}
-
 /**
  * One key press of `key` (a `keyIdentity`): the command that holds it now,
  * if the guard lets it and it is enabled, runs. A command that throws or
@@ -88,18 +67,8 @@ function dispatch(e: KeyboardEvent, key: string): void {
   if (keyIsOwnedElsewhere(e, key, opts, { singleKeys: singleKeysOn() })) {
     return;
   }
-  try {
-    const ctx = resolved.ctx();
-    if (command.enabled && !command.enabled(ctx)) return;
-    e.preventDefault();
-    const result: unknown = command.run(ctx);
-    // Any thenable, not only a native Promise.
-    if (isThenable(result)) {
-      void Promise.resolve(result).catch(() => failed(command));
-    }
-  } catch {
-    failed(command);
-  }
+  // Not enabled: the key is left to the browser (no `preventDefault`).
+  runCommand(resolved, () => e.preventDefault());
 }
 
 /**

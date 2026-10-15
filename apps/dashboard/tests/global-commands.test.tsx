@@ -29,6 +29,7 @@ vi.mock("tinykeys", async (importOriginal) => {
   return { ...actual, tinykeys: vi.fn(actual.tinykeys) };
 });
 
+import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
@@ -297,13 +298,14 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘K opens the palette but not over an open dialog; inside the palette ⌘K closes it", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => [] })),
-    );
     render(
       <Layout>
-        <CommandPalette userRole="editor" />
+        <CurrentProjectProvider
+          initialProjects={[]}
+          initialDefaultProjectId={null}
+        >
+          <CommandPalette userRole="editor" userId="u1" />
+        </CurrentProjectProvider>
       </Layout>,
     );
 

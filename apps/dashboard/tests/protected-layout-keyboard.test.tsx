@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The layout is a server component: its server-only data calls are replaced,
 // and the shell and palette (their own tests) are left out, so what is under
 // test is the keyboard the layout mounts.
-const { apiGetMock } = vi.hoisted(() => ({ apiGetMock: vi.fn() }));
+const { apiGetMock, paletteProps } = vi.hoisted(() => ({
+  apiGetMock: vi.fn(),
+  paletteProps: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => "/",
@@ -19,7 +22,10 @@ vi.mock("@/app/(protected)/_components/app-shell", () => ({
   ),
 }));
 vi.mock("@/components/cmdk/command-palette", () => ({
-  CommandPalette: () => null,
+  CommandPalette: (props: unknown) => {
+    paletteProps(props);
+    return null;
+  },
 }));
 vi.mock("@/components/themed-toaster", () => ({ ThemedToaster: () => null }));
 vi.mock("@/lib/review/use-review-mutations", () => ({
@@ -75,6 +81,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   apiGetMock.mockReset();
+  paletteProps.mockReset();
 });
 
 describe("the protected layout's keyboard", () => {
@@ -111,5 +118,27 @@ describe("the protected layout's keyboard", () => {
     expect(labels).toEqual(
       expect.arrayContaining(["Go to Analytics", "Go to Projects"]),
     );
+  });
+
+  it("gives the palette the signed-in user's id, for their own Recent", async () => {
+    me("editor");
+    await mountLayout();
+    expect(paletteProps).toHaveBeenLastCalledWith({
+      userRole: "editor",
+      userId: "u1",
+    });
+    cleanup();
+
+    // No user record: no id, so Recent is neither read nor kept.
+    apiGetMock.mockImplementation(async (path: string) =>
+      path === "/users/me"
+        ? { status: 404, data: null }
+        : { status: 200, data: [] },
+    );
+    await mountLayout();
+    expect(paletteProps).toHaveBeenLastCalledWith({
+      userRole: "guest",
+      userId: "",
+    });
   });
 });

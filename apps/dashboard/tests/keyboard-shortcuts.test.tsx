@@ -26,6 +26,7 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
   useReviewMutations: () => ({ undo: undoMock }),
 }));
 
+import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { BatchDoneCard } from "@/components/diff-viewer/BatchDoneCard";
@@ -1224,10 +1225,6 @@ describe("the viewer's keys are registry commands", () => {
   });
 
   it("typing a into the open palette's input approves nothing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => [] })),
-    );
     const onApprove = vi.fn();
     const onReject = vi.fn();
     function Viewer() {
@@ -1236,7 +1233,12 @@ describe("the viewer's keys are registry commands", () => {
     }
     render(
       <Keyboard role="editor">
-        <CommandPalette userRole="editor" />
+        <CurrentProjectProvider
+          initialProjects={[]}
+          initialDefaultProjectId={null}
+        >
+          <CommandPalette userRole="editor" userId="u1" />
+        </CurrentProjectProvider>
         <Viewer />
       </Keyboard>,
     );
@@ -1250,7 +1252,6 @@ describe("the viewer's keys are registry commands", () => {
     expect(onReject).not.toHaveBeenCalled();
     // The letters are the search's.
     expect((input as HTMLInputElement).value).toBe("arx");
-    vi.unstubAllGlobals();
   });
 
   it("g i in the viewer navigates and does not toggle the region editor", () => {

@@ -313,6 +313,31 @@ describe("CommandDispatcher", () => {
     expect(toast.error).toHaveBeenCalledTimes(3);
   });
 
+  it("an enabled check that throws is reported, runs nothing and leaves the key alone", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = vi.fn();
+    const next = vi.fn();
+    render(<Layout />);
+    mount("viewer", [
+      command("viewer", "review.approve", ["a"], {
+        label: "Approve step",
+        enabled: () => {
+          throw new Error("state gone");
+        },
+        run,
+      }),
+      command("viewer", "viewer.nextStep", ["n"], { run: next }),
+    ]);
+
+    const e = press("a");
+    expect(run).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    expect(toast.error).toHaveBeenLastCalledWith("Couldn't approve step");
+    expect(warn).toHaveBeenLastCalledWith("command failed", "review.approve");
+    press("n");
+    expect(next).toHaveBeenCalledOnce();
+  });
+
   it("a rejecting thenable is caught like a promise", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     // Not a native Promise: any thenable a command returns.
