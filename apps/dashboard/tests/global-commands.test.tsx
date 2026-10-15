@@ -368,6 +368,26 @@ describe("GlobalCommands", () => {
     expect(undoMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a guest has no ⌘Z binding and no undo row", () => {
+    // R9: undo takes back a review decision, which a guest cannot make.
+    render(<Layout role="guest" />);
+    expect(find("review.undo")).toBeUndefined();
+    const bound = Object.keys(vi.mocked(tinykeys).mock.calls.at(-1)![1]);
+    expect(bound).not.toContain("$mod+z");
+    expect(bound).toContain("$mod+k");
+    const e = press("z", { ctrlKey: true });
+    expect(undoMock).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    cleanup();
+
+    // Every role that reviews has it.
+    for (const role of ["editor", "admin", "owner"] as const) {
+      render(<Layout role={role} />);
+      expect(find("review.undo"), role).toBeDefined();
+      cleanup();
+    }
+  });
+
   it("⌘Z in a text field is native undo, not review undo", () => {
     render(
       <Layout>

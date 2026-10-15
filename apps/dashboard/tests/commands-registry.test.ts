@@ -419,6 +419,47 @@ describe("command registry", () => {
     ).not.toThrow();
   });
 
+  it("one scope's Shift+<c> and another's bare <c> throw in development", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // The dispatcher binds a bare "+" with Shift too; another scope's own
+    // "Shift++" would take that press whatever the scopes' precedence.
+    mount("global", [command("global", "global.plus", ["+"])]);
+    expect(() =>
+      mount("viewer", [command("viewer", "viewer.zoomIn", ["Shift++"])]),
+    ).toThrow(/"Shift\+\+".*"\+"/);
+    // And the other way round.
+    useCommandRegistry.setState({ entries: [] });
+    mount("viewer", [command("viewer", "viewer.zoomIn", [{ key: "Shift+?" }])]);
+    expect(() =>
+      mount("global", [command("global", "help.shortcuts", ["?"])]),
+    ).toThrow(/"\?".*"Shift\+\?"/);
+    expect(useCommandRegistry.getState().entries.map((e) => e.scope)).toEqual([
+      "viewer",
+    ]);
+
+    // One scope may bind both; a letter has no Shift twin.
+    useCommandRegistry.setState({ entries: [] });
+    expect(() =>
+      mount("viewer", [
+        command("viewer", "viewer.zoomIn", ["=", "+", "Shift++"]),
+      ]),
+    ).not.toThrow();
+    // …from two registrants of that scope too.
+    expect(() =>
+      mount("batches", [command("batches", "batches.help", ["?"])]),
+    ).not.toThrow();
+    expect(() =>
+      mount("batches", [command("batches", "batches.more", ["Shift+?"])]),
+    ).not.toThrow();
+    expect(() =>
+      mount("global", [command("global", "global.shiftA", ["Shift+a"])]),
+    ).not.toThrow();
+    expect(() =>
+      mount("batch", [command("batch", "batch.approve", ["a"])]),
+    ).not.toThrow();
+  });
+
   it("a command registered under the wrong scope throws in development", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 

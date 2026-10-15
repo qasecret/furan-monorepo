@@ -19,6 +19,7 @@ import {
   formatKeys,
   isCharacterBinding,
   keyIdentity,
+  shiftedTwin,
 } from "./keys";
 import { usePlatform } from "./platform";
 import { useSingleKeyShortcuts } from "./prefs";
@@ -78,11 +79,32 @@ const SCOPE_RANK: Record<CommandScope, number> = {
 
 let lastOwner = 0;
 
+/** Another scope's binding: who holds it, as written. */
+interface Holder {
+  id: string;
+  key: string;
+  scope: CommandScope;
+}
+
+/**
+ * The key that, held by another scope, would take this one's Shift press (or
+ * leave it with this one) whatever the scopes' precedence: a bare "?" and a
+ * "Shift+?", since the dispatcher also binds "?" with Shift (`shiftedTwin`).
+ */
+function shiftCounterpart(identity: string): string | null {
+  const twin = shiftedTwin(identity);
+  if (twin !== null) return twin;
+  const bare = identity.startsWith("Shift+") ? identity.slice(6) : null;
+  return bare !== null && shiftedTwin(bare) === identity ? bare : null;
+}
+
 /**
  * What is wrong with registering `incoming` in `scope`: a command declaring
  * another scope, a key (compared as tinykeys matches it, so "A" is "a")
- * shared with another command of the same scope, or one command binding a key
- * twice (its second binding's options would be dropped). Null when nothing is.
+ * shared with another command of the same scope, one command binding a key
+ * twice (its second binding's options would be dropped), or a bare character
+ * here whose Shift form ("?" and "Shift+?") another scope binds. Null when
+ * nothing is.
  */
 function registrationProblem(
   scope: CommandScope,
@@ -94,11 +116,20 @@ function registrationProblem(
     return `Command "${misplaced.id}" declares the "${misplaced.scope}" scope but is registered in the "${scope}" scope.`;
   }
   const holders = new Map<string, string>();
+  const elsewhere = new Map<string, Holder>();
   for (const entry of entries) {
-    if (entry.scope !== scope) continue;
     for (const { command } of entry.commands) {
       for (const b of command.keys ?? []) {
-        holders.set(keyIdentity(bindingKey(b)), command.id);
+        const key = bindingKey(b);
+        if (entry.scope === scope) {
+          holders.set(keyIdentity(key), command.id);
+        } else {
+          elsewhere.set(keyIdentity(key), {
+            id: command.id,
+            key,
+            scope: entry.scope,
+          });
+        }
       }
     }
   }
@@ -116,6 +147,12 @@ function registrationProblem(
       const holder = holders.get(identity);
       if (holder !== undefined) {
         return `Commands "${holder}" and "${command.id}" share the key "${key}" in the "${scope}" scope.`;
+      }
+      const counterpart = shiftCounterpart(identity);
+      const other =
+        counterpart === null ? undefined : elsewhere.get(counterpart);
+      if (other !== undefined) {
+        return `Command "${command.id}" binds "${key}" in the "${scope}" scope and "${other.id}" binds "${other.key}" in the "${other.scope}" scope: a key and its Shift form must be bound in one scope.`;
       }
       holders.set(identity, command.id);
     }

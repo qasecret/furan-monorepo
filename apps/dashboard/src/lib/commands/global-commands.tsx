@@ -11,7 +11,7 @@ import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { useTourOptional } from "@/components/tour/tour-context";
 import { useReviewMutations } from "@/lib/review/use-review-mutations";
-import { isAtLeastAdmin } from "@/lib/roles";
+import { canReviewRole, isAtLeastAdmin } from "@/lib/roles";
 
 /** What the global commands read when they run: the layout's live state. */
 interface GlobalCtx extends CommandCtx {
@@ -69,6 +69,8 @@ const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
     group: "Review",
     keys: ["$mod+z"],
     scope: "global",
+    // It takes back a review decision: a role that can't review has none.
+    allowed: ({ role }) => canReviewRole(role),
     // The newest action: no id. Not `allowInText`: in a field, ⌘Z is the
     // field's own undo.
     run: ({ undo }) => undo(),

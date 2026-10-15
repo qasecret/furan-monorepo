@@ -158,6 +158,20 @@ export function keyIdentity(key: string): string {
     .join(" ");
 }
 
+/**
+ * The same key with Shift held, for a bare character that has no case: "?",
+ * "/", "+", "0", "[" ("?" → "Shift+?"). Matching is on `e.key` (spec §3.6),
+ * but tinykeys also refuses a modifier the binding does not name, and many
+ * layouts need Shift to type these (US "?", German "/", AZERTY digits), so
+ * the dispatcher binds both. A letter has none: Shift makes it another key
+ * ("A"). Null for anything else.
+ */
+export function shiftedTwin(key: string): string | null {
+  if ([...key].length !== 1 || key.trim() === "") return null;
+  if (key.toLowerCase() !== key.toUpperCase()) return null;
+  return `Shift+${key}`;
+}
+
 function keyGlyph(key: string): string {
   return KEY_GLYPHS[key] ?? (isPrintable(key) ? key.toUpperCase() : key);
 }

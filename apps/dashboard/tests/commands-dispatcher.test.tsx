@@ -1,4 +1,4 @@
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { tinykeys } from "tinykeys";
@@ -301,6 +301,31 @@ describe("CommandDispatcher", () => {
     expect(toast.error).toHaveBeenCalledTimes(3);
   });
 
+  it("a rejecting thenable is caught like a promise", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Not a native Promise: any thenable a command returns.
+    const thenable = {
+      then(_ok: () => void, fail: (e: unknown) => void) {
+        fail(new Error("nope"));
+      },
+    } as unknown as Promise<void>;
+    render(<Layout />);
+    mount("viewer", [
+      command("viewer", "review.reject", ["r"], {
+        label: "Reject step",
+        run: () => thenable,
+      }),
+    ]);
+
+    press("r");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenLastCalledWith("Couldn't reject step");
+    expect(warn).toHaveBeenLastCalledWith("command failed", "review.reject");
+  });
+
   it("rebinds only when the key set changes", () => {
     const run = vi.fn();
     const x = command("global", "g.x", ["x"], { run });
@@ -355,15 +380,30 @@ describe("CommandDispatcher", () => {
         <Registrant scope="global" commands={[adminOnly]} />
       </Layout>,
     );
-    expect(tinykeys).not.toHaveBeenCalled();
+    // Not allowed, `g a` is not bound; its `g` is still a prefix (R8).
+    expect(tinykeys).toHaveBeenCalledTimes(1);
+    expect(boundKeys()).not.toContain("g a");
+    expect(boundKeys()).toContain("g (\\S)");
 
     tree.rerender(
       <Layout role="admin">
         <Registrant scope="global" commands={[adminOnly]} />
       </Layout>,
     );
-    expect(tinykeys).toHaveBeenCalledTimes(1);
-    expect(boundKeys()).toEqual(["g a"]);
+    expect(tinykeys).toHaveBeenCalledTimes(2);
+    expect(boundKeys()).toContain("g a");
+
+    // The same prefix from another sequence changes nothing.
+    mount("viewer", [
+      command("viewer", "viewer.other", ["g x"], { allowed: () => false }),
+    ]);
+    expect(tinykeys).toHaveBeenCalledTimes(2);
+    // A new prefix, even of a command no one may run, rebinds.
+    mount("viewer", [
+      command("viewer", "viewer.zed", ["z x"], { allowed: () => false }),
+    ]);
+    expect(tinykeys).toHaveBeenCalledTimes(3);
+    expect(boundKeys()).toContain("z (\\S)");
   });
 
   it("a completed sequence consumes its last key", () => {
@@ -397,6 +437,165 @@ describe("CommandDispatcher", () => {
     press("a");
     expect(approve).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledTimes(2);
+  });
+
+  /** The layout's global keys and a viewer `a`, for the prefix tests. */
+  function withViewerApprove(role: ViewerRole = "editor") {
+    const approve = vi.fn();
+    const tree = render(
+      <Layout role={role}>
+        <GlobalCommands />
+        <input aria-label="Branch" />
+        <Registrant
+          scope="viewer"
+          commands={[
+            command("viewer", "review.approve", ["a"], { run: approve }),
+          ]}
+        />
+      </Layout>,
+    );
+    return { approve, tree };
+  }
+
+  it("an editor's g then a in the viewer scope approves nothing and is prevented", () => {
+    // `g a` is admin-only, so an editor has no such binding: `g` is still a
+    // prefix, and the stray `a` after it is swallowed, not an approval.
+    const { approve } = withViewerApprove("editor");
+
+    press("g");
+    const a = press("a");
+    expect(approve).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(a.defaultPrevented).toBe(true);
+
+    // A shifted character after `g` is swallowed too.
+    press("g");
+    const q = press("?", { shiftKey: true });
+    expect(useShortcutsSheet.getState().open).toBe(false);
+    expect(q.defaultPrevented).toBe(true);
+
+    // On its own, `a` approves.
+    press("a");
+    expect(approve).toHaveBeenCalledTimes(1);
+  });
+
+  it("an admin's g a goes to /analytics only", () => {
+    const { approve } = withViewerApprove("admin");
+
+    press("g");
+    const a = press("a");
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenLastCalledWith("/analytics");
+    expect(approve).not.toHaveBeenCalled();
+    expect(a.defaultPrevented).toBe(true);
+  });
+
+  it("g then a typed in a text field is not prevented", () => {
+    const { approve } = withViewerApprove("editor");
+    act(() => screen.getByRole("textbox", { name: "Branch" }).focus());
+
+    const g = press("g");
+    const a = press("a");
+    expect(g.defaultPrevented).toBe(false);
+    expect(a.defaultPrevented).toBe(false);
+    expect(approve).not.toHaveBeenCalled();
+
+    // `g` on the page, then a click into the field and `a` within the
+    // second: the `a` is typed, not swallowed.
+    act(() => screen.getByRole("textbox", { name: "Branch" }).blur());
+    press("g");
+    act(() => screen.getByRole("textbox", { name: "Branch" }).focus());
+    expect(press("a").defaultPrevented).toBe(false);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("with single-key shortcuts off, g is no prefix", () => {
+    useSingleKeyStore.setState({ on: false });
+    const { approve } = withViewerApprove("editor");
+
+    press("g");
+    const a = press("a");
+    expect(a.defaultPrevented).toBe(false);
+    press("g");
+    const q = press("?", { shiftKey: true });
+    expect(q.defaultPrevented).toBe(false);
+    expect(approve).not.toHaveBeenCalled();
+
+    // A `g` pressed while the switch was off is no prefix, even if the
+    // switch comes back on (from another tab) before the next key…
+    press("g");
+    act(() => useSingleKeyStore.setState({ on: true }));
+    press("a");
+    expect(approve).toHaveBeenCalledTimes(1);
+
+    // …and a key pressed once it is off is not taken, whatever came before.
+    press("g");
+    act(() => useSingleKeyStore.setState({ on: false }));
+    expect(press("a").defaultPrevented).toBe(false);
+    expect(approve).toHaveBeenCalledTimes(1);
+  });
+
+  it("g then Tab or Escape is untouched", () => {
+    const { approve } = withViewerApprove("editor");
+
+    for (const key of ["Tab", "Escape", "Enter", "ArrowDown"]) {
+      press("g");
+      expect(press(key).defaultPrevented, key).toBe(false);
+    }
+    // The prefix is spent: `a` is the viewer's again.
+    press("a");
+    expect(approve).toHaveBeenCalledTimes(1);
+
+    // A ⌘ / Ctrl chord after `g` is not swallowed either.
+    press("g");
+    press("k", { ctrlKey: true });
+    expect(usePaletteStore.getState().open).toBe(true);
+  });
+
+  it("the prefix expires after the sequence window", () => {
+    vi.useFakeTimers();
+    try {
+      const { approve } = withViewerApprove("editor");
+
+      press("g");
+      act(() => {
+        vi.advanceTimersByTime(1100);
+      });
+      const late = press("a");
+      expect(approve).toHaveBeenCalledTimes(1);
+      expect(late.defaultPrevented).toBe(true);
+
+      // Within the window it is still swallowed.
+      press("g");
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+      press("a");
+      expect(approve).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("g typed in a field, focus moves, then i within 1 s does not navigate", () => {
+    const { approve } = withViewerApprove("editor");
+    const field = screen.getByRole("textbox", { name: "Branch" });
+    act(() => field.focus());
+    press("g");
+    // A click elsewhere moves focus without a key press.
+    act(() => field.blur());
+    expect(document.activeElement).toBe(document.body);
+
+    const i = press("i");
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(i.defaultPrevented).toBe(false);
+    // Nor is a stray key swallowed: that `g` was typing, not a prefix.
+    act(() => field.focus());
+    press("g");
+    act(() => field.blur());
+    const a = press("a");
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(a.defaultPrevented).toBe(true);
   });
 
   it("? opens the sheet on a non-US layout", () => {
@@ -465,13 +664,13 @@ describe("CommandDispatcher", () => {
 
   it("a key bound with Shift itself is its own command's, not the bare key's", () => {
     // `+` bare, and `Shift++` as a US keyboard sends it, held by different
-    // commands: the explicit binding is not overridden by the bare key's
-    // Shift tolerance.
+    // commands of one scope: the explicit binding is not overridden by the
+    // bare key's Shift tolerance. (Across scopes it is a registration error.)
     const bare = vi.fn();
     const shifted = vi.fn();
     render(<Layout />);
-    mount("global", [command("global", "g.plus", ["+"], { run: bare })]);
     mount("viewer", [
+      command("viewer", "viewer.plus", ["+"], { run: bare }),
       command("viewer", "viewer.zoomIn", ["Shift++"], { run: shifted }),
     ]);
 
