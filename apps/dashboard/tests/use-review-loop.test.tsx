@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
 import {
   afterEach,
   beforeEach,
@@ -1302,6 +1302,57 @@ describe("useReviewLoop: across the step-change remount (R37)", () => {
   /** The route commits: Next mounts a new viewer at `checkpointId`. */
   const remountAt = (checkpointId = S, options: Options = {}) =>
     mount({ checkpointId }, options);
+
+  test.each([
+    ["plain", false],
+    ["StrictMode", true],
+  ])(
+    "a keyed remount in one commit keeps the decision's card and move (%s)",
+    (_mode, strict) => {
+      // As Next does it: the viewer is keyed by the URL's step, so when the
+      // route commits, the old instance unmounts and the new one mounts in the
+      // SAME commit (the old one's cleanup runs before the new one's effects).
+      let loop: ReturnType<typeof useReviewLoop> | null = null;
+      function Host(props: Args) {
+        loop = useReviewLoop(props);
+        return null;
+      }
+      const current = () => {
+        if (!loop) throw new Error("the host has not rendered");
+        return loop;
+      };
+      /** The viewer for the URL's step, showing `step`. */
+      const viewer = (urlStep: string, step: string) => (
+        <Host key={urlStep} {...args({ checkpointId: step })} />
+      );
+
+      // The card.
+      query.data = intoNextBatch();
+      const withCard = render(viewer(STEP, STEP), { reactStrictMode: strict });
+      withCard.rerender(viewer(STEP, S)); // →: S on screen, its URL to commit
+      act(() => current().afterDecision());
+      expect(current().card).toBe("batch");
+      withCard.rerender(viewer(S, S)); // the route commits
+      expect(current().card).toBe("batch");
+      cleanup();
+
+      // The move still waiting for its answer.
+      query.data = undefined;
+      query.isFetching = true;
+      const waiting = render(viewer(STEP, STEP), { reactStrictMode: strict });
+      waiting.rerender(viewer(STEP, S));
+      act(() => current().afterDecision());
+      expect(current().pending).toBe(true);
+      waiting.rerender(viewer(S, S)); // the route commits
+      expect(current().pending).toBe(true);
+      query.isFetching = false;
+      query.data = intoOtherRun();
+      waiting.rerender(viewer(S, S));
+      calledOnceWith(router.push, OTHER_RUN_STEP);
+      waiting.rerender(viewer(S, S));
+      expect(router.push).toHaveBeenCalledOnce();
+    },
+  );
 
   test("a decision just before the step-change remount keeps its card", () => {
     query.data = intoNextBatch();

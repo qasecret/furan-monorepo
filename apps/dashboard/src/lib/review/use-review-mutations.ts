@@ -98,6 +98,11 @@ interface InFlightState {
   decisions: ReadonlySet<string>;
   /** Holds `ids`; `decision` when a decision holds them. */
   hold(ids: readonly string[], decision?: boolean): void;
+  /**
+   * The decision on `ids` was refused: no longer a decision in flight, though
+   * they stay held until the call settles.
+   */
+  refuse(ids: readonly string[]): void;
   release(ids: readonly string[]): void;
 }
 
@@ -123,6 +128,7 @@ export const useInFlightStore = create<InFlightState>((set) => ({
       ids: new Set([...s.ids, ...ids]),
       ...(decision && { decisions: new Set([...s.decisions, ...ids]) }),
     })),
+  refuse: (ids) => set((s) => ({ decisions: without(s.decisions, ids) })),
   release: (ids) =>
     set((s) => ({
       ids: without(s.ids, ids),
@@ -319,6 +325,11 @@ export function useReviewMutations() {
   const onError = (err: ReviewError, { actionId }: { actionId: string }) => {
     const action = ACTIONS.get(actionId);
     if (!action) return;
+    // Refused, before the rollback puts its steps back: the step reading
+    // pending again is then an undo to the review loop (R30), not a read from
+    // before a decision committed (R36), whatever order React renders the
+    // two in. The steps stay held until the call settles.
+    useInFlightStore.getState().refuse(action.held);
     rollBack(caches, action);
     const preview = err.data?.details?.preview;
     if (
