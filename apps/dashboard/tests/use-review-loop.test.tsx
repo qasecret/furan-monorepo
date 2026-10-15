@@ -10,7 +10,11 @@ import {
 } from "vitest";
 
 import { useReviewAnnouncer } from "@/lib/review/review-announcer";
-import { useLoopCue, useReviewLoop } from "@/lib/review/use-review-loop";
+import {
+  leftInBatchLabel,
+  useLoopCue,
+  useReviewLoop,
+} from "@/lib/review/use-review-loop";
 import type { ReviewContext } from "@/lib/review-context";
 import type { RouterOutputs } from "@/lib/trpc";
 
@@ -413,6 +417,77 @@ describe("useReviewLoop: the cue's test name", () => {
     expect(router.push).toHaveBeenCalledOnce();
     expect(useReviewAnnouncer.getState().text).toBe(
       "Next test: Untitled run · 7 left in batch",
+    );
+  });
+});
+
+describe("leftInBatchLabel: the pill's and the cue's count (R33)", () => {
+  const remaining = { run: 1, batch: 2, batchUnfiltered: 6, projectBatches: 1 };
+  const settled = { pending: false, inFilter: true };
+
+  test("without facets: what is left after the step, plus the step while it needs review", () => {
+    const flat = { ...remaining, batchUnfiltered: 2 };
+    expect(leftInBatchLabel(flat, false, settled)).toBe("2 left in batch");
+    expect(
+      leftInBatchLabel(flat, false, { pending: true, inFilter: true }),
+    ).toBe("3 left in batch");
+  });
+
+  test("with facets: the batch and the filter, the step counted in the filter only inside it", () => {
+    expect(leftInBatchLabel(remaining, true, settled)).toBe(
+      "6 left in batch · 2 in filter",
+    );
+    expect(
+      leftInBatchLabel(remaining, true, { pending: true, inFilter: true }),
+    ).toBe("7 left in batch · 3 in filter");
+    expect(
+      leftInBatchLabel(remaining, true, { pending: true, inFilter: false }),
+    ).toBe("7 left in batch · 2 in filter");
+  });
+});
+
+describe("useReviewLoop: the cue's count is the one shown on arrival (R33)", () => {
+  const filtered: ReviewContext = {
+    status: "needs-review",
+    facets: { browser: "chromium" },
+  };
+  const batchAnswer = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+      remaining: { run: 0, batch: 2, batchUnfiltered: 4, projectBatches: 1 },
+    });
+
+  test("J from a step that needs review counts it, in the filter's wording", () => {
+    query.data = batchAnswer();
+    const { result } = setup({ context: filtered, stepPending: true });
+    act(() => result.current.goNext());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Checkout · 5 left in batch · 3 in filter",
+    );
+  });
+
+  test("J from a pending step outside the filter counts it in the batch only", () => {
+    query.data = batchAnswer();
+    const { result } = setup({
+      context: filtered,
+      stepPending: true,
+      stepInFilter: false,
+    });
+    act(() => result.current.goNext());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Checkout · 5 left in batch · 2 in filter",
+    );
+  });
+
+  test("a decision does not count its own step, though its update has not rendered yet", () => {
+    query.data = batchAnswer();
+    // The decision's optimistic update comes after `afterDecision`: the step
+    // still reads as pending here.
+    const { result } = setup({ context: filtered, stepPending: true });
+    act(() => result.current.afterDecision());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Checkout · 4 left in batch · 2 in filter",
     );
   });
 });

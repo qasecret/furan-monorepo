@@ -21,6 +21,8 @@ const baseItem = (overrides: Partial<HistoryItem> = {}): HistoryItem => ({
   baselineSource: null,
   buildId: null,
   buildNumber: null,
+  buildName: null,
+  buildCiBuildId: null,
   createdAt: new Date().toISOString(),
   ...overrides,
 });
@@ -75,6 +77,37 @@ describe("HistoryTable", () => {
     expect(link.textContent).toMatch(/#42/);
     // That batch's page, not the builds list with a query nothing reads.
     expect(link.getAttribute("href")).toBe("/projects/p1/builds/b1");
+  });
+
+  test("a build without a number still links to its batch, by its display name", () => {
+    render(
+      <HistoryTable
+        projectId="p1"
+        items={[
+          baseItem({ id: "r1", buildId: "b-named", buildName: "nightly" }),
+          baseItem({
+            id: "r2",
+            buildId: "b-ci",
+            buildCiBuildId: "ci-123456789012345",
+          }),
+          baseItem({ id: "r3", buildId: "0123456789abcdef" }),
+        ]}
+        nextCursor={null}
+        onLoadMore={() => {}}
+      />,
+    );
+    const named = screen.getByRole("link", { name: "nightly" });
+    expect(named.getAttribute("href")).toBe("/projects/p1/builds/b-named");
+    // The display name's own fallbacks: the CI id's first 12, then the id's 8.
+    expect(
+      screen.getByRole("link", { name: "ci-123456789" }).getAttribute("href"),
+    ).toBe("/projects/p1/builds/b-ci");
+    expect(
+      screen.getByRole("link", { name: "01234567" }).getAttribute("href"),
+    ).toBe("/projects/p1/builds/0123456789abcdef");
+    expect(screen.getByTestId("history-row-build-r1").textContent).toBe(
+      "nightly",
+    );
   });
 
   test("build column shows em-dash when no build", () => {

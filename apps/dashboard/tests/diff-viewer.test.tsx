@@ -709,6 +709,7 @@ interface StepFixture {
   state: string | null;
   decision?: unknown;
   newerCapture?: unknown;
+  browser?: string;
 }
 const stepFixture = (
   id: string,
@@ -1234,6 +1235,14 @@ describe("DiffViewer: the review loop", () => {
   });
 
   test("header shows N left in batch · M in filter and Next pending", () => {
+    // The step on screen (c1) needs review, inside the filter: `remaining`
+    // leaves it out, the pill counts it in both (R33).
+    mockCheckpoints = {
+      items: [
+        stepFixture("c1", "unresolved", { browser: "chromium" }),
+        stepFixture("c2", "unresolved", { browser: "chromium" }),
+      ],
+    };
     nextQuery.data = answer({
       remaining: { run: 1, batch: 3, batchUnfiltered: 8, projectBatches: 2 },
     });
@@ -1244,7 +1253,7 @@ describe("DiffViewer: the review loop", () => {
       },
     });
     expect(r.getByTestId("header-loop-remaining").textContent).toBe(
-      "8 left in batch · 3 in filter",
+      "9 left in batch · 4 in filter",
     );
     const next = r.getByTestId("header-next-pending");
     expect(next.getAttribute("aria-label")).toBe("Next pending step");
@@ -1259,8 +1268,34 @@ describe("DiffViewer: the review loop", () => {
       remaining: { run: 1, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
     });
     const r = renderViewer({ reviewContext: { status: "failed", facets: {} } });
+    // c1 still needs review: the 3 others and itself (R33).
     expect(r.getByTestId("header-loop-remaining").textContent).toBe(
-      "3 left in batch",
+      "4 left in batch",
+    );
+  });
+
+  test("the pill counts the step on screen only while it needs review, and in the filter only inside it", () => {
+    nextQuery.data = answer({
+      remaining: { run: 1, batch: 3, batchUnfiltered: 8, projectBatches: 2 },
+    });
+    // Settled: what `remaining` says.
+    mockCheckpoints = { items: [stepFixture("c1", "passed")] };
+    const settled = renderViewer({
+      reviewContext: { status: "all", facets: { browser: "chromium" } },
+    });
+    expect(settled.getByTestId("header-loop-remaining").textContent).toBe(
+      "8 left in batch · 3 in filter",
+    );
+    cleanup();
+    // Pending, outside the filter: in the batch's count, not the filter's.
+    mockCheckpoints = {
+      items: [stepFixture("c1", "unresolved", { browser: "firefox" })],
+    };
+    const outside = renderViewer({
+      reviewContext: { status: "all", facets: { browser: "chromium" } },
+    });
+    expect(outside.getByTestId("header-loop-remaining").textContent).toBe(
+      "9 left in batch · 3 in filter",
     );
   });
 
@@ -1536,12 +1571,115 @@ describe("DiffViewer: the review loop", () => {
     // The viewer of the test the move opened: the 3 s start when it shows.
     const r = renderViewer({ runId: OTHER_RUN, initialCheckpointId: "s9" });
     const chip = r.getByTestId("header-loop-cue");
-    expect(chip.textContent).toBe("Next test: Checkout · 4 left in batch");
+    // The 4 the answer names past c1, and c1, which J left pending (R33).
+    expect(chip.textContent).toBe("Next test: Checkout · 5 left in batch");
     expect(chip.getAttribute("aria-hidden")).toBe("true");
     act(() => vi.advanceTimersByTime(2_999));
     expect(r.queryByTestId("header-loop-cue")).not.toBeNull();
     act(() => vi.advanceTimersByTime(1));
     expect(r.queryByTestId("header-loop-cue")).toBeNull();
+  });
+
+  describe("on arrival the cue and the pill show the same count", () => {
+    /** A batch: each pending step, with its run and browser. */
+    type Pending = { id: string; runId: string; browser: string };
+    /**
+     * `review.next`'s counts from `at`, as the server takes them: every
+     * pending step of the batch except `at`, and those inside the facets.
+     */
+    const remainingFrom = (
+      pending: Pending[],
+      at: string,
+      browser?: string,
+    ) => {
+      const others = pending.filter((p) => p.id !== at);
+      const inFilter = others.filter(
+        (p) => browser === undefined || p.browser === browser,
+      );
+      const atRun = pending.find((p) => p.id === at)?.runId ?? RUN_ID;
+      return {
+        run: inFilter.filter((p) => p.runId === atRun).length,
+        batch: inFilter.length,
+        batchUnfiltered: others.length,
+        projectBatches: 1,
+      };
+    };
+    const stepsOf = (pending: Pending[], runId: string) => ({
+      items: pending
+        .filter((p) => p.runId === runId)
+        .map((p) => stepFixture(p.id, "unresolved", { browser: p.browser })),
+    });
+
+    /**
+     * From c1 (in RUN_ID) to s9 (in OTHER_RUN) by `move`, then the viewer of
+     * s9: the cue it shows and its pill.
+     */
+    async function arrive(
+      pending: Pending[],
+      move: "J" | "A",
+      browser?: string,
+    ) {
+      const reviewContext = {
+        status: "needs-review" as const,
+        facets: browser ? { browser } : {},
+      };
+      mockCheckpoints = stepsOf(pending, RUN_ID);
+      nextQuery.data = answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "s9" },
+        scope: "batch",
+        remaining: remainingFrom(pending, "c1", browser),
+      });
+      renderViewer({ reviewContext });
+      await pressAsync(move);
+      expect(routerSpies.push).toHaveBeenCalledWith(
+        stepUrl(OTHER_RUN, "s9", browser ? `?browser=${browser}` : ""),
+      );
+      cleanup();
+      await act(async () => {});
+
+      // What is pending on arrival: a decision settled c1, J left it.
+      const after =
+        move === "A" ? pending.filter((p) => p.id !== "c1") : pending;
+      mockCheckpoints = stepsOf(after, OTHER_RUN);
+      nextQuery.data = answer({
+        target: null,
+        scope: "batch",
+        remaining: remainingFrom(after, "s9", browser),
+      });
+      const r = renderViewer({
+        runId: OTHER_RUN,
+        initialCheckpointId: "s9",
+        reviewContext,
+      });
+      return {
+        cue: r.getByTestId("header-loop-cue").textContent,
+        pill: r.getByTestId("header-loop-remaining").textContent,
+      };
+    }
+
+    const batch: Pending[] = [
+      { id: "c1", runId: RUN_ID, browser: "chromium" },
+      { id: "c2", runId: RUN_ID, browser: "firefox" },
+      { id: "s9", runId: OTHER_RUN, browser: "chromium" },
+      { id: "s10", runId: OTHER_RUN, browser: "firefox" },
+      { id: "x1", runId: "run-3", browser: "chromium" },
+    ];
+
+    test.each(["J", "A"] as const)("without facets (%s)", async (move) => {
+      const { cue, pill } = await arrive(batch, move);
+      expect(cue).toBe(`Next test: Checkout · ${pill}`);
+      expect(pill).toBe(move === "J" ? "5 left in batch" : "4 left in batch");
+    });
+
+    test.each(["J", "A"] as const)("with facets (%s)", async (move) => {
+      const { cue, pill } = await arrive(batch, move, "chromium");
+      expect(cue).toBe(`Next test: Checkout · ${pill}`);
+      expect(pill).toBe(
+        move === "J"
+          ? "5 left in batch · 3 in filter"
+          : "4 left in batch · 2 in filter",
+      );
+    });
   });
 
   test("a decision while review.next is fetching shows Next as busy, then moves exactly once", () => {
@@ -2109,7 +2247,7 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
-  test("All caught up: Back to batches keeps the status and branch", () => {
+  test("All caught up: Back to batches keeps the status", () => {
     nextQuery.data = answer({
       target: null,
       scope: "none",
@@ -2117,15 +2255,13 @@ describe("DiffViewer: the review loop", () => {
     });
     // No facets: with them, only the batch is known to be done (R25).
     const { r, again } = lastPendingStep({
-      reviewContext: { status: "failed", branch: "main", facets: {} },
+      reviewContext: { status: "failed", facets: {} },
     });
     press("A");
     c1Decided(again);
     r.getByRole("dialog", { name: "All caught up" });
     const batches = r.getByRole("link", { name: "Back to batches" });
-    expect(batches.getAttribute("href")).toBe(
-      "/inbox?status=failed&branch=main",
-    );
+    expect(batches.getAttribute("href")).toBe("/inbox?status=failed");
     expect(document.activeElement).toBe(batches);
     expect(r.queryByRole("button", { name: /Continue/ })).toBeNull();
   });

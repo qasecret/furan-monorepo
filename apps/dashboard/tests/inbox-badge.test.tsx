@@ -23,6 +23,21 @@ vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
 
 import { InboxBadge } from "@/app/(protected)/_components/inbox-badge";
 
+/**
+ * The badge as a screen reader gets it: its sr-only text, found by that text,
+ * and the visible (aria-hidden) number beside it. A generic span's aria-label
+ * is not announced, so the badge carries none.
+ */
+function badgeFor(spoken: string) {
+  const text = screen.getByText(spoken);
+  expect(text.className).toContain("sr-only");
+  const badge = text.parentElement!;
+  expect(badge.getAttribute("aria-label")).toBeNull();
+  return {
+    visible: badge.querySelector('[aria-hidden="true"]')?.textContent,
+  };
+}
+
 beforeEach(() => {
   projectState.currentProjectId = "p1";
   countMock.mockReset();
@@ -33,8 +48,7 @@ afterEach(cleanup);
 describe("InboxBadge (batches that need review)", () => {
   test("badge shows builds.pendingCount and hides at 0", () => {
     const { container, rerender } = render(<InboxBadge />);
-    const badge = screen.getByLabelText("3 batches need review");
-    expect(badge.textContent).toBe("3");
+    expect(badgeFor("3 batches need review").visible).toBe("3");
 
     countMock.mockReturnValue({ data: { total: 0 } });
     rerender(<InboxBadge />);
@@ -44,7 +58,7 @@ describe("InboxBadge (batches that need review)", () => {
   test("names a single batch in the singular", () => {
     countMock.mockReturnValue({ data: { total: 1 } });
     render(<InboxBadge />);
-    expect(screen.getByLabelText("1 batch needs review").textContent).toBe("1");
+    expect(badgeFor("1 batch needs review").visible).toBe("1");
   });
 
   test("hides while the count has not loaded", () => {
@@ -75,7 +89,6 @@ describe("InboxBadge (batches that need review)", () => {
   test("caps the visible number at 99+ but names the full count", () => {
     countMock.mockReturnValue({ data: { total: 120 } });
     render(<InboxBadge />);
-    const badge = screen.getByLabelText("120 batches need review");
-    expect(badge.textContent).toBe("99+");
+    expect(badgeFor("120 batches need review").visible).toBe("99+");
   });
 });

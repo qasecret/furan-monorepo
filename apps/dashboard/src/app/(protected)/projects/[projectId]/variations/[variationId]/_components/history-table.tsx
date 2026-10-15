@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { buildDisplayName } from "@/lib/build-display-name";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { batchHref } from "@/lib/review-url";
 
@@ -28,7 +29,23 @@ export interface HistoryItem {
   baselineSource: string | null;
   buildId: string | null;
   buildNumber: number | null;
+  /** The build's name and CI id: what names a build that has no number. */
+  buildName: string | null;
+  buildCiBuildId: string | null;
   createdAt: string | Date;
+}
+
+/**
+ * The build column's label: `#N` when the build is numbered, else the build's
+ * display name (its name, CI id or id), so every row links to its batch.
+ */
+function buildLabel(r: HistoryItem): string {
+  if (r.buildNumber !== null) return `#${r.buildNumber}`;
+  return buildDisplayName({
+    name: r.buildName,
+    ciBuildId: r.buildCiBuildId,
+    id: r.buildId,
+  });
 }
 
 interface Props {
@@ -108,13 +125,13 @@ export function HistoryTable({
                   ) : null}
                 </TableCell>
                 <TableCell>
-                  {r.buildId && r.buildNumber !== null ? (
+                  {r.buildId ? (
                     <Link
                       href={batchHref(projectId, r.buildId)}
                       className="tabular-nums text-brand-text hover:underline focus-ring"
                       data-testid={`history-row-build-${r.id}`}
                     >
-                      #{r.buildNumber}
+                      {buildLabel(r)}
                     </Link>
                   ) : null}
                 </TableCell>

@@ -408,7 +408,9 @@ describe("toBuildsListFilter", () => {
     // failed test", which a batch that also needs review still satisfies.
     ["failed", { anyFailed: true }],
     ["running", { status: "running" }],
-    ["passed", { status: "passed" }],
+    // Passed is the rollup AND no pending step (Ruling R32): an all-new
+    // first-baseline batch rolls up to passed but still needs review.
+    ["passed", { status: "passed", noPending: true }],
     ["all", {}],
   ];
   it.each(cases)("%s", (status, expected) => {

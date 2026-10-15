@@ -227,6 +227,9 @@ export const variationsRouter = t.router({
           baselineSource: testRuns.baselineSource,
           buildId: testRuns.buildId,
           buildNumber: builds.number,
+          // For a build without a number, so its row can still name it.
+          buildName: builds.name,
+          buildCiBuildId: builds.ciBuildId,
           createdAt: testRuns.createdAt,
           cursorAt: cursorTimestamp(testRuns.createdAt),
         })
