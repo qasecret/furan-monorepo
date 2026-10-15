@@ -358,7 +358,7 @@ class StubEventSource {
 import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
-import { useLoopCue } from "../src/lib/review/use-review-loop";
+import { loopHandoff, useLoopCue } from "../src/lib/review/use-review-loop";
 import { useInFlightStore } from "../src/lib/review/use-review-mutations";
 import { useUndoStore } from "../src/lib/review/use-undo-store";
 
@@ -384,6 +384,7 @@ function resetLoop() {
   vi.mocked(toast.error).mockReset();
   vi.mocked(toast.success).mockReset();
   useLoopCue.setState({ cue: null });
+  loopHandoff.slot = null;
   useReviewAnnouncer.setState({ text: "", seq: 0 });
   navState.pathname = "";
 }
@@ -2195,6 +2196,41 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(canvas()).not.toBeNull();
     expect(card(r)).toBeNull();
+  });
+
+  test("a decision before the step change's route commits keeps its card (R37)", () => {
+    nextQuery.data = intoNextBatch();
+    mockCheckpoints = {
+      items: [decided("c1"), stepFixture("c2", "unresolved"), decided("c3")],
+    };
+    const viewer = (step: string) => (
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId={step}
+      />
+    );
+    const r = render(viewer("c1"));
+    // →: the viewer shows c2 at once, and asks the router for its URL.
+    fireEvent.click(r.getByTestId("contextual-header-next"));
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c2"));
+    // A, before the route commits: the last pending step of the batch.
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(reviewSpies.decide.mock.calls[0]![0]).toMatchObject({
+      checkpointIds: ["c2"],
+    });
+    mockCheckpoints = {
+      items: [decided("c1"), decided("c2"), decided("c3")],
+    };
+    r.rerender(viewer("c1"));
+    expect(card(r)).not.toBeNull();
+    // The route commits: Next mounts a new viewer on c2, and the card is
+    // still there.
+    cleanup();
+    const committed = render(viewer("c2"));
+    expect(card(committed)).not.toBeNull();
+    expect(committed.getByRole("button", { name: CONTINUE })).toBeDefined();
   });
 
   test("a stale read during the decision keeps its card; the undo's own hold does not (R36)", async () => {
