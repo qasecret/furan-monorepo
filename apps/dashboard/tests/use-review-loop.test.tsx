@@ -1,5 +1,4 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
 import {
   afterEach,
   beforeEach,
@@ -1114,6 +1113,25 @@ describe("useReviewLoop: guards for the wired viewer", () => {
     expect(useLoopCue.getState().cue).toBeNull();
   });
 
+  test("leaving by hand after a stale move drops a cue still loading its name", async () => {
+    vi.useFakeTimers();
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    expect(router.push).toHaveBeenCalledOnce();
+    // The route never commits the move, which is given up on after 5 s; then
+    // the reviewer leaves by hand (a link). That departure is not the move's.
+    act(() => vi.advanceTimersByTime(5_000));
+    page.unmount();
+    await act(async () => {});
+    await act(async () => slow.resolve({ name: "Checkout" }));
+    expect(useReviewAnnouncer.getState().text).toBe("");
+    expect(useLoopCue.getState().cue).toBeNull();
+  });
+
   test("a move's own departure keeps its cue, still loading its name", async () => {
     const slow = deferred<{ name: string | null }>();
     utils.runs.getById.getData.mockReturnValue(undefined);
@@ -1130,17 +1148,17 @@ describe("useReviewLoop: guards for the wired viewer", () => {
   });
 
   test("a strict-mode remount of the page the move opened keeps its cue", async () => {
-    // Development runs every effect twice on mount; that is not leaving.
+    // Development runs every effect twice on mount (`reactStrictMode` in
+    // next.config): the unmount cleanup runs once while the page stays. That
+    // is not leaving. StrictMode has to be the root for the effects to run
+    // twice: as a `wrapper` it is not, and nothing is replayed.
     query.data = intoOtherRun();
     const page = setup();
     act(() => page.result.current.goNext());
     page.unmount();
-    const strict = ({ children }: { children: ReactNode }) => (
-      <StrictMode>{children}</StrictMode>
-    );
     const next = renderHook((props: Args) => useReviewLoop(props), {
       initialProps: args({ runId: OTHER_RUN, checkpointId: "step-9" }),
-      wrapper: strict,
+      reactStrictMode: true,
     });
     await act(async () => {});
     expect(next.result.current.cue).toBe(
@@ -1212,10 +1230,19 @@ describe("useReviewLoop: the visible cue (R15)", () => {
     const first = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
     expect(first.result.current.cue).toBe(CUE);
     act(() => vi.advanceTimersByTime(2_000));
-    // Another page shows it: the deadline is the first one's.
+    // The first page stops showing it, and its own take-down goes with it
+    // (its loop is off; it has not left, so the cue stays up)...
+    first.rerender(
+      args({ runId: OTHER_RUN, checkpointId: "step-9", enabled: false }),
+    );
+    expect(first.result.current.cue).toBeNull();
+    // ...and another page of the same test shows it: the deadline is still
+    // the first one's, 3 s from when it was first shown, not from now.
     const second = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
     expect(second.result.current.cue).toBe(CUE);
-    act(() => vi.advanceTimersByTime(1_000));
+    act(() => vi.advanceTimersByTime(999));
+    expect(second.result.current.cue).toBe(CUE);
+    act(() => vi.advanceTimersByTime(1));
     expect(second.result.current.cue).toBeNull();
   });
 

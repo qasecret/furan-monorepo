@@ -257,8 +257,10 @@ export function useReviewLoop({
   // Leaving the step by any route ends this instance: whatever is still on
   // its way (a K answer) is for a page that is gone. Left by hand (a link,
   // another step), a cue too: a move this hook made keeps its own, which is
-  // for the page it opens. Development's strict mode runs this on a remount
-  // as well; the page is back by the next microtask, and nothing is dropped.
+  // for the page it opens, unless the move was given up on (5 s) and the
+  // reviewer then left some other way. Development's strict mode runs this on
+  // a remount as well; the page is back by the next microtask, and nothing is
+  // dropped.
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -266,13 +268,13 @@ export function useReviewLoop({
       mounted.current = false;
       epoch.current += 1;
       prevPending.current = null;
-      if (!moving.current) {
+      if (!isMoving()) {
         queueMicrotask(() => {
           if (!mounted.current) supersedeCues();
         });
       }
     };
-  }, []);
+  }, [isMoving]);
 
   /** Say which test the reviewer has been taken to. */
   const announceMove = useCallback(
