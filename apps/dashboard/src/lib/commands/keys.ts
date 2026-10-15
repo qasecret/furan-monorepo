@@ -112,6 +112,21 @@ export function isCharacterBinding(key: string): boolean {
 }
 
 /**
+ * True when a binding cannot type or edit text, so a text field need not
+ * own it: one press carrying ⌘ / Ctrl / Alt (`$mod`, `Control`, `Meta`,
+ * `Alt`), or Escape. Letters, punctuation, Backspace, Delete, Enter, Space,
+ * arrows, Home / End and sequences all type or edit, so they are not.
+ */
+export function isNonTypingBinding(key: string): boolean {
+  const steps = stepsOf(key);
+  if (steps.length !== 1) return false;
+  const { modifiers, key: pressed } = parseStep(steps[0] ?? "");
+  return (
+    modifiers.some((m) => COMMAND_MODIFIERS.has(m)) || pressed === "Escape"
+  );
+}
+
+/**
  * True when every key of the command, and every step of each sequence
  * ("g i"), is a character key. False for a command with no keys.
  */

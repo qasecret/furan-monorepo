@@ -42,6 +42,15 @@ if (typeof window !== "undefined" && !readStored()) {
   useSingleKeyStore.setState({ on: false });
 }
 
+// Another tab's change: follow it. That tab announced it, so this one does
+// not; `newValue` is null when its storage was cleared (the default, on).
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== SINGLE_KEYS_STORAGE_KEY && e.key !== null) return;
+    useSingleKeyStore.setState({ on: e.newValue !== "0" });
+  });
+}
+
 /**
  * Turns the single-key shortcuts on or off: stores the choice and announces
  * it ("Single-key shortcuts off" / "Single-key shortcuts on"). No hook, so a

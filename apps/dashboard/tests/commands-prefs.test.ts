@@ -121,6 +121,41 @@ describe("single-key shortcuts switch", () => {
     expect(useReviewAnnouncer.getState().seq).toBe(2);
   });
 
+  it("a storage event from another tab updates the switch", () => {
+    const { result } = renderHook(() => useSingleKeyShortcuts());
+    const fromAnotherTab = (key: string | null, newValue: string | null) =>
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key,
+            newValue,
+            storageArea: window.localStorage,
+          }),
+        );
+      });
+
+    fromAnotherTab(STORAGE_KEY, "0");
+    expect(result.current[0]).toBe(false);
+    expect(singleKeysOn()).toBe(false);
+    fromAnotherTab(STORAGE_KEY, "1");
+    expect(result.current[0]).toBe(true);
+    expect(singleKeysOn()).toBe(true);
+
+    // Other keys are not ours.
+    fromAnotherTab("furan:sidebar:collapsed", "0");
+    expect(singleKeysOn()).toBe(true);
+
+    // Storage cleared in the other tab: back to the default.
+    fromAnotherTab(STORAGE_KEY, "0");
+    expect(singleKeysOn()).toBe(false);
+    fromAnotherTab(null, null);
+    expect(singleKeysOn()).toBe(true);
+
+    // It was the other tab's change: this one says nothing and writes nothing.
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
   it("renders on on the server and the stored choice after hydration", async () => {
     window.localStorage.setItem(STORAGE_KEY, "0");
     const fresh = await loadPrefs();

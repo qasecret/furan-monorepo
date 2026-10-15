@@ -1,4 +1,8 @@
-import { isCharacterBinding, type BindingOptions } from "./keys";
+import {
+  isCharacterBinding,
+  isNonTypingBinding,
+  type BindingOptions,
+} from "./keys";
 
 /**
  * The one guard every key goes through (spec §3.4): it says when a keystroke
@@ -46,6 +50,12 @@ export const LIST_ITEM = "[data-cursor-id]";
 const NATIVE_CONTROLS =
   'button,a[href],summary,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"]';
 
+/**
+ * A control that types ahead on letters without being a text field: a closed
+ * Radix Select's trigger is a `button[role=combobox]`.
+ */
+const TYPEAHEAD_CONTROLS = '[role="combobox"]';
+
 const ACTIVATION_KEYS = new Set(["Enter", "Space", " "]);
 
 /** True when focus is in a field that takes typed text. */
@@ -77,19 +87,23 @@ export function isTypingInInput(): boolean {
  *
  * 1. another handler already took it (`defaultPrevented`);
  * 2. an IME composition is under way;
- * 3. focus is in a text field, a select or an editable region. Typing "a"
- *    in the PatternEditor must not approve the run, "/" must not open the
- *    palette mid-regex. The one exception is a field inside the dialog
- *    `allowInDialog` names: ⌘K closes the palette from its own search box;
+ * 3. focus is in a text field, a select or an editable region, or (for a
+ *    character key) on a combobox, which types ahead. Typing "a" in the
+ *    PatternEditor must not approve the run, "/" must not open the palette
+ *    mid-regex. The one exception is a field inside the dialog
+ *    `allowInDialog` names, and only for a binding that cannot type or edit
+ *    (`isNonTypingBinding`: ⌘ / Ctrl / Alt chords, Esc): ⌘K closes the
+ *    palette from its own search box, while "r" typed there stays typing;
  * 4. focus is inside a menu, listbox or dialog, unless it is the dialog
  *    `allowInDialog` names, or (`passesUndo`) a `[data-passes-undo]` one;
  * 5. the key is auto-repeating and the binding does not repeat;
  * 6. single-key shortcuts are off and `key` is a character binding (a
  *    character key, or a sequence of them; arrows, Enter, Esc and anything
  *    with ⌘ / Ctrl / Alt keep working);
- * 7. the key is Enter or Space and focus is on a control that activates on
- *    it (button, link, summary, form control), other than the list item
- *    itself: native activation wins;
+ * 7. the key is Enter or Space (as the binding, or as the key the event
+ *    carries, so `Shift+Enter` counts) and focus is on a control that
+ *    activates on it (button, link, summary, form control), other than the
+ *    list item itself: native activation wins;
  * 8. the binding is tied to an element (`focusWithin`) and focus is outside.
  *
  * Focus is read from `document.activeElement`: a key press goes to the
@@ -114,7 +128,15 @@ export function keyIsOwnedElsewhere(
     opts.allowInDialog !== undefined &&
     owner.matches(opts.allowInDialog);
 
-  if (isTypingInInput() && !inAllowedDialog) return true; // 3
+  // The dialog a command names lets only a non-typing binding past a text
+  // field inside it: anything else typed there is typing.
+  const waived = inAllowedDialog && isNonTypingBinding(key);
+  if (!waived) {
+    if (isTypingInInput()) return true; // 3
+    if (focus?.matches(TYPEAHEAD_CONTROLS) && isCharacterBinding(key)) {
+      return true; // 3
+    }
+  }
   if (
     owner !== null &&
     !inAllowedDialog &&
@@ -125,7 +147,7 @@ export function keyIsOwnedElsewhere(
   if (e.repeat && !opts.repeat) return true; // 5
   if (!prefs.singleKeys && isCharacterBinding(key)) return true; // 6
   if (
-    ACTIVATION_KEYS.has(key) &&
+    (ACTIVATION_KEYS.has(key) || e.key === "Enter" || e.key === " ") &&
     focus?.matches(NATIVE_CONTROLS) &&
     !focus.matches(LIST_ITEM)
   ) {

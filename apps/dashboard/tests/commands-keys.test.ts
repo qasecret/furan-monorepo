@@ -8,10 +8,48 @@ import {
   isCharacterBinding,
   isCharacterKey,
   isCharacterKeyCommand,
+  isNonTypingBinding,
   lowerFirst,
 } from "@/lib/commands/keys";
 
 describe("command keys", () => {
+  it("isNonTypingBinding", () => {
+    // Bindings that cannot type or edit text: a modifier chord, or Esc.
+    for (const key of [
+      "$mod+k",
+      "$mod+z",
+      "Alt+x",
+      "Control+a",
+      "Meta+k",
+      "Shift+$mod+k",
+      "Escape",
+      "Shift+Escape",
+    ]) {
+      expect(isNonTypingBinding(key), key).toBe(true);
+    }
+    // Everything a text field uses: characters, Backspace/Delete, Enter,
+    // Space, arrows, Home/End, shifted punctuation, and sequences.
+    for (const key of [
+      "a",
+      "A",
+      "?",
+      "Shift+?",
+      "Shift+a",
+      "Backspace",
+      "Delete",
+      "Enter",
+      "Space",
+      "ArrowDown",
+      "Home",
+      "g i",
+      "g Escape",
+      "$mod+k $mod+j",
+      "",
+    ]) {
+      expect(isNonTypingBinding(key), key).toBe(false);
+    }
+  });
+
   it("classifies character keys", () => {
     // One printable character, optionally shifted: WCAG 2.1.4's "character
     // key" shortcuts, which the single-key switch turns off.

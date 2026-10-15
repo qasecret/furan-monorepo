@@ -62,6 +62,9 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   /**
    * CSS selector of the one dialog this key may fire inside, e.g.
    * "[data-command-palette]" (⌘K closes the palette) or "[data-done-card]".
+   * It lets the key past the dialog (guard rule 4), but past a text field in
+   * that dialog only for a binding that cannot type or edit text (modifier
+   * chords, Esc: `isNonTypingBinding`); anything else typed there stays typing.
    */
   allowInDialog?: string;
   /** Selector: the key acts only while focus is inside it (list arrows, Home/End). */

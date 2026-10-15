@@ -194,6 +194,82 @@ describe("keyIsOwnedElsewhere", () => {
     expect(owned("$mod+k", toggle)).toBe(true);
   });
 
+  it("in the allowed dialog's text field, r / Backspace stay owned while $mod+k and Escape do not", () => {
+    // The palette's search box: only keys that cannot type or edit text
+    // may pass, or "r" would reject the step it is typed over.
+    page(`<div role="dialog" data-command-palette><input id="search" /></div>`);
+    focus("#search");
+    const inPalette: Opts = { allowInDialog: "[data-command-palette]" };
+
+    for (const key of [
+      "r",
+      "a",
+      "/",
+      "?",
+      "Backspace",
+      "Delete",
+      "Enter",
+      "Space",
+      "ArrowDown",
+      "Home",
+      "g i",
+      "Shift+?",
+    ]) {
+      expect(owned(key, inPalette), key).toBe(true);
+    }
+    for (const key of [
+      "$mod+k",
+      "Control+k",
+      "Meta+k",
+      "Alt+x",
+      "Escape",
+      "Shift+Escape",
+    ]) {
+      expect(owned(key, inPalette), key).toBe(false);
+    }
+
+    // A text field in a dialog the command did not name owns all of them.
+    page(
+      `<div role="dialog" data-command-palette><input id="search" /></div>` +
+        `<div role="dialog" data-other><input id="other" /></div>`,
+    );
+    focus("#other");
+    expect(owned("Escape", inPalette)).toBe(true);
+    expect(owned("$mod+k", inPalette)).toBe(true);
+  });
+
+  it("a focused combobox owns character keys", () => {
+    // A closed Radix Select's trigger types ahead on letters: "j" must not
+    // also move the list cursor.
+    for (const html of [
+      `<button id="t" role="combobox" aria-expanded="false">All</button>`,
+      `<div id="t" role="combobox" tabindex="0">All</div>`,
+    ]) {
+      page(html);
+      focus("#t");
+      for (const key of ["j", "k", "a", "r", "s", "?", "/", "g i"]) {
+        expect(owned(key), `${html} ${key}`).toBe(true);
+      }
+      // Keys that are not characters keep their own handling.
+      for (const key of ["ArrowDown", "ArrowUp", "Escape", "$mod+k", "Home"]) {
+        expect(owned(key), `${html} ${key}`).toBe(false);
+      }
+    }
+
+    // Inside the dialog a command names, a combobox still types ahead.
+    page(
+      `<div role="dialog" data-done-card><button id="t" role="combobox">All</button></div>`,
+    );
+    focus("#t");
+    expect(owned("r", { allowInDialog: "[data-done-card]" })).toBe(true);
+    expect(owned("Escape", { allowInDialog: "[data-done-card]" })).toBe(false);
+
+    // Not a combobox: the letters are free.
+    page(`<button id="t">All</button>`);
+    focus("#t");
+    expect(owned("j")).toBe(false);
+  });
+
   it("repeat is ignored unless the command allows it", () => {
     expect(owned("a", {}, ON, { repeat: true })).toBe(true);
     expect(owned("a", { repeat: false }, ON, { repeat: true })).toBe(true);
@@ -304,10 +380,36 @@ describe("keyIsOwnedElsewhere", () => {
       expect(owned("Space"), `${name} (Space)`).toBe(false);
     }
 
+    // A chord on the activation key: the control still activates on the
+    // Enter / Space itself, so the binding string does not matter.
+    page(`<button id="t">x</button>`);
+    focus("#t");
+    expect(owned("a", {}, ON, { key: "Enter" })).toBe(true);
+    expect(owned("a", {}, ON, { key: " " })).toBe(true);
+
     // A focusable item that is not a control is never native.
     page(`<div id="t" role="listitem" tabindex="0">x</div>`);
     focus("#t");
     expect(owned("Enter")).toBe(false);
+  });
+
+  it("Shift+Enter on a focused button is left to native activation", () => {
+    page(
+      `<button id="t">x</button><li tabindex="0" data-cursor-id="a" id="item">x</li>`,
+    );
+    focus("#t");
+    const press = (key: string, init: KeyboardEventInit) =>
+      owned(key, {}, ON, init);
+    expect(press("Shift+Enter", { key: "Enter", shiftKey: true })).toBe(true);
+    expect(press("$mod+Enter", { key: "Enter", ctrlKey: true })).toBe(true);
+    expect(press("Shift+Space", { key: " ", shiftKey: true })).toBe(true);
+    // Another key on the button is not activation.
+    expect(press("Shift+ArrowDown", { key: "ArrowDown", shiftKey: true })).toBe(
+      false,
+    );
+    // The list item itself keeps its own Enter, chord or not.
+    focus("#item");
+    expect(press("Shift+Enter", { key: "Enter", shiftKey: true })).toBe(false);
   });
 
   it("focusWithin ignores the key outside the element", () => {
