@@ -29,7 +29,7 @@ interface Props {
  * column.
  *
  * Keystrokes inside the textarea have their propagation stopped so the
- * global `tinykeys` binding (e.g. the `A`/`R`/`C` shortcuts wired by
+ * dashboard's key dispatcher (e.g. the viewer's `A`/`R`/`C` commands from
  * `useDiffViewerShortcuts`) does not fire while the user is typing.
  */
 export function RunCommentPanel({ runId, embedded = false }: Props) {

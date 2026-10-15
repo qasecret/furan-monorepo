@@ -420,14 +420,11 @@ describe("GlobalCommands", () => {
     }
   });
 
-  it("⌘Z undoes once while the viewer still binds it too", () => {
-    // Until the viewer's keys move into the registry, its own tinykeys also
-    // binds ⌘Z to the same undo. Whichever listener runs first takes the key
-    // (preventDefault); the other yields. Both orders are checked.
+  it("⌘Z undoes once with the viewer mounted", () => {
+    // The viewer's keys are registry commands and ⌘Z is not one of them: on
+    // its page ⌘Z is this undo, once, whichever mounts first.
     const viewer = () =>
-      renderHook(() =>
-        useDiffViewerShortcuts({ viewports: [], onUndo: () => undoMock() }),
-      );
+      renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     const layout = () => render(<Layout />);
 
     for (const [first, second] of [

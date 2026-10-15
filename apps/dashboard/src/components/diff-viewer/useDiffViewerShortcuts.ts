@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { tinykeys } from "tinykeys";
 
 import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import {
@@ -12,29 +10,29 @@ import {
   type ViewerMode,
 } from "./useViewerStore";
 
-import { usePaletteStore } from "@/components/cmdk/use-command-palette";
-import {
-  isTypingInInput,
-  KEYBOARD_OWNER_ROLES,
-  PASSES_UNDO,
-} from "@/lib/commands/guard";
+import { useCommands } from "@/lib/commands/registry";
+import type { Command, CommandCtx } from "@/lib/commands/types";
+import { canReviewRole } from "@/lib/roles";
 
 const MODES: ViewerMode[] = ["side-by-side", "overlay", "difference"];
 
-interface ShortcutOptions {
+/**
+ * What the viewer's keys act on. A callback is given exactly when its key
+ * applies: the DiffViewer leaves one out while the done card is up (R20,
+ * R28), while the review loop is off, or at the end of the steps, and the
+ * command is then disabled (`enabled`), so the key is left to the browser.
+ */
+export interface ShortcutOptions {
   viewports: string[];
   /**
    * Project id — keys the per-project region clipboard for the
    * `$mod+C` / `$mod+V` shortcuts. Optional so existing callers that
-   * predate region copy/paste still compile; when empty the handlers
-   * short-circuit (no copy/paste happens).
+   * predate region copy/paste still compile; when empty, copy and paste
+   * are disabled (the browser's own copy and paste apply).
    */
   projectId?: string;
-  onApprove?: () => void; // T11 supplies these
+  onApprove?: () => void;
   onReject?: () => void;
-  /** ⌘Z / Ctrl+Z: takes back the newest review action. */
-  onUndo?: () => void;
-  onHelpToggle?: () => void;
   onNextDiff?: () => void;
   onPrevDiff?: () => void;
   /**
@@ -58,22 +56,11 @@ interface ShortcutOptions {
   onEscape?: () => void;
 }
 
-/**
- * True when this keystroke belongs to something else: a text field or
- * select has focus, focus is inside a menu / listbox / dialog, or another
- * handler already consumed it. Every viewer shortcut yields in that case —
- * otherwise typing "a" into the PatternEditor approves the run, "/" opens
- * the palette mid-regex, and Backspace deletes the selected region. `undo`
- * (⌘Z) is not owned by a dialog that passes it through.
- */
-function keyIsOwnedElsewhere(e: KeyboardEvent, undo = false): boolean {
-  if (e.defaultPrevented) return true;
-  if (isTypingInInput()) return true;
-  if (typeof document === "undefined") return false;
-  const owner = document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
-  if (!owner) return false;
-  return !(undo && owner.matches(PASSES_UNDO));
-}
+interface ViewerCtx extends CommandCtx, ShortcutOptions {}
+
+const store = () => useViewerStore.getState();
+
+const given = (callback: (() => void) | undefined) => callback !== undefined;
 
 function hasTextSelection(): boolean {
   if (typeof window === "undefined") return false;
@@ -81,209 +68,295 @@ function hasTextSelection(): boolean {
   return !!sel && sel.toString().length > 0;
 }
 
-/**
- * Wires keyboard shortcuts for the DiffViewer.
- *
- * `optsRef` indirection: callbacks (approve/reject/help, step and queue
- * navigation) are read through a ref so the underlying tinykeys binding does
- * not need to be torn down on every parent re-render.
- *
- * `?` is bound both bare and as `Shift+?` because on US-layout the `?`
- * key requires shift; tinykeys matches `key`, which is already `?` once
- * shift is held, but binding both keeps it robust across layouts.
- */
-export function useDiffViewerShortcuts(opts: ShortcutOptions) {
-  const mode = useViewerStore((s) => s.mode);
-  const setMode = useViewerStore((s) => s.setMode);
-  const viewport = useViewerStore((s) => s.viewport);
-  const setViewport = useViewerStore((s) => s.setViewport);
-  const optsRef = useRef(opts);
-  optsRef.current = opts;
+function isEditing(): boolean {
+  return store().ignoreEditMode !== "off";
+}
 
-  useEffect(() => {
-    const bindings: Record<string, (e: KeyboardEvent) => void> = {
-      ArrowLeft: () => {
-        optsRef.current.onPrevStep?.();
-      },
-      ArrowRight: () => {
-        optsRef.current.onNextStep?.();
-      },
-      D: () => {
-        // Toggle the single-image difference view.
-        setMode(mode === "difference" ? "side-by-side" : "difference");
-      },
-      O: () => {
-        const idx = MODES.indexOf(mode);
-        const next = MODES[(idx + 1) % MODES.length];
-        if (next) setMode(next);
-      },
-      "[": () => {
-        const vps = optsRef.current.viewports;
-        if (vps.length === 0) return;
-        const i = vps.indexOf(viewport);
-        const next = vps[(i - 1 + vps.length) % vps.length] ?? vps[0];
-        if (next) setViewport(next);
-      },
-      "]": () => {
-        const vps = optsRef.current.viewports;
-        if (vps.length === 0) return;
-        const i = vps.indexOf(viewport);
-        const next = vps[(i + 1) % vps.length] ?? vps[0];
-        if (next) setViewport(next);
-      },
-      H: () => {
-        const s = useViewerStore.getState();
-        s.setHighlightActive(!s.highlightActive);
-      },
-      n: () => {
-        optsRef.current.onNextDiff?.();
-      },
-      p: () => {
-        optsRef.current.onPrevDiff?.();
-      },
-      // Approve / reject ignore auto-repeat: holding the key must not fire
-      // a second review action.
-      A: (e) => {
-        if (e.repeat) return;
-        optsRef.current.onApprove?.();
-      },
-      R: (e) => {
-        if (e.repeat) return;
-        optsRef.current.onReject?.();
-      },
-      // `X` is the legacy reject hotkey from the predecessor frontend.
-      // Aliased to onReject so power reviewers carrying muscle memory from
-      // the old viewer hit the same action without retraining.
-      X: (e) => {
-        if (e.repeat) return;
-        optsRef.current.onReject?.();
-      },
-      // The review loop. Auto-repeat is ignored too: holding J must not walk
-      // the queue one step per repeat.
-      J: (e) => {
-        if (e.repeat) return;
-        optsRef.current.onNextPending?.();
-      },
-      K: (e) => {
-        if (e.repeat) return;
-        optsRef.current.onPrevPending?.();
-      },
-      C: () => {
-        const store = useViewerStore.getState();
-        store.setCommentPanelOpen(!store.commentPanelOpen);
-      },
-      "?": () => optsRef.current.onHelpToggle?.(),
-      "Shift+?": () => optsRef.current.onHelpToggle?.(),
-      // T9: `/` opens the global cmdk command palette. We reach into the
-      // zustand store directly so the binding stays decoupled from props.
-      "/": () => usePaletteStore.getState().setOpen(true),
-      // F14/F15: ignore-region editor shortcuts (ADR-031)
-      I: () => {
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode === "off") {
-          store.setIgnoreEditMode("run");
-        } else {
-          store.setIgnoreEditMode("off");
-        }
-      },
-      Delete: () => {
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode !== "off") {
-          store.deleteSelected();
-        }
-      },
-      Backspace: () => {
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode !== "off") {
-          store.deleteSelected();
-        }
-      },
-      Escape: (e) => {
-        const onEscape = optsRef.current.onEscape;
-        if (onEscape) {
-          // Held, it leaves once: the auto-repeats are not more presses.
-          if (e.repeat) return;
-          onEscape();
-          return;
-        }
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode !== "off") {
-          store.setIgnoreEditMode("off");
-        }
-        // Also clear the selected diff region (RegionListPanel selection).
-        store.setSelected(null);
-      },
-      // F-b: region copy/paste. `$mod` is tinykeys' cross-platform alias
-      // (Ctrl on Win/Linux, Cmd on Mac). Plain `C` is already bound to
-      // toggle the comment panel, so we use the modified form here.
-      "$mod+C": (e) => {
-        // Yield to the browser's own copy when text is selected.
-        if (hasTextSelection()) return;
-        const projectId = optsRef.current.projectId;
-        if (!projectId) return;
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode === "off" || !store.selectedIgnoreId) return;
-        const region = selectEffectiveRegion(store);
-        if (!region) return;
-        setClipboardRegion(projectId, region);
-        toast.success("Region copied");
-        e.preventDefault();
-      },
-      "$mod+V": (e) => {
-        const projectId = optsRef.current.projectId;
-        if (!projectId) return;
-        const store = useViewerStore.getState();
-        if (store.ignoreEditMode === "off") return;
-        const clipboard = getClipboardRegion(projectId);
-        if (!clipboard) return;
-        store.addDraftRegion({
-          ...clipboard,
-          id: crypto.randomUUID(),
-          viewport: store.viewport || clipboard.viewport,
-        });
-        e.preventDefault();
-      },
-      // ⌘Z takes back the newest review action. Auto-repeat is ignored, like
-      // approve and reject, so holding the keys cannot walk the stack back.
-      // Shift is not matched, so ⇧⌘Z (redo) passes through untouched.
-      "$mod+Z": (e) => {
-        if (e.repeat) return;
-        optsRef.current.onUndo?.();
-        e.preventDefault();
-      },
-      // Zoom shortcuts: `=` / `+` zoom in, `-` zooms out, `0` resets to fit.
-      // `=` is the unshifted key labeled "+" on US layouts, so zooming in
-      // needs no chord there. `+` is bound bare for layouts that send it
-      // without Shift, and as `Shift++` below for those that do.
-      "=": () => {
-        useViewerStore.getState().zoomBy(ZOOM_STEP);
-      },
-      "+": () => {
-        useViewerStore.getState().zoomBy(ZOOM_STEP);
-      },
-      // `+` as a US keyboard sends it: Shift with `=`. tinykeys does not
-      // match a modifier the binding does not name (as for `Shift+?`).
-      "Shift++": () => {
-        useViewerStore.getState().zoomBy(ZOOM_STEP);
-      },
-      "-": () => {
-        useViewerStore.getState().zoomBy(1 / ZOOM_STEP);
-      },
-      "0": () => {
-        useViewerStore.getState().resetZoom();
-      },
-    };
-    // Guard every binding in one place so a newly added shortcut can't
-    // forget to yield to inputs, menus, and dialogs.
-    const guarded = Object.fromEntries(
-      Object.entries(bindings).map(([key, handler]) => [
-        key,
-        (e: KeyboardEvent) => {
-          if (keyIsOwnedElsewhere(e, key === "$mod+Z")) return;
-          handler(e);
-        },
-      ]),
-    );
-    return tinykeys(window, guarded);
-  }, [mode, setMode, viewport, setViewport]);
+/** The viewport `step` places from the current one, wrapping round. */
+function cycleViewport(viewports: string[], step: 1 | -1): void {
+  if (viewports.length === 0) return;
+  const i = viewports.indexOf(store().viewport);
+  const next =
+    viewports[(i + step + viewports.length) % viewports.length] ?? viewports[0];
+  if (next) store().setViewport(next);
+}
+
+/**
+ * The region `$mod+C` copies: the selected ignore region, while the editor
+ * is on and no text is selected on the page (a text selection is the
+ * browser's to copy). Null: nothing for the viewer to copy.
+ */
+function regionToCopy({ projectId }: ViewerCtx) {
+  if (!projectId || !isEditing() || !store().selectedIgnoreId) return null;
+  if (hasTextSelection()) return null;
+  return selectEffectiveRegion(store());
+}
+
+/** What `$mod+V` pastes: the project's copied region, while editing. */
+function regionToPaste({ projectId }: ViewerCtx) {
+  if (!projectId || !isEditing()) return null;
+  return getClipboardRegion(projectId);
+}
+
+/**
+ * Spec §4.4: the diff viewer's commands, ids and labels verbatim, in the
+ * order the `?` sheet lists them. Approve and reject are for roles that
+ * review; everything else is anyone's. ⌘Z, `?` and `/` are global commands.
+ */
+export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
+  {
+    id: "viewer.prevStep",
+    label: "Previous step",
+    group: "Navigate",
+    keys: ["ArrowLeft"],
+    scope: "viewer",
+    primary: true,
+    enabled: ({ onPrevStep }) => given(onPrevStep),
+    run: ({ onPrevStep }) => onPrevStep?.(),
+  },
+  {
+    id: "viewer.nextStep",
+    label: "Next step",
+    group: "Navigate",
+    keys: ["ArrowRight"],
+    scope: "viewer",
+    primary: true,
+    enabled: ({ onNextStep }) => given(onNextStep),
+    run: ({ onNextStep }) => onNextStep?.(),
+  },
+  {
+    // The review loop: holding J must not walk the queue (no `repeat`).
+    id: "viewer.nextPending",
+    label: "Next pending step",
+    group: "Navigate",
+    keys: ["j"],
+    scope: "viewer",
+    primary: true,
+    enabled: ({ onNextPending }) => given(onNextPending),
+    run: ({ onNextPending }) => onNextPending?.(),
+  },
+  {
+    id: "viewer.prevPending",
+    label: "Previous pending step",
+    group: "Navigate",
+    keys: ["k"],
+    scope: "viewer",
+    primary: true,
+    enabled: ({ onPrevPending }) => given(onPrevPending),
+    run: ({ onPrevPending }) => onPrevPending?.(),
+  },
+  {
+    id: "viewer.nextRegion",
+    label: "Next change",
+    group: "Navigate",
+    keys: ["n"],
+    scope: "viewer",
+    enabled: ({ onNextDiff }) => given(onNextDiff),
+    run: ({ onNextDiff }) => onNextDiff?.(),
+  },
+  {
+    id: "viewer.prevRegion",
+    label: "Previous change",
+    group: "Navigate",
+    keys: ["p"],
+    scope: "viewer",
+    enabled: ({ onPrevDiff }) => given(onPrevDiff),
+    run: ({ onPrevDiff }) => onPrevDiff?.(),
+  },
+  {
+    id: "viewer.prevViewport",
+    label: "Previous viewport",
+    group: "View",
+    keys: ["["],
+    scope: "viewer",
+    enabled: ({ viewports }) => viewports.length > 0,
+    run: ({ viewports }) => cycleViewport(viewports, -1),
+  },
+  {
+    id: "viewer.nextViewport",
+    label: "Next viewport",
+    group: "View",
+    keys: ["]"],
+    scope: "viewer",
+    enabled: ({ viewports }) => viewports.length > 0,
+    run: ({ viewports }) => cycleViewport(viewports, 1),
+  },
+  {
+    // Holding the key must not send a second decision (no `repeat`). The
+    // same action as the Approve button: the step and run gates, unsaved
+    // ignore regions, the older-capture question and the loop's move.
+    id: "review.approve",
+    label: "Approve step",
+    group: "Review",
+    keys: ["a"],
+    scope: "viewer",
+    primary: true,
+    allowed: ({ role }) => canReviewRole(role),
+    enabled: ({ onApprove }) => given(onApprove),
+    run: ({ onApprove }) => onApprove?.(),
+  },
+  {
+    // `x` is the predecessor frontend's reject key, kept for muscle memory.
+    id: "review.reject",
+    label: "Reject step",
+    group: "Review",
+    keys: ["r", "x"],
+    scope: "viewer",
+    primary: true,
+    allowed: ({ role }) => canReviewRole(role),
+    enabled: ({ onReject }) => given(onReject),
+    run: ({ onReject }) => onReject?.(),
+  },
+  {
+    id: "viewer.difference",
+    label: "Toggle difference view",
+    group: "View",
+    keys: ["d"],
+    scope: "viewer",
+    run: () =>
+      store().setMode(
+        store().mode === "difference" ? "side-by-side" : "difference",
+      ),
+  },
+  {
+    id: "viewer.cycleMode",
+    label: "Cycle view mode",
+    group: "View",
+    keys: ["o"],
+    scope: "viewer",
+    run: () => {
+      const next = MODES[(MODES.indexOf(store().mode) + 1) % MODES.length];
+      if (next) store().setMode(next);
+    },
+  },
+  {
+    id: "viewer.highlight",
+    label: "Toggle highlight",
+    group: "View",
+    keys: ["h"],
+    scope: "viewer",
+    run: () => store().setHighlightActive(!store().highlightActive),
+  },
+  {
+    id: "viewer.comments",
+    label: "Toggle comments",
+    group: "View",
+    keys: ["c"],
+    scope: "viewer",
+    run: () => store().setCommentPanelOpen(!store().commentPanelOpen),
+  },
+  {
+    // `=` is the unshifted key labelled "+" on US layouts; `+` is bound for
+    // layouts that send it, and the dispatcher adds `Shift++` for those that
+    // need Shift to type it.
+    id: "viewer.zoomIn",
+    label: "Zoom in",
+    group: "View",
+    keys: ["=", "+"],
+    scope: "viewer",
+    repeat: true,
+    run: () => store().zoomBy(ZOOM_STEP),
+  },
+  {
+    id: "viewer.zoomOut",
+    label: "Zoom out",
+    group: "View",
+    keys: ["-"],
+    scope: "viewer",
+    repeat: true,
+    run: () => store().zoomBy(1 / ZOOM_STEP),
+  },
+  {
+    id: "viewer.fit",
+    label: "Fit",
+    group: "View",
+    keys: ["0"],
+    scope: "viewer",
+    repeat: true,
+    run: () => store().resetZoom(),
+  },
+  {
+    // F14/F15: the ignore-region editor (ADR-031).
+    id: "editor.toggle",
+    label: "Edit ignore regions",
+    group: "Editor",
+    keys: ["i"],
+    scope: "viewer",
+    run: () => store().setIgnoreEditMode(isEditing() ? "off" : "run"),
+  },
+  {
+    id: "editor.delete",
+    label: "Delete selected region",
+    group: "Editor",
+    keys: ["Delete", "Backspace"],
+    scope: "viewer",
+    enabled: () => isEditing() && store().selectedIgnoreId !== null,
+    run: () => store().deleteSelected(),
+  },
+  {
+    // F-b: region copy. Plain `c` toggles the comments, hence the modifier.
+    // Outside the editor, or with text selected, ⌘C is the browser's copy.
+    id: "editor.copy",
+    label: "Copy region",
+    group: "Editor",
+    keys: ["$mod+c"],
+    scope: "viewer",
+    enabled: (ctx) => regionToCopy(ctx) !== null,
+    run: (ctx) => {
+      const region = regionToCopy(ctx);
+      if (!ctx.projectId || !region) return;
+      setClipboardRegion(ctx.projectId, region);
+      toast.success("Region copied");
+    },
+  },
+  {
+    // Outside the editor, or with nothing copied, ⌘V is the browser's paste.
+    id: "editor.paste",
+    label: "Paste region",
+    group: "Editor",
+    keys: ["$mod+v"],
+    scope: "viewer",
+    enabled: (ctx) => regionToPaste(ctx) !== null,
+    run: (ctx) => {
+      const clipboard = regionToPaste(ctx);
+      if (!clipboard) return;
+      store().addDraftRegion({
+        ...clipboard,
+        id: crypto.randomUUID(),
+        viewport: store().viewport || clipboard.viewport,
+      });
+    },
+  },
+  {
+    // Fires inside the done card (its one dialog), wherever focus is in it:
+    // back to the batch. Held, it leaves once (no `repeat`).
+    id: "viewer.escape",
+    label: "Leave editor / clear selection / back to batch (on a done card)",
+    group: "Navigate",
+    keys: ["Escape"],
+    scope: "viewer",
+    allowInDialog: "[data-done-card]",
+    enabled: ({ onEscape }) =>
+      given(onEscape) || isEditing() || store().selectedRegionId !== null,
+    run: ({ onEscape }) => {
+      if (onEscape) {
+        onEscape();
+        return;
+      }
+      if (isEditing()) store().setIgnoreEditMode("off");
+      // Also clear the selected diff region (RegionListPanel selection).
+      store().setSelected(null);
+    },
+  },
+];
+
+/**
+ * The DiffViewer's keys (spec §4.4), registered in the `viewer` scope while
+ * it is mounted. The layout's one dispatcher binds them, applies the shared
+ * guard (text fields, menus and dialogs, IME, auto-repeat, the single-key
+ * switch) and runs them with these options, read live at each key press, so
+ * a re-render never rebinds anything.
+ */
+export function useDiffViewerShortcuts(opts: ShortcutOptions): void {
+  useCommands<ViewerCtx>("viewer", VIEWER_COMMANDS, opts);
 }

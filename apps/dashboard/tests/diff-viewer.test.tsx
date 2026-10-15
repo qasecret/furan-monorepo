@@ -3,11 +3,12 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as renderInDom,
   within,
+  type RenderOptions,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -361,6 +362,49 @@ import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
 import { loopHandoff, useLoopCue } from "../src/lib/review/use-review-loop";
 import { useInFlightStore } from "../src/lib/review/use-review-mutations";
 import { useUndoStore } from "../src/lib/review/use-undo-store";
+
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
+import { CommandDispatcher } from "@/lib/commands/dispatcher";
+import { GlobalCommands } from "@/lib/commands/global-commands";
+import { useSingleKeyStore } from "@/lib/commands/prefs";
+import {
+  CommandRoleProvider,
+  useCommandRegistry,
+} from "@/lib/commands/registry";
+import type { ViewerRole } from "@/lib/roles";
+
+/**
+ * The protected layout's keyboard, around every viewer here, as the app
+ * mounts it: the role, the global commands (⌘Z among them) and the one
+ * dispatcher, which runs the viewer's keys from the registry. A reviewer,
+ * unless a test says otherwise.
+ */
+const keyboard: { role: ViewerRole } = { role: "editor" };
+// The layout's providers: the global undo reads a query client.
+const layoutQueryClient = new QueryClient();
+function Keyboard({ children }: { children: ReactNode }) {
+  return (
+    <CommandRoleProvider role={keyboard.role}>
+      <QueryClientProvider client={layoutQueryClient}>
+        <GlobalCommands />
+      </QueryClientProvider>
+      <CommandDispatcher />
+      {children}
+    </CommandRoleProvider>
+  );
+}
+function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
+  return renderInDom(ui, { wrapper: Keyboard, ...options });
+}
+
+beforeEach(() => {
+  keyboard.role = "editor";
+  useCommandRegistry.setState({ entries: [], role: "guest" });
+  useSingleKeyStore.setState({ on: true });
+  usePaletteStore.setState({ open: false });
+  useShortcutsSheet.setState({ open: false });
+});
 
 /** Every mock the review loop reads, back to "no answer yet". */
 function resetLoop() {

@@ -560,16 +560,14 @@ export function DiffViewer({
     : undefined;
 
   // While the card is up, deciding and moving wait (R20): its keys are its
-  // own wherever focus is. ⌘Z still undoes.
+  // own wherever focus is. ⌘Z (the global review undo) still undoes. A
+  // callback left out disables its command (`enabled`).
   const keysOn = card === null;
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
     onApprove: keysOn ? review.approve : undefined,
     onReject: keysOn ? review.reject : undefined,
-    // ⌘Z takes back the newest review action: no id.
-    onUndo: () => review.undo(),
-    onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
     onPrevStep: keysOn ? onPrevStep : undefined,

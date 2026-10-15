@@ -69,6 +69,8 @@ const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
     group: "Review",
     keys: ["$mod+z"],
     scope: "global",
+    // In the viewer's hint bar (spec §4.4), with the viewer's own keys.
+    primary: true,
     // It takes back a review decision: a role that can't review has none.
     allowed: ({ role }) => canReviewRole(role),
     // The newest action: no id. Not `allowInText`: in a field, ⌘Z is the
