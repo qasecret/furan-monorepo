@@ -192,6 +192,11 @@ async function hoverFirstStep(p: Page): Promise<void> {
  * step). The header shows the run's name and a "2 / 3" count, not the step's
  * name; the Info panel's "Step" row ("2/3 cart") does, so that is what is read.
  * Found by name, never by id: step ids are different on every stack.
+ *
+ * Returns once the step's URL has committed. The viewer shows a step the
+ * moment the arrow is clicked, but Next mounts a new viewer there only when
+ * the route commits, a few hundred milliseconds later; a state that acts
+ * before then (Approve) would act on the viewer being replaced.
  */
 async function openStep(p: Page, name: string): Promise<void> {
   const stepRow = p.getByTestId("test-info-sidebar").getByText(/^\d+\/\d+ \S/);
@@ -199,7 +204,10 @@ async function openStep(p: Page, name: string): Promise<void> {
   let current = "";
   for (let hops = 0; hops < 8; hops++) {
     current = (await stepRow.innerText()).trim();
-    if (current.replace(/^\d+\/\d+ /, "") === name) return;
+    if (current.replace(/^\d+\/\d+ /, "") === name) {
+      await stepUrlCommitted(p);
+      return;
+    }
     // On the last step the arrow is natively disabled: say so, not "timed out
     // waiting for it to be enabled".
     if (!(await next.isEnabled())) break;
@@ -209,6 +217,22 @@ async function openStep(p: Page, name: string): Promise<void> {
   throw new Error(
     `visual: no step named "${name}" within 8 steps of the first (stopped at "${current}")`,
   );
+}
+
+/**
+ * Wait until the URL names the step the viewer shows (its `data-diff-id`): the
+ * route of the last step change has committed, and the viewer on screen is
+ * the one mounted for it.
+ */
+async function stepUrlCommitted(p: Page): Promise<void> {
+  const id = await p
+    .locator("[data-diff-id]")
+    .first()
+    .getAttribute("data-diff-id");
+  if (!id || id === "_first") {
+    throw new Error(`visual: the viewer names no step (data-diff-id=${id})`);
+  }
+  await p.waitForURL((url) => url.pathname.endsWith(`/checkpoints/${id}`));
 }
 
 /** The toast a review decision raised, which carries the Undo action. */
