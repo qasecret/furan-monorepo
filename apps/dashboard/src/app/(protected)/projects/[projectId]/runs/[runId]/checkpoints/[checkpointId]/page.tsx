@@ -5,6 +5,7 @@ import { use } from "react";
 
 import { PageTour } from "@/components/tour/page-tour";
 import { PageContainer } from "@/components/ui/page-container";
+import { parseReviewContext } from "@/lib/review-context";
 
 /**
  * Dynamic-import the DiffViewer with ssr:false to keep pixi.js out of
@@ -44,10 +45,15 @@ const DIFF_VIEWER_TOUR = [
 
 export default function CheckpointPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; runId: string; checkpointId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { projectId, runId, checkpointId } = use(params);
+  // The review context rides in the URL (spec §3.3); the viewer gets it as one
+  // prop, parsed and validated here, so it is never read from component state.
+  const reviewContext = parseReviewContext(use(searchParams));
   return (
     <>
       <PageTour pageId="diff-viewer" steps={DIFF_VIEWER_TOUR} />
@@ -56,6 +62,7 @@ export default function CheckpointPage({
           projectId={projectId}
           runId={runId}
           initialCheckpointId={checkpointId}
+          reviewContext={reviewContext}
         />
       </PageContainer>
     </>

@@ -12,6 +12,7 @@ afterEach(() => {
 
 const baseItem = (overrides: Partial<HistoryItem> = {}): HistoryItem => ({
   id: "r1",
+  checkpointId: "c1",
   status: "passed",
   branchName: "main",
   diffPercent: 0,
@@ -61,7 +62,7 @@ describe("HistoryTable", () => {
     expect(screen.queryByTestId("history-row-promotion-r1")).toBeNull();
   });
 
-  test("build column shows #buildNumber link when present", () => {
+  test("#N opens /builds/:buildId", () => {
     render(
       <HistoryTable
         projectId="p1"
@@ -72,7 +73,8 @@ describe("HistoryTable", () => {
     );
     const link = screen.getByTestId("history-row-build-r1");
     expect(link.textContent).toMatch(/#42/);
-    expect(link.getAttribute("href")).toBe("/projects/p1/builds?expand=b1");
+    // That batch's page, not the builds list with a query nothing reads.
+    expect(link.getAttribute("href")).toBe("/projects/p1/builds/b1");
   });
 
   test("build column shows em-dash when no build", () => {
@@ -87,18 +89,39 @@ describe("HistoryTable", () => {
     expect(screen.queryByTestId("history-row-build-r1")).toBeNull();
   });
 
-  test("View diff link points to runs/[id]/diffs/[id]", () => {
+  test("View diff → opens /runs/:runId/checkpoints/:checkpointId", () => {
     render(
       <HistoryTable
         projectId="p1"
-        items={[baseItem({ id: "run-xyz" })]}
+        items={[baseItem({ id: "run-xyz", checkpointId: "step-9" })]}
+        nextCursor={null}
+        onLoadMore={() => {}}
+      />,
+    );
+    // The exact step of that run, so the viewer never lands on "Step —".
+    expect(
+      screen.getByTestId("history-row-view-diff-run-xyz").getAttribute("href"),
+    ).toBe("/projects/p1/runs/run-xyz/checkpoints/step-9");
+  });
+
+  test("each row opens its own run's step", () => {
+    render(
+      <HistoryTable
+        projectId="p1"
+        items={[
+          baseItem({ id: "run-a", checkpointId: "step-a" }),
+          baseItem({ id: "run-b", checkpointId: "step-b" }),
+        ]}
         nextCursor={null}
         onLoadMore={() => {}}
       />,
     );
     expect(
-      screen.getByTestId("history-row-view-diff-run-xyz").getAttribute("href"),
-    ).toBe("/projects/p1/runs/run-xyz/diffs/run-xyz");
+      screen.getByTestId("history-row-view-diff-run-a").getAttribute("href"),
+    ).toBe("/projects/p1/runs/run-a/checkpoints/step-a");
+    expect(
+      screen.getByTestId("history-row-view-diff-run-b").getAttribute("href"),
+    ).toBe("/projects/p1/runs/run-b/checkpoints/step-b");
   });
 
   test("Load more button rendered only when nextCursor set", () => {

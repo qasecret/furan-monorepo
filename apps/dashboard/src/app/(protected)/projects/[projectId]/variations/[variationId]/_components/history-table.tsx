@@ -13,9 +13,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
+import { batchHref } from "@/lib/review-url";
 
 export interface HistoryItem {
   id: string;
+  /** This run's step of the variation: the one "View diff" opens. */
+  checkpointId: string;
   status: RunStatus;
   branchName: string | null;
   diffPercent: number | null;
@@ -106,7 +110,7 @@ export function HistoryTable({
                 <TableCell>
                   {r.buildId && r.buildNumber !== null ? (
                     <Link
-                      href={`/projects/${projectId}/builds?expand=${r.buildId}`}
+                      href={batchHref(projectId, r.buildId)}
                       className="tabular-nums text-brand-text hover:underline focus-ring"
                       data-testid={`history-row-build-${r.id}`}
                     >
@@ -116,7 +120,7 @@ export function HistoryTable({
                 </TableCell>
                 <TableCell>
                   <Link
-                    href={`/projects/${projectId}/runs/${r.id}/diffs/${r.id}`}
+                    href={diffViewerHref(projectId, r.id, r.checkpointId)}
                     className="text-brand-text hover:underline focus-ring"
                     data-testid={`history-row-view-diff-${r.id}`}
                   >
