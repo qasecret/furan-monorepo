@@ -260,6 +260,26 @@ describe("BatchDoneCard", () => {
     expect(queryByRole("button", { name: /Clear filter/ })).toBeNull();
   });
 
+  test("Continue and Clear filter show they are busy", () => {
+    const { getByRole, rerender } = renderCard({
+      variant: "filtered",
+      batchUnfiltered: 2,
+    });
+    const next = getByRole("button", { name: CONTINUE });
+    const clear = getByRole("button", { name: /Clear filter/ });
+    expect(next.getAttribute("aria-busy")).toBe("false");
+    expect(clear.getAttribute("aria-busy")).toBe("false");
+    rerender(
+      <BatchDoneCard
+        {...props({ variant: "filtered", batchUnfiltered: 2, busy: true })}
+      />,
+    );
+    expect(next.getAttribute("aria-busy")).toBe("true");
+    expect(clear.getAttribute("aria-busy")).toBe("true");
+    // Still pressable, and still in place: the focus stays where it was.
+    expect((next as HTMLButtonElement).disabled).toBe(false);
+  });
+
   test("no nextBatch → no Continue button", () => {
     const { getByRole, queryByRole } = renderCard({ nextBatch: null });
     getByRole("dialog", { name: "Batch done" });
@@ -306,6 +326,7 @@ describe("BatchDoneCard, wired to the review loop", () => {
       checkpointId: "c1",
       context,
       enabled: true,
+      stepPending: false,
     });
     return (
       <>
@@ -314,6 +335,7 @@ describe("BatchDoneCard, wired to the review loop", () => {
         </button>
         {loop.card ? (
           <BatchDoneCard
+            busy={loop.cardBusy}
             variant={loop.card}
             nextBatch={loop.next?.nextBatch ?? null}
             batchUnfiltered={loop.next?.remaining.batchUnfiltered ?? 0}
@@ -346,7 +368,11 @@ describe("BatchDoneCard, wired to the review loop", () => {
       "/projects/p1/runs/r9/checkpoints/s9?status=failed&browser=chromium&viewport=1280x720",
     );
     expect(router.replace).not.toHaveBeenCalled();
-    // The card is put away.
-    expect(r.queryByRole("dialog")).toBeNull();
+    // The card stays up, busy, until the route commits.
+    expect(
+      r.getByRole("button", { name: CONTINUE }).getAttribute("aria-busy"),
+    ).toBe("true");
+    await user.keyboard("{Enter}");
+    expect(router.push).toHaveBeenCalledOnce();
   });
 });

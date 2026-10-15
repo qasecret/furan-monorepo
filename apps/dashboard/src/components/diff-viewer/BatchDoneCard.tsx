@@ -26,6 +26,11 @@ export interface BatchDoneCardProps {
   onContinue: () => void;
   /** Clear the filter, to this batch's steps outside it (the loop's move). */
   onClearFilter: () => void;
+  /**
+   * Continue or Clear filter is on its way: both say so (`aria-busy`) until
+   * the route commits; pressing again does nothing (the loop sees to it).
+   */
+  busy?: boolean;
   /** Back to batch, and Esc: the batch, as the reviewer left it. */
   backHref: string;
   /**
@@ -76,6 +81,7 @@ export function BatchDoneCard({
   batchUnfiltered,
   onContinue,
   onClearFilter,
+  busy = false,
   backHref,
   batchesHref,
 }: BatchDoneCardProps) {
@@ -165,7 +171,8 @@ export function BatchDoneCard({
                     key={action}
                     ref={ref}
                     variant={variantFor(action)}
-                    className="justify-between gap-2"
+                    className="justify-between gap-2 aria-busy:cursor-progress"
+                    aria-busy={busy}
                     onClick={onContinue}
                     data-testid="batch-done-continue"
                   >
@@ -179,6 +186,8 @@ export function BatchDoneCard({
                     key={action}
                     ref={ref}
                     variant={variantFor(action)}
+                    className="aria-busy:cursor-progress"
+                    aria-busy={busy}
                     onClick={onClearFilter}
                     data-testid="batch-done-clear-filter"
                   >

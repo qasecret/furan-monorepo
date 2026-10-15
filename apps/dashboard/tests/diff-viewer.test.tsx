@@ -1591,6 +1591,9 @@ describe("DiffViewer: the review loop", () => {
     });
     press("A");
     expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    // Until the decision's own update lands the step reads as pending, and
+    // the canvas stays.
+    expect(card(r)).toBeNull();
     c1Decided(again);
 
     const dialog = r.getByRole("dialog", { name: "Batch done" });
@@ -1611,12 +1614,17 @@ describe("DiffViewer: the review loop", () => {
         .getAttribute("href"),
     ).toBe(`/projects/${PROJECT}/builds/${BUILD}?os=macOS#run-${RUN_ID}`);
 
-    // Continue: the next batch's first pending step, the facets kept.
+    // Continue: the next batch's first pending step, the facets kept. The
+    // card stays up, busy, until the route commits (R24).
     fireEvent.click(next);
     expect(routerSpies.push).toHaveBeenCalledOnce();
     expect(routerSpies.push).toHaveBeenCalledWith(
       stepUrl("run-9", "s1", "?os=macOS"),
     );
+    expect(card(r)).not.toBeNull();
+    expect(next.getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(next);
+    expect(routerSpies.push).toHaveBeenCalledOnce();
   });
 
   test("undo of the last decision brings the canvas back", () => {
@@ -1735,7 +1743,7 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 
-  test("a read-only viewer gets the card too, and Continue works", () => {
+  test("J at the boundary on a read-only step shows the card", () => {
     // Overridden by hand: its steps take no decisions, but the loop walks on.
     mockGetByIdData = {
       ...defaultMockData,
@@ -1745,25 +1753,140 @@ describe("DiffViewer: the review loop", () => {
       statusOverride: "failed",
     };
     nextQuery.data = intoNextBatch();
+    // c1 still reads unresolved, but nothing here waits for a reviewer.
     const r = renderViewer();
     press("J");
+    expect(useReviewAnnouncer.getState().text).toBe(`Batch done. ${CONTINUE}.`);
     fireEvent.click(r.getByRole("button", { name: CONTINUE }));
     expect(routerSpies.push).toHaveBeenCalledOnce();
     expect(routerSpies.push).toHaveBeenCalledWith(stepUrl("run-9", "s1"));
   });
 
-  test("a decision waiting for its answer shows no card until the answer comes", () => {
+  const LAST = "Last step to review in this batch.";
+
+  test("J at the boundary on a pending step announces the last step and shows no card", () => {
+    vi.useFakeTimers();
     nextQuery.data = intoNextBatch();
-    const { r, again } = lastPendingStep();
-    // J on the last pending step: the loop has its card, but the step on
-    // screen still needs review, so the canvas stays (R19).
+    const { r } = lastPendingStep();
     press("J");
+    // The card would cover the one step still to review.
     expect(card(r)).toBeNull();
     expect(canvas()).not.toBeNull();
+    expect(useReviewAnnouncer.getState().text).toBe(LAST);
+    // Seen as well, beside the pill, for about 3 s.
+    expect(r.getByTestId("header-loop-cue").textContent).toBe(LAST);
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(r.queryByTestId("header-loop-cue")).toBeNull();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    // Next pending (the header's) does the same.
+    fireEvent.click(r.getByTestId("header-next-pending"));
+    expect(card(r)).toBeNull();
+    expect(r.getByTestId("header-loop-cue").textContent).toBe(LAST);
+  });
 
-    // The answer is being refetched when the decision lands: it waits.
-    nextQuery.isFetching = true;
+  test("K at the boundary behaves like J", async () => {
+    // Nothing before this step in the batch: K's answer is the next batch.
+    utilsMock.review.next.fetch.mockResolvedValue(intoNextBatch());
+    nextQuery.data = intoNextBatch();
+    const { r } = lastPendingStep();
+    await pressAsync("K");
+    expect(card(r)).toBeNull();
+    expect(useReviewAnnouncer.getState().text).toBe(LAST);
+    cleanup();
+
+    // On a settled step, the card.
+    mockCheckpoints = { items: [decided("c1"), decided("c2"), decided("c3")] };
+    const settled = renderViewer();
+    await pressAsync("K");
+    settled.getByRole("dialog", { name: "Batch done" });
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+  });
+
+  test("J on the last pending step, then Mark as Bug: no card", () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep();
+    press("J");
+    fireEvent.click(r.getByTestId("mark-as-bug-button"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "rejected", checkpointIds: ["c1"] }),
+    );
+    mockCheckpoints = {
+      items: [
+        stepFixture("c1", "rejected", {
+          decision: { ...decision, kind: "rejected" },
+        }),
+        decided("c2"),
+        decided("c3"),
+      ],
+    };
     again();
+    // Mark as Bug stays to write the note (R35): no card over it.
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
+  });
+
+  /** The card is up from a decision, then ⌘Z puts the step back. */
+  function cardThenUndo() {
+    nextQuery.data = intoNextBatch();
+    const view = lastPendingStep();
+    press("A");
+    c1Decided(view.again);
+    expect(card(view.r)).not.toBeNull();
+    act(() => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    mockCheckpoints = {
+      items: [stepFixture("c1", "unresolved"), decided("c2"), decided("c3")],
+    };
+    view.again();
+    expect(card(view.r)).toBeNull();
+    return view;
+  }
+
+  test("undo, then Mark as Bug: no card", () => {
+    const { r, again } = cardThenUndo();
+    fireEvent.click(r.getByTestId("mark-as-bug-button"));
+    expect(reviewSpies.decide).toHaveBeenCalledTimes(2);
+    mockCheckpoints = {
+      items: [
+        stepFixture("c1", "rejected", {
+          decision: { ...decision, kind: "rejected" },
+        }),
+        decided("c2"),
+        decided("c3"),
+      ],
+    };
+    again();
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
+  });
+
+  test("Approve pending / an override with a dismissed card: no card", () => {
+    const { r, again } = cardThenUndo();
+    // The run is overridden by hand: the step is settled, by no decision.
+    mockGetByIdData = { ...mockGetByIdData, statusOverride: "failed" };
+    again();
+    expect(card(r)).toBeNull();
+    // Approve pending decides it, and calls no loop.
+    mockGetByIdData = { ...mockGetByIdData, statusOverride: null };
+    c1Decided(again);
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
+  });
+
+  test("a decision waiting for its answer shows no card until the answer comes", () => {
+    // The answer is being refetched when the decision lands: it waits.
+    nextQuery.data = intoNextBatch();
+    nextQuery.isFetching = true;
+    const { r, again } = lastPendingStep();
     press("A");
     c1Decided(again);
     const next = () => r.getByTestId("header-next-pending");
@@ -1773,6 +1896,17 @@ describe("DiffViewer: the review loop", () => {
     nextQuery.isFetching = false;
     again();
     expect(next().getAttribute("aria-busy")).not.toBe("true");
+    expect(card(r)).not.toBeNull();
+
+    // Next pending pressed on the card while the answer is refetched: it
+    // waits too, and the card is down meanwhile.
+    nextQuery.isFetching = true;
+    again();
+    fireEvent.click(next());
+    expect(next().getAttribute("aria-busy")).toBe("true");
+    expect(card(r)).toBeNull();
+    nextQuery.isFetching = false;
+    again();
     expect(card(r)).not.toBeNull();
   });
 

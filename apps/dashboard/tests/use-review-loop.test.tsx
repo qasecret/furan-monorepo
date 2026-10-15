@@ -79,6 +79,9 @@ function args(over: Partial<Args> = {}): Args {
     checkpointId: STEP,
     context: DEFAULT_CONTEXT,
     enabled: true,
+    // The step on screen is settled (decided, passed, read-only) unless a
+    // test says it still needs review.
+    stepPending: false,
     ...over,
   };
 }
@@ -550,7 +553,7 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     return hook;
   }
 
-  test("Continue opens the next batch's first pending step, keeping the facets, and puts the card away", () => {
+  test("Continue opens the next batch's first pending step, keeping the facets", () => {
     const { result } = withCard();
     act(() => result.current.continueToNextBatch());
     calledOnceWith(
@@ -558,10 +561,47 @@ describe("useReviewLoop: the card's moves (R18)", () => {
       `/projects/${PROJECT}/runs/r9/checkpoints/s9?status=failed&browser=chromium`,
     );
     expect(router.replace).not.toHaveBeenCalled();
-    expect(result.current.card).toBeNull();
     // No cue: the card has already said where it goes.
     expect(useReviewAnnouncer.getState().seq).toBe(0);
     expect(useLoopCue.getState().cue).toBeNull();
+  });
+
+  test("Continue keeps the card up and busy until the route commits", () => {
+    const { result, rerender } = withCard();
+    expect(result.current.cardBusy).toBe(false);
+    act(() => result.current.continueToNextBatch());
+    // Not put away: the step behind it is not the one being opened.
+    expect(result.current.card).toBe("batch");
+    expect(result.current.cardBusy).toBe(true);
+    // Pressing again meanwhile does nothing.
+    act(() => result.current.continueToNextBatch());
+    act(() => result.current.clearFilter());
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(utils.review.next.fetch).not.toHaveBeenCalled();
+    // The route commits: the next batch's step is on screen, with no card.
+    rerender(
+      args({
+        context: FACETED,
+        buildId: "b2",
+        runId: "r9",
+        checkpointId: "s9",
+      }),
+    );
+    expect(result.current.card).toBeNull();
+    expect(result.current.cardBusy).toBe(false);
+  });
+
+  test("the card is busy for at most 5 s: a move the route never commits lets it go", () => {
+    vi.useFakeTimers();
+    const { result } = withCard();
+    act(() => result.current.continueToNextBatch());
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(result.current.cardBusy).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current.cardBusy).toBe(false);
+    // And Continue works again.
+    act(() => result.current.continueToNextBatch());
+    expect(router.push).toHaveBeenCalledTimes(2);
   });
 
   test("Continue does nothing unless the answer leads into another batch", () => {
@@ -615,7 +655,25 @@ describe("useReviewLoop: the card's moves (R18)", () => {
       `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed`,
     );
     expect(router.replace).not.toHaveBeenCalled();
-    expect(result.current.card).toBeNull();
+    // The card stays up, busy, until the route commits.
+    expect(result.current.card).toBe("filtered");
+    expect(result.current.cardBusy).toBe(true);
+  });
+
+  test("Clear filter is busy from the press: a second press asks once", async () => {
+    const cleared = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(cleared.promise);
+    const { result } = withCard(3);
+    act(() => result.current.clearFilter());
+    expect(result.current.cardBusy).toBe(true);
+    act(() => result.current.clearFilter());
+    act(() => result.current.continueToNextBatch());
+    expect(utils.review.next.fetch).toHaveBeenCalledOnce();
+    expect(router.push).not.toHaveBeenCalled();
+    // Nothing left after all: the batch card, no longer busy.
+    await act(async () => cleared.resolve(intoNextBatch(0)));
+    expect(result.current.card).toBe("batch");
+    expect(result.current.cardBusy).toBe(false);
   });
 
   test("Clear filter into another run announces the next test", async () => {
@@ -699,10 +757,16 @@ describe("useReviewLoop: the card's moves (R18)", () => {
   test("a Clear filter answer that lands after another move is dropped", async () => {
     const cleared = deferred<Answer>();
     utils.review.next.fetch.mockReturnValue(cleared.promise);
-    const { result } = withCard(3);
+    const { result, rerender } = withCard(3);
     act(() => result.current.clearFilter());
-    act(() => result.current.continueToNextBatch());
-    expect(router.push).toHaveBeenCalledOnce();
+    // Next pending (the header's) moves first: the batch filled up again.
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-4" },
+      scope: "run",
+    });
+    rerender(args({ context: FACETED }));
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledOnce();
     await act(async () =>
       cleared.resolve(
         answer({
@@ -711,8 +775,10 @@ describe("useReviewLoop: the card's moves (R18)", () => {
         }),
       ),
     );
-    expect(router.push).toHaveBeenCalledOnce();
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledOnce();
+    expect(router.push).not.toHaveBeenCalled();
+    // Dropped, it is no longer busy.
+    expect(result.current.cardBusy).toBe(false);
   });
 
   test("Clear filter waits for a move still on its way, as K does", async () => {
@@ -728,6 +794,7 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     await act(async () => result.current.clearFilter());
     expect(router.push).not.toHaveBeenCalled();
     expect(result.current.card).toBe("filtered");
+    expect(result.current.cardBusy).toBe(false);
     utils.review.next.fetch.mockResolvedValue(
       answer({
         target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
@@ -742,10 +809,10 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     ["in this run", "run", RUN, router.replace],
     ["in another test", "batch", OTHER_RUN, router.push],
   ] as const)(
-    "a move puts away a card the step had (%s)",
+    "a move from a card's step keeps the card until the step changes (%s)",
     (_name, scope, runId, navigate) => {
       // J at the batch boundary showed the card; then a step needing review
-      // turns up in the batch (a teammate's undo), and J goes there.
+      // turns up in the batch (a teammate's undo), and Next goes there.
       query.data = intoNextBatch();
       const { result, rerender } = setup();
       act(() => result.current.goNext());
@@ -757,9 +824,130 @@ describe("useReviewLoop: the card's moves (R18)", () => {
       rerender(args());
       act(() => result.current.goNext());
       expect(navigate).toHaveBeenCalledOnce();
+      // Up until the route commits (R24)...
+      expect(result.current.card).toBe("batch");
+      // ...and gone with the step it was on.
+      rerender(args({ runId, checkpointId: "step-9" }));
       expect(result.current.card).toBeNull();
     },
   );
+});
+
+describe("useReviewLoop: the batch boundary on a step that needs review (R23, R27)", () => {
+  const boundary = (left = 0) =>
+    answer({
+      target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+      scope: "nextBatch",
+      remaining: {
+        run: 0,
+        batch: 0,
+        batchUnfiltered: left,
+        projectBatches: 2,
+      },
+      nextBatch,
+    });
+  const IN_BATCH = "Last step to review in this batch.";
+  const IN_FILTER = "Last step to review in this filter.";
+
+  test("J says this is the last step, shows it for about 3 s, and sets no card", () => {
+    vi.useFakeTimers();
+    query.data = boundary();
+    const { result } = setup({ stepPending: true });
+    act(() => result.current.goNext());
+    expect(result.current.card).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(useReviewAnnouncer.getState().text).toBe(IN_BATCH);
+    // The same words on the chip, on this test.
+    expect(result.current.cue).toBe(IN_BATCH);
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(result.current.cue).toBeNull();
+  });
+
+  test.each([
+    ["steps are left outside the filter", { os: "macOS" }, 2, IN_FILTER],
+    ["nothing is left outside the filter", { os: "macOS" }, 0, IN_BATCH],
+    ["no filter is set", {}, 0, IN_BATCH],
+  ] as const)("the words when %s", (_name, facets, left, text) => {
+    query.data = boundary(left);
+    const { result } = setup({
+      stepPending: true,
+      context: { status: "needs-review", facets },
+    });
+    act(() => result.current.goNext());
+    expect(useReviewAnnouncer.getState().text).toBe(text);
+  });
+
+  test("nothing left anywhere is the same: no All caught up over a step to review", () => {
+    query.data = answer({
+      target: null,
+      scope: "none",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+    });
+    const { result } = setup({ stepPending: true });
+    act(() => result.current.goNext());
+    expect(result.current.card).toBeNull();
+    expect(useReviewAnnouncer.getState().text).toBe(IN_BATCH);
+  });
+
+  test("J waiting for its answer says it when the answer comes", () => {
+    query.isFetching = true;
+    const { result, rerender } = setup({ stepPending: true });
+    act(() => result.current.goNext());
+    query.isFetching = false;
+    query.data = boundary();
+    rerender(args({ stepPending: true }));
+    expect(result.current.card).toBeNull();
+    expect(useReviewAnnouncer.getState().text).toBe(IN_BATCH);
+  });
+
+  test("a decision is never held to it: its own update has not landed yet", () => {
+    query.data = boundary();
+    const { result } = setup({ stepPending: true });
+    act(() => result.current.afterDecision());
+    expect(result.current.card).toBe("batch");
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
+  });
+
+  test("a decision waiting for its answer is not held to it either", () => {
+    query.isFetching = true;
+    const { result, rerender } = setup({ stepPending: true });
+    act(() => result.current.afterDecision());
+    query.isFetching = false;
+    query.data = boundary();
+    rerender(args({ stepPending: true }));
+    expect(result.current.card).toBe("batch");
+  });
+
+  test("K at the boundary: the same words on a step to review, the card on a settled one", async () => {
+    utils.review.next.fetch.mockResolvedValue(boundary());
+    const pending = setup({ stepPending: true });
+    await act(async () => pending.result.current.goPrev());
+    expect(pending.result.current.card).toBeNull();
+    expect(useReviewAnnouncer.getState().text).toBe(IN_BATCH);
+    pending.unmount();
+
+    const settled = setup();
+    await act(async () => settled.result.current.goPrev());
+    expect(settled.result.current.card).toBe("batch");
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("the step needing review again drops the card for good", () => {
+    // The decision brought the card; ⌘Z (or a refused decision) puts the
+    // step back, and the card goes with it.
+    query.data = boundary();
+    const { result, rerender } = setup({ stepPending: true });
+    act(() => result.current.afterDecision());
+    rerender(args({ stepPending: false })); // the decision lands
+    expect(result.current.card).toBe("batch");
+    rerender(args({ stepPending: true })); // undone
+    expect(result.current.card).toBeNull();
+    // Settled again by something that is not a decision here (Mark as Bug,
+    // approve pending, an override): no card comes back.
+    rerender(args({ stepPending: false }));
+    expect(result.current.card).toBeNull();
+  });
 });
 
 describe("useReviewLoop: prefetch", () => {
@@ -864,24 +1052,36 @@ describe("useReviewLoop.goPrev", () => {
     expect(useReviewAnnouncer.getState().text).toBe("");
   });
 
+  const empty = { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 };
   test.each([
-    ["nothing before it", prev({ target: null, scope: "none" })],
+    [
+      "nothing before it",
+      prev({ target: null, scope: "none", remaining: empty }),
+      "all",
+    ],
     [
       "only another batch before it",
       prev({
         target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
         scope: "nextBatch",
+        remaining: { ...empty, projectBatches: 1 },
         nextBatch,
       }),
+      "batch",
     ],
-  ])("stays put when there is %s", async (_name, result_) => {
-    utils.review.next.fetch.mockResolvedValue(result_);
-    const { result } = setup();
-    await act(async () => result.current.goPrev());
-    expect(router.push).not.toHaveBeenCalled();
-    expect(router.replace).not.toHaveBeenCalled();
-    expect(result.current.card).toBeNull();
-  });
+  ] as const)(
+    "stays in the batch when there is %s: the boundary, as for J (R27)",
+    async (_name, result_, card) => {
+      utils.review.next.fetch.mockResolvedValue(result_);
+      const { result } = setup();
+      await act(async () => result.current.goPrev());
+      expect(router.push).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+      // Another batch is not "previous": the step on screen is settled, so
+      // the card says the batch is done.
+      expect(result.current.card).toBe(card);
+    },
+  );
 
   test("an answer for a step the reviewer has left is ignored", async () => {
     let resolve!: (a: Answer) => void;

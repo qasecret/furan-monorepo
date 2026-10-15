@@ -246,6 +246,19 @@ export function DiffViewer({
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
 
+  // One set of review actions shared by the <ApprovalBar> buttons and the
+  // A / R keyboard shortcuts, so a keypress always takes the button's path:
+  // per-checkpoint decision, the step-state and run gates, unsaved ignore
+  // regions folded in, the older-capture question, and the move to the next
+  // pending step (the loop; Mark as Bug does not move). The loop is set up
+  // below, from the step's view; a decision reaches it when it is made.
+  const review = useReviewActions({
+    runId,
+    checkpointId: activeCheckpointId,
+    status: data?.status,
+    onResolved: () => loop.afterDecision(),
+  });
+
   // The review loop (spec §5.4), asked from the step on screen once `_first`
   // has resolved. Off until the run has loaded, for a run that failed to load
   // (a deleted run, another project's), and for a run with no batch to walk:
@@ -260,24 +273,13 @@ export function DiffViewer({
     checkpointId: activeCheckpointId,
     context,
     enabled: loopOn,
-  });
-
-  // One set of review actions shared by the <ApprovalBar> buttons and the
-  // A / R keyboard shortcuts, so a keypress always takes the button's path:
-  // per-checkpoint decision, the step-state and run gates, unsaved ignore
-  // regions folded in, the older-capture question, and the move to the next
-  // pending step (the loop; Mark as Bug does not move).
-  const review = useReviewActions({
-    runId,
-    checkpointId: activeCheckpointId,
-    status: data?.status,
-    onResolved: loop.afterDecision,
+    stepPending: review.view === "pending",
   });
   const undoCount = useUndoStore((s) => s.stack.length);
   // The done card (spec §5.4) takes the canvas's place once the step on
   // screen is settled: not while a decision waits for its answer, and not
-  // while the step needs review (again: ⌘Z on the decision that brought the
-  // card up brings the canvas back, R19).
+  // while the step needs review (the decision's own update lands just after
+  // it; the loop drops the card if the step needs review again, R19).
   const card =
     loop.card !== null && !loop.pending && review.view !== "pending"
       ? loop.card
@@ -729,6 +731,7 @@ export function DiffViewer({
             // Another card is another announcement, and takes the focus.
             key={card}
             variant={card}
+            busy={loop.cardBusy}
             nextBatch={
               loop.next?.scope === "nextBatch" ? loop.next.nextBatch : null
             }

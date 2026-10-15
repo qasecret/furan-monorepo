@@ -12,7 +12,7 @@ import {
 import { create } from "zustand";
 
 import { diffViewerHref } from "@/lib/diff-viewer-href";
-import { reserveAnnouncement } from "@/lib/review/review-announcer";
+import { announce, reserveAnnouncement } from "@/lib/review/review-announcer";
 import { loopQuery, type ReviewContext } from "@/lib/review-context";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -20,6 +20,9 @@ type NextAnswer = RouterOutputs["review"]["next"];
 
 /** The done card the viewer shows in place of a next step. */
 export type ReviewCard = "batch" | "filtered" | "all";
+
+/** What asked to move on: a decision, or J / K (and Next pending). */
+type Mover = "decision" | "key";
 
 export interface UseReviewLoopArgs {
   projectId: string;
@@ -32,6 +35,12 @@ export interface UseReviewLoopArgs {
   context: ReviewContext;
   /** Off for a reader who may not review (`review.next` refuses a guest). */
   enabled: boolean;
+  /**
+   * The step on screen still needs review (the viewer's `pending` view). J
+   * and K at the batch boundary then only say it is the last step (R23), and
+   * the step needing review again drops the card (⌘Z, a refused decision).
+   */
+  stepPending: boolean;
 }
 
 export interface ReviewLoop {
@@ -59,21 +68,33 @@ export interface ReviewLoop {
    * Next affordance shows it is busy until the move is made or dropped.
    */
   pending: boolean;
-  /** The done card to show, or null. */
+  /**
+   * The done card to show, or null. A decision brings it, and so does J or K
+   * at the batch boundary on a settled step; it is dropped when the step
+   * needs review again, and goes with the step it was on.
+   */
   card: ReviewCard | null;
   dismissCard(): void;
   /**
    * The card's Continue (R18): the next batch's first pending step, inside the
    * filters, which the URL keeps. Only when the answer leads into another
-   * batch; it puts the card away. No cue: the card has said where it goes.
+   * batch. No cue: the card has said where it goes. The card stays up, busy,
+   * until the route commits (R24).
    */
   continueToNextBatch(): void;
   /**
    * The card's Clear filter (R18): the next pending step of this batch with
    * the facets dropped (the status stays), asked when pressed. When the batch
-   * has none after all, the batch card instead.
+   * has none after all, the batch card instead (All caught up when nothing is
+   * left anywhere).
    */
   clearFilter(): void;
+  /**
+   * Continue or Clear filter is on its way (from the press until the route
+   * commits, for at most 5 s): the card's buttons are busy, and pressing
+   * either again does nothing.
+   */
+  cardBusy: boolean;
   /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
    * ‹N› left in batch") while it is shown, for about 3 s (R15); else null.
@@ -96,6 +117,10 @@ const MOVE_LIMIT_MS = 5_000;
 
 const cueText = (name: string, left: number) =>
   `Next test: ${name} · ${left} left in batch`;
+
+/** J or K at the batch boundary on a step that still needs review (R23). */
+const LAST_IN_FILTER = "Last step to review in this filter.";
+const LAST_IN_BATCH = "Last step to review in this batch.";
 
 /** How long the visible cue stays up once its test shows it (R15). */
 const CUE_MS = 3_000;
@@ -193,6 +218,7 @@ export function useReviewLoop({
   checkpointId,
   context,
   enabled,
+  stepPending,
 }: UseReviewLoopArgs): ReviewLoop {
   const router = useRouter();
   const utils = trpc.useUtils();
@@ -235,16 +261,32 @@ export function useReviewLoop({
     card: ReviewCard;
     atKey: string | undefined;
   } | null>(null);
-  // A decision (or J) that came before the answer: the step it waits on, and
-  // the epoch when it started to wait.
+  // A decision (or J) that came before the answer: the step it waits on, the
+  // epoch when it started to wait, and which of the two it was.
   const [waiting, setWaiting] = useState<{
     atKey: string;
     epoch: number;
+    by: Mover;
   } | null>(null);
-  // Both belong to the step they were made on; moving away drops them for
-  // good, so coming back never brings a card or a pending move back.
+  // Continue or Clear filter on its way, from the card on this step.
+  const [busy, setBusy] = useState<{ atKey: string | undefined } | null>(null);
+  // All three belong to the step they were made on; moving away drops them
+  // for good, so coming back never brings a card or a pending move back.
   if (shown && shown.atKey !== atKey) setShown(null);
   if (waiting !== null && waiting.atKey !== atKey) setWaiting(null);
+  if (busy && busy.atKey !== atKey) setBusy(null);
+  // A card is for a settled step. The step needing review again (⌘Z, a
+  // refused decision) drops it, for good: settling it some other way (Mark as
+  // Bug, approve pending, an override) brings none back. The change, not the
+  // state: a decision brings its card before its own update has landed.
+  const [wasPending, setWasPending] = useState(stepPending);
+  if (wasPending !== stepPending) {
+    setWasPending(stepPending);
+    if (stepPending && shown) setShown(null);
+  }
+  // Read by answers that come back later (K's).
+  const stepPendingRef = useRef(stepPending);
+  stepPendingRef.current = stepPending;
 
   // Orders the moves (see the doc above).
   const epoch = useRef(0);
@@ -361,56 +403,79 @@ export function useReviewLoop({
     [atKey],
   );
 
-  /** Act on an answer: the table in the hook's doc. */
-  const transition = useCallback(
-    (answer: NextAnswer) => {
-      epoch.current += 1;
-      // Steps left outside the filters make the card the filtered one: the
-      // reviewer is done with what they chose, not with the batch. And with
-      // a filter set, "nothing left anywhere" is only true of the filter.
+  /**
+   * Nothing left in the batch (`nextBatch` / `none`): the card. Steps left
+   * outside the filters make it the filtered one (the reviewer is done with
+   * what they chose, not with the batch); and with a filter set, "nothing
+   * left anywhere" is only true of the filter (R25). J and K on a step that
+   * still needs review say it is the last one instead (R23): the card would
+   * cover it.
+   */
+  const atBoundary = useCallback(
+    (answer: NextAnswer, by: Mover) => {
       const outside = answer.remaining.batchUnfiltered > 0;
       const faceted = Object.keys(loopContext.facets).length > 0;
+      if (by === "key" && stepPendingRef.current) {
+        const text = faceted && outside ? LAST_IN_FILTER : LAST_IN_BATCH;
+        supersedeCues();
+        announce(text);
+        showCue(text, runId);
+        return;
+      }
+      if (answer.scope === "nextBatch") {
+        showCard(outside ? "filtered" : "batch");
+      } else {
+        showCard(outside ? "filtered" : faceted ? "batch" : "all");
+      }
+    },
+    [loopContext, runId, showCard],
+  );
+
+  /** Act on an answer: the table in the hook's doc. */
+  const transition = useCallback(
+    (answer: NextAnswer, by: Mover) => {
+      epoch.current += 1;
+      // A move leaves a card this step had up until the route commits (R24):
+      // the new step comes without it.
       switch (answer.scope) {
         case "run":
-          // A step to go to puts away a card this step had (J at the batch
-          // boundary shows one, and the batch may fill up again).
-          setShown(null);
           if (answer.target) goTo(answer.target, "replace");
           return;
         case "batch":
-          setShown(null);
           if (!answer.target) return;
           if (goTo(answer.target, "push")) {
             announceMove(answer.target, answer.remaining.batch);
           }
           return;
         case "nextBatch":
-          showCard(outside ? "filtered" : "batch");
-          return;
         case "none":
-          showCard(outside ? "filtered" : faceted ? "batch" : "all");
+          atBoundary(answer, by);
           return;
       }
     },
-    [loopContext, goTo, announceMove, showCard],
+    [goTo, announceMove, atBoundary],
   );
 
   /** What a decision and J both do: move on the answer, or wait for it. */
-  const advance = useCallback(() => {
-    // After an error there is no answer coming: stay put (the error is shown).
-    if (!active || atKey === undefined || failed) return;
-    if (settled) {
-      transition(settled);
-    } else {
-      epoch.current += 1;
-      setWaiting({ atKey, epoch: epoch.current });
-    }
-  }, [active, atKey, failed, settled, transition]);
+  const advance = useCallback(
+    (by: Mover) => {
+      // After an error there is no answer coming: stay put (it is shown).
+      if (!active || atKey === undefined || failed) return;
+      if (settled) {
+        transition(settled, by);
+      } else {
+        epoch.current += 1;
+        setWaiting({ atKey, epoch: epoch.current, by });
+      }
+    },
+    [active, atKey, failed, settled, transition],
+  );
+  const afterDecision = useCallback(() => advance("decision"), [advance]);
 
   // J: as a decision, unless a move is still on its way to the screen.
   const goNext = useCallback(() => {
     if (isMoving()) return;
-    advance();
+    advance("key");
   }, [isMoving, advance]);
 
   // The answer a decision was waiting for has come, or will not come.
@@ -425,7 +490,7 @@ export function useReviewLoop({
     // A move made since it started to wait (K's) has already taken the
     // reviewer elsewhere: this answer is for the step they left.
     if (epoch.current !== waiting.epoch) return;
-    transition(settled);
+    transition(settled, waiting.by);
   }, [waiting, failed, settled, transition]);
 
   // ... and it is not waited for for ever.
@@ -468,12 +533,16 @@ export function useReviewLoop({
         // a deferred decision, leaving the page) wins; so does going to
         // another step by hand.
         if (epoch.current !== asked || atKeyRef.current !== atKey) return;
-        if (!answer.target) return;
         // Backwards stays inside this batch: another batch is not "previous".
         // The move bumps the epoch, which drops a decision still waiting for
-        // its forward answer.
-        if (answer.scope === "run") goTo(answer.target, "replace");
-        else if (answer.scope === "batch") goTo(answer.target, "push");
+        // its forward answer. At the batch boundary, as J does (R27).
+        if (answer.scope === "run" && answer.target) {
+          goTo(answer.target, "replace");
+        } else if (answer.scope === "batch" && answer.target) {
+          goTo(answer.target, "push");
+        } else if (answer.scope === "nextBatch" || answer.scope === "none") {
+          atBoundary(answer, "key");
+        }
       })
       .catch(() => {
         // The key does nothing; the reviewer can press it again.
@@ -481,26 +550,55 @@ export function useReviewLoop({
       .finally(() => {
         if (prevPending.current === token) prevPending.current = null;
       });
-  }, [active, at, atKey, utils, projectId, loopContext, isMoving, goTo]);
+  }, [
+    active,
+    at,
+    atKey,
+    utils,
+    projectId,
+    loopContext,
+    isMoving,
+    goTo,
+    atBoundary,
+  ]);
 
   const dismissCard = useCallback(() => setShown(null), []);
 
+  // Busy until the route commits (the step changes), for at most 5 s: a move
+  // the route never commits lets the buttons go again, as `goTo` does.
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setTimeout(
+      () => setBusy((b) => (b === busy ? null : b)),
+      MOVE_LIMIT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [busy]);
+
   const continueToNextBatch = useCallback(() => {
     // The answer the card shows: its target is the next batch's first pending
-    // step inside the facets (R5). Through `goTo`, like every move.
-    if (next?.scope !== "nextBatch" || !next.target) return;
-    if (goTo(next.target, "push")) setShown(null);
-  }, [next, goTo]);
+    // step inside the facets (R5). Through `goTo`, like every move; the card
+    // stays up until the route commits (R24).
+    if (busy || next?.scope !== "nextBatch" || !next.target) return;
+    if (goTo(next.target, "push")) setBusy({ atKey });
+  }, [busy, next, goTo, atKey]);
 
   // Asked when pressed, like K, from the step on screen; and like K's, its
-  // answer is dropped if anything moved the reviewer meanwhile.
+  // answer is dropped if anything moved the reviewer meanwhile. Busy from the
+  // press: a second one does not ask again.
   const clearFilter = useCallback(() => {
-    if (!active || !at || atKey === undefined || isMoving()) return;
+    if (busy || !active || !at || atKey === undefined || isMoving()) return;
+    const mine = { atKey };
+    setBusy(mine);
+    const done = () => setBusy((b) => (b === mine ? null : b));
     const asked = epoch.current;
     utils.review.next
       .fetch({ projectId, at })
       .then((answer) => {
-        if (epoch.current !== asked || atKeyRef.current !== atKey) return;
+        if (epoch.current !== asked || atKeyRef.current !== atKey) {
+          done();
+          return;
+        }
         // In this run the URL is replaced; in another test, pushed.
         const how =
           answer.scope === "run"
@@ -512,23 +610,28 @@ export function useReviewLoop({
           // Nothing is left in the batch after all (a teammate took the last
           // of it): the batch is done, or everything is (no filter now).
           epoch.current += 1;
+          done();
           showCard(answer.scope === "none" ? "all" : "batch");
           return;
         }
-        // The status stays; the facets are what is being cleared.
-        if (goTo(answer.target, how, { ...loopContext, facets: {} })) {
-          setShown(null);
-          // Into a test the reviewer did not pick: said, like the loop's
-          // own moves (R26), with the count outside the filter.
-          if (how === "push") {
-            announceMove(answer.target, answer.remaining.batch);
-          }
+        // The status stays; the facets are what is being cleared. The card
+        // stays up, busy, until the route commits (R24).
+        if (!goTo(answer.target, how, { ...loopContext, facets: {} })) {
+          done();
+          return;
+        }
+        // Into a test the reviewer did not pick: said, like the loop's own
+        // moves (R26), with the count outside the filter.
+        if (how === "push") {
+          announceMove(answer.target, answer.remaining.batch);
         }
       })
       .catch(() => {
         // The button does nothing; the reviewer can press it again.
+        done();
       });
   }, [
+    busy,
     active,
     at,
     atKey,
@@ -569,12 +672,13 @@ export function useReviewLoop({
     retry,
     goNext,
     goPrev,
-    afterDecision: advance,
+    afterDecision,
     pending: waiting !== null,
     card: shown?.card ?? null,
     dismissCard,
     continueToNextBatch,
     clearFilter,
+    cardBusy: busy !== null,
     cue: cue?.text ?? null,
   };
 }
