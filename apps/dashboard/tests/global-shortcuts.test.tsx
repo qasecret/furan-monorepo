@@ -272,7 +272,7 @@ describe("ShortcutsDialog", () => {
     usePaletteStore.setState({ open: false });
   });
 
-  it("ShortcutsDialog lists only bound keys (incl. J / K and ⌘Z) and none of j/k-row, a/r-row, Enter, /", async () => {
+  it("ShortcutsDialog lists only bound keys (incl. J / K and ⌘Z) and none of j/k-row, a/r-row, Enter, or the old / filter row", async () => {
     const { listed, text } = readDialog();
     const keys = listed.map((l) => l.key);
     expect(keys).toEqual(expect.arrayContaining(["J", "K", "⌘Z"]));
@@ -286,9 +286,13 @@ describe("ShortcutsDialog", () => {
     ]) {
       expect(text).not.toContain(stale);
     }
-    for (const stale of ["↑", "↓", "j", "k", "a", "r", "/"]) {
+    for (const stale of ["↑", "↓", "j", "k", "a", "r"]) {
       expect(keys).not.toContain(stale);
     }
+    // `/` is listed, for what it does: the old list taught it as the filter
+    // bar's key, and in the viewer it opens the command palette.
+    expect(listed).toContainEqual({ where: "In the diff viewer", key: "/" });
+    expect(listed).not.toContainEqual({ where: "Everywhere", key: "/" });
     expect(keys.filter((k) => k.includes("Enter"))).toEqual([]);
     cleanup();
 
@@ -322,8 +326,8 @@ describe("ShortcutsDialog", () => {
       "=": "+",
       Backspace: "Delete",
       "Shift+?": "?",
-      // The viewer's own way into the command palette.
-      "/": "⌘K",
+      // `+` as a US keyboard sends it.
+      "Shift++": "+",
     };
     const CAPS: Record<string, string> = {
       ArrowLeft: "←",

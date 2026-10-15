@@ -2026,6 +2026,38 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 
+  test("a decision refused while waiting stays on the step", () => {
+    // The answer is being refetched when the decision is made: it waits.
+    nextQuery.isFetching = true;
+    nextQuery.data = answer(); // c3, in this run
+    const steps = (c1: StepFixture) => ({
+      items: [c1, stepFixture("c2", "unresolved"), stepFixture("c3", "new")],
+    });
+    const viewer = () => (
+      <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
+    );
+    const r = render(viewer());
+    const next = () => r.getByTestId("header-next-pending");
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(next().getAttribute("aria-busy")).toBe("true");
+    // The decision shows at once...
+    mockCheckpoints = steps(decided("c1"));
+    r.rerender(viewer());
+    // ...and the server refuses it: the rollback puts c1 back as needing
+    // review, and the move it was waiting for is called off (R30).
+    mockCheckpoints = steps(stepFixture("c1", "unresolved"));
+    r.rerender(viewer());
+    expect(next().getAttribute("aria-busy")).not.toBe("true");
+    // The answer comes: the reviewer stays on c1.
+    nextQuery.isFetching = false;
+    r.rerender(viewer());
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(canvas()).not.toBeNull();
+    expect(card(r)).toBeNull();
+  });
+
   test("the filtered card's Clear filter drops the facets; a card that changes is said again", async () => {
     nextQuery.data = intoNextBatch(4);
     const { r, again } = lastPendingStep({

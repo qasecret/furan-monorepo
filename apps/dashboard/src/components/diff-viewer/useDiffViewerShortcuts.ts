@@ -299,6 +299,11 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       "+": () => {
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
+      // `+` as a US keyboard sends it: Shift with `=`. tinykeys does not
+      // match a modifier the binding does not name (as for `Shift+?`).
+      "Shift++": () => {
+        useViewerStore.getState().zoomBy(ZOOM_STEP);
+      },
       "-": () => {
         useViewerStore.getState().zoomBy(1 / ZOOM_STEP);
       },

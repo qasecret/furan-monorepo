@@ -204,18 +204,19 @@ function supersedeCues(): void {
  * Moves race: the router commits a new URL only after a round trip, so the
  * props still name the old step for a while. A navigation epoch orders them.
  * It is bumped by every move or card this hook makes, by a decision that has
- * to wait for its answer, and when the hook unmounts (in the viewer, leaving a
- * step by any route unmounts it). K reads the epoch when pressed and a waiting
- * decision records it when it starts to wait; either one's answer is dropped
- * if the epoch has changed since, so the latest move always wins: a K answer
- * never overrides a later J, decision or departure, and a deferred decision
- * never moves the reviewer again after K has. From a move until the step on
- * screen changes (or for at most 5 s), J and K do nothing: they would be
- * asked from the step being left. A move to the step on screen, or to the one
- * a move still on its way already goes to, is not made again. Every move also
- * takes a place in the order of announcements, so a cue still waiting for its
- * test's name is not said after a later move; leaving the page by hand does
- * the same.
+ * to wait for its answer, by the step on screen needing review again (an
+ * undo, a refused decision: R30), and when the hook unmounts (in the viewer,
+ * leaving a step by any route unmounts it). K reads the epoch when pressed
+ * and a waiting decision records it when it starts to wait; either one's
+ * answer is dropped if the epoch has changed since, so the latest move always
+ * wins: a K answer never overrides a later J, decision or departure, and a
+ * deferred decision never moves the reviewer again after K has. From a move
+ * until the step on screen changes (or for at most 5 s), J and K do nothing:
+ * they would be asked from the step being left. A move to the step on screen,
+ * or to the one a move still on its way already goes to, is not made again.
+ * Every move also takes a place in the order of announcements, so a cue still
+ * waiting for its test's name is not said after a later move; leaving the
+ * page by hand does the same.
  */
 export function useReviewLoop({
   projectId,
@@ -281,26 +282,32 @@ export function useReviewLoop({
   if (shown && shown.atKey !== atKey) setShown(null);
   if (waiting !== null && waiting.atKey !== atKey) setWaiting(null);
   if (busy && busy.atKey !== atKey) setBusy(null);
+  // Orders the moves (see the doc above).
+  const epoch = useRef(0);
   // A card is for a settled step. The step needing review again (⌘Z, a
   // refused decision) drops it, for good: settling it some other way (Mark as
   // Bug, approve pending, an override) brings none back. The change, not the
-  // state: a decision brings its card before its own update has landed. A
-  // decision still waiting for its answer is no longer one: its answer is
-  // taken as J's, which brings no card over a step that needs review.
-  const [wasPending, setWasPending] = useState(stepPending);
-  if (wasPending !== stepPending) {
-    setWasPending(stepPending);
-    if (stepPending && shown) setShown(null);
-    if (stepPending && waiting?.by === "decision") {
-      setWaiting({ ...waiting, by: "key" });
+  // state: a decision brings its card before its own update has landed.
+  // On the step on screen (not a move to another step that needs review), it
+  // also calls off the loop's move still on its way (R30): a decision waiting
+  // for its answer, Continue or Clear filter, and a K answer. The reviewer
+  // took the step back to review it; nothing moves them off it.
+  const [was, setWas] = useState({ pending: stepPending, atKey });
+  if (was.pending !== stepPending || was.atKey !== atKey) {
+    setWas({ pending: stepPending, atKey });
+    if (stepPending && !was.pending) {
+      if (shown) setShown(null);
+      if (was.atKey === atKey) {
+        if (waiting !== null) setWaiting(null);
+        if (busy) setBusy(null);
+        epoch.current += 1;
+      }
     }
   }
   // Read by answers that come back later (K's).
   const stepPendingRef = useRef(stepPending);
   stepPendingRef.current = stepPending;
 
-  // Orders the moves (see the doc above).
-  const epoch = useRef(0);
   // The step on screen right now, for answers that come back later. Set in a
   // layout effect, so no answer is checked against a step already replaced.
   const atKeyRef = useRef(atKey);
@@ -627,12 +634,10 @@ export function useReviewLoop({
               : null;
         if (!answer.target || how === null) {
           // Nothing is left in the batch after all (a teammate took the last
-          // of it): the batch is done, or everything is (no filter now). Not
-          // over a step that needs review again (⌘Z meanwhile dropped the
-          // card): it stays down.
-          done();
-          if (stepPendingRef.current) return;
+          // of it): the batch is done, or everything is (no filter now). An
+          // undo meanwhile has already called the lookup off (R30).
           epoch.current += 1;
+          done();
           showCard(answer.scope === "none" ? "all" : "batch");
           return;
         }

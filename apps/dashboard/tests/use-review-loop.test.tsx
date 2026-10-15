@@ -809,9 +809,10 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     const { result, rerender } = withCard(2);
     act(() => result.current.clearFilter());
     // ⌘Z before the lookup comes back: the step needs review again, and the
-    // card goes with it.
+    // card goes with it, no longer busy (R30).
     rerender(args({ context: FACETED, stepPending: true }));
     expect(result.current.card).toBeNull();
+    expect(result.current.cardBusy).toBe(false);
     // Nothing is left in the batch after all: the fallback would be the
     // batch card, over the step just put back.
     await act(async () => cleared.resolve(intoNextBatch(0)));
@@ -822,6 +823,30 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     // Settled again some other way (Mark as Bug): still none.
     rerender(args({ context: FACETED, stepPending: false }));
     expect(result.current.card).toBeNull();
+  });
+
+  test("an undo while Clear filter looks up cancels its move", async () => {
+    const cleared = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(cleared.promise);
+    const { result, rerender } = withCard(2);
+    act(() => result.current.clearFilter());
+    expect(result.current.cardBusy).toBe(true);
+    // ⌘Z on the step on screen before the lookup comes back (R30).
+    rerender(args({ context: FACETED, stepPending: true }));
+    expect(result.current.cardBusy).toBe(false);
+    // The lookup finds a step in this batch: it is not gone to.
+    await act(async () =>
+      cleared.resolve(
+        answer({
+          target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+          scope: "batch",
+        }),
+      ),
+    );
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBeNull();
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
   });
 
   test("leaving drops a K answer still on its way too", async () => {
@@ -1011,6 +1036,7 @@ describe("useReviewLoop: the batch boundary on a step that needs review (R23, R2
     expect(result.current.pending).toBe(true);
     rerender(args({ stepPending: false })); // the decision lands
     rerender(args({ stepPending: true })); // ⌘Z, or the decision is refused
+    expect(result.current.pending).toBe(false);
     // Its answer comes: the batch is done, but the step needs review again.
     query.isFetching = false;
     query.data = boundary();
@@ -1020,6 +1046,38 @@ describe("useReviewLoop: the batch boundary on a step that needs review (R23, R2
     // Settled again some other way (Mark as Bug): no card comes back.
     rerender(args({ stepPending: false }));
     expect(result.current.card).toBeNull();
+  });
+
+  test("an undo while a decision waits cancels its move (run or batch answer)", () => {
+    for (const later of [
+      answer({
+        target: { buildId: BUILD, runId: RUN, checkpointId: "step-2" },
+        scope: "run",
+      }),
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+      }),
+    ]) {
+      // The answer is being refetched when the decision is made: it waits.
+      query.data = undefined;
+      query.isFetching = true;
+      const { result, rerender, unmount } = setup({ stepPending: true });
+      act(() => result.current.afterDecision());
+      expect(result.current.pending).toBe(true);
+      rerender(args({ stepPending: false })); // the decision lands
+      rerender(args({ stepPending: true })); // ⌘Z on the step on screen
+      // The move is called off at once: Next pending is no longer busy...
+      expect(result.current.pending).toBe(false);
+      // ...and the answer, when it comes, moves the reviewer nowhere.
+      query.isFetching = false;
+      query.data = later;
+      rerender(args({ stepPending: true }));
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
+      expect(result.current.card).toBeNull();
+      unmount();
+    }
   });
 });
 

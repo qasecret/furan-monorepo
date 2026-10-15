@@ -7,7 +7,10 @@ vi.mock("sonner", () => ({
 
 import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
 import { useDiffViewerShortcuts } from "../src/components/diff-viewer/useDiffViewerShortcuts";
-import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import {
+  useViewerStore,
+  ZOOM_STEP,
+} from "../src/components/diff-viewer/useViewerStore";
 
 function press(key: string) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
@@ -124,6 +127,21 @@ describe("useDiffViewerShortcuts", () => {
     });
     // The auto-repeats of a held key are not more presses.
     expect(onEscape).toHaveBeenCalledOnce();
+  });
+
+  it("+ zooms in as a US keyboard sends it (Shift with =), once", () => {
+    useViewerStore.setState({ zoom: 1 });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "+",
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(useViewerStore.getState().zoom).toBeCloseTo(ZOOM_STEP);
   });
 
   it("O cycles the mode", () => {
