@@ -41,6 +41,12 @@ export interface UseReviewLoopArgs {
    * the step needing review again drops the card (⌘Z, a refused decision).
    */
   stepPending: boolean;
+  /**
+   * The step on screen is inside the context's facets (always, without
+   * facets). While it is pending it counts in the filter's count (R33).
+   * Defaults to true.
+   */
+  stepInFilter?: boolean;
 }
 
 export interface ReviewLoop {
@@ -103,10 +109,45 @@ export interface ReviewLoop {
   leave(href: string): void;
   /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
-   * ‹N› left in batch") while it is shown, for about 3 s (R15); else null.
-   * Only the loop's own forward moves have one: K's do not (R16).
+   * ‹N› left in batch", with facets "· ‹M› in filter") while it is shown, for
+   * about 3 s (R15); else null. Only the loop's own forward moves have one:
+   * K's do not (R16). Its count is the one the header pill shows on arrival
+   * (R33).
    */
   cue: string | null;
+}
+
+/** The step on screen, as the batch counts see it (R33). */
+export interface StepHere {
+  /** It still needs review. */
+  pending: boolean;
+  /** It is inside the facets (always, without facets). */
+  inFilter: boolean;
+}
+
+/** A step that is not counted: settled, or being decided. */
+const NOT_COUNTED: StepHere = { pending: false, inFilter: true };
+
+/**
+ * What is left in the batch, worded once for the header pill and the loop's
+ * cue (R33): "‹N› left in batch", or with facets "‹N› left in batch · ‹M› in
+ * filter". `review.next`'s `remaining` leaves out the step it was asked from,
+ * so `here` adds it back while it still needs review: to N always, and to M
+ * when it is inside the filter. Asked from the step a move leaves, with that
+ * step as `here`, it is the count the reviewer sees on arrival: moving does
+ * not change what is pending, and the target counts itself there.
+ */
+export function leftInBatchLabel(
+  remaining: NextAnswer["remaining"],
+  filtered: boolean,
+  here: StepHere,
+): string {
+  if (!filtered) {
+    return `${remaining.batch + (here.pending ? 1 : 0)} left in batch`;
+  }
+  const inBatch = remaining.batchUnfiltered + (here.pending ? 1 : 0);
+  const inFilter = remaining.batch + (here.pending && here.inFilter ? 1 : 0);
+  return `${inBatch} left in batch · ${inFilter} in filter`;
 }
 
 /** The viewer's own title for a run with no name. */
@@ -121,8 +162,7 @@ const WAIT_LIMIT_MS = 10_000;
  */
 const MOVE_LIMIT_MS = 5_000;
 
-const cueText = (name: string, left: number) =>
-  `Next test: ${name} · ${left} left in batch`;
+const cueText = (name: string, left: string) => `Next test: ${name} · ${left}`;
 
 /** J or K at the batch boundary on a step that still needs review (R23). */
 const LAST_IN_FILTER = "Last step to review in this filter.";
@@ -226,6 +266,7 @@ export function useReviewLoop({
   context,
   enabled,
   stepPending,
+  stepInFilter = true,
 }: UseReviewLoopArgs): ReviewLoop {
   const router = useRouter();
   const utils = trpc.useUtils();
@@ -304,9 +345,11 @@ export function useReviewLoop({
       }
     }
   }
-  // Read by answers that come back later (K's).
+  // Read by answers that come back later (K's), and by a move's cue.
   const stepPendingRef = useRef(stepPending);
   stepPendingRef.current = stepPending;
+  const stepInFilterRef = useRef(stepInFilter);
+  stepInFilterRef.current = stepInFilter;
 
   // The step on screen right now, for answers that come back later. Set in a
   // layout effect, so no answer is checked against a step already replaced.
@@ -350,9 +393,12 @@ export function useReviewLoop({
     };
   }, [isMoving]);
 
-  /** Say which test the reviewer has been taken to. */
+  /**
+   * Say which test the reviewer has been taken to, and what is left (`left`,
+   * from `leftInBatchLabel`).
+   */
   const announceMove = useCallback(
-    (target: { runId: string }, left: number) => {
+    (target: { runId: string }, left: string) => {
       // Said only if no later cue was reserved by then: a name that arrives
       // after the next move's cue belongs to a place already left. What is
       // said is also shown, on the test it names (R15).
@@ -459,19 +505,34 @@ export function useReviewLoop({
         case "run":
           if (answer.target) goTo(answer.target, "replace");
           return;
-        case "batch":
+        case "batch": {
           if (!answer.target) return;
+          // The count the reviewer sees on arrival (R33). A decision's step is
+          // no longer pending (its own update may not have rendered yet); a
+          // J leaves the step on screen as it is.
+          const here: StepHere =
+            by === "decision"
+              ? NOT_COUNTED
+              : {
+                  pending: stepPendingRef.current,
+                  inFilter: stepInFilterRef.current,
+                };
+          const faceted = Object.keys(loopContext.facets).length > 0;
           if (goTo(answer.target, "push")) {
-            announceMove(answer.target, answer.remaining.batch);
+            announceMove(
+              answer.target,
+              leftInBatchLabel(answer.remaining, faceted, here),
+            );
           }
           return;
+        }
         case "nextBatch":
         case "none":
           atBoundary(answer, by);
           return;
       }
     },
-    [goTo, announceMove, atBoundary],
+    [goTo, announceMove, atBoundary, loopContext],
   );
 
   /** What a decision and J both do: move on the answer, or wait for it. */
@@ -648,9 +709,16 @@ export function useReviewLoop({
           return;
         }
         // Into a test the reviewer did not pick: said, like the loop's own
-        // moves (R26), with the count outside the filter.
+        // moves (R26), with the count outside the filter: the facets are
+        // gone on arrival, and this answer was asked without them.
         if (how === "push") {
-          announceMove(answer.target, answer.remaining.batch);
+          announceMove(
+            answer.target,
+            leftInBatchLabel(answer.remaining, false, {
+              pending: stepPendingRef.current,
+              inFilter: true,
+            }),
+          );
         }
       })
       .catch(() => {

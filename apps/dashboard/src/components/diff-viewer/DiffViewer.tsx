@@ -30,15 +30,16 @@ import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
-import { useReviewLoop } from "@/lib/review/use-review-loop";
+import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
 import { useUndoStore } from "@/lib/review/use-undo-store";
 import {
   batchHref,
   DEFAULT_REVIEW_STATUS,
   serializeReviewContext,
   type ReviewContext,
+  type StepFacets,
 } from "@/lib/review-context";
-import { trpc, type RouterOutputs } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 
 interface Props {
   runId: string;
@@ -63,16 +64,17 @@ const NO_REVIEW_CONTEXT: ReviewContext = {
 };
 
 /**
- * The header pill: what is left in the batch, after this step. With facets
- * set it also says how many of them are inside the filter.
+ * The step is inside every facet the reviewer set (always, with none set): a
+ * pending step outside them is in the batch's count but not the filter's.
  */
-function remainingLabel(
-  remaining: RouterOutputs["review"]["next"]["remaining"],
-  filtered: boolean,
-): string {
-  return filtered
-    ? `${remaining.batchUnfiltered} left in batch · ${remaining.batch} in filter`
-    : `${remaining.batch} left in batch`;
+function inFacets(
+  step: Partial<Record<keyof StepFacets, string | null>> | undefined,
+  facets: StepFacets,
+): boolean {
+  if (!step) return true;
+  return (Object.keys(facets) as Array<keyof StepFacets>).every(
+    (k) => facets[k] === undefined || step[k] === facets[k],
+  );
 }
 
 /**
@@ -275,6 +277,15 @@ export function DiffViewer({
   // take decisions (overridden, not reviewable) still navigates; only
   // deciding is off.
   const loopOn = Boolean(data?.buildId) && !error;
+  // The step on screen, for the batch counts (R33): while it needs review it
+  // counts in what is left, and in the filter's count if it is inside it.
+  const stepHere = {
+    pending: review.view === "pending",
+    inFilter: inFacets(
+      checkpointsQuery.data?.items?.find((c) => c.id === activeCheckpointId),
+      context.facets,
+    ),
+  };
   const loop = useReviewLoop({
     projectId: data?.projectId ?? "",
     buildId: data?.buildId || undefined,
@@ -282,7 +293,8 @@ export function DiffViewer({
     checkpointId: activeCheckpointId,
     context,
     enabled: loopOn,
-    stepPending: review.view === "pending",
+    stepPending: stepHere.pending,
+    stepInFilter: stepHere.inFilter,
   });
   const undoCount = useUndoStore((s) => s.stack.length);
   // The done card (spec §5.4) takes the canvas's place once the step on
@@ -575,13 +587,15 @@ export function DiffViewer({
   const isEmpty = data?.status === "empty";
 
   // The header's review loop. The count is the answer's, so none until it
-  // has come, and none after a failed lookup (what it knew before is stale).
-  // Busy while a decision waits for the answer (spec §5.4).
+  // has come, and none after a failed lookup (what it knew before is stale);
+  // the step on screen counts in it while it needs review, and the loop's
+  // cue words its count the same way (R33). Busy while a decision waits for
+  // the answer (spec §5.4).
   const facetsSet = Object.keys(context.facets).length > 0;
   const headerLoop: HeaderLoop = {
     remaining:
       loop.next && !loop.error
-        ? remainingLabel(loop.next.remaining, facetsSet)
+        ? leftInBatchLabel(loop.next.remaining, facetsSet, stepHere)
         : "",
     // Inert while the card is up, as J is (R20, R28).
     onNextPending: loopOn && keysOn ? loop.goNext : undefined,
