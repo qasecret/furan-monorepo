@@ -283,6 +283,23 @@ describe.each(["afterDecision", "goNext"] as const)(
       expect(router.push).not.toHaveBeenCalled();
       expect(router.replace).not.toHaveBeenCalled();
     });
+
+    test("none: shows the filtered card when steps are left outside the filters", () => {
+      // Nothing is left anywhere inside the filters, but this batch still has
+      // steps outside them: the filtered set is done, not everything.
+      query.data = answer({
+        target: null,
+        scope: "none",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 2, projectBatches: 0 },
+      });
+      const { result } = setup({
+        context: { status: "needs-review", facets: { os: "macOS" } },
+      });
+      act(() => result.current[move]());
+      expect(result.current.card).toBe("filtered");
+      expect(router.push).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+    });
   },
 );
 
@@ -489,6 +506,195 @@ describe("useReviewLoop: the card", () => {
     const { result } = setup();
     expect(result.current.card).toBeNull();
   });
+});
+
+describe("useReviewLoop: the card's moves (R18)", () => {
+  const FACETED: ReviewContext = {
+    status: "failed",
+    facets: { browser: "chromium" },
+  };
+  /** This batch is done inside the filters; `left` steps are outside them. */
+  const intoNextBatch = (left = 0) =>
+    answer({
+      target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+      scope: "nextBatch",
+      remaining: {
+        run: 0,
+        batch: 0,
+        batchUnfiltered: left,
+        projectBatches: 2,
+      },
+      nextBatch,
+    });
+  /** The card is up, from a decision on the step on screen. */
+  function withCard(left = 0, context: ReviewContext = FACETED) {
+    query.data = intoNextBatch(left);
+    const hook = setup({ context });
+    act(() => hook.result.current.afterDecision());
+    expect(hook.result.current.card).toBe(left > 0 ? "filtered" : "batch");
+    return hook;
+  }
+
+  test("Continue opens the next batch's first pending step, keeping the facets, and puts the card away", () => {
+    const { result } = withCard();
+    act(() => result.current.continueToNextBatch());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/r9/checkpoints/s9?status=failed&browser=chromium`,
+    );
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBeNull();
+    // No cue: the card has already said where it goes.
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
+    expect(useLoopCue.getState().cue).toBeNull();
+  });
+
+  test("Continue does nothing unless the answer leads into another batch", () => {
+    query.data = answer({
+      target: null,
+      scope: "none",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+    });
+    const { result } = setup();
+    act(() => result.current.afterDecision());
+    act(() => result.current.continueToNextBatch());
+    // A step in this batch is not "the next batch" either.
+    query.data = answer({ nextBatch });
+    act(() => result.current.continueToNextBatch());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBe("all");
+  });
+
+  test("Continue goes through the move guards: once, and it drops a K answer still on its way", async () => {
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result } = withCard();
+    act(() => result.current.goPrev());
+    act(() => result.current.continueToNextBatch());
+    act(() => result.current.continueToNextBatch());
+    expect(router.push).toHaveBeenCalledOnce();
+    await act(async () => prev.resolve(previous()));
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  test("Clear filter moves to the first unfiltered pending step and drops the facets from the URL", async () => {
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+        remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+      }),
+    );
+    const { result } = withCard(4);
+    await act(async () => result.current.clearFilter());
+    // Asked from the step on screen, with no facets (and forward).
+    calledOnceWith(utils.review.next.fetch, {
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+    });
+    // Into another test: pushed. The status stays, the facets go.
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed`,
+    );
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBeNull();
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
+  });
+
+  test("Clear filter replaces the URL when that step is in this run", async () => {
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: RUN, checkpointId: "step-5" },
+        scope: "run",
+      }),
+    );
+    const { result } = withCard(1);
+    await act(async () => result.current.clearFilter());
+    calledOnceWith(
+      router.replace,
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-5?status=failed`,
+    );
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("Clear filter shows the batch card when nothing is left in the batch after all", async () => {
+    // A teammate took the last of them meanwhile.
+    utils.review.next.fetch.mockResolvedValue(intoNextBatch(0));
+    const { result } = withCard(2);
+    expect(result.current.card).toBe("filtered");
+    await act(async () => result.current.clearFilter());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBe("batch");
+  });
+
+  test("a Clear filter answer that lands after another move is dropped", async () => {
+    const cleared = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(cleared.promise);
+    const { result } = withCard(3);
+    act(() => result.current.clearFilter());
+    act(() => result.current.continueToNextBatch());
+    expect(router.push).toHaveBeenCalledOnce();
+    await act(async () =>
+      cleared.resolve(
+        answer({
+          target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+          scope: "batch",
+        }),
+      ),
+    );
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("Clear filter waits for a move still on its way, as K does", async () => {
+    const { result } = withCard(3);
+    act(() => result.current.continueToNextBatch());
+    await act(async () => result.current.clearFilter());
+    expect(utils.review.next.fetch).not.toHaveBeenCalled();
+  });
+
+  test("a failed Clear filter lookup stays put, and the button works again", async () => {
+    utils.review.next.fetch.mockRejectedValueOnce(new Error("down"));
+    const { result } = withCard(3);
+    await act(async () => result.current.clearFilter());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(result.current.card).toBe("filtered");
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+      }),
+    );
+    await act(async () => result.current.clearFilter());
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    ["in this run", "run", RUN, router.replace],
+    ["in another test", "batch", OTHER_RUN, router.push],
+  ] as const)(
+    "a move puts away a card the step had (%s)",
+    (_name, scope, runId, navigate) => {
+      // J at the batch boundary showed the card; then a step needing review
+      // turns up in the batch (a teammate's undo), and J goes there.
+      query.data = intoNextBatch();
+      const { result, rerender } = setup();
+      act(() => result.current.goNext());
+      expect(result.current.card).toBe("batch");
+      query.data = answer({
+        target: { buildId: BUILD, runId, checkpointId: "step-9" },
+        scope,
+      });
+      rerender(args());
+      act(() => result.current.goNext());
+      expect(navigate).toHaveBeenCalledOnce();
+      expect(result.current.card).toBeNull();
+    },
+  );
 });
 
 describe("useReviewLoop: prefetch", () => {

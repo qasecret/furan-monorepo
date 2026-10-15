@@ -63,6 +63,18 @@ export interface ReviewLoop {
   card: ReviewCard | null;
   dismissCard(): void;
   /**
+   * The card's Continue (R18): the next batch's first pending step, inside the
+   * filters, which the URL keeps. Only when the answer leads into another
+   * batch; it puts the card away. No cue: the card has said where it goes.
+   */
+  continueToNextBatch(): void;
+  /**
+   * The card's Clear filter (R18): the next pending step of this batch with
+   * the facets dropped (the status stays), asked when pressed. When the batch
+   * has none after all, the batch card instead.
+   */
+  clearFilter(): void;
+  /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
    * ‹N› left in batch") while it is shown, for about 3 s (R15); else null.
    * Only the loop's own forward moves have one: K's do not (R16).
@@ -146,7 +158,8 @@ function supersedeCues(): void {
  *   batch     it is in another test of the batch: push it, and announce which.
  *   nextBatch this batch is done: show the batch card (or the filtered card
  *             when steps are left outside the reviewer's filters).
- *   none      nothing is left anywhere: show the all-done card.
+ *   none      nothing is left anywhere: show the all-done card (or, again,
+ *             the filtered card when this batch has steps outside them).
  *
  * The answer is fetched ahead, for the step on screen, so a decision can move
  * at once. It is acted on only when it is in hand: not while it is being
@@ -306,15 +319,20 @@ export function useReviewLoop({
    * Go to a step the loop found: replace the URL, or push a new entry. Not
    * made, and false, when it is the step on screen, or the step a move still
    * on its way already goes to (a decision made before that move commits):
-   * the reviewer is not sent, nor told, twice.
+   * the reviewer is not sent, nor told, twice. The URL carries the review
+   * context, or `context` (Clear filter's, without the facets).
    */
   const goTo = useCallback(
-    (target: NonNullable<NextAnswer["target"]>, how: "replace" | "push") => {
+    (
+      target: NonNullable<NextAnswer["target"]>,
+      how: "replace" | "push",
+      context: ReviewContext = loopContext,
+    ) => {
       const href = diffViewerHref(
         projectId,
         target.runId,
         target.checkpointId,
-        loopContext,
+        context,
       );
       const onScreen = at
         ? diffViewerHref(projectId, at.runId, at.checkpointId, loopContext)
@@ -333,34 +351,45 @@ export function useReviewLoop({
     [projectId, at, loopContext, isMoving, router],
   );
 
+  /** Show a done card on the step on screen, in place of a move. */
+  const showCard = useCallback(
+    (card: ReviewCard) => {
+      supersedeCues();
+      setShown({ card, atKey });
+    },
+    [atKey],
+  );
+
   /** Act on an answer: the table in the hook's doc. */
   const transition = useCallback(
     (answer: NextAnswer) => {
       epoch.current += 1;
+      // Steps left outside the filters make the card the filtered one: the
+      // reviewer is done with what they chose, not with the batch.
+      const outside = answer.remaining.batchUnfiltered > 0;
       switch (answer.scope) {
         case "run":
+          // A step to go to puts away a card this step had (J at the batch
+          // boundary shows one, and the batch may fill up again).
+          setShown(null);
           if (answer.target) goTo(answer.target, "replace");
           return;
         case "batch":
+          setShown(null);
           if (!answer.target) return;
           if (goTo(answer.target, "push")) {
             announceMove(answer.target, answer.remaining.batch);
           }
           return;
         case "nextBatch":
-          supersedeCues();
-          setShown({
-            card: answer.remaining.batchUnfiltered > 0 ? "filtered" : "batch",
-            atKey,
-          });
+          showCard(outside ? "filtered" : "batch");
           return;
         case "none":
-          supersedeCues();
-          setShown({ card: "all", atKey });
+          showCard(outside ? "filtered" : "all");
           return;
       }
     },
-    [goTo, announceMove, atKey],
+    [goTo, announceMove, showCard],
   );
 
   /** What a decision and J both do: move on the answer, or wait for it. */
@@ -452,6 +481,57 @@ export function useReviewLoop({
   }, [active, at, atKey, utils, projectId, loopContext, isMoving, goTo]);
 
   const dismissCard = useCallback(() => setShown(null), []);
+
+  const continueToNextBatch = useCallback(() => {
+    // The answer the card shows: its target is the next batch's first pending
+    // step inside the facets (R5). Through `goTo`, like every move.
+    if (next?.scope !== "nextBatch" || !next.target) return;
+    if (goTo(next.target, "push")) setShown(null);
+  }, [next, goTo]);
+
+  // Asked when pressed, like K, from the step on screen; and like K's, its
+  // answer is dropped if anything moved the reviewer meanwhile.
+  const clearFilter = useCallback(() => {
+    if (!active || !at || atKey === undefined || isMoving()) return;
+    const asked = epoch.current;
+    utils.review.next
+      .fetch({ projectId, at })
+      .then((answer) => {
+        if (epoch.current !== asked || atKeyRef.current !== atKey) return;
+        // In this run the URL is replaced; in another test, pushed.
+        const how =
+          answer.scope === "run"
+            ? "replace"
+            : answer.scope === "batch"
+              ? "push"
+              : null;
+        if (!answer.target || how === null) {
+          // Nothing is left in the batch after all (a teammate took the last
+          // of it): the batch is done.
+          epoch.current += 1;
+          showCard("batch");
+          return;
+        }
+        // The status stays; the facets are what is being cleared.
+        if (goTo(answer.target, how, { ...loopContext, facets: {} })) {
+          setShown(null);
+        }
+      })
+      .catch(() => {
+        // The button does nothing; the reviewer can press it again.
+      });
+  }, [
+    active,
+    at,
+    atKey,
+    isMoving,
+    utils,
+    projectId,
+    loopContext,
+    goTo,
+    showCard,
+  ]);
+
   // The cue is shown on the test it names, not on the one the move left; its
   // 3 s run from the first time a page of that test shows it.
   const matching = useLoopCue((s) =>
@@ -484,6 +564,8 @@ export function useReviewLoop({
     pending: waiting !== null,
     card: shown?.card ?? null,
     dismissCard,
+    continueToNextBatch,
+    clearFilter,
     cue: cue?.text ?? null,
   };
 }
