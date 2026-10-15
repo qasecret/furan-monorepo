@@ -29,6 +29,11 @@ import { UNREVIEWABLE_LIFECYCLE_LIST } from "./legality.js";
  * - it has no active decision, and
  * - its run is reviewable (`reviewableRunCondition`).
  *
+ * "No active decision" is the `NOT EXISTS` on `checkpoint_decisions`, with
+ * `NOT screenshots.has_active_decision` beside it as a pre-filter (ADR-074):
+ * a decided step keeps its verdict, so without the flag every pending scan
+ * would probe the decisions of the project's whole history.
+ *
  * The conditions are over `screenshots` joined to `test_runs` on
  * `screenshots.run_id = test_runs.id`; the caller does the join and adds its
  * own explicit `project_id` filter (the queries here do).
@@ -102,10 +107,79 @@ export function pendingStepCondition(facets?: StepFacets): SQL {
   const activeDecision = sql`(select 1 from ${checkpointDecisions} where ${checkpointDecisions.screenshotId} = ${screenshots.id} and ${isNull(checkpointDecisions.revertedAt)})`;
   return and(
     inArray(screenshots.verdict, ["new", "unresolved"]),
+    // ADR-074: a pre-filter the partial index `screenshots_pending_open_idx`
+    // can serve (a literal, not a bound parameter, so its predicate is
+    // provably implied). The trigger on `checkpoint_decisions` keeps the flag
+    // exact, but correctness never rests on it: the `NOT EXISTS` below stays
+    // the definition, so a flag left false would still be filtered there.
+    sql`not ${screenshots.hasActiveDecision}`,
     notExists(activeDecision),
     reviewableRunCondition(),
     facetCondition(facets),
   )!;
+}
+
+/**
+ * The build has at least one pending step inside `facets`, other than
+ * `exceptStepId` when given (the step a reviewer is deciding). `buildId` is
+ * the enclosing query's build id: `sql\`b.id\`` in a raw query over
+ * `builds b`, or `sql\`${builds.id}\`` in the `where` of a drizzle select
+ * from `builds` (drizzle prints a one-table select's own columns bare in its
+ * select list, so keep this condition out of that list).
+ *
+ * The step conditions reference the unaliased `screenshots` / `test_runs`, so
+ * they go in a fresh EXISTS over those tables; the only link to the enclosing
+ * query is `buildId`.
+ */
+export function buildHasPendingStep(
+  projectId: string,
+  buildId: SQL,
+  opts: {
+    facets?: StepFacets | undefined;
+    exceptStepId?: string | undefined;
+  } = {},
+): SQL {
+  const except =
+    opts.exceptStepId === undefined
+      ? sql``
+      : sql`and ${screenshots.id} <> ${opts.exceptStepId}`;
+  return sql`exists (
+    select 1 from ${testRuns}
+    join ${screenshots} on ${screenshots.runId} = ${testRuns.id}
+    where ${testRuns.buildId} = ${buildId}
+      and ${testRuns.projectId} = ${projectId}
+      and ${screenshots.projectId} = ${projectId}
+      and ${pendingStepCondition(opts.facets)}
+      ${except}
+  )`;
+}
+
+/**
+ * The number of the build's pending steps inside `facets`, as a scalar
+ * subquery: `buildId` is the enclosing query's build id, as for
+ * `buildHasPendingStep`. A query that picks a build (`LIMIT 1`) and wants its
+ * count in the same statement computes this over the picked row only, so pick
+ * the build in a subquery and select this from it.
+ *
+ * Every column sits inside a nested fragment, so it keeps its table name even
+ * in the select list of a drizzle one-table select (which prints a direct
+ * column chunk of a select-list expression bare).
+ */
+export function buildPendingCount(
+  projectId: string,
+  buildId: SQL,
+  facets?: StepFacets | undefined,
+): SQL<number> {
+  const joined = sql`${screenshots.runId} = ${testRuns.id}`;
+  const inBuild = and(
+    sql`${testRuns.buildId} = ${buildId}`,
+    eq(testRuns.projectId, projectId),
+    eq(screenshots.projectId, projectId),
+    pendingStepCondition(facets),
+  );
+  return sql<number>`(select count(*) from ${testRuns} join ${screenshots} on ${joined} where ${inBuild})`.mapWith(
+    Number,
+  );
 }
 
 /**
@@ -114,7 +188,11 @@ export function pendingStepCondition(facets?: StepFacets): SQL {
  */
 export async function pendingCountsByRun(
   db: DB | Tx,
-  args: { projectId: string; runIds: string[]; facets?: StepFacets },
+  args: {
+    projectId: string;
+    runIds: string[];
+    facets?: StepFacets | undefined;
+  },
 ): Promise<Map<string, number>> {
   if (args.runIds.length === 0) return new Map();
   const rows = await db
@@ -139,7 +217,11 @@ export async function pendingCountsByRun(
  */
 export async function pendingCountsByBuild(
   db: DB | Tx,
-  args: { projectId: string; buildIds: string[]; facets?: StepFacets },
+  args: {
+    projectId: string;
+    buildIds: string[];
+    facets?: StepFacets | undefined;
+  },
 ): Promise<Map<string, number>> {
   if (args.buildIds.length === 0) return new Map();
   const rows = await db

@@ -1,0 +1,12 @@
+-- 0039: builds (project_id, created_at DESC, id DESC).
+--
+-- The project's builds newest first is the order the review queue
+-- (`review.next`, spec 2026-10-14-review-loop §4.2) and the builds list read
+-- them in. Without this index a "newest batch that needs review" probe has to
+-- look at every build of the project before it can sort; with it the probe
+-- walks the index from the newest build and stops at its first hit.
+--
+-- DESC NULLS FIRST is what `ORDER BY created_at DESC` means, so the planner can
+-- read the index in query order. Additive and idempotent: re-applying this file
+-- is a no-op.
+CREATE INDEX IF NOT EXISTS "builds_project_created_idx" ON "builds" USING btree ("project_id","created_at" DESC NULLS FIRST,"id" DESC NULLS FIRST);

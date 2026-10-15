@@ -248,6 +248,21 @@ d("the SQL definition of a pending review step", () => {
     ).toEqual([...only("plain"), ...only("mac")].sort());
   });
 
+  test("pendingStepCondition pre-filters on the active-decision flag and keeps the NOT EXISTS", () => {
+    const { sql: text } = h.db
+      .select({ id: screenshots.id })
+      .from(screenshots)
+      .where(pendingStepCondition())
+      .toSQL();
+    // The index-usable pre-filter (ADR-074): a literal, never a bound
+    // parameter, so the partial index's predicate is provably implied.
+    expect(text).toContain(`not "screenshots"."has_active_decision"`);
+    // The canonical test stays: correctness never depends on the flag.
+    expect(text).toMatch(
+      /not exists \(select 1 from "checkpoint_decisions" where "checkpoint_decisions"\."screenshot_id" = "screenshots"\."id" and "checkpoint_decisions"\."reverted_at" is null\)/,
+    );
+  });
+
   test("facetCondition is undefined until a facet is set", () => {
     expect(facetCondition()).toBeUndefined();
     expect(facetCondition({})).toBeUndefined();

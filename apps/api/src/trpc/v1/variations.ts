@@ -177,11 +177,14 @@ export const variationsRouter = t.router({
     .query(async ({ input, ctx }) => {
       // ADR-038: runs are linked to variations through screenshots.
       // First, find the steps (screenshots) of this variation in the project,
-      // and with them the runs that have one. A run is expected to have one
-      // step of a variation; if it somehow has two, the earliest by
-      // `created_at, id` is the one its row names.
+      // one row per run that has one. A run is expected to have one step of a
+      // variation; if it somehow has two, the earliest by `created_at, id` is
+      // the one its row names.
       const linkedSteps = await ctx.db
-        .select({ runId: screenshots.runId, stepId: screenshots.id })
+        .selectDistinctOn([screenshots.runId], {
+          runId: screenshots.runId,
+          stepId: screenshots.id,
+        })
         .from(screenshots)
         .where(
           and(
@@ -189,16 +192,17 @@ export const variationsRouter = t.router({
             eq(screenshots.projectId, input.projectId),
           ),
         )
-        .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+        .orderBy(
+          screenshots.runId,
+          asc(screenshots.createdAt),
+          asc(screenshots.id),
+        );
 
       if (linkedSteps.length === 0) {
         return { items: [], nextCursor: null };
       }
 
-      const stepByRun = new Map<string, string>();
-      for (const step of linkedSteps) {
-        if (!stepByRun.has(step.runId)) stepByRun.set(step.runId, step.stepId);
-      }
+      const stepByRun = new Map(linkedSteps.map((s) => [s.runId, s.stepId]));
       const runIdList = [...stepByRun.keys()];
 
       const conditions = [

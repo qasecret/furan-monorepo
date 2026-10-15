@@ -143,10 +143,12 @@ async function loadNewerCaptures(
       and(
         inArray(screenshots.testVariationId, variationIds),
         // Captured after this run, and in this run's project (a variation
-        // never spans projects; the pin keeps a corrupt row from naming a
-        // foreign project's run and build).
+        // never spans projects; the pins, on the run and on the step it
+        // returns, keep a corrupt row from naming a foreign project's run,
+        // build or step).
         sql`(${testRuns.createdAt}, ${testRuns.id}) > (select this_run.created_at, this_run.id from test_runs this_run where this_run.id = ${runId})`,
         sql`${testRuns.projectId} = (select this_run.project_id from test_runs this_run where this_run.id = ${runId})`,
+        sql`${screenshots.projectId} = (select this_run.project_id from test_runs this_run where this_run.id = ${runId})`,
       ),
     )
     .orderBy(

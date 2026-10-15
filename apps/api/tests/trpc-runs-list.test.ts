@@ -1204,7 +1204,8 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
         ],
       });
 
-      expect(await facets(s)).toEqual({
+      const values = await facets(s);
+      expect(values).toEqual({
         browser: [
           { value: "chromium", pending: 1 },
           { value: "firefox", pending: 1 },
@@ -1220,6 +1221,30 @@ d("tRPC runs.list: step environment, pending steps, order and counts", () => {
         os: [{ value: "iOS", pending: 1 }],
         device: [{ value: "iPhone 12", pending: 1 }],
       });
+
+      // One pending definition: each value's count is what the batch page's
+      // list reports for that facet (its runs' summed pendingCount).
+      for (const dimension of [
+        "browser",
+        "viewport",
+        "os",
+        "device",
+      ] as const) {
+        for (const { value, pending } of values[dimension]) {
+          const page = await list(s, {
+            buildId: s.buildId,
+            pending: true,
+            limit: 100,
+            [dimension]: value,
+          });
+          const summed = page.items.reduce((n, r) => n + r.pendingCount, 0);
+          expect([dimension, value, summed]).toEqual([
+            dimension,
+            value,
+            pending,
+          ]);
+        }
+      }
     });
 
     test("a build with no step has no values; one with no os or device lists none", async () => {

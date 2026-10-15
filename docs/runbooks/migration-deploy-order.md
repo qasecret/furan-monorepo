@@ -122,7 +122,17 @@ For 0008 specifically, the symptom of a botched deploy order is:
 - **Slack notifier silent for `aborted`/`empty` runs** → the workers may be on the old image (these statuses are only emitted by the new code; if the dashboard shows them but Slack doesn't fire, check that the diff-worker / capture-worker images are on the new tag too).
 - **GitHub commit-status stays `pending` for `aborted` runs** → same diagnosis. The publish for these terminal states only exists in the new image (commit `bc766d0`).
 
-## 6. References
+## 6. Migration 0040 (active-decision flag): locks and the backfill
+
+`0040_active_decision_flag.sql` adds `screenshots.has_active_decision`, a trigger on `checkpoint_decisions` and two partial indexes, and backfills the flag (ADR-074). It narrows nothing, but it locks tables while it runs:
+
+- **drizzle-kit** (`drizzle-kit migrate`, every pending file in one transaction): `ADD COLUMN` takes ACCESS EXCLUSIVE on `screenshots` and holds it until commit, so every read and write of `screenshots` waits for the whole migration. That measured 1.5–3.5 s on a database with 190k steps, and it grows with the size of `screenshots`.
+- **The compose runner** (`migrate` service, `psql -f`, each statement on its own): the backfill holds SHARE on `checkpoint_decisions` (decision writes wait, reads do not) and each index build holds SHARE on `screenshots` (writes wait, reads do not). Reads are never blocked.
+- **Deadlocks:** a decision write that has already locked a step (an undo of a re-diffed approve, a run or project deletion) can deadlock with the backfill. The backfill rolls back to a savepoint and retries on a deadlock (up to five attempts), so the migration still completes and ends exact. The other write may fail once, and nothing in the API retries it: the reviewer or admin who made it sees the error and does it again (the undo, or the deletion).
+
+**Recommendation:** stop the writers first (§2, step 2) and run the migration with nothing writing, as for any migration in this runbook. Then none of the waits above is visible to users and no deadlock can occur.
+
+## 7. References
 
 - Migration: [`packages/db/migrations/0008_run_status_enum.sql`](../../packages/db/migrations/0008_run_status_enum.sql)
 - Spec: [`furan-design/specs/2026-05-19-run-status-enum-design.md`](../../furan-design/specs/2026-05-19-run-status-enum-design.md) (gitignored design dir)
