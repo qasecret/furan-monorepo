@@ -242,6 +242,47 @@ describe("ContextualToolbar Start reviewing", () => {
     expect(onClick).toHaveBeenCalledOnce();
   });
 
+  test("when the queue could not be read the reason is also visible text beside the button", () => {
+    render(
+      <ContextualToolbar
+        {...baseProps}
+        start={{
+          count: undefined,
+          failed: true,
+          reason: "Couldn't load the review queue",
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    // A tooltip and an aria-label reach neither a sighted keyboard user nor a
+    // touch user, so the reason is on the page too, announced politely.
+    const note = screen.getByRole("status");
+    expect(note.textContent).toBe("Couldn't load the review queue");
+    expect(note.className).toContain("text-fg-muted");
+    expect(note.className).toContain("text-2xs");
+  });
+
+  test("shows no failure text while the queue is fine or the button is merely unavailable", () => {
+    const { rerender } = render(
+      <ContextualToolbar
+        {...baseProps}
+        start={{ count: 12, reason: null, onClick: vi.fn() }}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    rerender(
+      <ContextualToolbar
+        {...baseProps}
+        start={{
+          count: 0,
+          reason: "Nothing to review in this batch",
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   test("is absent for a reader who may not review", () => {
     render(<ContextualToolbar {...baseProps} />);
     expect(screen.queryByTestId("batch-start-reviewing")).toBeNull();

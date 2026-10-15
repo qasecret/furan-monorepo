@@ -61,7 +61,8 @@ export interface StartControl {
   /**
    * The review queue could not be read (`reason` says so). The button then
    * stays pressable instead: it is the retry, and its name and tooltip give
-   * the reason. A disabled button that explains itself ignores presses.
+   * the reason, which is also shown as text beside it. A disabled button that
+   * explains itself ignores presses.
    */
   failed?: boolean;
   onClick: () => void;
@@ -289,6 +290,18 @@ export function ContextualToolbar({
                 ? "Start reviewing"
                 : `Start reviewing (${start.count})`}
             </DisabledAwareButton>
+            {/* The tooltip and the accessible name reach neither a sighted
+                keyboard user nor a touch user, so the reason is on the page
+                as well while the press is a retry. */}
+            {start.failed && (
+              <span
+                role="status"
+                data-testid="batch-start-reviewing-failure"
+                className="text-2xs text-fg-muted"
+              >
+                {start.reason ?? "Couldn't load the review queue"}
+              </span>
+            )}
           </Segment>
         </>
       )}
