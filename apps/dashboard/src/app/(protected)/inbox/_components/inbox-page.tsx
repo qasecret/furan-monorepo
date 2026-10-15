@@ -22,7 +22,7 @@ import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
-import { buildDisplayName } from "@/lib/build-display-name";
+import { buildDisplayName, matchesBatchSearch } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
@@ -66,14 +66,6 @@ const firstPage = (key: string): Paging => ({
  * one page of the filtered Needs review list. More than that reads "N+".
  */
 const FILTERED_START_LIMIT = 100;
-
-/** The client-side search: a batch's display name or branch contains `q`. */
-function matchesSearch(b: BuildRow, q: string): boolean {
-  return (
-    buildDisplayName(b).toLowerCase().includes(q) ||
-    (b.branchName ?? "").toLowerCase().includes(q)
-  );
-}
 
 /**
  * Batches: the start of the review loop (spec §5.1). A full-width table of the
@@ -152,7 +144,7 @@ export function InboxPage({ context }: Props) {
   // Client-side search over the loaded rows (batch name / branch).
   const query = search.text.trim().toLowerCase();
   const rows = useMemo(
-    () => (query ? items.filter((b) => matchesSearch(b, query)) : items),
+    () => (query ? items.filter((b) => matchesBatchSearch(b, query)) : items),
     [items, query],
   );
 
@@ -172,7 +164,7 @@ export function InboxPage({ context }: Props) {
   const filteredRows = useMemo(
     () =>
       (filteredPending.data?.items ?? []).filter(
-        (b) => !query || matchesSearch(b, query),
+        (b) => !query || matchesBatchSearch(b, query),
       ),
     [filteredPending.data, query],
   );
@@ -210,7 +202,7 @@ export function InboxPage({ context }: Props) {
   /** The batch Start reviewing opens under a branch or a search, fresh. */
   const firstFilteredBatch = async (): Promise<BuildRow | undefined> => {
     const fresh = await utils.builds.list.fetch(filteredInput);
-    return fresh.items.find((b) => !query || matchesSearch(b, query));
+    return fresh.items.find((b) => !query || matchesBatchSearch(b, query));
   };
 
   const startReviewing = async () => {

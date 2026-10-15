@@ -21,6 +21,8 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { createBackend, TrpcBackend } from "./trpc-backend";
+
 const { pushMock, undoMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   undoMock: vi.fn(),
@@ -65,6 +67,9 @@ const PROJECTS: ProjectListItem[] = [
 
 const RECENT_A = "furan:palette:recent:user-a";
 
+/** The palette's search asks this server, which has nothing to show. */
+const backend = createBackend();
+
 /** The protected layout's keyboard and palette, around a page. */
 function Shell({
   role = "editor",
@@ -80,17 +85,19 @@ function Shell({
   children?: ReactNode;
 }) {
   return (
-    <CommandRoleProvider role={role}>
-      <CurrentProjectProvider
-        initialProjects={projects}
-        initialDefaultProjectId={defaultProjectId}
-      >
-        <GlobalCommands />
-        <CommandDispatcher />
-        {children}
-        <CommandPalette userRole={role} userId={userId} />
-      </CurrentProjectProvider>
-    </CommandRoleProvider>
+    <TrpcBackend backend={backend}>
+      <CommandRoleProvider role={role}>
+        <CurrentProjectProvider
+          initialProjects={projects}
+          initialDefaultProjectId={defaultProjectId}
+        >
+          <GlobalCommands />
+          <CommandDispatcher />
+          {children}
+          <CommandPalette userRole={role} userId={userId} />
+        </CurrentProjectProvider>
+      </CommandRoleProvider>
+    </TrpcBackend>
   );
 }
 
@@ -154,6 +161,7 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(() => {
+  backend.calls = [];
   pushMock.mockReset();
   undoMock.mockReset();
   useUndoStore.setState({ stack: [] });
@@ -634,6 +642,73 @@ describe("CommandPalette", () => {
     await settle();
     expect(useSingleKeyStore.getState().on).toBe(false);
     expect(document.activeElement).toBe(somewhere);
+  });
+
+  test("a navigation pick does not refocus the opener", async () => {
+    // Recent holds an admin page and the project jumps are the admin's: all
+    // four kinds of page are there to pick.
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([{ id: "admin.members", label: "Members" }]),
+    );
+    render(
+      <Shell role="admin">
+        <button type="button">Somewhere</button>
+      </Shell>,
+    );
+    const somewhere = screen.getByRole("button", { name: "Somewhere" });
+    const picks: [heading: string, label: string][] = [
+      ["Go to", "Batches"],
+      ["Recent", "Members"],
+      ["Projects", "Jump to project: Beta"],
+      ["Account", "API tokens"],
+    ];
+    for (const [heading, label] of picks) {
+      act(() => somewhere.focus());
+      press("k", { ctrlKey: true });
+      const palette = await screen.findByTestId("command-palette");
+      fireEvent.click(
+        within(group(palette, heading)).getByRole("option", { name: label }),
+      );
+      await settle();
+      // The page it went to may have focused something: the opener, which
+      // is on a page that is going away, does not take it back.
+      expect(usePaletteStore.getState().open, label).toBe(false);
+      expect(document.activeElement, label).not.toBe(somewhere);
+    }
+
+    // Not picking, or picking a command, still gives focus back.
+    act(() => somewhere.focus());
+    press("k", { ctrlKey: true });
+    await screen.findByTestId("command-palette");
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settle();
+    expect(document.activeElement).toBe(somewhere);
+  });
+
+  test("focus goes back to the opener without scrolling the page", async () => {
+    render(
+      <Shell>
+        <button type="button">Somewhere</button>
+      </Shell>,
+    );
+    const somewhere = screen.getByRole("button", { name: "Somewhere" });
+    act(() => somewhere.focus());
+    const focus = vi.spyOn(somewhere, "focus");
+    press("k", { ctrlKey: true });
+    await screen.findByTestId("command-palette");
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settle();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   test("a key another scope takes is not shown on the command", async () => {

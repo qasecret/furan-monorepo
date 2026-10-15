@@ -29,6 +29,8 @@ vi.mock("tinykeys", async (importOriginal) => {
   return { ...actual, tinykeys: vi.fn(actual.tinykeys) };
 });
 
+import { createBackend, TrpcBackend } from "./trpc-backend";
+
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
@@ -313,7 +315,9 @@ describe("GlobalCommands", () => {
           initialProjects={[]}
           initialDefaultProjectId={null}
         >
-          <CommandPalette userRole="editor" userId="u1" />
+          <TrpcBackend backend={createBackend()}>
+            <CommandPalette userRole="editor" userId="u1" />
+          </TrpcBackend>
         </CurrentProjectProvider>
       </Layout>,
     );

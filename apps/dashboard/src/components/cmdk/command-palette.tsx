@@ -11,6 +11,12 @@ import {
   type RecentEntry,
 } from "./palette-recent";
 import { usePaletteStore } from "./use-command-palette";
+import {
+  batchRowLabel,
+  usePaletteSearch,
+  type BatchHit,
+  type TestHit,
+} from "./use-palette-search";
 
 import {
   useCurrentProject,
@@ -174,11 +180,32 @@ function enabledNow({ command, ctx }: ResolvedCommand): boolean {
 }
 
 /**
+ * A search result's value starts with this (see `foundValue`): the batch or
+ * test is there because the server (or the Batches rule) matched it, so
+ * cmdk's own matcher must not hide it. The label can fail that matcher: the
+ * typed text is trimmed before it is asked, and the server's match is a SQL
+ * ILIKE, where `_` and `%` stand for any characters.
+ */
+const FOUND_PREFIX = "found:";
+
+/**
+ * Every result scores the same, so the rows keep the order they came in
+ * (newest first) instead of being ranked by their labels.
+ */
+const FOUND_SCORE = 1;
+
+function foundValue(kind: "batch" | "test", id: string): string {
+  return `${FOUND_PREFIX}${kind}:${id}`;
+}
+
+/**
  * Matches what an item reads, its label (its only keyword), never its value:
  * a value is the item's unique id ("goto:admin.members"), so that Recent's
- * "Members" and Go to's are two items.
+ * "Members" and Go to's are two items. A search result is the exception: it
+ * is never left out, whatever it reads.
  */
-function byLabel(_value: string, search: string, keywords?: string[]): number {
+function byLabel(value: string, search: string, keywords?: string[]): number {
+  if (value.startsWith(FOUND_PREFIX)) return FOUND_SCORE;
   return defaultFilter(keywords?.join(" ") ?? "", search);
 }
 
@@ -190,9 +217,11 @@ function resultCount(count: number): string {
 /**
  * The polite live region: "1 result" / "‹N› results" for what the typed
  * search shows (cmdk's filtered count), said once the typing has settled.
- * Quiet until something is typed, and again when the search is cleared.
+ * Quiet until something is typed, and again when the search is cleared, and
+ * quiet while the search of batches and tests is still out: the count is
+ * not final until it is answered.
  */
-function ResultCount(): JSX.Element {
+function ResultCount({ pending }: { pending: boolean }): JSX.Element {
   const search = useCommandState((s) => s.search);
   const count = useCommandState((s) => s.filtered.count);
   const [settled, setSettled] = useState<{
@@ -200,12 +229,13 @@ function ResultCount(): JSX.Element {
     text: string;
   } | null>(null);
   useEffect(() => {
+    if (pending) return;
     const timer = setTimeout(
       () => setSettled({ search, text: resultCount(count) }),
       ANNOUNCE_DELAY_MS,
     );
     return () => clearTimeout(timer);
-  }, [search, count]);
+  }, [search, count, pending]);
   // A count settled for another search is not this one's.
   const text =
     search.trim() !== "" && settled?.search === search ? settled.text : "";
@@ -284,10 +314,17 @@ function PaletteBody({
   userRole,
   userId,
   onPick,
-}: Props & { onPick: (resolved: ResolvedCommand) => void }): JSX.Element {
+  onNavigate,
+}: Props & {
+  onPick: (resolved: ResolvedCommand) => void;
+  /** A page was picked: the palette is going to it. */
+  onNavigate: () => void;
+}): JSX.Element {
   const router = useRouter();
   const setOpen = usePaletteStore((s) => s.setOpen);
   const { currentProjectId, projects } = useCurrentProject();
+  const [search, setSearch] = useState("");
+  const found = usePaletteSearch(currentProjectId, search);
   const commands = useRegisteredCommands();
   const platform = usePlatform();
   const [singleKeys] = useSingleKeyShortcuts();
@@ -308,6 +345,7 @@ function PaletteBody({
    * doesn't wait for the close.
    */
   const go = (page: Destination) => {
+    onNavigate();
     setOpen(false);
     recordRecent(
       userId,
@@ -376,6 +414,41 @@ function PaletteBody({
     />
   );
 
+  // A batch or test the search found. It is kept in Recent by an id the
+  // palette does not own (so by its address too), under its name.
+  const foundItem = (
+    kind: "batch" | "test",
+    hit: BatchHit | TestHit,
+    label: string,
+  ) => {
+    const page: Destination = {
+      id: `${kind}:${hit.projectId}:${hit.id}`,
+      label: hit.name,
+      href: hit.href,
+    };
+    return (
+      <Item
+        key={page.id}
+        value={foundValue(kind, hit.id)}
+        label={label}
+        onSelect={() => go(page)}
+      />
+    );
+  };
+  // A search that failed is one row saying so, not a result: it is shown
+  // whatever cmdk's matcher makes of the text, is not counted, and is not
+  // chosen. Its group is mounted by force (`forceMount` on the group, which
+  // cmdk applies to the group's items), as nothing in it is counted.
+  const searchError = (what: "batches" | "tests") => (
+    <Command.Item
+      disabled
+      value={`${FOUND_PREFIX}error:${what}`}
+      className="flex items-center px-2 py-1.5 text-sm text-fg-muted"
+    >
+      <span className="min-w-0 truncate">Couldn&apos;t search {what}</span>
+    </Command.Item>
+  );
+
   // No vim keys: cmdk's Ctrl+K ("previous item") would take the key off a
   // Mac, and ⌘K / Ctrl+K must close the palette.
   return (
@@ -386,18 +459,50 @@ function PaletteBody({
       filter={byLabel}
     >
       <Command.Input
+        onValueChange={setSearch}
         placeholder="Search batches and tests, or run a command…"
         className="w-full border-b border-edge px-4 py-3 text-sm outline-none bg-transparent"
         data-testid="command-input"
       />
       <Command.List className="max-h-80 overflow-auto p-1">
-        <Command.Empty className="p-3 text-sm text-fg-muted">
-          No results
-        </Command.Empty>
+        {/* Not while batches and tests are still being searched for. */}
+        {!found.pending && (
+          <Command.Empty className="p-3 text-sm text-fg-muted">
+            No results
+          </Command.Empty>
+        )}
 
         {actions.length > 0 && (
           <Command.Group heading="Actions" className={CMD_GROUP_CLASS}>
             {actions.map((r) => commandItem("action", r))}
+          </Command.Group>
+        )}
+
+        {(found.batches.items.length > 0 || found.batches.error) && (
+          <Command.Group
+            heading="Batches"
+            forceMount={found.batches.error}
+            className={CMD_GROUP_CLASS}
+          >
+            {found.batches.error
+              ? searchError("batches")
+              : found.batches.items.map((hit) =>
+                  foundItem("batch", hit, batchRowLabel(hit)),
+                )}
+          </Command.Group>
+        )}
+
+        {(found.tests.items.length > 0 || found.tests.error) && (
+          <Command.Group
+            heading="Tests"
+            forceMount={found.tests.error}
+            className={CMD_GROUP_CLASS}
+          >
+            {found.tests.error
+              ? searchError("tests")
+              : found.tests.items.map((hit) =>
+                  foundItem("test", hit, hit.name),
+                )}
           </Command.Group>
         )}
 
@@ -427,16 +532,22 @@ function PaletteBody({
           {ACCOUNT_PAGES.map((p) => pageItem("account", p))}
         </Command.Group>
       </Command.List>
-      <ResultCount />
+      <ResultCount pending={found.pending} />
     </Command>
   );
 }
 
 /**
  * The ⌘K command palette (spec §5.2). Its groups, in order: Actions (the
- * current page's commands that are enabled, with their keys), Go to, Recent
- * (per user), Projects (admins), Preferences and Account. With an empty
- * search they keep that order; while typing, cmdk ranks the matches.
+ * current page's commands that are enabled, with their keys), Batches and
+ * Tests (what a search of 2 or more characters finds), Go to, Recent (per
+ * user), Projects (admins), Preferences and Account. Empty groups are left
+ * out, and the order holds while typing: cmdk ranks the items within a group
+ * and hides those that don't match, but does not move groups.
+ *
+ * Batches and Tests come from `usePaletteSearch`. They are never hidden by
+ * cmdk's matcher (see `byLabel`); a failed search is one row in its group
+ * (`searchError`) and the rest of the palette works as it does.
  *
  * Open state lives in `usePaletteStore` (zustand), so commands can open it
  * from outside React. It has no key listener of its own: ⌘K / Ctrl+K is the
@@ -445,11 +556,13 @@ function PaletteBody({
  * dialog, the one where ⌘K still fires (to close it). Letters typed in its
  * search box are the search's: the dispatcher's guard owns them there.
  *
- * Focus: on close it goes back to where it was when the palette opened. A
- * picked command runs only then, once the palette has let go of focus (its
- * focus trap would pull a `.focus()` back), so a command that moves focus
- * (to a search box, a list row) keeps it. It is checked again then: still
- * registered, allowed and enabled.
+ * Focus: on close it goes back to where it was when the palette opened,
+ * without scrolling, unless a page was picked: that page may focus something
+ * of its own, and the opener is on the page being left. A picked command
+ * runs only then, once the palette has let go of focus (its focus trap would
+ * pull a `.focus()` back), so a command that moves focus (to a search box, a
+ * list row) keeps it. It is checked again then: still registered, allowed
+ * and enabled.
  *
  * Commands come from the registry; the projects from the protected layout's
  * server data (`useCurrentProject`), so opening it fetches nothing.
@@ -461,6 +574,8 @@ export function CommandPalette({ userRole, userId }: Props): JSX.Element {
   const picked = useRef<ResolvedCommand | null>(null);
   /** What had focus when the palette opened. */
   const opener = useRef<HTMLElement | null>(null);
+  /** A page was picked: the palette is going to it. */
+  const navigating = useRef(false);
 
   // The un-keyed list an earlier palette kept: gone from this browser.
   useEffect(() => forgetLegacyRecent(), []);
@@ -492,7 +607,13 @@ export function CommandPalette({ userRole, userId }: Props): JSX.Element {
           e.preventDefault();
           const back = opener.current;
           opener.current = null;
-          if (back?.isConnected) back.focus();
+          // Going to a page: it may focus something of its own, and the
+          // opener is on the page being left. Otherwise focus goes back
+          // where it was, without scrolling the page to it.
+          const leaving = navigating.current;
+          navigating.current = false;
+          if (!leaving && back?.isConnected)
+            back.focus({ preventScroll: true });
           const resolved = picked.current;
           picked.current = null;
           // Checked as it runs, not as it was picked: the page or the role
@@ -503,7 +624,14 @@ export function CommandPalette({ userRole, userId }: Props): JSX.Element {
         }}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <PaletteBody userRole={userRole} userId={userId} onPick={pick} />
+        <PaletteBody
+          userRole={userRole}
+          userId={userId}
+          onPick={pick}
+          onNavigate={() => {
+            navigating.current = true;
+          }}
+        />
       </DialogContent>
     </Dialog>
   );

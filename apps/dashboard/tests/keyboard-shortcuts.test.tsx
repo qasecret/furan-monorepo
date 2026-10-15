@@ -26,6 +26,8 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
   useReviewMutations: () => ({ undo: undoMock }),
 }));
 
+import { createBackend, TrpcBackend } from "./trpc-backend";
+
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
@@ -1250,7 +1252,9 @@ describe("the viewer's keys are registry commands", () => {
           initialProjects={[]}
           initialDefaultProjectId={null}
         >
-          <CommandPalette userRole="editor" userId="u1" />
+          <TrpcBackend backend={createBackend()}>
+            <CommandPalette userRole="editor" userId="u1" />
+          </TrpcBackend>
         </CurrentProjectProvider>
         <Viewer />
       </Keyboard>,
