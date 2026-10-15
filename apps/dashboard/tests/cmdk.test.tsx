@@ -659,6 +659,8 @@ describe("CommandPalette", () => {
     expect(run).not.toHaveBeenCalled();
     await settle();
     expect(run).toHaveBeenCalledOnce();
+    // No key ran it (R22).
+    expect(run).toHaveBeenCalledWith(expect.anything(), {});
 
     // Checked when it runs, not when it was picked.
     run.mockClear();
