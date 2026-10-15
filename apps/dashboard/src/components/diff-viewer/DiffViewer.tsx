@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
+import { BatchDoneCard } from "./BatchDoneCard";
 import type { CheckpointSummary } from "./checkpoint-nav";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
@@ -34,6 +35,7 @@ import { useUndoStore } from "@/lib/review/use-undo-store";
 import {
   batchHref,
   DEFAULT_REVIEW_STATUS,
+  serializeReviewContext,
   type ReviewContext,
 } from "@/lib/review-context";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
@@ -272,6 +274,14 @@ export function DiffViewer({
     onResolved: loop.afterDecision,
   });
   const undoCount = useUndoStore((s) => s.stack.length);
+  // The done card (spec §5.4) takes the canvas's place once the step on
+  // screen is settled: not while a decision waits for its answer, and not
+  // while the step needs review (again: ⌘Z on the decision that brought the
+  // card up brings the canvas back, R19).
+  const card =
+    loop.card !== null && !loop.pending && review.view !== "pending"
+      ? loop.card
+      : null;
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
   // viewer picks up freshly written diff regions, baselineSource, etc.
@@ -516,20 +526,23 @@ export function DiffViewer({
       ? () => handleCheckpointSelect(checkpointSummaries[navIndex + 1]!.id)
       : undefined;
 
+  // While the card is up, deciding and moving wait (R20): its keys are its
+  // own wherever focus is. ⌘Z still undoes.
+  const keysOn = card === null;
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
-    onApprove: review.approve,
-    onReject: review.reject,
+    onApprove: keysOn ? review.approve : undefined,
+    onReject: keysOn ? review.reject : undefined,
     // ⌘Z takes back the newest review action: no id.
     onUndo: () => review.undo(),
     onHelpToggle: () => undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
-    onPrevStep,
-    onNextStep,
-    onNextPending: loopOn ? loop.goNext : undefined,
-    onPrevPending: loopOn ? loop.goPrev : undefined,
+    onPrevStep: keysOn ? onPrevStep : undefined,
+    onNextStep: keysOn ? onNextStep : undefined,
+    onNextPending: loopOn && keysOn ? loop.goNext : undefined,
+    onPrevPending: loopOn && keysOn ? loop.goPrev : undefined,
   });
 
   if (isLoading)
@@ -711,7 +724,22 @@ export function DiffViewer({
             </div>
           )}
         </div>
-        {isEmpty ? (
+        {card && backHref ? (
+          <BatchDoneCard
+            // Another card is another announcement, and takes the focus.
+            key={card}
+            variant={card}
+            nextBatch={
+              loop.next?.scope === "nextBatch" ? loop.next.nextBatch : null
+            }
+            batchUnfiltered={loop.next?.remaining.batchUnfiltered ?? 0}
+            onContinue={loop.continueToNextBatch}
+            onClearFilter={loop.clearFilter}
+            backHref={backHref}
+            // The Batches page, with the status and branch kept.
+            batchesHref={`/inbox${serializeReviewContext(context, ["status", "branch"])}`}
+          />
+        ) : isEmpty ? (
           <EmptyRunCard {...(backHref ? { buildHref: backHref } : {})} />
         ) : (
           <>

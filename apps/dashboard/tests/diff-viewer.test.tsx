@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useRef } from "react";
 import { toast } from "sonner";
@@ -1033,7 +1039,13 @@ describe("DiffViewer: the review loop", () => {
       batchUnfiltered: number;
       projectBatches: number;
     };
-    nextBatch: null;
+    nextBatch: {
+      buildId: string;
+      name: string;
+      number: number | null;
+      branch: string | null;
+      pending: number;
+    } | null;
   };
   const answer = (over: Partial<Answer> = {}): Answer => ({
     target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c3" },
@@ -1502,6 +1514,341 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
+  });
+
+  // ---- The done cards (spec §5.4) ----
+
+  /** This batch is done inside the filters; `left` steps are outside them. */
+  const intoNextBatch = (left = 0) =>
+    answer({
+      target: { buildId: "build-2", runId: "run-9", checkpointId: "s1" },
+      scope: "nextBatch",
+      remaining: {
+        run: 0,
+        batch: 0,
+        batchUnfiltered: left,
+        projectBatches: 2,
+      },
+      nextBatch: {
+        buildId: "build-2",
+        name: "Nightly",
+        number: 43,
+        branch: "main",
+        pending: 5,
+      },
+    });
+  const CONTINUE = "Continue to build #43 · main · 5 pending";
+  const decision = {
+    id: "d",
+    actionId: "a",
+    kind: "approved",
+    actor: null,
+    at: new Date().toISOString(),
+    source: "viewer",
+    legacy: false,
+    undo: { allowed: true, reason: null },
+  };
+  /** A step with a decision on it (as the optimistic update leaves it). */
+  const decided = (id: string) => stepFixture(id, "approved", { decision });
+  const card = (r: ReturnType<typeof render>) =>
+    r.queryByTestId("batch-done-card");
+  const canvas = () => document.getElementById("diff-viewer-canvas");
+
+  /**
+   * The viewer on c1, the last step of the batch that needs review, and a
+   * way to render it again after the caches change (a new element each time:
+   * the same one would let React skip the render).
+   */
+  function lastPendingStep(
+    props: Partial<ComponentProps<typeof DiffViewer>> = {},
+  ) {
+    mockCheckpoints = {
+      items: [stepFixture("c1", "unresolved"), decided("c2"), decided("c3")],
+    };
+    const viewer = () => (
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId="c1"
+        {...props}
+      />
+    );
+    const r = render(viewer());
+    return { r, again: () => r.rerender(viewer()) };
+  }
+  /** The decision on c1 lands: the step reads as decided. */
+  function c1Decided(again: () => void) {
+    mockCheckpoints = {
+      items: [decided("c1"), decided("c2"), decided("c3")],
+    };
+    again();
+  }
+
+  test("the last decision of the batch brings the card in place of the canvas, focused on Continue", () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep({
+      reviewContext: { status: "needs-review", facets: { os: "macOS" } },
+    });
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    c1Decided(again);
+
+    const dialog = r.getByRole("dialog", { name: "Batch done" });
+    expect(card(r)).toBe(dialog);
+    // In the canvas's place: no canvas, no toolbar, no key hints.
+    expect(canvas()).toBeNull();
+    expect(r.queryByTestId("diff-viewer-shortcut-hints")).toBeNull();
+    expect(document.getElementById("diff-viewer-toolbar")).toBeNull();
+    // The header stays.
+    expect(r.getByTestId("contextual-header")).toBeDefined();
+    const next = r.getByRole("button", { name: CONTINUE });
+    expect(document.activeElement).toBe(next);
+    expect(useReviewAnnouncer.getState().text).toBe(`Batch done. ${CONTINUE}.`);
+    // The card's Back to batch goes where the header's does.
+    expect(
+      within(dialog)
+        .getByRole("link", { name: "Back to batch" })
+        .getAttribute("href"),
+    ).toBe(`/projects/${PROJECT}/builds/${BUILD}?os=macOS#run-${RUN_ID}`);
+
+    // Continue: the next batch's first pending step, the facets kept.
+    fireEvent.click(next);
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(
+      stepUrl("run-9", "s1", "?os=macOS"),
+    );
+  });
+
+  test("undo of the last decision brings the canvas back", () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep();
+    press("A");
+    c1Decided(again);
+    expect(card(r)).not.toBeNull();
+    expect(document.activeElement).toBe(
+      r.getByRole("button", { name: CONTINUE }),
+    );
+
+    // ⌘Z, with focus on the card: it reaches the viewer's undo.
+    act(() => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "z",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(reviewSpies.undo).toHaveBeenCalledOnce();
+    // The undo puts the step back: pending again, so the canvas is back.
+    mockCheckpoints = {
+      items: [stepFixture("c1", "unresolved"), decided("c2"), decided("c3")],
+    };
+    again();
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
+
+    // A new decision brings the card back, and says so again.
+    const said = useReviewAnnouncer.getState().seq;
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledTimes(2);
+    c1Decided(again);
+    expect(card(r)).not.toBeNull();
+    expect(useReviewAnnouncer.getState().seq).toBe(said + 1);
+    expect(canvas()).toBeNull();
+  });
+
+  test("A and J do nothing while the card is up; Esc goes back to the batch", () => {
+    // A step the diff passed (R would reject it) at the batch boundary.
+    mockCheckpoints = {
+      items: [stepFixture("c1", "passed"), decided("c2"), decided("c3")],
+    };
+    nextQuery.data = intoNextBatch();
+    const viewer = () => (
+      <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
+    );
+    const r = render(viewer());
+    press("J");
+    expect(card(r)).not.toBeNull();
+    const before = useViewerStore.getState().mode;
+
+    // Focus is on the card: the review keys, the moves and the viewer's own
+    // keys all yield to it.
+    for (const key of ["A", "R", "X", "J", "K", "ArrowRight", "D"]) press(key);
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(useViewerStore.getState().mode).toBe(before);
+
+    // A step needing review turns up in the batch (a teammate's undo), and
+    // focus has left the card: J still waits while the card is up.
+    nextQuery.data = intoOtherRun();
+    r.rerender(viewer());
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    press("J");
+    press("R");
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+
+    // Esc, from the card: back to the batch, anchored on this run.
+    const dialog = r.getByRole("dialog");
+    act(() => dialog.focus());
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(
+      `/projects/${PROJECT}/builds/${BUILD}#run-${RUN_ID}`,
+    );
+  });
+
+  test("Continue is offered only while the answer leads into the next batch", () => {
+    mockCheckpoints = { items: [decided("c1"), decided("c2"), decided("c3")] };
+    nextQuery.data = intoNextBatch();
+    const viewer = () => (
+      <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
+    );
+    const r = render(viewer());
+    press("J");
+    expect(r.getByRole("button", { name: CONTINUE })).toBeDefined();
+    // The refetched answer has a step in this batch again; it still names
+    // the next batch, but Continue would not go there.
+    nextQuery.data = {
+      ...intoOtherRun(),
+      nextBatch: intoNextBatch().nextBatch,
+    };
+    r.rerender(viewer());
+    expect(card(r)).not.toBeNull();
+    expect(r.queryByRole("button", { name: /Continue/ })).toBeNull();
+  });
+
+  test("J at the batch boundary shows the card", () => {
+    // The reviewer went back to a step already decided; nothing in the batch
+    // needs review any more.
+    mockCheckpoints = { items: [decided("c1"), decided("c2"), decided("c3")] };
+    nextQuery.data = intoNextBatch();
+    const r = renderViewer();
+    expect(card(r)).toBeNull();
+    press("J");
+    expect(r.getByRole("dialog", { name: "Batch done" })).toBeDefined();
+    // It never leaves the batch on its own.
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+  });
+
+  test("a read-only viewer gets the card too, and Continue works", () => {
+    // Overridden by hand: its steps take no decisions, but the loop walks on.
+    mockGetByIdData = {
+      ...defaultMockData,
+      projectId: PROJECT,
+      buildId: BUILD,
+      status: "failed",
+      statusOverride: "failed",
+    };
+    nextQuery.data = intoNextBatch();
+    const r = renderViewer();
+    press("J");
+    fireEvent.click(r.getByRole("button", { name: CONTINUE }));
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl("run-9", "s1"));
+  });
+
+  test("a decision waiting for its answer shows no card until the answer comes", () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep();
+    // J on the last pending step: the loop has its card, but the step on
+    // screen still needs review, so the canvas stays (R19).
+    press("J");
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
+
+    // The answer is being refetched when the decision lands: it waits.
+    nextQuery.isFetching = true;
+    again();
+    press("A");
+    c1Decided(again);
+    const next = () => r.getByTestId("header-next-pending");
+    expect(next().getAttribute("aria-busy")).toBe("true");
+    expect(card(r)).toBeNull();
+    // The answer comes: now the card.
+    nextQuery.isFetching = false;
+    again();
+    expect(next().getAttribute("aria-busy")).not.toBe("true");
+    expect(card(r)).not.toBeNull();
+  });
+
+  test("the filtered card's Clear filter drops the facets; a card that changes is said again", async () => {
+    nextQuery.data = intoNextBatch(4);
+    const { r, again } = lastPendingStep({
+      reviewContext: { status: "failed", facets: { browser: "chromium" } },
+    });
+    press("A");
+    c1Decided(again);
+    r.getByRole("dialog", { name: "Done with the filtered steps" });
+    // Clear filter: the next pending step of the batch, outside the filter.
+    utilsMock.review.next.fetch.mockResolvedValue(intoOtherRun());
+    await act(async () => {
+      fireEvent.click(
+        r.getByRole("button", { name: "Clear filter (4 more in this batch)" }),
+      );
+    });
+    expect(utilsMock.review.next.fetch).toHaveBeenCalledWith({
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN_ID, checkpointId: "c1" },
+    });
+    expect(routerSpies.push).toHaveBeenCalledWith(
+      stepUrl(OTHER_RUN, "s9", "?status=failed"),
+    );
+    cleanup();
+
+    // Pressed when a teammate has taken the last of them: the batch is done,
+    // and the new card is said and focused.
+    resetReviewSpies();
+    nextQuery.data = intoNextBatch(4);
+    const second = lastPendingStep({
+      reviewContext: { status: "failed", facets: { browser: "chromium" } },
+    });
+    press("A");
+    c1Decided(second.again);
+    utilsMock.review.next.fetch.mockResolvedValue(intoNextBatch(0));
+    await act(async () => {
+      fireEvent.click(
+        second.r.getByRole("button", {
+          name: "Clear filter (4 more in this batch)",
+        }),
+      );
+    });
+    second.r.getByRole("dialog", { name: "Batch done" });
+    expect(useReviewAnnouncer.getState().text).toBe(`Batch done. ${CONTINUE}.`);
+    expect(document.activeElement).toBe(
+      second.r.getByRole("button", { name: CONTINUE }),
+    );
+    // No Clear filter on it, whatever the count it had.
+    expect(second.r.queryByRole("button", { name: /Clear filter/ })).toBeNull();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("All caught up: Back to batches keeps the status and branch", () => {
+    nextQuery.data = answer({
+      target: null,
+      scope: "none",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+    });
+    const { r, again } = lastPendingStep({
+      reviewContext: {
+        status: "failed",
+        branch: "main",
+        facets: { os: "macOS" },
+      },
+    });
+    press("A");
+    c1Decided(again);
+    r.getByRole("dialog", { name: "All caught up" });
+    const batches = r.getByRole("link", { name: "Back to batches" });
+    expect(batches.getAttribute("href")).toBe(
+      "/inbox?status=failed&branch=main",
+    );
+    expect(document.activeElement).toBe(batches);
+    expect(r.queryByRole("button", { name: /Continue/ })).toBeNull();
   });
 
   test("a failed lookup says so beside the pill, with Retry", () => {

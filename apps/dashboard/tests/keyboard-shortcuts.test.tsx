@@ -600,6 +600,41 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     });
   }
 
+  // The review loop's done card (BatchDoneCard) is a dialog that owns the
+  // keys while focus is in it, all but ⌘Z: undoing the decision that brought
+  // it up brings the step back (R20).
+  const DONE_CARD = `<div role="dialog" data-passes-undo=""><button>Continue</button></div>`;
+
+  it.each(SINGLE_KEYS)(
+    "%s is ignored while focus is in the done card",
+    (key) => {
+      armEveryShortcut();
+      mountHook();
+      focusInto(DONE_CARD, "button");
+      const before = snapshot();
+      act(() => press(key));
+      expectNothingFired(before);
+    },
+  );
+
+  it("Ctrl+Z still undoes while focus is in the done card", () => {
+    armEveryShortcut();
+    mountHook();
+    focusInto(DONE_CARD, "button");
+    pressCtrlZ();
+    expect(callbacks.onUndo).toHaveBeenCalledOnce();
+  });
+
+  it("Ctrl+Z stays with a menu opened inside a dialog that lets it through", () => {
+    mountHook();
+    focusInto(
+      `<div role="dialog" data-passes-undo=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,
+      "[role=menuitem]",
+    );
+    pressCtrlZ();
+    expect(callbacks.onUndo).not.toHaveBeenCalled();
+  });
+
   it("still fires Ctrl+Z while focus sits on an ordinary toolbar button", () => {
     mountHook();
     focusInto(`<button>Overlay</button>`, "button");

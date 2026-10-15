@@ -67,6 +67,11 @@ const NON_TEXT_INPUT_TYPES = new Set([
 const KEYBOARD_OWNER_ROLES =
   '[role="menu"],[role="menubar"],[role="listbox"],[role="dialog"],[role="alertdialog"]';
 
+// A dialog that owns the bare keys but lets ⌘Z through to the viewer: the
+// review loop's done card (BatchDoneCard), where undoing the decision that
+// brought it up brings the step back (R20).
+const PASSES_UNDO = "[data-passes-undo]";
+
 function isTypingInInput(): boolean {
   if (typeof document === "undefined") return false;
   const el = document.activeElement as HTMLElement | null;
@@ -91,13 +96,16 @@ function isTypingInInput(): boolean {
  * select has focus, focus is inside a menu / listbox / dialog, or another
  * handler already consumed it. Every viewer shortcut yields in that case —
  * otherwise typing "a" into the PatternEditor approves the run, "/" opens
- * the palette mid-regex, and Backspace deletes the selected region.
+ * the palette mid-regex, and Backspace deletes the selected region. `undo`
+ * (⌘Z) is not owned by a dialog that passes it through.
  */
-function keyIsOwnedElsewhere(e: KeyboardEvent): boolean {
+function keyIsOwnedElsewhere(e: KeyboardEvent, undo = false): boolean {
   if (e.defaultPrevented) return true;
   if (isTypingInInput()) return true;
   if (typeof document === "undefined") return false;
-  return !!document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
+  const owner = document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
+  if (!owner) return false;
+  return !(undo && owner.matches(PASSES_UNDO));
 }
 
 function hasTextSelection(): boolean {
@@ -291,7 +299,7 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       Object.entries(bindings).map(([key, handler]) => [
         key,
         (e: KeyboardEvent) => {
-          if (keyIsOwnedElsewhere(e)) return;
+          if (keyIsOwnedElsewhere(e, key === "$mod+Z")) return;
           handler(e);
         },
       ]),
