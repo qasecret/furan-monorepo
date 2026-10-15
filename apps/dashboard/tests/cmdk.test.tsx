@@ -139,6 +139,16 @@ function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return e;
 }
 
+/**
+ * Lets the palette finish closing: Radix hands focus back a tick after its
+ * content unmounts, and a picked command runs then.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 beforeEach(() => {
   pushMock.mockReset();
   usePaletteStore.setState({ open: false });
@@ -225,7 +235,7 @@ describe("CommandPalette", () => {
   test("groups appear in spec order", async () => {
     localStorage.setItem(
       RECENT_A,
-      JSON.stringify([{ label: "Members", href: "/admin/members" }]),
+      JSON.stringify([{ id: "admin.members", label: "Members" }]),
     );
     render(
       <Shell role="admin">
@@ -310,9 +320,47 @@ describe("CommandPalette", () => {
 
     // Running one closes the palette first, then runs it.
     fireEvent.click(approve);
+    expect(usePaletteStore.getState().open).toBe(false);
+    await settle();
     expect(onApprove).toHaveBeenCalledOnce();
     expect(openWhenRun).toEqual([false]);
-    expect(usePaletteStore.getState().open).toBe(false);
+  });
+
+  test("keys show ⌘ on a Mac and Ctrl elsewhere", async () => {
+    const COMMANDS: Command[] = [
+      {
+        id: "test.edit",
+        label: "Edit the thing",
+        group: "Editor",
+        keys: ["$mod+e"],
+        scope: "batches",
+        run: vi.fn(),
+      },
+    ];
+    function Page() {
+      useCommands("batches", COMMANDS, {});
+      return null;
+    }
+    const cases = [
+      ["MacIntel", ["⌘", "E"], "Meta+E"],
+      ["Win32", ["Ctrl", "E"], "Control+E"],
+    ] as const;
+    for (const [platform, shown, aria] of cases) {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+      render(
+        <Shell>
+          <Page />
+        </Shell>,
+      );
+      const option = within(await openPalette()).getByRole("option", {
+        name: "Edit the thing",
+      });
+      expect(caps(option), platform).toEqual(shown);
+      expect(option.getAttribute("aria-keyshortcuts"), platform).toBe(aria);
+      cleanup();
+      act(() => usePaletteStore.setState({ open: false }));
+      useCommandRegistry.setState({ entries: [], role: "guest" });
+    }
   });
 
   test("with single-key shortcuts off, an action shows no character key", async () => {
@@ -335,8 +383,8 @@ describe("CommandPalette", () => {
     ).toEqual(["←"]);
   });
 
-  test("an action no longer allowed or enabled when chosen does not run", async () => {
-    // State that changes without a re-render, between the list and the pick.
+  test("an action runs once the palette has closed, if it is still allowed and enabled then", async () => {
+    // State that changes without a re-render, after the pick.
     const live = { allowed: true, enabled: true };
     const run = vi.fn();
     const COMMANDS: Command[] = [
@@ -369,25 +417,134 @@ describe("CommandPalette", () => {
       expect(usePaletteStore.getState().open).toBe(false);
     };
 
+    // Not while the palette still holds focus: once it has let go.
     await pick();
+    expect(run).not.toHaveBeenCalled();
+    await settle();
     expect(run).toHaveBeenCalledOnce();
 
+    // Checked when it runs, not when it was picked.
     run.mockClear();
-    const palette = await openPalette();
-    const option = within(group(palette, "Actions")).getByRole("option", {
-      name: "Do the thing",
-    });
+    await pick();
     live.enabled = false;
-    fireEvent.click(option);
+    await settle();
     expect(run).not.toHaveBeenCalled();
 
     live.enabled = true;
-    const again = within(await openPalette()).getByRole("option", {
-      name: "Do the thing",
-    });
+    await pick();
     live.allowed = false;
-    fireEvent.click(again);
+    await settle();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  test("a page command that focuses an input keeps focus after the palette closes", async () => {
+    const COMMANDS: Command[] = [
+      {
+        id: "test.search",
+        label: "Search batches",
+        group: "Navigate",
+        scope: "batches",
+        run: () => document.getElementById("batch-search")?.focus(),
+      },
+    ];
+    function Page() {
+      useCommands("batches", COMMANDS, {});
+      return (
+        <>
+          <button type="button">Somewhere</button>
+          <input id="batch-search" aria-label="Search batches" />
+        </>
+      );
+    }
+    render(
+      <Shell>
+        <Page />
+      </Shell>,
+    );
+    // Opened from elsewhere on the page, where focus would go back to.
+    act(() => screen.getByRole("button", { name: "Somewhere" }).focus());
+    press("k", { ctrlKey: true });
+    const palette = await screen.findByTestId("command-palette");
+    fireEvent.click(
+      within(group(palette, "Actions")).getByRole("option", {
+        name: "Search batches",
+      }),
+    );
+    await settle();
+    const search = document.getElementById("batch-search");
+    expect(document.activeElement).toBe(search);
+    // And it stays there once the close is long done.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(document.activeElement).toBe(search);
+  });
+
+  test("a command picked just before the palette opens again never runs late", async () => {
+    const run = vi.fn();
+    const COMMANDS: Command[] = [
+      {
+        id: "test.act",
+        label: "Do the thing",
+        group: "Review",
+        scope: "viewer",
+        run,
+      },
+    ];
+    function Page() {
+      useCommands("viewer", COMMANDS, {});
+      return null;
+    }
+    render(
+      <Shell>
+        <Page />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    fireEvent.click(
+      within(group(palette, "Actions")).getByRole("option", {
+        name: "Do the thing",
+      }),
+    );
+    // Open again before that close has let go of focus.
+    await openPalette();
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test("closing the palette returns focus to where it was", async () => {
+    render(
+      <Shell>
+        <button type="button">Somewhere</button>
+      </Shell>,
+    );
+    const somewhere = screen.getByRole("button", { name: "Somewhere" });
+
+    // Closed with Escape.
+    act(() => somewhere.focus());
+    press("k", { ctrlKey: true });
+    await screen.findByTestId("command-palette");
+    expect(document.activeElement).not.toBe(somewhere);
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await settle();
+    expect(usePaletteStore.getState().open).toBe(false);
+    expect(document.activeElement).toBe(somewhere);
+
+    // A command that moves no focus: it is back where it was too.
+    press("k", { ctrlKey: true });
+    const palette = await screen.findByTestId("command-palette");
+    fireEvent.click(
+      within(group(palette, "Preferences")).getByRole("option", {
+        name: "Turn single-key shortcuts off",
+      }),
+    );
+    await settle();
+    expect(useSingleKeyStore.getState().on).toBe(false);
+    expect(document.activeElement).toBe(somewhere);
   });
 
   test("a key another scope takes is not shown on the command", async () => {
@@ -554,8 +711,9 @@ describe("CommandPalette", () => {
         name: "Turn single-key shortcuts off",
       }),
     );
-    expect(useSingleKeyStore.getState().on).toBe(false);
     expect(usePaletteStore.getState().open).toBe(false);
+    await settle();
+    expect(useSingleKeyStore.getState().on).toBe(false);
 
     palette = await openPalette();
     expect(labels(palette, "Preferences")).toEqual([
@@ -569,6 +727,7 @@ describe("CommandPalette", () => {
       }),
     );
     expect(usePaletteStore.getState().open).toBe(false);
+    await settle();
     expect(useShortcutsSheet.getState().open).toBe(true);
   });
 
@@ -590,11 +749,6 @@ describe("CommandPalette", () => {
   });
 
   test("Recent is per user (user A's recent is absent for user B)", async () => {
-    // The old, un-keyed list is not read.
-    localStorage.setItem(
-      "furan:recent-projects",
-      JSON.stringify([{ id: "p9", name: "Old" }]),
-    );
     const a = render(<Shell userId="user-a" />);
     let palette = await openPalette();
     expect(headings(palette)).not.toContain("Recent");
@@ -618,8 +772,9 @@ describe("CommandPalette", () => {
     render(<Shell userId="user-a" />);
     palette = await openPalette();
     expect(labels(palette, "Recent")).toEqual(["API tokens"]);
+    // Kept by the page's id, not by where it went.
     expect(JSON.parse(localStorage.getItem(RECENT_A) ?? "null")).toEqual([
-      { label: "API tokens", href: "/account/tokens" },
+      { id: "account.tokens", label: "API tokens" },
     ]);
     // A Recent entry goes where it went before.
     pushMock.mockReset();
@@ -661,7 +816,7 @@ describe("CommandPalette", () => {
   test("without a user id, or with storage blocked, Recent is not kept and the palette still works", async () => {
     // Not even a list stored under an empty id is read, or written.
     const underNoId = JSON.stringify([
-      { label: "API tokens", href: "/account/tokens" },
+      { id: "account.tokens", label: "API tokens" },
     ]);
     localStorage.setItem("furan:palette:recent:", underNoId);
     render(<Shell userId="" />);
@@ -681,7 +836,7 @@ describe("CommandPalette", () => {
     // Blocked storage (privacy modes): the default, nothing.
     localStorage.setItem(
       RECENT_A,
-      JSON.stringify([{ label: "API tokens", href: "/account/tokens" }]),
+      JSON.stringify([{ id: "account.tokens", label: "API tokens" }]),
     );
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -700,12 +855,14 @@ describe("CommandPalette", () => {
   });
 
   test("a non-admin's Recent leaves out the admin pages and project jumps", async () => {
-    // Kept from when this user was an admin.
+    // Kept from when this user was an admin: pages by id, and one kept by
+    // its address (a page that is not one of the palette's own).
     const stored = [
-      { label: "Members", href: "/admin/members" },
-      { label: "Analytics", href: "/analytics" },
-      { label: "Jump to project: Beta", href: "/projects/p2/builds" },
-      { label: "API tokens", href: "/account/tokens" },
+      { id: "admin.members", label: "Members" },
+      { id: "go.analytics", label: "Analytics" },
+      { id: "project:p2", label: "Jump to project: Beta" },
+      { id: "elsewhere", label: "An audit entry", href: "/admin/audit-log/7" },
+      { id: "account.tokens", label: "API tokens" },
     ];
     localStorage.setItem(RECENT_A, JSON.stringify(stored));
     render(<Shell role="editor" />);
@@ -719,14 +876,74 @@ describe("CommandPalette", () => {
     );
   });
 
+  test("a Recent page is kept by its id and goes where that page is now", async () => {
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([
+        { id: "go.settings", label: "Settings" },
+        { id: "project:p1", label: "Jump to project: Old name" },
+        { id: "project:p9", label: "Jump to project: Gone" },
+        { id: "go.nowhere", label: "Nowhere" },
+      ]),
+    );
+    // The current project is now Beta.
+    render(<Shell role="admin" defaultProjectId="p2" />);
+    const palette = await openPalette();
+    // The project's name as it is now; a project no longer listed and a page
+    // the palette doesn't know are left out.
+    expect(labels(palette, "Recent")).toEqual([
+      "Settings",
+      "Jump to project: Acme",
+    ]);
+    fireEvent.click(
+      within(group(palette, "Recent")).getByRole("option", {
+        name: "Settings",
+      }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/projects/p2/settings");
+    expect(JSON.parse(localStorage.getItem(RECENT_A) ?? "null")[0]).toEqual({
+      id: "go.settings",
+      label: "Settings",
+    });
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // No current project: no Settings to go back to.
+    render(<Shell role="admin" defaultProjectId={null} />);
+    expect(labels(await openPalette(), "Recent")).toEqual([
+      "Jump to project: Acme",
+    ]);
+  });
+
+  test("the old un-keyed recent list is removed from this browser", async () => {
+    localStorage.setItem(
+      "furan:recent-projects",
+      JSON.stringify([{ id: "p9", name: "Old" }]),
+    );
+    render(<Shell />);
+    expect(localStorage.getItem("furan:recent-projects")).toBeNull();
+    expect(headings(await openPalette())).not.toContain("Recent");
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // Blocked storage: nothing breaks.
+    localStorage.setItem("furan:recent-projects", "[]");
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    render(<Shell />);
+    expect(labels(await openPalette(), "Account")).toEqual(["API tokens"]);
+  });
+
   test("a stored entry that is not a page of this app is not listed", async () => {
     localStorage.setItem(
       RECENT_A,
       JSON.stringify([
-        { label: "Evil", href: "javascript:alert(1)" },
-        { label: "Away", href: "//elsewhere.test/x" },
-        { label: "Broken" },
-        { label: "Members", href: "/admin/members" },
+        { id: "a", label: "Evil", href: "javascript:alert(1)" },
+        { id: "b", label: "Away", href: "//elsewhere.test/x" },
+        { label: "No id", href: "/inbox" },
+        { id: "c" },
+        { id: "admin.members", label: "Members" },
       ]),
     );
     render(<Shell role="admin" />);
@@ -804,5 +1021,32 @@ describe("CommandPalette", () => {
     expect(onReject).not.toHaveBeenCalled();
     expect(input.value).toBe("ar");
     expect(usePaletteStore.getState().open).toBe(true);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // An admin, whose `?`, `/` and `g a` all do something on the page: typed
+    // here, they are the search's too.
+    render(
+      <Shell role="admin">
+        <Viewer viewports={[]} onApprove={onApprove} onReject={onReject} />
+      </Shell>,
+    );
+    press("k", { ctrlKey: true });
+    const adminInput = (await screen.findByTestId(
+      "command-input",
+    )) as HTMLInputElement;
+    act(() => adminInput.focus());
+    await user.type(adminInput, "?");
+    expect(useShortcutsSheet.getState().open).toBe(false);
+    await user.type(adminInput, "/");
+    await user.type(adminInput, "g");
+    await user.type(adminInput, "a");
+    expect(adminInput.value).toBe("?/ga");
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(useShortcutsSheet.getState().open).toBe(false);
+    expect(usePaletteStore.getState().open).toBe(true);
+    expect(document.activeElement).toBe(adminInput);
   });
 });

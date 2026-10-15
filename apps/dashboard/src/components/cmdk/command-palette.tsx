@@ -2,29 +2,30 @@
 
 import { Command, defaultFilter, useCommandState } from "cmdk";
 import { useRouter } from "next/navigation";
-import { Fragment, useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 
-import { readRecent, recordRecent, type RecentEntry } from "./palette-recent";
+import {
+  forgetLegacyRecent,
+  readRecent,
+  recordRecent,
+  type RecentEntry,
+} from "./palette-recent";
 import { usePaletteStore } from "./use-command-palette";
 
 import {
   useCurrentProject,
   type ProjectListItem,
 } from "@/app/(protected)/_components/current-project-provider";
+import { KeyChoices } from "@/components/shortcuts/key-caps";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import {
-  ariaKeyShortcuts,
-  bindingKey,
-  formatKeys,
-  keyIdentity,
-  liveBindings,
-} from "@/lib/commands/keys";
+import { ariaKeyShortcuts, formatKeys } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 import {
   resolveCommands,
   resolveKeyMap,
   useRegisteredCommands,
+  winningBindings,
   type ResolvedCommand,
 } from "@/lib/commands/registry";
 import { runCommand } from "@/lib/commands/run-command";
@@ -47,49 +48,65 @@ const CMD_GROUP_CLASS =
 const ITEM_CLASS =
   "flex items-center gap-3 px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover";
 
-const KEY_CAP =
-  "min-w-5 rounded border border-edge bg-sunken px-1 py-0.5 text-center font-mono text-xs text-fg-secondary";
-
-/** `formatKeys`' word between the steps of a sequence ("G then I"). */
-const SEQUENCE_WORD = "then";
-
 /** The count is announced once typing has settled, not on every key. */
 const ANNOUNCE_DELAY_MS = 300;
 
-/** The admin pages in Go to, by their human names (spec §5.2). */
-const ADMIN_PAGES: RecentEntry[] = [
-  { label: "Members", href: "/admin/members" },
-  { label: "Projects", href: "/admin/projects" },
-  { label: "Installations", href: "/admin/installations" },
-  { label: "API keys", href: "/admin/api-keys" },
-  { label: "Auto rules", href: "/admin/auto-rules" },
-  { label: "Audit log", href: "/admin/audit-log" },
-];
-
-const ACCOUNT_PAGES: RecentEntry[] = [
-  { label: "API tokens", href: "/account/tokens" },
-];
-
-const ANALYTICS: RecentEntry = { label: "Analytics", href: "/analytics" };
-
-/** "Jump to project: ‹name›": the project's batches (ADR-052: admins only). */
-function projectJump({ id, name }: ProjectListItem): RecentEntry {
-  return { label: `Jump to project: ${name}`, href: `/projects/${id}/builds` };
+/**
+ * A page the palette goes to: its id (what Recent keeps), its name, and
+ * where it is now.
+ */
+interface Destination {
+  id: string;
+  label: string;
+  href: string;
 }
 
-const PROJECT_JUMP = /^\/projects\/[^/]+\/builds$/;
+const BATCHES: Destination = {
+  id: "go.batches",
+  label: "Batches",
+  href: "/inbox",
+};
 
-/**
- * A page the palette offers admins only. A non-admin's Recent leaves these
- * out: the list of someone since demoted must not keep the admin pages, or
- * a way to switch projects (ADR-052).
- */
-function isAdminPage(href: string): boolean {
-  return (
-    href === ANALYTICS.href ||
-    ADMIN_PAGES.some((p) => p.href === href) ||
-    PROJECT_JUMP.test(href)
-  );
+const ANALYTICS: Destination = {
+  id: "go.analytics",
+  label: "Analytics",
+  href: "/analytics",
+};
+
+/** The admin pages in Go to, by their human names (spec §5.2). */
+const ADMIN_PAGES: Destination[] = [
+  { id: "admin.members", label: "Members", href: "/admin/members" },
+  { id: "admin.projects", label: "Projects", href: "/admin/projects" },
+  {
+    id: "admin.installations",
+    label: "Installations",
+    href: "/admin/installations",
+  },
+  { id: "admin.apiKeys", label: "API keys", href: "/admin/api-keys" },
+  { id: "admin.autoRules", label: "Auto rules", href: "/admin/auto-rules" },
+  { id: "admin.auditLog", label: "Audit log", href: "/admin/audit-log" },
+];
+
+const ACCOUNT_PAGES: Destination[] = [
+  { id: "account.tokens", label: "API tokens", href: "/account/tokens" },
+];
+
+/** The current project's settings: one id, wherever that project is. */
+function settingsOf(projectId: string): Destination {
+  return {
+    id: "go.settings",
+    label: "Settings",
+    href: `/projects/${projectId}/settings`,
+  };
+}
+
+/** "Jump to project: ‹name›": the project's batches (ADR-052: admins only). */
+function projectJump({ id, name }: ProjectListItem): Destination {
+  return {
+    id: `project:${id}`,
+    label: `Jump to project: ${name}`,
+    href: `/projects/${id}/builds`,
+  };
 }
 
 /**
@@ -99,15 +116,35 @@ function isAdminPage(href: string): boolean {
 function goToPages(
   admin: boolean,
   currentProjectId: string | null,
-): RecentEntry[] {
+): Destination[] {
   return [
-    { label: "Batches", href: "/inbox" },
+    BATCHES,
     ...(admin ? [ANALYTICS] : []),
-    ...(currentProjectId
-      ? [{ label: "Settings", href: `/projects/${currentProjectId}/settings` }]
-      : []),
+    ...(currentProjectId ? [settingsOf(currentProjectId)] : []),
     ...(admin ? ADMIN_PAGES : []),
   ];
+}
+
+/**
+ * Recent as it can be offered now. One of the palette's pages (kept by id)
+ * is listed as it is now, its address and name current, or left out when it
+ * isn't offered to this user any more: an admin page after a demotion,
+ * Settings with no current project, a project no longer listed. A page kept
+ * by its address is left out of a non-admin's list when it is an admin page.
+ */
+function shownRecent(
+  stored: RecentEntry[],
+  offered: Map<string, Destination>,
+  admin: boolean,
+): Destination[] {
+  return stored.flatMap((entry): Destination[] => {
+    if (entry.href === undefined) {
+      const page = offered.get(entry.id);
+      return page ? [page] : [];
+    }
+    if (!admin && entry.href.startsWith("/admin")) return [];
+    return [{ id: entry.id, label: entry.label, href: entry.href }];
+  });
 }
 
 /**
@@ -132,9 +169,8 @@ function enabledNow({ command, ctx }: ResolvedCommand): boolean {
 
 /**
  * Matches what an item reads, its label (its only keyword), never its value:
- * a value is the item's unique id ("goto:/admin/members"), so that Recent's
- * "Members" and Go to's are two items, and typing "admin" finds no page by
- * its path.
+ * a value is the item's unique id ("goto:admin.members"), so that Recent's
+ * "Members" and Go to's are two items.
  */
 function byLabel(_value: string, search: string, keywords?: string[]): number {
   return defaultFilter(keywords?.join(" ") ?? "", search);
@@ -179,35 +215,6 @@ function ResultCount(): JSX.Element {
   );
 }
 
-/** A command's keys, right-aligned: a cap per token, "/" between keys. */
-function Keys({ keys }: { keys: string[][] }): JSX.Element | null {
-  if (keys.length === 0) return null;
-  // Hidden from assistive technology: the item's `aria-keyshortcuts` says it.
-  return (
-    <span
-      aria-hidden="true"
-      className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-fg-muted"
-    >
-      {keys.map((tokens, i) => (
-        <Fragment key={i}>
-          {i > 0 && <span>/</span>}
-          <kbd className="inline-flex items-center gap-1 font-sans">
-            {tokens.map((token, j) =>
-              token === SEQUENCE_WORD ? (
-                <span key={j}>{token}</span>
-              ) : (
-                <kbd key={j} className={KEY_CAP}>
-                  {token}
-                </kbd>
-              ),
-            )}
-          </kbd>
-        </Fragment>
-      ))}
-    </span>
-  );
-}
-
 function Item({
   value,
   label,
@@ -231,7 +238,15 @@ function Item({
       {...(ariaKeys ? { "aria-keyshortcuts": ariaKeys } : {})}
     >
       <span className="min-w-0 truncate">{label}</span>
-      <Keys keys={keys} />
+      {keys.length > 0 && (
+        // Hidden from assistive technology: `aria-keyshortcuts` says it.
+        <span
+          aria-hidden="true"
+          className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs"
+        >
+          <KeyChoices keys={keys.map((tokens) => ({ tokens }))} />
+        </span>
+      )}
     </Command.Item>
   );
 }
@@ -256,42 +271,50 @@ interface Props {
 /**
  * The palette's content. It mounts each time the palette opens, so Recent
  * and the page's enabled commands are read afresh, and the search starts
- * empty.
+ * empty. A picked command goes to `onPick`, which runs it once the palette
+ * has closed.
  */
-function PaletteBody({ userRole, userId }: Props): JSX.Element {
+function PaletteBody({
+  userRole,
+  userId,
+  onPick,
+}: Props & { onPick: (resolved: ResolvedCommand) => void }): JSX.Element {
   const router = useRouter();
   const setOpen = usePaletteStore((s) => s.setOpen);
   const { currentProjectId, projects } = useCurrentProject();
   const commands = useRegisteredCommands();
   const platform = usePlatform();
   const [singleKeys] = useSingleKeyShortcuts();
+  const [stored] = useState(() => readRecent(userId));
   const admin = isAtLeastAdmin(userRole);
-  const [recent] = useState(() =>
-    readRecent(userId).filter((e) => admin || !isAdminPage(e.href)),
+
+  const goTo = goToPages(admin, currentProjectId);
+  // ADR-052: no project switching for non-admins.
+  const jumps = admin ? projects.map(projectJump) : [];
+  const offered = new Map(
+    [...goTo, ...jumps, ...ACCOUNT_PAGES].map((page) => [page.id, page]),
   );
+  const recent = shownRecent(stored, offered, admin);
 
-  /** A page: closes, remembers it in Recent, goes. */
-  const go = (entry: RecentEntry) => {
+  /**
+   * A page: closes, remembers it in Recent (one of the palette's own by its
+   * id, any other by its address too), goes. Going needs no focus, so it
+   * doesn't wait for the close.
+   */
+  const go = (page: Destination) => {
     setOpen(false);
-    recordRecent(userId, entry);
-    router.push(entry.href);
+    recordRecent(
+      userId,
+      offered.has(page.id) ? { id: page.id, label: page.label } : page,
+    );
+    router.push(page.href);
   };
 
-  /** A command: closes, then runs it if it still may and can. */
-  const run = (resolved: ResolvedCommand) => {
-    setOpen(false);
-    // Still registered and allowed (the page or the role may have changed)?
-    if (!resolveCommands().includes(resolved)) return;
-    runCommand(resolved);
-  };
-
-  // A key shows only where a press runs this command: its live keys (the
-  // single-key switch), less any another scope takes.
+  // A key shows only where a press runs this command now: its live keys
+  // (the single-key switch), less any another scope takes.
   const winners = resolveKeyMap(commands);
   const row = (resolved: ResolvedCommand): CommandRow => {
-    const bindings = liveBindings(resolved.command, singleKeys).filter(
-      (b) => winners.get(keyIdentity(bindingKey(b))) === resolved,
-    );
+    const bindings = winningBindings(resolved, winners, singleKeys);
     return {
       resolved,
       keys: formatKeys(bindings, platform),
@@ -327,15 +350,15 @@ function PaletteBody({ userRole, userId }: Props): JSX.Element {
       label={resolved.command.label}
       keys={keys}
       ariaKeys={ariaKeys}
-      onSelect={() => run(resolved)}
+      onSelect={() => onPick(resolved)}
     />
   );
-  const pageItem = (prefix: string, entry: RecentEntry) => (
+  const pageItem = (prefix: string, page: Destination) => (
     <Item
-      key={entry.href}
-      value={`${prefix}:${entry.href}`}
-      label={entry.label}
-      onSelect={() => go(entry)}
+      key={page.id}
+      value={`${prefix}:${page.id}`}
+      label={page.label}
+      onSelect={() => go(page)}
     />
   );
 
@@ -365,7 +388,7 @@ function PaletteBody({ userRole, userId }: Props): JSX.Element {
         )}
 
         <Command.Group heading="Go to" className={CMD_GROUP_CLASS}>
-          {goToPages(admin, currentProjectId).map((p) => pageItem("goto", p))}
+          {goTo.map((p) => pageItem("goto", p))}
         </Command.Group>
 
         {recent.length > 0 && (
@@ -374,10 +397,9 @@ function PaletteBody({ userRole, userId }: Props): JSX.Element {
           </Command.Group>
         )}
 
-        {/* ADR-052: no project switching for non-admins. */}
-        {admin && projects.length > 0 && (
+        {jumps.length > 0 && (
           <Command.Group heading="Projects" className={CMD_GROUP_CLASS}>
-            {projects.map((p) => pageItem("project", projectJump(p)))}
+            {jumps.map((p) => pageItem("project", p))}
           </Command.Group>
         )}
 
@@ -409,12 +431,35 @@ function PaletteBody({ userRole, userId }: Props): JSX.Element {
  * dialog, the one where ⌘K still fires (to close it). Letters typed in its
  * search box are the search's: the dispatcher's guard owns them there.
  *
+ * Focus: on close it goes back to where it was when the palette opened. A
+ * picked command runs only then, once the palette has let go of focus (its
+ * focus trap would pull a `.focus()` back), so a command that moves focus
+ * (to a search box, a list row) keeps it. It is checked again then: still
+ * registered, allowed and enabled.
+ *
  * Commands come from the registry; the projects from the protected layout's
  * server data (`useCurrentProject`), so opening it fetches nothing.
  */
 export function CommandPalette({ userRole, userId }: Props): JSX.Element {
   const open = usePaletteStore((s) => s.open);
   const setOpen = usePaletteStore((s) => s.setOpen);
+  /** The command picked, to run once the palette has closed. */
+  const picked = useRef<ResolvedCommand | null>(null);
+  /** What had focus when the palette opened. */
+  const opener = useRef<HTMLElement | null>(null);
+
+  // The un-keyed list an earlier palette kept: gone from this browser.
+  useEffect(() => forgetLegacyRecent(), []);
+
+  // Opened again before the last close finished: that pick never runs late.
+  useEffect(() => {
+    if (open) picked.current = null;
+  }, [open]);
+
+  const pick = (resolved: ResolvedCommand) => {
+    picked.current = resolved;
+    setOpen(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -424,9 +469,27 @@ export function CommandPalette({ userRole, userId }: Props): JSX.Element {
         aria-describedby={undefined}
         data-testid="command-palette"
         data-command-palette=""
+        onOpenAutoFocus={() => {
+          const focused = document.activeElement;
+          opener.current = focused instanceof HTMLElement ? focused : null;
+        }}
+        onCloseAutoFocus={(e) => {
+          // Radix would focus the dialog's trigger, and the palette has none.
+          e.preventDefault();
+          const back = opener.current;
+          opener.current = null;
+          if (back?.isConnected) back.focus();
+          const resolved = picked.current;
+          picked.current = null;
+          // Checked as it runs, not as it was picked: the page or the role
+          // may have changed in between.
+          if (resolved && resolveCommands().includes(resolved)) {
+            runCommand(resolved);
+          }
+        }}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <PaletteBody userRole={userRole} userId={userId} />
+        <PaletteBody userRole={userRole} userId={userId} onPick={pick} />
       </DialogContent>
     </Dialog>
   );

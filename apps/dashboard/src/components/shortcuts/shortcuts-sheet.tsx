@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useId, useMemo, type JSX } from "react";
+import { useId, useMemo, type JSX } from "react";
 
+import { KeyChoices } from "./key-caps";
 import { useShortcutsSheet } from "./use-shortcuts-sheet";
 
 import { useTourOptional } from "@/components/tour/tour-context";
@@ -13,18 +14,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/cn";
 import {
   bindingKey,
   formatKeys,
   isCharacterBinding,
-  keyIdentity,
 } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 import {
   resolveKeyMap,
   useRegisteredCommands,
+  winningBindings,
   type ResolvedCommand,
 } from "@/lib/commands/registry";
 import type { CommandScope, Platform } from "@/lib/commands/types";
@@ -41,7 +41,7 @@ const HEADINGS: Record<CommandScope, string> = {
 const SECTION_ORDER: CommandScope[] = ["batches", "batch", "viewer", "global"];
 
 /** One key of a command, as the sheet shows it. */
-interface ShownKey {
+interface SheetKey {
   /** The `kbd` tokens: ["⌘", "K"], or ["G", "then", "I"] for a sequence. */
   tokens: string[];
   /** A letter or symbol key: what the single-key switch turns off. */
@@ -51,10 +51,8 @@ interface ShownKey {
 interface Row {
   id: string;
   label: string;
-  keys: ShownKey[];
+  keys: SheetKey[];
 }
-
-const SEQUENCE_WORD = "then";
 
 /**
  * The rows of each scope. A key shows once: where the registry gives it to
@@ -71,9 +69,8 @@ function rowsByScope(
   const byScope = new Map<CommandScope, Row[]>();
   for (const resolved of commands) {
     const { command, scope } = resolved;
-    const bindings = (command.keys ?? []).filter(
-      (b) => winners.get(keyIdentity(bindingKey(b))) === resolved,
-    );
+    // Character keys stay, marked off while the switch is off.
+    const bindings = winningBindings(resolved, winners);
     if (bindings.length === 0) continue;
     const tokens = formatKeys(bindings, platform);
     const row: Row = {
@@ -87,41 +84,6 @@ function rowsByScope(
     byScope.set(scope, [...(byScope.get(scope) ?? []), row]);
   }
   return byScope;
-}
-
-const KEY_CAP =
-  "min-w-6 rounded border border-edge bg-sunken px-1.5 py-0.5 text-center font-mono text-xs";
-
-/** One key: each token on its own cap, "then" as plain text between them. */
-function Key({
-  shown,
-  off,
-}: {
-  shown: ShownKey;
-  /** The switch is off and this key is a character key. */
-  off: boolean;
-}): JSX.Element {
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      <kbd className="inline-flex items-center gap-1">
-        {shown.tokens.map((token, i) => (
-          <Fragment key={i}>
-            {i > 0 && " "}
-            {token === SEQUENCE_WORD ? (
-              <span className="font-sans text-fg-muted">{token}</span>
-            ) : (
-              <kbd className={cn(KEY_CAP, off ? "text-fg-muted" : "text-fg")}>
-                {token}
-              </kbd>
-            )}
-          </Fragment>
-        ))}
-      </kbd>
-      {off && (
-        <span className="text-fg-muted">(single-key shortcuts are off)</span>
-      )}
-    </span>
-  );
 }
 
 function Section({
@@ -147,16 +109,13 @@ function Section({
           <li key={row.id} className="flex items-start justify-between gap-4">
             <span className="text-fg-secondary">{row.label}</span>
             <span className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs">
-              {row.keys.map((shown, i) => (
-                <Fragment key={i}>
-                  {i > 0 && (
-                    <span aria-hidden="true" className="text-fg-muted">
-                      /
-                    </span>
-                  )}
-                  <Key shown={shown} off={!singleKeys && shown.character} />
-                </Fragment>
-              ))}
+              <KeyChoices
+                keys={row.keys.map((shown) => ({
+                  tokens: shown.tokens,
+                  off: !singleKeys && shown.character,
+                }))}
+                offNote="(single-key shortcuts are off)"
+              />
             </span>
           </li>
         ))}
