@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   ariaKeyShortcuts,
+  bindingKey,
+  bindingOptions,
   formatKeys,
+  isCharacterBinding,
   isCharacterKey,
   isCharacterKeyCommand,
   lowerFirst,
@@ -42,6 +45,42 @@ describe("command keys", () => {
     expect(isCharacterKeyCommand({ keys: ["$mod+k"] })).toBe(false);
     expect(isCharacterKeyCommand({ keys: [] })).toBe(false);
     expect(isCharacterKeyCommand({})).toBe(false);
+  });
+
+  it("isCharacterBinding treats sequences of characters as character bindings", () => {
+    for (const key of ["g i", "g a", "a", "?", "Shift++"]) {
+      expect(isCharacterBinding(key), key).toBe(true);
+    }
+    for (const key of ["g Enter", "g $mod+k", "$mod+k", "ArrowDown", ""]) {
+      expect(isCharacterBinding(key), key).toBe(false);
+    }
+    // One key press, not a sequence.
+    expect(isCharacterKey("g i")).toBe(false);
+  });
+
+  it("string bindings keep working", () => {
+    expect(bindingKey("a")).toBe("a");
+    expect(bindingKey({ key: "ArrowDown", repeat: true })).toBe("ArrowDown");
+
+    // A string binding takes every option from its command.
+    const escape = {
+      focusWithin: "[data-viewer]",
+      repeat: true,
+      allowInDialog: "[data-done-card]",
+      passesUndo: true,
+    };
+    expect(bindingOptions(escape, "Escape")).toEqual(escape);
+    expect(bindingOptions({}, "a")).toEqual({});
+
+    expect(formatKeys(["r", "x"], "mac")).toEqual([["R"], ["X"]]);
+    expect(formatKeys([{ key: "r" }, "x"], "mac")).toEqual([["R"], ["X"]]);
+    expect(ariaKeyShortcuts([{ key: "$mod+k" }, "/"], "other")).toBe(
+      "Control+K /",
+    );
+    expect(isCharacterKeyCommand({ keys: [{ key: "g i" }, "?"] })).toBe(true);
+    expect(isCharacterKeyCommand({ keys: ["j", { key: "ArrowDown" }] })).toBe(
+      false,
+    );
   });
 
   it("formats keys per platform", () => {

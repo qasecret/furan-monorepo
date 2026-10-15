@@ -1,10 +1,47 @@
-import type { Command, Platform } from "./types";
+import type { Command, KeyBinding, Platform } from "./types";
 
 /**
  * Key strings use tinykeys syntax: modifiers joined to the key with "+"
  * ("$mod+k", "Shift++"), and the steps of a sequence separated by spaces
  * ("g i"). These helpers classify and display them; they never bind anything.
+ * A command's keys are `KeyBinding`s: a key string, or one with per-key
+ * options. Every reader takes the key string out with `bindingKey`.
  */
+
+/** The options that decide when one binding of a command fires. */
+export interface BindingOptions {
+  focusWithin?: string;
+  repeat?: boolean;
+  allowInDialog?: string;
+  passesUndo?: boolean;
+}
+
+/** The key string of a binding: "a" for both "a" and `{ key: "a" }`. */
+export function bindingKey(b: KeyBinding): string {
+  return typeof b === "string" ? b : b.key;
+}
+
+/**
+ * The options for one binding of `cmd`: a per-key `focusWithin` / `repeat`
+ * overrides the command's own; the rest come from the command.
+ */
+export function bindingOptions(
+  cmd: Pick<Command, "focusWithin" | "repeat" | "allowInDialog" | "passesUndo">,
+  b: KeyBinding,
+): BindingOptions {
+  const own: Exclude<KeyBinding, string> | undefined =
+    typeof b === "string" ? undefined : b;
+  const focusWithin = own?.focusWithin ?? cmd.focusWithin;
+  const repeat = own?.repeat ?? cmd.repeat;
+  const { allowInDialog, passesUndo } = cmd;
+  // Only the options that are set, so a spread never adds `undefined`s.
+  return {
+    ...(focusWithin !== undefined ? { focusWithin } : {}),
+    ...(repeat !== undefined ? { repeat } : {}),
+    ...(allowInDialog !== undefined ? { allowInDialog } : {}),
+    ...(passesUndo !== undefined ? { passesUndo } : {}),
+  };
+}
 
 /** Modifiers that make a key press a shortcut rather than a typed character. */
 const COMMAND_MODIFIERS = new Set(["$mod", "Control", "Meta", "Alt"]);
@@ -66,18 +103,38 @@ export function isCharacterKey(key: string): boolean {
 }
 
 /**
+ * True when a key, or every step of a sequence ("g i"), is a character key:
+ * the binding the single-key switch turns off.
+ */
+export function isCharacterBinding(key: string): boolean {
+  const steps = stepsOf(key);
+  return steps.length > 0 && steps.every(isCharacterKey);
+}
+
+/**
  * True when every key of the command, and every step of each sequence
  * ("g i"), is a character key. False for a command with no keys.
  */
 export function isCharacterKeyCommand(c: Pick<Command, "keys">): boolean {
   const keys = c.keys ?? [];
   return (
-    keys.length > 0 &&
-    keys.every((key) => {
-      const steps = stepsOf(key);
-      return steps.length > 0 && steps.every(isCharacterKey);
-    })
+    keys.length > 0 && keys.every((b) => isCharacterBinding(bindingKey(b)))
   );
+}
+
+/**
+ * The same string for keys tinykeys treats as one: a single-character key
+ * is lower-cased in each step, so "A" and "a" (or "Shift+A" and "Shift+a")
+ * compare equal.
+ */
+export function keyIdentity(key: string): string {
+  return stepsOf(key)
+    .map((step) => {
+      const { modifiers, key: pressed } = parseStep(step);
+      const k = isPrintable(pressed) ? pressed.toLowerCase() : pressed;
+      return [...modifiers, k].join("+");
+    })
+    .join(" ");
 }
 
 function keyGlyph(key: string): string {
@@ -97,9 +154,9 @@ function stepTokens(step: string, platform: Platform): string[] {
  * "$mod+k" → ["⌘", "K"] on macOS, ["Ctrl", "K"] elsewhere; "g i" →
  * ["G", "then", "I"]; "ArrowUp" → ["↑"]; "Escape" → ["Esc"].
  */
-export function formatKeys(keys: string[], platform: Platform): string[][] {
-  return keys.map((key) =>
-    stepsOf(key).flatMap((step, i) => [
+export function formatKeys(keys: KeyBinding[], platform: Platform): string[][] {
+  return keys.map((b) =>
+    stepsOf(bindingKey(b)).flatMap((step, i) => [
       ...(i > 0 ? ["then"] : []),
       ...stepTokens(step, platform),
     ]),
@@ -128,9 +185,12 @@ function ariaKey(key: string): string {
  * (a space separates alternatives), so sequences are left out; the result is
  * "" when nothing is left.
  */
-export function ariaKeyShortcuts(keys: string[], platform: Platform): string {
+export function ariaKeyShortcuts(
+  keys: KeyBinding[],
+  platform: Platform,
+): string {
   return keys
-    .map(stepsOf)
+    .map((b) => stepsOf(bindingKey(b)))
     .filter((steps) => steps.length === 1)
     .map((steps) => {
       const { modifiers, key } = parseStep(steps[0] ?? "");

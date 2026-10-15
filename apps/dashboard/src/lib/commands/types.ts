@@ -20,6 +20,14 @@ export type CommandGroup =
   | "Account"
   | "Help";
 
+/**
+ * One key of a command, in tinykeys syntax ("a", "$mod+k", "g i"), with
+ * optional per-key options that override the command's own. That lets one
+ * command bind `j` anywhere and `ArrowDown` only inside a list, on repeat.
+ */
+export type KeyBinding =
+  string | { key: string; focusWithin?: string; repeat?: boolean };
+
 /** Which key glyphs to show: ⌘ ⇧ on macOS, Ctrl Shift elsewhere. */
 export type Platform = "mac" | "other";
 
@@ -43,8 +51,8 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   /** Verbatim copy (spec §4), e.g. "Approve step". */
   label: string;
   group: CommandGroup;
-  /** tinykeys syntax: "a", "$mod+k", "g i", "Shift+ArrowDown". */
-  keys?: string[];
+  /** tinykeys syntax: "a", "$mod+k", "g i", "Shift+ArrowDown" (see `KeyBinding`). */
+  keys?: KeyBinding[];
   scope: CommandScope;
   /** Role / permission. False: never bound, listed or shown. */
   allowed?: (ctx: C) => boolean;

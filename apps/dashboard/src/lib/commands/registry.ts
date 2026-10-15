@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  createContext,
   createElement,
-  useContext,
+  Fragment,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   type JSX,
@@ -12,7 +12,13 @@ import {
 } from "react";
 import { create } from "zustand";
 
-import { ariaKeyShortcuts, formatKeyLabel, formatKeys } from "./keys";
+import {
+  ariaKeyShortcuts,
+  bindingKey,
+  formatKeyLabel,
+  formatKeys,
+  keyIdentity,
+} from "./keys";
 import { usePlatform } from "./platform";
 import type { Command, CommandCtx, CommandScope } from "./types";
 
@@ -21,7 +27,10 @@ import type { ViewerRole } from "@/lib/roles";
 /** A registered command with the live ctx of the component that registered it. */
 export interface ResolvedCommand {
   command: Command;
-  /** Reads the registrant's ctx as of its latest render, plus the role. */
+  /**
+   * Reads the registrant's ctx as of its latest render, with the registry's
+   * current role.
+   */
   ctx: () => CommandCtx;
   /** The scope it was registered in. */
   scope: CommandScope;
@@ -37,16 +46,24 @@ interface RegistryEntry {
 interface RegistryState {
   /** In registration order. Replaced (never mutated) on register/unregister. */
   entries: RegistryEntry[];
+  /**
+   * The viewer's role, set by `CommandRoleProvider`. Every command's ctx
+   * reads it from here, so `allowed` follows a role change whichever
+   * component renders first. "guest" (least privilege) until a provider sets it.
+   */
+  role: ViewerRole;
 }
 
 /**
- * Every mounted registrant's commands. A scope may have several registrants
- * (several components can call `useCommands` for one scope); each call is
- * its own entry. Only registering and unregistering change the store; a
- * registrant's re-render never does.
+ * Every mounted registrant's commands, and the role they are checked
+ * against. A scope may have several registrants (several components can call
+ * `useCommands` for one scope); each call is its own entry. Registering,
+ * unregistering and a role change write the store; a registrant's re-render
+ * never does.
  */
 export const useCommandRegistry = create<RegistryState>(() => ({
   entries: [],
+  role: "guest",
 }));
 
 /** On a shared key the most specific scope wins. */
@@ -59,26 +76,38 @@ const SCOPE_RANK: Record<CommandScope, number> = {
 
 let lastOwner = 0;
 
-/** The first key `incoming` shares with another command of the same scope. */
-function findSharedKey(
+/**
+ * What is wrong with registering `incoming` in `scope`: a command declaring
+ * another scope, or a key (compared as tinykeys matches it, so "A" is "a")
+ * shared with another command of the same scope. Null when nothing is.
+ */
+function registrationProblem(
   scope: CommandScope,
   incoming: Command[],
   entries: RegistryEntry[],
 ): string | null {
+  const misplaced = incoming.find((c) => c.scope !== scope);
+  if (misplaced) {
+    return `Command "${misplaced.id}" declares the "${misplaced.scope}" scope but is registered in the "${scope}" scope.`;
+  }
   const holders = new Map<string, string>();
   for (const entry of entries) {
     if (entry.scope !== scope) continue;
     for (const { command } of entry.commands) {
-      for (const key of command.keys ?? []) holders.set(key, command.id);
+      for (const b of command.keys ?? []) {
+        holders.set(keyIdentity(bindingKey(b)), command.id);
+      }
     }
   }
   for (const command of incoming) {
-    for (const key of new Set(command.keys ?? [])) {
-      const holder = holders.get(key);
+    const own = new Set((command.keys ?? []).map(bindingKey));
+    for (const key of own) {
+      const identity = keyIdentity(key);
+      const holder = holders.get(identity);
       if (holder !== undefined) {
         return `Commands "${holder}" and "${command.id}" share the key "${key}" in the "${scope}" scope.`;
       }
-      holders.set(key, command.id);
+      holders.set(identity, command.id);
     }
   }
   return null;
@@ -91,10 +120,10 @@ function register(
   ctx: () => CommandCtx,
 ): () => void {
   const { entries } = useCommandRegistry.getState();
-  const clash = findSharedKey(scope, commands, entries);
-  if (clash) {
-    if (process.env.NODE_ENV !== "production") throw new Error(clash);
-    console.error(clash);
+  const problem = registrationProblem(scope, commands, entries);
+  if (problem) {
+    if (process.env.NODE_ENV !== "production") throw new Error(problem);
+    console.error(problem);
   }
   const owner = ++lastOwner;
   const entry: RegistryEntry = {
@@ -109,10 +138,12 @@ function register(
     }));
 }
 
-// Least privilege when no provider is mounted: decision commands stay hidden.
-const RoleContext = createContext<ViewerRole>("guest");
-
-/** Supplies the viewer's role to every command's ctx. Mounted in the protected layout. */
+/**
+ * Supplies the viewer's role to every command's ctx. Mounted once, in the
+ * protected layout. It writes the role into the registry: straight away on
+ * its first client render, so the tree below renders with it, and in a
+ * layout effect on every change, before paint.
+ */
 export function CommandRoleProvider({
   role,
   children,
@@ -120,11 +151,24 @@ export function CommandRoleProvider({
   role: ViewerRole;
   children: ReactNode;
 }): JSX.Element {
-  return createElement(RoleContext.Provider, { value: role }, children);
+  const applied = useRef(false);
+  // Client only: the server has no registered commands, and its module
+  // store is shared between requests.
+  if (!applied.current && typeof window !== "undefined") {
+    applied.current = true;
+    if (useCommandRegistry.getState().role !== role) {
+      useCommandRegistry.setState({ role });
+    }
+  }
+  useLayoutEffect(() => {
+    useCommandRegistry.setState({ role });
+  }, [role]);
+  return createElement(Fragment, null, children);
 }
 
+/** The role commands are checked against. */
 export function useCommandRole(): ViewerRole {
-  return useContext(RoleContext);
+  return useCommandRegistry((s) => s.role);
 }
 
 /**
@@ -133,22 +177,24 @@ export function useCommandRole(): ViewerRole {
  * - Commands are static per mount: they are read once, when it mounts.
  * - `ctx` is kept in a ref that every render refreshes, so `allowed`,
  *   `enabled` and `run` always see live state, and a re-render never touches
- *   the store.
- * - Two commands of one scope (from any registrants) may not share a key:
- *   development throws, production logs.
+ *   the store. The role comes from the registry (`CommandRoleProvider`).
+ * - Development throws, and production logs, when a command declares another
+ *   scope or two commands of one scope (from any registrants) share a key.
  */
 export function useCommands<C extends CommandCtx>(
   scope: CommandScope,
   commands: Command<C>[],
   ctx: Omit<C, "role">,
 ): void {
-  const role = useCommandRole();
-  const live = useRef({ ctx, role });
-  live.current = { ctx, role };
+  const live = useRef(ctx);
+  live.current = ctx;
 
   useEffect(() => {
     const getCtx = () =>
-      ({ ...live.current.ctx, role: live.current.role }) as C;
+      ({
+        ...live.current,
+        role: useCommandRegistry.getState().role,
+      }) as C;
     // `commands` is deliberately not a dependency: it is static per mount.
     return register(scope, commands as unknown as Command[], getCtx);
   }, [scope]);
@@ -165,6 +211,8 @@ function resolveEntries(entries: RegistryEntry[]): ResolvedCommand[] {
 /**
  * Every registered command that is `allowed` for its live ctx, in
  * registration order. A plain read (no React), e.g. for a key press.
+ * `allowed` is evaluated now, so the list is a snapshot: a key press must
+ * call `resolveKeyMap(resolveCommands())` at that moment.
  */
 export function resolveCommands(): ResolvedCommand[] {
   return resolveEntries(useCommandRegistry.getState().entries);
@@ -173,14 +221,17 @@ export function resolveCommands(): ResolvedCommand[] {
 /**
  * Which command each key runs. On a key shared across scopes the most
  * specific scope wins (`viewer` > `batch` > `batches` > `global`),
- * whatever the order of `cmds`.
+ * whatever the order of `cmds`. The map is only as fresh as `cmds`: at a
+ * key press, build it from a fresh `resolveCommands()`, never from a list
+ * memoised at render time.
  */
 export function resolveKeyMap(
   cmds: ResolvedCommand[],
 ): Map<string, ResolvedCommand> {
   const map = new Map<string, ResolvedCommand>();
   for (const resolved of cmds) {
-    for (const key of resolved.command.keys ?? []) {
+    for (const b of resolved.command.keys ?? []) {
+      const key = bindingKey(b);
       const held = map.get(key);
       if (!held || SCOPE_RANK[resolved.scope] > SCOPE_RANK[held.scope]) {
         map.set(key, resolved);
@@ -191,8 +242,10 @@ export function resolveKeyMap(
 }
 
 /**
- * `resolveCommands()` for rendering. It re-renders on register and
- * unregister (and when the role changes), never on a registrant's re-render.
+ * `resolveCommands()` for rendering. It re-renders on register, unregister
+ * and a role change, never on a registrant's re-render. Its `allowed` is a
+ * snapshot from that render: use it to render, and resolve afresh
+ * (`resolveCommands()`) when a key is pressed.
  */
 export function useRegisteredCommands(): ResolvedCommand[] {
   const entries = useCommandRegistry((s) => s.entries);
@@ -236,7 +289,7 @@ export function useCommandKeys(id: string): CommandKeys {
     return {
       keys: formatKeys(keys, platform),
       ...(aria ? { ariaKeyShortcuts: aria } : {}),
-      titleSuffix: ` (${formatKeyLabel(first, platform)})`,
+      titleSuffix: ` (${formatKeyLabel(bindingKey(first), platform)})`,
     };
   }, [commands, id, platform]);
 }

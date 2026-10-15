@@ -1,8 +1,9 @@
 import { act, cleanup, render, renderHook } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
+import { createElement, Fragment, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { bindingOptions, formatKeys } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import {
   CommandRoleProvider,
@@ -14,7 +15,12 @@ import {
   useRegisteredCommands,
   type ResolvedCommand,
 } from "@/lib/commands/registry";
-import type { Command, CommandCtx, CommandScope } from "@/lib/commands/types";
+import type {
+  Command,
+  CommandCtx,
+  CommandScope,
+  KeyBinding,
+} from "@/lib/commands/types";
 import { canReviewRole, type ViewerRole } from "@/lib/roles";
 
 function withRole(role: ViewerRole) {
@@ -26,7 +32,7 @@ function withRole(role: ViewerRole) {
 function command(
   scope: CommandScope,
   id: string,
-  keys: string[],
+  keys: KeyBinding[],
   extra: Partial<Command> = {},
 ): Command {
   return {
@@ -59,7 +65,7 @@ function stubMac() {
 }
 
 beforeEach(() => {
-  useCommandRegistry.setState({ entries: [] });
+  useCommandRegistry.setState({ entries: [], role: "guest" });
 });
 
 afterEach(() => {
@@ -85,6 +91,22 @@ describe("command registry", () => {
     unmount();
     expect(useCommandRegistry.getState().entries).toHaveLength(0);
     expect(resolveCommands()).toEqual([]);
+
+    // Unmounting one registrant removes only its own commands: not the
+    // other registrant of the same scope, nor another scope's.
+    const reject = mount("viewer", [command("viewer", "review.reject", ["r"])]);
+    mount("viewer", [command("viewer", "viewer.next", ["n"])]);
+    mount("global", [command("global", "go.batches", ["g i"])]);
+    expect(resolveCommands().map((r) => r.command.id)).toEqual([
+      "review.reject",
+      "viewer.next",
+      "go.batches",
+    ]);
+    reject.unmount();
+    expect(resolveCommands().map((r) => r.command.id)).toEqual([
+      "viewer.next",
+      "go.batches",
+    ]);
   });
 
   it("a re-render with new ctx does not re-register but run sees the new ctx", async () => {
@@ -157,10 +179,104 @@ describe("command registry", () => {
     guestView.unmount();
     guest.unmount();
 
-    mount("viewer", [approve], "editor");
-    expect(resolveCommands().map((r) => r.command.id)).toEqual([
-      "review.approve",
-    ]);
+    // `allowed` is evaluated against the live ctx at every resolve, never
+    // once at registration: the role flips while the registration stays.
+    function Registrant() {
+      useCommands("viewer", [approve], {});
+      return null;
+    }
+    const tree = (role: ViewerRole) =>
+      createElement(CommandRoleProvider, {
+        role,
+        children: createElement(Registrant),
+      });
+    const { rerender } = render(tree("editor"));
+    const ids = () => resolveCommands().map((r) => r.command.id);
+    const registered = useCommandRegistry.getState().entries;
+    expect(ids()).toEqual(["review.approve"]);
+    rerender(tree("guest"));
+    expect(ids()).toEqual([]);
+    rerender(tree("editor"));
+    expect(ids()).toEqual(["review.approve"]);
+    // No re-registration happened along the way.
+    expect(useCommandRegistry.getState().entries).toBe(registered);
+  });
+
+  it("allowed follows the registrant's live ctx with no store write", () => {
+    interface EditCtx extends CommandCtx {
+      canEdit: boolean;
+    }
+    const edit: Command<EditCtx> = {
+      id: "editor.toggle",
+      label: "Edit ignore regions",
+      group: "Editor",
+      keys: ["i"],
+      scope: "viewer",
+      allowed: (ctx) => ctx.canEdit,
+      run: vi.fn(),
+    };
+    const { rerender } = renderHook(
+      ({ canEdit }: { canEdit: boolean }) =>
+        useCommands<EditCtx>("viewer", [edit], { canEdit }),
+      { initialProps: { canEdit: true }, wrapper: withRole("editor") },
+    );
+    const ids = () => resolveCommands().map((r) => r.command.id);
+    expect(ids()).toEqual(["editor.toggle"]);
+
+    const storeChanges = vi.fn();
+    const unsubscribe = useCommandRegistry.subscribe(storeChanges);
+    rerender({ canEdit: false });
+    expect(ids()).toEqual([]);
+    rerender({ canEdit: true });
+    expect(ids()).toEqual(["editor.toggle"]);
+    unsubscribe();
+    expect(storeChanges).not.toHaveBeenCalled();
+  });
+
+  it("a subscriber rendered before the registrant follows a role change both ways", () => {
+    const approve = command("viewer", "review.approve", ["a"], {
+      allowed: (ctx) => canReviewRole(ctx.role),
+    });
+    let listed: string[] = [];
+    let hint: ReturnType<typeof useCommandKeys> | undefined;
+    // Renders before the registrant in the same pass, so it can't rely on
+    // the registrant's render to have seen the new role.
+    function Hints() {
+      listed = useRegisteredCommands().map((r) => r.command.id);
+      hint = useCommandKeys("review.approve");
+      return null;
+    }
+    function Registrant() {
+      useCommands("viewer", [approve], {});
+      return null;
+    }
+    const tree = (role: ViewerRole) =>
+      createElement(CommandRoleProvider, {
+        role,
+        children: createElement(
+          Fragment,
+          null,
+          createElement(Hints),
+          createElement(Registrant),
+        ),
+      });
+    const approveHint = {
+      keys: [["A"]],
+      ariaKeyShortcuts: "A",
+      titleSuffix: " (A)",
+    };
+
+    const { rerender } = render(tree("editor"));
+    expect(listed).toEqual(["review.approve"]);
+    expect(hint).toEqual(approveHint);
+
+    rerender(tree("guest"));
+    expect(listed).toEqual([]);
+    expect(hint).toStrictEqual({ keys: [], titleSuffix: "" });
+
+    rerender(tree("editor"));
+    expect(listed).toEqual(["review.approve"]);
+    expect(hint).toEqual(approveHint);
   });
 
   it("most specific scope wins on a shared key", () => {
@@ -216,6 +332,85 @@ describe("command registry", () => {
     expect(() =>
       mount("global", [command("global", "global.a", ["a"])]),
     ).not.toThrow();
+  });
+
+  it("A and a in one scope are duplicates", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // tinykeys matches "A" and "a" alike.
+    mount("viewer", [command("viewer", "review.approve", ["a"])]);
+    expect(() =>
+      mount("viewer", [command("viewer", "viewer.other", ["A"])]),
+    ).toThrow(/"A"/);
+    expect(() =>
+      mount("batch", [
+        command("batch", "batch.approve", ["Shift+a"]),
+        command("batch", "batch.again", [{ key: "Shift+A" }]),
+      ]),
+    ).toThrow(/"Shift\+A"/);
+  });
+
+  it("a command registered under the wrong scope throws in development", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      mount("viewer", [command("global", "go.batches", ["g i"])]),
+    ).toThrow(/go\.batches/);
+    expect(useCommandRegistry.getState().entries).toHaveLength(0);
+    expect(() =>
+      mount("global", [command("global", "go.batches", ["g i"])]),
+    ).not.toThrow();
+  });
+
+  it("a command can bind one key anywhere and another only within an element", () => {
+    const down: KeyBinding = {
+      key: "ArrowDown",
+      focusWithin: "[data-batches-list]",
+      repeat: true,
+    };
+    const next = command("batches", "list.next", ["j", down]);
+    mount("batches", [next]);
+
+    const map = resolveKeyMap(resolveCommands());
+    expect([...map.keys()].sort()).toEqual(["ArrowDown", "j"]);
+    expect(map.get("j")?.command.id).toBe("list.next");
+    expect(map.get("ArrowDown")?.command.id).toBe("list.next");
+
+    // `j` works anywhere; ArrowDown only in the list, and on auto-repeat.
+    expect(bindingOptions(next, "j")).toEqual({});
+    expect(bindingOptions(next, down)).toEqual({
+      focusWithin: "[data-batches-list]",
+      repeat: true,
+    });
+    // A per-key option overrides the command's own.
+    const inList = command(
+      "batch",
+      "list.prev",
+      ["k", { key: "ArrowUp", repeat: false }],
+      {
+        focusWithin: "[data-batch-list]",
+        repeat: true,
+      },
+    );
+    expect(bindingOptions(inList, "k")).toEqual({
+      focusWithin: "[data-batch-list]",
+      repeat: true,
+    });
+    expect(bindingOptions(inList, { key: "ArrowUp", repeat: false })).toEqual({
+      focusWithin: "[data-batch-list]",
+      repeat: false,
+    });
+
+    // Display and hints read the key out of each binding.
+    expect(formatKeys(next.keys ?? [], "other")).toEqual([["J"], ["↓"]]);
+    const { result } = renderHook(() => useCommandKeys("list.next"), {
+      wrapper: withRole("editor"),
+    });
+    expect(result.current).toEqual({
+      keys: [["J"], ["↓"]],
+      ariaKeyShortcuts: "J ArrowDown",
+      titleSuffix: " (J)",
+    });
   });
 
   it("useCommandKeys gives aria-keyshortcuts and a title suffix", () => {
