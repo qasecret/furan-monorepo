@@ -27,7 +27,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           # Use a fine-grained PAT (scoped to this repo, contents/PRs/workflows
           # = read+write) so that tag creation here fires downstream workflows
