@@ -390,8 +390,10 @@ export const STATES: ReadonlyArray<VisualState> = [
       // by the time the sweep's first shot is taken, and the state passes with
       // the select closed. Registered (capturing) before the list opens, so it
       // runs before Radix's own listeners; it lasts until the next navigation.
+      // Only the window's own events: a capturing `blur` listener on the
+      // window also sees every element's blur, which must go on as usual.
       await p.evaluate(
-        `(() => { const keep = (e) => e.stopImmediatePropagation(); for (const t of ["resize", "blur"]) window.addEventListener(t, keep, true); })()`,
+        `(() => { const keep = (e) => { if (e.target === window) e.stopImmediatePropagation(); }; for (const t of ["resize", "blur"]) window.addEventListener(t, keep, true); })()`,
       );
       await trigger.click();
       await expect(p.getByRole("listbox")).toBeVisible();

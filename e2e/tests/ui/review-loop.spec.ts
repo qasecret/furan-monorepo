@@ -160,6 +160,16 @@ test.describe.serial("ui: review loop", () => {
     test.setTimeout(240_000);
     ({ admin, pat } = ownerCreds());
 
+    // The admin's assignment as it is before this run touches anything:
+    // creating a project may make its creator a member, which the restore
+    // must not keep.
+    const me = await api.me(admin);
+    restore = {
+      userId: me.id,
+      projectIds: await api.listUserProjects(admin, me.id),
+      defaultProjectId: me.defaultProjectId ?? null,
+    };
+
     const stamp = Date.now();
     projectId = (
       await api.createProject(admin, { name: `review-loop-ui-${stamp}` })
@@ -240,12 +250,6 @@ test.describe.serial("ui: review loop", () => {
 
     // Make the project the reviewer's current one (Batches shows the default
     // project), keeping every membership the admin already had.
-    const me = await api.me(admin);
-    restore = {
-      userId: me.id,
-      projectIds: await api.listUserProjects(admin, me.id),
-      defaultProjectId: me.defaultProjectId ?? null,
-    };
     await api.setUserProjects(admin, {
       userId: me.id,
       projectIds: [...new Set([...restore.projectIds, projectId])],
@@ -272,9 +276,13 @@ test.describe.serial("ui: review loop", () => {
   });
 
   test.afterAll(async () => {
-    await context?.close();
-    // Put the admin's projects and default back as they were.
-    if (restore) await api.setUserProjects(admin, restore);
+    // Put the admin's projects and default back as they were, first: a
+    // context that fails to close must not leave them changed.
+    try {
+      if (restore) await api.setUserProjects(admin, restore);
+    } finally {
+      await context?.close();
+    }
   });
 
   test("Batches opens on Needs review and offers Start reviewing (2)", async ({}, testInfo) => {
