@@ -45,7 +45,7 @@ export interface BatchDoneCardProps {
   backHref: string;
   /**
    * Back to batches, on any card with no Continue: the Batches page, its
-   * status and branch kept.
+   * status kept.
    */
   batchesHref: string;
 }

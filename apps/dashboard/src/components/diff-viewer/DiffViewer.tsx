@@ -755,8 +755,9 @@ export function DiffViewer({
             onClearFilter={loop.clearFilter}
             onLeave={loop.leave}
             backHref={backHref}
-            // The Batches page, with the status and branch kept.
-            batchesHref={`/inbox${serializeReviewContext(context, ["status", "branch"])}`}
+            // The Batches page, with the status kept (the viewer's URL never
+            // carries a branch: only the status and facets travel the loop).
+            batchesHref={`/inbox${serializeReviewContext(context, ["status"])}`}
           />
         ) : isEmpty ? (
           <EmptyRunCard {...(backHref ? { buildHref: backHref } : {})} />

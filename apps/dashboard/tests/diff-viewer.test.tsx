@@ -2109,7 +2109,7 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).not.toHaveBeenCalled();
   });
 
-  test("All caught up: Back to batches keeps the status and branch", () => {
+  test("All caught up: Back to batches keeps the status", () => {
     nextQuery.data = answer({
       target: null,
       scope: "none",
@@ -2117,15 +2117,13 @@ describe("DiffViewer: the review loop", () => {
     });
     // No facets: with them, only the batch is known to be done (R25).
     const { r, again } = lastPendingStep({
-      reviewContext: { status: "failed", branch: "main", facets: {} },
+      reviewContext: { status: "failed", facets: {} },
     });
     press("A");
     c1Decided(again);
     r.getByRole("dialog", { name: "All caught up" });
     const batches = r.getByRole("link", { name: "Back to batches" });
-    expect(batches.getAttribute("href")).toBe(
-      "/inbox?status=failed&branch=main",
-    );
+    expect(batches.getAttribute("href")).toBe("/inbox?status=failed");
     expect(document.activeElement).toBe(batches);
     expect(r.queryByRole("button", { name: /Continue/ })).toBeNull();
   });
