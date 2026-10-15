@@ -1122,14 +1122,13 @@ d("tRPC runs router", () => {
     expect(data.autoApproved).toBe(false);
   });
 
-  test("getById returns prevRunId + nextRunId as null (ADR-038: deferred to Phase 5)", async () => {
-    // ADR-038: sibling run navigation (prevRunId/nextRunId) is deferred to
-    // Phase 5 of the batch/test/checkpoint model rework. getById always
-    // returns null for both fields in the current implementation.
+  test("getById has no prevRunId / nextRunId: review.next walks the queue", async () => {
+    // The sibling-run links were always null (ADR-038); the review loop
+    // (review.next) is the one way to the next or previous run now.
     const client = makeClient(baseUrl, s.memberJwt);
     const data = await client.runs.getById.query({ runId: s.runId });
-    expect(data.prevRunId).toBeNull();
-    expect(data.nextRunId).toBeNull();
+    expect(data).not.toHaveProperty("prevRunId");
+    expect(data).not.toHaveProperty("nextRunId");
   });
 
   // ADR-031: per-run ignore-regions editor + re-diff trigger.

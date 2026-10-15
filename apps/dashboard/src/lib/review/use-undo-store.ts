@@ -9,6 +9,18 @@ export interface UndoEntry {
   label: string;
   /** The runs the action decided in. */
   runIds: string[];
+  /**
+   * Where the action's one step is in the viewer (`href`, with the review
+   * context it was decided in), and its name: the Undone toast offers to go
+   * back to it. Only a single-step decision has one.
+   */
+  goTo?: UndoGoTo;
+}
+
+/** A step to go back to once its decision is undone. */
+export interface UndoGoTo {
+  href: string;
+  name: string;
 }
 
 /** How many actions ⌘Z can walk back through. */

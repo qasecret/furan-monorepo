@@ -3,8 +3,11 @@
 import Link from "next/link";
 
 interface Props {
-  projectId: string;
-  buildId?: string | null;
+  /**
+   * The run's batch page, carrying the review context and anchored on the
+   * run (`batchHref`); none when the run has no batch.
+   */
+  buildHref?: string;
 }
 
 /**
@@ -13,7 +16,7 @@ interface Props {
  * Keeps the user oriented and points at the SDK instead of leaving them
  * staring at an empty canvas.
  */
-export function EmptyRunCard({ projectId, buildId }: Props) {
+export function EmptyRunCard({ buildHref }: Props) {
   return (
     <div
       className="flex flex-col gap-4 p-8 m-4 rounded-xl border border-dashed border-edge-strong bg-sunken max-w-2xl text-sm text-fg-secondary"
@@ -49,9 +52,9 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
         >
           View SDK docs →
         </Link>
-        {buildId && (
+        {buildHref && (
           <Link
-            href={`/projects/${projectId}/builds/${buildId}`}
+            href={buildHref}
             className="text-brand-text hover:underline focus-ring"
             data-testid="empty-run-card-timeline"
           >

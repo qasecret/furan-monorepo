@@ -146,7 +146,10 @@ export const StepCard = memo(function StepCard({
   const canUndo = decision?.undo.allowed === true;
   const undoLocked = header.decisionLockedReason !== null || inFlight;
 
-  const open = () => router.push(diffViewerHref(projectId, runId, id, ctx));
+  // The step in the viewer, inside the page's filters: where opening it goes,
+  // and where the Undone toast of its decision offers to go back to.
+  const stepHref = diffViewerHref(projectId, runId, id, ctx);
+  const open = () => router.push(stepHref);
 
   // The button a keyboard user pressed is about to be replaced (by Undo), and
   // focus would drop to the page. So when the card held focus at the time, it
@@ -177,6 +180,7 @@ export const StepCard = memo(function StepCard({
       checkpointIds: [id],
       kind,
       label: `${kind === "approved" ? "Approved" : "Rejected"} '${name}'`,
+      goTo: { href: stepHref, name },
     });
   };
 

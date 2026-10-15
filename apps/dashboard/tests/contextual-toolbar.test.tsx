@@ -269,7 +269,9 @@ describe("ContextualToolbar Start reviewing", () => {
         start={{ count: 12, reason: null, onClick: vi.fn() }}
       />,
     );
-    expect(screen.queryByRole("status")).toBeNull();
+    // The region is mounted (so a screen reader hears its text change) but
+    // says nothing, and takes no room.
+    expect(screen.getByRole("status").textContent).toBe("");
     rerender(
       <ContextualToolbar
         {...baseProps}
@@ -280,7 +282,35 @@ describe("ContextualToolbar Start reviewing", () => {
         }}
       />,
     );
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  test("the status region stays mounted when the failure appears, so the change is announced", () => {
+    const { rerender } = render(
+      <ContextualToolbar
+        {...baseProps}
+        start={{ count: 12, reason: null, onClick: vi.fn() }}
+      />,
+    );
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+    expect(region.className).toContain("sr-only");
+    rerender(
+      <ContextualToolbar
+        {...baseProps}
+        start={{
+          count: undefined,
+          failed: true,
+          reason: "Couldn't load the review queue",
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    // The very same element, now with text: a live region announces a change
+    // to a region that was already in the page, not one that appears.
+    expect(screen.getByRole("status")).toBe(region);
+    expect(region.textContent).toBe("Couldn't load the review queue");
+    expect(region.className).not.toContain("sr-only");
   });
 
   test("is absent for a reader who may not review", () => {

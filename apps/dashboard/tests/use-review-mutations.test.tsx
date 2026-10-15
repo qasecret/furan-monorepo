@@ -122,6 +122,16 @@ vi.mock("@/lib/trpc", () => ({
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
+// The Undone toast's Go to navigates with the router, and is left out when
+// the reviewer is already on that step: set `nav.pathname` per test.
+const nav = vi.hoisted(() => ({
+  router: { push: vi.fn(), replace: vi.fn() },
+  pathname: "/projects/p-1/builds/build-1",
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => nav.router,
+  usePathname: () => nav.pathname,
+}));
 
 import {
   useInFlightStore,
@@ -372,7 +382,9 @@ beforeEach(() => {
   server.approveBuild.mockResolvedValue(decided([RUN, RUN_2]));
   server.revert.mockResolvedValue(reverted());
   useUndoStore.setState({ stack: [] });
-  useInFlightStore.setState({ ids: new Set() });
+  useInFlightStore.setState({ ids: new Set(), decisions: new Set() });
+  nav.router.push.mockReset();
+  nav.pathname = "/projects/p-1/builds/build-1";
 });
 
 afterEach(() => {
@@ -989,6 +1001,45 @@ describe("useReviewMutations: in flight", () => {
     first.resolve(decided());
     await run();
     expect(forA.result.current).toBe(false);
+  });
+
+  it("a refused decision stops being one before its rollback lands, and stays held until it settles", async () => {
+    // The review loop takes the step reading pending again for an undo only
+    // when no decision on it is in flight (R30, R36): so the refusal must be
+    // known before the rollback writes the step back, whatever order React
+    // renders the two in.
+    seed();
+    const refusal = deferred();
+    server.approve.mockReturnValueOnce(refusal.promise);
+    const { result, run } = setup();
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+    expect(useInFlightStore.getState().decisions.has(A)).toBe(true);
+    // What the store says when the rollback writes the step list.
+    const seen: Array<{ decision: boolean; held: boolean }> = [];
+    utils.runs.listCheckpoints.setData.mockImplementationOnce(
+      (input: unknown, updater: unknown) => {
+        const { ids, decisions } = useInFlightStore.getState();
+        seen.push({ decision: decisions.has(A), held: ids.has(A) });
+        return qc.setQueryData(
+          keyOf(["runs", "listCheckpoints"], input),
+          updater as never,
+        );
+      },
+    );
+
+    refusal.reject(trpcError("already_decided", "CONFLICT"));
+    await run();
+
+    expect(seen).toEqual([{ decision: false, held: true }]);
+    expect(itemState(A)).toBe("unresolved");
+    expect(useInFlightStore.getState().ids.has(A)).toBe(false);
   });
 
   it("frees the checkpoint again after a failure", async () => {
@@ -1837,6 +1888,171 @@ describe("useReviewMutations: undo", () => {
 
     decideCall.resolve(decided());
     await run();
+  });
+});
+
+describe("useReviewMutations: Go to the undone step", () => {
+  /** Where the viewer shows step A, with the review context it was decided in. */
+  const HOME =
+    "/projects/p-1/runs/run-1/checkpoints/cp-a?status=failed&os=macOS";
+  const goTo = { href: HOME, name: "home" };
+
+  /** The options handed to the last call of a toast. */
+  const optionsOf = (fn: unknown) =>
+    vi.mocked(fn as typeof toast.success).mock.calls.at(-1)?.[1] as
+      { action?: { label: string; onClick: () => void } } | undefined;
+
+  it("Undone toast offers Go to 'home' for a single-step action", async () => {
+    seed();
+    const { result, run } = setup();
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved 'home'",
+        goTo,
+      }),
+    );
+    // The undo entry remembers where its step is.
+    expect(useUndoStore.getState().stack).toEqual([
+      expect.objectContaining({ label: "Approved 'home'", goTo }),
+    ]);
+    vi.mocked(toast.success).mockClear();
+
+    // ⌘Z from another step: the Undone toast can take the reviewer back.
+    await run(() => result.current.undo());
+
+    expect(toast.success).toHaveBeenCalledOnce();
+    expect(vi.mocked(toast.success).mock.calls[0]![0]).toBe("Undone");
+    const action = optionsOf(toast.success)?.action;
+    expect(action?.label).toBe("Go to 'home'");
+    expect(nav.router.push).not.toHaveBeenCalled();
+    action!.onClick();
+    expect(nav.router.push).toHaveBeenCalledOnce();
+    // The exact step, with the review context it was decided in.
+    expect(nav.router.push).toHaveBeenCalledWith(HOME);
+    expect(useUndoStore.getState().stack).toEqual([]);
+  });
+
+  it("no Go to for multi-step actions", async () => {
+    seed();
+    const { result, run } = setup();
+    // A run-wide decision (Approve pending steps) and one of several steps
+    // keep no goTo, even when handed one.
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        kind: "approved",
+        label: "Approved 2 steps",
+        goTo,
+      }),
+    );
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A, B],
+        kind: "rejected",
+        label: "Rejected 2 steps",
+        goTo,
+      }),
+    );
+    // A group decision, and the batch's Approve pending.
+    await run(() =>
+      result.current.decideGroup({
+        runId: RUN,
+        checkpointId: A,
+        kind: "approved",
+        label: "Approved 3 similar steps",
+      }),
+    );
+    await run(() =>
+      result.current.approveBuild({
+        buildId: BUILD,
+        expectedCount: 2,
+        label: "Approved 2 steps",
+        onConflict: vi.fn(),
+      }),
+    );
+    const stack = useUndoStore.getState().stack;
+    expect(stack).toHaveLength(4);
+    for (const entry of stack) expect(entry).not.toHaveProperty("goTo");
+
+    vi.mocked(toast.success).mockClear();
+    for (let i = 0; i < 4; i++) await run(() => result.current.undo());
+    expect(server.revert).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(toast.success).mock.calls).toEqual([
+      ["Undone"],
+      ["Undone"],
+      ["Undone"],
+      ["Undone"],
+    ]);
+
+    // A decision from before a reload, undone from its step's chip: there is
+    // no entry, so nothing says where it is.
+    const CHIP = "55555555-5555-4555-8555-555555555555";
+    seedApproved(CHIP);
+    vi.mocked(toast.success).mockClear();
+    await run(() => result.current.undo(CHIP));
+    expect(server.revert).toHaveBeenLastCalledWith({ actionId: CHIP });
+    expect(vi.mocked(toast.success).mock.calls).toEqual([["Undone"]]);
+    expect(nav.router.push).not.toHaveBeenCalled();
+  });
+
+  it("no Go to while the reviewer is on that step already", async () => {
+    seed();
+    nav.pathname = "/projects/p-1/runs/run-1/checkpoints/cp-a";
+    const { result, run } = setup();
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved 'home'",
+        goTo,
+      }),
+    );
+    vi.mocked(toast.success).mockClear();
+    await run(() => result.current.undo());
+    expect(vi.mocked(toast.success).mock.calls).toEqual([["Undone"]]);
+  });
+
+  it("a partial or already-done undo offers no Go to", async () => {
+    for (const [answer, shown] of [
+      [
+        reverted({
+          reverted: 0,
+          skipped: [{ checkpointId: A, reason: "already_undone" }],
+        }),
+        toast.info,
+      ],
+      [
+        reverted({
+          reverted: 1,
+          skipped: [{ checkpointId: B, reason: "history_expired" }],
+        }),
+        toast.warning,
+      ],
+    ] as const) {
+      useUndoStore.setState({ stack: [] });
+      seed();
+      server.revert.mockResolvedValueOnce(answer);
+      const { result, run } = setup();
+      await run(() =>
+        result.current.decide({
+          runId: RUN,
+          checkpointIds: [A],
+          kind: "approved",
+          label: "Approved 'home'",
+          goTo,
+        }),
+      );
+      vi.mocked(shown).mockClear();
+      await run(() => result.current.undo());
+      expect(shown).toHaveBeenCalledOnce();
+      expect(vi.mocked(shown).mock.calls[0]).toHaveLength(1);
+      cleanup();
+    }
   });
 });
 

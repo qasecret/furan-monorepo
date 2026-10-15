@@ -32,7 +32,16 @@ async function isStepOfRun(runId: string, stepId: string): Promise<boolean> {
           (item as { id?: unknown }).id === stepId,
       )
     );
-  } catch {
+  } catch (error) {
+    // Swallowed on purpose: a failed lookup must never break an old link; the
+    // viewer opens the run's first step instead. It is logged so that a
+    // lookup that fails every time can be traced. Only the run id and the
+    // error's message are logged, never the session cookie or a token.
+    console.warn(
+      `legacy diff link: could not list the steps of run ${runId}; opening its first step (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+    );
     return false;
   }
 }

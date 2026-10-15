@@ -292,16 +292,20 @@ export function ContextualToolbar({
             </DisabledAwareButton>
             {/* The tooltip and the accessible name reach neither a sighted
                 keyboard user nor a touch user, so the reason is on the page
-                as well while the press is a retry. */}
-            {start.failed && (
-              <span
-                role="status"
-                data-testid="batch-start-reviewing-failure"
-                className="text-2xs text-fg-muted"
-              >
-                {start.reason ?? "Couldn't load the review queue"}
-              </span>
-            )}
+                as well while the press is a retry. The region is always
+                mounted and only its text changes: a screen reader announces
+                a change inside a live region that was already there, not one
+                that appears with its text. Empty, it is visually hidden
+                (`sr-only` is out of the flow, so it adds no gap). */}
+            <span
+              role="status"
+              data-testid="batch-start-reviewing-failure"
+              className={start.failed ? "text-2xs text-fg-muted" : "sr-only"}
+            >
+              {start.failed
+                ? (start.reason ?? "Couldn't load the review queue")
+                : ""}
+            </span>
           </Segment>
         </>
       )}
