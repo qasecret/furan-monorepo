@@ -287,6 +287,40 @@ d("review read model", () => {
       expect(a!.decision!.id).toBe(row!.id);
     });
 
+    test("each checkpoint carries its whole environment, device included (null for a desktop step)", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          {
+            name: "home",
+            verdict: "unresolved",
+            viewport: "390x844",
+            browser: "safari",
+            os: "iOS",
+            device: "iPhone 15",
+          },
+          {
+            name: "home",
+            verdict: "unresolved",
+            viewport: "412x915",
+            browser: "chrome",
+            os: "Android",
+            device: "Pixel 8",
+          },
+        ],
+      });
+      const { items } = await as(s.editor).runs.listCheckpoints.query({
+        runId: s.runId,
+      });
+      expect(items.map((i) => [i.viewport, i.browser, i.os, i.device])).toEqual(
+        [
+          ["1280x720", "chromium", null, null],
+          ["390x844", "safari", "iOS", "iPhone 15"],
+          ["412x915", "chrome", "Android", "Pixel 8"],
+        ],
+      );
+    });
+
     test("`state` follows the decision, else the verdict; an undiffed checkpoint reads null; there is no `status` alias", async () => {
       const s = await seed({
         checkpoints: [
