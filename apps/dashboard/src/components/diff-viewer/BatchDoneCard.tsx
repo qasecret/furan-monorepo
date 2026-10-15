@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 
 import { Button } from "@/components/ui/button";
 import { announce } from "@/lib/review/review-announcer";
@@ -31,6 +36,11 @@ export interface BatchDoneCardProps {
    * the route commits; pressing again does nothing (the loop sees to it).
    */
   busy?: boolean;
+  /**
+   * Leave for one of the hrefs below, through the review loop (it orders
+   * the departure after any move on its way): Esc and the back links.
+   */
+  onLeave: (href: string) => void;
   /** Back to batch, and Esc: the batch, as the reviewer left it. */
   backHref: string;
   /**
@@ -64,7 +74,8 @@ type Action = "continue" | "clear" | "batches" | "batch";
  * filtered steps, or All caught up, with the way on.
  *
  * Presentational: Continue and Clear filter are the loop's moves, handed in;
- * Back to batch and Back to batches are links. The actions come in a fixed
+ * Back to batch and Back to batches are links that leave through the loop
+ * (`onLeave`), as Esc does. The actions come in a fixed
  * order (Continue, Clear filter, Back to batches, Back to batch) and the
  * first one shown is the primary: it has the focus, and it is announced with
  * the title through the page's one polite region, once per time the card
@@ -82,10 +93,10 @@ export function BatchDoneCard({
   onContinue,
   onClearFilter,
   busy = false,
+  onLeave,
   backHref,
   batchesHref,
 }: BatchDoneCardProps) {
-  const router = useRouter();
   const titleId = useId();
   const bodyId = useId();
   const title = TITLES[variant];
@@ -131,7 +142,16 @@ export function BatchDoneCard({
     if (e.key !== "Escape" || e.defaultPrevented) return;
     e.preventDefault();
     if (e.repeat) return;
-    router.push(backHref);
+    onLeave(backHref);
+  };
+
+  // A plain click leaves through the loop; a modified one (a new tab, a new
+  // window) is the link's, as anywhere else.
+  const follow = (href: string) => (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onLeave(href);
   };
 
   const variantFor = (action: Action) =>
@@ -202,7 +222,11 @@ export function BatchDoneCard({
                     variant={variantFor(action)}
                     asChild
                   >
-                    <Link href={batchesHref} data-testid="batch-done-batches">
+                    <Link
+                      href={batchesHref}
+                      onClick={follow(batchesHref)}
+                      data-testid="batch-done-batches"
+                    >
                       {labels.batches}
                     </Link>
                   </Button>
@@ -217,6 +241,7 @@ export function BatchDoneCard({
                   >
                     <Link
                       href={backHref}
+                      onClick={follow(backHref)}
                       aria-keyshortcuts="Escape"
                       title="Back to batch (Esc)"
                       data-testid="batch-done-back"

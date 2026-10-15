@@ -6,6 +6,7 @@ import {
   render,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useRef } from "react";
 import { toast } from "sonner";
@@ -1706,6 +1707,24 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).toHaveBeenCalledOnce();
     expect(routerSpies.push).toHaveBeenCalledWith(
       `/projects/${PROJECT}/builds/${BUILD}#run-${RUN_ID}`,
+    );
+  });
+
+  test("Esc after a click on the card's surround goes back to the batch", async () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep({
+      reviewContext: { status: "failed", facets: {} },
+    });
+    press("A");
+    c1Decided(again);
+    // A click beside the card: focus leaves it for the page.
+    const user = userEvent.setup();
+    await user.click(r.getByTestId("batch-done-card-area"));
+    expect(card(r)!.contains(document.activeElement)).toBe(false);
+    await user.keyboard("{Escape}");
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(
+      `/projects/${PROJECT}/builds/${BUILD}?status=failed#run-${RUN_ID}`,
     );
   });
 

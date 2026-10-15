@@ -70,6 +70,7 @@ function props(over: Partial<Props> = {}): Props {
     batchUnfiltered: 0,
     onContinue: vi.fn(),
     onClearFilter: vi.fn(),
+    onLeave: vi.fn(),
     backHref: BACK,
     batchesHref: BATCHES,
     ...over,
@@ -183,19 +184,22 @@ describe("BatchDoneCard", () => {
 
   test("Esc goes back to the batch", () => {
     for (const variant of ["batch", "filtered", "all"] as const) {
-      router.push.mockReset();
-      const { getByRole } = renderCard({ variant, batchUnfiltered: 2 });
+      const { getByRole, props: p } = renderCard({
+        variant,
+        batchUnfiltered: 2,
+      });
       const from = document.activeElement!;
       expect(getByRole("dialog").contains(from)).toBe(true);
       const esc = createEvent.keyDown(from, { key: "Escape" });
       fireEvent(from, esc);
-      expect(router.push).toHaveBeenCalledOnce();
-      expect(router.push).toHaveBeenCalledWith(BACK);
+      // Through the loop, which orders it after any move on its way.
+      expect(p.onLeave).toHaveBeenCalledOnce();
+      expect(p.onLeave).toHaveBeenCalledWith(BACK);
       // Nothing else takes it (the viewer's own Esc yields).
       expect(esc.defaultPrevented).toBe(true);
       // Held down, it does not go twice.
       fireEvent.keyDown(from, { key: "Escape", repeat: true });
-      expect(router.push).toHaveBeenCalledOnce();
+      expect(p.onLeave).toHaveBeenCalledOnce();
       // The link says so.
       expect(
         getByRole("link", { name: "Back to batch" }).getAttribute(
@@ -206,13 +210,40 @@ describe("BatchDoneCard", () => {
     }
 
     // Also with focus on the card itself (a click on its body).
-    const { getByRole } = renderCard();
-    router.push.mockReset();
+    const { getByRole, props: p } = renderCard();
     const dialog = getByRole("dialog");
     act(() => dialog.focus());
     expect(document.activeElement).toBe(dialog);
     fireEvent.keyDown(dialog, { key: "Escape" });
-    expect(router.push).toHaveBeenCalledWith(BACK);
+    expect(p.onLeave).toHaveBeenCalledWith(BACK);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("Back to batch and Back to batches leave through the loop; a modified click is the browser's", () => {
+    const { getByRole, props: p } = renderCard({ nextBatch: null });
+    const back = getByRole("link", { name: "Back to batch" });
+    const batches = getByRole("link", { name: "Back to batches" });
+    /** Click, and say whether the page took the click from the link. */
+    const click = (el: Element, init: MouseEventInit = {}) => {
+      let prevented = false;
+      // Last in line: read the verdict, then keep jsdom from navigating.
+      const last = (e: Event) => {
+        prevented = e.defaultPrevented;
+        e.preventDefault();
+      };
+      window.addEventListener("click", last);
+      fireEvent.click(el, { button: 0, ...init });
+      window.removeEventListener("click", last);
+      return prevented;
+    };
+    expect(click(back)).toBe(true);
+    expect(p.onLeave).toHaveBeenLastCalledWith(BACK);
+    expect(click(batches)).toBe(true);
+    expect(p.onLeave).toHaveBeenLastCalledWith(BATCHES);
+    expect(p.onLeave).toHaveBeenCalledTimes(2);
+    // ⌘-click (a new tab) is left to the link.
+    expect(click(back, { metaKey: true })).toBe(false);
+    expect(p.onLeave).toHaveBeenCalledTimes(2);
   });
 
   test("announced via a polite live region", () => {
@@ -341,6 +372,7 @@ describe("BatchDoneCard, wired to the review loop", () => {
             batchUnfiltered={loop.next?.remaining.batchUnfiltered ?? 0}
             onContinue={loop.continueToNextBatch}
             onClearFilter={loop.clearFilter}
+            onLeave={loop.leave}
             backHref={BACK}
             batchesHref={BATCHES}
           />

@@ -528,6 +528,11 @@ export function DiffViewer({
       ? () => handleCheckpointSelect(checkpointSummaries[navIndex + 1]!.id)
       : undefined;
 
+  // Back to the batch as the reviewer left it, scrolled to this run.
+  const backHref = data?.buildId
+    ? batchHref(data.projectId, data.buildId, context, runId)
+    : undefined;
+
   // While the card is up, deciding and moving wait (R20): its keys are its
   // own wherever focus is. ⌘Z still undoes.
   const keysOn = card === null;
@@ -545,6 +550,8 @@ export function DiffViewer({
     onNextStep: keysOn ? onNextStep : undefined,
     onNextPending: loopOn && keysOn ? loop.goNext : undefined,
     onPrevPending: loopOn && keysOn ? loop.goPrev : undefined,
+    // Esc is the card's while it is up, wherever focus is: back to the batch.
+    onEscape: card && backHref ? () => loop.leave(backHref) : undefined,
   });
 
   if (isLoading)
@@ -557,10 +564,6 @@ export function DiffViewer({
     return <div className="p-4 text-sm text-fg-secondary">No run data.</div>;
 
   const isEmpty = data?.status === "empty";
-  // Back to the batch as the reviewer left it, scrolled to this run.
-  const backHref = data.buildId
-    ? batchHref(data.projectId, data.buildId, context, runId)
-    : undefined;
 
   // The header's review loop. The count is the answer's, so none until it
   // has come, and none after a failed lookup (what it knew before is stale).
@@ -738,6 +741,7 @@ export function DiffViewer({
             batchUnfiltered={loop.next?.remaining.batchUnfiltered ?? 0}
             onContinue={loop.continueToNextBatch}
             onClearFilter={loop.clearFilter}
+            onLeave={loop.leave}
             backHref={backHref}
             // The Batches page, with the status and branch kept.
             batchesHref={`/inbox${serializeReviewContext(context, ["status", "branch"])}`}

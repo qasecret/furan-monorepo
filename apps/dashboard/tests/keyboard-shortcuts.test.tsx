@@ -87,6 +87,27 @@ describe("useDiffViewerShortcuts", () => {
     expect(others.onApprove).toHaveBeenCalledOnce();
   });
 
+  it("Escape goes to onEscape instead of the viewer's own, when it is given", () => {
+    useViewerStore.setState({ ignoreEditMode: "run", selectedRegionId: "r1" });
+    const onEscape = vi.fn();
+    const { rerender } = renderHook(
+      (props: { onEscape?: () => void }) =>
+        useDiffViewerShortcuts({ viewports: [], ...props }),
+      { initialProps: { onEscape } as { onEscape?: () => void } },
+    );
+    act(() => press("Escape"));
+    expect(onEscape).toHaveBeenCalledOnce();
+    // The viewer's own Esc did not run.
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
+    expect(useViewerStore.getState().selectedRegionId).toBe("r1");
+    // Without it, Esc is the viewer's again.
+    rerender({});
+    act(() => press("Escape"));
+    expect(onEscape).toHaveBeenCalledOnce();
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+    expect(useViewerStore.getState().selectedRegionId).toBeNull();
+  });
+
   it("O cycles the mode", () => {
     renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     act(() => press("O"));

@@ -781,6 +781,39 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     expect(result.current.cardBusy).toBe(false);
   });
 
+  test("a Clear filter lookup that lands after Esc does not navigate", async () => {
+    const cleared = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(cleared.promise);
+    const { result } = withCard(3);
+    act(() => result.current.clearFilter());
+    // Esc (or a back link) leaves before the lookup comes back.
+    const back = `/projects/${PROJECT}/builds/${BUILD}#run-${RUN}`;
+    act(() => result.current.leave(back));
+    calledOnceWith(router.push, back);
+    await act(async () =>
+      cleared.resolve(
+        answer({
+          target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+          scope: "batch",
+        }),
+      ),
+    );
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(useReviewAnnouncer.getState().seq).toBe(0);
+  });
+
+  test("leaving drops a K answer still on its way too", async () => {
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result } = withCard();
+    act(() => result.current.goPrev());
+    act(() => result.current.leave("/inbox"));
+    await act(async () => prev.resolve(previous()));
+    calledOnceWith(router.push, "/inbox");
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   test("Clear filter waits for a move still on its way, as K does", async () => {
     const { result } = withCard(3);
     act(() => result.current.continueToNextBatch());

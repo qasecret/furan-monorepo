@@ -96,6 +96,12 @@ export interface ReviewLoop {
    */
   cardBusy: boolean;
   /**
+   * Leave the viewer for `href` (the card's Esc, Back to batch, Back to
+   * batches). It takes its place in the order of moves: a lookup or a K
+   * answer still on its way does not move the reviewer after it.
+   */
+  leave(href: string): void;
+  /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
    * ‹N› left in batch") while it is shown, for about 3 s (R15); else null.
    * Only the loop's own forward moves have one: K's do not (R16).
@@ -564,6 +570,14 @@ export function useReviewLoop({
 
   const dismissCard = useCallback(() => setShown(null), []);
 
+  const leave = useCallback(
+    (href: string) => {
+      epoch.current += 1;
+      router.push(href);
+    },
+    [router],
+  );
+
   // Busy until the route commits (the step changes), for at most 5 s: a move
   // the route never commits lets the buttons go again, as `goTo` does.
   useEffect(() => {
@@ -679,6 +693,7 @@ export function useReviewLoop({
     continueToNextBatch,
     clearFilter,
     cardBusy: busy !== null,
+    leave,
     cue: cue?.text ?? null,
   };
 }

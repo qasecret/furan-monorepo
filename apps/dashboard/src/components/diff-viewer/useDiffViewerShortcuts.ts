@@ -45,6 +45,12 @@ interface ShortcutOptions {
    */
   onNextPending?: () => void;
   onPrevPending?: () => void;
+  /**
+   * Esc, when something on the page takes it in place of the viewer's own
+   * (leave the ignore editor, clear the selection): the review loop's done
+   * card, which goes back to the batch wherever focus is.
+   */
+  onEscape?: () => void;
 }
 
 // <input> types that take no typed text — single-key shortcuts still apply
@@ -232,6 +238,11 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         }
       },
       Escape: () => {
+        const onEscape = optsRef.current.onEscape;
+        if (onEscape) {
+          onEscape();
+          return;
+        }
         const store = useViewerStore.getState();
         if (store.ignoreEditMode !== "off") {
           store.setIgnoreEditMode("off");
