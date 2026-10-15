@@ -1152,6 +1152,25 @@ describe("useReviewActions", () => {
     expect(review.decide).toHaveBeenCalledTimes(1);
   });
 
+  it("a single-step decision says where its step is, for the Undone toast's Go to; Approve pending does not", () => {
+    arrange({ items: [step(), step({ id: OTHER, name: "pricing" })] });
+    const stepHref = (id: string) => `/viewer/${id}?status=failed`;
+    const a = actionsFor({ stepHref });
+    const goTo = { href: `/viewer/${CP}?status=failed`, name: "home" };
+    a.approve();
+    a.reject();
+    a.markAsBug();
+    expect(review.decide.mock.calls.map(([args]) => args)).toEqual([
+      expect.objectContaining({ kind: "approved", goTo }),
+      expect.objectContaining({ kind: "rejected", goTo }),
+      expect.objectContaining({ label: "Marked 'home' as a bug", goTo }),
+    ]);
+    // Every pending step of the run: no one step to go back to.
+    a.approveAllCheckpoints();
+    expect(review.decide).toHaveBeenCalledTimes(4);
+    expect(review.decide.mock.calls[3]![0]).not.toHaveProperty("goTo");
+  });
+
   it("moves on right after it decides, without waiting for the server (R35)", () => {
     const onResolved = vi.fn();
     const order: string[] = [];

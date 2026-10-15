@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 const {
   reviewSpies,
   routerSpies,
+  navState,
   setIgnoreAreasSpy,
   nextQuery,
   utilsMock,
@@ -78,6 +79,8 @@ const {
     // One router object for every render, so effects that depend on it don't
     // re-run each time.
     routerSpies: { push: vi.fn(), replace: vi.fn() },
+    // The URL path on screen (`usePathname`), set by a test that needs it.
+    navState: { pathname: "" },
     // What the live `review.next` query answers (the review loop), set per
     // test, and every call it got.
     nextQuery: {
@@ -185,6 +188,7 @@ vi.mock("pixi.js", () => ({
 // useRouter.
 vi.mock("next/navigation", () => ({
   useRouter: () => routerSpies,
+  usePathname: () => navState.pathname,
 }));
 
 // ADR-032: tests override fields on this object (e.g., autoApproved)
@@ -380,6 +384,7 @@ function resetLoop() {
   vi.mocked(toast.success).mockReset();
   useLoopCue.setState({ cue: null });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
+  navState.pathname = "";
 }
 
 describe("DiffViewer", () => {
@@ -723,6 +728,12 @@ const press = (key: string) =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
 
+/** Where the Undone toast's Go to takes the reviewer back to cp-1. */
+const CP1 = {
+  href: `/projects/test-project-id/runs/${RUN_ID}/checkpoints/cp-1`,
+  name: "CP-1",
+};
+
 function resetReviewSpies() {
   reviewSpies.decide.mockReset();
   reviewSpies.undo.mockReset();
@@ -762,6 +773,7 @@ describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
       checkpointIds: ["cp-1"],
       kind: "approved",
       label: "Approved 'CP-1'",
+      goTo: CP1,
     });
   });
 
@@ -849,6 +861,7 @@ describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
       checkpointIds: ["cp-1"],
       kind: "rejected",
       label: "Rejected 'CP-1'",
+      goTo: CP1,
     });
     fireEvent.click(r.getByTestId("reject-button"));
     expect(reviewSpies.decide.mock.calls[1]).toEqual(
@@ -909,7 +922,12 @@ describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
 });
 
 describe("DiffViewer stale-capture guard", () => {
-  const NEWER = { runId: "run-newer", buildId: "build-2", buildName: "#42" };
+  const NEWER = {
+    runId: "run-newer",
+    checkpointId: "cp-9",
+    buildId: "build-2",
+    buildName: "#42",
+  };
   beforeEach(() => {
     mockGetByIdData = { ...defaultMockData };
     mockCheckpoints = {
@@ -975,10 +993,15 @@ describe("DiffViewer stale-capture guard", () => {
     expect(document.activeElement).toBe(more);
   });
 
-  test("shows the callout, linking to the newer capture", () => {
+  test("shows the callout, linking to the newer capture's own step, in the same filters", () => {
     mockGetByIdData = { ...defaultMockData, projectId: "proj-1" };
     const r = render(
-      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        reviewContext={{ status: "failed", facets: { browser: "chromium" } }}
+      />,
     );
     const callout = r.getByTestId("stale-step-callout");
     expect(callout.getAttribute("role")).toBe("status");
@@ -986,7 +1009,9 @@ describe("DiffViewer stale-capture guard", () => {
       "A newer capture of this step exists in build #42. Approving here makes this older image the baseline.",
     );
     const link = r.getByRole("link", { name: "Open the newer capture" });
-    expect(link.getAttribute("href")).toBe("/projects/proj-1/runs/run-newer");
+    expect(link.getAttribute("href")).toBe(
+      "/projects/proj-1/runs/run-newer/checkpoints/cp-9?status=failed&browser=chromium",
+    );
   });
 
   test("shows no callout when the step has no newer capture", () => {
@@ -1325,6 +1350,74 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.replace).toHaveBeenCalledTimes(1);
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledOnce();
+  });
+
+  test("⌘Z on the step the loop moved to: the Undone toast's Go to opens the step undone, in the same filters", async () => {
+    realReview.on = true;
+    useUndoStore.setState({ stack: [] });
+    server.approve.mockResolvedValue({
+      actionId: "echo",
+      decided: [{ checkpointId: "c1", runId: RUN_ID, state: "approved" }],
+      runs: [{ runId: RUN_ID, status: "unresolved" }],
+      replayed: false,
+      capped: false,
+      cap: 500,
+    });
+    server.revert.mockResolvedValue({
+      actionId: "echo",
+      reverted: 1,
+      skipped: [],
+      runs: [],
+    });
+    utilsMock.runs.listCheckpoints.getData.mockReturnValue(mockCheckpoints);
+    utilsMock.runs.getById.getData.mockReturnValue({
+      ...mockGetByIdData,
+      name: "Checkout",
+      statusOverride: null,
+      checkpointContexts: {},
+    });
+    nextQuery.data = answer();
+    const ctx = {
+      status: "failed" as const,
+      facets: { os: "macOS" },
+    };
+    const QUERY = "?status=failed&os=macOS";
+    const qc = new QueryClient();
+    const viewer = (step: string) => (
+      <QueryClientProvider client={qc}>
+        <DiffViewer
+          runId={RUN_ID}
+          projectId={PROJECT}
+          initialCheckpointId={step}
+          reviewContext={ctx}
+        />
+      </QueryClientProvider>
+    );
+    navState.pathname = stepUrl(RUN_ID, "c1");
+    render(viewer("c1"));
+    await pressAsync("A");
+    expect(routerSpies.replace).toHaveBeenCalledWith(
+      stepUrl(RUN_ID, "c3", QUERY),
+    );
+
+    // The move lands: the reviewer is on c3, and takes the decision back.
+    cleanup();
+    navState.pathname = stepUrl(RUN_ID, "c3");
+    render(viewer("c3"));
+    vi.mocked(toast.success).mockClear();
+    await pressAsync("z", { ctrlKey: true });
+    expect(server.revert).toHaveBeenCalledOnce();
+    expect(toast.success).toHaveBeenCalledOnce();
+    const [text, options] = vi.mocked(toast.success).mock.calls[0]!;
+    expect(text).toBe("Undone");
+    const action = (
+      options as { action?: { label: string; onClick: () => void } }
+    ).action;
+    expect(action?.label).toBe("Go to 'C1'");
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    action!.onClick();
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(RUN_ID, "c1", QUERY));
   });
 
   test("run not found: loop affordances hidden, review.next not called", async () => {

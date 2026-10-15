@@ -6,6 +6,7 @@ import {
   type CheckpointDecisionKind,
 } from "@furan/shared-types";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { create } from "zustand";
@@ -30,7 +31,7 @@ import {
   describeSkip,
   type ReviewError,
 } from "./review-copy";
-import { useUndoStore } from "./use-undo-store";
+import { useUndoStore, type UndoGoTo } from "./use-undo-store";
 
 import { trpc, type RouterInputs, type RouterOutputs } from "@/lib/trpc";
 
@@ -55,6 +56,11 @@ export interface DecideArgs {
   ignoreAreas?: RouterInputs["review"]["approve"]["ignoreAreas"];
   /** Only for a rejection. */
   reason?: string;
+  /**
+   * Only with exactly one checkpoint id: where that step is in the viewer,
+   * and its name. Undoing the decision offers to go back to it.
+   */
+  goTo?: UndoGoTo;
 }
 
 export interface DecideGroupArgs {
@@ -79,6 +85,9 @@ export interface ApproveBuildArgs {
 }
 
 const UNDO_TOAST_MS = 10_000;
+
+/** The path of a link, without its query or hash. */
+const pathOf = (href: string): string => href.split(/[?#]/, 1)[0] ?? href;
 
 /** Shown for a decision until the refetch brings the real reviewer back. */
 const OPTIMISTIC_ACTOR: Actor = { id: "", name: "You" };
@@ -142,6 +151,8 @@ interface Action {
   rollback?: ReviewChange;
   /** Checkpoints held in flight until the call settles. */
   held: string[];
+  /** A single-step decision's step, for the undo entry. */
+  goTo?: UndoGoTo;
   onConflict?: (preview: ApproveBuildPreview) => void;
   /** Called once the server has approved, and once the call is over. */
   onSuccess?: () => void;
@@ -243,11 +254,14 @@ function newActionId(): string {
  * caches that are loaded, and puts them back if the server refuses. Group and
  * build approvals wait for the server: it picks their members, and the build
  * one runs behind a confirmation that has its own pending state. Every call,
- * however it ends, refetches the review caches.
+ * however it ends, refetches the review caches. Undoing a single-step decision
+ * offers to go back to its step (`DecideArgs.goTo`), from anywhere but there.
  */
 export function useReviewMutations() {
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
   const inFlight = useInFlightStore((s) => s.ids);
   const caches: Caches = useMemo(
     () => ({ utils, queryClient }),
@@ -339,9 +353,25 @@ export function useReviewMutations() {
       onError(err, vars);
     },
     onSuccess: ({ reverted, skipped }: RevertResult, { actionId }) => {
+      // Read before it is dropped: a single-step decision knows its step.
+      const goTo = useUndoStore
+        .getState()
+        .stack.find((e) => e.actionId === actionId)?.goTo;
       useUndoStore.getState().drop(actionId);
       if (skipped.length === 0) {
-        toast.success("Undone");
+        // The step needs review again: offer to go back to it, unless the
+        // reviewer is on it already.
+        if (goTo && pathOf(goTo.href) !== pathname) {
+          toast.success("Undone", {
+            action: {
+              label: `Go to '${goTo.name}'`,
+              onClick: () => router.push(goTo.href),
+            },
+            duration: UNDO_TOAST_MS,
+          });
+        } else {
+          toast.success("Undone");
+        }
       } else if (
         reverted === 0 &&
         skipped.every((s) => s.reason === "already_undone")
@@ -416,7 +446,12 @@ export function useReviewMutations() {
         ? action.runIds
         : result.runs.map((r) => r.runId);
     const label = wordAction(action, result);
-    useUndoStore.getState().push({ actionId, label, runIds });
+    useUndoStore.getState().push({
+      actionId,
+      label,
+      runIds,
+      ...(action.goTo && { goTo: action.goTo }),
+    });
     toast.success(label, {
       action: { label: "Undo", onClick: () => undo(actionId) },
       duration: UNDO_TOAST_MS,
@@ -475,6 +510,8 @@ export function useReviewMutations() {
           inverse: (c) =>
             restoreChange(loadedFields(c, [runId], new Set(targets))),
           held: targets,
+          // Several steps have no one place to go back to.
+          ...(args.goTo && checkpointIds?.length === 1 && { goTo: args.goTo }),
         },
         () => {
           if (kind === "approved") {

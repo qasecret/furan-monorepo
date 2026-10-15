@@ -287,6 +287,7 @@ describe("RunResults review calls", () => {
       checkpointIds: ["c1"],
       kind: "approved",
       label: "Approved 'home'",
+      goTo: { href: "/projects/p1/runs/r1/checkpoints/c1", name: "home" },
     });
     fireEvent.click(screen.getByTestId("step-undo-c2"));
     expect(reviewSpies.undo).toHaveBeenCalledWith("a-approved");

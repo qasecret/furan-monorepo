@@ -77,6 +77,9 @@ const RUN: StepRun = {
 /** The review context of a clean URL: Needs review, no facets. */
 const CLEAN: ReviewContext = parseReviewContext(new URLSearchParams());
 
+/** Where the Undone toast's Go to takes the reviewer: the step, in the viewer. */
+const HOME = { href: "/projects/p1/runs/r1/checkpoints/c1", name: "home" };
+
 function renderCard(
   checkpoint: StepCheckpoint,
   over: { canReview?: boolean; run?: StepRun; ctx?: ReviewContext } = {},
@@ -135,6 +138,7 @@ describe("StepCard review actions", () => {
       checkpointIds: ["c1"],
       kind: "approved",
       label: "Approved 'home'",
+      goTo: HOME,
     });
   });
 
@@ -147,7 +151,26 @@ describe("StepCard review actions", () => {
       checkpointIds: ["c1"],
       kind: "rejected",
       label: "Rejected 'home'",
+      goTo: HOME,
     });
+  });
+
+  test("a card's decision says where its step is, in the page's review context", () => {
+    // The Undone toast's Go to opens the step in the viewer, inside the
+    // filters the batch page had; the branch and search stay behind.
+    const ctx = parseReviewContext(
+      new URLSearchParams("status=failed&os=macOS&branch=main&q=nav"),
+    );
+    renderCard(cp(), { ctx });
+    fireEvent.click(button("step-reject-c1"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goTo: {
+          href: "/projects/p1/runs/r1/checkpoints/c1?status=failed&os=macOS",
+          name: "home",
+        },
+      }),
+    );
   });
 
   test("an approved step offers Undo, not Approve or Reject", () => {
@@ -376,6 +399,7 @@ describe("StepCard approve of an older capture", () => {
       checkpointIds: ["c1"],
       kind: "approved",
       label: "Approved 'home'",
+      goTo: HOME,
     });
     expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
   });

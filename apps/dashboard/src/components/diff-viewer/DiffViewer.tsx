@@ -251,12 +251,21 @@ export function DiffViewer({
   // per-checkpoint decision, the step-state and run gates, unsaved ignore
   // regions folded in, the older-capture question, and the move to the next
   // pending step (the loop; Mark as Bug does not move). The loop is set up
-  // below, from the step's view; a decision reaches it when it is made.
+  // below, from the step's view; a decision reaches it when it is made. A
+  // decision says where its step is, in this review context, so its undo can
+  // offer to come back here.
+  const runProjectId = data?.projectId;
   const review = useReviewActions({
     runId,
     checkpointId: activeCheckpointId,
     status: data?.status,
     onResolved: () => loop.afterDecision(),
+    ...(runProjectId
+      ? {
+          stepHref: (id: string) =>
+            diffViewerHref(runProjectId, runId, id, context),
+        }
+      : {}),
   });
 
   // The review loop (spec §5.4), asked from the step on screen once `_first`
@@ -724,8 +733,10 @@ export function DiffViewer({
                 newer={{
                   buildName: review.newerCapture.buildName,
                   runId: review.newerCapture.runId,
+                  checkpointId: review.newerCapture.checkpointId,
                   projectId: data.projectId,
                 }}
+                context={context}
               />
             </div>
           )}

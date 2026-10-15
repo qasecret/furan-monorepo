@@ -48,6 +48,12 @@ export interface UseReviewActionsArgs {
    * approve-pending or override.
    */
   onResolved?: () => void;
+  /**
+   * The viewer's link to a step of this run, with its review context. A
+   * decision on one step hands it on, so undoing the decision offers to go
+   * back to that step. Without it, the undo offers nothing.
+   */
+  stepHref?: (checkpointId: string) => string;
 }
 
 export interface ReviewActions {
@@ -135,6 +141,7 @@ export function useReviewActions({
   checkpointId,
   status,
   onResolved,
+  stepHref,
 }: UseReviewActionsArgs): ReviewActions {
   const utils = trpc.useUtils();
   const { decide, undo, isInFlight } = useReviewMutations();
@@ -197,6 +204,11 @@ export function useReviewActions({
 
   // The step's name, for the labels the toasts and the undo list show.
   const quoted = listed?.name ? `'${listed.name}'` : "this step";
+  // Where the step is, for the Undone toast's Go to: named like the label.
+  const goTo = (id: string) =>
+    stepHref && listed?.name
+      ? { goTo: { href: stepHref(id), name: listed.name } }
+      : {};
 
   // ADR-036: when the reviewer has drawn/edited ignore regions but not
   // separately saved them, fold them into the approve call so approving
@@ -218,13 +230,20 @@ export function useReviewActions({
       kind: "approved",
       label: `Approved ${quoted}`,
       ...pendingIgnoreAreas(),
+      ...goTo(checkpointId),
     });
     onResolved?.();
   };
 
   const rejectStep = (label: string): boolean => {
     if (!checkpointId) return false;
-    decide({ runId, checkpointIds: [checkpointId], kind: "rejected", label });
+    decide({
+      runId,
+      checkpointIds: [checkpointId],
+      kind: "rejected",
+      label,
+      ...goTo(checkpointId),
+    });
     return true;
   };
 
