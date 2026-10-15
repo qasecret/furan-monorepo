@@ -150,7 +150,8 @@ means every screenshot test passed.
   `state-batch-done` the card J raises at a batch's end, here "Done with the
   filtered steps"; `state-undo-toast` the toast with its Undo action.) The
   All caught up card is not reachable here: the fixture always has pending
-  work.
+  work. `tests/ui/review-loop.spec.ts` shoots it instead, with the same axe
+  `color-contrast` check in both themes (see Coverage matrix).
 - **Contrast axe cannot decide.** axe `incomplete` results (text over an
   image or gradient, overlapped or pseudo-element backgrounds, …) are counted
   by reason (`messageKey`) per shot in `color-contrast.json` and annotated
@@ -219,13 +220,31 @@ page. It never touches the visual sweep's fixture. It runs in `s3-full`: like
 the diff viewer, it reads and writes through the dashboard's client-side calls,
 which reach the api through the stack's single origin (3011).
 
+`tests/ui/review-loop.spec.ts` (capability `review.loop`, not `@visual`)
+drives the review loop in a real browser, also on data of its own, in a
+project created fresh for every run (`review-loop-ui-<timestamp>`): "Start
+reviewing" and "All caught up" speak for the whole project, so nothing may be
+pending there but this run's steps. Two batches need review on one branch, an
+older one with two tests and a newer one with one. From Batches (Needs review,
+"Start reviewing (2)") it opens the newer batch, approves with `A`, continues
+from the "Batch done" card to the older one with Enter, approves its first
+test and is moved to the second with the "Next test" cue, and approves that to
+reach "All caught up". That card is shot, and checked with axe
+`color-contrast`, in light and dark (problems fail the test, as in the sweep).
+It then goes back to a batch from the viewer with a `viewport` filter set and
+checks the filter is kept, and opens an old `/runs/:r/diffs/:step` link to
+check it lands on that exact step. Batches lists the signed-in user's default
+project, so for its run the spec makes its project the bootstrap admin's
+default (keeping their memberships) and puts the old assignment back in
+`afterAll`. It runs in `s3-full`, like `review-flow.spec.ts`.
+
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 4 times (the seeder, then
-  the login, dashboard and review-flow specs), so repeated Playwright runs
-  against a kept stack trip it after a few iterations: the login form then
-  reads "Invalid email or password" and the api logs
+  per-account login brake, ADR-063). A run signs in 5 times (the seeder, then
+  the login, dashboard, review-flow and review-loop specs), so repeated
+  Playwright runs against a kept stack trip it after a few iterations: the
+  login form then reads "Invalid email or password" and the api logs
   `login_account_rate_limited` (429). Wait out the window, or recreate the
   stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
