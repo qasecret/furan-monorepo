@@ -279,6 +279,41 @@ describe("command registry", () => {
     expect(hint).toEqual(approveHint);
   });
 
+  it("CommandRoleProvider writes the role on its first client render", () => {
+    // A layout effect alone would leave the store at "guest" for the tree
+    // below's first render, so a button's hint would flash "no keys".
+    const seen: ViewerRole[] = [];
+    function Probe() {
+      seen.push(useCommandRegistry.getState().role);
+      return null;
+    }
+    render(
+      createElement(CommandRoleProvider, {
+        role: "editor",
+        children: createElement(Probe),
+      }),
+    );
+    expect(seen[0]).toBe("editor");
+    expect(useCommandRegistry.getState().role).toBe("editor");
+  });
+
+  it("CommandRoleProvider resets the role to guest when it unmounts", () => {
+    const { unmount } = render(
+      createElement(CommandRoleProvider, { role: "admin", children: null }),
+    );
+    expect(useCommandRegistry.getState().role).toBe("admin");
+    unmount();
+    expect(useCommandRegistry.getState().role).toBe("guest");
+
+    // A provider that replaces another in one commit keeps its own role: the
+    // old one's cleanup must not win over the new one's write.
+    const provider = (key: string, role: ViewerRole) =>
+      createElement(CommandRoleProvider, { key, role, children: null });
+    const tree = render(provider("a", "admin"));
+    tree.rerender(provider("b", "editor"));
+    expect(useCommandRegistry.getState().role).toBe("editor");
+  });
+
   it("most specific scope wins on a shared key", () => {
     const at = (scope: CommandScope, id: string, keys: string[]) =>
       ({
@@ -350,6 +385,40 @@ describe("command registry", () => {
     ).toThrow(/"Shift\+A"/);
   });
 
+  it("the duplicate check normalises the existing holder's key too", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // The holder is written "A", the newcomer "a": still one key.
+    mount("viewer", [command("viewer", "review.approve", ["A"])]);
+    expect(() =>
+      mount("viewer", [command("viewer", "viewer.other", ["a"])]),
+    ).toThrow(/review\.approve.*viewer\.other/);
+  });
+
+  it("one command may not bind the same key twice", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // The same key in two cases, or once bare and once with an option.
+    expect(() =>
+      mount("viewer", [command("viewer", "review.approve", ["a", "A"])]),
+    ).toThrow('Command "review.approve" binds the key "a" twice');
+    expect(() =>
+      mount("viewer", [
+        command("viewer", "review.reject", [
+          "a",
+          { key: "a", focusWithin: "[data-list]" },
+        ]),
+      ]),
+    ).toThrow('Command "review.reject" binds the key "a" twice');
+    expect(useCommandRegistry.getState().entries).toHaveLength(0);
+
+    // Two different keys, or one key used by two commands (another error),
+    // are not this problem.
+    expect(() =>
+      mount("viewer", [command("viewer", "review.next", ["j", "ArrowDown"])]),
+    ).not.toThrow();
+  });
+
   it("a command registered under the wrong scope throws in development", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -410,6 +479,27 @@ describe("command registry", () => {
       keys: [["J"], ["↓"]],
       ariaKeyShortcuts: "J ArrowDown",
       titleSuffix: " (J)",
+    });
+  });
+
+  it("an object binding keeps the command's allowInDialog and passesUndo", () => {
+    const undo = command("global", "review.undo", [{ key: "$mod+z" }], {
+      allowInDialog: "[data-done-card]",
+      passesUndo: true,
+      focusWithin: "[data-list]",
+    });
+    expect(bindingOptions(undo, { key: "$mod+z" })).toEqual({
+      focusWithin: "[data-list]",
+      allowInDialog: "[data-done-card]",
+      passesUndo: true,
+    });
+    // A per-key option overrides only its own field.
+    expect(
+      bindingOptions(undo, { key: "$mod+z", focusWithin: "[data-other]" }),
+    ).toEqual({
+      focusWithin: "[data-other]",
+      allowInDialog: "[data-done-card]",
+      passesUndo: true,
     });
   });
 

@@ -78,8 +78,9 @@ let lastOwner = 0;
 
 /**
  * What is wrong with registering `incoming` in `scope`: a command declaring
- * another scope, or a key (compared as tinykeys matches it, so "A" is "a")
- * shared with another command of the same scope. Null when nothing is.
+ * another scope, a key (compared as tinykeys matches it, so "A" is "a")
+ * shared with another command of the same scope, or one command binding a key
+ * twice (its second binding's options would be dropped). Null when nothing is.
  */
 function registrationProblem(
   scope: CommandScope,
@@ -100,9 +101,16 @@ function registrationProblem(
     }
   }
   for (const command of incoming) {
-    const own = new Set((command.keys ?? []).map(bindingKey));
-    for (const key of own) {
+    // Each key as first written, by identity, for this command alone.
+    const own = new Map<string, string>();
+    for (const b of command.keys ?? []) {
+      const key = bindingKey(b);
       const identity = keyIdentity(key);
+      const first = own.get(identity);
+      if (first !== undefined) {
+        return `Command "${command.id}" binds the key "${first}" twice.`;
+      }
+      own.set(identity, key);
       const holder = holders.get(identity);
       if (holder !== undefined) {
         return `Commands "${holder}" and "${command.id}" share the key "${key}" in the "${scope}" scope.`;
@@ -142,7 +150,8 @@ function register(
  * Supplies the viewer's role to every command's ctx. Mounted once, in the
  * protected layout. It writes the role into the registry: straight away on
  * its first client render, so the tree below renders with it, and in a
- * layout effect on every change, before paint.
+ * layout effect on every change, before paint. Unmounted, it puts the role
+ * back to "guest".
  */
 export function CommandRoleProvider({
   role,
@@ -163,6 +172,12 @@ export function CommandRoleProvider({
   useLayoutEffect(() => {
     useCommandRegistry.setState({ role });
   }, [role]);
+  // Gone, the role goes with it: least privilege until a provider says
+  // otherwise. A provider that replaces this one writes after this runs.
+  useLayoutEffect(
+    () => () => useCommandRegistry.setState({ role: "guest" }),
+    [],
+  );
   return createElement(Fragment, null, children);
 }
 
