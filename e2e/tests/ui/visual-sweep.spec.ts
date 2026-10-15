@@ -85,6 +85,7 @@ const STATIC_NAMES = staticRoutes({
   unresolvedRunId: "",
   multiRunId: "",
   multiBuildId: "",
+  loopBuildId: "",
 }).map((r) => r.name);
 
 /**
@@ -477,10 +478,12 @@ test.describe.serial("visual sweep @visual", () => {
     await p.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1);
     await settle(p);
     const landedPath = new URL(p.url()).pathname;
-    if (landedPath !== v.path) {
+    // A state may name a query (a filter); only the path is compared.
+    const wantedPath = new URL(v.path, "http://sweep.invalid").pathname;
+    if (landedPath !== wantedPath) {
       testInfo.annotations.push({
         type: "landed-elsewhere",
-        description: `${v.path} → ${landedPath}`,
+        description: `${wantedPath} → ${landedPath}`,
       });
     }
     await unclip(p);

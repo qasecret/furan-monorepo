@@ -54,7 +54,8 @@ version`); older versions don't support them. Output: `e2e-coverage.md` /
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
 full-page PNG at a 1440×900 viewport, plus the interaction states in
 `STATES` (⌘K open, a menu open, a dialog open, a step card hovered, a decided
-step, the Approve-pending question, the Undo toast), and runs axe
+step, the Approve-pending question, a batch's viewport filter open and
+matching nothing, the batch-done card, the Undo toast), and runs axe
 `color-contrast` on each. The dashboard scrolls inside its own containers,
 never the document, so before capturing, `src/visual/unclip.ts` lets those
 containers grow to their content: the PNG and axe cover the whole page, not
@@ -95,7 +96,13 @@ Then check out the branch in that worktree (the dev server hot-reloads) and
 re-run with `VISUAL_LABEL=after`. PNGs land in
 `visual-out/<VISUAL_LABEL>/<theme>/<route>.png` (override the root with
 `VISUAL_OUT`); the fixture project's IDs are kept in `.visual-sweep.json` so
-both runs capture the same data. Both are gitignored. The fixture also makes
+both runs capture the same data. Both are gitignored. A `.visual-sweep.json`
+from before the multi-step run or the loop batch existed is upgraded in
+place: the project and everything it holds stay as they are, and only the
+missing batch is added (the file is written after each addition). The fixture
+holds three batches: the single-step build, the multi-step build, and a
+"loop" batch (two runs, one at a phone viewport, each with one pending changed
+step) that is always the newest. The fixture also makes
 that project the bootstrap admin's default project (keeping its other
 memberships), so `/inbox` captures the batches table rather than "No project
 assigned".
@@ -124,16 +131,21 @@ means every screenshot test passed.
 **What the sweep does not cover.** A green sweep says nothing about:
 
 - **The project, builds and runs screens as such.** `project`, `builds` and
-  `runs` redirect to the latest batch (the multi-step build), so those three
-  shots are the same screen as `build-multi`; `build` shows the single-step
-  build.
-- **States the fixture never renders:** empty and error states, a selected
-  region, menus opened from the keyboard, settings tabs other than the
+  `runs` redirect to the latest batch (the loop batch), so those three shots
+  are the same screen, and the loop batch has no shot of its own; `build`
+  shows the single-step build and `build-multi` the multi-step one.
+- **States the fixture never renders:** error states, empty states other
+  than a filter that matches nothing, a selected region, menus opened from the keyboard, settings tabs other than the
   default, and toasts other than the review Undo toast. (The multi-step run
   covers step arrows and the approved, rejected and pending-`new` steps;
   `state-step-hover` covers a step card's hover toolbar; `state-decided-step`
   the decision chip; `state-approve-pending` the Approve-pending question;
-  `state-undo-toast` the toast with its Undo action.)
+  `state-facets-open` the batch's Viewport filter open;
+  `state-filtered-empty` a shared link whose filter matches nothing;
+  `state-batch-done` the card J raises at a batch's end, here "Done with the
+  filtered steps"; `state-undo-toast` the toast with its Undo action.) The
+  All caught up card is not reachable here: the fixture always has pending
+  work.
 - **Contrast axe cannot decide.** axe `incomplete` results (text over an
   image or gradient, overlapped or pseudo-element backgrounds, …) are counted
   by reason (`messageKey`) per shot in `color-contrast.json` and annotated

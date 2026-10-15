@@ -63,6 +63,13 @@ export interface CaptureRunInput extends Omit<
   "checkpointName" | "fixture"
 > {
   checkpoints: Array<{ name: string; fixture: Fixture }>;
+  /**
+   * Append the run to this existing build (the project's, on `branchName`)
+   * instead of creating one: how a batch comes to hold several runs. A build
+   * made here is named by `buildName`; an existing one already has its name,
+   * so giving both is an error.
+   */
+  buildId?: string;
 }
 
 export interface CaptureRunResult {
@@ -199,12 +206,13 @@ export async function capture(
 }
 
 /**
- * Capture one run with several checkpoints: ONE build and ONE run, one upload
- * per checkpoint in the order given, then complete and wait for the verdict of
- * the run and of every checkpoint — the flow of a multi-step test. The run is
- * named after the first checkpoint. Every checkpoint is uploaded with the
- * base64 endpoint; `matchLevel` / accessibility options (multipart only) are
- * not supported here, use `capture`.
+ * Capture one run with several checkpoints: ONE run (in a new build, or in
+ * `input.buildId`'s), one upload per checkpoint in the order given, then
+ * complete and wait for the verdict of the run and of every checkpoint — the
+ * flow of a multi-step test. The run is named after the first checkpoint.
+ * Every checkpoint is uploaded with the base64 endpoint; `matchLevel` /
+ * accessibility options (multipart only) are not supported here, use
+ * `capture`.
  */
 export async function captureRun(
   api: ApiClient,
@@ -219,13 +227,23 @@ export async function captureRun(
     );
   }
 
-  const build = await api.createBuild(input.pat, input.projectId, {
-    branchName: input.branchName,
-    ...(input.buildName ? { name: input.buildName } : {}),
-  });
+  if (input.buildId !== undefined && input.buildName !== undefined) {
+    throw new Error(
+      "captureRun: buildName names a new build, so it cannot be combined with buildId",
+    );
+  }
+
+  const buildId =
+    input.buildId ??
+    (
+      await api.createBuild(input.pat, input.projectId, {
+        branchName: input.branchName,
+        ...(input.buildName ? { name: input.buildName } : {}),
+      })
+    ).id;
   const run = await api.createRun(input.pat, {
     projectId: input.projectId,
-    buildId: build.id,
+    buildId,
     name: first.name,
     branchName: input.branchName,
     ...(input.parentBranchName
@@ -259,7 +277,7 @@ export async function captureRun(
   );
   const settled = await pollRunStatus(api, input.pat, run.runId);
   return {
-    buildId: build.id,
+    buildId,
     runId: run.runId,
     status: settled.status,
     autoApproved: settled.autoApproved,

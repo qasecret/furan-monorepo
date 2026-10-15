@@ -319,8 +319,9 @@ export const STATES: ReadonlyArray<VisualState> = [
     hold: hoverFirstStep,
   },
   // ---- the review flow --------------------------------------------------
-  // Added at the END, in this order: the first two only look, the last one
-  // changes the fixture (and puts it back, see `cleanup`), so it must run last.
+  // Added at the END, in this order: all but the last only look (or, as the
+  // done card's J, only read the fixture), the last one changes it (and puts
+  // it back, see `cleanup`), so it must run last.
   {
     // The multi-step run opens on `home`, an approved step: the header shows
     // who decided it, and when, with Undo.
@@ -348,6 +349,58 @@ export const STATES: ReadonlyArray<VisualState> = [
         dialog.getByText(/^Approve \d+ pending steps?\?$/),
       ).toBeVisible();
       await expect(dialog.getByTestId("approve-pending-confirm")).toBeEnabled();
+    },
+  },
+  {
+    // The multi-step batch with its Viewport filter open: "Any viewport" and the
+    // batch's viewport, with its pending count.
+    name: "state-facets-open",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: async (p) => {
+      // The select is drawn only once the batch's values are known.
+      const trigger = p.getByTestId("facet-select-viewport");
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      await expect(p.getByRole("listbox")).toBeVisible();
+      await expect(
+        p.getByRole("option", { name: /^\d+x\d+ · \d+ pending$/ }).first(),
+      ).toBeVisible();
+    },
+  },
+  {
+    // A viewport the batch has none of, as a shared link can name one: the
+    // empty list and the select that says why ("0x0 (not in this batch)").
+    name: "state-filtered-empty",
+    path: (f) =>
+      `/projects/${f.projectId}/builds/${f.multiBuildId}?viewport=0x0`,
+    open: async (p) => {
+      await expect(p.getByTestId("batch-empty-filtered")).toBeVisible();
+      await expect(p.getByTestId("facet-select-viewport")).toContainText(
+        "not in this batch",
+      );
+    },
+  },
+  {
+    // J on the multi-step run's decided `home` step, with a browser filter that
+    // no step of the project matches: nothing is left inside the filter, so the
+    // viewer shows the done card instead of moving (here "Done with the
+    // filtered steps": `profile` still needs review outside the filter). The
+    // step is decided, so J lands on the boundary rather than announcing "last
+    // step" (a pending one shows a header chip, not a card). The fixture's
+    // steps are all chromium, so no step inside `browser=firefox` can pull J
+    // elsewhere. Only reads; nothing to put back.
+    name: "state-batch-done",
+    path: (f) =>
+      `/projects/${f.projectId}/runs/${f.multiRunId}?browser=firefox`,
+    open: async (p) => {
+      await openStep(p, "home");
+      await expect(p.getByTestId("decision-chip")).toBeVisible();
+      await p.keyboard.press("j");
+      await expect(
+        p.getByRole("dialog", {
+          name: /^(Batch done|Done with the filtered steps)$/,
+        }),
+      ).toBeVisible();
     },
   },
   {
