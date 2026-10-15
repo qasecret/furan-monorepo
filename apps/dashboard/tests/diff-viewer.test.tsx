@@ -385,6 +385,7 @@ function resetLoop() {
   vi.mocked(toast.success).mockReset();
   useLoopCue.setState({ cue: null });
   loopHandoff.slot = null;
+  useInFlightStore.setState({ ids: new Set(), decisions: new Set() });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
   navState.pathname = "";
 }

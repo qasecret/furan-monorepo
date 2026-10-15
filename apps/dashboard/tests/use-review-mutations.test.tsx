@@ -382,7 +382,7 @@ beforeEach(() => {
   server.approveBuild.mockResolvedValue(decided([RUN, RUN_2]));
   server.revert.mockResolvedValue(reverted());
   useUndoStore.setState({ stack: [] });
-  useInFlightStore.setState({ ids: new Set() });
+  useInFlightStore.setState({ ids: new Set(), decisions: new Set() });
   nav.router.push.mockReset();
   nav.pathname = "/projects/p-1/builds/build-1";
 });
@@ -1001,6 +1001,45 @@ describe("useReviewMutations: in flight", () => {
     first.resolve(decided());
     await run();
     expect(forA.result.current).toBe(false);
+  });
+
+  it("a refused decision stops being one before its rollback lands, and stays held until it settles", async () => {
+    // The review loop takes the step reading pending again for an undo only
+    // when no decision on it is in flight (R30, R36): so the refusal must be
+    // known before the rollback writes the step back, whatever order React
+    // renders the two in.
+    seed();
+    const refusal = deferred();
+    server.approve.mockReturnValueOnce(refusal.promise);
+    const { result, run } = setup();
+    await run(() =>
+      result.current.decide({
+        runId: RUN,
+        checkpointIds: [A],
+        kind: "approved",
+        label: "Approved home",
+      }),
+    );
+    expect(useInFlightStore.getState().decisions.has(A)).toBe(true);
+    // What the store says when the rollback writes the step list.
+    const seen: Array<{ decision: boolean; held: boolean }> = [];
+    utils.runs.listCheckpoints.setData.mockImplementationOnce(
+      (input: unknown, updater: unknown) => {
+        const { ids, decisions } = useInFlightStore.getState();
+        seen.push({ decision: decisions.has(A), held: ids.has(A) });
+        return qc.setQueryData(
+          keyOf(["runs", "listCheckpoints"], input),
+          updater as never,
+        );
+      },
+    );
+
+    refusal.reject(trpcError("already_decided", "CONFLICT"));
+    await run();
+
+    expect(seen).toEqual([{ decision: false, held: true }]);
+    expect(itemState(A)).toBe("unresolved");
+    expect(useInFlightStore.getState().ids.has(A)).toBe(false);
   });
 
   it("frees the checkpoint again after a failure", async () => {
