@@ -62,6 +62,7 @@ type CP = {
   viewport: string;
   browser: string;
   os: string | null;
+  device: string | null;
   imageKey: string | null;
 };
 
@@ -75,6 +76,7 @@ function cp(over: Partial<CP> = {}): CP {
     viewport: "1280x720",
     browser: "chromium",
     os: "linux",
+    device: null,
     imageKey: "k1",
     ...over,
   };
@@ -403,6 +405,67 @@ describe("RunResults environment facets", () => {
     expect(screen.queryByTestId("step-card-c3")).toBeNull();
   });
 
+  test("a run with steps on two devices: the device facet narrows the steps, n of m counts the matching ones, one #run anchor", () => {
+    // Same viewport, browser and OS: only the device tells the steps apart.
+    const onTwoDevices = () => [
+      cp({
+        id: "c1",
+        name: "home",
+        verdict: "unresolved",
+        state: "unresolved",
+        device: "iPhone 15",
+      }),
+      cp({ id: "c2", name: "cart", device: "iPhone 15" }),
+      cp({
+        id: "c3",
+        name: "home",
+        verdict: "unresolved",
+        state: "unresolved",
+        device: "Pixel 8",
+      }),
+      cp({ id: "c4", name: "cart", device: null }),
+    ];
+
+    const view = renderRun(onTwoDevices(), "unresolved", null, {
+      ctx: ctxOf("device=iPhone%2015"),
+    });
+    expect(screen.getByTestId("step-card-c1")).toBeDefined();
+    expect(screen.getByTestId("step-card-c2")).toBeDefined();
+    // The other device's step, and a step with no device, are not this device.
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+    expect(screen.queryByTestId("step-card-c4")).toBeNull();
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "1 of 2 pending",
+    );
+    expect(anchors()).toHaveLength(1);
+    view.unmount();
+
+    // Without the facet every step is back, counted together.
+    renderRun(onTwoDevices(), "unresolved");
+    expect(screen.getByTestId("step-card-c3")).toBeDefined();
+    expect(screen.getByTestId("step-card-c4")).toBeDefined();
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "2 of 4 pending",
+    );
+    expect(anchors()).toHaveLength(1);
+  });
+
+  test("a device facet holds together with the others, on the same step", () => {
+    renderRun(
+      [
+        cp({ id: "c1", browser: "safari", device: "iPhone 15" }),
+        cp({ id: "c2", browser: "chrome", device: "iPhone 15" }),
+        cp({ id: "c3", browser: "safari", device: "Pixel 8" }),
+      ],
+      "passed",
+      null,
+      { ctx: ctxOf("browser=safari&device=iPhone%2015") },
+    );
+    expect(screen.getByTestId("step-card-c1")).toBeDefined();
+    expect(screen.queryByTestId("step-card-c2")).toBeNull();
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+  });
+
   test("facets given together hold on the same step", () => {
     renderRun(
       [
@@ -444,6 +507,33 @@ describe("RunResults counts from the list", () => {
     expect(screen.getByTestId("result-pending-r1").textContent).toBe(
       "2 of 5 pending",
     );
+  });
+
+  test("with a facet on, the list's counts are not both ratios: only the pending count is said", () => {
+    // `pendingCount` counts inside the facets, `stepCount` all the steps, so
+    // "2 of 5" would compare two different sets.
+    renderRun([], "unresolved", null, {
+      ctx: ctxOf("viewport=390x844"),
+      pendingCount: 2,
+      stepCount: 5,
+    });
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "2 pending",
+    );
+  });
+
+  test("the same holds for each facet", () => {
+    for (const q of ["browser=safari", "os=iOS", "device=iPhone%2015"]) {
+      cleanup();
+      renderRun([], "unresolved", null, {
+        ctx: ctxOf(q),
+        pendingCount: 3,
+        stepCount: 7,
+      });
+      expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+        "3 pending",
+      );
+    }
   });
 
   test("with nothing pending in the list it says nothing", () => {

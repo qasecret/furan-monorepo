@@ -50,10 +50,12 @@ const previewMock = vi.fn();
 const nextMock = vi.fn();
 const fetchNext = vi.fn();
 const invalidateNext = vi.fn();
+const invalidateFacets = vi.fn();
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
       review: { next: { fetch: fetchNext, invalidate: invalidateNext } },
+      runs: { facets: { invalidate: invalidateFacets } },
     }),
     builds: { getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) } },
     runs: {
@@ -179,6 +181,8 @@ beforeEach(() => {
   nextMock.mockReturnValue({ data: nextAnswer(2), isLoading: false });
   fetchNext.mockReset();
   fetchNext.mockResolvedValue(nextAnswer(2));
+  invalidateNext.mockReset();
+  invalidateFacets.mockReset();
   // Default: runs have no resolvable checkpoints yet, so each renders as a
   // single fallback result row carrying the test name.
   listCheckpointsMock.mockReset();
@@ -269,6 +273,7 @@ const step = (id: string, over: Record<string, unknown> = {}) => ({
   viewport: "1280x720",
   browser: "chromium",
   os: "linux",
+  device: null,
   imageKey: null,
   ...over,
 });
@@ -894,6 +899,48 @@ describe("BatchPage environment facets", () => {
   });
 });
 
+describe("BatchPage environment facets: device", () => {
+  test("a run with steps on two devices: the device facet narrows the steps, n of m counts the matching ones, one #run anchor", () => {
+    withBuild();
+    listMock.mockReturnValue(
+      listOf([runItem("r1", { pendingCount: 1, stepCount: 3 })]),
+    );
+    listCheckpointsMock.mockReturnValue({
+      data: {
+        items: [
+          step("c1", { name: "home", device: "iPhone 15" }),
+          step("c2", {
+            name: "cart",
+            device: "iPhone 15",
+            verdict: "passed",
+            state: "passed",
+          }),
+          step("c3", { name: "home", device: "Pixel 8" }),
+        ],
+      },
+      isLoading: false,
+    });
+    const anchors = () => document.querySelectorAll('[id="run-r1"]');
+
+    const view = render(batchPage("device=iPhone%2015"));
+    expect(lastListInput()).toMatchObject({ device: "iPhone 15" });
+    expect(screen.getByTestId("step-card-c1")).toBeDefined();
+    expect(screen.getByTestId("step-card-c2")).toBeDefined();
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "1 of 2 pending",
+    );
+    expect(anchors()).toHaveLength(1);
+
+    view.rerender(batchPage("status=all"));
+    expect(screen.getByTestId("step-card-c3")).toBeDefined();
+    expect(screen.getByTestId("result-pending-r1").textContent).toBe(
+      "2 of 3 pending",
+    );
+    expect(anchors()).toHaveLength(1);
+  });
+});
+
 describe("BatchPage Start reviewing", () => {
   test("Start reviewing (N) opens the first pending step inside the filter", async () => {
     withBuild();
@@ -1014,6 +1061,69 @@ describe("BatchPage Start reviewing", () => {
     );
   });
 
+  test("when the review queue cannot be read it says so, stays pressable and asks again", () => {
+    withBuild();
+    listMock.mockReturnValue(listOf([runItem("r1")]));
+    const refetch = vi.fn();
+    nextMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    });
+    render(batchPage());
+    const button = screen.getByTestId(
+      "batch-start-reviewing",
+    ) as HTMLButtonElement;
+    // Never a dead, silent button: it is not disabled, it names the problem
+    // (to the eye as a tooltip, to a screen reader as its name) and the way on.
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("title")).toBe("Couldn't load the review queue");
+    expect(button.getAttribute("aria-label")).toBe(
+      "Start reviewing: Couldn't load the review queue. Press to try again.",
+    );
+
+    fireEvent.click(button);
+    expect(refetch).toHaveBeenCalledOnce();
+    // It retries; it does not open the viewer on a queue it does not have.
+    expect(fetchNext).not.toHaveBeenCalled();
+    expect(routerMock.push).not.toHaveBeenCalled();
+  });
+
+  test("once the queue loads again the button is Start reviewing (N) as ever", async () => {
+    withBuild();
+    listMock.mockReturnValue(listOf([runItem("r1")]));
+    nextMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+    const view = render(batchPage());
+    nextMock.mockReturnValue({ data: nextAnswer(3), isLoading: false });
+    view.rerender(batchPage());
+    const button = screen.getByTestId("batch-start-reviewing");
+    expect(button.textContent).toBe("Start reviewing (3)");
+    expect(button.hasAttribute("title")).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(routerMock.push).toHaveBeenCalled());
+  });
+
+  test("an error that leaves an earlier answer in place does not hide the count", () => {
+    withBuild();
+    listMock.mockReturnValue(listOf([runItem("r1")]));
+    nextMock.mockReturnValue({
+      data: nextAnswer(4),
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+    render(batchPage());
+    expect(screen.getByTestId("batch-start-reviewing").textContent).toBe(
+      "Start reviewing (4)",
+    );
+  });
+
   test("a reader who may not review gets no Start reviewing and no review.next call", () => {
     withBuild();
     listMock.mockReturnValue(listOf([runItem("r1")]));
@@ -1023,6 +1133,26 @@ describe("BatchPage Start reviewing", () => {
       expect.anything(),
       expect.objectContaining({ enabled: false }),
     );
+  });
+});
+
+describe("BatchPage Refresh", () => {
+  test("starts the list over and refreshes the environment filter counts of this batch", () => {
+    getByIdMock.mockReturnValue({
+      data: build,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const refetchList = vi.fn();
+    listMock.mockReturnValue(
+      listOf([runItem("r1")], null, { refetch: refetchList }),
+    );
+    render(batchPage());
+    fireEvent.click(screen.getByTestId("batch-refresh"));
+    expect(refetchList).toHaveBeenCalled();
+    expect(invalidateNext).toHaveBeenCalled();
+    expect(invalidateFacets).toHaveBeenCalledWith({ buildId: "b1" });
   });
 });
 
@@ -1222,6 +1352,37 @@ describe("BatchPage back to batch (#run anchor)", () => {
     // No error, the rows are there, and the reviewer can still load more.
     expect(screen.getAllByTestId(/^result-row-/)).toHaveLength(10);
     expect(screen.getByRole("button", { name: "Load more" })).toBeDefined();
+  });
+
+  test("a page still showing the previous filter's answer does not count toward the cap, nor load more", async () => {
+    withBuild();
+    arriveAt("#run-missing");
+    // A batch that never ends, where each new page is first answered with the
+    // previous page kept in view (`placeholderData`), as the query does while
+    // it fetches; only a later look finds the real answer.
+    const answered = new Set<string | undefined>([undefined]);
+    let shown = listOf([runItem("r0")], "c1");
+    listMock.mockImplementation((args: { cursor?: string }) => {
+      if (answered.has(args.cursor)) {
+        const n = args.cursor ? Number(args.cursor.slice(1)) : 0;
+        shown = listOf([runItem(`r${n}`)], `c${n + 1}`);
+        return shown;
+      }
+      answered.add(args.cursor);
+      return { ...shown, isPlaceholderData: true };
+    });
+    const view = render(batchPage());
+    // The fetches land one after another.
+    for (let i = 0; i < 40; i++) {
+      await act(async () => {
+        view.rerender(batchPage());
+      });
+    }
+    // Ten pages in all, none counted twice: nine more after the first. Without
+    // the guard each placeholder look counted as a page, and it stopped near five.
+    expect(cursorsAsked().size).toBe(10);
+    expect(cursorsAsked().has("c10")).toBe(false);
+    expect(scrolled).toHaveLength(0);
   });
 
   test("stops when the batch ends without the run", async () => {

@@ -259,6 +259,9 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
     setContext({ status: DEFAULT_REVIEW_STATUS, facets: {} });
 
   const startCount = loop?.remaining.batch;
+  // The queue could not be read (and there is no earlier answer to show):
+  // Start reviewing says so and a press asks again.
+  const queueFailed = canReview && next.isError && next.data === undefined;
 
   return (
     <PageContainer fullBleed>
@@ -275,6 +278,7 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
           void list.refetch();
           void buildQ.refetch();
           void utils.review.next.invalidate();
+          void utils.runs.facets.invalidate({ buildId });
         }}
         isRefreshing={list.isFetching || buildQ.isFetching}
         canApprovePending={canReview}
@@ -292,13 +296,17 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
           canReview
             ? {
                 count: startCount,
-                reason:
-                  startCount === 0
+                failed: queueFailed,
+                reason: queueFailed
+                  ? "Couldn't load the review queue"
+                  : startCount === 0
                     ? "Nothing to review in this batch"
                     : starting
                       ? "Opening the first step…"
                       : null,
-                onClick: () => void startReviewing(),
+                onClick: queueFailed
+                  ? () => void next.refetch()
+                  : () => void startReviewing(),
               }
             : undefined
         }

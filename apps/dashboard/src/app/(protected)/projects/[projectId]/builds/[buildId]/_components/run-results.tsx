@@ -80,23 +80,30 @@ function groupByEnv(
   return groups;
 }
 
+/** Whether any environment facet is set. */
+function hasFacets(facets: StepFacets): boolean {
+  return (
+    facets.browser !== undefined ||
+    facets.viewport !== undefined ||
+    facets.os !== undefined ||
+    facets.device !== undefined
+  );
+}
+
 /**
  * Whether a step is in the environment the facets name. The facets given
  * together hold on the same step, as they do for `runs.list` (spec §4.1); a
- * step with no OS never matches an OS facet.
- *
- * `device` is not here: `runs.listCheckpoints` does not return it, so the
- * step cards cannot be narrowed by it (the list and its counts are, by the
- * server).
+ * step with no OS (or no device) never matches an OS (or device) facet.
  */
 function inFacets(
-  step: Pick<Checkpoint, "browser" | "viewport" | "os">,
+  step: Pick<Checkpoint, "browser" | "viewport" | "os" | "device">,
   facets: StepFacets,
 ): boolean {
   return (
     (facets.browser === undefined || step.browser === facets.browser) &&
     (facets.viewport === undefined || step.viewport === facets.viewport) &&
-    (facets.os === undefined || step.os === facets.os)
+    (facets.os === undefined || step.os === facets.os) &&
+    (facets.device === undefined || step.device === facets.device)
   );
 }
 
@@ -163,11 +170,7 @@ export function RunResults({
   const { facets } = ctx;
   const visible = useMemo(
     () =>
-      facets.browser === undefined &&
-      facets.viewport === undefined &&
-      facets.os === undefined
-        ? items
-        : items?.filter((c) => inFacets(c, facets)),
+      hasFacets(facets) ? items?.filter((c) => inFacets(c, facets)) : items,
     [items, facets],
   );
   const groups = useMemo(
@@ -309,11 +312,17 @@ const ResultRow = memo(function ResultRow({
   const sm = statusStyle(status);
   const hasSteps = checkpoints.length > 0;
   // A row counts its own steps, the ones the facets leave. A row with none
-  // loaded says what the run list counted for the run.
+  // loaded says what the run list counted for the run: its pending steps
+  // inside the facets, but ALL its steps, so with a facet on the two do not
+  // measure the same thing and only the pending count is said.
   const pending = hasSteps
     ? checkpoints.filter((c) => c.state !== null && isPending(c.state)).length
     : runPending;
   const total = hasSteps ? checkpoints.length : runSteps;
+  const pendingText =
+    !hasSteps && hasFacets(ctx.facets)
+      ? `${pending} pending`
+      : `${pending} of ${total} pending`;
   const [open, setOpen] = useState(true);
 
   // "Back to batch": once, bring this row to the middle of the page and focus
@@ -375,7 +384,7 @@ const ResultRow = memo(function ResultRow({
                 data-testid={`result-pending-${runId}`}
                 className="truncate text-2xs text-fg-muted"
               >
-                {`${pending} of ${total} pending`}
+                {pendingText}
               </span>
             )}
           </span>

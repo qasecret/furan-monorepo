@@ -58,6 +58,12 @@ export interface StartControl {
   count: number | undefined;
   /** Why it is unavailable, or null when it can be used. */
   reason: string | null;
+  /**
+   * The review queue could not be read (`reason` says so). The button then
+   * stays pressable instead: it is the retry, and its name and tooltip give
+   * the reason. A disabled button that explains itself ignores presses.
+   */
+  failed?: boolean;
   onClick: () => void;
 }
 
@@ -259,12 +265,26 @@ export function ContextualToolbar({
               className="h-7 gap-1.5 px-3 text-xs"
               testId="batch-start-reviewing"
               // Nothing to press until the count is known; an explained
-              // refusal otherwise (it stays focusable and says why).
-              disabled={start.count === undefined || start.reason !== null}
-              reason={start.reason}
+              // refusal otherwise (it stays focusable and says why). Unless
+              // the queue failed to load: then the press asks again.
+              disabled={
+                !start.failed &&
+                (start.count === undefined || start.reason !== null)
+              }
+              reason={start.failed ? null : start.reason}
+              title={start.failed ? (start.reason ?? undefined) : undefined}
+              label={
+                start.failed
+                  ? `Start reviewing: ${start.reason ?? "couldn't load the review queue"}. Press to try again.`
+                  : undefined
+              }
               onClick={start.onClick}
             >
-              <Play className="h-3.5 w-3.5" aria-hidden />
+              {start.failed ? (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Play className="h-3.5 w-3.5" aria-hidden />
+              )}
               {start.count === undefined
                 ? "Start reviewing"
                 : `Start reviewing (${start.count})`}

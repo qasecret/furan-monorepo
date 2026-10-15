@@ -213,6 +213,35 @@ describe("ContextualToolbar Start reviewing", () => {
     expect(button.disabled).toBe(true);
   });
 
+  test("when the queue could not be read it stays pressable, names the problem, and the press retries", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <ContextualToolbar
+        {...baseProps}
+        start={{
+          count: undefined,
+          failed: true,
+          reason: "Couldn't load the review queue",
+          onClick,
+        }}
+      />,
+    );
+    const button = screen.getByTestId(
+      "batch-start-reviewing",
+    ) as HTMLButtonElement;
+    // Not natively disabled with nothing to say, and not an explained
+    // (press-ignoring) disabled button either: it is the retry.
+    expect(button.disabled).toBe(false);
+    expect(button.hasAttribute("aria-disabled")).toBe(false);
+    expect(button.getAttribute("title")).toBe("Couldn't load the review queue");
+    expect(button.getAttribute("aria-label")).toBe(
+      "Start reviewing: Couldn't load the review queue. Press to try again.",
+    );
+    await user.click(button);
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
   test("is absent for a reader who may not review", () => {
     render(<ContextualToolbar {...baseProps} />);
     expect(screen.queryByTestId("batch-start-reviewing")).toBeNull();
