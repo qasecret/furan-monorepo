@@ -194,9 +194,20 @@ export function useReviewActions({
     void utils.runs.listCheckpoints.invalidate({ runId });
   };
   // The run-level override is not a decision, so it is not optimistic and
-  // not undoable: the refetch brings the header its new state.
+  // not undoable: the refetch brings the header its new state. It also moves
+  // the run's steps in or out of review (an overridden run is not
+  // reviewable), so the loop's next target and counts, the badge, the
+  // Batches and batch lists and the facet counts refresh as after a decision.
   const overrideStatus = trpc.runs.overrideStatus.useMutation({
-    onSuccess: () => invalidate(),
+    onSuccess: () => {
+      invalidate();
+      void utils.review.next.invalidate();
+      void utils.builds.pendingCount.invalidate();
+      void utils.builds.list.invalidate();
+      void utils.builds.getById.invalidate();
+      void utils.runs.list.invalidate();
+      void utils.runs.facets.invalidate();
+    },
     onError: (e) => toast.error(describeOverrideError(e)),
   });
 
