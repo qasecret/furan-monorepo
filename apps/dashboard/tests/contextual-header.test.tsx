@@ -47,6 +47,31 @@ describe("ContextualHeader: the review loop", () => {
     expect(screen.queryByTestId("header-next-pending")).toBeNull();
   });
 
+  test("Next pending is busy while a decision waits for the next step, and still pressable", () => {
+    const l = loop({ pending: true });
+    const { rerender } = renderHeader(l);
+    const next = screen.getByTestId("header-next-pending") as HTMLButtonElement;
+    expect(next.getAttribute("aria-busy")).toBe("true");
+    expect(next.disabled).toBe(false);
+    expect(next.textContent).toBe("Next pending");
+    // The spinner turns only when motion is allowed.
+    const spinner = screen.getByTestId("header-next-pending-busy");
+    expect(spinner.getAttribute("class")).toContain("motion-safe:animate-spin");
+    expect(spinner.getAttribute("class")).not.toMatch(/(^|\s)animate-spin/);
+    fireEvent.click(next);
+    expect(l.onNextPending).toHaveBeenCalledOnce();
+
+    rerender(
+      <ContextualHeader
+        title="Checkout"
+        status="unresolved"
+        loop={loop({ pending: false })}
+      />,
+    );
+    expect(next.getAttribute("aria-busy")).toBe("false");
+    expect(screen.queryByTestId("header-next-pending-busy")).toBeNull();
+  });
+
   test("no pill until the count is known; Next pending is there already", () => {
     renderHeader(loop({ remaining: "" }));
     expect(screen.queryByTestId("header-loop-remaining")).toBeNull();

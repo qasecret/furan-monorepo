@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsRight,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,6 +24,12 @@ export interface HeaderLoop {
   remaining: string;
   /** Next pending: the same move as J. */
   onNextPending?: () => void;
+  /**
+   * A decision is waiting for the next step to be looked up (spec §5.4):
+   * the button shows it is busy, and stays pressable (pressing again is
+   * harmless).
+   */
+  pending?: boolean;
   /** The Next pending button's text. */
   nextLabel: string;
   /**
@@ -155,7 +162,8 @@ export function ContextualHeader({
 
 /** Left in batch, the move's cue, a failed lookup, and Next pending. */
 function LoopControls({ loop }: { loop: HeaderLoop }) {
-  const { remaining, onNextPending, nextLabel, cue, error, onRetry } = loop;
+  const { remaining, onNextPending, pending, nextLabel, cue, error, onRetry } =
+    loop;
   return (
     <div className="flex items-center gap-2" data-testid="header-loop">
       {remaining ? (
@@ -205,13 +213,23 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
         variant="secondary"
         className="h-8 gap-1 px-3 text-xs"
         aria-label="Next pending step"
+        aria-busy={pending ?? false}
         title="Next pending step (J)"
         data-testid="header-next-pending"
         onClick={onNextPending}
         disabled={!onNextPending}
       >
         {nextLabel}
-        <ChevronsRight className="h-4 w-4" aria-hidden />
+        {pending ? (
+          // Turns only when motion is allowed; still, it reads as busy.
+          <Loader2
+            className="h-4 w-4 text-fg-muted motion-safe:animate-spin"
+            aria-hidden
+            data-testid="header-next-pending-busy"
+          />
+        ) : (
+          <ChevronsRight className="h-4 w-4" aria-hidden />
+        )}
       </Button>
     </div>
   );

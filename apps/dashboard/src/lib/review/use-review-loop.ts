@@ -54,6 +54,11 @@ export interface ReviewLoop {
   goPrev(): void;
   /** Called when a decision is made: moves on, or shows a card when nothing is left. */
   afterDecision(): void;
+  /**
+   * A decision (or J) is waiting for `review.next` to answer (spec §5.4): the
+   * Next affordance shows it is busy until the move is made or dropped.
+   */
+  pending: boolean;
   /** The done card to show, or null. */
   card: ReviewCard | null;
   dismissCard(): void;
@@ -71,41 +76,65 @@ const UNTITLED_RUN = "Untitled run";
 /** A decision waits this long for its answer; after that it is let go, silently. */
 const WAIT_LIMIT_MS = 10_000;
 
+/**
+ * J and K wait this long for a move to change the step on screen; a move the
+ * route never committed (a failed navigation) does not hold them for ever.
+ */
+const MOVE_LIMIT_MS = 5_000;
+
 const cueText = (name: string, left: number) =>
   `Next test: ${name} · ${left} left in batch`;
 
-/** How long the visible cue stays up (R15). */
+/** How long the visible cue stays up once its test shows it (R15). */
 const CUE_MS = 3_000;
 
+/**
+ * A cue its test has not shown by then never is: the move did not land (the
+ * reviewer went elsewhere first), and the test opened later must not show it.
+ */
+const CUE_UNSEEN_MS = 10_000;
+
+interface LoopCue {
+  text: string;
+  /** The test (run) the move opened: the only one that shows it. */
+  runId: string;
+}
+
 interface LoopCueState {
-  /** The last forward move's cue, and the test (run) it opened. */
-  cue: { text: string; runId: string } | null;
+  /** The last forward move's cue, or null. */
+  cue: LoopCue | null;
 }
 
 /**
  * The visible twin of the spoken cue (R15), for the header of the test the
  * loop moved to. A store, not state: the move replaces the page that made it,
- * and the chip is shown by the page it opens. It is taken down after about
- * 3 s, or at once by the next move.
+ * and the chip is shown by the page it opens. Its 3 s start when that page
+ * first shows it (the route may take a while); the next move, or leaving by
+ * hand, takes it down at once.
  */
 export const useLoopCue = create<LoopCueState>(() => ({ cue: null }));
 
-/** The pending take-down; one for the page, restarted by every cue. */
-let cueTimer: ReturnType<typeof setTimeout> | undefined;
+/** When each cue was first on screen: the start of its 3 s. */
+const cueShownAt = new WeakMap<LoopCue, number>();
+
+function takeDown(cue: LoopCue): void {
+  if (useLoopCue.getState().cue === cue) useLoopCue.setState({ cue: null });
+}
 
 function showCue(text: string, runId: string): void {
-  clearTimeout(cueTimer);
-  useLoopCue.setState({ cue: { text, runId } });
-  cueTimer = setTimeout(() => useLoopCue.setState({ cue: null }), CUE_MS);
+  const cue: LoopCue = { text, runId };
+  useLoopCue.setState({ cue });
+  setTimeout(() => {
+    if (!cueShownAt.has(cue)) takeDown(cue);
+  }, CUE_UNSEEN_MS);
 }
 
 /**
- * A move is being made: a cue still waiting for its test's name, or still on
- * screen, is about a place being left.
+ * A move is being made, or the reviewer has left by hand: a cue still waiting
+ * for its test's name, or still on screen, is about a place being left.
  */
 function supersedeCues(): void {
   reserveAnnouncement();
-  clearTimeout(cueTimer);
   if (useLoopCue.getState().cue !== null) useLoopCue.setState({ cue: null });
 }
 
@@ -136,9 +165,12 @@ function supersedeCues(): void {
  * if the epoch has changed since, so the latest move always wins: a K answer
  * never overrides a later J, decision or departure, and a deferred decision
  * never moves the reviewer again after K has. From a move until the step on
- * screen changes, J and K do nothing: they would be asked from the step being
- * left. Every move also takes a place in the order of announcements, so a
- * cue still waiting for its test's name is not said after a later move.
+ * screen changes (or for at most 5 s), J and K do nothing: they would be
+ * asked from the step being left. A move to the step on screen, or to the one
+ * a move still on its way already goes to, is not made again. Every move also
+ * takes a place in the order of announcements, so a cue still waiting for its
+ * test's name is not said after a later move; leaving the page by hand does
+ * the same.
  */
 export function useReviewLoop({
   projectId,
@@ -207,22 +239,40 @@ export function useReviewLoop({
   const atKeyRef = useRef(atKey);
   // The K on its way, if any: one at a time, and a new step starts afresh.
   const prevPending = useRef<symbol | null>(null);
-  // A move has been made and the route has not committed it yet.
+  // A move has been made and the route has not committed it yet: when, and
+  // where to.
   const moving = useRef(false);
+  const movedAt = useRef(0);
+  const lastHref = useRef<string | null>(null);
   useLayoutEffect(() => {
     atKeyRef.current = atKey;
     prevPending.current = null;
     moving.current = false;
   }, [atKey]);
-  // Leaving the step by any route ends this instance: whatever is still on
-  // its way (a K answer) is for a page that is gone.
-  useEffect(
-    () => () => {
-      epoch.current += 1;
-      prevPending.current = null;
-    },
+  /** A move is on its way to the screen, and not given up on yet. */
+  const isMoving = useCallback(
+    () => moving.current && Date.now() - movedAt.current < MOVE_LIMIT_MS,
     [],
   );
+  // Leaving the step by any route ends this instance: whatever is still on
+  // its way (a K answer) is for a page that is gone. Left by hand (a link,
+  // another step), a cue too: a move this hook made keeps its own, which is
+  // for the page it opens. Development's strict mode runs this on a remount
+  // as well; the page is back by the next microtask, and nothing is dropped.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      epoch.current += 1;
+      prevPending.current = null;
+      if (!moving.current) {
+        queueMicrotask(() => {
+          if (!mounted.current) supersedeCues();
+        });
+      }
+    };
+  }, []);
 
   /** Say which test the reviewer has been taken to. */
   const announceMove = useCallback(
@@ -250,48 +300,60 @@ export function useReviewLoop({
     [utils],
   );
 
-  /** Go to a step the loop found: replace the URL, or push a new entry. */
+  /**
+   * Go to a step the loop found: replace the URL, or push a new entry. Not
+   * made, and false, when it is the step on screen, or the step a move still
+   * on its way already goes to (a decision made before that move commits):
+   * the reviewer is not sent, nor told, twice.
+   */
   const goTo = useCallback(
-    (
-      target: NonNullable<NextAnswer["target"]>,
-      how: "replace" | "push",
-    ): void => {
-      epoch.current += 1;
-      moving.current = true;
-      supersedeCues();
+    (target: NonNullable<NextAnswer["target"]>, how: "replace" | "push") => {
       const href = diffViewerHref(
         projectId,
         target.runId,
         target.checkpointId,
         loopContext,
       );
+      const onScreen = at
+        ? diffViewerHref(projectId, at.runId, at.checkpointId, loopContext)
+        : undefined;
+      if (href === onScreen) return false;
+      if (isMoving() && href === lastHref.current) return false;
+      epoch.current += 1;
+      moving.current = true;
+      movedAt.current = Date.now();
+      lastHref.current = href;
+      supersedeCues();
       if (how === "replace") router.replace(href);
       else router.push(href);
+      return true;
     },
-    [projectId, loopContext, router],
+    [projectId, at, loopContext, isMoving, router],
   );
 
   /** Act on an answer: the table in the hook's doc. */
   const transition = useCallback(
     (answer: NextAnswer) => {
       epoch.current += 1;
-      supersedeCues();
       switch (answer.scope) {
         case "run":
           if (answer.target) goTo(answer.target, "replace");
           return;
         case "batch":
           if (!answer.target) return;
-          goTo(answer.target, "push");
-          announceMove(answer.target, answer.remaining.batch);
+          if (goTo(answer.target, "push")) {
+            announceMove(answer.target, answer.remaining.batch);
+          }
           return;
         case "nextBatch":
+          supersedeCues();
           setShown({
             card: answer.remaining.batchUnfiltered > 0 ? "filtered" : "batch",
             atKey,
           });
           return;
         case "none":
+          supersedeCues();
           setShown({ card: "all", atKey });
           return;
       }
@@ -313,9 +375,9 @@ export function useReviewLoop({
 
   // J: as a decision, unless a move is still on its way to the screen.
   const goNext = useCallback(() => {
-    if (moving.current) return;
+    if (isMoving()) return;
     advance();
-  }, [advance]);
+  }, [isMoving, advance]);
 
   // The answer a decision was waiting for has come, or will not come.
   useEffect(() => {
@@ -356,7 +418,7 @@ export function useReviewLoop({
       !at ||
       atKey === undefined ||
       prevPending.current ||
-      moving.current
+      isMoving()
     ) {
       return;
     }
@@ -385,13 +447,25 @@ export function useReviewLoop({
       .finally(() => {
         if (prevPending.current === token) prevPending.current = null;
       });
-  }, [active, at, atKey, utils, projectId, loopContext, goTo]);
+  }, [active, at, atKey, utils, projectId, loopContext, isMoving, goTo]);
 
   const dismissCard = useCallback(() => setShown(null), []);
-  // The cue is shown on the test it names, not on the one the move left.
-  const cue = useLoopCue((s) =>
-    s.cue !== null && s.cue.runId === runId ? s.cue.text : null,
+  // The cue is shown on the test it names, not on the one the move left; its
+  // 3 s run from the first time a page of that test shows it.
+  const matching = useLoopCue((s) =>
+    s.cue !== null && s.cue.runId === runId ? s.cue : null,
   );
+  const cue = enabled ? matching : null;
+  useEffect(() => {
+    if (!cue) return;
+    const first = cueShownAt.get(cue) ?? Date.now();
+    cueShownAt.set(cue, first);
+    const timer = setTimeout(
+      () => takeDown(cue),
+      Math.max(0, first + CUE_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [cue]);
   const refetch = query.refetch;
   const retry = useCallback(() => {
     void refetch();
@@ -405,8 +479,9 @@ export function useReviewLoop({
     goNext,
     goPrev,
     afterDecision: advance,
+    pending: waiting !== null,
     card: shown?.card ?? null,
     dismissCard,
-    cue: enabled ? cue : null,
+    cue: cue?.text ?? null,
   };
 }

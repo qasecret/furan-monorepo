@@ -1281,10 +1281,11 @@ describe("DiffViewer: the review loop", () => {
     const wrap = (ui: ReactNode) => (
       <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
     );
-    const viewer = (
+    // A new element each time: the same one would let React skip the render.
+    const viewer = () => (
       <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
     );
-    const r = render(wrap(viewer));
+    const r = render(wrap(viewer()));
 
     // The decision moves on at once...
     await pressAsync("A");
@@ -1300,10 +1301,13 @@ describe("DiffViewer: the review loop", () => {
 
     // The refetch lands, with another answer: nothing moves again.
     nextQuery.isFetching = true;
-    r.rerender(wrap(viewer));
+    const calls = nextQuery.calls.length;
+    r.rerender(wrap(viewer()));
     nextQuery.isFetching = false;
     nextQuery.data = intoOtherRun();
-    r.rerender(wrap(viewer));
+    r.rerender(wrap(viewer()));
+    // The viewer did render the new answer.
+    expect(nextQuery.calls.length).toBeGreaterThan(calls);
     await act(async () => {});
     expect(routerSpies.replace).toHaveBeenCalledTimes(1);
     expect(routerSpies.push).not.toHaveBeenCalled();
@@ -1418,15 +1422,86 @@ describe("DiffViewer: the review loop", () => {
     renderViewer();
     await pressAsync("J");
     expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
+    // The move's own page goes; the route takes its time to commit.
     cleanup();
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(2_000));
 
-    // The route commits: the viewer of the test the move opened.
+    // The viewer of the test the move opened: the 3 s start when it shows.
     const r = renderViewer({ runId: OTHER_RUN, initialCheckpointId: "s9" });
     const chip = r.getByTestId("header-loop-cue");
     expect(chip.textContent).toBe("Next test: Checkout · 4 left in batch");
     expect(chip.getAttribute("aria-hidden")).toBe("true");
-    act(() => vi.advanceTimersByTime(3_000));
+    act(() => vi.advanceTimersByTime(2_999));
+    expect(r.queryByTestId("header-loop-cue")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
     expect(r.queryByTestId("header-loop-cue")).toBeNull();
+  });
+
+  test("a decision while review.next is fetching shows Next as busy, then moves exactly once", () => {
+    // A cached answer being refetched (a decision invalidated it).
+    nextQuery.data = answer();
+    nextQuery.isFetching = true;
+    // A new element each time: the same one would let React skip the render.
+    const viewer = () => (
+      <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
+    );
+    const r = render(viewer());
+    const next = () => r.getByTestId("header-next-pending");
+    expect(next().getAttribute("aria-busy")).not.toBe("true");
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(next().getAttribute("aria-busy")).toBe("true");
+    // Pressing it again meanwhile is harmless.
+    expect((next() as HTMLButtonElement).disabled).toBe(false);
+
+    // The fresh answer arrives.
+    nextQuery.isFetching = false;
+    nextQuery.data = answer({
+      target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c2" },
+    });
+    r.rerender(viewer());
+    expect(next().getAttribute("aria-busy")).not.toBe("true");
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c2"));
+    r.rerender(viewer());
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("the empty run's View build link keeps the context and anchors the run", () => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      projectId: PROJECT,
+      buildId: BUILD,
+      status: "empty",
+    };
+    const r = renderViewer({
+      reviewContext: { status: "failed", facets: { os: "macOS" } },
+    });
+    expect(r.getByTestId("empty-run-card-timeline").getAttribute("href")).toBe(
+      `/projects/${PROJECT}/builds/${BUILD}?status=failed&os=macOS#run-${RUN_ID}`,
+    );
+  });
+
+  test("a run with no batch offers no Next pending, and J / K do nothing", async () => {
+    mockGetByIdData = { ...defaultMockData, projectId: PROJECT, buildId: "" };
+    nextQuery.data = answer();
+    utilsMock.review.next.fetch.mockResolvedValue(answer());
+    const r = renderViewer();
+    expect(
+      (r.getByTestId("header-next-pending") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(r.queryByTestId("shortcut-hint-loop")).toBeNull();
+    expect(nextQuery.calls.every((c) => c.options.enabled === false)).toBe(
+      true,
+    );
+    await pressAsync("J");
+    await pressAsync("K");
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
   });
 
   test("a failed lookup says so beside the pill, with Retry", () => {

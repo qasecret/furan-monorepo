@@ -245,14 +245,15 @@ export function DiffViewer({
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
 
   // The review loop (spec §5.4), asked from the step on screen once `_first`
-  // has resolved. Off until the run has loaded, and for a run that failed to
-  // load (a deleted run, another project's): no Next pending, no J / K, and no
-  // `review.next` call. A run that may not take decisions (overridden, not
-  // reviewable) still navigates; only deciding is off.
-  const loopOn = Boolean(data) && !error;
+  // has resolved. Off until the run has loaded, for a run that failed to load
+  // (a deleted run, another project's), and for a run with no batch to walk:
+  // no Next pending, no J / K, and no `review.next` call. A run that may not
+  // take decisions (overridden, not reviewable) still navigates; only
+  // deciding is off.
+  const loopOn = Boolean(data?.buildId) && !error;
   const loop = useReviewLoop({
     projectId: data?.projectId ?? "",
-    buildId: data?.buildId ?? undefined,
+    buildId: data?.buildId || undefined,
     runId,
     checkpointId: activeCheckpointId,
     context,
@@ -541,17 +542,22 @@ export function DiffViewer({
     return <div className="p-4 text-sm text-fg-secondary">No run data.</div>;
 
   const isEmpty = data?.status === "empty";
+  // Back to the batch as the reviewer left it, scrolled to this run.
+  const backHref = data.buildId
+    ? batchHref(data.projectId, data.buildId, context, runId)
+    : undefined;
 
-  // The header's review loop (the run has loaded, so the loop is on). The
-  // count is the answer's, so none until it has come, and none after a failed
-  // lookup (what it knew before is stale).
+  // The header's review loop. The count is the answer's, so none until it
+  // has come, and none after a failed lookup (what it knew before is stale).
+  // Busy while a decision waits for the answer (spec §5.4).
   const facetsSet = Object.keys(context.facets).length > 0;
   const headerLoop: HeaderLoop = {
     remaining:
       loop.next && !loop.error
         ? remainingLabel(loop.next.remaining, facetsSet)
         : "",
-    onNextPending: loop.goNext,
+    onNextPending: loopOn ? loop.goNext : undefined,
+    pending: loop.pending,
     nextLabel: "Next pending",
     ...(loop.cue ? { cue: loop.cue } : {}),
     ...(loop.error
@@ -669,12 +675,7 @@ export function DiffViewer({
           title={data.name ?? "Untitled run"}
           status={data.status}
           branch={data.branchName}
-          // Back to the batch as the reviewer left it, scrolled to this run.
-          backHref={
-            data.buildId
-              ? batchHref(data.projectId, data.buildId, context, runId)
-              : undefined
-          }
+          backHref={backHref}
           nav={headerNav}
           loop={headerLoop}
           rightActions={
@@ -711,10 +712,7 @@ export function DiffViewer({
           )}
         </div>
         {isEmpty ? (
-          <EmptyRunCard
-            projectId={data.projectId}
-            buildId={data.buildId ?? null}
-          />
+          <EmptyRunCard {...(backHref ? { buildHref: backHref } : {})} />
         ) : (
           <>
             <div id="diff-viewer-toolbar">
@@ -856,19 +854,23 @@ export function DiffViewer({
                     </kbd>
                     navigate
                   </span>
-                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
-                  <span
-                    className="flex items-center gap-1.5"
-                    data-testid="shortcut-hint-loop"
-                  >
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      J
-                    </kbd>
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      K
-                    </kbd>
-                    next/prev pending
-                  </span>
+                  {loopOn && (
+                    <>
+                      <span className="h-3 w-px bg-edge-strong" aria-hidden />
+                      <span
+                        className="flex items-center gap-1.5"
+                        data-testid="shortcut-hint-loop"
+                      >
+                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                          J
+                        </kbd>
+                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                          K
+                        </kbd>
+                        next/prev pending
+                      </span>
+                    </>
+                  )}
                   <span className="h-3 w-px bg-edge-strong" aria-hidden />
                   <span className="flex items-center gap-1.5">
                     <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">

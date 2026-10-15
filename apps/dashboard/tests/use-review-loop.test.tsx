@@ -1,4 +1,5 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
 import {
   afterEach,
   beforeEach,
@@ -1030,12 +1031,146 @@ describe("useReviewLoop: guards for the wired viewer", () => {
 
   test("a decision is not held back by a move still committing", () => {
     // The step on screen is still the one being left, and a decision on it
-    // moves on as ever: only J and K wait for the route.
+    // moves on as ever (only J and K wait for the route), when its answer
+    // names another step than the move already on its way.
+    query.data = answer();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-5" },
+    });
+    rerender(args());
+    act(() => result.current.afterDecision());
+    expect(router.replace).toHaveBeenCalledTimes(2);
+    expect(router.replace).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-5`,
+    );
+  });
+
+  test("a decision during a committing move to the same step does not navigate or cue twice", () => {
+    // J has moved into the next test; before the route commits, a decision
+    // on the step still on screen gets the same answer.
+    query.data = intoOtherRun();
+    const { result } = setup();
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(useReviewAnnouncer.getState().seq).toBe(1);
+    act(() => result.current.afterDecision());
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.replace).not.toHaveBeenCalled();
+    // The cue J made stands: not said again, not taken down.
+    expect(useReviewAnnouncer.getState().seq).toBe(1);
+    expect(useLoopCue.getState().cue?.text).toBe(
+      "Next test: Checkout · 4 left in batch",
+    );
+  });
+
+  test("an answer naming the step on screen is not navigated to", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+    });
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    // Nothing is on its way, so J is not held back.
+    query.data = answer();
+    rerender(args());
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledOnce();
+  });
+
+  test("J works again if a move never changes the step (5 s bound)", () => {
+    vi.useFakeTimers();
     query.data = answer();
     const { result } = setup();
     act(() => result.current.goNext());
-    act(() => result.current.afterDecision());
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(4_999));
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(1));
+    act(() => result.current.goNext());
     expect(router.replace).toHaveBeenCalledTimes(2);
+  });
+
+  test("leaving the viewer by hand drops a cue still loading its name", async () => {
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    // The move's own departure: its cue is for the page it opens.
+    page.unmount();
+    // That page opens, and the reviewer leaves it by hand (a link, another
+    // step) before the name has come.
+    const next = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
+    next.unmount();
+    await act(async () => {});
+    await act(async () => slow.resolve({ name: "Checkout" }));
+    expect(useReviewAnnouncer.getState().text).toBe("");
+    expect(useLoopCue.getState().cue).toBeNull();
+  });
+
+  test("a move's own departure keeps its cue, still loading its name", async () => {
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    page.unmount();
+    await act(async () => {});
+    await act(async () => slow.resolve({ name: "Checkout" }));
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Checkout · 4 left in batch",
+    );
+  });
+
+  test("a strict-mode remount of the page the move opened keeps its cue", async () => {
+    // Development runs every effect twice on mount; that is not leaving.
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    page.unmount();
+    const strict = ({ children }: { children: ReactNode }) => (
+      <StrictMode>{children}</StrictMode>
+    );
+    const next = renderHook((props: Args) => useReviewLoop(props), {
+      initialProps: args({ runId: OTHER_RUN, checkpointId: "step-9" }),
+      wrapper: strict,
+    });
+    await act(async () => {});
+    expect(next.result.current.cue).toBe(
+      "Next test: Checkout · 4 left in batch",
+    );
+  });
+});
+
+describe("useReviewLoop: the pending state (spec §5.4)", () => {
+  test("pending while a decision waits for its answer, then not", () => {
+    query.data = answer();
+    query.isFetching = true;
+    const { result, rerender } = setup();
+    expect(result.current.pending).toBe(false);
+    act(() => result.current.afterDecision());
+    expect(result.current.pending).toBe(true);
+    query.isFetching = false;
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-5" },
+    });
+    rerender(args());
+    expect(result.current.pending).toBe(false);
+    expect(router.replace).toHaveBeenCalledOnce();
+  });
+
+  test("not pending when the answer is in hand: the move is at once", () => {
+    query.data = answer();
+    const { result } = setup();
+    act(() => result.current.afterDecision());
+    expect(result.current.pending).toBe(false);
   });
 });
 
@@ -1052,19 +1187,47 @@ describe("useReviewLoop: the visible cue (R15)", () => {
     });
   const CUE = "Next test: Checkout · 4 left in batch";
 
-  test("a forward move into another test shows its cue there, for about 3 s", () => {
+  test("a forward move into another test shows its cue there, for about 3 s from when it is first shown", () => {
     query.data = intoOtherRun();
     const { result, rerender } = setup();
     act(() => result.current.goNext());
     // Not on the test being left...
     expect(result.current.cue).toBeNull();
-    // ...but on the one the move opened (a new page in the viewer).
+    // ...but on the one the move opened (a new page in the viewer), however
+    // long the route took to get there.
+    act(() => vi.advanceTimersByTime(2_000));
     rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
     expect(result.current.cue).toBe(CUE);
     act(() => vi.advanceTimersByTime(2_999));
     expect(result.current.cue).toBe(CUE);
     act(() => vi.advanceTimersByTime(1));
     expect(result.current.cue).toBeNull();
+  });
+
+  test("a page of the same test opened again does not restart the 3 s", () => {
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    page.unmount();
+    const first = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
+    expect(first.result.current.cue).toBe(CUE);
+    act(() => vi.advanceTimersByTime(2_000));
+    // Another page shows it: the deadline is the first one's.
+    const second = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
+    expect(second.result.current.cue).toBe(CUE);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(second.result.current.cue).toBeNull();
+  });
+
+  test("a cue its test never shows is dropped after 10 s", () => {
+    query.data = intoOtherRun();
+    const page = setup();
+    act(() => page.result.current.goNext());
+    page.unmount();
+    act(() => vi.advanceTimersByTime(10_000));
+    // Opening that test much later shows no stale cue.
+    const later = setup({ runId: OTHER_RUN, checkpointId: "step-9" });
+    expect(later.result.current.cue).toBeNull();
   });
 
   test("a decision's move into another test shows the cue as well", () => {

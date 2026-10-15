@@ -67,10 +67,24 @@ describe("useDiffViewerShortcuts", () => {
   });
 
   it("J / K do nothing without the loop", () => {
-    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
-    // No handler: nothing to call, and nothing throws.
+    const others = {
+      onApprove: vi.fn(),
+      onReject: vi.fn(),
+      onNextStep: vi.fn(),
+      onPrevStep: vi.fn(),
+      onNextDiff: vi.fn(),
+      onPrevDiff: vi.fn(),
+    };
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], ...others }));
+    const before = useViewerStore.getState();
     act(() => press("J"));
     act(() => press("K"));
+    // Neither falls through to another binding, nor touches the viewer.
+    for (const cb of Object.values(others)) expect(cb).not.toHaveBeenCalled();
+    expect(useViewerStore.getState()).toEqual(before);
+    // The bindings are live: the same press of another key does fire.
+    act(() => press("A"));
+    expect(others.onApprove).toHaveBeenCalledOnce();
   });
 
   it("O cycles the mode", () => {
