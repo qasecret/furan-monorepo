@@ -62,11 +62,26 @@ const firstPage = (key: string): Paging => ({
 });
 
 /**
+ * How many batches Start reviewing looks through under a branch or a search:
+ * one page of the filtered Needs review list. More than that reads "N+".
+ */
+const FILTERED_START_LIMIT = 100;
+
+/** The client-side search: a batch's display name or branch contains `q`. */
+function matchesSearch(b: BuildRow, q: string): boolean {
+  return (
+    buildDisplayName(b).toLowerCase().includes(q) ||
+    (b.branchName ?? "").toLowerCase().includes(q)
+  );
+}
+
+/**
  * Batches: the start of the review loop (spec §5.1). A full-width table of the
  * project's test-result batches, opening on the ones that need review. The
  * chips, the branch and the search live in the URL; "Start reviewing" opens the
- * first pending step of the newest batch that needs it; every empty state
- * names a next action.
+ * first pending step of the newest batch that needs it, within the branch and
+ * the search when either is set (Ruling R34); every empty state names a next
+ * action.
  */
 export function InboxPage({ context }: Props) {
   const { currentProjectId } = useCurrentProject();
@@ -135,15 +150,32 @@ export function InboxPage({ context }: Props) {
   }, [items, context.branch]);
 
   // Client-side search over the loaded rows (batch name / branch).
-  const rows = useMemo(() => {
-    const q = search.text.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (b) =>
-        buildDisplayName(b).toLowerCase().includes(q) ||
-        (b.branchName ?? "").toLowerCase().includes(q),
-    );
-  }, [items, search.text]);
+  const query = search.text.trim().toLowerCase();
+  const rows = useMemo(
+    () => (query ? items.filter((b) => matchesSearch(b, query)) : items),
+    [items, query],
+  );
+
+  // Start reviewing follows the branch and the search (Ruling R34, spec
+  // §1.3): with either set it counts and opens the filtered Needs review
+  // list, whatever chip is showing. Without them it is the project's count.
+  const filtered = !!context.branch || query !== "";
+  const filteredInput = {
+    projectId: currentProjectId ?? "",
+    needsReview: true,
+    ...(context.branch ? { branch: context.branch } : {}),
+    limit: FILTERED_START_LIMIT,
+  };
+  const filteredPending = trpc.builds.list.useQuery(filteredInput, {
+    enabled: !!currentProjectId && filtered,
+  });
+  const filteredRows = useMemo(
+    () =>
+      (filteredPending.data?.items ?? []).filter(
+        (b) => !query || matchesSearch(b, query),
+      ),
+    [filteredPending.data, query],
+  );
 
   // The list came back with nothing at all, whatever the search says.
   const serverEmpty = !!list.data && !list.isError && items.length === 0;
@@ -175,15 +207,34 @@ export function InboxPage({ context }: Props) {
     });
   };
 
+  /** The batch Start reviewing opens under a branch or a search, fresh. */
+  const firstFilteredBatch = async (): Promise<BuildRow | undefined> => {
+    const fresh = await utils.builds.list.fetch(filteredInput);
+    return fresh.items.find((b) => !query || matchesSearch(b, query));
+  };
+
   const startReviewing = async () => {
     if (!currentProjectId || starting) return;
     setStarting(true);
     try {
-      // No `at`: the first pending step of the newest batch needing review.
-      const next = await utils.review.next.fetch({
-        projectId: currentProjectId,
-      });
-      if (next.target) {
+      // Filtered: the first pending step of the newest batch in the filtered
+      // Needs review list, through a build-only `at`. Otherwise no `at`: the
+      // first pending step of the newest batch needing review.
+      const batch = filtered ? await firstFilteredBatch() : undefined;
+      if (filtered && !batch) {
+        toast.info("Nothing in these filters needs review.");
+        void utils.builds.pendingCount.invalidate();
+        void utils.builds.list.invalidate();
+        return;
+      }
+      const next = await utils.review.next.fetch(
+        batch
+          ? { projectId: currentProjectId, at: { buildId: batch.id } }
+          : { projectId: currentProjectId },
+      );
+      // A batch reviewed meanwhile answers with another batch's step, which
+      // may be outside the filters: refresh instead of going there.
+      if (next.target && (!batch || next.target.buildId === batch.id)) {
         router.push(
           diffViewerHref(
             currentProjectId,
@@ -195,7 +246,11 @@ export function InboxPage({ context }: Props) {
         );
       } else {
         // The count was stale: someone decided the last step meanwhile.
-        toast.info("Nothing needs review.");
+        toast.info(
+          batch
+            ? "That batch has nothing left to review."
+            : "Nothing needs review.",
+        );
         void utils.builds.pendingCount.invalidate();
         void utils.builds.list.invalidate();
       }
@@ -217,10 +272,21 @@ export function InboxPage({ context }: Props) {
     );
   }
 
-  const total = pending.data?.total;
+  // The filtered list's own count when a branch or a search is set; "N+"
+  // when it holds more batches than one page.
+  const total = filtered
+    ? filteredPending.data
+      ? filteredRows.length
+      : undefined
+    : pending.data?.total;
+  const totalLabel =
+    filtered && filteredPending.data?.nextCursor ? `${total}+` : `${total}`;
+  const countLoading = filtered ? filteredPending.isLoading : pending.isLoading;
   const startReason =
     total === 0
-      ? "Nothing needs review"
+      ? filtered
+        ? "Nothing in these filters needs review"
+        : "Nothing needs review"
       : starting
         ? "Opening the first step…"
         : null;
@@ -289,14 +355,14 @@ export function InboxPage({ context }: Props) {
                 variant="default"
                 testId="inbox-start-reviewing"
                 className="h-9 gap-2"
-                disabled={pending.isLoading || total === 0 || starting}
+                disabled={countLoading || total === 0 || starting}
                 reason={startReason}
                 onClick={() => void startReviewing()}
               >
                 <Play className="h-4 w-4" aria-hidden />
                 {total === undefined
                   ? "Start reviewing"
-                  : `Start reviewing (${total})`}
+                  : `Start reviewing (${totalLabel})`}
               </DisabledAwareButton>
             </>
           }

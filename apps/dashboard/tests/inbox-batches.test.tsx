@@ -36,13 +36,14 @@ vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
 const listMock = vi.fn();
 const pendingMock = vi.fn();
 const fetchNext = vi.fn();
+const fetchList = vi.fn();
 const invalidate = vi.hoisted(() => ({ list: vi.fn(), pendingCount: vi.fn() }));
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({
       review: { next: { fetch: fetchNext } },
       builds: {
-        list: { invalidate: invalidate.list },
+        list: { invalidate: invalidate.list, fetch: fetchList },
         pendingCount: { invalidate: invalidate.pendingCount },
       },
     }),
@@ -96,16 +97,21 @@ const result = (items: unknown[], over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** The main list and the one-batch "latest" probe are the same procedure. */
+/**
+ * The main list, the one-batch "latest" probe and Start reviewing's filtered
+ * Needs review list (`limit: 100`) are the same procedure.
+ */
 function serve(opts: {
   main?: ReturnType<typeof result>;
   latest?: ReturnType<typeof result>;
+  filtered?: ReturnType<typeof result>;
   pending?: number | null;
 }) {
   const main = opts.main ?? result([build()]);
   const latest = opts.latest ?? result([build()]);
+  const filtered = opts.filtered ?? result([build()]);
   listMock.mockImplementation((input: { limit?: number }) =>
-    input.limit === 1 ? latest : main,
+    input.limit === 1 ? latest : input.limit === 100 ? filtered : main,
   );
   pendingMock.mockReturnValue(
     opts.pending === null
@@ -118,18 +124,31 @@ function serve(opts: {
   );
 }
 
-/** The main list's input of the most recent render (the one without `limit: 1`). */
+/** The main list's input of the most recent render (the one without a `limit`). */
 const mainInput = (): Record<string, unknown> => {
   const calls = listMock.mock.calls.filter(
-    (c) => (c[0] as { limit?: number }).limit !== 1,
+    (c) => (c[0] as { limit?: number }).limit === undefined,
   );
   return calls[calls.length - 1]?.[0] as Record<string, unknown>;
+};
+
+/** Start reviewing's filtered Needs review list: its last input and options. */
+const filteredCall = () => {
+  const calls = listMock.mock.calls.filter(
+    (c) => (c[0] as { limit?: number }).limit === 100,
+  );
+  const last = calls[calls.length - 1];
+  return {
+    input: last?.[0] as Record<string, unknown>,
+    enabled: (last?.[1] as { enabled?: boolean } | undefined)?.enabled,
+  };
 };
 
 beforeEach(() => {
   routerMock.push.mockReset();
   routerMock.replace.mockReset();
   fetchNext.mockReset();
+  fetchList.mockReset();
   listMock.mockReset();
   pendingMock.mockReset();
   invalidate.list.mockReset();
@@ -627,6 +646,158 @@ describe("Batches: Start reviewing", () => {
         .getByRole("button", { name: "Start reviewing (4)" })
         .getAttribute("aria-disabled"),
     ).toBeNull();
+  });
+});
+
+describe("Batches: Start reviewing follows the branch and the search (R34)", () => {
+  const target = { buildId: "b2", runId: "r2", checkpointId: "c2" };
+
+  test("without a branch or a search it is the project's count, and the filtered list is not asked for", () => {
+    serve({ pending: 7 });
+    render(<InboxPage context={ctxOf("status=all")} />);
+    expect(
+      screen.getByRole("button", { name: "Start reviewing (7)" }),
+    ).toBeDefined();
+    expect(filteredCall().enabled).toBe(false);
+  });
+
+  test("with a branch it counts the filtered Needs review list and opens its first batch's first pending step", async () => {
+    const rows = [
+      build({ id: "b2", branchName: "feature/a" }),
+      build({ id: "b3", branchName: "feature/a" }),
+    ];
+    serve({ pending: 9, filtered: result(rows) });
+    fetchList.mockResolvedValue({ items: rows, nextCursor: null });
+    fetchNext.mockResolvedValue({ target, scope: "batch" });
+    render(<InboxPage context={ctxOf("status=all&branch=feature%2Fa")} />);
+
+    // The filtered list, not the project's 9: whatever chip is showing.
+    expect(filteredCall()).toEqual({
+      input: {
+        projectId: "p1",
+        needsReview: true,
+        branch: "feature/a",
+        limit: 100,
+      },
+      enabled: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start reviewing (2)" }),
+    );
+
+    await waitFor(() =>
+      expect(routerMock.push).toHaveBeenCalledWith(
+        "/projects/p1/runs/r2/checkpoints/c2?status=all",
+      ),
+    );
+    // A fresh read of the same list, then that batch's first pending step.
+    expect(fetchList).toHaveBeenCalledWith(filteredCall().input);
+    expect(fetchNext).toHaveBeenCalledWith({
+      projectId: "p1",
+      at: { buildId: "b2" },
+    });
+  });
+
+  test("with a search it counts and opens only the batches the search matches", async () => {
+    const rows = [
+      build({ id: "b9", name: "release", number: null, ciBuildId: null }),
+      build({ id: "b2", name: "nightly", number: null, ciBuildId: null }),
+      build({ id: "b3", name: "nightly-2", number: null, ciBuildId: null }),
+    ];
+    serve({ pending: 9, filtered: result(rows) });
+    fetchList.mockResolvedValue({ items: rows, nextCursor: null });
+    fetchNext.mockResolvedValue({ target, scope: "batch" });
+    render(<InboxPage context={ctxOf("q=nightly")} />);
+
+    expect(filteredCall().input).toEqual({
+      projectId: "p1",
+      needsReview: true,
+      limit: 100,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start reviewing (2)" }),
+    );
+    await waitFor(() =>
+      expect(fetchNext).toHaveBeenCalledWith({
+        projectId: "p1",
+        at: { buildId: "b2" },
+      }),
+    );
+    await waitFor(() =>
+      expect(routerMock.push).toHaveBeenCalledWith(
+        "/projects/p1/runs/r2/checkpoints/c2",
+      ),
+    );
+  });
+
+  test("a filtered list longer than one page reads N+", () => {
+    serve({
+      pending: 300,
+      filtered: result([build({ id: "b2" }), build({ id: "b3" })], {
+        data: {
+          items: [build({ id: "b2" }), build({ id: "b3" })],
+          nextCursor: "more",
+        },
+      }),
+    });
+    render(<InboxPage context={ctxOf("branch=main")} />);
+    expect(
+      screen.getByRole("button", { name: "Start reviewing (2+)" }),
+    ).toBeDefined();
+  });
+
+  test("nothing pending in the filters disables it with the filters' reason", () => {
+    serve({ pending: 9, filtered: result([]) });
+    render(<InboxPage context={ctxOf("branch=main")} />);
+
+    const button = screen.getByTestId("inbox-start-reviewing");
+    expect(button.textContent).toContain("Start reviewing (0)");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    const reason = document.getElementById(
+      button.getAttribute("aria-describedby") ?? "",
+    );
+    expect(reason?.textContent).toBe("Nothing in these filters needs review");
+  });
+
+  test("a batch reviewed meanwhile does not take the reviewer outside the filters", async () => {
+    const rows = [build({ id: "b2", branchName: "feature/a" })];
+    serve({ pending: 9, filtered: result(rows) });
+    fetchList.mockResolvedValue({ items: rows, nextCursor: null });
+    // b2 has nothing left: the server moves on to another batch.
+    fetchNext.mockResolvedValue({
+      target: { buildId: "b-other", runId: "r9", checkpointId: "c9" },
+      scope: "nextBatch",
+    });
+    render(<InboxPage context={ctxOf("branch=feature%2Fa")} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start reviewing (1)" }),
+    );
+    await waitFor(() =>
+      expect(toastMock.info).toHaveBeenCalledWith(
+        "That batch has nothing left to review.",
+      ),
+    );
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(invalidate.list).toHaveBeenCalled();
+    expect(invalidate.pendingCount).toHaveBeenCalled();
+  });
+
+  test("a fresh read with nothing left in the filters says so and asks for no step", async () => {
+    serve({ pending: 9, filtered: result([build({ id: "b2" })]) });
+    fetchList.mockResolvedValue({ items: [], nextCursor: null });
+    render(<InboxPage context={ctxOf("branch=main")} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start reviewing (1)" }),
+    );
+    await waitFor(() =>
+      expect(toastMock.info).toHaveBeenCalledWith(
+        "Nothing in these filters needs review.",
+      ),
+    );
+    expect(fetchNext).not.toHaveBeenCalled();
+    expect(routerMock.push).not.toHaveBeenCalled();
   });
 });
 
