@@ -84,6 +84,9 @@ export function ContextualHeader({
   rightActions,
   loop,
 }: Props) {
+  // ← / →'s keys, for the step buttons' hints (spec §5.4).
+  const prevKeys = useCommandKeys("viewer.prevStep");
+  const nextKeys = useCommandKeys("viewer.nextStep");
   return (
     <header
       className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-edge bg-canvas px-4"
@@ -124,6 +127,12 @@ export function ContextualHeader({
             <button
               type="button"
               aria-label="Previous step"
+              aria-keyshortcuts={prevKeys.ariaKeyShortcuts}
+              title={
+                prevKeys.titleSuffix
+                  ? `Previous step${prevKeys.titleSuffix}`
+                  : undefined
+              }
               data-testid="contextual-header-prev"
               onClick={nav.onPrev}
               disabled={!nav.onPrev}
@@ -137,6 +146,12 @@ export function ContextualHeader({
             <button
               type="button"
               aria-label="Next step"
+              aria-keyshortcuts={nextKeys.ariaKeyShortcuts}
+              title={
+                nextKeys.titleSuffix
+                  ? `Next step${nextKeys.titleSuffix}`
+                  : undefined
+              }
               data-testid="contextual-header-next"
               onClick={nav.onNext}
               disabled={!nav.onNext}

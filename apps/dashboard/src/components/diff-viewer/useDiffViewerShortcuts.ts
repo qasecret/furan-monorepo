@@ -105,6 +105,8 @@ function regionToPaste({ projectId }: ViewerCtx) {
  */
 export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
   {
+    // ← / → do not repeat: each step is a route change and a remount, and
+    // the repeats of a held arrow would push the same stale target.
     id: "viewer.prevStep",
     label: "Previous step",
     group: "Navigate",
@@ -146,11 +148,14 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     run: ({ onPrevPending }) => onPrevPending?.(),
   },
   {
+    // N / P repeat: held, they walk the changes (R13). The stepper reads the
+    // live store and wraps, so each repeat moves on from where the last left.
     id: "viewer.nextRegion",
     label: "Next change",
     group: "Navigate",
     keys: ["n"],
     scope: "viewer",
+    repeat: true,
     enabled: ({ onNextDiff }) => given(onNextDiff),
     run: ({ onNextDiff }) => onNextDiff?.(),
   },
@@ -160,10 +165,14 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "Navigate",
     keys: ["p"],
     scope: "viewer",
+    repeat: true,
     enabled: ({ onPrevDiff }) => given(onPrevDiff),
     run: ({ onPrevDiff }) => onPrevDiff?.(),
   },
   {
+    // [ / ] do not repeat, deliberately (the old binding did): there are few
+    // viewports, and each switch loads the step's images again, so a held key
+    // would only queue loads.
     id: "viewer.prevViewport",
     label: "Previous viewport",
     group: "View",

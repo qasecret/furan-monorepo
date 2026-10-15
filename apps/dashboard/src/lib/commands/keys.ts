@@ -118,6 +118,23 @@ export function isCharacterBinding(key: string): boolean {
 }
 
 /**
+ * The bindings of `cmd` that do something with the single-key switch as it
+ * is: all of them while it is on; while it is off, all but the character
+ * bindings (`isCharacterBinding`: "a", "?", "g i"), which the guard skips
+ * (rule 6). Every hint (a button's `useCommandKeys`, the viewer's hint bar)
+ * reads its keys from here, so none names a key that does nothing.
+ */
+export function liveBindings(
+  cmd: Pick<Command, "keys">,
+  singleKeysOn: boolean,
+): KeyBinding[] {
+  const keys = cmd.keys ?? [];
+  return singleKeysOn
+    ? keys
+    : keys.filter((b) => !isCharacterBinding(bindingKey(b)));
+}
+
+/**
  * True when a binding cannot type or edit text, so a text field need not
  * own it: one press carrying ⌘ / Ctrl / Alt (`$mod`, `Control`, `Meta`,
  * `Alt`), or Escape. Letters, punctuation, Backspace, Delete, Enter, Space,

@@ -9,6 +9,7 @@ import {
   isCharacterKey,
   isCharacterKeyCommand,
   isNonTypingBinding,
+  liveBindings,
   lowerFirst,
 } from "@/lib/commands/keys";
 
@@ -156,6 +157,26 @@ describe("command keys", () => {
     // alternatives, so "g i" would claim G and I each run the command.
     expect(ariaKeyShortcuts(["g i"], "mac")).toBe("");
     expect(ariaKeyShortcuts(["g i", "?"], "mac")).toBe("?");
+  });
+
+  it("liveBindings keeps what the single-key switch leaves working", () => {
+    const listNext = {
+      keys: [
+        "j",
+        { key: "ArrowDown", focusWithin: "[data-list]", repeat: true },
+        "g j",
+        "$mod+j",
+      ],
+    };
+    // On: every binding, as written (options kept).
+    expect(liveBindings(listNext, true)).toEqual(listNext.keys);
+    // Off: character keys and sequences of them are dropped, in order.
+    expect(liveBindings(listNext, false)).toEqual([
+      { key: "ArrowDown", focusWithin: "[data-list]", repeat: true },
+      "$mod+j",
+    ]);
+    expect(liveBindings({ keys: ["a", "?", "Shift++"] }, false)).toEqual([]);
+    expect(liveBindings({}, true)).toEqual([]);
   });
 
   it("lower-cases only the first letter of a label", () => {

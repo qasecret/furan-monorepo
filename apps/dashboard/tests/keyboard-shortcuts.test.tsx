@@ -177,6 +177,16 @@ describe("useDiffViewerShortcuts", () => {
     expect(onPrevStep).toHaveBeenCalledOnce();
   });
 
+  it("ArrowLeft / ArrowRight with no step that way are the browser's", () => {
+    // At the ends of the run, or while the done card is up, the viewer hands
+    // no step callback: the arrows scroll as usual.
+    const onNextDiff = vi.fn();
+    mountViewer({ viewports: [], onNextDiff });
+    expect(press("ArrowLeft").defaultPrevented).toBe(false);
+    expect(press("ArrowRight").defaultPrevented).toBe(false);
+    expect(onNextDiff).not.toHaveBeenCalled();
+  });
+
   it("J / K invoke onNextPending / onPrevPending, either case", () => {
     const onNextPending = vi.fn();
     const onPrevPending = vi.fn();
@@ -1178,6 +1188,39 @@ describe("the viewer's keys are registry commands", () => {
     press("r", { repeat: true });
     expect(onApprove).toHaveBeenCalledOnce();
     expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it("N repeats, ArrowRight does not", () => {
+    const onNextDiff = vi.fn();
+    const onPrevDiff = vi.fn();
+    const onNextStep = vi.fn();
+    mountViewer({ viewports: [], onNextDiff, onPrevDiff, onNextStep });
+
+    // Held, N and P walk the changes (R13).
+    press("n");
+    press("n", { repeat: true });
+    press("n", { repeat: true });
+    expect(onNextDiff).toHaveBeenCalledTimes(3);
+    press("p", { repeat: true });
+    expect(onPrevDiff).toHaveBeenCalledTimes(1);
+
+    // Held, → moves one step: each step is a route change, and its repeats
+    // would push the same stale target.
+    press("ArrowRight");
+    const held = press("ArrowRight", { repeat: true });
+    expect(onNextStep).toHaveBeenCalledOnce();
+    expect(held.defaultPrevented).toBe(false);
+  });
+
+  it("a held [ switches the viewport once", () => {
+    useViewerStore.setState({ viewport: "b" });
+    mountViewer({ viewports: ["a", "b", "c"] });
+    press("[");
+    expect(useViewerStore.getState().viewport).toBe("a");
+    // Each switch loads the images again: the repeats do nothing.
+    press("[", { repeat: true });
+    press("]", { repeat: true });
+    expect(useViewerStore.getState().viewport).toBe("a");
   });
 
   it("typing a into the open palette's input approves nothing", async () => {

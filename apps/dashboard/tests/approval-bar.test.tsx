@@ -111,12 +111,21 @@ import { useUndoStore } from "../src/lib/review/use-undo-store";
 let latestActions: ReturnType<typeof useReviewActions> | undefined;
 function Bar(
   props: UseReviewActionsArgs &
-    Omit<ComponentProps<typeof ApprovalBar>, "actions">,
+    Omit<ComponentProps<typeof ApprovalBar>, "actions" | "canReview"> & {
+      canReview?: boolean;
+    },
 ) {
   const actions = useReviewActions(props);
   // What a keyboard shortcut would call, for the tests that stand in for one.
   latestActions = actions;
-  return <ApprovalBar {...props} actions={actions} />;
+  // A reviewer, unless a test says otherwise.
+  return (
+    <ApprovalBar
+      {...props}
+      canReview={props.canReview ?? true}
+      actions={actions}
+    />
+  );
 }
 
 const RUN_ID = "00000000-0000-0000-0000-000000000000";

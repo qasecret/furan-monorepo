@@ -30,12 +30,12 @@ import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import {
   bindingKey,
   formatKeyLabel,
-  isCharacterBinding,
+  liveBindings,
   lowerFirst,
 } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
-import { useRegisteredCommands } from "@/lib/commands/registry";
+import { useCommandKeys, useRegisteredCommands } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
@@ -65,6 +65,13 @@ interface Props {
    * makes carries it, and the review loop walks inside it.
    */
   reviewContext?: ReviewContext;
+  /**
+   * The viewer may decide: the server's answer for the request's role
+   * (R14), so the first paint already has, or has not, the decision
+   * buttons. False: the step and its decision read-only, with no Approve,
+   * Reject, Mark as Bug, group approval, undo or override.
+   */
+  canReview: boolean;
 }
 
 /** A viewer opened without a review context: the default chip, no facets. */
@@ -173,6 +180,7 @@ export function DiffViewer({
   projectId,
   initialCheckpointId,
   reviewContext,
+  canReview,
 }: Props) {
   const router = useRouter();
   const utils = trpc.useUtils();
@@ -547,6 +555,9 @@ export function DiffViewer({
   }, [data?.diffRegions, selectedCheckpointId]);
 
   const stepper = useDiffStepper(regions);
+  // ← / →'s keys, for the step buttons' hints (spec §5.4).
+  const prevStepKeys = useCommandKeys("viewer.prevStep");
+  const nextStepKeys = useCommandKeys("viewer.nextStep");
 
   // ←/→ step navigation over the checkpoint list (the reference TestStep
   // binds the arrows to "navigate"). Computed before the early-returns so the
@@ -740,6 +751,7 @@ export function DiffViewer({
               diffRegions={regions}
               inline
               showStatus={false}
+              canReview={canReview}
             />
           }
         />
@@ -747,13 +759,16 @@ export function DiffViewer({
             gets a full-width strip under the single-row header. Self-nulls
             when the checkpoint isn't part of a same-change group. */}
         <div id="diff-viewer-approval">
-          <GroupApprovalCallout
-            runId={runId}
-            checkpointId={activeCheckpointId}
-          />
+          {canReview && (
+            <GroupApprovalCallout
+              runId={runId}
+              checkpointId={activeCheckpointId}
+            />
+          )}
           {/* An older run's step: approving it would put its image back as
-              the baseline. Only a step that still needs a reviewer asks. */}
-          {review.view === "pending" && review.newerCapture && (
+              the baseline. Only a step that still needs a reviewer asks, and
+              only a viewer who may approve. */}
+          {canReview && review.view === "pending" && review.newerCapture && (
             <div className="border-b border-edge px-3 py-2">
               <StaleStepCallout
                 newer={{
@@ -861,6 +876,8 @@ export function DiffViewer({
                       onClick={onPrevStep}
                       disabled={!onPrevStep}
                       aria-label="Previous step"
+                      aria-keyshortcuts={prevStepKeys.ariaKeyShortcuts}
+                      title={stepTitle("Previous step", prevStepKeys)}
                       data-testid="diff-viewer-step-prev"
                       className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-overlay/90 text-fg-secondary shadow-overlay backdrop-blur transition-colors hover:bg-overlay-hover hover:text-fg focus-ring disabled:pointer-events-none disabled:opacity-30"
                     >
@@ -871,6 +888,8 @@ export function DiffViewer({
                       onClick={onNextStep}
                       disabled={!onNextStep}
                       aria-label="Next step"
+                      aria-keyshortcuts={nextStepKeys.ariaKeyShortcuts}
+                      title={stepTitle("Next step", nextStepKeys)}
                       data-testid="diff-viewer-step-next"
                       className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-overlay/90 text-fg-secondary shadow-overlay backdrop-blur transition-colors hover:bg-overlay-hover hover:text-fg focus-ring disabled:pointer-events-none disabled:opacity-30"
                     >
@@ -929,6 +948,14 @@ export function DiffViewer({
   );
 }
 
+/** "Next step (→)" for a step button; none while its key is unbound. */
+function stepTitle(
+  label: string,
+  keys: { titleSuffix: string },
+): string | undefined {
+  return keys.titleSuffix ? `${label}${keys.titleSuffix}` : undefined;
+}
+
 /** The hint bar's word for a command, and the test id of its group. */
 const HINTS: Record<string, { text: string; testId?: string }> = {
   "viewer.prevStep": { text: "navigate" },
@@ -977,11 +1004,9 @@ function ShortcutHints({ show }: { show: Partial<Record<string, boolean>> }) {
       (a, b) => Number(a.scope === "global") - Number(b.scope === "global"),
     );
   for (const { command } of primary) {
-    const key = (command.keys ?? [])
-      .map(bindingKey)
-      .find((k) => singleKeys || !isCharacterBinding(k));
-    if (key === undefined) continue;
-    const cap = formatKeyLabel(key, platform);
+    const [live] = liveBindings(command, singleKeys);
+    if (live === undefined) continue;
+    const cap = formatKeyLabel(bindingKey(live), platform);
     const hint = HINTS[command.id] ?? { text: lowerFirst(command.label) };
     const last = groups.at(-1);
     if (last?.text === hint.text) last.keys.push(cap);

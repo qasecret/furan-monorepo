@@ -17,8 +17,8 @@ import {
   bindingKey,
   formatKeyLabel,
   formatKeys,
-  isCharacterBinding,
   keyIdentity,
+  liveBindings,
   shiftedTwin,
 } from "./keys";
 import { usePlatform } from "./platform";
@@ -352,10 +352,7 @@ export function useCommandKeys(id: string): CommandKeys {
         found = resolved;
       }
     }
-    const bound = found?.command.keys ?? [];
-    const keys = singleKeys
-      ? bound
-      : bound.filter((b) => !isCharacterBinding(bindingKey(b)));
+    const keys = found ? liveBindings(found.command, singleKeys) : [];
     const [first] = keys;
     if (first === undefined) return NO_KEYS;
     const aria = ariaKeyShortcuts(keys, platform);

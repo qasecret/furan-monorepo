@@ -239,6 +239,9 @@ let mockGetByIdKeepsData = false;
 // ADR-038 checkpoint list — configurable per-test so the side step-arrows
 // (which need total > 1) can be exercised. Empty by default.
 let mockCheckpoints: { items: unknown[] } = { items: [] };
+// The step's same-change group (ADR-042), for the group-approval callout;
+// none by default.
+let mockGroup: unknown = undefined;
 
 // Mock the tRPC client.
 // T9: getById response includes baselineScreenshot + diffName.
@@ -279,9 +282,10 @@ vi.mock("../src/lib/trpc", () => {
         },
         setTempIgnoreAreas: { useMutation: noopMutation },
         setDiffThresholdOverride: { useMutation: noopMutation },
-        // ADR-042: group-approval callout — data:undefined fires null-guard → renders nothing
+        // ADR-042: group-approval callout — data:undefined (the default)
+        // fires its null-guard → renders nothing.
         getCheckpointGroup: {
-          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+          useQuery: () => ({ data: mockGroup, isLoading: false, error: null }),
         },
       },
       projects: {
@@ -356,7 +360,7 @@ class StubEventSource {
 (globalThis as unknown as { EventSource: typeof StubEventSource }).EventSource =
   StubEventSource;
 
-import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
+import { DiffViewer as ViewerUnderTest } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
 import { loopHandoff, useLoopCue } from "../src/lib/review/use-review-loop";
@@ -372,7 +376,7 @@ import {
   CommandRoleProvider,
   useCommandRegistry,
 } from "@/lib/commands/registry";
-import type { ViewerRole } from "@/lib/roles";
+import { canReviewRole, type ViewerRole } from "@/lib/roles";
 
 /**
  * The protected layout's keyboard, around every viewer here, as the app
@@ -398,7 +402,22 @@ function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
   return renderInDom(ui, { wrapper: Keyboard, ...options });
 }
 
+/**
+ * The viewer as the checkpoint page hands it out: `canReview` is the
+ * server's answer for the same role the keyboard has, unless a test says.
+ */
+function DiffViewer(
+  props: Omit<ComponentProps<typeof ViewerUnderTest>, "canReview"> & {
+    canReview?: boolean;
+  },
+) {
+  return (
+    <ViewerUnderTest canReview={canReviewRole(keyboard.role)} {...props} />
+  );
+}
+
 beforeEach(() => {
+  mockGroup = undefined;
   keyboard.role = "editor";
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
@@ -1975,7 +1994,10 @@ describe("DiffViewer: the review loop", () => {
     act(() => (document.activeElement as HTMLElement | null)?.blur());
     press("J");
     press("R");
+    // Nor does → move to the next step of the run.
+    press("ArrowRight");
     expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(reviewSpies.decide).not.toHaveBeenCalled();
 
     // Esc, from the card: back to the batch, anchored on this run.
@@ -2637,25 +2659,10 @@ describe("DiffViewer key hints come from the registry", () => {
     expect(next.getAttribute("title")).toBe("Next pending step (J)");
     cleanup();
 
-    // A guest has no decision keys to name; J is still theirs.
+    // A guest has no decision buttons (R14); J is still theirs.
     keyboard.role = "guest";
     const guest = render(viewer());
-    expect(
-      guest
-        .getByTestId("approve-checkpoint-button")
-        .hasAttribute("aria-keyshortcuts"),
-    ).toBe(false);
-    expect(
-      guest.getByTestId("approve-checkpoint-button").getAttribute("title"),
-    ).toBe(
-      "Promotes this step's candidate as the new baseline for its test variation.",
-    );
-    expect(
-      guest.getByTestId("reject-button").hasAttribute("aria-keyshortcuts"),
-    ).toBe(false);
-    expect(guest.getByTestId("reject-button").hasAttribute("title")).toBe(
-      false,
-    );
+    expect(guest.queryByTestId("approve-checkpoint-button")).toBeNull();
     expect(
       guest
         .getByTestId("header-next-pending")
@@ -2675,6 +2682,207 @@ describe("DiffViewer key hints come from the registry", () => {
     expect(off.getByTestId("header-next-pending").getAttribute("title")).toBe(
       "Next pending step",
     );
+  });
+
+  test("the step buttons carry aria-keyshortcuts ← / → and their titles", () => {
+    // The middle step: both ways are open.
+    mockCheckpoints = {
+      items: [
+        stepFixture("cp-1", "unresolved"),
+        stepFixture("cp-2", "unresolved"),
+        stepFixture("cp-3", "unresolved"),
+      ],
+    };
+    const r = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+    );
+    for (const [prev, next] of [
+      ["contextual-header-prev", "contextual-header-next"],
+      ["diff-viewer-step-prev", "diff-viewer-step-next"],
+    ] as const) {
+      expect(r.getByTestId(prev).getAttribute("aria-keyshortcuts")).toBe(
+        "ArrowLeft",
+      );
+      expect(r.getByTestId(prev).getAttribute("title")).toBe(
+        "Previous step (←)",
+      );
+      expect(r.getByTestId(next).getAttribute("aria-keyshortcuts")).toBe(
+        "ArrowRight",
+      );
+      expect(r.getByTestId(next).getAttribute("title")).toBe("Next step (→)");
+    }
+    // The arrows are not character keys: the switch leaves them.
+    cleanup();
+    useSingleKeyStore.setState({ on: false });
+    const off = render(
+      <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-2" />,
+    );
+    expect(
+      off
+        .getByTestId("diff-viewer-step-next")
+        .getAttribute("aria-keyshortcuts"),
+    ).toBe("ArrowRight");
+  });
+});
+
+// R14: the server says whether this viewer may review. A guest gets the
+// step's state and its decision, read-only, and no way to decide.
+describe("DiffViewer decision buttons follow canReview", () => {
+  const DECIDED = {
+    id: "d",
+    actionId: "a",
+    kind: "approved",
+    actor: null,
+    at: new Date().toISOString(),
+    source: "viewer",
+    legacy: false,
+    undo: { allowed: true, reason: null },
+  };
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    resetReviewSpies();
+  });
+  afterEach(() => cleanup());
+
+  const DECISION_CONTROLS = [
+    "approve-checkpoint-button",
+    "reject-button",
+    "mark-as-bug-button",
+    "approval-more-menu",
+    // The same change elsewhere: Accept all / Reject all.
+    "group-approval-callout",
+    // The older-capture warning, which only matters before approving.
+    "stale-step-callout",
+  ];
+  /** A pending step with a same-change group and a newer capture. */
+  function pendingWithEverything() {
+    mockGroup = {
+      checkpointCount: 2,
+      runCount: 1,
+      capped: false,
+      checkpoints: [
+        { runId: "run-2", testName: "Checkout" },
+        { runId: "run-2", testName: "Checkout" },
+      ],
+    };
+    mockCheckpoints = {
+      items: [
+        stepFixture("cp-1", "unresolved", {
+          newerCapture: {
+            runId: "run-newer",
+            checkpointId: "cp-9",
+            buildId: "build-2",
+            buildName: "#42",
+          },
+        }),
+      ],
+    };
+  }
+
+  test("a guest sees no Approve / Reject / Mark as Bug in the viewer", () => {
+    keyboard.role = "guest";
+    pendingWithEverything();
+    const pending = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview={false}
+      />,
+    );
+    for (const id of DECISION_CONTROLS) {
+      expect(pending.queryByTestId(id), id).toBeNull();
+    }
+    // The run's state is still on show.
+    expect(pending.getByTestId("contextual-header")).toBeDefined();
+    cleanup();
+
+    // A decided step: its decision reads as before, with no Undo.
+    mockCheckpoints = {
+      items: [stepFixture("cp-1", "approved", { decision: DECIDED })],
+    };
+    const decided = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview={false}
+      />,
+    );
+    const chip = decided.getByTestId("decision-chip");
+    expect(chip.textContent).toContain("Approved");
+    expect(within(chip).queryByRole("button", { name: /Undo/ })).toBeNull();
+    expect(decided.queryByTestId("approval-more-menu")).toBeNull();
+    cleanup();
+
+    // A run overridden by hand: the override reads, with no Reset.
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "failed",
+      statusOverride: "failed",
+    };
+    const overridden = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview={false}
+      />,
+    );
+    expect(overridden.getByTestId("override-chip")).toBeDefined();
+    expect(overridden.queryByTestId("reset-override")).toBeNull();
+  });
+
+  test("an editor still does", () => {
+    pendingWithEverything();
+    const pending = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview
+      />,
+    );
+    for (const id of DECISION_CONTROLS) {
+      expect(pending.getByTestId(id), id).toBeDefined();
+    }
+    // And they work (a rejection asks nothing, even of an older capture).
+    fireEvent.click(pending.getByTestId("reject-button"));
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    cleanup();
+
+    mockCheckpoints = {
+      items: [stepFixture("cp-1", "approved", { decision: DECIDED })],
+    };
+    const decided = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview
+      />,
+    );
+    expect(
+      within(decided.getByTestId("decision-chip")).getByRole("button", {
+        name: "Undo approval",
+      }),
+    ).toBeDefined();
+    cleanup();
+
+    mockGetByIdData = {
+      ...defaultMockData,
+      status: "failed",
+      statusOverride: "failed",
+    };
+    const overridden = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        canReview
+      />,
+    );
+    expect(overridden.getByTestId("reset-override")).toBeDefined();
   });
 });
 

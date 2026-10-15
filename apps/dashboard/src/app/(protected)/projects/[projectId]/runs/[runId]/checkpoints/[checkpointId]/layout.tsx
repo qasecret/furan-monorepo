@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 /**
- * The checkpoint diff viewer page is a client component (it dynamic-imports
- * pixi.js via `next/dynamic ssr:false`), so it can't export `metadata`
- * directly. This layout segment sets the document title for the route.
+ * Sets the document title for the checkpoint diff viewer route. (The page
+ * was a client component, which cannot export `metadata`; it is a server
+ * component now, with the client-only viewer in `CheckpointViewer`, and the
+ * title stays here.)
  */
 export const metadata: Metadata = { title: "Diff viewer" };
 
