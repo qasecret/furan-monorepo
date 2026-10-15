@@ -1156,6 +1156,112 @@ describe("useReviewLoop: the batch boundary on a step that needs review (R23, R2
   });
 });
 
+describe("useReviewLoop: a stale read during a decision (R36)", () => {
+  // A read of the step that starts after the decision's optimistic update and
+  // before the server commits it comes back with the step still pending, and
+  // shows it so until the refetch after the decision lands. While a decision
+  // on the step is in flight that flicker is not an undo (R30): the card
+  // stays and the decision's move still happens.
+  const intoNextBatch = () =>
+    answer({
+      target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+      scope: "nextBatch",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 2 },
+      nextBatch,
+    });
+  const intoOtherRun = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+  /** The step on screen as the viewer reads it, and its decision in flight. */
+  const step = (pending: boolean, decisionInFlight: boolean) =>
+    args({ stepPending: pending, decisionInFlight });
+
+  test("a stale read while the decision is in flight does not drop its card", () => {
+    query.data = intoNextBatch();
+    const { result, rerender } = setup({ stepPending: true });
+    // A: the decision is held in flight, then the loop hears of it.
+    rerender(step(true, true));
+    act(() => result.current.afterDecision());
+    expect(result.current.card).toBe("batch");
+    rerender(step(false, true)); // its optimistic update lands
+    rerender(step(true, true)); // a read from before the commit lands
+    rerender(step(false, true)); // ...and is put right
+    expect(result.current.card).toBe("batch");
+    // Another stale read is still on screen when the decision settles: the
+    // flag dropping under it is no flip either.
+    rerender(step(true, true));
+    rerender(step(true, false));
+    rerender(step(false, false)); // the refetch after the decision lands
+    expect(result.current.card).toBe("batch");
+  });
+
+  test("a stale read while a decision waits does not cancel its move", () => {
+    // The answer is being refetched when the decision is made: it waits.
+    query.isFetching = true;
+    const { result, rerender } = setup({ stepPending: true });
+    rerender(step(true, true));
+    act(() => result.current.afterDecision());
+    expect(result.current.pending).toBe(true);
+    rerender(step(false, true)); // its optimistic update lands
+    rerender(step(true, true)); // a read from before the commit
+    rerender(step(false, true));
+    expect(result.current.pending).toBe(true);
+    rerender(step(false, false)); // the decision settles
+    // The answer comes: the decision moves, once.
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    rerender(step(false, false));
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9`,
+    );
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.pending).toBe(false);
+    // A later refetch of the same answer does not move again.
+    rerender(step(false, false));
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  test("an undo after the decision has landed still cancels and drops the card", () => {
+    // The card: the decision lands, then ⌘Z puts the step back (R30). The
+    // undo's own hold is not a decision in flight.
+    query.data = intoNextBatch();
+    const withCard = setup({ stepPending: true });
+    withCard.rerender(step(true, true));
+    act(() => withCard.result.current.afterDecision());
+    withCard.rerender(step(false, true));
+    withCard.rerender(step(false, false)); // landed
+    expect(withCard.result.current.card).toBe("batch");
+    withCard.rerender(step(true, false)); // ⌘Z
+    expect(withCard.result.current.card).toBeNull();
+    // Settled again some other way (Mark as Bug): no card comes back.
+    withCard.rerender(step(false, false));
+    expect(withCard.result.current.card).toBeNull();
+    withCard.unmount();
+
+    // The move: a decision waiting for its answer lands, then is undone.
+    query.data = undefined;
+    query.isFetching = true;
+    const waiting = setup({ stepPending: true });
+    waiting.rerender(step(true, true));
+    act(() => waiting.result.current.afterDecision());
+    waiting.rerender(step(false, true));
+    waiting.rerender(step(false, false)); // landed
+    expect(waiting.result.current.pending).toBe(true);
+    waiting.rerender(step(true, false)); // ⌘Z
+    expect(waiting.result.current.pending).toBe(false);
+    // The answer comes: it moves the reviewer nowhere.
+    query.isFetching = false;
+    query.data = intoOtherRun();
+    waiting.rerender(step(true, false));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(waiting.result.current.card).toBeNull();
+  });
+});
+
 describe("useReviewLoop: prefetch", () => {
   test("prefetches the target", () => {
     query.data = answer({

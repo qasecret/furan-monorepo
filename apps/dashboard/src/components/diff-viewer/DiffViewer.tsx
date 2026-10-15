@@ -31,6 +31,7 @@ import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
+import { useIsDecisionInFlight } from "@/lib/review/use-review-mutations";
 import { useUndoStore } from "@/lib/review/use-undo-store";
 import {
   batchHref,
@@ -286,6 +287,9 @@ export function DiffViewer({
       context.facets,
     ),
   };
+  // A decision on this step still on its way: a read meanwhile that shows the
+  // step pending again predates its commit, and is no undo (R36).
+  const decisionInFlight = useIsDecisionInFlight(activeCheckpointId);
   const loop = useReviewLoop({
     projectId: data?.projectId ?? "",
     buildId: data?.buildId || undefined,
@@ -295,6 +299,7 @@ export function DiffViewer({
     enabled: loopOn,
     stepPending: stepHere.pending,
     stepInFilter: stepHere.inFilter,
+    decisionInFlight,
   });
   const undoCount = useUndoStore((s) => s.stack.length);
   // The done card (spec §5.4) takes the canvas's place once the step on
