@@ -213,10 +213,17 @@ describe("Batches: the status chips", () => {
     expect(sent("status=failed")).not.toHaveProperty("status");
     expect(sent("status=failed")).not.toHaveProperty("needsReview");
     expect(sent("status=running")).toMatchObject({ status: "running" });
-    expect(sent("status=passed")).toMatchObject({ status: "passed" });
+    expect(sent("status=running")).not.toHaveProperty("noPending");
+    // Passed leaves out the batches still needing review (Ruling R32).
+    expect(sent("status=passed")).toMatchObject({
+      status: "passed",
+      noPending: true,
+    });
+    expect(sent("status=passed")).not.toHaveProperty("needsReview");
     const all = sent("status=all");
     expect(all).not.toHaveProperty("status");
     expect(all).not.toHaveProperty("needsReview");
+    expect(all).not.toHaveProperty("noPending");
     expect(all).not.toHaveProperty("anyFailed");
   });
 

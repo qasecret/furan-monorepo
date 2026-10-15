@@ -323,23 +323,25 @@ export function toRunsListFilter(
  * The `builds.list` filter for a context. On Batches the chips are filters,
  * not a partition (§3.1): a batch can be under Needs review and Failed at
  * once. Needs review is `needsReview` (a pending step) and Failed is
- * `anyFailed` (at least one failed test); Running and Passed are the batch's
- * rollup status of the same name. Facets, search and props are not part of it:
- * search is applied by the caller, and facets are per-batch.
+ * `anyFailed` (at least one failed test); Running is the batch's rollup
+ * status of the same name. Passed is the `passed` rollup AND no pending step
+ * (`noPending`, Ruling R32): a first-baseline batch is all `new`, which rolls
+ * up to passed while every step still needs review. Facets, search and props
+ * are not part of it: search is applied by the caller, and facets are
+ * per-batch.
  */
 export function toBuildsListFilter(
   ctx: ReviewContext,
 ): Pick<
   RouterInputs["builds"]["list"],
-  "status" | "needsReview" | "anyFailed" | "branch"
+  "status" | "needsReview" | "noPending" | "anyFailed" | "branch"
 > {
   const c = normalize(ctx);
   return {
     ...(c.status === "needs-review" ? { needsReview: true } : {}),
     ...(c.status === "failed" ? { anyFailed: true } : {}),
-    ...(c.status === "running" || c.status === "passed"
-      ? { status: c.status }
-      : {}),
+    ...(c.status === "running" ? { status: "running" } : {}),
+    ...(c.status === "passed" ? { status: "passed", noPending: true } : {}),
     ...(c.branch !== undefined ? { branch: c.branch } : {}),
   };
 }

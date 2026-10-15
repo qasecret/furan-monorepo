@@ -693,6 +693,73 @@ d("tRPC builds: needing review, pending counts and the pending badge", () => {
     );
   });
 
+  test("Passed excludes a batch whose runs are all new (pending)", async () => {
+    // A: a first-baseline batch, every step `new` and undecided. `new` runs
+    // roll up to `passed`, yet every step still needs review.
+    const s = await seed({
+      checkpoints: [
+        { name: "first-a", verdict: "new" },
+        { name: "first-b", verdict: "new" },
+      ],
+    });
+    const a = s.buildId;
+    // B: every step passed.
+    const b = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "b1", verdict: "passed" }] },
+    });
+    // C: a `new` step approved: nothing left to review.
+    const c = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
+    });
+    await decide(s, c.runId, c.shots["c1"]!.id);
+    // D: one `new` step approved, its sibling still pending.
+    const dBuild = await addReviewBuild(h, s, {
+      spec: {
+        checkpoints: [
+          { name: "d-done", verdict: "new" },
+          { name: "d-open", verdict: "new" },
+        ],
+      },
+    });
+    await decide(s, dBuild.runId, dBuild.shots["d-done"]!.id);
+    // E: an unresolved step: not passed in the rollup.
+    const e = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "e1", verdict: "unresolved" }] },
+    });
+    // F: no runs at all: nothing pending, but `empty`, not passed.
+    const [f] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch })
+      .returning({ id: builds.id });
+
+    const client = as(s.editor);
+    const list = (extra: {
+      status?: "passed";
+      noPending?: boolean;
+      needsReview?: boolean;
+    }) => client.builds.list.query({ projectId: s.projectId, ...extra });
+
+    // The rollup alone lists the pending batches as passed.
+    expect(sorted(idsOf(await list({ status: "passed" })))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId]),
+    );
+    // The Passed chip (Ruling R32): passed AND no pending step.
+    expect(
+      sorted(idsOf(await list({ status: "passed", noPending: true }))),
+    ).toEqual(sorted([b.buildId, c.buildId]));
+    // On its own, `noPending` is the complement of `needsReview`.
+    expect(sorted(idsOf(await list({ noPending: true })))).toEqual(
+      sorted([b.buildId, c.buildId, f!.id]),
+    );
+    expect(sorted(idsOf(await list({ needsReview: true })))).toEqual(
+      sorted([a, dBuild.buildId, e.buildId]),
+    );
+    // `false` is no filter, like leaving it out.
+    expect(sorted(idsOf(await list({ noPending: false })))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId, e.buildId, f!.id]),
+    );
+  });
+
   test("pendingCheckpoints per row equals builds.getById.pendingCheckpoints", async () => {
     // A: three steps, two pending (one decided).
     const s = await seed({
