@@ -2255,6 +2255,59 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     }
   });
 
+  test("a stale Confirm on the last step needing review keeps focus on the card", async () => {
+    serveBatch({ c5: { newerCapture: NEWER } });
+    render(<Keyboard />);
+    walkTo("step:c5");
+
+    press("a");
+    fireEvent.click(await screen.findByTestId("stale-step-confirm"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ checkpointIds: ["c5"], kind: "approved" }),
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    // Nothing after it needs review: focus is back on the card, as after a
+    // plain `a`, not dropped to the page.
+    expect(focused()).toBe("step:c5");
+    expect(tabStops()).toEqual(["step:c5"]);
+  });
+
+  test("a stale Confirm whose next step disappeared keeps focus on the card", async () => {
+    serveBatch({ c1: { newerCapture: NEWER } });
+    render(<Keyboard />);
+    walkTo("step:c1");
+
+    // The next step needing review is c3 when `a` is pressed...
+    press("a");
+    await screen.findByTestId("stale-step-dialog");
+    // ...and its row is collapsed before the question is answered.
+    fireEvent.click(item(`run:r1:${NARROW}`));
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("stale-step-confirm"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(focused()).toBe("step:c1");
+  });
+
+  test("a plain a with nothing left keeps focus where it was in the card", () => {
+    serveBatch();
+    render(<Keyboard />);
+    walkTo("step:c5");
+    // Focus on the card's own Approve button: it stays there (the card
+    // then hands it to Undo once the decision has settled).
+    const approve = screen.getByTestId("step-approve-c5");
+    act(() => approve.focus());
+    press("a");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(approve);
+  });
+
   test("the step scroller is not a Tab stop", () => {
     serveBatch();
     render(<Keyboard />);

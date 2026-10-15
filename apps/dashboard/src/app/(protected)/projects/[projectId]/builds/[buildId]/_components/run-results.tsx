@@ -588,6 +588,10 @@ export function BatchResults({
   }, []);
   const items = useMemo(() => batchItems(runs, rows), [runs, rows]);
   const cursor = useListCursor({ items, listRef });
+  // The items as of the latest render, for a continuation that runs later
+  // (after the stale-step question has closed).
+  const latestItems = useRef(items);
+  latestItems.current = items;
   const channel = useBatchCursorChannel(cursor.itemProps, reportRow);
 
   const at = items.find((i) => i.id === cursor.cursorId) ?? null;
@@ -657,7 +661,19 @@ export function BatchResults({
       // works at once. A refusal does not bring it back: the toast says what
       // happened (spec §4.3).
       const goOn = () => {
-        if (nextStep !== undefined) cursor.setCursor(nextStep.id, true);
+        const held = (id: string) =>
+          latestItems.current.some((i) => i.id === id);
+        if (nextStep !== undefined && held(nextStep.id)) {
+          cursor.setCursor(nextStep.id, true);
+          return;
+        }
+        // Nowhere to go on to (nothing after it needs review, or that step
+        // has gone): focus stays where it is, unless the question took it
+        // with it, and then it comes back to this step's card.
+        const active = document.activeElement;
+        if (active === null || active === document.body) {
+          cursor.setCursor(at.id, true);
+        }
       };
       if (kind === "approved") {
         // For an older capture the card asks first, as its button does: the

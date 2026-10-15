@@ -67,8 +67,10 @@ interface ConfirmProps {
   onCancel: () => void;
   onConfirm: () => void;
   /**
-   * As the question closes and would put focus back: `preventDefault` keeps
-   * it from doing so, for a caller that places focus itself.
+   * Radix's close auto-focus, once the question has unmounted and released
+   * its focus trap: the moment a caller that places focus itself can do so.
+   * The question has no trigger, so Radix restores no focus of its own;
+   * `preventDefault` would keep it from focusing one.
    */
   onCloseAutoFocus?: (event: Event) => void;
 }

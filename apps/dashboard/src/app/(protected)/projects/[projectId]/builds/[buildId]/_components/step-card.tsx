@@ -381,10 +381,15 @@ export const StepCard = memo(function StepCard({
                     );
                   }
                 }}
+                // Runs once the question has unmounted and let go of focus
+                // (inside its focus trap, a move would be pulled back).
                 onCloseAutoFocus={(e) => {
                   const then = afterClose.current;
                   afterClose.current = null;
                   if (then === null) return;
+                  // A guard, not a fix: Radix's modal content restores no
+                  // focus here today (this dialog has no trigger to focus).
+                  // It keeps one added later from taking focus after us.
                   e.preventDefault();
                   then();
                 }}
