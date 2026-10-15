@@ -264,10 +264,21 @@ describe("BatchDoneCard", () => {
     const { getByRole, queryByRole } = renderCard({ nextBatch: null });
     getByRole("dialog", { name: "Batch done" });
     expect(queryByRole("button", { name: /Continue/ })).toBeNull();
-    // Back to batch is the way on, and has the focus.
-    expect(document.activeElement).toBe(
-      getByRole("link", { name: "Back to batch" }),
-    );
+    // Any card with no Continue offers Back to batches instead, and it leads.
+    const batches = getByRole("link", { name: "Back to batches" });
+    expect(batches.getAttribute("href")).toBe(BATCHES);
+    expect(document.activeElement).toBe(batches);
+    expect(getByRole("link", { name: "Back to batch" })).toBeDefined();
+    cleanup();
+
+    // On the filtered card too, after Clear filter.
+    const filtered = renderCard({
+      variant: "filtered",
+      batchUnfiltered: 2,
+      nextBatch: null,
+    });
+    const links = filtered.getAllByRole("link").map((a) => a.textContent ?? "");
+    expect(links).toEqual(["Back to batches", "Back to batch"]);
   });
 
   test("its entrance is animated only when motion is allowed", () => {

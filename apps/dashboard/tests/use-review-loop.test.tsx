@@ -284,6 +284,21 @@ describe.each(["afterDecision", "goNext"] as const)(
       expect(router.replace).not.toHaveBeenCalled();
     });
 
+    test("with facets, nothing left in the filter anywhere: Batch done, not All caught up", () => {
+      // Steps outside the filter may wait elsewhere: only the batch is
+      // known to be done.
+      query.data = answer({
+        target: null,
+        scope: "none",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+      });
+      const { result } = setup({
+        context: { status: "needs-review", facets: { os: "macOS" } },
+      });
+      act(() => result.current[move]());
+      expect(result.current.card).toBe("batch");
+    });
+
     test("none: shows the filtered card when steps are left outside the filters", () => {
       // Nothing is left anywhere inside the filters, but this batch still has
       // steps outside them: the filtered set is done, not everything.
@@ -601,6 +616,41 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     );
     expect(router.replace).not.toHaveBeenCalled();
     expect(result.current.card).toBeNull();
+  });
+
+  test("Clear filter into another run announces the next test", async () => {
+    // A forward move into a test the reviewer did not pick (R26): the cue,
+    // with the count outside the filter (the answer was asked without it).
+    utils.runs.getById.getData.mockReturnValue({ name: "Login flow" });
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+        remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+      }),
+    );
+    const { result, rerender } = withCard(4);
+    await act(async () => result.current.clearFilter());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Login flow · 3 left in batch",
+    );
+    // The chip too, on the test it opens.
+    rerender(
+      args({ context: FACETED, runId: OTHER_RUN, checkpointId: "step-9" }),
+    );
+    expect(result.current.cue).toBe("Next test: Login flow · 3 left in batch");
+  });
+
+  test("Clear filter in this run says nothing", async () => {
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: RUN, checkpointId: "step-5" },
+        scope: "run",
+      }),
+    );
+    const { result } = withCard(1);
+    await act(async () => result.current.clearFilter());
+    expect(router.replace).toHaveBeenCalledOnce();
     expect(useReviewAnnouncer.getState().seq).toBe(0);
   });
 
@@ -629,6 +679,21 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
     expect(result.current.card).toBe("batch");
+  });
+
+  test("Clear filter shows All caught up when nothing is left anywhere", async () => {
+    // Asked without the filter, so nothing is left in the project at all.
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: null,
+        scope: "none",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+      }),
+    );
+    const { result } = withCard(2);
+    await act(async () => result.current.clearFilter());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(result.current.card).toBe("all");
   });
 
   test("a Clear filter answer that lands after another move is dropped", async () => {

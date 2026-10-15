@@ -158,8 +158,9 @@ function supersedeCues(): void {
  *   batch     it is in another test of the batch: push it, and announce which.
  *   nextBatch this batch is done: show the batch card (or the filtered card
  *             when steps are left outside the reviewer's filters).
- *   none      nothing is left anywhere: show the all-done card (or, again,
- *             the filtered card when this batch has steps outside them).
+ *   none      nothing is left anywhere: show the all-done card. With facets
+ *             set only the filter is known to be empty: the filtered card
+ *             when this batch has steps outside it, else the batch card.
  *
  * The answer is fetched ahead, for the step on screen, so a decision can move
  * at once. It is acted on only when it is in hand: not while it is being
@@ -365,8 +366,10 @@ export function useReviewLoop({
     (answer: NextAnswer) => {
       epoch.current += 1;
       // Steps left outside the filters make the card the filtered one: the
-      // reviewer is done with what they chose, not with the batch.
+      // reviewer is done with what they chose, not with the batch. And with
+      // a filter set, "nothing left anywhere" is only true of the filter.
       const outside = answer.remaining.batchUnfiltered > 0;
+      const faceted = Object.keys(loopContext.facets).length > 0;
       switch (answer.scope) {
         case "run":
           // A step to go to puts away a card this step had (J at the batch
@@ -385,11 +388,11 @@ export function useReviewLoop({
           showCard(outside ? "filtered" : "batch");
           return;
         case "none":
-          showCard(outside ? "filtered" : "all");
+          showCard(outside ? "filtered" : faceted ? "batch" : "all");
           return;
       }
     },
-    [goTo, announceMove, showCard],
+    [loopContext, goTo, announceMove, showCard],
   );
 
   /** What a decision and J both do: move on the answer, or wait for it. */
@@ -507,14 +510,19 @@ export function useReviewLoop({
               : null;
         if (!answer.target || how === null) {
           // Nothing is left in the batch after all (a teammate took the last
-          // of it): the batch is done.
+          // of it): the batch is done, or everything is (no filter now).
           epoch.current += 1;
-          showCard("batch");
+          showCard(answer.scope === "none" ? "all" : "batch");
           return;
         }
         // The status stays; the facets are what is being cleared.
         if (goTo(answer.target, how, { ...loopContext, facets: {} })) {
           setShown(null);
+          // Into a test the reviewer did not pick: said, like the loop's
+          // own moves (R26), with the count outside the filter.
+          if (how === "push") {
+            announceMove(answer.target, answer.remaining.batch);
+          }
         }
       })
       .catch(() => {
@@ -530,6 +538,7 @@ export function useReviewLoop({
     loopContext,
     goTo,
     showCard,
+    announceMove,
   ]);
 
   // The cue is shown on the test it names, not on the one the move left; its

@@ -1833,12 +1833,9 @@ describe("DiffViewer: the review loop", () => {
       scope: "none",
       remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
     });
+    // No facets: with them, only the batch is known to be done (R25).
     const { r, again } = lastPendingStep({
-      reviewContext: {
-        status: "failed",
-        branch: "main",
-        facets: { os: "macOS" },
-      },
+      reviewContext: { status: "failed", branch: "main", facets: {} },
     });
     press("A");
     c1Decided(again);

@@ -28,7 +28,10 @@ export interface BatchDoneCardProps {
   onClearFilter: () => void;
   /** Back to batch, and Esc: the batch, as the reviewer left it. */
   backHref: string;
-  /** Back to batches (`all` only): the Batches page, its status and branch kept. */
+  /**
+   * Back to batches, on any card with no Continue: the Batches page, its
+   * status and branch kept.
+   */
   batchesHref: string;
 }
 
@@ -87,7 +90,8 @@ export function BatchDoneCard({
   if (nextBatch) actions.push("continue");
   // Only the filtered card has steps outside the filters to clear it for.
   if (variant === "filtered" && batchUnfiltered > 0) actions.push("clear");
-  if (variant === "all") actions.push("batches");
+  // Nowhere to continue to: the batches are the way on.
+  if (!nextBatch) actions.push("batches");
   actions.push("batch");
   const primary = actions[0];
 
