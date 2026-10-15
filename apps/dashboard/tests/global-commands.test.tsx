@@ -245,6 +245,14 @@ describe("GlobalCommands", () => {
     expect(e.defaultPrevented).toBe(true);
   });
 
+  it("/ opens the palette when no page search is registered", () => {
+    render(<Layout role="editor" />);
+    expect(usePaletteStore.getState().open).toBe(false);
+    const e = press("/");
+    expect(usePaletteStore.getState().open).toBe(true);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
   it("g a and g p are admin-only", () => {
     // An editor: no navigation, no binding, no command.
     const editor = render(<Layout role="editor" />);

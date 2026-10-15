@@ -6,6 +6,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -186,6 +187,27 @@ describe("ShortcutsSheet", () => {
     expect(useShortcutsSheet.getState().open).toBe(false);
   });
 
+  it("opening the sheet focuses the dialog, not the switch", async () => {
+    const user = userEvent.setup();
+    render(<Layout />);
+    openSheet();
+    // Focus starts on the dialog itself: a screen reader begins at the title,
+    // and Space or Enter cannot flip the persisted preference unseen.
+    expect(document.activeElement).toBe(sheet());
+    expect(useSingleKeyStore.getState().on).toBe(true);
+
+    await user.keyboard(" ");
+    await user.keyboard("{Enter}");
+
+    expect(useSingleKeyStore.getState().on).toBe(true);
+    expect(localStorage.getItem(SINGLE_KEYS_STORAGE_KEY)).toBeNull();
+    expect(
+      within(sheet())
+        .getByRole("switch", { name: "Single-key shortcuts" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
   it("lists this page's commands then Everywhere", () => {
     render(
       <Layout role="admin">
@@ -201,7 +223,10 @@ describe("ShortcutsSheet", () => {
     const labels = (s: { rows: HTMLElement[] }) =>
       s.rows.map((r) => r.firstElementChild?.textContent);
     expect(labels(all[0]!)).toEqual(["Approve step", "Next step", "Fit"]);
-    expect(labels(all[1]!)).toEqual([
+    // The global commands this test cares about are all there, in this order;
+    // a command added later does not break it.
+    const everywhere = labels(all[1]!);
+    const expected = [
       "Open command palette",
       "Keyboard shortcuts",
       "Search",
@@ -209,7 +234,11 @@ describe("ShortcutsSheet", () => {
       "Go to Batches",
       "Go to Analytics",
       "Go to Projects",
-    ]);
+    ];
+    expect(everywhere).toEqual(expect.arrayContaining(expected));
+    expect(everywhere.filter((l) => l && expected.includes(l))).toEqual(
+      expected,
+    );
   });
 
   it.each([
@@ -708,5 +737,50 @@ describe("ShortcutsSheet", () => {
       "On this page (Batch)",
       "Everywhere",
     ]);
+  });
+
+  it("the sheet drops a page section when the page unmounts", () => {
+    const page = (
+      <Page
+        scope="batch"
+        commands={[command("batch", "batch.approve", "Approve step", ["a"])]}
+      />
+    );
+    const { rerender } = render(<Layout>{page}</Layout>);
+    openSheet();
+    expect(sections().map((s) => s.heading)).toEqual([
+      "On this page (Batch)",
+      "Everywhere",
+    ]);
+    expect(rowOf("Approve step")).toBeTruthy();
+
+    // The page goes away: its commands and its section go with it.
+    rerender(<Layout />);
+    expect(sections().map((s) => s.heading)).toEqual(["Everywhere"]);
+    expect(() => rowOf("Approve step")).toThrow();
+  });
+
+  it("the sheet follows a role change while open", () => {
+    const labels = () =>
+      within(sheet())
+        .getAllByRole("listitem")
+        .map((r) => r.firstElementChild?.textContent);
+    const { rerender } = render(<Layout role="guest" />);
+    openSheet();
+    expect(labels()).not.toContain("Undo last review action");
+    expect(labels()).not.toContain("Go to Analytics");
+
+    // Each rerender is a NEW element (a new role prop).
+    rerender(<Layout role="admin" />);
+    expect(labels()).toContain("Undo last review action");
+    expect(labels()).toContain("Go to Analytics");
+    expect(labels()).toContain("Go to Projects");
+
+    rerender(<Layout role="editor" />);
+    expect(labels()).toContain("Undo last review action");
+    expect(labels()).not.toContain("Go to Analytics");
+
+    rerender(<Layout role="guest" />);
+    expect(labels()).not.toContain("Undo last review action");
   });
 });

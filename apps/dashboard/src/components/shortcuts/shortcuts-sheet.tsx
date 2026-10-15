@@ -194,6 +194,15 @@ export function ShortcutsSheet(): JSX.Element {
       <DialogContent
         // The sheet is its own description: a list of keys and a switch.
         aria-describedby={undefined}
+        // Radix would focus the first tabbable element, which is the footer's
+        // switch: Space or Enter would flip the stored WCAG 2.1.4 preference
+        // unseen, and a screen reader would start below the list. Focus the
+        // dialog itself (tabIndex -1) instead: it reads the title, then the
+        // list, and the switch is a Tab away.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (e.target as HTMLElement).focus();
+        }}
         className="max-h-[85vh] max-w-lg overflow-y-auto"
       >
         <DialogHeader>
