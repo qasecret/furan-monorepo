@@ -85,6 +85,7 @@ const STATIC_NAMES = staticRoutes({
   unresolvedRunId: "",
   multiRunId: "",
   multiBuildId: "",
+  loopBuildId: "",
 }).map((r) => r.name);
 
 /**
@@ -450,6 +451,30 @@ test.describe.serial("visual sweep @visual", () => {
   }
 
   /**
+   * Wait for a client-side redirect to land (`VisualRoute.lands`): the page
+   * is still the redirecting route until the router has replaced the URL, and
+   * a shot taken then is a blank pane that passes. Fails, saying where the
+   * page stayed, if the pathname never matches.
+   */
+  async function waitForLanding(
+    p: Page,
+    lands: RegExp,
+    path: string,
+  ): Promise<void> {
+    try {
+      await p.waitForURL((url) => lands.test(url.pathname), {
+        timeout: NAV_TIMEOUT,
+        waitUntil: "commit",
+      });
+    } catch (err) {
+      if (!(err instanceof errors.TimeoutError)) throw err;
+      throw new Error(
+        `${path} should redirect to a path matching ${lands}, but stayed at ${new URL(p.url()).pathname} after ${NAV_TIMEOUT / 1000}s`,
+      );
+    }
+  }
+
+  /**
    * Check the navigation, settle, un-clip, then screenshot, save, and run axe
    * colour-contrast. A 4xx/5xx answer fails the test (an error page must not
    * pass as a screen); landing somewhere other than `v.path` is annotated
@@ -477,10 +502,13 @@ test.describe.serial("visual sweep @visual", () => {
     await p.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1);
     await settle(p);
     const landedPath = new URL(p.url()).pathname;
-    if (landedPath !== v.path) {
+    // Compare paths only: a state's path may carry a query (`state-filtered-empty`
+    // names a filter), which the URL keeps and `v.path`'s pathname does not.
+    const wantedPath = new URL(v.path, "http://sweep.invalid").pathname;
+    if (landedPath !== wantedPath) {
       testInfo.annotations.push({
         type: "landed-elsewhere",
-        description: `${v.path} → ${landedPath}`,
+        description: `${wantedPath} → ${landedPath}`,
       });
     }
     await unclip(p);
@@ -553,6 +581,7 @@ test.describe.serial("visual sweep @visual", () => {
               ? editorPage
               : page;
           const v = await visit(p, path);
+          if (route.lands) await waitForLanding(p, route.lands, path);
           await shoot(p, v, theme, route.name, testInfo);
         });
       }

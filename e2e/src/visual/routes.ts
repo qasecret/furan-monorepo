@@ -32,7 +32,22 @@ export interface VisualRoute {
    * non-admin screen would otherwise never be captured.
    */
   as?: "editor";
+  /**
+   * For a route the dashboard redirects on the CLIENT (`/builds` and `/runs`
+   * through `LatestBuildRedirect`, `_first` to the first step), after the
+   * document has loaded: the pathname the page must reach before it is shot.
+   * Without it a shot taken between the redirect's first render and its
+   * landing is a blank right-hand pane that passes. The sweep waits for it
+   * (as long as a navigation) and fails, saying where the page stayed, if it
+   * is never reached. Routes that redirect on the server need none.
+   */
+  lands?: RegExp;
 }
+
+/** `/builds/:buildId`, the batch page a Builds index redirects to. */
+const LANDS_ON_BATCH = /\/builds\/[^/]+$/;
+/** A viewer on a real step: not still on the `_first` placeholder. */
+const LANDS_ON_STEP = /\/runs\/[^/]+\/checkpoints\/(?!_first$)[^/]+$/;
 
 const ADMIN_AREAS = [
   "api-keys",
@@ -57,17 +72,25 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
       path: `/admin/projects/${f.projectId}/members`,
     },
     { name: "projects", path: "/projects", as: "editor" },
-    { name: "project", path: P },
-    { name: "builds", path: `${P}/builds` },
+    { name: "project", path: P, lands: LANDS_ON_BATCH },
+    { name: "builds", path: `${P}/builds`, lands: LANDS_ON_BATCH },
     { name: "build", path: `${P}/builds/${f.buildId}` },
     // The multi-step run's build and run: result rows of several steps, with
     // an approved, a rejected and a pending step.
     { name: "build-multi", path: (x) => `${P}/builds/${x.multiBuildId}` },
-    { name: "runs", path: `${P}/runs` },
-    { name: "run", path: `${P}/runs/${f.unresolvedRunId}` },
+    { name: "runs", path: `${P}/runs`, lands: LANDS_ON_BATCH },
+    {
+      name: "run",
+      path: `${P}/runs/${f.unresolvedRunId}`,
+      lands: LANDS_ON_STEP,
+    },
     // `/runs/:id` redirects to its first checkpoint, whose viewer shows the
     // step arrows between the run's steps.
-    { name: "run-multi", path: (x) => `${P}/runs/${x.multiRunId}` },
+    {
+      name: "run-multi",
+      path: (x) => `${P}/runs/${x.multiRunId}`,
+      lands: LANDS_ON_STEP,
+    },
     { name: "settings", path: `${P}/settings` },
     { name: "variations", path: `${P}/variations` },
   ];
@@ -79,14 +102,15 @@ export function staticRoutes(f: VisualFixture): VisualRoute[] {
  * `a[href]` whose pathname matches `href` and captures that page. Zero
  * matching links fails the test — a missing link is itself a regression.
  *
- * Where the links actually are (checked in the DOM, 2026-10-08):
- *  - `/runs/:runId/diffs/:diffId` is linked only from a variation's history
- *    table, so `diff` goes variations → variation → diff. (The run page and the
- *    diff viewer render no `/diffs/` or `/checkpoints/` anchors.)
- *  - `/runs/:runId/checkpoints/:checkpointId` has no anchor anywhere — it is
- *    reached by `router.push`/`replace` only — so it has no entry here. The
- *    `run` static route covers it: `/runs/:runId` redirects to the run's first
- *    checkpoint, which is what that screenshot shows.
+ * Where the links actually are (checked in the DOM, 2026-10-15):
+ *  - `/runs/:runId/checkpoints/:checkpointId` is linked from a variation's
+ *    history table ("View diff" opens the exact step of that run), so `diff`
+ *    goes variations → variation → that step. The legacy
+ *    `/runs/:runId/diffs/:diffId` is only a redirect to the same step now and
+ *    nothing links to it. (The run page and the viewer itself render no such
+ *    anchors; they reach a step by `router.push`/`replace`.)
+ *  - The `run` static route is the same viewer, reached by redirect:
+ *    `/runs/:runId` goes to the run's first checkpoint.
  */
 export const DISCOVERED: ReadonlyArray<{
   name: string;
@@ -99,7 +123,7 @@ export const DISCOVERED: ReadonlyArray<{
     name: "diff",
     from: (f) => `/projects/${f.projectId}/variations`,
     via: [/\/variations\/[^/]+$/],
-    href: /\/diffs\/[^/]+$/,
+    href: /\/runs\/[^/]+\/checkpoints\/[^/]+$/,
   },
   {
     name: "variation",
@@ -168,6 +192,11 @@ async function hoverFirstStep(p: Page): Promise<void> {
  * step). The header shows the run's name and a "2 / 3" count, not the step's
  * name; the Info panel's "Step" row ("2/3 cart") does, so that is what is read.
  * Found by name, never by id: step ids are different on every stack.
+ *
+ * Returns once the step's URL has committed. The viewer shows a step the
+ * moment the arrow is clicked, but Next mounts a new viewer there only when
+ * the route commits, a few hundred milliseconds later; a state that acts
+ * before then (Approve) would act on the viewer being replaced.
  */
 async function openStep(p: Page, name: string): Promise<void> {
   const stepRow = p.getByTestId("test-info-sidebar").getByText(/^\d+\/\d+ \S/);
@@ -175,7 +204,10 @@ async function openStep(p: Page, name: string): Promise<void> {
   let current = "";
   for (let hops = 0; hops < 8; hops++) {
     current = (await stepRow.innerText()).trim();
-    if (current.replace(/^\d+\/\d+ /, "") === name) return;
+    if (current.replace(/^\d+\/\d+ /, "") === name) {
+      await stepUrlCommitted(p);
+      return;
+    }
     // On the last step the arrow is natively disabled: say so, not "timed out
     // waiting for it to be enabled".
     if (!(await next.isEnabled())) break;
@@ -185,6 +217,22 @@ async function openStep(p: Page, name: string): Promise<void> {
   throw new Error(
     `visual: no step named "${name}" within 8 steps of the first (stopped at "${current}")`,
   );
+}
+
+/**
+ * Wait until the URL names the step the viewer shows (its `data-diff-id`): the
+ * route of the last step change has committed, and the viewer on screen is
+ * the one mounted for it.
+ */
+async function stepUrlCommitted(p: Page): Promise<void> {
+  const id = await p
+    .locator("[data-diff-id]")
+    .first()
+    .getAttribute("data-diff-id");
+  if (!id || id === "_first") {
+    throw new Error(`visual: the viewer names no step (data-diff-id=${id})`);
+  }
+  await p.waitForURL((url) => url.pathname.endsWith(`/checkpoints/${id}`));
 }
 
 /** The toast a review decision raised, which carries the Undo action. */
@@ -319,8 +367,9 @@ export const STATES: ReadonlyArray<VisualState> = [
     hold: hoverFirstStep,
   },
   // ---- the review flow --------------------------------------------------
-  // Added at the END, in this order: the first two only look, the last one
-  // changes the fixture (and puts it back, see `cleanup`), so it must run last.
+  // Added at the END, in this order: all but the last only look (or, as the
+  // done card's J, only read the fixture), the last one changes it (and puts
+  // it back, see `cleanup`), so it must run last.
   {
     // The multi-step run opens on `home`, an approved step: the header shows
     // who decided it, and when, with Undo.
@@ -348,6 +397,69 @@ export const STATES: ReadonlyArray<VisualState> = [
         dialog.getByText(/^Approve \d+ pending steps?\?$/),
       ).toBeVisible();
       await expect(dialog.getByTestId("approve-pending-confirm")).toBeEnabled();
+    },
+  },
+  {
+    // The loop batch with its Viewport filter open: "Any viewport" and the
+    // batch's two viewports, each with its pending count, so the list is a real
+    // choice.
+    name: "state-facets-open",
+    path: (f) => `/projects/${f.projectId}/builds/${f.loopBuildId}`,
+    open: async (p) => {
+      // The select is drawn only once the batch's values are known.
+      const trigger = p.getByTestId("facet-select-viewport");
+      await expect(trigger).toBeVisible();
+      // Radix Select closes itself on a window `resize` (and `blur`), and each
+      // full-page screenshot resizes the window: without this the list is shut
+      // by the time the sweep's first shot is taken, and the state passes with
+      // the select closed. Registered (capturing) before the list opens, so it
+      // runs before Radix's own listeners; it lasts until the next navigation.
+      // Only the window's own events: a capturing `blur` listener on the
+      // window also sees every element's blur, which must go on as usual.
+      await p.evaluate(
+        `(() => { const keep = (e) => { if (e.target === window) e.stopImmediatePropagation(); }; for (const t of ["resize", "blur"]) window.addEventListener(t, keep, true); })()`,
+      );
+      await trigger.click();
+      await expect(p.getByRole("listbox")).toBeVisible();
+      await expect(
+        p.getByRole("option", { name: /^\d+x\d+ · \d+ pending$/ }),
+      ).toHaveCount(2);
+    },
+  },
+  {
+    // A viewport the batch has none of, as a shared link can name one: the
+    // empty list and the select that says why ("0x0 (not in this batch)").
+    name: "state-filtered-empty",
+    path: (f) =>
+      `/projects/${f.projectId}/builds/${f.multiBuildId}?viewport=0x0`,
+    open: async (p) => {
+      await expect(p.getByTestId("batch-empty-filtered")).toBeVisible();
+      await expect(p.getByTestId("facet-select-viewport")).toContainText(
+        "not in this batch",
+      );
+    },
+  },
+  {
+    // J on the multi-step run's decided `home` step, with a browser filter that
+    // no step of the project matches: nothing is left inside the filter, so the
+    // viewer shows the done card instead of moving (here "Done with the
+    // filtered steps": `profile` still needs review outside the filter). The
+    // step is decided, so J lands on the boundary rather than announcing "last
+    // step" (a pending one shows a header chip, not a card). The fixture's
+    // steps are all chromium, so no step inside `browser=firefox` can pull J
+    // elsewhere. Only reads; nothing to put back.
+    name: "state-batch-done",
+    path: (f) =>
+      `/projects/${f.projectId}/runs/${f.multiRunId}?browser=firefox`,
+    open: async (p) => {
+      await openStep(p, "home");
+      await expect(p.getByTestId("decision-chip")).toBeVisible();
+      await p.keyboard.press("j");
+      await expect(
+        p.getByRole("dialog", {
+          name: /^(Batch done|Done with the filtered steps)$/,
+        }),
+      ).toBeVisible();
     },
   },
   {

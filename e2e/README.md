@@ -54,7 +54,8 @@ version`); older versions don't support them. Output: `e2e-coverage.md` /
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
 full-page PNG at a 1440×900 viewport, plus the interaction states in
 `STATES` (⌘K open, a menu open, a dialog open, a step card hovered, a decided
-step, the Approve-pending question, the Undo toast), and runs axe
+step, the Approve-pending question, a batch's viewport filter open and
+matching nothing, the batch-done card, the Undo toast), and runs axe
 `color-contrast` on each. The dashboard scrolls inside its own containers,
 never the document, so before capturing, `src/visual/unclip.ts` lets those
 containers grow to their content: the PNG and axe cover the whole page, not
@@ -70,7 +71,10 @@ problems are reported as test annotations (also written to
 theme with that theme's whole list. Uncaught page errors are annotated `pageerror`
 (hiding Next's dev overlay also hides its error dialog). A route answering
 4xx/5xx fails; a route that redirects elsewhere is annotated
-`landed-elsewhere`. Routes admins are redirected away from (`as: "editor"`:
+`landed-elsewhere`. The routes the dashboard redirects on the client
+(`project`, `builds`, `runs`, `run`, `run-multi`) declare where they must
+land (`lands`), and the sweep waits for it before the shot, failing if the
+page stays put. Routes admins are redirected away from (`as: "editor"`:
 `/account/tokens`, `/projects`) are captured from the seeded editor's
 session.
 
@@ -95,7 +99,13 @@ Then check out the branch in that worktree (the dev server hot-reloads) and
 re-run with `VISUAL_LABEL=after`. PNGs land in
 `visual-out/<VISUAL_LABEL>/<theme>/<route>.png` (override the root with
 `VISUAL_OUT`); the fixture project's IDs are kept in `.visual-sweep.json` so
-both runs capture the same data. Both are gitignored. The fixture also makes
+both runs capture the same data. Both are gitignored. A `.visual-sweep.json`
+from before the multi-step run or the loop batch existed is upgraded in
+place: the project and everything it holds stay as they are, and only the
+missing batch is added (the file is written after each addition). The fixture
+holds three batches: the single-step build, the multi-step build, and a
+"loop" batch (two runs, one at a phone viewport, each with one pending changed
+step) that is always the newest. The fixture also makes
 that project the bootstrap admin's default project (keeping its other
 memberships), so `/inbox` captures the batches table rather than "No project
 assigned".
@@ -124,16 +134,24 @@ means every screenshot test passed.
 **What the sweep does not cover.** A green sweep says nothing about:
 
 - **The project, builds and runs screens as such.** `project`, `builds` and
-  `runs` redirect to the latest batch (the multi-step build), so those three
-  shots are the same screen as `build-multi`; `build` shows the single-step
-  build.
-- **States the fixture never renders:** empty and error states, a selected
-  region, menus opened from the keyboard, settings tabs other than the
-  default, and toasts other than the review Undo toast. (The multi-step run
+  `runs` redirect to the latest batch (the loop batch), so those three shots
+  are the same screen. The loop batch has no dedicated route; those three
+  shots show it. `build` shows the single-step build and `build-multi` the
+  multi-step one.
+- **States the fixture never renders:** error states, empty states other
+  than a filter that matches nothing, a selected region, menus opened from
+  the keyboard, settings tabs other than the default, and toasts other than
+  the review Undo toast. (The multi-step run
   covers step arrows and the approved, rejected and pending-`new` steps;
   `state-step-hover` covers a step card's hover toolbar; `state-decided-step`
   the decision chip; `state-approve-pending` the Approve-pending question;
-  `state-undo-toast` the toast with its Undo action.)
+  `state-facets-open` the loop batch's Viewport filter open;
+  `state-filtered-empty` a shared link whose filter matches nothing;
+  `state-batch-done` the card J raises at a batch's end, here "Done with the
+  filtered steps"; `state-undo-toast` the toast with its Undo action.) The
+  All caught up card is not reachable here: the fixture always has pending
+  work. `tests/ui/review-loop.spec.ts` shoots it instead, with the same axe
+  `color-contrast` check in both themes (see Coverage matrix).
 - **Contrast axe cannot decide.** axe `incomplete` results (text over an
   image or gradient, overlapped or pseudo-element backgrounds, …) are counted
   by reason (`messageKey`) per shot in `color-contrast.json` and annotated
@@ -202,13 +220,31 @@ page. It never touches the visual sweep's fixture. It runs in `s3-full`: like
 the diff viewer, it reads and writes through the dashboard's client-side calls,
 which reach the api through the stack's single origin (3011).
 
+`tests/ui/review-loop.spec.ts` (capability `review.loop`, not `@visual`)
+drives the review loop in a real browser, also on data of its own, in a
+project created fresh for every run (`review-loop-ui-<timestamp>`): "Start
+reviewing" and "All caught up" speak for the whole project, so nothing may be
+pending there but this run's steps. Two batches need review on one branch, an
+older one with two tests and a newer one with one. From Batches (Needs review,
+"Start reviewing (2)") it opens the newer batch, approves with `A`, continues
+from the "Batch done" card to the older one with Enter, approves its first
+test and is moved to the second with the "Next test" cue, and approves that to
+reach "All caught up". That card is shot, and checked with axe
+`color-contrast`, in light and dark (problems fail the test, as in the sweep).
+It then goes back to a batch from the viewer with a `viewport` filter set and
+checks the filter is kept, and opens an old `/runs/:r/diffs/:step` link to
+check it lands on that exact step. Batches lists the signed-in user's default
+project, so for its run the spec makes its project the bootstrap admin's
+default (keeping their memberships) and puts the old assignment back in
+`afterAll`. It runs in `s3-full`, like `review-flow.spec.ts`.
+
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 4 times (the seeder, then
-  the login, dashboard and review-flow specs), so repeated Playwright runs
-  against a kept stack trip it after a few iterations: the login form then
-  reads "Invalid email or password" and the api logs
+  per-account login brake, ADR-063). A run signs in 5 times (the seeder, then
+  the login, dashboard, review-flow and review-loop specs), so repeated
+  Playwright runs against a kept stack trip it after a few iterations: the
+  login form then reads "Invalid email or password" and the api logs
   `login_account_rate_limited` (429). Wait out the window, or recreate the
   stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation

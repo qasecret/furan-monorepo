@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { ApiError, type ApiClient } from "../clients/api-client.js";
-import { capture, captureRun } from "../clients/virtual-sdk.js";
+import { capture, captureRun, type Fixture } from "../clients/virtual-sdk.js";
 import { loadSeed, principal } from "../seed/load-seed.js";
 
 /**
@@ -14,7 +14,11 @@ import { loadSeed, principal } from "../seed/load-seed.js";
  *    content; and
  *  - a build holding one MULTI-step run with a decided step on each side and a
  *    pending one, so step arrows, multi-step result rows and the decided states
- *    all render (see {@link addMultiRun}).
+ *    all render (see {@link addMultiRun}); and
+ *  - a second pending batch of two runs on its own branch, one at a phone
+ *    viewport, each with one pending changed step, so the review loop has a
+ *    batch to continue to and the batch filters have more than one value (see
+ *    {@link addLoopBatch}).
  */
 export interface VisualFixture {
   projectId: string;
@@ -24,6 +28,11 @@ export interface VisualFixture {
   multiRunId: string;
   /** The build that run belongs to. */
   multiBuildId: string;
+  /**
+   * The loop batch: two runs (a desktop and a phone viewport), each with one
+   * pending `changed` step. The newest batch of the project.
+   */
+  loopBuildId: string;
 }
 
 type SingleFixture = Pick<
@@ -31,6 +40,16 @@ type SingleFixture = Pick<
   "projectId" | "buildId" | "unresolvedRunId"
 >;
 type MultiFixture = Pick<VisualFixture, "multiRunId" | "multiBuildId">;
+type LoopFixture = Pick<VisualFixture, "loopBuildId">;
+
+/**
+ * What `.visual-sweep.json` can hold: the single-step ids, then each later
+ * addition (the multi-step run, the loop batch) once it exists. A file from
+ * before an addition simply lacks it, and {@link completeFixture} adds it.
+ */
+type StoredFixture = SingleFixture &
+  Partial<MultiFixture> &
+  Partial<LoopFixture>;
 
 const FIXTURE_FILE = fileURLToPath(
   new URL("../../.visual-sweep.json", import.meta.url),
@@ -51,27 +70,41 @@ const MULTI_BRANCH = "visual-sweep-multi";
 const MULTI_BASELINE_BUILD_NAME = "visual-sweep-multi-baseline";
 const MULTI_BUILD_NAME = "visual-sweep-multi-build";
 
+/**
+ * The loop batch lives on its own branch too, for the same reason as the multi
+ * run's: it must not touch the baselines of the other batches. Two tests, each
+ * with one step: one at the default viewport, one at a phone's.
+ */
+const LOOP_BRANCH = "visual-sweep-loop";
+const LOOP_BASELINE_BUILD_NAME = "visual-sweep-loop-baseline";
+const LOOP_BUILD_NAME = "visual-sweep-loop-build";
+const LOOP_TESTS: ReadonlyArray<{ name: string; viewport?: string }> = [
+  { name: "loop-desktop" },
+  { name: "loop-mobile", viewport: "375x812" },
+];
+
 const isId = (v: unknown): v is string => typeof v === "string" && v !== "";
 
 /**
- * The fixture file, validated field by field. A file from before the multi-step
- * run existed has only the single-step ids: it is returned as such, and
- * {@link reuseOrCreate} adds the multi run to it. A file that is unreadable or
- * lacks a single-step id is no fixture at all.
+ * A parsed fixture file, validated field by field. A file from before the
+ * multi-step run (or the loop batch) existed lacks its ids: it is returned
+ * as such, and {@link completeFixture} adds what is missing. A file that
+ * lacks a single-step id, or is no object at all, is no fixture. (Exported so
+ * the upgrade rules can be driven without the file.)
  */
-function readFixture(): (SingleFixture & Partial<MultiFixture>) | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(FIXTURE_FILE, "utf8"));
-  } catch {
-    return null;
-  }
+export function parseFixture(raw: unknown): StoredFixture | null {
   // `null`, an array or a scalar parses fine but is no fixture either.
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return null;
   }
-  const { projectId, buildId, unresolvedRunId, multiRunId, multiBuildId } =
-    raw as Record<string, unknown>;
+  const {
+    projectId,
+    buildId,
+    unresolvedRunId,
+    multiRunId,
+    multiBuildId,
+    loopBuildId,
+  } = raw as Record<string, unknown>;
   if (!isId(projectId) || !isId(buildId) || !isId(unresolvedRunId)) {
     return null;
   }
@@ -83,10 +116,20 @@ function readFixture(): (SingleFixture & Partial<MultiFixture>) | null {
     ...(isId(multiRunId) && isId(multiBuildId)
       ? { multiRunId, multiBuildId }
       : {}),
+    ...(isId(loopBuildId) ? { loopBuildId } : {}),
   };
 }
 
-function writeFixture(fixture: VisualFixture): void {
+/** The fixture file, or null when it is missing, unreadable or no fixture. */
+function readFixture(): StoredFixture | null {
+  try {
+    return parseFixture(JSON.parse(readFileSync(FIXTURE_FILE, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function writeFixture(fixture: StoredFixture): void {
   writeFileSync(FIXTURE_FILE, JSON.stringify(fixture, null, 2));
 }
 
@@ -139,23 +182,7 @@ async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
   if (existing) {
     const projects = await api.listProjects(admin);
     if (projects.some((p) => p.id === existing.projectId)) {
-      if (existing.multiRunId && existing.multiBuildId) {
-        return {
-          ...existing,
-          multiRunId: existing.multiRunId,
-          multiBuildId: existing.multiBuildId,
-        };
-      }
-      // A fixture file from before the multi-step run: keep the project and
-      // its single-step run exactly as they are, and add only the missing run.
-      const fixture = {
-        projectId: existing.projectId,
-        buildId: existing.buildId,
-        unresolvedRunId: existing.unresolvedRunId,
-        ...(await addMultiRun(api, existing.projectId)),
-      };
-      writeFixture(fixture);
-      return fixture;
+      return completeFixture(api, existing);
     }
   }
 
@@ -197,14 +224,51 @@ async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
     );
   }
 
-  const fixture: VisualFixture = {
+  // Written before the rest is added, so a run that fails part-way resumes
+  // from here instead of capturing the single-step run again.
+  const stored: StoredFixture = {
     projectId,
     buildId: changed.buildId,
     unresolvedRunId: changed.runId,
-    ...(await addMultiRun(api, projectId)),
   };
-  writeFixture(fixture);
-  return fixture;
+  writeFixture(stored);
+  return completeFixture(api, stored);
+}
+
+/**
+ * `stored` with whatever it lacks added: the multi-step run, then the loop
+ * batch. A fixture file from before either: keep the project and everything
+ * it already holds exactly as it is, and add only the missing parts, writing
+ * the file after each so a failure part-way never adds one twice. The loop
+ * batch is added last, so it is always the project's newest batch (the
+ * `project`, `builds` and `runs` routes land on the newest batch).
+ */
+async function completeFixture(
+  api: ApiClient,
+  stored: StoredFixture,
+): Promise<VisualFixture> {
+  const { projectId, buildId, unresolvedRunId } = stored;
+
+  let multi: MultiFixture;
+  if (stored.multiRunId !== undefined && stored.multiBuildId !== undefined) {
+    multi = {
+      multiRunId: stored.multiRunId,
+      multiBuildId: stored.multiBuildId,
+    };
+  } else {
+    multi = await addMultiRun(api, projectId);
+    writeFixture({ ...stored, ...multi });
+  }
+
+  let loop: LoopFixture;
+  if (stored.loopBuildId !== undefined) {
+    loop = { loopBuildId: stored.loopBuildId };
+  } else {
+    loop = await addLoopBatch(api, projectId);
+    writeFixture({ ...stored, ...multi, ...loop });
+  }
+
+  return { projectId, buildId, unresolvedRunId, ...multi, ...loop };
 }
 
 /** A run's checkpoints as the reviewer reads them: `name → state`, in order. */
@@ -222,18 +286,19 @@ async function checkpointStates(
 /**
  * Throw unless the run's steps are exactly `expected`: a fixture that quietly
  * came out different would make every later before/after comparison meaningless.
+ * `what` says which steps, when ("the multi-step run's steps after capture").
  */
 async function expectSteps(
   api: ApiClient,
   auth: string,
   runId: string,
   expected: Array<[string, string]>,
-  when: string,
+  what: string,
 ): Promise<void> {
   const actual = await checkpointStates(api, auth, runId);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
-      `visual fixture: expected the multi-step run's steps ${when} to be ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      `visual fixture: expected ${what} to be ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
     );
   }
 }
@@ -289,7 +354,7 @@ async function addMultiRun(
       ["cart", "passed"],
       ["profile", "new"],
     ],
-    "after capture",
+    "the multi-step run's steps after capture",
   );
 
   await api.trpcMutate(admin, "review.approve", {
@@ -319,8 +384,92 @@ async function addMultiRun(
       ["cart", "rejected"],
       ["profile", "new"],
     ],
-    "after review",
+    "the multi-step run's steps after review",
   );
 
   return { multiRunId: candidate.runId, multiBuildId: candidate.buildId };
+}
+
+/**
+ * One batch of the loop fixture: a run for each of {@link LOOP_TESTS}, each
+ * with its one step captured from `fixture`, appended to the same build (the
+ * first run makes it, named `buildName`).
+ */
+async function captureLoopBatch(
+  api: ApiClient,
+  projectId: string,
+  fixture: Fixture,
+  buildName: string,
+): Promise<{
+  buildId: string;
+  runs: Array<{ name: string; runId: string; status: string }>;
+}> {
+  const pat = principal(loadSeed(), "owner").pat;
+  let buildId: string | undefined;
+  const runs: Array<{ name: string; runId: string; status: string }> = [];
+  for (const test of LOOP_TESTS) {
+    const run = await captureRun(api, {
+      pat,
+      projectId,
+      branchName: LOOP_BRANCH,
+      ...(buildId === undefined ? { buildName } : { buildId }),
+      ...(test.viewport ? { viewport: test.viewport } : {}),
+      checkpoints: [{ name: test.name, fixture }],
+    });
+    buildId = run.buildId;
+    runs.push({ name: test.name, runId: run.runId, status: run.status });
+  }
+  if (buildId === undefined) {
+    throw new Error("visual fixture: the loop batch has no tests");
+  }
+  return { buildId, runs };
+}
+
+/**
+ * The loop batch: two tests (a desktop and a phone viewport), each approved as
+ * the baseline of {@link LOOP_BRANCH}, then re-run in one new build with the
+ * `changed` screenshot. Each of its two runs is left with one pending
+ * `unresolved` step, which nothing in the sweep decides: the batch is the next
+ * batch to continue to, and a second set of filter values, and stays pending.
+ *
+ * Not atomic: a failure after the candidate build exists (a capture or the
+ * check below) leaves it as an extra pending batch on {@link LOOP_BRANCH}, and
+ * since the fixture file has no `loopBuildId` yet the next run adds the loop
+ * batch again. Accepted: a stray pending batch costs nothing to the sweep.
+ */
+async function addLoopBatch(
+  api: ApiClient,
+  projectId: string,
+): Promise<LoopFixture> {
+  const admin = loadSeed().bootstrapAdminJwt;
+
+  const baseline = await captureLoopBatch(
+    api,
+    projectId,
+    "baseline",
+    LOOP_BASELINE_BUILD_NAME,
+  );
+  for (const run of baseline.runs) {
+    // A leftover baseline on this branch makes the capture "passed"; only a new
+    // or unresolved run needs (and accepts) approval.
+    if (run.status !== "passed") await api.approveRun(admin, run.runId);
+  }
+
+  const candidate = await captureLoopBatch(
+    api,
+    projectId,
+    "changed",
+    LOOP_BUILD_NAME,
+  );
+  for (const run of candidate.runs) {
+    await expectSteps(
+      api,
+      admin,
+      run.runId,
+      [[run.name, "unresolved"]],
+      `the loop batch's ${run.name} run's steps after capture`,
+    );
+  }
+
+  return { loopBuildId: candidate.buildId };
 }
