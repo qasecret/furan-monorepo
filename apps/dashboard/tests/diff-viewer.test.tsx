@@ -1917,16 +1917,20 @@ describe("DiffViewer: the review loop", () => {
     expect(next().getAttribute("aria-busy")).not.toBe("true");
     expect(card(r)).not.toBeNull();
 
-    // Next pending pressed on the card while the answer is refetched: it
-    // waits too, and the card is down meanwhile.
+    // While the card is up, Next pending is inert (R28), as J is: pressed
+    // while the answer is refetched, it neither waits nor takes the card
+    // down.
     nextQuery.isFetching = true;
     again();
+    expect(next()).toHaveProperty("disabled", true);
     fireEvent.click(next());
-    expect(next().getAttribute("aria-busy")).toBe("true");
-    expect(card(r)).toBeNull();
+    expect(next().getAttribute("aria-busy")).not.toBe("true");
+    expect(card(r)).not.toBeNull();
     nextQuery.isFetching = false;
     again();
     expect(card(r)).not.toBeNull();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 
   test("the filtered card's Clear filter drops the facets; a card that changes is said again", async () => {

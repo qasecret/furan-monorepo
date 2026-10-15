@@ -284,11 +284,16 @@ export function useReviewLoop({
   // A card is for a settled step. The step needing review again (⌘Z, a
   // refused decision) drops it, for good: settling it some other way (Mark as
   // Bug, approve pending, an override) brings none back. The change, not the
-  // state: a decision brings its card before its own update has landed.
+  // state: a decision brings its card before its own update has landed. A
+  // decision still waiting for its answer is no longer one: its answer is
+  // taken as J's, which brings no card over a step that needs review.
   const [wasPending, setWasPending] = useState(stepPending);
   if (wasPending !== stepPending) {
     setWasPending(stepPending);
     if (stepPending && shown) setShown(null);
+    if (stepPending && waiting?.by === "decision") {
+      setWaiting({ ...waiting, by: "key" });
+    }
   }
   // Read by answers that come back later (K's).
   const stepPendingRef = useRef(stepPending);
@@ -622,9 +627,12 @@ export function useReviewLoop({
               : null;
         if (!answer.target || how === null) {
           // Nothing is left in the batch after all (a teammate took the last
-          // of it): the batch is done, or everything is (no filter now).
-          epoch.current += 1;
+          // of it): the batch is done, or everything is (no filter now). Not
+          // over a step that needs review again (⌘Z meanwhile dropped the
+          // card): it stays down.
           done();
+          if (stepPendingRef.current) return;
+          epoch.current += 1;
           showCard(answer.scope === "none" ? "all" : "batch");
           return;
         }

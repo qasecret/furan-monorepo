@@ -237,9 +237,11 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
           store.deleteSelected();
         }
       },
-      Escape: () => {
+      Escape: (e) => {
         const onEscape = optsRef.current.onEscape;
         if (onEscape) {
+          // Held, it leaves once: the auto-repeats are not more presses.
+          if (e.repeat) return;
           onEscape();
           return;
         }

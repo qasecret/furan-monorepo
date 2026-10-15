@@ -108,6 +108,24 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewerStore.getState().selectedRegionId).toBeNull();
   });
 
+  it("held Esc leaves once", () => {
+    const onEscape = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onEscape }));
+    act(() => {
+      for (const repeat of [false, true, true, true]) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            repeat,
+          }),
+        );
+      }
+    });
+    // The auto-repeats of a held key are not more presses.
+    expect(onEscape).toHaveBeenCalledOnce();
+  });
+
   it("O cycles the mode", () => {
     renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     act(() => press("O"));

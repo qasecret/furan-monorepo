@@ -803,6 +803,27 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     expect(useReviewAnnouncer.getState().seq).toBe(0);
   });
 
+  test("a Clear filter fallback that lands after an undo brings no card", async () => {
+    const cleared = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(cleared.promise);
+    const { result, rerender } = withCard(2);
+    act(() => result.current.clearFilter());
+    // ⌘Z before the lookup comes back: the step needs review again, and the
+    // card goes with it.
+    rerender(args({ context: FACETED, stepPending: true }));
+    expect(result.current.card).toBeNull();
+    // Nothing is left in the batch after all: the fallback would be the
+    // batch card, over the step just put back.
+    await act(async () => cleared.resolve(intoNextBatch(0)));
+    expect(result.current.card).toBeNull();
+    expect(result.current.cardBusy).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    // Settled again some other way (Mark as Bug): still none.
+    rerender(args({ context: FACETED, stepPending: false }));
+    expect(result.current.card).toBeNull();
+  });
+
   test("leaving drops a K answer still on its way too", async () => {
     const prev = deferred<Answer>();
     utils.review.next.fetch.mockReturnValue(prev.promise);
@@ -978,6 +999,25 @@ describe("useReviewLoop: the batch boundary on a step that needs review (R23, R2
     expect(result.current.card).toBeNull();
     // Settled again by something that is not a decision here (Mark as Bug,
     // approve pending, an override): no card comes back.
+    rerender(args({ stepPending: false }));
+    expect(result.current.card).toBeNull();
+  });
+
+  test("a waiting decision that is undone before its answer lands brings no card", () => {
+    // The answer is being refetched when the decision is made: it waits.
+    query.isFetching = true;
+    const { result, rerender } = setup({ stepPending: true });
+    act(() => result.current.afterDecision());
+    expect(result.current.pending).toBe(true);
+    rerender(args({ stepPending: false })); // the decision lands
+    rerender(args({ stepPending: true })); // ⌘Z, or the decision is refused
+    // Its answer comes: the batch is done, but the step needs review again.
+    query.isFetching = false;
+    query.data = boundary();
+    rerender(args({ stepPending: true }));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.card).toBeNull();
+    // Settled again some other way (Mark as Bug): no card comes back.
     rerender(args({ stepPending: false }));
     expect(result.current.card).toBeNull();
   });

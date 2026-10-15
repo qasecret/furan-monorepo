@@ -574,7 +574,8 @@ export function DiffViewer({
       loop.next && !loop.error
         ? remainingLabel(loop.next.remaining, facetsSet)
         : "",
-    onNextPending: loopOn ? loop.goNext : undefined,
+    // Inert while the card is up, as J is (R20, R28).
+    onNextPending: loopOn && keysOn ? loop.goNext : undefined,
     pending: loop.pending,
     nextLabel: "Next pending",
     ...(loop.cue ? { cue: loop.cue } : {}),
