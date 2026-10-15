@@ -359,6 +359,7 @@ import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
 import { useLoopCue } from "../src/lib/review/use-review-loop";
+import { useInFlightStore } from "../src/lib/review/use-review-mutations";
 import { useUndoStore } from "../src/lib/review/use-undo-store";
 
 /** Every mock the review loop reads, back to "no answer yet". */
@@ -2194,6 +2195,100 @@ describe("DiffViewer: the review loop", () => {
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(canvas()).not.toBeNull();
     expect(card(r)).toBeNull();
+  });
+
+  test("a stale read during the decision keeps its card; the undo's own hold does not (R36)", async () => {
+    // The real review hook and its in-flight store, over a server that
+    // answers when the test says.
+    realReview.on = true;
+    useUndoStore.setState({ stack: [] });
+    useInFlightStore.setState({ ids: new Set(), decisions: new Set() });
+    let approveAnswers: (result: unknown) => void = () => undefined;
+    server.approve.mockReturnValue(
+      new Promise((resolve) => {
+        approveAnswers = resolve;
+      }),
+    );
+    let revertAnswers: (result: unknown) => void = () => undefined;
+    server.revert.mockReturnValue(
+      new Promise((resolve) => {
+        revertAnswers = resolve;
+      }),
+    );
+    // The caches the review hook reads are the ones the viewer shows.
+    utilsMock.runs.listCheckpoints.getData.mockImplementation(
+      () => mockCheckpoints,
+    );
+    utilsMock.runs.getById.getData.mockReturnValue({
+      ...mockGetByIdData,
+      name: "Checkout",
+      statusOverride: null,
+      checkpointContexts: {},
+    });
+    nextQuery.data = intoNextBatch();
+    const pendingC1 = () => stepFixture("c1", "unresolved");
+    const decidedC1 = (actionId: string) =>
+      stepFixture("c1", "approved", { decision: { ...decision, actionId } });
+    mockCheckpoints = { items: [pendingC1(), decided("c2"), decided("c3")] };
+    const qc = new QueryClient();
+    const viewer = () => (
+      <QueryClientProvider client={qc}>
+        <DiffViewer
+          runId={RUN_ID}
+          projectId={PROJECT}
+          initialCheckpointId="c1"
+        />
+      </QueryClientProvider>
+    );
+    const r = render(viewer());
+    /** c1 as the viewer reads it, rendered again. */
+    const c1Is = (c1: StepFixture) => {
+      mockCheckpoints = { items: [c1, decided("c2"), decided("c3")] };
+      r.rerender(viewer());
+    };
+
+    // A: the last pending step of the batch is approved.
+    await pressAsync("A");
+    expect(server.approve).toHaveBeenCalledOnce();
+    const { actionId } = server.approve.mock.calls[0]![0] as {
+      actionId: string;
+    };
+    c1Is(decidedC1(actionId)); // its optimistic update
+    expect(card(r)).not.toBeNull();
+    // A read from before the commit shows c1 pending: the card hides...
+    c1Is(pendingC1());
+    expect(card(r)).toBeNull();
+    // ...and is back once c1 reads settled again.
+    c1Is(decidedC1(actionId));
+    expect(card(r)).not.toBeNull();
+    // The server commits: the card stays.
+    await act(async () => {
+      approveAnswers({
+        actionId,
+        decided: [{ checkpointId: "c1", runId: RUN_ID, state: "approved" }],
+        runs: [{ runId: RUN_ID, status: "passed" }],
+        replayed: false,
+        capped: false,
+        cap: 500,
+      });
+    });
+    expect(useInFlightStore.getState().ids.size).toBe(0);
+    expect(card(r)).not.toBeNull();
+
+    // ⌘Z: the undo holds c1 in flight too, but it is no decision. Its own
+    // update puts c1 back as pending, and the card goes, for good (R30).
+    await pressAsync("z", { ctrlKey: true });
+    expect(server.revert).toHaveBeenCalledOnce();
+    expect(useInFlightStore.getState().ids.has("c1")).toBe(true);
+    c1Is(pendingC1());
+    expect(card(r)).toBeNull();
+    await act(async () => {
+      revertAnswers({ actionId, reverted: 1, skipped: [], runs: [] });
+    });
+    // Settled again by something that is not a decision here: no card.
+    c1Is(decidedC1("another-action"));
+    expect(card(r)).toBeNull();
+    expect(canvas()).not.toBeNull();
   });
 
   test("the filtered card's Clear filter drops the facets; a card that changes is said again", async () => {

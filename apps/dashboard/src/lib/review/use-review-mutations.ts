@@ -94,24 +94,40 @@ const OPTIMISTIC_ACTOR: Actor = { id: "", name: "You" };
 
 interface InFlightState {
   ids: ReadonlySet<string>;
-  hold(ids: readonly string[]): void;
+  /** Those of `ids` held by a decision (an approval or a rejection), not by an undo. */
+  decisions: ReadonlySet<string>;
+  /** Holds `ids`; `decision` when a decision holds them. */
+  hold(ids: readonly string[], decision?: boolean): void;
   release(ids: readonly string[]): void;
 }
 
+const without = (
+  set: ReadonlySet<string>,
+  ids: readonly string[],
+): Set<string> => {
+  const next = new Set(set);
+  for (const id of ids) next.delete(id);
+  return next;
+};
+
 /**
- * Checkpoints with a decision on its way to the server. Shared by every
- * consumer of the hook, so the viewer and the batch page agree, and held in a
- * store so the buttons that read `isInFlight` re-render when it changes.
+ * Checkpoints with a decision or an undo on its way to the server. Shared by
+ * every consumer of the hook, so the viewer and the batch page agree, and held
+ * in a store so the buttons that read `isInFlight` re-render when it changes.
  */
 export const useInFlightStore = create<InFlightState>((set) => ({
   ids: new Set(),
-  hold: (ids) => set((s) => ({ ids: new Set([...s.ids, ...ids]) })),
+  decisions: new Set(),
+  hold: (ids, decision = false) =>
+    set((s) => ({
+      ids: new Set([...s.ids, ...ids]),
+      ...(decision && { decisions: new Set([...s.decisions, ...ids]) }),
+    })),
   release: (ids) =>
-    set((s) => {
-      const next = new Set(s.ids);
-      for (const id of ids) next.delete(id);
-      return { ids: next };
-    }),
+    set((s) => ({
+      ids: without(s.ids, ids),
+      decisions: without(s.decisions, ids),
+    })),
 }));
 
 /**
@@ -120,6 +136,20 @@ export const useInFlightStore = create<InFlightState>((set) => ({
  */
 export function useIsInFlight(checkpointId: string): boolean {
   return useInFlightStore((s) => s.ids.has(checkpointId));
+}
+
+/**
+ * Whether a decision on this checkpoint (of the step, its run or its group) is
+ * on its way to the server; an undo of one is not. Until it settles, a read of
+ * the step that started before the decision committed may show it pending
+ * again: the review loop must not take that for an undo (R36).
+ */
+export function useIsDecisionInFlight(
+  checkpointId: string | undefined,
+): boolean {
+  return useInFlightStore(
+    (s) => checkpointId !== undefined && s.decisions.has(checkpointId),
+  );
 }
 
 /**
@@ -168,7 +198,8 @@ const ACTIONS = new Map<string, Action>();
 function start(actionId: string, action: Action, send: () => void): void {
   ACTIONS.set(actionId, action);
   try {
-    useInFlightStore.getState().hold(action.held);
+    // A decide action has a kind; an undo has none.
+    useInFlightStore.getState().hold(action.held, action.kind !== undefined);
     send();
   } catch (error) {
     ACTIONS.delete(actionId);

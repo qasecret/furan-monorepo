@@ -47,6 +47,13 @@ export interface UseReviewLoopArgs {
    * Defaults to true.
    */
   stepInFilter?: boolean;
+  /**
+   * A decision on the step on screen is on its way to the server (its undo
+   * is not). A read that started before the decision committed may show the
+   * step pending again meanwhile: that is no undo (R36), so it neither drops
+   * the card nor calls off the decision's move. Defaults to false.
+   */
+  decisionInFlight?: boolean;
 }
 
 export interface ReviewLoop {
@@ -245,7 +252,8 @@ function supersedeCues(): void {
  * props still name the old step for a while. A navigation epoch orders them.
  * It is bumped by every move or card this hook makes, by a decision that has
  * to wait for its answer, by the step on screen needing review again (an
- * undo, a refused decision: R30), and when the hook unmounts (in the viewer,
+ * undo, a refused decision: R30; not a stale read while a decision on it is
+ * in flight: R36), and when the hook unmounts (in the viewer,
  * leaving a step by any route unmounts it). K reads the epoch when pressed
  * and a waiting decision records it when it starts to wait; either one's
  * answer is dropped if the epoch has changed since, so the latest move always
@@ -267,6 +275,7 @@ export function useReviewLoop({
   enabled,
   stepPending,
   stepInFilter = true,
+  decisionInFlight = false,
 }: UseReviewLoopArgs): ReviewLoop {
   const router = useRouter();
   const utils = trpc.useUtils();
@@ -333,10 +342,15 @@ export function useReviewLoop({
   // also calls off the loop's move still on its way (R30): a decision waiting
   // for its answer, Continue or Clear filter, and a K answer. The reviewer
   // took the step back to review it; nothing moves them off it.
+  // Not while a decision on the step is in flight (R36): a read that started
+  // before it committed shows the step pending until the refetch after it
+  // lands, and the reviewer took nothing back. Nor when that decision settles
+  // under such a read: the step was already reading pending, so that is no
+  // change. Its undo can only come once it has settled, and does count.
   const [was, setWas] = useState({ pending: stepPending, atKey });
   if (was.pending !== stepPending || was.atKey !== atKey) {
     setWas({ pending: stepPending, atKey });
-    if (stepPending && !was.pending) {
+    if (stepPending && !was.pending && !decisionInFlight) {
       if (shown) setShown(null);
       if (was.atKey === atKey) {
         if (waiting !== null) setWaiting(null);
