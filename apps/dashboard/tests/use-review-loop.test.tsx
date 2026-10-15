@@ -1,0 +1,644 @@
+import { act, cleanup, renderHook } from "@testing-library/react";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+  type Mock,
+} from "vitest";
+
+import { useReviewAnnouncer } from "@/lib/review/review-announcer";
+import { useReviewLoop } from "@/lib/review/use-review-loop";
+import type { ReviewContext } from "@/lib/review-context";
+import type { RouterOutputs } from "@/lib/trpc";
+
+// The router, the tRPC hooks and the utils are mocked: this suite is about
+// what the loop decides from an answer of `review.next` (where it goes, what
+// it says, which card it shows), not about the server.
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
+
+type Answer = RouterOutputs["review"]["next"];
+
+/** What the live `review.next` query answers, set per test. */
+const query = vi.hoisted(() => ({
+  data: undefined as unknown,
+  isLoading: false,
+  calls: [] as Array<{ input: unknown; options: { enabled?: boolean } }>,
+}));
+const utils = vi.hoisted(() => ({
+  review: { next: { fetch: vi.fn() } },
+  runs: {
+    getById: { prefetch: vi.fn(), getData: vi.fn(), fetch: vi.fn() },
+    listCheckpoints: { prefetch: vi.fn() },
+  },
+}));
+
+vi.mock("@/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => utils,
+    review: {
+      next: {
+        useQuery: (input: unknown, options: { enabled?: boolean }) => {
+          query.calls.push({ input, options });
+          return { data: query.data, isLoading: query.isLoading };
+        },
+      },
+    },
+  },
+}));
+
+const PROJECT = "p1";
+const BUILD = "b1";
+const RUN = "run-1";
+const STEP = "step-1";
+const OTHER_RUN = "run-2";
+
+const DEFAULT_CONTEXT: ReviewContext = { status: "needs-review", facets: {} };
+
+type Args = Parameters<typeof useReviewLoop>[0];
+
+function args(over: Partial<Args> = {}): Args {
+  return {
+    projectId: PROJECT,
+    buildId: BUILD,
+    runId: RUN,
+    checkpointId: STEP,
+    context: DEFAULT_CONTEXT,
+    enabled: true,
+    ...over,
+  };
+}
+
+function answer(over: Partial<Answer> = {}): Answer {
+  return {
+    target: { buildId: BUILD, runId: RUN, checkpointId: "step-2" },
+    scope: "run",
+    remaining: { run: 2, batch: 5, batchUnfiltered: 5, projectBatches: 3 },
+    nextBatch: null,
+    ...over,
+  };
+}
+
+const nextBatch = {
+  buildId: "b2",
+  name: "Build 12",
+  number: 12,
+  branch: "main",
+  pending: 4,
+};
+
+function setup(over: Partial<Args> = {}) {
+  return renderHook((props: Args) => useReviewLoop(props), {
+    initialProps: args(over),
+  });
+}
+
+/** The mock was called once, with these arguments. */
+function calledOnceWith(mock: Mock, ...expected: unknown[]) {
+  expect(mock).toHaveBeenCalledOnce();
+  expect(mock).toHaveBeenCalledWith(...expected);
+}
+
+/** The arguments `review.next.useQuery` got on the last render. */
+function lastCall() {
+  const call = query.calls.at(-1);
+  if (!call) throw new Error("review.next.useQuery was not called");
+  return call;
+}
+
+beforeEach(() => {
+  query.data = undefined;
+  query.isLoading = false;
+  query.calls = [];
+  router.push.mockReset();
+  router.replace.mockReset();
+  utils.review.next.fetch.mockReset();
+  utils.runs.getById.prefetch.mockReset();
+  utils.runs.getById.getData.mockReset();
+  utils.runs.getById.fetch.mockReset();
+  utils.runs.listCheckpoints.prefetch.mockReset();
+  // A target run that is already cached, with a name.
+  utils.runs.getById.getData.mockReturnValue({ name: "Checkout" });
+  useReviewAnnouncer.setState({ text: "", seq: 0 });
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("useReviewLoop: the query", () => {
+  test("asks review.next from the step, with the context's facets", () => {
+    setup({
+      context: { status: "failed", facets: { browser: "chromium" } },
+    });
+    const { input, options } = lastCall();
+    expect(input).toEqual({
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+      facets: { browser: "chromium" },
+    });
+    expect(options.enabled).toBe(true);
+  });
+
+  test.each([
+    ["is the _first placeholder", "_first"],
+    ["is not known yet", undefined],
+  ])("disabled while the checkpoint %s", (_name, checkpointId) => {
+    setup({ checkpointId });
+    expect(lastCall().options.enabled).toBe(false);
+    // And the query never names the placeholder.
+    expect(JSON.stringify(lastCall().input)).not.toContain("_first");
+  });
+
+  test("disabled until the batch is known", () => {
+    setup({ buildId: undefined });
+    expect(lastCall().options.enabled).toBe(false);
+  });
+
+  test("no call when enabled is false", () => {
+    // Even with an answer in the cache, a loop that is off asks nothing and
+    // moves nowhere.
+    query.data = answer();
+    const { result } = setup({ enabled: false });
+    expect(lastCall().options.enabled).toBe(false);
+    act(() => result.current.afterDecision());
+    act(() => result.current.goNext());
+    act(() => result.current.goPrev());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(utils.review.next.fetch).not.toHaveBeenCalled();
+    expect(result.current.next).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+  });
+
+  test("hands back the answer and whether it is loading", () => {
+    query.isLoading = true;
+    const { result, rerender } = setup();
+    expect(result.current.loading).toBe(true);
+    expect(result.current.next).toBeUndefined();
+    query.isLoading = false;
+    query.data = answer();
+    rerender(args());
+    expect(result.current.loading).toBe(false);
+    expect(result.current.next).toBe(query.data);
+  });
+});
+
+describe.each(["afterDecision", "goNext"] as const)(
+  "useReviewLoop.%s, by scope",
+  (move) => {
+    test("run: replaces the URL with the next step of the run", () => {
+      query.data = answer({
+        target: { buildId: BUILD, runId: RUN, checkpointId: "step-2" },
+        scope: "run",
+      });
+      const { result } = setup();
+      act(() => result.current[move]());
+      calledOnceWith(
+        router.replace,
+        `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-2`,
+      );
+      expect(router.push).not.toHaveBeenCalled();
+      // Same run: nothing to announce.
+      expect(useReviewAnnouncer.getState().text).toBe("");
+      expect(result.current.card).toBeNull();
+    });
+
+    test("batch: pushes the next test, and announces it", () => {
+      query.data = answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+        remaining: { run: 0, batch: 4, batchUnfiltered: 4, projectBatches: 3 },
+      });
+      const { result } = setup();
+      act(() => result.current[move]());
+      calledOnceWith(
+        router.push,
+        `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9`,
+      );
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(useReviewAnnouncer.getState().text).toBe(
+        "Next test: Checkout · 4 left in batch",
+      );
+      expect(result.current.card).toBeNull();
+    });
+
+    test("nextBatch: shows the batch card when nothing is hidden by the filters", () => {
+      query.data = answer({
+        target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+        scope: "nextBatch",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 2 },
+        nextBatch,
+      });
+      const { result } = setup();
+      act(() => result.current[move]());
+      expect(result.current.card).toBe("batch");
+      // It does not leave the page: the card offers the next batch.
+      expect(router.push).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+    });
+
+    test("nextBatch: shows the filtered card when steps are left outside the filters", () => {
+      query.data = answer({
+        target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+        scope: "nextBatch",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 3, projectBatches: 2 },
+        nextBatch,
+      });
+      const { result } = setup();
+      act(() => result.current[move]());
+      expect(result.current.card).toBe("filtered");
+      expect(router.push).not.toHaveBeenCalled();
+    });
+
+    test("none: shows the all-done card", () => {
+      query.data = answer({
+        target: null,
+        scope: "none",
+        remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+      });
+      const { result } = setup();
+      act(() => result.current[move]());
+      expect(result.current.card).toBe("all");
+      expect(router.push).not.toHaveBeenCalled();
+      expect(router.replace).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe("useReviewLoop: the review context travels", () => {
+  test("every move carries the status and facets in the URL", () => {
+    const context: ReviewContext = {
+      status: "failed",
+      facets: { browser: "chromium", viewport: "1280x720" },
+    };
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    const { result, rerender } = setup({ context });
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&browser=chromium&viewport=1280x720`,
+    );
+    query.data = answer({ scope: "run" });
+    rerender(args({ context }));
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-2?status=failed&browser=chromium&viewport=1280x720`,
+    );
+  });
+});
+
+describe("useReviewLoop: the cue's test name", () => {
+  const batchAnswer = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+      remaining: { run: 0, batch: 7, batchUnfiltered: 7, projectBatches: 1 },
+    });
+
+  test("reads the name from the run already cached", () => {
+    utils.runs.getById.getData.mockReturnValue({ name: "Login flow" });
+    query.data = batchAnswer();
+    const { result } = setup();
+    act(() => result.current.goNext());
+    expect(utils.runs.getById.getData).toHaveBeenCalledWith({
+      runId: OTHER_RUN,
+    });
+    expect(utils.runs.getById.fetch).not.toHaveBeenCalled();
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Login flow · 7 left in batch",
+    );
+  });
+
+  test("moves at once and announces when the run arrives, if it is not cached yet", async () => {
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    let resolve!: (run: { name: string | null }) => void;
+    utils.runs.getById.fetch.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    query.data = batchAnswer();
+    const { result } = setup();
+    act(() => result.current.goNext());
+    // The move does not wait for the name.
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(useReviewAnnouncer.getState().text).toBe("");
+    await act(async () => resolve({ name: "Profile page" }));
+    expect(utils.runs.getById.fetch).toHaveBeenCalledWith({
+      runId: OTHER_RUN,
+    });
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Profile page · 7 left in batch",
+    );
+  });
+
+  test("falls back to the viewer's own title for a run with no name", () => {
+    utils.runs.getById.getData.mockReturnValue({ name: null });
+    query.data = batchAnswer();
+    const { result } = setup();
+    act(() => result.current.goNext());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Untitled run · 7 left in batch",
+    );
+  });
+
+  test("still announces when the run cannot be read", async () => {
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockRejectedValue(new Error("down"));
+    query.data = batchAnswer();
+    const { result } = setup();
+    await act(async () => result.current.goNext());
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Untitled run · 7 left in batch",
+    );
+  });
+});
+
+describe("useReviewLoop: a late answer", () => {
+  test("late answer defers the transition", () => {
+    query.isLoading = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    // No answer yet: nothing moves.
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+
+    // The answer arrives: now it moves, once.
+    query.isLoading = false;
+    query.data = answer();
+    rerender(args());
+    calledOnceWith(
+      router.replace,
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-2`,
+    );
+
+    // A refetch of the same answer does not move it again.
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).toHaveBeenCalledOnce();
+  });
+
+  test("a deferred move into the next batch shows its card when the answer arrives", () => {
+    query.isLoading = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    expect(result.current.card).toBeNull();
+    query.isLoading = false;
+    query.data = answer({
+      target: null,
+      scope: "none",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+    });
+    rerender(args());
+    expect(result.current.card).toBe("all");
+  });
+
+  test("an answer that arrives after the reviewer went elsewhere is ignored", () => {
+    query.isLoading = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+
+    // The reviewer opens another step before the answer comes.
+    rerender(args({ checkpointId: "step-7" }));
+    query.isLoading = false;
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-8" },
+    });
+    rerender(args({ checkpointId: "step-7" }));
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+
+    // And it does not linger: the next answer for this step is not acted on
+    // either, without a new decision.
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-9" },
+    });
+    rerender(args({ checkpointId: "step-7" }));
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("a decision with the loop off does not wait for an answer that cannot come", () => {
+    const { result, rerender } = setup({ enabled: false });
+    act(() => result.current.afterDecision());
+    rerender(args({ enabled: true }));
+    query.data = answer();
+    rerender(args({ enabled: true }));
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("useReviewLoop: the card", () => {
+  const done = () =>
+    answer({
+      target: null,
+      scope: "none",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 0, projectBatches: 0 },
+    });
+
+  test("dismissCard clears it", () => {
+    query.data = done();
+    const { result } = setup();
+    act(() => result.current.afterDecision());
+    expect(result.current.card).toBe("all");
+    act(() => result.current.dismissCard());
+    expect(result.current.card).toBeNull();
+  });
+
+  test("moving to another step puts it away", () => {
+    query.data = done();
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    expect(result.current.card).toBe("all");
+    rerender(args({ checkpointId: "step-3" }));
+    expect(result.current.card).toBeNull();
+    // Coming back does not bring it back.
+    rerender(args({ checkpointId: STEP }));
+    expect(result.current.card).toBeNull();
+  });
+
+  test("is null before anything is decided", () => {
+    query.data = done();
+    const { result } = setup();
+    expect(result.current.card).toBeNull();
+  });
+});
+
+describe("useReviewLoop: prefetch", () => {
+  test("prefetches the target", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    setup();
+    calledOnceWith(utils.runs.getById.prefetch, {
+      runId: OTHER_RUN,
+    });
+    calledOnceWith(utils.runs.listCheckpoints.prefetch, { runId: OTHER_RUN });
+  });
+
+  test("prefetches again when the target moves to another run, not on a refetch", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    const { rerender } = setup();
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    rerender(args());
+    expect(utils.runs.getById.prefetch).toHaveBeenCalledOnce();
+
+    query.data = answer({
+      target: { buildId: BUILD, runId: "run-3", checkpointId: "step-1" },
+      scope: "batch",
+    });
+    rerender(args());
+    expect(utils.runs.getById.prefetch).toHaveBeenLastCalledWith({
+      runId: "run-3",
+    });
+    expect(utils.runs.getById.prefetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not refetch the run the reviewer is already in", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-2" },
+      scope: "run",
+    });
+    setup();
+    expect(utils.runs.getById.prefetch).not.toHaveBeenCalled();
+    expect(utils.runs.listCheckpoints.prefetch).not.toHaveBeenCalled();
+  });
+
+  test("prefetches nothing when there is no target", () => {
+    query.data = answer({ target: null, scope: "none" });
+    setup();
+    expect(utils.runs.getById.prefetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("useReviewLoop.goPrev", () => {
+  const prev = (over: Partial<Answer> = {}) =>
+    answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-0" },
+      scope: "run",
+      ...over,
+    });
+
+  test("goPrev sends direction prev", async () => {
+    utils.review.next.fetch.mockResolvedValue(prev());
+    const { result } = setup({
+      context: { status: "needs-review", facets: { os: "macOS" } },
+    });
+    await act(async () => result.current.goPrev());
+    calledOnceWith(utils.review.next.fetch, {
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+      direction: "prev",
+      facets: { os: "macOS" },
+    });
+  });
+
+  test("replaces the URL with the previous step of the run", async () => {
+    utils.review.next.fetch.mockResolvedValue(prev());
+    const { result } = setup();
+    await act(async () => result.current.goPrev());
+    calledOnceWith(
+      router.replace,
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-0`,
+    );
+  });
+
+  test("pushes the previous test when it is in another run, without the next-test cue", async () => {
+    utils.review.next.fetch.mockResolvedValue(
+      prev({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-4" },
+        scope: "batch",
+      }),
+    );
+    const { result } = setup();
+    await act(async () => result.current.goPrev());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-4`,
+    );
+    expect(useReviewAnnouncer.getState().text).toBe("");
+  });
+
+  test.each([
+    ["nothing before it", prev({ target: null, scope: "none" })],
+    [
+      "only another batch before it",
+      prev({
+        target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+        scope: "nextBatch",
+        nextBatch,
+      }),
+    ],
+  ])("stays put when there is %s", async (_name, result_) => {
+    utils.review.next.fetch.mockResolvedValue(result_);
+    const { result } = setup();
+    await act(async () => result.current.goPrev());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.card).toBeNull();
+  });
+
+  test("an answer for a step the reviewer has left is ignored", async () => {
+    let resolve!: (a: Answer) => void;
+    utils.review.next.fetch.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const { result, rerender } = setup();
+    act(() => result.current.goPrev());
+    rerender(args({ checkpointId: "step-7" }));
+    await act(async () => resolve(prev()));
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("a second press while one is on its way does not ask again", async () => {
+    let resolve!: (a: Answer) => void;
+    utils.review.next.fetch.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const { result } = setup();
+    act(() => {
+      result.current.goPrev();
+      result.current.goPrev();
+    });
+    expect(utils.review.next.fetch).toHaveBeenCalledOnce();
+    await act(async () => resolve(prev()));
+    expect(router.replace).toHaveBeenCalledOnce();
+    // Once it has landed, the key works again.
+    utils.review.next.fetch.mockResolvedValue(prev());
+    await act(async () => result.current.goPrev());
+    expect(utils.review.next.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("a failed lookup is not an unhandled rejection, and the key works again", async () => {
+    utils.review.next.fetch.mockRejectedValueOnce(new Error("down"));
+    const { result } = setup();
+    await act(async () => result.current.goPrev());
+    expect(router.replace).not.toHaveBeenCalled();
+    utils.review.next.fetch.mockResolvedValue(prev());
+    await act(async () => result.current.goPrev());
+    expect(router.replace).toHaveBeenCalledOnce();
+  });
+
+  test("does nothing before the step is resolved", () => {
+    const { result } = setup({ checkpointId: "_first" });
+    act(() => result.current.goPrev());
+    expect(utils.review.next.fetch).not.toHaveBeenCalled();
+  });
+});

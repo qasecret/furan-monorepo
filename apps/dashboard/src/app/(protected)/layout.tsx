@@ -10,6 +10,7 @@ import { ThemedToaster } from "@/components/themed-toaster";
 import { GlobalShortcuts } from "@/components/triage/global-shortcuts";
 import { apiGet } from "@/lib/api-client";
 import { requireJwt } from "@/lib/auth";
+import { ReviewAnnouncer } from "@/lib/review/review-announcer";
 import type { ViewerRole } from "@/lib/roles";
 
 interface Me {
@@ -86,6 +87,9 @@ export default async function ProtectedLayout({
         <CommandPalette userRole={userRole} />
         <GlobalShortcuts />
         <ThemedToaster />
+        {/* The review loop's live region: here, because the loop's own moves
+            replace the page it speaks from. */}
+        <ReviewAnnouncer />
       </CurrentProjectProvider>
     </Providers>
   );
