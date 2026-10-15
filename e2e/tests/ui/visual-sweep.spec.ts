@@ -88,9 +88,9 @@ const STATIC_NAMES = staticRoutes({
 }).map((r) => r.name);
 
 /**
- * The dashboard's live-update channels (SSE: /api/v1/events,
- * /api/v1/projects/:id/events, /api/v1/runs/:id/events). Their responses never
- * finish, so `networkidle` would never fire on a page that subscribes. The
+ * The dashboard's live-update channels (SSE: /api/v1/projects/:id/events,
+ * /api/v1/runs/:id/events). Their responses never finish, so `networkidle`
+ * would never fire on a page that subscribes. The
  * sweep answers them with a 204, which tells EventSource to stop for good (no
  * reconnect); that only freezes live updates, which a screenshot doesn't need.
  */
