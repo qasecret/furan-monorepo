@@ -13,6 +13,11 @@ import {
 } from "./useViewerStore";
 
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import {
+  isTypingInInput,
+  KEYBOARD_OWNER_ROLES,
+  PASSES_UNDO,
+} from "@/lib/commands/guard";
 
 const MODES: ViewerMode[] = ["side-by-side", "overlay", "difference"];
 
@@ -51,50 +56,6 @@ interface ShortcutOptions {
    * card, which goes back to the batch wherever focus is.
    */
   onEscape?: () => void;
-}
-
-// <input> types that take no typed text — single-key shortcuts still apply
-// while one of these has focus (e.g. after clicking a checkbox).
-const NON_TEXT_INPUT_TYPES = new Set([
-  "button",
-  "checkbox",
-  "color",
-  "file",
-  "image",
-  "radio",
-  "range",
-  "reset",
-  "submit",
-]);
-
-// Widgets that consume bare keys themselves: menu / listbox typeahead
-// (pressing "A" in the open More menu jumps to "Approve all"), and dialogs
-// layered over the viewer.
-const KEYBOARD_OWNER_ROLES =
-  '[role="menu"],[role="menubar"],[role="listbox"],[role="dialog"],[role="alertdialog"]';
-
-// A dialog that owns the bare keys but lets ⌘Z through to the viewer: the
-// review loop's done card (BatchDoneCard), where undoing the decision that
-// brought it up brings the step back (R20).
-const PASSES_UNDO = "[data-passes-undo]";
-
-function isTypingInInput(): boolean {
-  if (typeof document === "undefined") return false;
-  const el = document.activeElement as HTMLElement | null;
-  if (!el) return false;
-  if (el.tagName === "INPUT") {
-    return !NON_TEXT_INPUT_TYPES.has((el as HTMLInputElement).type);
-  }
-  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
-  // `closest` also covers focus inside a nested editable region (and jsdom,
-  // which doesn't implement `isContentEditable`).
-  if (
-    el.isContentEditable ||
-    el.closest('[contenteditable]:not([contenteditable="false"])')
-  ) {
-    return true;
-  }
-  return false;
 }
 
 /**

@@ -17,9 +17,11 @@ import {
   bindingKey,
   formatKeyLabel,
   formatKeys,
+  isCharacterBinding,
   keyIdentity,
 } from "./keys";
 import { usePlatform } from "./platform";
+import { useSingleKeyShortcuts } from "./prefs";
 import type { Command, CommandCtx, CommandScope } from "./types";
 
 import type { ViewerRole } from "@/lib/roles";
@@ -284,11 +286,15 @@ const NO_KEYS: CommandKeys = { keys: [], titleSuffix: "" };
  * A command's keys for a button that runs it: the `kbd` tokens, its
  * `aria-keyshortcuts` and a title suffix such as " (A)". No hint for an
  * unknown id, a command that isn't `allowed`, or one without keys. When an
- * id is registered in several scopes, the most specific one is used.
+ * id is registered in several scopes, the most specific one is used. With
+ * the single-key switch off, character keys ("a", "j", "g i") are left out
+ * of the hint, since they do nothing: a command with only those has no hint,
+ * and one with others (`list.next`: J and ↓) shows just those.
  */
 export function useCommandKeys(id: string): CommandKeys {
   const commands = useRegisteredCommands();
   const platform = usePlatform();
+  const [singleKeys] = useSingleKeyShortcuts();
   return useMemo(() => {
     let found: ResolvedCommand | undefined;
     for (const resolved of commands) {
@@ -297,7 +303,10 @@ export function useCommandKeys(id: string): CommandKeys {
         found = resolved;
       }
     }
-    const keys = found?.command.keys ?? [];
+    const bound = found?.command.keys ?? [];
+    const keys = singleKeys
+      ? bound
+      : bound.filter((b) => !isCharacterBinding(bindingKey(b)));
     const [first] = keys;
     if (first === undefined) return NO_KEYS;
     const aria = ariaKeyShortcuts(keys, platform);
@@ -306,5 +315,5 @@ export function useCommandKeys(id: string): CommandKeys {
       ...(aria ? { ariaKeyShortcuts: aria } : {}),
       titleSuffix: ` (${formatKeyLabel(bindingKey(first), platform)})`,
     };
-  }, [commands, id, platform]);
+  }, [commands, id, platform, singleKeys]);
 }
