@@ -116,7 +116,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback((pageId: string, steps: TourStep[]) => {
     if (steps.length === 0) return;
-    // Always store pageId + steps so the Help button has a tour to
+    // Always store pageId + steps so Replay tour has a tour to
     // re-launch even after the user dismissed it. Auto-start only
     // when this page has not been dismissed before.
     setState({

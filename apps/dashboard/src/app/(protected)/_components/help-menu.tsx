@@ -28,6 +28,8 @@ export function HelpMenu() {
   const tour = useTourOptional();
   const [singleKeys, setSingleKeys] = useSingleKeyShortcuts();
   const trigger = useRef<HTMLButtonElement>(null);
+  /** The item chosen opens the sheet: the sheet, not the button, gets focus. */
+  const opensSheet = useRef(false);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -41,13 +43,25 @@ export function HelpMenu() {
           <HelpCircle className="h-4 w-4" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[13rem]">
+      <DropdownMenuContent
+        align="end"
+        className="min-w-[13rem]"
+        // A closing menu gives focus back to its button. Not when it closed
+        // to open the sheet: the sheet has taken focus, and gives it to this
+        // button when it closes.
+        onCloseAutoFocus={(e) => {
+          if (!opensSheet.current) return;
+          opensSheet.current = false;
+          e.preventDefault();
+        }}
+      >
         <DropdownMenuItem
           // The menu item goes with the menu, and focus with it: the sheet
           // gives focus back to this button instead.
-          onSelect={() =>
-            useShortcutsSheet.getState().openFrom(trigger.current)
-          }
+          onSelect={() => {
+            opensSheet.current = true;
+            useShortcutsSheet.getState().openFrom(trigger.current);
+          }}
         >
           Keyboard shortcuts
         </DropdownMenuItem>

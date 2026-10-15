@@ -40,6 +40,7 @@ vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
 import { TopBar } from "@/app/(protected)/_components/top-bar";
 import { useSidebarStore } from "@/app/(protected)/_components/use-sidebar-store";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { KeyCaps } from "@/components/shortcuts/key-caps";
 import { ShortcutsSheet } from "@/components/shortcuts/shortcuts-sheet";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { PageTour } from "@/components/tour/page-tour";
@@ -130,9 +131,13 @@ describe("TopBar", () => {
   test("palette button opens the palette and names ⌘K", async () => {
     // Not a Mac: Ctrl K.
     const view = render(<TopBar {...props} />);
-    const button = screen.getByRole("button", { name: "Open command palette" });
-    expect(within(button).getByText("Search or run a command…")).toBeTruthy();
-    expect(within(button).getByText("Ctrl K").tagName).toBe("KBD");
+    const button = screen.getByRole("button", {
+      name: "Search or run a command…",
+    });
+    const key = within(button).getByText("Ctrl K");
+    expect(key.tagName).toBe("KBD");
+    // The key is announced by `aria-keyshortcuts`, not read out twice.
+    expect(key.getAttribute("aria-hidden")).toBe("true");
     expect(button.getAttribute("aria-keyshortcuts")).toBe("Control+K");
 
     expect(usePaletteStore.getState().open).toBe(false);
@@ -144,30 +149,93 @@ describe("TopBar", () => {
     usePaletteStore.setState({ open: false });
     vi.spyOn(window.navigator, "platform", "get").mockReturnValue("MacIntel");
     render(<TopBar {...props} />);
-    const mac = screen.getByRole("button", { name: "Open command palette" });
+    const mac = screen.getByRole("button", {
+      name: "Search or run a command…",
+    });
     expect(within(mac).getByText("⌘K").tagName).toBe("KBD");
     expect(mac.getAttribute("aria-keyshortcuts")).toBe("Meta+K");
     fireEvent.click(mac);
     expect(usePaletteStore.getState().open).toBe(true);
   });
 
-  test("palette button is before the theme toggle and the Help menu, and on a narrow screen keeps its icon and key", () => {
+  test("the palette button's accessible name contains its visible text at every width", () => {
+    // WCAG 2.5.3 (Label in Name): what a person can read on the button is
+    // what it is called, so speech input by that text finds it. There is no
+    // `aria-label` to differ from it, and below `md` the words are visually
+    // hidden but still the name, never `display: none`.
     render(<TopBar {...props} />);
-    const button = screen.getByRole("button", { name: "Open command palette" });
+    const button = screen.getByRole("button", {
+      name: "Search or run a command…",
+    });
+    expect(button.hasAttribute("aria-label")).toBe(false);
+    expect(button.hasAttribute("aria-labelledby")).toBe(false);
+
+    const label = within(button).getByText("Search or run a command…");
+    const removedAtAnyWidth = [...label.classList].filter((c) =>
+      /(^|:)(hidden|invisible)$/.test(c),
+    );
+    expect(removedAtAnyWidth).toEqual([]);
+    expect(label.classList.contains("max-md:sr-only")).toBe(true);
+    // Below `md` the words go, so the badge is no part of the name either.
+    expect(within(button).getByText("Ctrl K").getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
+  test("palette button is before the theme toggle and the Help menu", () => {
+    render(<TopBar {...props} />);
+    const button = screen.getByRole("button", {
+      name: "Search or run a command…",
+    });
     const help = screen.getByRole("button", { name: "Help" });
     const theme = screen.getByTestId("theme-toggle");
     const follows = (a: Node, b: Node) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     expect(follows(button, help)).toBe(true);
     expect(follows(help, theme)).toBe(true);
+  });
 
-    // The words go below the md breakpoint; the icon and the key stay.
-    const label = within(button).getByText("Search or run a command…");
-    expect(label.className).toContain("hidden");
-    expect(label.className).toContain("md:inline");
+  test("the palette button's key badge is drawn as the sheet's key caps are", () => {
+    // One definition of a key cap (`KeyBadge`), not a copy in the button.
+    const { container } = render(
+      <>
+        <TopBar {...props} />
+        <KeyCaps tokens={["K"]} />
+      </>,
+    );
+    // The inner `kbd` of `KeyCaps` is a cap; the button's badge is a single one.
+    const cap = container.querySelector("kbd kbd");
+    const badge = within(
+      screen.getByRole("button", { name: "Search or run a command…" }),
+    ).getByText("Ctrl K");
+    expect(cap).toBeTruthy();
+    const shape = [...(cap?.classList ?? [])].filter(
+      (c) => !c.startsWith("text-fg"),
+    );
+    expect(shape.length).toBeGreaterThan(4);
+    expect([...badge.classList]).toEqual(expect.arrayContaining(shape));
+  });
+
+  test("the palette button gives up width as the screen narrows", () => {
+    // The right cluster shares the bar with the project label and the
+    // sidebar toggle: narrow at md, wide at lg, the key gone below sm, and
+    // the words below md (the icon is always there).
+    render(<TopBar {...props} />);
+    const button = screen.getByRole("button", {
+      name: "Search or run a command…",
+    });
+    expect(button.classList.contains("md:w-40")).toBe(true);
+    expect(button.classList.contains("lg:w-64")).toBe(true);
+    expect(button.classList.contains("md:w-64")).toBe(false);
     expect(button.querySelector("svg")).toBeTruthy();
-    const key = within(button).getByText("Ctrl K");
-    expect(key.className).not.toMatch(/\bhidden\b/);
+    const label = within(button).getByText("Search or run a command…");
+    expect(label.classList.contains("max-md:sr-only")).toBe(true);
+    // The label shrinks and ellipsizes in the width it is given.
+    expect(label.classList.contains("truncate")).toBe(true);
+    expect(label.classList.contains("min-w-0")).toBe(true);
+    expect(
+      within(button).getByText("Ctrl K").classList.contains("max-sm:hidden"),
+    ).toBe(true);
   });
 
   test("Help menu opens the sheet", async () => {
@@ -203,6 +271,60 @@ describe("TopBar", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(help));
+  });
+
+  test("the Help button does not take focus while the sheet it opened takes it", async () => {
+    // The menu gives focus back to its button as it closes; for an item that
+    // opens the sheet, that would be a hand-over to the wrong element for a
+    // moment. The sheet takes focus, and gives it back to the button on close.
+    const user = userEvent.setup();
+    render(<Chrome />);
+    const help = screen.getByRole("button", { name: "Help" });
+    const focus = vi.spyOn(help, "focus");
+    const menu = await openHelp(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" }),
+    );
+    const sheet = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+    });
+    // Past the tick in which the menu hands focus back.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(sheet);
+
+    // Closing the sheet is what gives it back.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(document.activeElement).toBe(help));
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  test("closing the Help menu any other way still returns focus to its button", async () => {
+    const user = userEvent.setup();
+    render(<Chrome />);
+    const help = screen.getByRole("button", { name: "Help" });
+
+    // Esc, with nothing chosen.
+    await openHelp(user);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(help));
+
+    // After it has opened the sheet once: that was for one opening only.
+    let menu = await openHelp(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" }),
+    );
+    await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    act(() => document.body.focus());
+    menu = await openHelp(user);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(help));
   });
 

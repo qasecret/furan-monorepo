@@ -32,12 +32,16 @@ export function ProjectSelector() {
           : undefined
       }
       className={cn(
-        "flex items-center gap-2 rounded-md border border-edge px-2.5 py-1.5 text-sm font-medium text-fg",
+        // `min-w-0`: in the bar's left cluster the label gives way (its name
+        // ellipsizes) instead of overlapping the controls beside it.
+        "flex min-w-0 items-center gap-2 rounded-md border border-edge px-2.5 py-1.5 text-sm font-medium text-fg",
         scopedOut && "opacity-60",
       )}
     >
       <FolderKanban className="h-4 w-4 shrink-0 text-fg-muted" aria-hidden />
-      <span className="max-w-[12rem] truncate">{name ?? "No project"}</span>
+      <span className="min-w-0 max-w-[12rem] truncate">
+        {name ?? "No project"}
+      </span>
     </div>
   );
 }

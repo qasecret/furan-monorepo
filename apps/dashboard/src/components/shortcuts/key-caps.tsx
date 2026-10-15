@@ -1,4 +1,4 @@
-import { Fragment, type JSX } from "react";
+import { Fragment, type HTMLAttributes, type JSX } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -12,6 +12,27 @@ const SEQUENCE_WORD = "then";
 
 const KEY_CAP =
   "min-w-6 rounded border border-edge bg-sunken px-1.5 py-0.5 text-center font-mono text-xs";
+
+/**
+ * One key cap: the box a key (or one of a sequence's keys) is drawn in. The
+ * one definition of it, for the sheet, the palette and the top bar's button.
+ * `className` adds to (and, for a colour, replaces) the cap's own.
+ */
+export function KeyBadge({
+  off = false,
+  className,
+  ...props
+}: HTMLAttributes<HTMLElement> & {
+  /** It does nothing right now: muted. */
+  off?: boolean;
+}): JSX.Element {
+  return (
+    <kbd
+      className={cn(KEY_CAP, off ? "text-fg-muted" : "text-fg", className)}
+      {...props}
+    />
+  );
+}
 
 /** One key, as `formatKeys` gives its tokens. */
 export interface ShownKey {
@@ -30,9 +51,7 @@ export function KeyCaps({ tokens, off = false }: ShownKey): JSX.Element {
           {token === SEQUENCE_WORD ? (
             <span className="font-sans text-fg-muted">{token}</span>
           ) : (
-            <kbd className={cn(KEY_CAP, off ? "text-fg-muted" : "text-fg")}>
-              {token}
-            </kbd>
+            <KeyBadge off={off}>{token}</KeyBadge>
           )}
         </Fragment>
       ))}
