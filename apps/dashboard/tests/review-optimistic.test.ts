@@ -26,6 +26,7 @@ function item(id: string, over: Partial<CheckpointItem> = {}): CheckpointItem {
     viewport: "1280x720",
     browser: "chromium",
     os: "linux",
+    device: null,
     matchLevel: "Strict",
     imageKey: "images/a.png",
     testVariationId: "variation-1",

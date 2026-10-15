@@ -15,11 +15,13 @@ import { StaleStepConfirm } from "@/components/diff-viewer/StaleStepCallout";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
 import type { CheckpointItem } from "@/lib/review/optimistic";
 import {
   useIsInFlight,
   type DecideArgs,
 } from "@/lib/review/use-review-mutations";
+import type { ReviewContext } from "@/lib/review-context";
 import {
   reviewStateStyle,
   statusStyle,
@@ -60,6 +62,12 @@ export interface StepRun {
 interface Props {
   projectId: string;
   runId: string;
+  /**
+   * The page's review context (status and facets): the viewer opens with it.
+   * One object for as long as the URL's filters are the same, so a decision
+   * redraws no card but its own.
+   */
+  ctx: ReviewContext;
   /** Guests never see review actions. */
   canReview: boolean;
   checkpoint: StepCheckpoint;
@@ -109,6 +117,7 @@ function lookOf(
 export const StepCard = memo(function StepCard({
   projectId,
   runId,
+  ctx,
   canReview,
   checkpoint,
   index,
@@ -137,8 +146,10 @@ export const StepCard = memo(function StepCard({
   const canUndo = decision?.undo.allowed === true;
   const undoLocked = header.decisionLockedReason !== null || inFlight;
 
-  const open = () =>
-    router.push(`/projects/${projectId}/runs/${runId}/checkpoints/${id}`);
+  // The step in the viewer, inside the page's filters: where opening it goes,
+  // and where the Undone toast of its decision offers to go back to.
+  const stepHref = diffViewerHref(projectId, runId, id, ctx);
+  const open = () => router.push(stepHref);
 
   // The button a keyboard user pressed is about to be replaced (by Undo), and
   // focus would drop to the page. So when the card held focus at the time, it
@@ -169,6 +180,7 @@ export const StepCard = memo(function StepCard({
       checkpointIds: [id],
       kind,
       label: `${kind === "approved" ? "Approved" : "Rejected"} '${name}'`,
+      goTo: { href: stepHref, name },
     });
   };
 

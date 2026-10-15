@@ -46,7 +46,11 @@ export interface DisabledAwareButtonProps {
   children: ReactNode;
   title?: string;
   className?: string;
-  /** The accessible name, for a button that holds only an icon. */
+  /**
+   * The accessible name, for a button that holds only an icon, or whose name
+   * must say more than its text does (a retry that names what failed and that
+   * pressing it tries again).
+   */
   label?: string;
 }
 

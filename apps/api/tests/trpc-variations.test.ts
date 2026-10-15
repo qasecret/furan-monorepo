@@ -417,6 +417,49 @@ d("tRPC variations router", () => {
     expect(res.items[0]!.buildId).toBe(s.buildId);
   });
 
+  test("history names a build without a number by its name and CI id", async () => {
+    const [b] = await h.db
+      .insert(builds)
+      .values({
+        projectId: s.projectId,
+        branchName: "main",
+        name: "nightly",
+        ciBuildId: "ci-123456789012345",
+      })
+      .returning();
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: b!.id,
+        name: "run-unnumbered",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    await h.db.insert(screenshots).values({
+      runId: run!.id,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "LoginPage.darkMode",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
+    });
+    const client = mkClient(h, s.editorJwt);
+    const res = await client.variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+    const row = res.items.find((i) => i.id === run!.id)!;
+    expect(row).toMatchObject({
+      buildId: b!.id,
+      buildNumber: null,
+      buildName: "nightly",
+      buildCiBuildId: "ci-123456789012345",
+    });
+  });
+
   test("history returns null buildNumber when run has no build (defensive)", async () => {
     // test_runs.buildId is notNull in the schema, so the LEFT JOIN's NULL branch
     // is exercised only if a build row is missing — guard against that path anyway.
@@ -449,6 +492,165 @@ d("tRPC variations router", () => {
       variationId: s.variationId,
     });
     expect(res.items[0]).toHaveProperty("buildNumber");
+  });
+
+  test("variations.history rows carry the step id of that variation", async () => {
+    const [run1, run2] = await h.db
+      .insert(testRuns)
+      .values([
+        {
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "run-1",
+          branchName: "main",
+          status: "passed",
+          createdAt: new Date(Date.now() - 2000),
+        },
+        {
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "run-2",
+          branchName: "main",
+          status: "passed",
+          createdAt: new Date(Date.now() - 1000),
+        },
+      ])
+      .returning();
+    // Each run has three steps, of which the variation's is in the middle:
+    // the others (other variations, captured before and after it) must not
+    // be the one returned.
+    const stepIds: Record<string, string> = {};
+    for (const run of [run1!, run2!]) {
+      const base = Date.now() - 10_000;
+      const shot = (
+        name: string,
+        variationId: string,
+        offset: number,
+        viewport = "1280x720",
+      ) =>
+        h.db
+          .insert(screenshots)
+          .values({
+            runId: run.id,
+            projectId: s.projectId,
+            testVariationId: variationId,
+            name,
+            viewport,
+            browser: "chromium",
+            imageKey: `${run.id}-${name}`,
+            createdAt: new Date(base + offset),
+          })
+          .returning({ id: screenshots.id });
+      await shot("Checkout.summary", s.otherVariationId, 0, "375x812");
+      const [mine] = await shot("LoginPage.darkMode", s.variationId, 1000);
+      await shot("Checkout.summary", s.otherVariationId, 2000);
+      stepIds[run.id] = mine!.id;
+    }
+
+    const res = await mkClient(h, s.editorJwt).variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+    // Newest first; one row per run, each with the variation's own step.
+    expect(res.items.map((i) => [i.id, i.checkpointId])).toEqual([
+      [run2!.id, stepIds[run2!.id]],
+      [run1!.id, stepIds[run1!.id]],
+    ]);
+    expect(res.items.map((i) => i.buildId)).toEqual([s.buildId, s.buildId]);
+  });
+
+  test("history: a foreign project's step of the variation is not the row's step", async () => {
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "run-x",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    // Corrupt data: another project's screenshot, earlier than the real one,
+    // in this run and naming this variation.
+    await h.db.insert(screenshots).values({
+      runId: run!.id,
+      projectId: s.otherProjectId,
+      testVariationId: s.variationId,
+      name: "alias",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "foreign",
+      createdAt: new Date(Date.now() - 5000),
+    });
+    const [mine] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: run!.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "LoginPage.darkMode",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "mine",
+      })
+      .returning();
+    const res = await mkClient(h, s.editorJwt).variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+    expect(res.items.map((i) => [i.id, i.checkpointId])).toEqual([
+      [run!.id, mine!.id],
+    ]);
+  });
+
+  test("history: a run with two steps of the variation names the earliest", async () => {
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: s.buildId,
+        name: "run-dup",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    // Not expected (the same name at two viewports is two variations), but
+    // the row must still carry one deterministic step, not duplicate the run.
+    const base = Date.now() - 10_000;
+    const [late] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: run!.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "late",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "late",
+        createdAt: new Date(base + 1000),
+      })
+      .returning();
+    const [early] = await h.db
+      .insert(screenshots)
+      .values({
+        runId: run!.id,
+        projectId: s.projectId,
+        testVariationId: s.variationId,
+        name: "early",
+        viewport: "1280x720",
+        browser: "chromium",
+        imageKey: "early",
+        createdAt: new Date(base),
+      })
+      .returning();
+    expect(late!.id).not.toBe(early!.id);
+    const res = await mkClient(h, s.editorJwt).variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+    expect(res.items.map((i) => [i.id, i.checkpointId])).toEqual([
+      [run!.id, early!.id],
+    ]);
   });
 
   test("history rejects non-member with FORBIDDEN", async () => {

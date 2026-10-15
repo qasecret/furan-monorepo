@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { tinykeys } from "tinykeys";
@@ -30,19 +29,28 @@ interface ShortcutOptions {
   onReject?: () => void;
   /** ⌘Z / Ctrl+Z: takes back the newest review action. */
   onUndo?: () => void;
-  prevDiffHref?: string | null;
-  nextDiffHref?: string | null;
   onHelpToggle?: () => void;
   onNextDiff?: () => void;
   onPrevDiff?: () => void;
   /**
    * Step (checkpoint) navigation for ←/→ — the reference TestStep binds the
-   * arrows to "navigate" between steps. When supplied these take precedence
-   * over prev/nextDiffHref (run-level navigation, currently inert under
-   * ADR-038); callers without checkpoints fall back to the href behaviour.
+   * arrows to "navigate" between the run's own steps.
    */
   onPrevStep?: () => void;
   onNextStep?: () => void;
+  /**
+   * J / K: the next / previous step that still needs a reviewer, in the
+   * review loop's order (across the runs of the batch, inside the filter).
+   * Absent when the loop is off (the run did not load).
+   */
+  onNextPending?: () => void;
+  onPrevPending?: () => void;
+  /**
+   * Esc, when something on the page takes it in place of the viewer's own
+   * (leave the ignore editor, clear the selection): the review loop's done
+   * card, which goes back to the batch wherever focus is.
+   */
+  onEscape?: () => void;
 }
 
 // <input> types that take no typed text — single-key shortcuts still apply
@@ -64,6 +72,11 @@ const NON_TEXT_INPUT_TYPES = new Set([
 // layered over the viewer.
 const KEYBOARD_OWNER_ROLES =
   '[role="menu"],[role="menubar"],[role="listbox"],[role="dialog"],[role="alertdialog"]';
+
+// A dialog that owns the bare keys but lets ⌘Z through to the viewer: the
+// review loop's done card (BatchDoneCard), where undoing the decision that
+// brought it up brings the step back (R20).
+const PASSES_UNDO = "[data-passes-undo]";
 
 function isTypingInInput(): boolean {
   if (typeof document === "undefined") return false;
@@ -89,13 +102,16 @@ function isTypingInInput(): boolean {
  * select has focus, focus is inside a menu / listbox / dialog, or another
  * handler already consumed it. Every viewer shortcut yields in that case —
  * otherwise typing "a" into the PatternEditor approves the run, "/" opens
- * the palette mid-regex, and Backspace deletes the selected region.
+ * the palette mid-regex, and Backspace deletes the selected region. `undo`
+ * (⌘Z) is not owned by a dialog that passes it through.
  */
-function keyIsOwnedElsewhere(e: KeyboardEvent): boolean {
+function keyIsOwnedElsewhere(e: KeyboardEvent, undo = false): boolean {
   if (e.defaultPrevented) return true;
   if (isTypingInInput()) return true;
   if (typeof document === "undefined") return false;
-  return !!document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
+  const owner = document.activeElement?.closest(KEYBOARD_OWNER_ROLES);
+  if (!owner) return false;
+  return !(undo && owner.matches(PASSES_UNDO));
 }
 
 function hasTextSelection(): boolean {
@@ -107,16 +123,15 @@ function hasTextSelection(): boolean {
 /**
  * Wires keyboard shortcuts for the DiffViewer.
  *
- * `optsRef` indirection: callbacks (approve/reject/help) and href targets
- * are read through a ref so the underlying tinykeys binding does not need
- * to be torn down on every parent re-render.
+ * `optsRef` indirection: callbacks (approve/reject/help, step and queue
+ * navigation) are read through a ref so the underlying tinykeys binding does
+ * not need to be torn down on every parent re-render.
  *
  * `?` is bound both bare and as `Shift+?` because on US-layout the `?`
  * key requires shift; tinykeys matches `key`, which is already `?` once
  * shift is held, but binding both keeps it robust across layouts.
  */
 export function useDiffViewerShortcuts(opts: ShortcutOptions) {
-  const router = useRouter();
   const mode = useViewerStore((s) => s.mode);
   const setMode = useViewerStore((s) => s.setMode);
   const viewport = useViewerStore((s) => s.viewport);
@@ -127,20 +142,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
   useEffect(() => {
     const bindings: Record<string, (e: KeyboardEvent) => void> = {
       ArrowLeft: () => {
-        const o = optsRef.current;
-        if (o.onPrevStep) {
-          o.onPrevStep();
-          return;
-        }
-        if (o.prevDiffHref) router.push(o.prevDiffHref);
+        optsRef.current.onPrevStep?.();
       },
       ArrowRight: () => {
-        const o = optsRef.current;
-        if (o.onNextStep) {
-          o.onNextStep();
-          return;
-        }
-        if (o.nextDiffHref) router.push(o.nextDiffHref);
+        optsRef.current.onNextStep?.();
       },
       D: () => {
         // Toggle the single-image difference view.
@@ -192,6 +197,16 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         if (e.repeat) return;
         optsRef.current.onReject?.();
       },
+      // The review loop. Auto-repeat is ignored too: holding J must not walk
+      // the queue one step per repeat.
+      J: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onNextPending?.();
+      },
+      K: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onPrevPending?.();
+      },
       C: () => {
         const store = useViewerStore.getState();
         store.setCommentPanelOpen(!store.commentPanelOpen);
@@ -222,7 +237,14 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
           store.deleteSelected();
         }
       },
-      Escape: () => {
+      Escape: (e) => {
+        const onEscape = optsRef.current.onEscape;
+        if (onEscape) {
+          // Held, it leaves once: the auto-repeats are not more presses.
+          if (e.repeat) return;
+          onEscape();
+          return;
+        }
         const store = useViewerStore.getState();
         if (store.ignoreEditMode !== "off") {
           store.setIgnoreEditMode("off");
@@ -268,13 +290,19 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         optsRef.current.onUndo?.();
         e.preventDefault();
       },
-      // Zoom shortcuts. `=` is the unshifted key labeled "+" on US layouts —
-      // binding both `+` and `=` covers Shift-+ and bare-= without forcing
-      // users to chord. `0` resets to fit.
+      // Zoom shortcuts: `=` / `+` zoom in, `-` zooms out, `0` resets to fit.
+      // `=` is the unshifted key labeled "+" on US layouts, so zooming in
+      // needs no chord there. `+` is bound bare for layouts that send it
+      // without Shift, and as `Shift++` below for those that do.
       "=": () => {
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
       "+": () => {
+        useViewerStore.getState().zoomBy(ZOOM_STEP);
+      },
+      // `+` as a US keyboard sends it: Shift with `=`. tinykeys does not
+      // match a modifier the binding does not name (as for `Shift+?`).
+      "Shift++": () => {
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
       "-": () => {
@@ -290,11 +318,11 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       Object.entries(bindings).map(([key, handler]) => [
         key,
         (e: KeyboardEvent) => {
-          if (keyIsOwnedElsewhere(e)) return;
+          if (keyIsOwnedElsewhere(e, key === "$mod+Z")) return;
           handler(e);
         },
       ]),
     );
     return tinykeys(window, guarded);
-  }, [router, mode, setMode, viewport, setViewport]);
+  }, [mode, setMode, viewport, setViewport]);
 }

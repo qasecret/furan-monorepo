@@ -48,4 +48,7 @@ export {
   gt,
   gte,
   count,
+  exists,
+  notExists,
 } from "drizzle-orm";
+export type { SQL } from "drizzle-orm";

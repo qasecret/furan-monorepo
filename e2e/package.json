@@ -20,7 +20,7 @@
     "@furan/tsconfig": "workspace:*",
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.5",
-    "eslint": "^9.17.0",
+    "eslint": "^10.12.0",
     "execa": "^9.5.0",
     "sharp": "^0.35.5",
     "tsx": "^4.23.15",

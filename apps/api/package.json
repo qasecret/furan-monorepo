@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.scripts.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
@@ -41,7 +41,7 @@
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.45.3",
     "fastify": "^5.12.5",
-    "fastify-plugin": "^5.0.1",
+    "fastify-plugin": "^6.0.1",
     "json-stable-stringify": "^1.1.1",
     "zod": "^3.24.1"
   },
@@ -52,7 +52,7 @@
     "@trpc/client": "^11",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.5",
-    "eslint": "^9.17.0",
+    "eslint": "^10.12.0",
     "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

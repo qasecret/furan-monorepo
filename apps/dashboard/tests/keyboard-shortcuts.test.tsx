@@ -1,19 +1,16 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock next/navigation router.
-const pushMock = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
-}));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { usePaletteStore } from "../src/components/cmdk/use-command-palette";
 import { useDiffViewerShortcuts } from "../src/components/diff-viewer/useDiffViewerShortcuts";
-import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import {
+  useViewerStore,
+  ZOOM_STEP,
+} from "../src/components/diff-viewer/useViewerStore";
 
 function press(key: string) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
@@ -36,7 +33,6 @@ describe("useDiffViewerShortcuts", () => {
       kindOverrides: new Map(),
       selectedIgnoreId: null,
     });
-    pushMock.mockReset();
   });
   afterEach(() => {
     // Unmount any mounted renderHook trees so tinykeys bindings registered
@@ -47,12 +43,105 @@ describe("useDiffViewerShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("ArrowRight pushes the next-diff href if provided", () => {
+  it("ArrowLeft / ArrowRight move between the run's own steps", () => {
+    const onPrevStep = vi.fn();
+    const onNextStep = vi.fn();
     renderHook(() =>
-      useDiffViewerShortcuts({ viewports: [], nextDiffHref: "/next" }),
+      useDiffViewerShortcuts({ viewports: [], onPrevStep, onNextStep }),
     );
     act(() => press("ArrowRight"));
-    expect(pushMock).toHaveBeenCalledWith("/next");
+    expect(onNextStep).toHaveBeenCalledOnce();
+    act(() => press("ArrowLeft"));
+    expect(onPrevStep).toHaveBeenCalledOnce();
+  });
+
+  it("J / K invoke onNextPending / onPrevPending, either case", () => {
+    const onNextPending = vi.fn();
+    const onPrevPending = vi.fn();
+    renderHook(() =>
+      useDiffViewerShortcuts({ viewports: [], onNextPending, onPrevPending }),
+    );
+    act(() => press("j"));
+    act(() => press("J"));
+    expect(onNextPending).toHaveBeenCalledTimes(2);
+    act(() => press("k"));
+    act(() => press("K"));
+    expect(onPrevPending).toHaveBeenCalledTimes(2);
+  });
+
+  it("J / K do nothing without the loop", () => {
+    const others = {
+      onApprove: vi.fn(),
+      onReject: vi.fn(),
+      onNextStep: vi.fn(),
+      onPrevStep: vi.fn(),
+      onNextDiff: vi.fn(),
+      onPrevDiff: vi.fn(),
+    };
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], ...others }));
+    const before = useViewerStore.getState();
+    act(() => press("J"));
+    act(() => press("K"));
+    // Neither falls through to another binding, nor touches the viewer.
+    for (const cb of Object.values(others)) expect(cb).not.toHaveBeenCalled();
+    expect(useViewerStore.getState()).toEqual(before);
+    // The bindings are live: the same press of another key does fire.
+    act(() => press("A"));
+    expect(others.onApprove).toHaveBeenCalledOnce();
+  });
+
+  it("Escape goes to onEscape instead of the viewer's own, when it is given", () => {
+    useViewerStore.setState({ ignoreEditMode: "run", selectedRegionId: "r1" });
+    const onEscape = vi.fn();
+    const { rerender } = renderHook(
+      (props: { onEscape?: () => void }) =>
+        useDiffViewerShortcuts({ viewports: [], ...props }),
+      { initialProps: { onEscape } as { onEscape?: () => void } },
+    );
+    act(() => press("Escape"));
+    expect(onEscape).toHaveBeenCalledOnce();
+    // The viewer's own Esc did not run.
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
+    expect(useViewerStore.getState().selectedRegionId).toBe("r1");
+    // Without it, Esc is the viewer's again.
+    rerender({});
+    act(() => press("Escape"));
+    expect(onEscape).toHaveBeenCalledOnce();
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+    expect(useViewerStore.getState().selectedRegionId).toBeNull();
+  });
+
+  it("held Esc leaves once", () => {
+    const onEscape = vi.fn();
+    renderHook(() => useDiffViewerShortcuts({ viewports: [], onEscape }));
+    act(() => {
+      for (const repeat of [false, true, true, true]) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            repeat,
+          }),
+        );
+      }
+    });
+    // The auto-repeats of a held key are not more presses.
+    expect(onEscape).toHaveBeenCalledOnce();
+  });
+
+  it("+ zooms in as a US keyboard sends it (Shift with =), once", () => {
+    useViewerStore.setState({ zoom: 1 });
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "+",
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(useViewerStore.getState().zoom).toBeCloseTo(ZOOM_STEP);
   });
 
   it("O cycles the mode", () => {
@@ -389,6 +478,8 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     "A",
     "R",
     "X",
+    "J",
+    "K",
     "C",
     "I",
     "?",
@@ -420,6 +511,8 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     onPrevDiff: vi.fn(),
     onPrevStep: vi.fn(),
     onNextStep: vi.fn(),
+    onNextPending: vi.fn(),
+    onPrevPending: vi.fn(),
   };
 
   // A state in which every key above would visibly change something.
@@ -469,8 +562,6 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     renderHook(() =>
       useDiffViewerShortcuts({
         viewports: ["1280x720", "375x812"],
-        nextDiffHref: "/next",
-        prevDiffHref: "/prev",
         ...callbacks,
       }),
     );
@@ -479,14 +570,12 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   function expectNothingFired(before: ReturnType<typeof snapshot>) {
     for (const cb of Object.values(callbacks))
       expect(cb).not.toHaveBeenCalled();
-    expect(pushMock).not.toHaveBeenCalled();
     expect(snapshot()).toEqual(before);
   }
 
   let focused: HTMLElement | null = null;
   beforeEach(() => {
     vi.clearAllMocks();
-    pushMock.mockReset();
   });
   afterEach(() => {
     // Unmount hook trees first so tinykeys bindings don't accumulate.
@@ -568,6 +657,41 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     });
   }
 
+  // The review loop's done card (BatchDoneCard) is a dialog that owns the
+  // keys while focus is in it, all but ⌘Z: undoing the decision that brought
+  // it up brings the step back (R20).
+  const DONE_CARD = `<div role="dialog" data-passes-undo=""><button>Continue</button></div>`;
+
+  it.each(SINGLE_KEYS)(
+    "%s is ignored while focus is in the done card",
+    (key) => {
+      armEveryShortcut();
+      mountHook();
+      focusInto(DONE_CARD, "button");
+      const before = snapshot();
+      act(() => press(key));
+      expectNothingFired(before);
+    },
+  );
+
+  it("Ctrl+Z still undoes while focus is in the done card", () => {
+    armEveryShortcut();
+    mountHook();
+    focusInto(DONE_CARD, "button");
+    pressCtrlZ();
+    expect(callbacks.onUndo).toHaveBeenCalledOnce();
+  });
+
+  it("Ctrl+Z stays with a menu opened inside a dialog that lets it through", () => {
+    mountHook();
+    focusInto(
+      `<div role="dialog" data-passes-undo=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,
+      "[role=menuitem]",
+    );
+    pressCtrlZ();
+    expect(callbacks.onUndo).not.toHaveBeenCalled();
+  });
+
   it("still fires Ctrl+Z while focus sits on an ordinary toolbar button", () => {
     mountHook();
     focusInto(`<button>Overlay</button>`, "button");
@@ -615,5 +739,19 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     });
     expect(callbacks.onApprove).not.toHaveBeenCalled();
     expect(callbacks.onReject).not.toHaveBeenCalled();
+  });
+
+  it("ignores auto-repeat so holding J/K cannot walk the queue", () => {
+    mountHook();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "J", bubbles: true, repeat: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "K", bubbles: true, repeat: true }),
+      );
+    });
+    expect(callbacks.onNextPending).not.toHaveBeenCalled();
+    expect(callbacks.onPrevPending).not.toHaveBeenCalled();
   });
 });

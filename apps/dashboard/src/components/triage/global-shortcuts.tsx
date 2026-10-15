@@ -7,21 +7,20 @@ import { ShortcutsDialog } from "./shortcuts-dialog";
 
 const SEQUENCE_WINDOW_MS = 1000;
 
-// Two-key sequence prefix → handler. Keep this in sync with the rows
-// listed by ShortcutsDialog; that dialog advertises these keys and
-// users will try them, so adding a row there without a binding here
-// makes the dialog a lie.
+// Two-key sequence prefix → handler. The ShortcutsDialog lists these
+// under "Everywhere"; its test presses every key it lists, so a row there
+// without a binding here fails it.
 type SequenceMap = Record<string, Record<string, () => void>>;
 
 /**
- * Mounted once at the protected-layout level. Handles the global
- * triage shortcuts the ShortcutsDialog advertises:
+ * Mounted once at the protected-layout level. Handles the keys that work
+ * on every page:
  *   - `?`     open the shortcuts dialog from anywhere
- *   - `g i`   go to /inbox
+ *   - `g i`   go to Batches (/inbox)
  *   - `g p`   go to /projects
  *
- * Per-page handlers (inbox row navigation, `/` filter focus, …)
- * remain on their own pages — this only owns the cross-page bindings.
+ * ⌘K belongs to the command palette, and the diff viewer's keys to
+ * `useDiffViewerShortcuts`; this only owns the cross-page bindings.
  */
 export function GlobalShortcuts() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);

@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
   builds,
+  checkpointDecisions,
   diffRegions,
   projectMembers,
   projects,
@@ -25,6 +27,14 @@ import { hashPassword } from "../src/lib/password.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  addReviewBuild,
+  addReviewRun,
+  cleanupReviewSeeds,
+  seedReviewRun,
+  type ReviewRunSpec,
+  type ReviewSeed,
+} from "./review-fixtures.js";
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -436,5 +446,438 @@ d("tRPC builds router", () => {
     await expect(
       client.builds.list.query({ projectId: s.projectId }),
     ).rejects.toThrow(/FORBIDDEN/);
+  });
+});
+
+d("tRPC builds: needing review, pending counts and the pending badge", () => {
+  let h: TestApp;
+  const seeds: ReviewSeed[] = [];
+
+  async function seed(
+    spec: ReviewRunSpec,
+    opts?: { branch?: string },
+  ): Promise<ReviewSeed> {
+    const s = await seedReviewRun(h, spec, opts);
+    seeds.push(s);
+    return s;
+  }
+
+  /** The client of one of the seed's users. */
+  const as = (user: { jwt: string }) => mkClient(h, user.jwt);
+
+  /** A decision row (an approve unless `decision`), active unless `reverted`. */
+  async function decide(
+    s: ReviewSeed,
+    runId: string,
+    shotId: string,
+    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
+  ): Promise<void> {
+    await h.db.insert(checkpointDecisions).values({
+      projectId: s.projectId,
+      runId,
+      screenshotId: shotId,
+      actionId: randomUUID(),
+      decision: opts.decision ?? "approved",
+      actorId: s.editor.id,
+      source: "viewer",
+      before: null,
+      revertedAt: opts.reverted ? new Date() : null,
+      revertedBy: opts.reverted ? s.editor.id : null,
+    });
+  }
+
+  const idsOf = (page: { items: Array<{ id: string }> }) =>
+    page.items.map((i) => i.id);
+  const sorted = (ids: string[]) => [...ids].sort();
+
+  beforeAll(async () => {
+    h = await createTestApp();
+    h.app.log.level = "silent";
+    await h.app.listen({ host: "127.0.0.1", port: 0 });
+  });
+  afterAll(async () => {
+    await cleanupReviewSeeds(h, seeds);
+    await h.close();
+  });
+
+  test("needsReview keeps builds with pending steps", async () => {
+    // A: a build whose only run is all `new`: pending.
+    const s = await seed({
+      checkpoints: [
+        { name: "a1", verdict: "new" },
+        { name: "a2", verdict: "new" },
+      ],
+    });
+    const a = s.buildId;
+    // B: every step rejected: nothing left to review.
+    const bRun = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "b1", verdict: "unresolved" }] },
+    });
+    await decide(s, bRun.runId, bRun.shots["b1"]!.id, {
+      decision: "rejected",
+    });
+    // C: only passed steps: nothing to review.
+    const c = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "passed" }] },
+    });
+    // D: an unresolved step whose approve was reverted: pending again.
+    const dRun = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "d1", verdict: "unresolved" }] },
+    });
+    await decide(s, dRun.runId, dRun.shots["d1"]!.id, { reverted: true });
+    // E: still running, so not reviewable: its steps are not pending.
+    const e = await addReviewBuild(h, s, {
+      spec: {
+        lifecycle: "running",
+        checkpoints: [{ name: "e1", verdict: "unresolved" }],
+      },
+    });
+    // F: no runs at all.
+    const [f] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch })
+      .returning({ id: builds.id });
+
+    const client = as(s.editor);
+    const all = await client.builds.list.query({ projectId: s.projectId });
+    expect(sorted(idsOf(all))).toEqual(
+      sorted([a, bRun.buildId, c.buildId, dRun.buildId, e.buildId, f!.id]),
+    );
+
+    const needing = await client.builds.list.query({
+      projectId: s.projectId,
+      needsReview: true,
+    });
+    expect(sorted(idsOf(needing))).toEqual(sorted([a, dRun.buildId]));
+
+    // `false` is no filter, like leaving it out.
+    const notFiltering = await client.builds.list.query({
+      projectId: s.projectId,
+      needsReview: false,
+    });
+    expect(sorted(idsOf(notFiltering))).toEqual(sorted(idsOf(all)));
+  });
+
+  test("needsReview combines with the other filters and pages without gaps", async () => {
+    const s = await seed(
+      { checkpoints: [{ name: "x1", verdict: "new" }] },
+      { branch: "feature/one" },
+    );
+    const b2 = await addReviewBuild(h, s, {
+      branch: "feature/two",
+      spec: { checkpoints: [{ name: "x2", verdict: "unresolved" }] },
+    });
+    const b3 = await addReviewBuild(h, s, {
+      branch: "feature/one",
+      spec: { checkpoints: [{ name: "x3", verdict: "new" }] },
+    });
+    // Nothing to review on this one, between the others in time.
+    await addReviewBuild(h, s, {
+      branch: "feature/one",
+      spec: { checkpoints: [{ name: "x4", verdict: "passed" }] },
+    });
+    const b5 = await addReviewBuild(h, s, {
+      branch: "feature/one",
+      spec: { checkpoints: [{ name: "x5", verdict: "unresolved" }] },
+    });
+    const client = as(s.editor);
+
+    // AND with the branch filter.
+    const onOne = await client.builds.list.query({
+      projectId: s.projectId,
+      needsReview: true,
+      branch: "feature/one",
+    });
+    expect(sorted(idsOf(onOne))).toEqual(
+      sorted([s.buildId, b3.buildId, b5.buildId]),
+    );
+    // AND with the aggregate status: x1/x3 are `new` (passed in the rollup),
+    // x2/x5 are unresolved.
+    const unresolved = await client.builds.list.query({
+      projectId: s.projectId,
+      needsReview: true,
+      status: "unresolved",
+    });
+    expect(sorted(idsOf(unresolved))).toEqual(sorted([b2.buildId, b5.buildId]));
+
+    // Keyset paging walks exactly the matching builds, newest first.
+    const walked: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 6; i++) {
+      const page = await client.builds.list.query({
+        projectId: s.projectId,
+        needsReview: true,
+        limit: 1,
+        ...(cursor ? { cursor } : {}),
+      });
+      walked.push(...idsOf(page));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    expect(walked).toEqual([b5.buildId, b3.buildId, b2.buildId, s.buildId]);
+  });
+
+  test("anyFailed keeps batches with at least one failed run, whatever else they hold", async () => {
+    // A: one rejected run and one pending run. The batch rolls up to
+    // `unresolved`, yet it has a failed test and a step to review.
+    const s = await seed({
+      lifecycle: "failed",
+      checkpoints: [{ name: "a-rejected", verdict: "unresolved" }],
+    });
+    await decide(s, s.runId, s.shots["a-rejected"]!.id, {
+      decision: "rejected",
+    });
+    await addReviewRun(h, s, {
+      checkpoints: [{ name: "a-pending", verdict: "unresolved" }],
+    });
+    const a = s.buildId;
+    // B: only a rejected run: failed, nothing left to review.
+    const b = await addReviewBuild(h, s, {
+      spec: {
+        lifecycle: "failed",
+        checkpoints: [{ name: "b-rejected", verdict: "unresolved" }],
+      },
+    });
+    await decide(s, b.runId, b.shots["b-rejected"]!.id, {
+      decision: "rejected",
+    });
+    // C: only a pending run: to review, no failure.
+    const c = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
+    });
+    // D: only passed steps.
+    const dBuild = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "d1", verdict: "passed" }] },
+    });
+    // E: no runs at all.
+    const [e] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch })
+      .returning({ id: builds.id });
+
+    const client = as(s.editor);
+    const list = (extra: {
+      anyFailed?: boolean;
+      needsReview?: boolean;
+      status?: "failed" | "unresolved";
+    }) => client.builds.list.query({ projectId: s.projectId, ...extra });
+
+    const failing = await list({ anyFailed: true });
+    expect(sorted(idsOf(failing))).toEqual(sorted([a, b.buildId]));
+    // A is `unresolved` in the rollup, so `status: "failed"` would miss it.
+    expect(failing.items.find((i) => i.id === a)?.aggregateStatus).toBe(
+      "unresolved",
+    );
+    expect(failing.items.find((i) => i.id === a)?.failedCount).toBe(1);
+
+    // The same batch is under Needs review as well: the chips are filters,
+    // not a partition.
+    const needing = await list({ needsReview: true });
+    expect(sorted(idsOf(needing))).toEqual(sorted([a, c.buildId]));
+
+    // It combines with the other filters by AND.
+    expect(
+      sorted(idsOf(await list({ anyFailed: true, needsReview: true }))),
+    ).toEqual([a]);
+    expect(
+      sorted(idsOf(await list({ anyFailed: true, status: "failed" }))),
+    ).toEqual([b.buildId]);
+
+    // `false` is no filter, like leaving it out.
+    const all = await list({});
+    expect(sorted(idsOf(await list({ anyFailed: false })))).toEqual(
+      sorted(idsOf(all)),
+    );
+    expect(sorted(idsOf(all))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId, e!.id]),
+    );
+  });
+
+  test("Passed excludes a batch whose runs are all new (pending)", async () => {
+    // A: a first-baseline batch, every step `new` and undecided. `new` runs
+    // roll up to `passed`, yet every step still needs review.
+    const s = await seed({
+      checkpoints: [
+        { name: "first-a", verdict: "new" },
+        { name: "first-b", verdict: "new" },
+      ],
+    });
+    const a = s.buildId;
+    // B: every step passed.
+    const b = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "b1", verdict: "passed" }] },
+    });
+    // C: a `new` step approved: nothing left to review.
+    const c = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "new" }] },
+    });
+    await decide(s, c.runId, c.shots["c1"]!.id);
+    // D: one `new` step approved, its sibling still pending.
+    const dBuild = await addReviewBuild(h, s, {
+      spec: {
+        checkpoints: [
+          { name: "d-done", verdict: "new" },
+          { name: "d-open", verdict: "new" },
+        ],
+      },
+    });
+    await decide(s, dBuild.runId, dBuild.shots["d-done"]!.id);
+    // E: an unresolved step: not passed in the rollup.
+    const e = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "e1", verdict: "unresolved" }] },
+    });
+    // F: no runs at all: nothing pending, but `empty`, not passed.
+    const [f] = await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch })
+      .returning({ id: builds.id });
+
+    const client = as(s.editor);
+    const list = (extra: {
+      status?: "passed";
+      noPending?: boolean;
+      needsReview?: boolean;
+    }) => client.builds.list.query({ projectId: s.projectId, ...extra });
+
+    // The rollup alone lists the pending batches as passed.
+    expect(sorted(idsOf(await list({ status: "passed" })))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId]),
+    );
+    // The Passed chip (Ruling R32): passed AND no pending step.
+    expect(
+      sorted(idsOf(await list({ status: "passed", noPending: true }))),
+    ).toEqual(sorted([b.buildId, c.buildId]));
+    // On its own, `noPending` is the complement of `needsReview`.
+    expect(sorted(idsOf(await list({ noPending: true })))).toEqual(
+      sorted([b.buildId, c.buildId, f!.id]),
+    );
+    expect(sorted(idsOf(await list({ needsReview: true })))).toEqual(
+      sorted([a, dBuild.buildId, e.buildId]),
+    );
+    // `false` is no filter, like leaving it out.
+    expect(sorted(idsOf(await list({ noPending: false })))).toEqual(
+      sorted([a, b.buildId, c.buildId, dBuild.buildId, e.buildId, f!.id]),
+    );
+  });
+
+  test("pendingCheckpoints per row equals builds.getById.pendingCheckpoints", async () => {
+    // A: three steps, two pending (one decided).
+    const s = await seed({
+      checkpoints: [
+        { name: "a-new", verdict: "new" },
+        { name: "a-unresolved", verdict: "unresolved" },
+        { name: "a-decided", verdict: "unresolved" },
+      ],
+    });
+    const aRun = s.runId;
+    await decide(s, aRun, s.shots["a-decided"]!.id);
+    // A second run in the same build: one more pending step, and a run that is
+    // still running (not reviewable, so none of its steps count).
+    await addReviewRun(h, s, {
+      checkpoints: [{ name: "a2", verdict: "new" }],
+    });
+    await addReviewRun(h, s, {
+      lifecycle: "running",
+      checkpoints: [{ name: "a3", verdict: "unresolved" }],
+    });
+    // B: nothing pending.
+    await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "b", verdict: "passed" }] },
+    });
+    // C: three pending steps over two runs.
+    const c = await addReviewBuild(h, s, {
+      spec: {
+        checkpoints: [
+          { name: "c1", verdict: "new" },
+          { name: "c2", verdict: "unresolved" },
+        ],
+      },
+    });
+    await addReviewRun(
+      h,
+      s,
+      { checkpoints: [{ name: "c3", verdict: "unresolved" }] },
+      { buildId: c.buildId },
+    );
+    // D: no runs.
+    await h.db
+      .insert(builds)
+      .values({ projectId: s.projectId, branchName: s.branch });
+
+    const client = as(s.editor);
+    const page = await client.builds.list.query({ projectId: s.projectId });
+    expect(page.items).toHaveLength(4);
+    for (const item of page.items) {
+      const detail = await client.builds.getById.query({ buildId: item.id });
+      expect(item.pendingCheckpoints).toBe(detail.pendingCheckpoints);
+    }
+    // And the numbers are what the seed says they are, not all zero.
+    const byId = new Map(page.items.map((i) => [i.id, i.pendingCheckpoints]));
+    expect(byId.get(s.buildId)).toBe(3);
+    expect(byId.get(c.buildId)).toBe(3);
+    expect(page.items.filter((i) => i.pendingCheckpoints === 0)).toHaveLength(
+      2,
+    );
+
+    // needsReview rows count the same.
+    const needing = await client.builds.list.query({
+      projectId: s.projectId,
+      needsReview: true,
+    });
+    expect(
+      Object.fromEntries(
+        needing.items.map((i) => [i.id, i.pendingCheckpoints]),
+      ),
+    ).toEqual({ [s.buildId]: 3, [c.buildId]: 3 });
+  });
+
+  test("builds.pendingCount counts builds, member-gated", async () => {
+    // A: three pending steps over two runs count once.
+    const s = await seed({
+      checkpoints: [
+        { name: "a1", verdict: "new" },
+        { name: "a2", verdict: "unresolved" },
+      ],
+    });
+    await addReviewRun(h, s, {
+      checkpoints: [{ name: "a3", verdict: "new" }],
+    });
+    // B: pending. C: nothing pending.
+    const b = await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "b1", verdict: "unresolved" }] },
+    });
+    await addReviewBuild(h, s, {
+      spec: { checkpoints: [{ name: "c1", verdict: "passed" }] },
+    });
+    // A build in another project does not count.
+    const other = await seed({
+      checkpoints: [{ name: "o1", verdict: "new" }],
+    });
+
+    const count = (user: { jwt: string }, projectId: string) =>
+      as(user).builds.pendingCount.query({ projectId });
+    expect(await count(s.editor, s.projectId)).toEqual({ total: 2 });
+    expect(await count(other.editor, other.projectId)).toEqual({ total: 1 });
+
+    // It follows the decisions: deciding B's only step takes B out.
+    await decide(s, b.runId, b.shots["b1"]!.id, { decision: "rejected" });
+    expect(await count(s.editor, s.projectId)).toEqual({ total: 1 });
+
+    // A project without builds is zero.
+    const empty = await seed({
+      checkpoints: [{ name: "e1", verdict: "passed" }],
+    });
+    expect(await count(empty.editor, empty.projectId)).toEqual({ total: 0 });
+
+    // The gate: members and admins only.
+    await expect(count(s.outsider, s.projectId)).rejects.toThrow(/FORBIDDEN/);
+    await expect(count(s.guest, s.projectId)).rejects.toThrow(/FORBIDDEN/);
+    await expect(count(s.editor, other.projectId)).rejects.toThrow(/FORBIDDEN/);
+    await expect(count(s.admin, s.projectId)).resolves.toEqual({ total: 1 });
+    await expect(
+      mkClient(h, "not-a-token").builds.pendingCount.query({
+        projectId: s.projectId,
+      }),
+    ).rejects.toThrow(/UNAUTHORIZED/);
   });
 });

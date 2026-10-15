@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   builds,
   desc,
   eq,
@@ -156,10 +157,14 @@ export const variationsRouter = t.router({
    * `builds` so the table can render `#{buildNumber}` without a second
    * query per row.
    *
+   * Each row is a run and carries `checkpointId`, that run's step (screenshot)
+   * of the variation, so a link can open the exact step instead of the run.
+   *
    * Cross-tenant safety: WHERE already filters on projectId AND
-   * testVariationId; even if a caller passes a variationId from another
-   * project, the projectId guard prevents leakage. The projectMember
-   * middleware blocks the call before the query runs.
+   * testVariationId (on the steps as well as the runs); even if a caller
+   * passes a variationId from another project, the projectId guard prevents
+   * leakage. The projectMember middleware blocks the call before the query
+   * runs.
    */
   history: publicProcedure
     .input(historyInput)
@@ -171,17 +176,34 @@ export const variationsRouter = t.router({
     )
     .query(async ({ input, ctx }) => {
       // ADR-038: runs are linked to variations through screenshots.
-      // First, find all run IDs that have a screenshot with this variation.
-      const linkedRunIds = await ctx.db
-        .select({ runId: screenshots.runId })
+      // First, find the steps (screenshots) of this variation in the project,
+      // one row per run that has one. A run is expected to have one step of a
+      // variation; if it somehow has two, the earliest by `created_at, id` is
+      // the one its row names.
+      const linkedSteps = await ctx.db
+        .selectDistinctOn([screenshots.runId], {
+          runId: screenshots.runId,
+          stepId: screenshots.id,
+        })
         .from(screenshots)
-        .where(eq(screenshots.testVariationId, input.variationId));
+        .where(
+          and(
+            eq(screenshots.testVariationId, input.variationId),
+            eq(screenshots.projectId, input.projectId),
+          ),
+        )
+        .orderBy(
+          screenshots.runId,
+          asc(screenshots.createdAt),
+          asc(screenshots.id),
+        );
 
-      if (linkedRunIds.length === 0) {
+      if (linkedSteps.length === 0) {
         return { items: [], nextCursor: null };
       }
 
-      const runIdList = linkedRunIds.map((r) => r.runId);
+      const stepByRun = new Map(linkedSteps.map((s) => [s.runId, s.stepId]));
+      const runIdList = [...stepByRun.keys()];
 
       const conditions = [
         eq(testRuns.projectId, input.projectId),
@@ -205,6 +227,9 @@ export const variationsRouter = t.router({
           baselineSource: testRuns.baselineSource,
           buildId: testRuns.buildId,
           buildNumber: builds.number,
+          // For a build without a number, so its row can still name it.
+          buildName: builds.name,
+          buildCiBuildId: builds.ciBuildId,
           createdAt: testRuns.createdAt,
           cursorAt: cursorTimestamp(testRuns.createdAt),
         })
@@ -221,7 +246,12 @@ export const variationsRouter = t.router({
         hasMore && last
           ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.id })
           : null;
-      const items = page.map(({ cursorAt: _cursorAt, ...r }) => r);
+      const items = page.map(({ cursorAt: _cursorAt, ...r }) => ({
+        ...r,
+        // Every listed run has a step of the variation (the list is built from
+        // them), so the lookup always hits.
+        checkpointId: stepByRun.get(r.id)!,
+      }));
       return { items, nextCursor };
     }),
 });

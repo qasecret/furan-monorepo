@@ -81,9 +81,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
       items.push(r);
     }
   }
-  for (const r of (history.data?.items as unknown as
-    | HistoryItem[]
-    | undefined) ?? []) {
+  for (const r of history.data?.items ?? []) {
     if (!seen.has(r.id)) {
       seen.add(r.id);
       items.push(r);
@@ -102,10 +100,7 @@ export function VariationHistory({ projectId, variationId }: Props) {
 
   const onLoadMore = () => {
     if (!history.data?.nextCursor) return;
-    setAccumulated((prev) => [
-      ...prev,
-      ...((history.data?.items as unknown as HistoryItem[]) ?? []),
-    ]);
+    setAccumulated((prev) => [...prev, ...(history.data?.items ?? [])]);
     setCursor(history.data.nextCursor);
   };
 

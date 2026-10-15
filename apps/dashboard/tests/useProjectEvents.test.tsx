@@ -134,9 +134,55 @@ describe("useProjectEvents", () => {
       act(() => {
         es.fire(name, [{ id: "x" }]);
       });
-      // Two invalidate calls per event: one for [["runs"]], one for [["builds"]].
+      // One invalidate call per namespace: [["runs"]], [["builds"]] and the
+      // review loop's [["review", "next"]].
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [["runs"]] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [["builds"]] });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: [["review", "next"]],
+      });
+    }
+  });
+
+  it("marks the cached review.next and builds.pendingCount stale on every event", () => {
+    const qc = new QueryClient();
+    renderHook(() => useProjectEvents("proj-1"), { wrapper: wrapper(qc) });
+    const es = StubEventSource.instances[0]!;
+
+    // The keys tRPC's react-query integration gives these queries.
+    const next = [
+      ["review", "next"],
+      { input: { projectId: "proj-1" }, type: "query" },
+    ];
+    const badge = [
+      ["builds", "pendingCount"],
+      { input: { projectId: "proj-1" }, type: "query" },
+    ];
+    // An unrelated namespace stays fresh.
+    const other = [
+      ["review", "decide"],
+      { input: { projectId: "proj-1" }, type: "query" },
+    ];
+    const stale = (key: unknown[]) => qc.getQueryState(key)?.isInvalidated;
+
+    for (const name of [
+      "testRun_updated",
+      "build_updated",
+      "run.checkpoint_diffed",
+      "run.completed",
+    ]) {
+      qc.setQueryData(next, { target: null });
+      qc.setQueryData(badge, { total: 1 });
+      qc.setQueryData(other, { ok: true });
+      expect(stale(next)).toBe(false);
+      expect(stale(badge)).toBe(false);
+
+      act(() => {
+        es.fire(name, [{ id: "x" }]);
+      });
+      expect(stale(next), `${name} invalidates review.next`).toBe(true);
+      expect(stale(badge), `${name} invalidates the badge`).toBe(true);
+      expect(stale(other)).toBe(false);
     }
   });
 
