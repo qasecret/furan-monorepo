@@ -46,7 +46,10 @@ import {
 } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
-import { usePaletteSearch } from "@/components/cmdk/use-palette-search";
+import {
+  usePaletteSearch,
+  type PaletteSearch,
+} from "@/components/cmdk/use-palette-search";
 import {
   useDiffViewerShortcuts,
   type ShortcutOptions,
@@ -444,6 +447,156 @@ describe("usePaletteSearch", () => {
     expect(result.current.batches).toEqual({ items: [], error: true });
     expect(result.current.tests.error).toBe(false);
     expect(result.current.tests.items.map((t) => t.name)).toEqual(["cart"]);
+  });
+});
+
+describe("a failed batch list", () => {
+  /**
+   * The hook over the backend, with every render it made: the one between a
+   * search settling and its effects running is not on `result.current`.
+   */
+  function mountHook() {
+    const renders: PaletteSearch[] = [];
+    const hook = renderHook(
+      ({ text }) => {
+        const search = usePaletteSearch("p1", text);
+        renders.push(search);
+        return search;
+      },
+      {
+        initialProps: { text: "" },
+        wrapper: ({ children }) => (
+          <TrpcBackend backend={backend}>{children}</TrpcBackend>
+        ),
+      },
+    );
+    return { ...hook, renders };
+  }
+  const asked = () => callsTo(backend, "builds.list").length;
+  /** A search's text typed and left to settle. */
+  async function settleOn(
+    rerender: (props: { text: string }) => void,
+    text: string,
+  ) {
+    rerender({ text });
+    await advance(150);
+    await advance(10);
+  }
+
+  test("a batch list that failed once is retried on the next search", async () => {
+    // The list fails now and answers later; the question is held so the
+    // moment between asking and answering can be seen.
+    let healthy = false;
+    let release: () => void = () => undefined;
+    backend.answer = ({ path }) => {
+      if (path === "variations.list") return Promise.resolve(page([]));
+      if (!healthy) return Promise.reject(new Error("down"));
+      return new Promise((resolve) => {
+        release = () => resolve(page([build("b1", { name: "cart" })]));
+      });
+    };
+    const { result, rerender, renders } = mountHook();
+    vi.useFakeTimers();
+
+    // The first search finds it down, and says so.
+    await settleOn(rerender, "ca");
+    expect(asked()).toBe(1);
+    expect(result.current.batches).toEqual({ items: [], error: true });
+    expect(result.current.pending).toBe(false);
+
+    // It is back, but the same search stands: no new question, the failure
+    // stays as it was.
+    healthy = true;
+    await advance(2000);
+    expect(asked()).toBe(1);
+    expect(result.current.batches.error).toBe(true);
+
+    // The next search asks the list again. While that is out, the old
+    // failure is not shown (it is not this search's), from the first render
+    // of the search on, and the search is pending...
+    const before = renders.length;
+    await settleOn(rerender, "cart");
+    expect(asked()).toBe(2);
+    expect(result.current.batches).toEqual({ items: [], error: false });
+    expect(result.current.pending).toBe(true);
+    expect(renders.slice(before).filter((r) => r.batches.error)).toEqual([]);
+
+    // ...and then the rows are there.
+    await act(async () => release());
+    await advance(10);
+    expect(result.current.batches.error).toBe(false);
+    expect(result.current.batches.items.map((b) => b.name)).toEqual(["cart"]);
+    expect(result.current.pending).toBe(false);
+    expect(asked()).toBe(2);
+  });
+
+  test("a list that keeps failing is asked once per search, not in a loop", async () => {
+    backend.answer = async ({ path }) => {
+      if (path === "builds.list") throw new Error("down");
+      return page([]);
+    };
+    const { result, rerender } = mountHook();
+    vi.useFakeTimers();
+
+    // Each search settles, shows the failure and is left alone for a while:
+    // one question for it, however long it stands.
+    for (const [i, text] of ["ca", "car", "cart"].entries()) {
+      await settleOn(rerender, text);
+      await advance(3000);
+      expect(asked(), text).toBe(i + 1);
+      expect(result.current.batches, text).toEqual({
+        items: [],
+        error: true,
+      });
+      expect(result.current.pending, text).toBe(false);
+    }
+  });
+
+  test("a list that failed on refresh, with rows already loaded, is retried on the next search too", async () => {
+    // The list loaded for the first search; a refresh when the window is
+    // back in focus (it is stale after a while) then failed, and the rows it
+    // had are not shown for a failed list.
+    let failing = false;
+    let release: () => void = () => undefined;
+    backend.answer = ({ path }) => {
+      if (path === "variations.list") return Promise.resolve(page([]));
+      if (failing) return Promise.reject(new Error("down"));
+      return new Promise((resolve) => {
+        release = () => resolve(page([build("b1", { name: "cart" })]));
+      });
+    };
+    const { result, rerender, renders } = mountHook();
+    vi.useFakeTimers();
+
+    await settleOn(rerender, "ca");
+    await act(async () => release());
+    await advance(10);
+    expect(result.current.batches.items.map((b) => b.name)).toEqual(["cart"]);
+    expect(asked()).toBe(1);
+
+    failing = true;
+    await advance(31_000);
+    await act(async () => {
+      window.dispatchEvent(new Event("visibilitychange"));
+    });
+    await advance(10);
+    expect(asked()).toBe(2);
+    expect(result.current.batches).toEqual({ items: [], error: true });
+
+    // The next search asks again; the failure is not shown while that is
+    // out, though the rows are still held under it, and then the rows are
+    // back.
+    failing = false;
+    const before = renders.length;
+    await settleOn(rerender, "cart");
+    expect(asked()).toBe(3);
+    expect(result.current.batches.error).toBe(false);
+    expect(result.current.pending).toBe(true);
+    expect(renders.slice(before).filter((r) => r.batches.error)).toEqual([]);
+    await act(async () => release());
+    await advance(10);
+    expect(result.current.batches.items.map((b) => b.name)).toEqual(["cart"]);
+    expect(result.current.pending).toBe(false);
   });
 });
 

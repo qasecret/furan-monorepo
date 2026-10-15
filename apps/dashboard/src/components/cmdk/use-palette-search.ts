@@ -96,7 +96,8 @@ function useSettled(value: string): string {
  *   keeps an earlier answer on screen, so a slow answer to an earlier text,
  *   arriving late, is not shown for this one.
  * - **Errors:** a failed group is `error` with no rows; the other group is
- *   unaffected, and so is everything else in the palette.
+ *   unaffected, and so is everything else in the palette. A failed batch
+ *   list, once shown, is asked once more by the next search.
  */
 export function usePaletteSearch(
   projectId: string | null,
@@ -123,6 +124,26 @@ export function usePaletteSearch(
     },
     { enabled: live, retry: false },
   );
+
+  // The batch list's key never changes, so a failure would stay for the rest
+  // of the session: nothing else asks again as the typing goes on. A failure
+  // the user has been shown is asked about once more by the next search. Until
+  // that answer is in, the old failure is not shown (it is not this search's).
+  const batchesFailed = live && builds.isError && !builds.isFetching;
+  const [seen, setSeen] = useState<{ failure: number; text: string } | null>(
+    null,
+  );
+  const failure = builds.errorUpdateCount;
+  const retryDue =
+    batchesFailed && seen?.failure === failure && seen.text !== settled;
+  const { refetch } = builds;
+  useEffect(() => {
+    if (!batchesFailed) return;
+    if (retryDue) void refetch({ cancelRefetch: false });
+    else if (seen?.failure !== failure) setSeen({ failure, text: settled });
+  }, [batchesFailed, retryDue, seen, failure, settled, refetch]);
+  const batchesAsking =
+    live && builds.isError && (builds.isFetching || retryDue);
 
   const buildRows = builds.data?.items;
   const batchItems = useMemo((): BatchHit[] => {
@@ -151,12 +172,13 @@ export function usePaletteSearch(
     }));
   }, [live, project, variationRows]);
 
-  const batchError = live && builds.isError;
+  const batchError = live && builds.isError && !batchesAsking;
   const testError = live && variations.isError;
   return {
     batches: { items: batchError ? [] : batchItems, error: batchError },
     tests: { items: testError ? [] : testItems, error: testError },
     pending:
-      project !== null && (!live || builds.isPending || variations.isPending),
+      project !== null &&
+      (!live || builds.isPending || variations.isPending || batchesAsking),
   };
 }

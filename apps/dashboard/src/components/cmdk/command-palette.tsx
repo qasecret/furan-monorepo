@@ -408,11 +408,12 @@ function PaletteBody({
     )
     .map(row);
 
-  // What Enter chooses on a fresh palette: the page's first own action, else
-  // Go to Batches. Never undo, which would take back a decision at a ⌘K then
-  // Enter. (cmdk's own choice is the first row, which is undo on a page with
-  // no actions of its own.) The choice is only where it starts: undo stays
-  // one arrow key, or a search, away.
+  // What Enter chooses on a fresh palette, and again once the search is
+  // cleared: the page's first own action, else Go to Batches. Never undo,
+  // which would take back a decision at a ⌘K then Enter. (cmdk's own choice
+  // is the first row, which is undo on a page with no actions of its own.)
+  // The choice is only where it starts: undo stays one arrow key, or a
+  // search, away.
   const [startsOn] = useState(() => {
     const first = actions.find(
       (a) => !GLOBAL_ACTIONS.has(a.resolved.command.id),
@@ -421,6 +422,14 @@ function PaletteBody({
       ? `action:${first.resolved.scope}:${first.resolved.command.id}`
       : `goto:${BATCHES.id}`;
   });
+  // The chosen row is held here, not by cmdk, so that clearing the search can
+  // put it back: cmdk chooses its first row whenever the search changes.
+  const [chosen, setChosen] = useState(startsOn);
+  useEffect(() => {
+    // Runs after cmdk's own choice for this search (a layout effect), so the
+    // starting row wins.
+    if (search === "") setChosen(startsOn);
+  }, [search, startsOn]);
   const failures = [
     found.batches.error && SEARCH_ERROR.batches,
     found.tests.error && SEARCH_ERROR.tests,
@@ -493,7 +502,8 @@ function PaletteBody({
       className="bg-overlay"
       vimBindings={false}
       filter={byLabel}
-      defaultValue={startsOn}
+      value={chosen}
+      onValueChange={setChosen}
     >
       <Command.Input
         onValueChange={setSearch}

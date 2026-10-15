@@ -504,6 +504,79 @@ describe("CommandPalette", () => {
     expect(undoMock).toHaveBeenCalledTimes(1);
   });
 
+  test("after typing and clearing, Enter does not undo", async () => {
+    // cmdk selects its first row again whenever the search changes. Cleared,
+    // that first row is Undo on a page with no actions of its own: the
+    // palette's starting choice must come back instead.
+    act(() =>
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+    );
+    const selected = (palette: HTMLElement) =>
+      palette.querySelector('[role="option"][aria-selected="true"]')
+        ?.firstElementChild?.textContent;
+    const input = () => screen.getByTestId("command-input");
+    const type = (value: string) =>
+      fireEvent.change(input(), { target: { value } });
+
+    // No page actions: Undo is the only action and the first row.
+    render(<Shell role="editor" />);
+    let palette = await openPalette();
+    expect(labels(palette, "Actions")).toEqual(["Undo last review action"]);
+    expect(selected(palette)).toBe("Batches");
+
+    // Typed to something that matches Undo and nothing before it...
+    type("undo last");
+    expect(selected(palette)).toBe("Undo last review action");
+    // ...and cleared: the starting choice, not the first row.
+    type("");
+    expect(selected(palette)).toBe("Batches");
+    // Cleared from a longer text and a one-letter text alike.
+    type("settings");
+    type("s");
+    type("");
+    expect(selected(palette)).toBe("Batches");
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(pushMock).toHaveBeenCalledWith("/inbox");
+    await settle();
+    expect(undoMock).not.toHaveBeenCalled();
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // With page actions it is the first of them again, after a search that
+    // chose something else.
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} />
+      </Shell>,
+    );
+    palette = await openPalette();
+    const first = labels(palette, "Actions")[0];
+    type("undo last");
+    expect(selected(palette)).toBe("Undo last review action");
+    type("");
+    expect(selected(palette)).toBe(first);
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // The arrow keys still move the choice from there, and Undo is one away.
+    render(<Shell role="editor" />);
+    palette = await openPalette();
+    type("zz");
+    type("");
+    expect(selected(palette)).toBe("Batches");
+    fireEvent.keyDown(input(), { key: "ArrowUp" });
+    expect(selected(palette)).toBe("Undo last review action");
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    expect(selected(palette)).toBe("Batches");
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    expect(selected(palette)).not.toBe("Batches");
+    expect(selected(palette)).not.toBe("Undo last review action");
+  });
+
   test("a guest never sees it", async () => {
     // Even with an action on the stack: a guest cannot have made one in this
     // session, and cannot take one back.
