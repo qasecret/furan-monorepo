@@ -128,7 +128,7 @@ For 0008 specifically, the symptom of a botched deploy order is:
 
 - **drizzle-kit** (`drizzle-kit migrate`, every pending file in one transaction): `ADD COLUMN` takes ACCESS EXCLUSIVE on `screenshots` and holds it until commit, so every read and write of `screenshots` waits for the whole migration. That measured 1.5–3.5 s on a database with 190k steps, and it grows with the size of `screenshots`.
 - **The compose runner** (`migrate` service, `psql -f`, each statement on its own): the backfill holds SHARE on `checkpoint_decisions` (decision writes wait, reads do not) and each index build holds SHARE on `screenshots` (writes wait, reads do not). Reads are never blocked.
-- **Deadlocks:** a decision write that has already locked a step (an undo of a re-diffed approve, a run or project deletion) can deadlock with the backfill. The backfill retries on a deadlock (up to five attempts), so the migration still completes and ends exact; the other write may fail once and is retried by its caller.
+- **Deadlocks:** a decision write that has already locked a step (an undo of a re-diffed approve, a run or project deletion) can deadlock with the backfill. The backfill rolls back to a savepoint and retries on a deadlock (up to five attempts), so the migration still completes and ends exact. The other write may fail once, and nothing in the API retries it: the reviewer or admin who made it sees the error and does it again (the undo, or the deletion).
 
 **Recommendation:** stop the writers first (§2, step 2) and run the migration with nothing writing, as for any migration in this runbook. Then none of the waits above is visible to users and no deadlock can occur.
 
