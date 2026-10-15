@@ -3,9 +3,10 @@
 import { Play, RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { BATCHES_COMMANDS, type BatchesCtx } from "./batches-commands";
 import {
   NoBatchesMatch,
   NoBatchesYet,
@@ -25,6 +26,8 @@ import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { buildDisplayName, matchesBatchSearch } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
+import { useCommandKeys, useCommands } from "@/lib/commands/registry";
+import { useListCursor } from "@/lib/commands/use-list-cursor";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatBatchDateTime } from "@/lib/format";
 import {
@@ -37,6 +40,9 @@ import {
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type BuildRow = RouterOutputs["builds"]["list"]["items"][number];
+
+/** The rows on screen while the list loads: skeletons, not rows. */
+const NO_ROWS: BuildRow[] = [];
 
 interface Props {
   /**
@@ -148,6 +154,23 @@ export function InboxPage({ context }: Props) {
     [items, query],
   );
 
+  // The keyboard cursor walks the rows on screen: none while the skeleton
+  // stands in for them. A row is one Tab stop and the list a place the arrow
+  // keys work in (spec §4.2, §6).
+  const listRef = useRef<HTMLTableSectionElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const shownRows = list.isLoading ? NO_ROWS : rows;
+  const cursor = useListCursor({ items: shownRows, listRef });
+
+  /**
+   * Where a row goes: its batch, only the status travelling (the Batches
+   * page has no facets, the same as Start reviewing). The row's link, a
+   * click on the row and the Open batch command all use it.
+   */
+  const rowHref = (b: BuildRow) =>
+    batchHref(b.projectId, b.id, { status: context.status });
+  const cursorRow = shownRows.find((b) => b.id === cursor.cursorId);
+
   // Start reviewing follows the branch and the search (Ruling R34, spec
   // §1.3): with either set it counts and opens the filtered Needs review
   // list, whatever chip is showing. Without them it is the project's count.
@@ -253,17 +276,6 @@ export function InboxPage({ context }: Props) {
     }
   };
 
-  if (!currentProjectId) {
-    return (
-      <div
-        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-fg-muted"
-        data-testid="inbox-no-project"
-      >
-        No project assigned. Ask an admin to add you to a project.
-      </div>
-    );
-  }
-
   // The filtered list's own count when a branch or a search is set; "N+"
   // when it holds more batches than one page.
   const total = filtered
@@ -282,6 +294,38 @@ export function InboxPage({ context }: Props) {
       : starting
         ? "Opening the first step…"
         : null;
+
+  // Whether Start reviewing is available: the button and its key (`s`) are
+  // one and the same.
+  const startDisabled = countLoading || total === 0 || starting;
+  const startKeys = useCommandKeys("batches.start");
+
+  useCommands<BatchesCtx>("batches", BATCHES_COMMANDS, {
+    rowCount: shownRows.length,
+    next: cursor.next,
+    prev: cursor.prev,
+    first: cursor.first,
+    last: cursor.last,
+    canOpen: cursorRow !== undefined,
+    open: () => {
+      if (cursorRow) router.push(rowHref(cursorRow));
+    },
+    canStart: !!currentProjectId && !startDisabled,
+    start: startReviewing,
+    focusSearch: () => searchRef.current?.focus(),
+    show: (status) => setContext({ status }),
+  });
+
+  if (!currentProjectId) {
+    return (
+      <div
+        className="flex flex-1 items-center justify-center p-10 text-center text-sm text-fg-muted"
+        data-testid="inbox-no-project"
+      >
+        No project assigned. Ask an admin to add you to a project.
+      </div>
+    );
+  }
 
   // What the body shows when there is no row to show.
   const showTable = list.isLoading || rows.length > 0;
@@ -347,8 +391,14 @@ export function InboxPage({ context }: Props) {
                 variant="default"
                 testId="inbox-start-reviewing"
                 className="h-9 gap-2"
-                disabled={countLoading || total === 0 || starting}
+                disabled={startDisabled}
                 reason={startReason}
+                ariaKeyShortcuts={startKeys.ariaKeyShortcuts}
+                title={
+                  startKeys.titleSuffix
+                    ? `Start reviewing${startKeys.titleSuffix}`
+                    : undefined
+                }
                 onClick={() => void startReviewing()}
               >
                 <Play className="h-4 w-4" aria-hidden />
@@ -394,6 +444,7 @@ export function InboxPage({ context }: Props) {
                 aria-hidden
               />
               <Input
+                ref={searchRef}
                 type="search"
                 value={search.text}
                 onChange={(e) => search.setText(e.target.value)}
@@ -427,7 +478,11 @@ export function InboxPage({ context }: Props) {
                     <th className="px-5 py-3 font-medium">Started</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-edge-subtle">
+                <tbody
+                  ref={listRef}
+                  data-batches-list=""
+                  className="divide-y divide-edge-subtle"
+                >
                   {list.isLoading
                     ? Array.from({ length: 8 }).map((_, i) => (
                         <tr key={i}>
@@ -437,17 +492,14 @@ export function InboxPage({ context }: Props) {
                         </tr>
                       ))
                     : rows.map((b) => {
-                        // Only the status travels: the Batches page has no facets
-                        // (the same as Start reviewing).
-                        const href = batchHref(b.projectId, b.id, {
-                          status: context.status,
-                        });
+                        const href = rowHref(b);
                         const meta = buildStatusMeta(b.aggregateStatus);
                         return (
                           <tr
                             key={b.id}
+                            {...cursor.itemProps(b.id)}
                             onClick={() => router.push(href)}
-                            className="group cursor-pointer transition-colors hover:bg-hover"
+                            className="group cursor-pointer transition-colors hover:bg-hover focus-ring focus-visible:-outline-offset-2"
                             data-testid={`inbox-batch-row-${b.id}`}
                           >
                             <td className="px-5 py-3.5 align-middle">
@@ -461,8 +513,12 @@ export function InboxPage({ context }: Props) {
                               </span>
                             </td>
                             <td className="px-5 py-3.5 align-middle">
+                              {/* The row is the Tab stop and Enter opens it; the
+                                  link stays a link (middle-click, new tab) and
+                                  is read with the row. */}
                               <Link
                                 href={href}
+                                tabIndex={-1}
                                 onClick={(e) => e.stopPropagation()}
                                 className="font-medium text-fg transition-colors focus-ring group-hover:text-brand-text"
                               >
