@@ -26,6 +26,10 @@ type Answer = RouterOutputs["review"]["next"];
 const query = vi.hoisted(() => ({
   data: undefined as unknown,
   isLoading: false,
+  isFetching: false,
+  isError: false,
+  error: null as { message: string } | null,
+  refetch: vi.fn(),
   calls: [] as Array<{ input: unknown; options: { enabled?: boolean } }>,
 }));
 const utils = vi.hoisted(() => ({
@@ -43,7 +47,14 @@ vi.mock("@/lib/trpc", () => ({
       next: {
         useQuery: (input: unknown, options: { enabled?: boolean }) => {
           query.calls.push({ input, options });
-          return { data: query.data, isLoading: query.isLoading };
+          return {
+            data: query.data,
+            isLoading: query.isLoading,
+            isFetching: query.isFetching,
+            isError: query.isError,
+            error: query.error,
+            refetch: query.refetch,
+          };
         },
       },
     },
@@ -112,6 +123,10 @@ function lastCall() {
 beforeEach(() => {
   query.data = undefined;
   query.isLoading = false;
+  query.isFetching = false;
+  query.isError = false;
+  query.error = null;
+  query.refetch.mockReset();
   query.calls = [];
   router.push.mockReset();
   router.replace.mockReset();
@@ -127,6 +142,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 describe("useReviewLoop: the query", () => {
@@ -640,5 +656,293 @@ describe("useReviewLoop.goPrev", () => {
     const { result } = setup({ checkpointId: "_first" });
     act(() => result.current.goPrev());
     expect(utils.review.next.fetch).not.toHaveBeenCalled();
+  });
+});
+
+/** A promise to settle by hand, for an answer that is still on its way. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const STEP_BEFORE = `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-0`;
+const STEP_AFTER = `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-2`;
+
+const previous = () =>
+  answer({
+    target: { buildId: BUILD, runId: RUN, checkpointId: "step-0" },
+    scope: "run",
+  });
+
+describe("useReviewLoop: a K answer racing a later move", () => {
+  // The route commits only after the router's round trip, so the props still
+  // name the old step when the K answer lands: the step-key guard cannot see
+  // the move, and a navigation epoch has to.
+  test("a K answer that lands after a J move is dropped", async () => {
+    query.data = answer();
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result } = setup();
+    act(() => result.current.goPrev());
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenLastCalledWith(STEP_AFTER);
+    await act(async () => prev.resolve(previous()));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+    // The key is free again.
+    utils.review.next.fetch.mockResolvedValue(previous());
+    await act(async () => result.current.goPrev());
+    expect(router.replace).toHaveBeenLastCalledWith(STEP_BEFORE);
+  });
+
+  test("a K answer that lands after a decision's move is dropped", async () => {
+    query.data = answer();
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result } = setup();
+    act(() => result.current.goPrev());
+    act(() => result.current.afterDecision());
+    expect(router.replace).toHaveBeenLastCalledWith(STEP_AFTER);
+    await act(async () => prev.resolve(previous()));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  test("a K answer that lands after a decision's deferred move is dropped", async () => {
+    query.isLoading = true;
+    query.isFetching = true;
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    act(() => result.current.goPrev());
+    // The forward answer comes first and moves; K's, still on its way, is stale.
+    query.isLoading = false;
+    query.isFetching = false;
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenLastCalledWith(STEP_AFTER);
+    await act(async () => prev.resolve(previous()));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  test("K navigating clears a waiting decision, so the late forward answer does not move again", async () => {
+    query.isLoading = true;
+    query.isFetching = true;
+    utils.review.next.fetch.mockResolvedValue(previous());
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    await act(async () => result.current.goPrev());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenLastCalledWith(STEP_BEFORE);
+
+    // The forward answer arrives for the step K left (props not changed yet).
+    query.isLoading = false;
+    query.isFetching = false;
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("useReviewLoop: an answer being refreshed", () => {
+  test("a decision waits for the refetch instead of acting on an invalidated cached answer", () => {
+    // The cached answer names step-2; a refetch (after the decision
+    // invalidated it) is on its way and may name another.
+    query.data = answer();
+    query.isFetching = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    expect(router.replace).not.toHaveBeenCalled();
+
+    query.isFetching = false;
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: "step-5" },
+    });
+    rerender(args());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith(
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-5`,
+    );
+  });
+
+  test("an answer that is not being refreshed is acted on at once", () => {
+    query.data = answer();
+    query.isFetching = false;
+    const { result } = setup();
+    act(() => result.current.afterDecision());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useReviewLoop: when review.next fails", () => {
+  const boom = { message: "Something went wrong" };
+
+  test("an error while a decision waits clears it, stays put, and is exposed", () => {
+    query.isLoading = true;
+    query.isFetching = true;
+    const { result, rerender } = setup();
+    expect(result.current.error).toBeNull();
+    act(() => result.current.afterDecision());
+
+    query.isLoading = false;
+    query.isFetching = false;
+    query.isError = true;
+    query.error = boom;
+    rerender(args());
+    expect(result.current.error).toBe(boom);
+    expect(router.replace).not.toHaveBeenCalled();
+
+    // The wait is gone: a later good answer does not move it.
+    query.isError = false;
+    query.error = null;
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+  });
+
+  test("a decision on a query that has failed stays put and does not wait", () => {
+    query.isError = true;
+    query.error = boom;
+    query.data = answer(); // what it knew before it failed
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    expect(router.replace).not.toHaveBeenCalled();
+    query.isError = false;
+    query.error = null;
+    rerender(args());
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("an error is not shown while the loop is off", () => {
+    query.isError = true;
+    query.error = boom;
+    const { result } = setup({ enabled: false });
+    expect(result.current.error).toBeNull();
+  });
+
+  test("retry asks again", () => {
+    const { result } = setup();
+    act(() => result.current.retry());
+    expect(query.refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useReviewLoop: how long a decision waits", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  test("a decision whose answer takes longer than 10 s is dropped silently", () => {
+    query.isLoading = true;
+    query.isFetching = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    act(() => vi.advanceTimersByTime(10_001));
+
+    query.isLoading = false;
+    query.isFetching = false;
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(result.current.card).toBeNull();
+  });
+
+  test("an answer just inside the bound still moves", () => {
+    query.isLoading = true;
+    query.isFetching = true;
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    act(() => vi.advanceTimersByTime(9_999));
+
+    query.isLoading = false;
+    query.isFetching = false;
+    query.data = answer();
+    rerender(args());
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useReviewLoop: the order of cues", () => {
+  test("a cue whose name arrives after a later move's cue is dropped", async () => {
+    // First move: the run is not cached, so its name is on its way.
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValueOnce(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+      remaining: { run: 0, batch: 4, batchUnfiltered: 4, projectBatches: 1 },
+    });
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenCalledTimes(1);
+
+    // Second move: cached, so it is said at once.
+    utils.runs.getById.getData.mockReturnValue({ name: "Second test" });
+    query.data = answer({
+      target: { buildId: BUILD, runId: "run-3", checkpointId: "step-1" },
+      scope: "batch",
+      remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 1 },
+    });
+    rerender(args());
+    act(() => result.current.goNext());
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Second test · 3 left in batch",
+    );
+
+    // The first name finally arrives: too late to be said.
+    await act(async () => slow.resolve({ name: "First test" }));
+    expect(useReviewAnnouncer.getState().text).toBe(
+      "Next test: Second test · 3 left in batch",
+    );
+  });
+});
+
+describe("useReviewLoop: stable callbacks", () => {
+  test("the callbacks keep their identity across a re-render of the same step", () => {
+    query.data = answer();
+    const { result, rerender } = setup();
+    const before = { ...result.current };
+    // A new but equal context object, as an unmemoized caller would pass.
+    rerender(
+      args({
+        context: { status: "needs-review", facets: {} } as ReviewContext,
+      }),
+    );
+    expect(result.current.goNext).toBe(before.goNext);
+    expect(result.current.goPrev).toBe(before.goPrev);
+    expect(result.current.afterDecision).toBe(before.afterDecision);
+    expect(result.current.dismissCard).toBe(before.dismissCard);
+  });
+
+  test("a new context value does change them (the links they build differ)", () => {
+    query.data = answer();
+    const { result, rerender } = setup();
+    const before = result.current.goNext;
+    rerender(args({ context: { status: "failed", facets: {} } }));
+    expect(result.current.goNext).not.toBe(before);
+  });
+
+  test("a K still on its way for a step the reviewer left does not block K on the next one", () => {
+    utils.review.next.fetch.mockReturnValue(new Promise(() => {}));
+    const { result, rerender } = setup();
+    act(() => result.current.goPrev());
+    expect(utils.review.next.fetch).toHaveBeenCalledTimes(1);
+    rerender(args({ checkpointId: "step-3" }));
+    act(() => result.current.goPrev());
+    expect(utils.review.next.fetch).toHaveBeenCalledTimes(2);
+    expect(utils.review.next.fetch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        at: { buildId: BUILD, runId: RUN, checkpointId: "step-3" },
+      }),
+    );
   });
 });
