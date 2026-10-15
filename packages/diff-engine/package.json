@@ -19,7 +19,7 @@
     "fft.js": "^4.0.4",
     "jsdom": "^25.0.1",
     "looks-same": "^10.0.1",
-    "odiff-bin": "^3.1.0",
+    "odiff-bin": "^4.5.0",
     "ollama": "^0.6.4",
     "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0",
