@@ -13,8 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0",
-    "@google/genai": "^2.27.0",
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@google/genai": "^2.28.0",
     "axe-core": "^4.14.0",
     "fft.js": "^4.0.4",
     "jsdom": "^25.0.1",
