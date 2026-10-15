@@ -26,6 +26,7 @@ const build: BuildRowData = {
   passedCount: 2,
   abortedCount: 0,
   emptyCount: 0,
+  pendingCheckpoints: 1,
   aggregateStatus: "unresolved",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

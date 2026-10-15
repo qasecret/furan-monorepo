@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   builds,
   desc,
   eq,
@@ -73,10 +74,13 @@ export interface CheckpointReviewView {
   } | null;
   /**
    * A later run captured the same variation (spec §5.6): approving this older
-   * image would make it the baseline again. The newest such run.
+   * image would make it the baseline again. The newest such run, and that
+   * run's step of the variation (`checkpointId`), so a link can open it.
    */
   newerCapture: {
     runId: string;
+    /** The newer run's step (screenshot) of this variation. */
+    checkpointId: string;
     buildId: string;
     /** The build's display name, computed like the dashboard's `buildDisplayName`. */
     buildName: string;
@@ -114,7 +118,9 @@ type NewerCapture = NonNullable<CheckpointReviewView["newerCapture"]>;
  * `runId` (capture order: run `created_at, id`, as the core orders runs), with
  * its build's name. Two statements however many variations there are; the
  * second is skipped when nothing is newer. "After" is compared in SQL so the
- * run's microsecond timestamp is never rounded through a JS Date.
+ * run's microsecond timestamp is never rounded through a JS Date. (A run with
+ * two screenshots of one variation is not expected; the earliest, by
+ * `created_at, id`, is named, as `variations.history` does.)
  */
 async function loadNewerCaptures(
   db: DB | Tx,
@@ -127,6 +133,7 @@ async function loadNewerCaptures(
   const newest = await db
     .selectDistinctOn([screenshots.testVariationId], {
       variationId: screenshots.testVariationId,
+      checkpointId: screenshots.id,
       runId: testRuns.id,
       buildId: testRuns.buildId,
     })
@@ -146,6 +153,8 @@ async function loadNewerCaptures(
       screenshots.testVariationId,
       desc(testRuns.createdAt),
       desc(testRuns.id),
+      asc(screenshots.createdAt),
+      asc(screenshots.id),
     );
   if (newest.length === 0) return out;
 
@@ -170,6 +179,7 @@ async function loadNewerCaptures(
   for (const n of newest) {
     out.set(n.variationId, {
       runId: n.runId,
+      checkpointId: n.checkpointId,
       buildId: n.buildId,
       buildName:
         buildName.get(n.buildId) ?? buildDisplayName({ id: n.buildId }),

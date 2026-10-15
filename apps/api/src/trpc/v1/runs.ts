@@ -3,9 +3,11 @@ import {
   asc,
   baselines,
   builds,
+  count,
   desc,
   diffRegions,
   eq,
+  exists,
   ilike,
   inArray,
   isNull,
@@ -17,6 +19,7 @@ import {
   testRuns,
   testVariations,
   type RunStatus,
+  type SQL,
 } from "@furan/db";
 import {
   overrideStatusInputSchema,
@@ -31,13 +34,25 @@ import {
   decodeKeysetCursor,
   encodeKeysetCursor,
 } from "../../lib/keyset-cursor.js";
-import { announceRuns, trpcActionCtx } from "../../lib/review/actions.js";
+import {
+  announceRuns,
+  requireBuildProject,
+  resolveBuildProject,
+  trpcActionCtx,
+} from "../../lib/review/actions.js";
 import { enqueueRunDiff } from "../../lib/review/enqueue.js";
 import {
   GROUP_APPROVE_CAP,
   groupScope,
   loadGroupSeed,
 } from "../../lib/review/groups.js";
+import {
+  facetCondition,
+  facetValuesByBuild,
+  pendingCountsByRun,
+  pendingStepCondition,
+  type StepFacets,
+} from "../../lib/review/pending.js";
 import {
   loadCheckpointReview,
   NO_REVIEW,
@@ -167,10 +182,10 @@ const listInput = z.object({
   /** Optional filter to runs under a single build (drill-in from Builds tab). */
   buildId: z.string().uuid().optional(),
   /**
-   * Exact-match filters on the device/environment columns. The legacy
-   * frontend exposed all of these in its DataGrid filter row; furan kept
-   * branch + status only at launch and is now filling the gap. Empty
-   * string is rejected at the boundary (`.min(1)`) so the "no filter"
+   * Exact-match filters on the step environment (ADR-038: the columns live on
+   * `screenshots`, not on the run). A run matches when at least one of its
+   * steps does, and the facets given together must hold on the SAME step.
+   * Empty string is rejected at the boundary (`.min(1)`) so the "no filter"
    * state is unambiguously `undefined` rather than `""`. customTags is
    * ILIKE-substring rather than exact because the column is a comma-
    * separated free-form bag in legacy usage ("smoke,login,critical")
@@ -181,8 +196,25 @@ const listInput = z.object({
   os: z.string().min(1).max(64).optional(),
   device: z.string().min(1).max(64).optional(),
   customTags: z.string().min(1).max(255).optional(),
+  /**
+   * `true` keeps the runs that need review: at least one pending step (spec
+   * §3.1; `pendingStepCondition`) inside the environment facets above.
+   * `false` or omitted is no filter. Combines with `status` by AND.
+   */
+  pending: z.boolean().optional(),
+  /**
+   * `newest` (default): newest first. `capture`: oldest first, the order the
+   * runs were captured, which is how a reviewer works through a batch; the
+   * keyset cursor then runs ascending. Keep `order` constant while paging: a
+   * cursor replayed under the other order continues from that row in the new
+   * direction.
+   */
+  order: z.enum(["capture", "newest"]).default("newest"),
 });
 type ListInput = z.infer<typeof listInput>;
+
+const facetsInput = z.object({ buildId: z.string().uuid() });
+type FacetsInput = z.infer<typeof facetsInput>;
 
 /**
  * The run statuses `overrideStatus` may act on (spec §3.3). Excludes
@@ -290,18 +322,49 @@ function rediffAndAnnounce(
   );
 }
 
+/** The environment facets of a `list` input, as `StepFacets`. */
+function listFacets(input: StepFacets): StepFacets {
+  return {
+    browser: input.browser,
+    viewport: input.viewport,
+    os: input.os,
+    device: input.device,
+  };
+}
+
+/**
+ * The run (`test_runs`, unaliased, in the enclosing query) has a step of the
+ * project for which `step` holds. `pending.ts`'s step conditions reference the
+ * unaliased `screenshots` / `test_runs`, so they go in a fresh EXISTS over
+ * `screenshots`; `test_runs` binds to the enclosing list query's.
+ */
+function runHasStep(projectId: string, step: SQL | undefined): SQL {
+  const conditions = [
+    sql`${screenshots.runId} = ${testRuns.id}`,
+    eq(screenshots.projectId, projectId),
+  ];
+  if (step) conditions.push(step);
+  return exists(
+    sql`(select 1 from ${screenshots} where ${and(...conditions)})`,
+  );
+}
+
 /**
  * The non-status WHERE conditions `list` applies
- * (projectId + branch/buildId/customTags). A shared builder keeps filter
- * logic centralized so it can't drift when a dimension is added
- * (e.g. ADR-038 Phase 5 device filters).
+ * (projectId + branch/buildId/customTags, plus the step conditions: the
+ * environment facets and `pending`). A shared builder keeps filter logic
+ * centralized so it can't drift when a dimension is added.
  */
-function runListBaseConditions(input: {
-  projectId: string;
-  branch?: string | undefined;
-  buildId?: string | undefined;
-  customTags?: string | undefined;
-}) {
+function runListBaseConditions(
+  input: {
+    projectId: string;
+    branch?: string | undefined;
+    buildId?: string | undefined;
+    customTags?: string | undefined;
+    pending?: boolean | undefined;
+  },
+  facets: StepFacets,
+) {
   const conditions = [eq(testRuns.projectId, input.projectId)];
   if (input.branch) conditions.push(eq(testRuns.branchName, input.branch));
   if (input.buildId) conditions.push(eq(testRuns.buildId, input.buildId));
@@ -310,15 +373,54 @@ function runListBaseConditions(input: {
     // verbatim, e.g. "smoke,login,critical"); reviewers match on a substring.
     conditions.push(ilike(testRuns.customTags, `%${input.customTags}%`));
   }
+  // "At least one of the run's steps matches", the facets on the same step.
+  // With `pending`, that step must also be pending: pending steps count only
+  // inside the facets (a pending step elsewhere does not qualify the run).
+  const facetsOnly = facetCondition(facets);
+  if (input.pending) {
+    conditions.push(runHasStep(input.projectId, pendingStepCondition(facets)));
+  } else if (facetsOnly) {
+    conditions.push(runHasStep(input.projectId, facetsOnly));
+  }
   return conditions;
+}
+
+/**
+ * Every step of each of `runIds` (the project's runs only), unfiltered: the
+ * total a reviewer sees beside the pending count. A run with no step is absent
+ * from the map. One grouped query, however many runs.
+ */
+async function stepCountsByRun(
+  db: Context["db"],
+  args: { projectId: string; runIds: string[] },
+): Promise<Map<string, number>> {
+  if (args.runIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: screenshots.runId, steps: count() })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, args.projectId),
+        inArray(screenshots.runId, args.runIds),
+      ),
+    )
+    .groupBy(screenshots.runId);
+  return new Map(rows.map((r) => [r.id, r.steps]));
 }
 
 export const runsRouter = t.router({
   /**
-   * Cursor-paginated run listing for the dashboard index page (T9).
-   * Order: `created_at DESC, id DESC`. The opaque cursor is the last item's
-   * full-µs `created_at` + id (lib/keyset-cursor.ts); we fetch `limit + 1`
-   * rows and use the extra row to decide whether `nextCursor` should be set.
+   * Cursor-paginated run listing for the dashboard index page (T9) and the
+   * batch page's review list.
+   * Order: `created_at DESC, id DESC` (`order: "newest"`, the default) or
+   * `created_at ASC, id ASC` (`order: "capture"`). The opaque cursor is the
+   * last item's full-µs `created_at` + id (lib/keyset-cursor.ts); we fetch
+   * `limit + 1` rows and use the extra row to decide whether `nextCursor`
+   * should be set.
+   *
+   * Each item carries `pendingCount` (its pending steps inside the environment
+   * facets) and `stepCount` (all its steps), filled by one grouped query each
+   * per page.
    */
   list: publicProcedure
     .input(listInput)
@@ -332,14 +434,20 @@ export const runsRouter = t.router({
       }),
     )
     .query(async ({ input, ctx }) => {
-      // ADR-038: browser/viewport/os/device filters moved to screenshots;
-      // Phase 5 adds sub-query filters there. Shared base conditions keep
-      // `list` consistent with any future filter expansions.
-      const conditions = runListBaseConditions(input);
+      // ADR-038: browser/viewport/os/device live on screenshots; the base
+      // conditions filter runs by their steps (and by pending steps).
+      const facets = listFacets(input);
+      const conditions = runListBaseConditions(input, facets);
+      const capture = input.order === "capture";
       const cursor = input.cursor ? decodeKeysetCursor(input.cursor) : null;
       if (cursor) {
+        // The keyset runs the way the list does: after the cursor row.
+        const keyset = sql`(${testRuns.createdAt}, ${testRuns.id})`;
+        const cursorKey = sql`(${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`;
         conditions.push(
-          sql`(${testRuns.createdAt}, ${testRuns.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
+          capture
+            ? sql`${keyset} > ${cursorKey}`
+            : sql`${keyset} < ${cursorKey}`,
         );
       }
       // Empty array == no filter, identical to undefined — keeps the
@@ -362,11 +470,26 @@ export const runsRouter = t.router({
         .from(testRuns)
         .leftJoin(builds, eq(testRuns.buildId, builds.id))
         .where(and(...conditions))
-        .orderBy(desc(testRuns.createdAt), desc(testRuns.id))
+        .orderBy(
+          ...(capture
+            ? [asc(testRuns.createdAt), asc(testRuns.id)]
+            : [desc(testRuns.createdAt), desc(testRuns.id)]),
+        )
         .limit(input.limit + 1);
 
       const hasMore = rows.length > input.limit;
       const page = hasMore ? rows.slice(0, input.limit) : rows;
+      // One grouped query each for the whole page, never one per row.
+      const runIds = page.map((r) => r.run.id);
+      const pendingByRun = await pendingCountsByRun(ctx.db, {
+        projectId: input.projectId,
+        runIds,
+        facets,
+      });
+      const stepsByRun = await stepCountsByRun(ctx.db, {
+        projectId: input.projectId,
+        runIds,
+      });
       // Flatten the join: run columns stay top-level (back-compat with every
       // existing consumer) with the build display fields alongside so the
       // dashboard can group runs under their build (ADR-038 batch model).
@@ -377,6 +500,8 @@ export const runsRouter = t.router({
         buildCiBuildId: r.buildCiBuildId,
         buildBranchName: r.buildBranchName,
         buildCreatedAt: r.buildCreatedAt,
+        pendingCount: pendingByRun.get(r.run.id) ?? 0,
+        stepCount: stepsByRun.get(r.run.id) ?? 0,
       }));
       const last = page[page.length - 1];
       const nextCursor =
@@ -384,6 +509,29 @@ export const runsRouter = t.router({
           ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.run.id })
           : null;
       return { items, nextCursor };
+    }),
+
+  /**
+   * The environment values (browser, viewport, os, device) the batch's steps
+   * have, each with its pending steps: what the batch page's environment filter
+   * offers. Resolve-then-gate on the build's project (a bare `buildId`), like
+   * `builds.getById`.
+   */
+  facets: publicProcedure
+    .input(facetsInput)
+    .use(authed)
+    .use(
+      projectMember<FacetsInput>("read", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveBuildProject(ctx.db, input.buildId),
+        },
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      // An admin skips the gate's resolver: resolve the project again here.
+      const projectId = await requireBuildProject(ctx.db, input.buildId);
+      return facetValuesByBuild(ctx.db, { projectId, buildId: input.buildId });
     }),
 
   getById: publicProcedure

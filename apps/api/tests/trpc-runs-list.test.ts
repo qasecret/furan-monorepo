@@ -4,15 +4,20 @@ import type { AddressInfo } from "node:net";
 import {
   baselines,
   builds,
+  checkpointDecisions,
   diffRegions,
+  eq,
+  inArray,
   projectMembers,
   projects,
   screenshots,
   testRuns,
   testVariations,
   users,
+  type DB,
 } from "@furan/db";
 import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
+import type { inferRouterInputs } from "@trpc/server";
 import {
   afterAll,
   beforeAll,
@@ -23,9 +28,19 @@ import {
 } from "vitest";
 
 import { hashPassword } from "../src/lib/password.js";
+import type { Context } from "../src/trpc/context.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
+import { runsRouter } from "../src/trpc/v1/runs.js";
 
 import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  addReviewBuild,
+  addReviewRun,
+  cleanupReviewSeeds,
+  seedReviewRun,
+  type ReviewRunSpec,
+  type ReviewSeed,
+} from "./review-fixtures.js";
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -374,9 +389,9 @@ d("tRPC runs.list", () => {
     // the single filter narrows correctly. Shares the project + variation
     // from the outer seed; uses a fresh build to avoid cursor noise from
     // the 26 base runs.
-    // ADR-038: browser/viewport/os/device moved from test_runs to screenshots.
-    // Filters on those dimensions are Phase 5 work (sub-query against screenshots).
-    // The seed below stores the columns on screenshots, not on testRuns.
+    // ADR-038: browser/viewport/os/device live on screenshots (steps), not on
+    // test_runs; a run matches a filter when one of its steps does. The seed
+    // below stores the columns on screenshots.
     async function seedDeviceVariants() {
       const [b] = await h.db
         .insert(builds)
@@ -452,9 +467,7 @@ d("tRPC runs.list", () => {
       return b.id;
     }
 
-    // ADR-038 Phase 5 TODO: browser/viewport/os/device filters sub-query screenshots.
-    // These tests are skipped until the sub-query filters are implemented.
-    test.skip("list: filters by browser", async () => {
+    test("list: filters by browser", async () => {
       const buildId = await seedDeviceVariants();
       const client = makeClient(baseUrl, s.memberJwt);
       const page = await client.runs.list.query({
@@ -462,11 +475,10 @@ d("tRPC runs.list", () => {
         buildId,
         browser: "firefox",
       });
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.browser).toBe("firefox");
+      expect(page.items.map((r) => r.name)).toEqual(["row-2"]);
     });
 
-    test.skip("list: filters by viewport", async () => {
+    test("list: filters by viewport", async () => {
       const buildId = await seedDeviceVariants();
       const client = makeClient(baseUrl, s.memberJwt);
       const page = await client.runs.list.query({
@@ -474,11 +486,10 @@ d("tRPC runs.list", () => {
         buildId,
         viewport: "375x667",
       });
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.viewport).toBe("375x667");
+      expect(page.items.map((r) => r.name)).toEqual(["row-3"]);
     });
 
-    test.skip("list: filters by os", async () => {
+    test("list: filters by os", async () => {
       const buildId = await seedDeviceVariants();
       const client = makeClient(baseUrl, s.memberJwt);
       const page = await client.runs.list.query({
@@ -486,11 +497,10 @@ d("tRPC runs.list", () => {
         buildId,
         os: "ios",
       });
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.os).toBe("ios");
+      expect(page.items.map((r) => r.name)).toEqual(["row-3"]);
     });
 
-    test.skip("list: filters by device", async () => {
+    test("list: filters by device", async () => {
       const buildId = await seedDeviceVariants();
       const client = makeClient(baseUrl, s.memberJwt);
       const page = await client.runs.list.query({
@@ -498,8 +508,7 @@ d("tRPC runs.list", () => {
         buildId,
         device: "iphone-12",
       });
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.device).toBe("iphone-12");
+      expect(page.items.map((r) => r.name)).toEqual(["row-3"]);
     });
 
     test("list: filters by customTags (ILIKE substring)", async () => {
@@ -517,7 +526,7 @@ d("tRPC runs.list", () => {
       );
     });
 
-    test.skip("list: filters compose (browser + viewport)", async () => {
+    test("list: filters compose (browser + viewport)", async () => {
       const buildId = await seedDeviceVariants();
       const client = makeClient(baseUrl, s.memberJwt);
       const page = await client.runs.list.query({
@@ -527,8 +536,7 @@ d("tRPC runs.list", () => {
         viewport: "375x667",
       });
       // Only row-3 matches both.
-      expect(page.items).toHaveLength(1);
-      expect(page.items[0]?.name).toBe("row-3");
+      expect(page.items.map((r) => r.name)).toEqual(["row-3"]);
     });
   });
 
@@ -553,5 +561,762 @@ d("tRPC runs.list", () => {
     });
     const row = res.items.find((r) => r.name === "thumbed");
     expect(row?.thumbnailUrl).toBe("https://example/thumb.webp");
+  });
+});
+
+/** Counts the statements a read issues (`select*` / `execute` on the handle). */
+function countingDb(db: DB): { db: DB; count: () => number } {
+  let n = 0;
+  const counted = new Set([
+    "select",
+    "selectDistinct",
+    "selectDistinctOn",
+    "execute",
+  ]);
+  const proxy = new Proxy(db, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        if (counted.has(String(prop))) n++;
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  return { db: proxy, count: () => n };
+}
+
+type ListQuery = Omit<
+  inferRouterInputs<AppRouter>["runs"]["list"],
+  "projectId"
+>;
+
+d("tRPC runs.list: step environment, pending steps, order and counts", () => {
+  let h: TestApp;
+  let baseUrl: string;
+  const seeds: ReviewSeed[] = [];
+
+  async function seed(
+    spec: ReviewRunSpec,
+    opts?: { branch?: string },
+  ): Promise<ReviewSeed> {
+    const s = await seedReviewRun(h, spec, opts);
+    seeds.push(s);
+    return s;
+  }
+
+  /** `runs.list` as the seed's editor (a project member). */
+  function list(s: ReviewSeed, query: ListQuery = {}) {
+    return makeClient(baseUrl, s.editor.jwt).runs.list.query({
+      projectId: s.projectId,
+      ...query,
+    });
+  }
+
+  const idsOf = (page: { items: Array<{ id: string }> }) =>
+    page.items.map((i) => i.id);
+  const sorted = (ids: string[]) => [...ids].sort();
+
+  /** A decision row (an approve unless `decision`), active unless `reverted`. */
+  async function decide(
+    s: ReviewSeed,
+    runId: string,
+    shotId: string,
+    opts: { reverted?: boolean; decision?: "approved" | "rejected" } = {},
+  ): Promise<void> {
+    await h.db.insert(checkpointDecisions).values({
+      projectId: s.projectId,
+      runId,
+      screenshotId: shotId,
+      actionId: randomUUID(),
+      decision: opts.decision ?? "approved",
+      actorId: s.editor.id,
+      source: "viewer",
+      before: null,
+      revertedAt: opts.reverted ? new Date() : null,
+      revertedBy: opts.reverted ? s.editor.id : null,
+    });
+  }
+
+  beforeAll(async () => {
+    h = await createTestApp();
+    h.app.log.level = "silent";
+    await h.app.listen({ port: 0, host: "127.0.0.1" });
+    const addr = h.app.server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+  });
+  afterAll(async () => {
+    await cleanupReviewSeeds(h, seeds);
+    await h.close();
+  });
+
+  test("browser/viewport/os/device filter runs by their steps", async () => {
+    // A: chromium at two viewports.
+    const s = await seed({
+      checkpoints: [
+        { name: "home", verdict: "passed", viewport: "1280x720" },
+        { name: "home", verdict: "passed", viewport: "375x812" },
+      ],
+    });
+    const a = s.runId;
+    // B: firefox on desktop.
+    const b = (
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "home", verdict: "passed", browser: "firefox" }],
+      })
+    ).runId;
+    // C: a phone (webkit, iOS, iPhone 12).
+    const c = (
+      await addReviewRun(h, s, {
+        checkpoints: [
+          {
+            name: "home",
+            verdict: "passed",
+            browser: "webkit",
+            viewport: "390x844",
+            os: "iOS",
+            device: "iPhone 12",
+          },
+        ],
+      })
+    ).runId;
+    // D: no single step is firefox at 375x812: chromium is at 375x812 and
+    // firefox is at 1280x720.
+    const d2 = (
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "x", verdict: "passed", viewport: "375x812" },
+          { name: "y", verdict: "passed", browser: "firefox" },
+        ],
+      })
+    ).runId;
+
+    const filtered = async (q: ListQuery) => sorted(idsOf(await list(s, q)));
+
+    expect(await filtered({})).toEqual(sorted([a, b, c, d2]));
+
+    // One facet at a time: a run matches when at least one of its steps does.
+    expect(await filtered({ browser: "firefox" })).toEqual(sorted([b, d2]));
+    expect(await filtered({ browser: "chromium" })).toEqual(sorted([a, d2]));
+    expect(await filtered({ browser: "webkit" })).toEqual([c]);
+    expect(await filtered({ viewport: "375x812" })).toEqual(sorted([a, d2]));
+    expect(await filtered({ viewport: "1280x720" })).toEqual(
+      sorted([a, b, d2]),
+    );
+    expect(await filtered({ os: "iOS" })).toEqual([c]);
+    expect(await filtered({ device: "iPhone 12" })).toEqual([c]);
+    expect(await filtered({ browser: "opera" })).toEqual([]);
+
+    // Facets combine on ONE step (AND), not across a run's steps.
+    expect(
+      await filtered({ browser: "firefox", viewport: "1280x720" }),
+    ).toEqual(sorted([b, d2]));
+    expect(
+      await filtered({ browser: "chromium", viewport: "375x812" }),
+    ).toEqual(sorted([a, d2]));
+    expect(await filtered({ browser: "firefox", viewport: "375x812" })).toEqual(
+      [],
+    );
+    expect(
+      await filtered({ browser: "webkit", os: "iOS", device: "iPhone 12" }),
+    ).toEqual([c]);
+    expect(await filtered({ browser: "chromium", os: "iOS" })).toEqual([]);
+
+    // They combine with the other filters, and stay inside the project.
+    expect(await filtered({ browser: "firefox", buildId: s.buildId })).toEqual(
+      sorted([b, d2]),
+    );
+    expect(await filtered({ browser: "firefox", branch: "elsewhere" })).toEqual(
+      [],
+    );
+    const other = await seed({
+      checkpoints: [{ name: "home", verdict: "passed", browser: "firefox" }],
+    });
+    expect(await filtered({ browser: "firefox" })).toEqual(sorted([b, d2]));
+    expect(idsOf(await list(other, { browser: "firefox" }))).toEqual([
+      other.runId,
+    ]);
+  });
+
+  test("pending: true keeps runs with ≥1 pending step inside the facets", async () => {
+    // (a) one step of each verdict: pending (new + unresolved)
+    const s = await seed({
+      checkpoints: [
+        { name: "a-new", verdict: "new" },
+        { name: "a-unresolved", verdict: "unresolved" },
+        { name: "a-passed", verdict: "passed" },
+      ],
+    });
+    // (b) unresolved with an active approve, (b2) with an active reject: decided
+    const b = await addReviewRun(h, s, {
+      lifecycle: "passed",
+      checkpoints: [{ name: "b", verdict: "unresolved" }],
+    });
+    await decide(s, b.runId, b.shots.b!.id);
+    const b2 = await addReviewRun(h, s, {
+      lifecycle: "failed",
+      checkpoints: [{ name: "b2", verdict: "unresolved" }],
+    });
+    await decide(s, b2.runId, b2.shots.b2!.id, { decision: "rejected" });
+    // (c) unresolved, its approve reverted: pending again
+    const c = await addReviewRun(h, s, {
+      checkpoints: [{ name: "c", verdict: "unresolved" }],
+    });
+    await decide(s, c.runId, c.shots.c!.id, { reverted: true });
+    // (d) running, (e) aborted, (f) empty, (g) overridden, (h) a sibling not yet
+    // diffed: not reviewable, so nothing in them is pending
+    for (const [name, spec] of [
+      ["d", { lifecycle: "running" }],
+      ["e", { lifecycle: "aborted" }],
+      ["f", { lifecycle: "empty" }],
+      ["g", { override: "failed" }],
+    ] as const) {
+      await addReviewRun(h, s, {
+        ...spec,
+        checkpoints: [{ name, verdict: "unresolved" }],
+      });
+    }
+    await addReviewRun(h, s, {
+      lifecycle: "failed",
+      checkpoints: [
+        { name: "h-unresolved", verdict: "unresolved" },
+        { name: "h-undiffed", verdict: null },
+      ],
+    });
+    // (n) a first capture only: every step `new`
+    const n = await addReviewRun(h, s, {
+      checkpoints: [
+        { name: "n1", verdict: "new" },
+        { name: "n2", verdict: "new" },
+      ],
+    });
+    // (p) all passed; (q) failed lifecycle with a pending step
+    await addReviewRun(h, s, {
+      checkpoints: [{ name: "p", verdict: "passed" }],
+    });
+    const q = await addReviewRun(h, s, {
+      lifecycle: "failed",
+      checkpoints: [{ name: "q", verdict: "unresolved" }],
+    });
+
+    const everything = await list(s, { limit: 100 });
+    expect(everything.items).toHaveLength(12);
+
+    const pending = await list(s, { pending: true, limit: 100 });
+    expect(sorted(idsOf(pending))).toEqual(
+      sorted([s.runId, c.runId, n.runId, q.runId]),
+    );
+    // Newest first, like every other listing.
+    expect(idsOf(pending)).toEqual([q.runId, n.runId, c.runId, s.runId]);
+
+    // `pending: false` is no filter, like leaving it out.
+    expect(idsOf(await list(s, { pending: false, limit: 100 }))).toEqual(
+      idsOf(everything),
+    );
+
+    // The status filter stays as it is and combines with `pending` by AND.
+    expect(
+      idsOf(await list(s, { pending: true, status: ["new"], limit: 100 })),
+    ).toEqual([n.runId]);
+    expect(
+      sorted(
+        idsOf(
+          await list(s, { pending: true, status: ["unresolved"], limit: 100 }),
+        ),
+      ),
+    ).toEqual(sorted([s.runId, c.runId]));
+    expect(
+      idsOf(await list(s, { pending: true, status: ["failed"], limit: 100 })),
+    ).toEqual([q.runId]);
+    expect(
+      await list(s, { pending: true, status: ["passed"], limit: 100 }),
+    ).toMatchObject({ items: [] });
+
+    // Pending steps count only inside the facets: every pending step here is
+    // chromium at 1280x720.
+    expect(
+      sorted(
+        idsOf(
+          await list(s, { pending: true, browser: "chromium", limit: 100 }),
+        ),
+      ),
+    ).toEqual(sorted([s.runId, c.runId, n.runId, q.runId]));
+    expect(
+      idsOf(await list(s, { pending: true, browser: "firefox", limit: 100 })),
+    ).toEqual([]);
+
+    // It pages like any other filter.
+    const first = await list(s, { pending: true, limit: 3 });
+    expect(idsOf(first)).toEqual([q.runId, n.runId, c.runId]);
+    const second = await list(s, {
+      pending: true,
+      limit: 3,
+      cursor: first.nextCursor!,
+    });
+    expect(idsOf(second)).toEqual([s.runId]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  test("order: capture lists oldest first and pages forward", async () => {
+    const s = await seed({ checkpoints: [{ name: "a", verdict: "passed" }] });
+    const r2 = await addReviewRun(h, s, {
+      checkpoints: [{ name: "b", verdict: "passed" }],
+    });
+    const r3 = await addReviewRun(h, s, {
+      checkpoints: [{ name: "c", verdict: "passed" }],
+    });
+    const r1 = { runId: s.runId };
+
+    const first = await list(s, { order: "capture", limit: 2 });
+    expect(idsOf(first)).toEqual([r1.runId, r2.runId]);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await list(s, {
+      order: "capture",
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(idsOf(second)).toEqual([r3.runId]);
+    expect(second.nextCursor).toBeNull();
+
+    // Newest first stays the default, and `order: "newest"` is the same thing.
+    const newest = [r3.runId, r2.runId, r1.runId];
+    expect(idsOf(await list(s))).toEqual(newest);
+    expect(idsOf(await list(s, { order: "newest" }))).toEqual(newest);
+    const newestFirst = await list(s, { limit: 2 });
+    expect(
+      idsOf(await list(s, { limit: 2, cursor: newestFirst.nextCursor! })),
+    ).toEqual([r1.runId]);
+
+    // Runs sharing a created_at are not skipped or repeated: the id breaks the tie.
+    const [r1Row] = await h.db
+      .select({ createdAt: testRuns.createdAt })
+      .from(testRuns)
+      .where(eq(testRuns.id, r1.runId));
+    const tie = new Date(r1Row!.createdAt.getTime() + 60_000);
+    await h.db
+      .update(testRuns)
+      .set({ createdAt: tie })
+      .where(inArray(testRuns.id, [r2.runId, r3.runId]));
+    const walked: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 5; i++) {
+      const page = await list(s, {
+        order: "capture",
+        limit: 1,
+        ...(cursor ? { cursor } : {}),
+      });
+      walked.push(...idsOf(page));
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+    // r1 stays first (the shared instant is later than its capture time).
+    expect(walked).toEqual([r1.runId, ...sorted([r2.runId, r3.runId])]);
+  });
+
+  test("pendingCount and stepCount per row", async () => {
+    // A: three steps, two of them pending
+    const s = await seed({
+      checkpoints: [
+        { name: "a-new", verdict: "new" },
+        { name: "a-unresolved", verdict: "unresolved" },
+        { name: "a-passed", verdict: "passed" },
+      ],
+    });
+    // B: nothing to review
+    const b = await addReviewRun(h, s, {
+      checkpoints: [{ name: "b", verdict: "passed" }],
+    });
+    // C: still running, so not reviewable: two steps, none pending
+    const c = await addReviewRun(h, s, {
+      lifecycle: "running",
+      checkpoints: [
+        { name: "c1", verdict: "unresolved" },
+        { name: "c2", verdict: "unresolved" },
+      ],
+    });
+    // D: one of two pending steps already decided
+    const d2 = await addReviewRun(h, s, {
+      checkpoints: [
+        { name: "d1", verdict: "unresolved" },
+        { name: "d2", verdict: "unresolved" },
+      ],
+    });
+    await decide(s, d2.runId, d2.shots.d1!.id);
+    // E: no steps at all
+    const e = await addReviewRun(h, s, { lifecycle: "empty", checkpoints: [] });
+
+    const page = await list(s, { limit: 100 });
+    const counts = Object.fromEntries(
+      page.items.map((i) => [i.id, [i.pendingCount, i.stepCount]]),
+    );
+    expect(counts).toEqual({
+      [s.runId]: [2, 3],
+      [b.runId]: [0, 1],
+      [c.runId]: [0, 2],
+      [d2.runId]: [1, 2],
+      [e.runId]: [0, 0],
+    });
+    // The run's own columns are still there beside the new ones.
+    expect(page.items[0]).toMatchObject({
+      id: e.runId,
+      projectId: s.projectId,
+      buildId: s.buildId,
+    });
+  });
+
+  test("the counts come from one grouped query each, however many rows", async () => {
+    const s = await seed({
+      checkpoints: [{ name: "a", verdict: "unresolved" }],
+    });
+    const caller = (db: DB) =>
+      runsRouter.createCaller({
+        user: { id: s.admin.id, role: "admin", via: "jwt" },
+        db,
+      } as unknown as Context);
+
+    const one = countingDb(h.db);
+    const small = await caller(one.db).list({ projectId: s.projectId });
+    for (let i = 0; i < 6; i++) {
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: `r${i}-1`, verdict: "unresolved" },
+          { name: `r${i}-2`, verdict: "new" },
+        ],
+      });
+    }
+    const many = countingDb(h.db);
+    const big = await caller(many.db).list({ projectId: s.projectId });
+
+    expect(small.items).toHaveLength(1);
+    expect(big.items).toHaveLength(7);
+    expect(big.items.map((i) => i.pendingCount)).toEqual([2, 2, 2, 2, 2, 2, 1]);
+    // The page, the pending counts and the step counts: three statements for
+    // one row or for seven.
+    expect(one.count()).toBe(many.count());
+    expect(many.count()).toBeLessThanOrEqual(3);
+    // An empty page asks nothing about its (absent) rows.
+    const none = countingDb(h.db);
+    const empty = await caller(none.db).list({
+      projectId: s.projectId,
+      branch: "no-such-branch",
+    });
+    expect(empty.items).toEqual([]);
+    expect(none.count()).toBeLessThanOrEqual(1);
+  });
+
+  test("pending + facets: membership and pendingCount respect the facets, stepCount does not", async () => {
+    // X: pending at both viewports
+    const s = await seed({
+      checkpoints: [
+        { name: "home", verdict: "unresolved", viewport: "1280x720" },
+        { name: "home", verdict: "unresolved", viewport: "375x812" },
+      ],
+    });
+    const x = s.runId;
+    // Y: pending on desktop only
+    const y = (
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "home", verdict: "unresolved", viewport: "1280x720" },
+        ],
+      })
+    ).runId;
+    // Z: has a mobile step, but it is passed; its pending step is on desktop
+    const z = (
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "home", verdict: "passed", viewport: "375x812" },
+          { name: "about", verdict: "unresolved", viewport: "1280x720" },
+        ],
+      })
+    ).runId;
+    // V: mobile only, passed
+    const v = (
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "home", verdict: "passed", viewport: "375x812" }],
+      })
+    ).runId;
+
+    const summary = async (q: ListQuery) =>
+      Object.fromEntries(
+        (await list(s, { limit: 100, ...q })).items.map((i) => [
+          i.id,
+          [i.pendingCount, i.stepCount],
+        ]),
+      );
+
+    // No facets: pending anywhere in the run.
+    expect(await summary({ pending: true })).toEqual({
+      [x]: [2, 2],
+      [y]: [1, 1],
+      [z]: [1, 2],
+    });
+    // The mobile facet: only X has a pending MOBILE step. Z has a mobile step
+    // and a pending step, but they are two different steps, so Z is out. The
+    // counts are of the mobile steps; stepCount still counts every step.
+    expect(await summary({ pending: true, viewport: "375x812" })).toEqual({
+      [x]: [1, 2],
+    });
+    expect(await summary({ pending: true, viewport: "1280x720" })).toEqual({
+      [x]: [1, 2],
+      [y]: [1, 1],
+      [z]: [1, 2],
+    });
+    expect(await summary({ pending: true, viewport: "1024x768" })).toEqual({});
+
+    // Facets without `pending` filter by step only, while pendingCount is
+    // still the pending steps inside them.
+    expect(await summary({ viewport: "375x812" })).toEqual({
+      [x]: [1, 2],
+      [z]: [0, 2],
+      [v]: [0, 1],
+    });
+
+    // Combined with status (AND): X and Y are `unresolved`, V is `passed`.
+    expect(
+      await summary({
+        pending: true,
+        viewport: "375x812",
+        status: ["passed"],
+      }),
+    ).toEqual({});
+    expect(
+      await summary({
+        pending: true,
+        viewport: "375x812",
+        status: ["unresolved"],
+      }),
+    ).toEqual({ [x]: [1, 2] });
+
+    // A step decided on mobile is no longer pending there.
+    await h.db.insert(checkpointDecisions).values({
+      projectId: s.projectId,
+      runId: x,
+      screenshotId: s.shotsInOrder[1]!.id,
+      actionId: randomUUID(),
+      decision: "approved",
+      actorId: s.editor.id,
+      source: "viewer",
+      before: null,
+    });
+    expect(await summary({ pending: true, viewport: "375x812" })).toEqual({});
+    expect(await summary({ pending: true })).toEqual({
+      [x]: [1, 2],
+      [y]: [1, 1],
+      [z]: [1, 2],
+    });
+  });
+
+  test("counts and filters follow runs added to later builds", async () => {
+    const s = await seed({ checkpoints: [{ name: "a", verdict: "passed" }] });
+    const later = await addReviewBuild(h, s, {
+      branch: "feature/other",
+      spec: {
+        checkpoints: [{ name: "b", verdict: "unresolved", browser: "firefox" }],
+      },
+    });
+    const sibling = await addReviewRun(
+      h,
+      s,
+      {
+        checkpoints: [{ name: "c", verdict: "new", browser: "firefox" }],
+      },
+      { buildId: later.buildId },
+    );
+    expect(
+      sorted(idsOf(await list(s, { buildId: later.buildId, pending: true }))),
+    ).toEqual(sorted([later.runId, sibling.runId]));
+    expect(
+      sorted(idsOf(await list(s, { pending: true, browser: "firefox" }))),
+    ).toEqual(sorted([later.runId, sibling.runId]));
+    expect(await list(s, { pending: true, browser: "chromium" })).toMatchObject(
+      { items: [] },
+    );
+  });
+
+  describe("runs.facets", () => {
+    /** `runs.facets` for a build, as `user` (the seed's editor by default). */
+    function facets(
+      s: ReviewSeed,
+      buildId: string = s.buildId,
+      user: { jwt: string } = s.editor,
+    ) {
+      return makeClient(baseUrl, user.jwt).runs.facets.query({ buildId });
+    }
+
+    test("runs.facets lists the batch's values with pending counts", async () => {
+      // Run 1: a pending desktop chromium step, a passed phone step.
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved", viewport: "1280x720" },
+          { name: "home", verdict: "passed", viewport: "375x812" },
+        ],
+      });
+      // Run 2: a new firefox step, and a webkit iPhone step that is pending
+      // too (an undecided one in a reviewable run).
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "about", verdict: "new", browser: "firefox" },
+          {
+            name: "about",
+            verdict: "unresolved",
+            browser: "webkit",
+            viewport: "390x844",
+            os: "iOS",
+            device: "iPhone 12",
+          },
+        ],
+      });
+      // Run 3: a pending step that is decided, so it is not pending.
+      const decided = await addReviewRun(h, s, {
+        lifecycle: "passed",
+        checkpoints: [
+          { name: "decided", verdict: "unresolved", browser: "firefox" },
+        ],
+      });
+      await decide(s, decided.runId, decided.shots.decided!.id);
+      // Run 4: still running (not reviewable), so its step is not pending,
+      // but its environment still counts as a value of the batch.
+      await addReviewRun(h, s, {
+        lifecycle: "running",
+        checkpoints: [
+          { name: "running", verdict: "unresolved", browser: "opera" },
+        ],
+      });
+      // Another build of the same project, and another project, do not leak in.
+      await addReviewBuild(h, s, {
+        spec: {
+          checkpoints: [
+            {
+              name: "elsewhere",
+              verdict: "unresolved",
+              browser: "edge",
+              viewport: "800x600",
+              os: "Linux",
+              device: "Pixel",
+            },
+          ],
+        },
+      });
+      await seed({
+        checkpoints: [
+          { name: "foreign", verdict: "unresolved", browser: "safari" },
+        ],
+      });
+
+      expect(await facets(s)).toEqual({
+        browser: [
+          { value: "chromium", pending: 1 },
+          { value: "firefox", pending: 1 },
+          { value: "opera", pending: 0 },
+          { value: "webkit", pending: 1 },
+        ],
+        viewport: [
+          { value: "1280x720", pending: 2 },
+          { value: "375x812", pending: 0 },
+          { value: "390x844", pending: 1 },
+        ],
+        // NULL os / device (the desktop steps) are omitted.
+        os: [{ value: "iOS", pending: 1 }],
+        device: [{ value: "iPhone 12", pending: 1 }],
+      });
+    });
+
+    test("a build with no step has no values; one with no os or device lists none", async () => {
+      const s = await seed({ checkpoints: [] });
+      expect(await facets(s)).toEqual({
+        browser: [],
+        viewport: [],
+        os: [],
+        device: [],
+      });
+
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "a", verdict: "passed" }],
+      });
+      expect(await facets(s)).toEqual({
+        browser: [{ value: "chromium", pending: 0 }],
+        viewport: [{ value: "1280x720", pending: 0 }],
+        os: [],
+        device: [],
+      });
+    });
+
+    test("a pending step counts once however many runs share the value; a sibling undiffed step makes the whole run non-pending", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved" },
+          { name: "b", verdict: "new" },
+        ],
+      });
+      await addReviewRun(h, s, {
+        checkpoints: [{ name: "c", verdict: "unresolved" }],
+      });
+      // An undiffed step blocks its run: neither of the run's steps is pending.
+      await addReviewRun(h, s, {
+        checkpoints: [
+          { name: "d", verdict: "unresolved" },
+          { name: "e", verdict: null },
+        ],
+      });
+      expect((await facets(s)).browser).toEqual([
+        { value: "chromium", pending: 3 },
+      ]);
+    });
+
+    test("values come back in ascending order", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "passed", browser: "webkit", viewport: "9x9" },
+          {
+            name: "b",
+            verdict: "passed",
+            browser: "chromium",
+            viewport: "1x1",
+          },
+          { name: "c", verdict: "passed", browser: "firefox", viewport: "5x5" },
+        ],
+      });
+      const res = await facets(s);
+      expect(res.browser.map((v) => v.value)).toEqual([
+        "chromium",
+        "firefox",
+        "webkit",
+      ]);
+      expect(res.viewport.map((v) => v.value)).toEqual(["1x1", "5x5", "9x9"]);
+    });
+
+    test("an admin who is not a member can read it; a guest, an outsider and another project's member cannot; an unknown build is NOT_FOUND", async () => {
+      const s = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      const expected = {
+        browser: [{ value: "chromium", pending: 1 }],
+        viewport: [{ value: "1280x720", pending: 1 }],
+        os: [],
+        device: [],
+      };
+      expect(await facets(s, s.buildId, s.admin)).toEqual(expected);
+      // The membership gate rejects a guest, member or not.
+      await expect(facets(s, s.buildId, s.guest)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      await expect(facets(s, s.buildId, s.outsider)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      // A member of another project is an outsider to this build.
+      const other = await seed({
+        checkpoints: [{ name: "a", verdict: "unresolved" }],
+      });
+      await expect(facets(s, s.buildId, other.editor)).rejects.toMatchObject({
+        data: { code: "FORBIDDEN" },
+      });
+      await expect(
+        facets(s, "00000000-0000-0000-0000-000000000000", s.admin),
+      ).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+      await expect(
+        facets(s, "00000000-0000-0000-0000-000000000000", s.editor),
+      ).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+    });
   });
 });
