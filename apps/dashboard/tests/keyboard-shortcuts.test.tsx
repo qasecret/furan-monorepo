@@ -61,6 +61,7 @@ import {
   useCommandKeys,
   useCommandRegistry,
 } from "@/lib/commands/registry";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 /**
@@ -131,8 +132,16 @@ const DRAFT = {
   kind: "ignore" as const,
 };
 
+/** ⌘Z takes back this session's newest review action: there is one. */
+function haveSomethingToUndo() {
+  useUndoStore.setState({
+    stack: [{ actionId: "a1", label: "Approved home", runIds: ["r1"] }],
+  });
+}
+
 function resetStores() {
   sessionStorage.clear();
+  useUndoStore.setState({ stack: [] });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -468,6 +477,7 @@ describe("useDiffViewerShortcuts", () => {
   // ⌘Z is the global `review.undo` now (Task 3): on the viewer's page it is
   // the same undo, through the one dispatcher.
   it("Ctrl+Z invokes the review undo and prevents the browser default", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     const ev = press("z", { ctrlKey: true });
     expect(undoMock).toHaveBeenCalledOnce();
@@ -537,6 +547,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
 
   // A state in which every key above would visibly change something.
   function armEveryShortcut() {
+    haveSomethingToUndo();
     usePaletteStore.setState({ open: false });
     useShortcutsSheet.setState({ open: false });
     useViewerStore.setState({
@@ -690,6 +701,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   });
 
   it("still fires Ctrl+Z while focus sits on an ordinary toolbar button", () => {
+    haveSomethingToUndo();
     mountHook();
     focusInto(`<button>Overlay</button>`, "button");
     pressCtrlZ();
@@ -773,6 +785,7 @@ describe("the viewer's keys are registry commands", () => {
 
   /** Every key's effect is visible from here: the editor on, d1 selected. */
   function arm() {
+    haveSomethingToUndo();
     setClipboardRegion("p1", COPIED);
     useViewerStore.setState({
       mode: "side-by-side",

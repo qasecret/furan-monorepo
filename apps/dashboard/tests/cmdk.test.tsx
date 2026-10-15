@@ -21,7 +21,10 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const pushMock = vi.fn();
+const { pushMock, undoMock } = vi.hoisted(() => ({
+  pushMock: vi.fn(),
+  undoMock: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
@@ -29,7 +32,7 @@ vi.mock("next/navigation", () => ({
 
 // The global commands' ⌘Z: no review session here.
 vi.mock("@/lib/review/use-review-mutations", () => ({
-  useReviewMutations: () => ({ undo: vi.fn() }),
+  useReviewMutations: () => ({ undo: undoMock }),
 }));
 
 import {
@@ -52,6 +55,7 @@ import {
   useCommands,
 } from "@/lib/commands/registry";
 import type { Command } from "@/lib/commands/types";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 const PROJECTS: ProjectListItem[] = [
@@ -151,6 +155,8 @@ async function settle(): Promise<void> {
 
 beforeEach(() => {
   pushMock.mockReset();
+  undoMock.mockReset();
+  useUndoStore.setState({ stack: [] });
   usePaletteStore.setState({ open: false });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
@@ -361,6 +367,89 @@ describe("CommandPalette", () => {
       act(() => usePaletteStore.setState({ open: false }));
       useCommandRegistry.setState({ entries: [], role: "guest" });
     }
+  });
+
+  test("Undo last review action appears in Actions only when there is something to undo", async () => {
+    const ENTRY = {
+      actionId: "a1",
+      label: "Approved home",
+      runIds: ["r1"],
+    };
+    // Nothing to undo: not offered, with a page that has actions of its own
+    // and with one that has none.
+    const { unmount } = render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} />
+      </Shell>,
+    );
+    let palette = await openPalette();
+    expect(labels(palette, "Actions")).not.toContain("Undo last review action");
+    unmount();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+    render(<Shell role="editor" />);
+    palette = await openPalette();
+    expect(headings(palette)).not.toContain("Actions");
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // Something to undo: it is the last of the page's actions, with its key.
+    act(() => useUndoStore.getState().push(ENTRY));
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} />
+      </Shell>,
+    );
+    palette = await openPalette();
+    const actions = labels(palette, "Actions");
+    expect(actions).toContain("Approve step");
+    expect(actions.at(-1)).toBe("Undo last review action");
+    const undo = within(group(palette, "Actions")).getByRole("option", {
+      name: "Undo last review action",
+    });
+    expect(caps(undo)).toEqual(["Ctrl", "Z"]);
+    expect(undo.getAttribute("aria-keyshortcuts")).toBe("Control+Z");
+
+    // Choosing it takes back the newest action, once the palette has closed.
+    fireEvent.click(undo);
+    expect(usePaletteStore.getState().open).toBe(false);
+    expect(undoMock).not.toHaveBeenCalled();
+    await settle();
+    expect(undoMock).toHaveBeenCalledTimes(1);
+    expect(undoMock).toHaveBeenCalledWith();
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+
+    // On a page with no actions of its own, it is the only action.
+    render(<Shell role="editor" />);
+    expect(labels(await openPalette(), "Actions")).toEqual([
+      "Undo last review action",
+    ]);
+  });
+
+  test("a guest never sees it", async () => {
+    // Even with an action on the stack: a guest cannot have made one in this
+    // session, and cannot take one back.
+    act(() =>
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+    );
+    render(
+      <Shell role="guest">
+        <Viewer viewports={[]} onNextDiff={vi.fn()} />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    expect(
+      within(palette).queryByRole("option", {
+        name: /Undo last review action/,
+      }),
+    ).toBeNull();
+    // Their other actions are there: it is this one that is not.
+    expect(labels(palette, "Actions")).toContain("Next change");
   });
 
   test("with single-key shortcuts off, an action shows no character key", async () => {

@@ -55,6 +55,7 @@ import {
   type ResolvedCommand,
 } from "@/lib/commands/registry";
 import { useReviewAnnouncer } from "@/lib/review/review-announcer";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 // next-themes reads the OS scheme through matchMedia, which jsdom lacks.
@@ -131,7 +132,15 @@ function isEnabled(id: string): boolean {
   return resolved.command.enabled?.(resolved.ctx()) ?? true;
 }
 
+/** ⌘Z takes back this session's newest review action: there is one. */
+function haveSomethingToUndo() {
+  useUndoStore.setState({
+    stack: [{ actionId: "a1", label: "Approved home", runIds: ["r1"] }],
+  });
+}
+
 beforeEach(() => {
+  useUndoStore.setState({ stack: [] });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -356,6 +365,7 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘Z calls undo", () => {
+    haveSomethingToUndo();
     render(
       <Layout role="editor">
         <div role="dialog" data-passes-undo="">
@@ -385,6 +395,21 @@ describe("GlobalCommands", () => {
     act(() => screen.getByRole("button", { name: "Keep" }).focus());
     press("z", { ctrlKey: true });
     expect(undoMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("⌘Z with nothing to undo does nothing and leaves the key alone", () => {
+    // R16: the command is enabled while this session has an action to take
+    // back, which the palette lists it by.
+    render(<Layout role="editor" />);
+    expect(isEnabled("review.undo")).toBe(false);
+    const e = press("z", { ctrlKey: true });
+    expect(undoMock).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+
+    act(() => haveSomethingToUndo());
+    expect(isEnabled("review.undo")).toBe(true);
+    expect(press("z", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(undoMock).toHaveBeenCalledTimes(1);
   });
 
   it("a guest has no ⌘Z binding and no undo row", () => {
@@ -425,6 +450,7 @@ describe("GlobalCommands", () => {
   it("⌘Z undoes once with the viewer mounted", () => {
     // The viewer's keys are registry commands and ⌘Z is not one of them: on
     // its page ⌘Z is this undo, once, whichever mounts first.
+    haveSomethingToUndo();
     const viewer = () =>
       renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     const layout = () => render(<Layout />);

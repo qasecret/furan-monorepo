@@ -48,6 +48,12 @@ const CMD_GROUP_CLASS =
 const ITEM_CLASS =
   "flex items-center gap-3 px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover";
 
+/**
+ * The global commands that are also the current page's actions: undo has no
+ * other way in than a toast or a chip, so the palette offers it (R16).
+ */
+const GLOBAL_ACTIONS = new Set(["review.undo"]);
+
 /** The count is announced once typing has settled, not on every key. */
 const ANNOUNCE_DELAY_MS = 300;
 
@@ -322,10 +328,18 @@ function PaletteBody({
     };
   };
 
-  // The page's own commands that apply now.
-  const actions = commands
-    .filter((c) => c.scope !== "global" && enabledNow(c))
-    .map(row);
+  // The page's own commands that apply now, then the global ones that are
+  // actions too (undo, when there is something to take back). Undo comes
+  // last: Enter on a fresh palette must never take back a decision.
+  const actions = [
+    ...commands.filter((c) => c.scope !== "global" && enabledNow(c)),
+    ...commands.filter(
+      (c) =>
+        c.scope === "global" &&
+        GLOBAL_ACTIONS.has(c.command.id) &&
+        enabledNow(c),
+    ),
+  ].map(row);
   const preferences = commands
     .filter(
       (c) =>
