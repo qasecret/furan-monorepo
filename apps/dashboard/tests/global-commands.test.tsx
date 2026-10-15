@@ -555,4 +555,31 @@ describe("GlobalCommands", () => {
     expect(tour?.state.active).toBe(true);
     expect(tour?.state.index).toBe(0);
   });
+
+  it("Replay tour follows the current page: it is off again once the page with a tour is left", async () => {
+    const steps: TourStep[] = [{ target: "body", content: "Hello" }];
+    function Page({ id }: { id: string }) {
+      useTourSteps(id, steps);
+      return null;
+    }
+    const shell = (page: ReactNode) => (
+      <TourProvider>
+        <Layout />
+        {page}
+      </TourProvider>
+    );
+    localStorage.setItem("furan:tour:dismissed:inbox", "1");
+    localStorage.setItem("furan:tour:dismissed:variations", "1");
+
+    const view = render(shell(<Page id="inbox" />));
+    expect(isEnabled("help.tour")).toBe(true);
+
+    // To a page that has no tour of its own.
+    view.rerender(shell(null));
+    expect(isEnabled("help.tour")).toBe(false);
+
+    // To one that has: it is that page's tour that replays.
+    view.rerender(shell(<Page id="variations" />));
+    expect(isEnabled("help.tour")).toBe(true);
+  });
 });

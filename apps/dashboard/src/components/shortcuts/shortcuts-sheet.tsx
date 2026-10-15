@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, type JSX } from "react";
+import { useId, useMemo, useRef, type JSX } from "react";
 
 import { KeyChoices } from "./key-caps";
 import { useShortcutsSheet } from "./use-shortcuts-sheet";
@@ -142,6 +142,8 @@ export function ShortcutsSheet(): JSX.Element {
   const tour = useTourOptional();
   const switchId = useId();
   const helpId = useId();
+  /** Where focus goes back to on close: where it was as the sheet opened. */
+  const opener = useRef<HTMLElement | null>(null);
 
   const rows = useMemo(
     () => rowsByScope(commands, platform),
@@ -160,9 +162,26 @@ export function ShortcutsSheet(): JSX.Element {
         // list, and the switch is a Tab away.
         onOpenAutoFocus={(e) => {
           e.preventDefault();
+          // The sheet has no trigger of its own, so Radix has nowhere to give
+          // focus back to: remember where it came from (the opener's own
+          // word first, as a menu item that opened it goes with its menu).
+          const active = document.activeElement;
+          opener.current =
+            useShortcutsSheet.getState().returnTo ??
+            (active instanceof HTMLElement && active !== document.body
+              ? active
+              : null);
           (e.target as HTMLElement).focus();
         }}
-        className="max-h-[85vh] max-w-lg overflow-y-auto"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          const back = opener.current;
+          opener.current = null;
+          if (back?.isConnected) back.focus();
+        }}
+        // The focused panel is a container to read from, not a control: no
+        // ring on it.
+        className="max-h-[85vh] max-w-lg overflow-y-auto outline-none"
       >
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>

@@ -3,6 +3,8 @@
 import { Bell, ChevronsLeft, ChevronsRight, Menu } from "lucide-react";
 
 import { AccountMenu } from "./account-menu";
+import { HelpMenu } from "./help-menu";
+import { PaletteButton } from "./palette-button";
 import { ProjectSelector } from "./project-selector";
 import { useSidebarStore } from "./use-sidebar-store";
 
@@ -12,11 +14,12 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
  * App-shell top bar, beside the navigation Sidebar.
  *
  * Left cluster: mobile drawer toggle → desktop sidebar collapse/expand toggle
- * → ProjectSelector. Right cluster: ThemeToggle → bell → AccountMenu.
+ * → ProjectSelector. Right cluster: PaletteButton → HelpMenu → ThemeToggle →
+ * bell → AccountMenu.
  *
- * The command-palette search button + tour HelpButton were removed in #308
- * when the collapse toggle took their slot; the palette is now reached via the
- * global Cmd/Ctrl+K handler.
+ * The palette button and the Help menu are the keyboard surface's visible
+ * entries (spec §5.3): the ⌘K palette, and the `?` sheet, the page's tour and
+ * the single-key switch. ⌘K still opens the palette from anywhere.
  *
  * The bell renders disabled for v1.0; a real notification feed lands in
  * a later phase (see plan-roadmap §7.1).
@@ -67,6 +70,8 @@ export function TopBar({ email, initial, role }: TopBarProps) {
         <ProjectSelector />
       </div>
       <div className="flex items-center gap-3 shrink-0">
+        <PaletteButton />
+        <HelpMenu />
         <ThemeToggle />
         <button
           type="button"
