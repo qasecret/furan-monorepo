@@ -300,11 +300,15 @@ describe("useReviewLoop: the review context travels", () => {
     expect(router.push).toHaveBeenLastCalledWith(
       `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&browser=chromium&viewport=1280x720`,
     );
-    query.data = answer({ scope: "run" });
-    rerender(args({ context }));
+    // The route commits: the step on screen is the one J moved to.
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-10" },
+      scope: "run",
+    });
+    rerender(args({ context, runId: OTHER_RUN, checkpointId: "step-9" }));
     act(() => result.current.goNext());
     expect(router.replace).toHaveBeenLastCalledWith(
-      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-2?status=failed&browser=chromium&viewport=1280x720`,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-10?status=failed&browser=chromium&viewport=1280x720`,
     );
   });
 });
@@ -628,7 +632,7 @@ describe("useReviewLoop.goPrev", () => {
         resolve = r;
       }),
     );
-    const { result } = setup();
+    const { result, rerender } = setup();
     act(() => {
       result.current.goPrev();
       result.current.goPrev();
@@ -636,7 +640,8 @@ describe("useReviewLoop.goPrev", () => {
     expect(utils.review.next.fetch).toHaveBeenCalledOnce();
     await act(async () => resolve(prev()));
     expect(router.replace).toHaveBeenCalledOnce();
-    // Once it has landed, the key works again.
+    // Once it has landed (the route has committed), the key works again.
+    rerender(args({ checkpointId: "step-0" }));
     utils.review.next.fetch.mockResolvedValue(prev());
     await act(async () => result.current.goPrev());
     expect(utils.review.next.fetch).toHaveBeenCalledTimes(2);
@@ -685,7 +690,7 @@ describe("useReviewLoop: a K answer racing a later move", () => {
     query.data = answer();
     const prev = deferred<Answer>();
     utils.review.next.fetch.mockReturnValue(prev.promise);
-    const { result } = setup();
+    const { result, rerender } = setup();
     act(() => result.current.goPrev());
     act(() => result.current.goNext());
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -693,7 +698,8 @@ describe("useReviewLoop: a K answer racing a later move", () => {
     await act(async () => prev.resolve(previous()));
     expect(router.replace).toHaveBeenCalledTimes(1);
     expect(router.push).not.toHaveBeenCalled();
-    // The key is free again.
+    // The key is free again once J's step is on screen.
+    rerender(args({ checkpointId: "step-2" }));
     utils.review.next.fetch.mockResolvedValue(previous());
     await act(async () => result.current.goPrev());
     expect(router.replace).toHaveBeenLastCalledWith(STEP_BEFORE);
@@ -730,7 +736,7 @@ describe("useReviewLoop: a K answer racing a later move", () => {
     expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
-  test("K navigating clears a waiting decision, so the late forward answer does not move again", async () => {
+  test("K navigating drops a waiting decision, so the late forward answer does not move again", async () => {
     query.isLoading = true;
     query.isFetching = true;
     utils.review.next.fetch.mockResolvedValue(previous());
@@ -885,14 +891,15 @@ describe("useReviewLoop: the order of cues", () => {
     act(() => result.current.goNext());
     expect(router.push).toHaveBeenCalledTimes(1);
 
-    // Second move: cached, so it is said at once.
+    // Second move, from the step the first one opened: cached, so it is said
+    // at once.
     utils.runs.getById.getData.mockReturnValue({ name: "Second test" });
     query.data = answer({
       target: { buildId: BUILD, runId: "run-3", checkpointId: "step-1" },
       scope: "batch",
       remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 1 },
     });
-    rerender(args());
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
     act(() => result.current.goNext());
     expect(useReviewAnnouncer.getState().text).toBe(
       "Next test: Second test · 3 left in batch",
@@ -944,5 +951,89 @@ describe("useReviewLoop: stable callbacks", () => {
         at: { buildId: BUILD, runId: RUN, checkpointId: "step-3" },
       }),
     );
+  });
+});
+
+describe("useReviewLoop: guards for the wired viewer", () => {
+  const intoOtherRun = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+      remaining: { run: 0, batch: 4, batchUnfiltered: 4, projectBatches: 1 },
+    });
+
+  // In the viewer every step is a new instance of the page (the dynamic
+  // segment remounts), so leaving the step by hand unmounts the hook: the K
+  // answer still on its way must not take the reviewer back.
+  test("a K answer that lands after the hook unmounts does not navigate", async () => {
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result, unmount } = setup();
+    act(() => result.current.goPrev());
+    unmount();
+    await act(async () => prev.resolve(previous()));
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("a cue still loading its name is not spoken after a later K move", async () => {
+    // J moves into another test whose name is not cached yet.
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenCalledTimes(1);
+
+    // The route commits, and K takes the reviewer back before the name comes.
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+        scope: "batch",
+      }),
+    );
+    await act(async () => result.current.goPrev());
+    expect(router.push).toHaveBeenCalledTimes(2);
+
+    // The name arrives: it names a test the reviewer has already left.
+    await act(async () => slow.resolve({ name: "Checkout" }));
+    expect(useReviewAnnouncer.getState().text).toBe("");
+  });
+
+  test("a second J before the route commits does nothing", async () => {
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenCalledTimes(1);
+    // One move, one cue.
+    expect(useReviewAnnouncer.getState().seq).toBe(1);
+    // Nor does K: it would be asked from the step being left.
+    await act(async () => result.current.goPrev());
+    expect(utils.review.next.fetch).not.toHaveBeenCalled();
+
+    // Once the step J opened is on screen, J works again.
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-10" },
+      scope: "run",
+    });
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    act(() => result.current.goNext());
+    calledOnceWith(
+      router.replace,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-10`,
+    );
+  });
+
+  test("a decision is not held back by a move still committing", () => {
+    // The step on screen is still the one being left, and a decision on it
+    // moves on as ever: only J and K wait for the route.
+    query.data = answer();
+    const { result } = setup();
+    act(() => result.current.goNext());
+    act(() => result.current.afterDecision());
+    expect(router.replace).toHaveBeenCalledTimes(2);
   });
 });

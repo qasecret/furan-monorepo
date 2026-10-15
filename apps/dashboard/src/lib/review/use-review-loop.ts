@@ -44,9 +44,12 @@ export interface ReviewLoop {
   error: { message: string } | null;
   /** Ask `review.next` again after an error. */
   retry(): void;
-  /** J: the next step that needs a reviewer. */
+  /**
+   * J: the next step that needs a reviewer. Does nothing while a move is on
+   * its way to the screen.
+   */
   goNext(): void;
-  /** K: the previous step that needs a reviewer. */
+  /** K: the previous step that needs a reviewer; the same guard as J. */
   goPrev(): void;
   /** Called when a decision is made: moves on, or shows a card when nothing is left. */
   afterDecision(): void;
@@ -83,9 +86,17 @@ const cueText = (name: string, left: number) =>
  * `diffViewerHref` with the review context, so the filters are never lost.
  *
  * Moves race: the router commits a new URL only after a round trip, so the
- * props still name the old step for a while. Every move this hook makes bumps
- * a navigation epoch, and an answer that was asked for before the latest move
- * (K's, or a deferred decision's) is dropped rather than overriding it.
+ * props still name the old step for a while. A navigation epoch orders them.
+ * It is bumped by every move or card this hook makes, by a decision that has
+ * to wait for its answer, and when the hook unmounts (in the viewer, leaving a
+ * step by any route unmounts it). K reads the epoch when pressed and a waiting
+ * decision records it when it starts to wait; either one's answer is dropped
+ * if the epoch has changed since, so the latest move always wins: a K answer
+ * never overrides a later J, decision or departure, and a deferred decision
+ * never moves the reviewer again after K has. From a move until the step on
+ * screen changes, J and K do nothing: they would be asked from the step being
+ * left. Every move also takes a place in the order of announcements, so a
+ * cue still waiting for its test's name is not said after a later move.
  */
 export function useReviewLoop({
   projectId,
@@ -136,24 +147,40 @@ export function useReviewLoop({
     card: ReviewCard;
     atKey: string | undefined;
   } | null>(null);
-  // A decision (or J) that came before the answer: the step it waits on.
-  const [waiting, setWaiting] = useState<string | null>(null);
+  // A decision (or J) that came before the answer: the step it waits on, and
+  // the epoch when it started to wait.
+  const [waiting, setWaiting] = useState<{
+    atKey: string;
+    epoch: number;
+  } | null>(null);
   // Both belong to the step they were made on; moving away drops them for
   // good, so coming back never brings a card or a pending move back.
   if (shown && shown.atKey !== atKey) setShown(null);
-  if (waiting !== null && waiting !== atKey) setWaiting(null);
+  if (waiting !== null && waiting.atKey !== atKey) setWaiting(null);
 
-  // Counts the moves this hook makes (see the doc above).
+  // Orders the moves (see the doc above).
   const epoch = useRef(0);
   // The step on screen right now, for answers that come back later. Set in a
   // layout effect, so no answer is checked against a step already replaced.
   const atKeyRef = useRef(atKey);
   // The K on its way, if any: one at a time, and a new step starts afresh.
   const prevPending = useRef<symbol | null>(null);
+  // A move has been made and the route has not committed it yet.
+  const moving = useRef(false);
   useLayoutEffect(() => {
     atKeyRef.current = atKey;
     prevPending.current = null;
+    moving.current = false;
   }, [atKey]);
+  // Leaving the step by any route ends this instance: whatever is still on
+  // its way (a K answer) is for a page that is gone.
+  useEffect(
+    () => () => {
+      epoch.current += 1;
+      prevPending.current = null;
+    },
+    [],
+  );
 
   /** Say which test the reviewer has been taken to. */
   const announceMove = useCallback(
@@ -183,6 +210,9 @@ export function useReviewLoop({
       how: "replace" | "push",
     ): void => {
       epoch.current += 1;
+      moving.current = true;
+      // A cue still waiting for its name belongs to a place being left.
+      reserveAnnouncement();
       const href = diffViewerHref(
         projectId,
         target.runId,
@@ -199,6 +229,7 @@ export function useReviewLoop({
   const transition = useCallback(
     (answer: NextAnswer) => {
       epoch.current += 1;
+      reserveAnnouncement();
       switch (answer.scope) {
         case "run":
           if (answer.target) goTo(answer.target, "replace");
@@ -230,9 +261,15 @@ export function useReviewLoop({
       transition(settled);
     } else {
       epoch.current += 1;
-      setWaiting(atKey);
+      setWaiting({ atKey, epoch: epoch.current });
     }
   }, [active, atKey, failed, settled, transition]);
+
+  // J: as a decision, unless a move is still on its way to the screen.
+  const goNext = useCallback(() => {
+    if (moving.current) return;
+    advance();
+  }, [advance]);
 
   // The answer a decision was waiting for has come, or will not come.
   useEffect(() => {
@@ -243,6 +280,9 @@ export function useReviewLoop({
     }
     if (!settled) return;
     setWaiting(null);
+    // A move made since it started to wait (K's) has already taken the
+    // reviewer elsewhere: this answer is for the step they left.
+    if (epoch.current !== waiting.epoch) return;
     transition(settled);
   }, [waiting, failed, settled, transition]);
 
@@ -265,8 +305,17 @@ export function useReviewLoop({
   // K asks when it is pressed, not ahead: one more query per step, for a key
   // that is pressed rarely. At most one is on its way at a time.
   const goPrev = useCallback(() => {
-    if (!active || !at || atKey === undefined || prevPending.current) return;
-    epoch.current += 1;
+    if (
+      !active ||
+      !at ||
+      atKey === undefined ||
+      prevPending.current ||
+      moving.current
+    ) {
+      return;
+    }
+    // Not a move yet: a decision already waiting for its answer still moves
+    // when it comes, unless this answer moves the reviewer first.
     const asked = epoch.current;
     const token = Symbol("prev");
     prevPending.current = token;
@@ -274,16 +323,15 @@ export function useReviewLoop({
       .fetch({ projectId, at, direction: "prev", facets: loopContext.facets })
       .then((answer) => {
         // Anything that moved the reviewer since K was pressed (J, a decision,
-        // a deferred decision) wins; so does going to another step by hand.
+        // a deferred decision, leaving the page) wins; so does going to
+        // another step by hand.
         if (epoch.current !== asked || atKeyRef.current !== atKey) return;
         if (!answer.target) return;
         // Backwards stays inside this batch: another batch is not "previous".
+        // The move bumps the epoch, which drops a decision still waiting for
+        // its forward answer.
         if (answer.scope === "run") goTo(answer.target, "replace");
         else if (answer.scope === "batch") goTo(answer.target, "push");
-        else return;
-        // K has moved the reviewer: a decision still waiting for its forward
-        // answer would move them again.
-        setWaiting(null);
       })
       .catch(() => {
         // The key does nothing; the reviewer can press it again.
@@ -304,7 +352,7 @@ export function useReviewLoop({
     loading: active && query.isLoading,
     error: failed ? query.error : null,
     retry,
-    goNext: advance,
+    goNext,
     goPrev,
     afterDecision: advance,
     card: shown?.card ?? null,
