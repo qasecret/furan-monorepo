@@ -21,7 +21,9 @@ import { LIST_ITEM } from "./guard";
  * - **Focus sets it.** Focus landing anywhere in an item (the item itself or
  *   a control inside it, by a click, Tab, or a handoff such as "Back to
  *   batch" or a step card moving focus to its Undo) makes that item the
- *   cursor; with items inside items, the innermost.
+ *   cursor; with items inside items, the innermost. Focus that lands on an
+ *   item before `items` holds it (the item and the focus arrived together)
+ *   makes it the cursor once `items` does, if focus is still there.
  * - **Keyed by id.** It survives refetches and reorders. When its item
  *   disappears, it moves to the item now at the index its item last had, or
  *   to the last item. It takes focus with it only when focus went with the
@@ -127,6 +129,9 @@ export function useListCursor({
   // The element in the list focus last landed on, until focus goes
   // somewhere else. If the list then loses it, focus went with the item.
   const focusedRef = useRef<Element | null>(null);
+  // Focus that landed on an item `items` did not hold yet: the element, so
+  // the item becomes the cursor once it does (if focus is still there).
+  const earlyRef = useRef<Element | null>(null);
   // Set while the list is empty and holds a record of focus: the timer that
   // lets the record go (`KEEP_FOCUS_MS`).
   const emptiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -176,7 +181,10 @@ export function useListCursor({
       if (!list.contains(target)) return;
       focusedRef.current = target;
       const id = itemIdOf(list, target);
-      // An item of another list (nested in this one) is not this cursor's.
+      // An item of another list (nested in this one) is not this cursor's;
+      // nor, yet, one `items` does not hold (it may be on its way).
+      earlyRef.current =
+        id !== null && !idsRef.current.includes(id) ? target : null;
       if (id === null || !idsRef.current.includes(id)) return;
       if (id !== cursorRef.current) place(id, false);
     },
@@ -258,6 +266,18 @@ export function useListCursor({
       return;
     }
     stopWaiting();
+    // Focus that came before its item: the item is the cursor now, if focus
+    // is still on it.
+    const early = earlyRef.current;
+    if (early !== null) {
+      const earlyId = itemIdOf(listRef.current, early);
+      if (document.activeElement !== early) {
+        earlyRef.current = null;
+      } else if (earlyId !== null && ids.includes(earlyId)) {
+        earlyRef.current = null;
+        if (earlyId !== cursorRef.current) place(earlyId, false);
+      }
+    }
     let id = cursorRef.current;
     if (id === null) return;
     const at = ids.indexOf(id);
@@ -288,7 +308,7 @@ export function useListCursor({
       focusedRef.current = null;
       place(id, true);
     }
-  }, [ids, cursorId, place, forgetFocus, stopWaiting]);
+  }, [ids, cursorId, place, forgetFocus, stopWaiting, listRef]);
 
   const setCursor = useCallback(
     (id: string, focus = false) => {

@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { useCommandKeys } from "@/lib/commands/registry";
 import { describeRefusal } from "@/lib/review/review-copy";
 import type { ReviewStatus } from "@/lib/review-context";
 
@@ -198,6 +199,9 @@ export function ContextualToolbar({
   start,
   environment,
 }: Props) {
+  // The key that does what Start reviewing does (`s`): none for a reader who
+  // may not review, or while single-key shortcuts are off.
+  const startKeys = useCommandKeys("batch.start");
   return (
     <div className="flex flex-wrap items-end gap-4 border-b border-edge px-4 py-2">
       <Segment label="View">
@@ -273,7 +277,14 @@ export function ContextualToolbar({
                 (start.count === undefined || start.reason !== null)
               }
               reason={start.failed ? null : start.reason}
-              title={start.failed ? (start.reason ?? undefined) : undefined}
+              ariaKeyShortcuts={startKeys.ariaKeyShortcuts}
+              title={
+                start.failed
+                  ? (start.reason ?? undefined)
+                  : startKeys.titleSuffix
+                    ? `Start reviewing${startKeys.titleSuffix}`
+                    : undefined
+              }
               label={
                 start.failed
                   ? `Start reviewing: ${start.reason ?? "couldn't load the review queue"}. Press to try again.`

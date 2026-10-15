@@ -23,6 +23,11 @@ const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: pushMock }) }));
 
 import {
+  createStepActions,
+  StepActionsProvider,
+  type StepActionsRegistry,
+} from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/step-actions-context";
+import {
   StepCard,
   type StepCheckpoint,
   type StepRun,
@@ -82,22 +87,35 @@ const HOME = { href: "/projects/p1/runs/r1/checkpoints/c1", name: "home" };
 
 function renderCard(
   checkpoint: StepCheckpoint,
-  over: { canReview?: boolean; run?: StepRun; ctx?: ReviewContext } = {},
+  over: {
+    canReview?: boolean;
+    run?: StepRun;
+    ctx?: ReviewContext;
+    /** Inside a batch list, which hands the card this registry. */
+    registry?: StepActionsRegistry;
+  } = {},
 ) {
-  const card = (cp: StepCheckpoint) => (
-    <StepCard
-      projectId="p1"
-      runId="r1"
-      ctx={over.ctx ?? CLEAN}
-      canReview={over.canReview ?? true}
-      checkpoint={cp}
-      index={0}
-      total={3}
-      run={over.run ?? RUN}
-      decide={reviewSpies.decide}
-      undo={reviewSpies.undo}
-    />
-  );
+  const card = (cp: StepCheckpoint) => {
+    const el = (
+      <StepCard
+        projectId="p1"
+        runId="r1"
+        ctx={over.ctx ?? CLEAN}
+        canReview={over.canReview ?? true}
+        checkpoint={cp}
+        index={0}
+        total={3}
+        run={over.run ?? RUN}
+        decide={reviewSpies.decide}
+        undo={reviewSpies.undo}
+      />
+    );
+    return over.registry ? (
+      <StepActionsProvider value={over.registry}>{el}</StepActionsProvider>
+    ) : (
+      el
+    );
+  };
   const view = render(card(checkpoint));
   /** Shows the same card with another checkpoint, as a cache patch would. */
   return { ...view, show: (next: StepCheckpoint) => view.rerender(card(next)) };
@@ -637,6 +655,132 @@ describe("StepCard state", () => {
     expect(screen.getByTestId("step-status-c1").textContent).toBe(
       statusStyle("aborted").label,
     );
+  });
+});
+
+describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
+  const NEWER = { runId: "run-newer", buildId: "build-2", buildName: "#42" };
+
+  test("a card is a list item named by its step and its state, with a focus ring", () => {
+    const card = renderCard(cp());
+    const el = screen.getByRole("listitem", { name: "home, Unresolved" });
+    expect(el).toBe(screen.getByTestId("step-card-c1"));
+    expect(el.className).toContain("focus-ring");
+    // Its toolbar shows while it has focus, as it does on hover.
+    expect(screen.getByTestId("step-toolbar-c1").className).toContain(
+      "group-focus-within:opacity-100",
+    );
+    expect(el.className.split(" ")).toContain("group");
+
+    card.show(cp({ state: "approved", decision: decision("approved") }));
+    expect(
+      screen.getByRole("listitem", { name: "home, Approved" }),
+    ).toBeDefined();
+  });
+
+  test("outside a batch list a card is no cursor item and registers nothing", () => {
+    renderCard(cp());
+    const el = screen.getByTestId("step-card-c1");
+    expect(el.hasAttribute("data-cursor-id")).toBe(false);
+    expect(el.hasAttribute("tabindex")).toBe(false);
+  });
+
+  test("the card registers the same approve and reject its buttons use", () => {
+    const registry = createStepActions();
+    const card = renderCard(cp(), { registry });
+    const actions = registry.get("c1");
+    expect(actions).toBeDefined();
+    expect(actions?.needsReviewer).toBe(true);
+    expect(actions?.canReview).toBe(true);
+    expect(actions?.asksFirst).toBe(false);
+
+    // What the keys run is what a click on the buttons does.
+    act(() => actions?.approve());
+    fireEvent.click(button("step-approve-c1"));
+    expect(reviewSpies.decide).toHaveBeenCalledTimes(2);
+    expect(reviewSpies.decide.mock.calls[0]).toEqual(
+      reviewSpies.decide.mock.calls[1],
+    );
+    expect(reviewSpies.decide).toHaveBeenLastCalledWith({
+      runId: "r1",
+      checkpointIds: ["c1"],
+      kind: "approved",
+      label: "Approved 'home'",
+      goTo: HOME,
+    });
+
+    reviewSpies.decide.mockClear();
+    act(() => actions?.reject());
+    fireEvent.click(button("step-reject-c1"));
+    expect(reviewSpies.decide.mock.calls).toEqual([
+      [expect.objectContaining({ kind: "rejected", checkpointIds: ["c1"] })],
+      reviewSpies.decide.mock.calls[0],
+    ]);
+
+    pushMock.mockClear();
+    act(() => actions?.open());
+    expect(pushMock).toHaveBeenCalledWith(HOME.href);
+
+    // Read live: once decided, it no longer needs a reviewer.
+    card.show(cp({ state: "approved", decision: decision("approved") }));
+    expect(registry.get("c1")?.needsReviewer).toBe(false);
+    expect(registry.get("c1")?.canReview).toBe(false);
+
+    card.unmount();
+    expect(registry.get("c1")).toBeUndefined();
+  });
+
+  test("a step that cannot be decided now says so, and its actions decide nothing", () => {
+    const registry = createStepActions();
+    const card = renderCard(cp(), {
+      registry,
+      run: { ...RUN, statusOverride: "passed" },
+    });
+    expect(registry.get("c1")?.needsReviewer).toBe(true);
+    expect(registry.get("c1")?.canReview).toBe(false);
+    act(() => registry.get("c1")?.approve());
+    act(() => registry.get("c1")?.reject());
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+
+    // Nor while its own decision is on its way.
+    card.unmount();
+    inFlight.add("c1");
+    renderCard(cp(), { registry });
+    expect(registry.get("c1")?.canReview).toBe(false);
+    act(() => registry.get("c1")?.approve());
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
+  test("a reader who may not review registers no decision", () => {
+    const registry = createStepActions();
+    renderCard(cp(), { registry, canReview: false });
+    expect(registry.get("c1")?.canReview).toBe(false);
+    act(() => registry.get("c1")?.approve());
+    act(() => registry.get("c1")?.reject());
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
+  test("approve for an older capture asks the stale-step question, and Cancel gives focus back to the card", async () => {
+    const registry = createStepActions();
+    renderCard(cp({ newerCapture: NEWER } as Partial<StepCheckpoint>), {
+      registry,
+    });
+    const card = screen.getByTestId("step-card-c1");
+    card.tabIndex = 0;
+    act(() => card.focus());
+    expect(registry.get("c1")?.asksFirst).toBe(true);
+
+    act(() => registry.get("c1")?.approve());
+    const dialog = await screen.findByTestId("stale-step-dialog");
+    expect(dialog.textContent).toContain("Approve an older capture?");
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("stale-step-cancel"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(card);
   });
 });
 

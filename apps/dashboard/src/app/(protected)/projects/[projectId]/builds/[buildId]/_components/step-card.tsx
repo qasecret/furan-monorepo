@@ -10,11 +10,15 @@ import { Maximize2, Star, ThumbsDown, ThumbsUp, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo, useEffect, useRef, useState } from "react";
 
+import { stepItemId, useCursorItem } from "./batch-cursor-context";
+import { useRegisterStepActions } from "./step-actions-context";
+
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
 import { StaleStepConfirm } from "@/components/diff-viewer/StaleStepCallout";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
+import { useCommandKeys } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import type { CheckpointItem } from "@/lib/review/optimistic";
 import {
@@ -216,6 +220,38 @@ export const StepCard = memo(function StepCard({
     decideStep("approved");
   };
 
+  // Inside the batch list: the card is a cursor item (spec §6), and the
+  // list's `a`, `r` and Enter / `o` run these, the same functions its buttons
+  // call. A decision is available exactly when its buttons are.
+  const card = useRef<HTMLDivElement>(null);
+  const item = useCursorItem(stepItemId(id));
+  const decidable = canReview && needsReviewer && header.canApprove;
+  useRegisterStepActions(id, {
+    approve: () => {
+      const el = card.current;
+      if (!decidable || el === null) return;
+      // The question's Cancel gives focus back to what had it: the card, or
+      // the control inside it.
+      const active = document.activeElement;
+      approveStep(
+        active instanceof HTMLElement && el.contains(active) ? active : el,
+      );
+    },
+    reject: () => {
+      if (decidable) decideStep("rejected");
+    },
+    open,
+    needsReviewer,
+    canReview: decidable,
+    asksFirst: newerCapture !== null,
+  });
+  const approveKeys = useCommandKeys("batch.approve");
+  const rejectKeys = useCommandKeys("batch.reject");
+  // The list is one Tab stop (spec §6): the card's own controls are in the
+  // Tab order only while the card is that stop, after it. A click still
+  // focuses them, which makes the card the cursor.
+  const innerTab = item !== null && item.tabIndex !== 0 ? -1 : undefined;
+
   // The icon buttons share one look; only the hover hue says which is which.
   // One that is unavailable (`aria-disabled`) does not react to hover: it
   // keeps its resting colours.
@@ -224,8 +260,12 @@ export const StepCard = memo(function StepCard({
 
   return (
     <div
+      ref={card}
+      {...item}
+      role="listitem"
+      aria-label={`${name}, ${style.label}`}
       data-testid={`step-card-${id}`}
-      className="group relative w-[320px] shrink-0"
+      className="group relative w-[320px] shrink-0 rounded-lg focus-ring"
     >
       <div className="relative overflow-hidden rounded-lg border border-edge bg-raised transition-colors group-hover:border-brand/40">
         <span
@@ -236,6 +276,7 @@ export const StepCard = memo(function StepCard({
         <button
           type="button"
           aria-label={`Open ${name}`}
+          tabIndex={innerTab}
           onClick={open}
           className="block aspect-video w-full cursor-pointer overflow-hidden bg-muted"
         >
@@ -261,8 +302,15 @@ export const StepCard = memo(function StepCard({
                   variant="ghost"
                   label={`Approve ${name}`}
                   testId={`step-approve-${id}`}
+                  tabIndex={innerTab}
                   disabled={!header.canApprove}
                   reason={header.disabledReason}
+                  ariaKeyShortcuts={approveKeys.ariaKeyShortcuts}
+                  title={
+                    approveKeys.titleSuffix
+                      ? `Approve${approveKeys.titleSuffix}`
+                      : undefined
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     approveStep(e.currentTarget);
@@ -275,8 +323,15 @@ export const StepCard = memo(function StepCard({
                   variant="ghost"
                   label={`Reject ${name}`}
                   testId={`step-reject-${id}`}
+                  tabIndex={innerTab}
                   disabled={!header.canReject}
                   reason={header.disabledReason}
+                  ariaKeyShortcuts={rejectKeys.ariaKeyShortcuts}
+                  title={
+                    rejectKeys.titleSuffix
+                      ? `Reject${rejectKeys.titleSuffix}`
+                      : undefined
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     decideStep("rejected");
@@ -313,6 +368,7 @@ export const StepCard = memo(function StepCard({
                 variant="ghost"
                 label={`Undo ${decision.kind === "approved" ? "approval" : "rejection"} of ${name}`}
                 testId={`step-undo-${id}`}
+                tabIndex={innerTab}
                 disabled={undoLocked}
                 reason={header.decisionLockedReason}
                 onClick={(e) => {
@@ -329,6 +385,7 @@ export const StepCard = memo(function StepCard({
             ref={openButton}
             type="button"
             aria-label={`Open ${name} in the viewer`}
+            tabIndex={innerTab}
             onClick={(e) => {
               e.stopPropagation();
               open();

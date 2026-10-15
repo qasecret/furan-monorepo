@@ -31,7 +31,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
+import {
+  BatchResults,
+  RunResults,
+} from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
+import { useCommandRegistry } from "@/lib/commands/registry";
 import { parseReviewContext, type ReviewContext } from "@/lib/review-context";
 
 /** A review context from a query string: the status and the facets. */
@@ -623,5 +627,118 @@ describe("RunResults reveal (Back to batch)", () => {
     );
     expect(scrolled).toHaveLength(0);
     expect(onRevealed).not.toHaveBeenCalled();
+  });
+});
+
+describe("BatchResults: the cursor's items (spec §4.3, §6)", () => {
+  beforeEach(() => {
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+  });
+
+  /** A `runs.list` row. */
+  const run = (id: string) => ({
+    id,
+    name: `Test ${id}`,
+    status: "unresolved" as const,
+    statusOverride: null,
+    pendingCount: 1,
+    stepCount: 1,
+  });
+
+  function renderBatch(steps: Record<string, CP[]>) {
+    listCheckpointsMock.mockImplementation(({ runId }: { runId: string }) => ({
+      data: { items: steps[runId] ?? [] },
+      isLoading: false,
+    }));
+    return render(
+      <BatchResults
+        projectId="p1"
+        runs={
+          [run("r1"), run("r2")] as ComponentProps<typeof BatchResults>["runs"]
+        }
+        branchName="main"
+        ctx={ctxOf()}
+        view="list"
+        canReview={true}
+        revealRunId={null}
+        onRevealed={() => undefined}
+        busy={false}
+      />,
+    );
+  }
+
+  const ids = (els: HTMLElement[]) =>
+    els.map((el) => el.getAttribute("data-cursor-id"));
+
+  test("each result row is an item of its own, a run's rows apart (run:<runId>:<groupKey>), and each step card one", () => {
+    renderBatch({
+      r1: [
+        cp({
+          id: "c1",
+          os: "linux",
+          browser: "chromium",
+          viewport: "1280x720",
+        }),
+        cp({
+          id: "c2",
+          os: "windows",
+          browser: "firefox",
+          viewport: "390x844",
+        }),
+      ],
+      r2: [],
+    });
+    // The rows' own toggles are the items.
+    const toggles = [
+      ...screen.getAllByTestId("result-row-r1"),
+      screen.getByTestId("result-row-r2"),
+    ];
+    expect(ids(toggles)).toEqual([
+      "run:r1:linux|chromium|1280x720",
+      "run:r1:windows|firefox|390x844",
+      "run:r2:none",
+    ]);
+    expect(ids([screen.getByTestId("step-card-c1")])).toEqual(["step:c1"]);
+    expect(ids([screen.getByTestId("step-card-c2")])).toEqual(["step:c2"]);
+    // Every id is unique on the page.
+    const all = ids(
+      Array.from(document.querySelectorAll<HTMLElement>("[data-cursor-id]")),
+    );
+    expect(new Set(all).size).toBe(all.length);
+    // One Tab stop: the first row.
+    expect(
+      ids(
+        Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-cursor-id][tabindex="0"]',
+          ),
+        ),
+      ),
+    ).toEqual(["run:r1:linux|chromium|1280x720"]);
+  });
+
+  test("a row's toggle has a focus ring, and its step cards sit in a list", () => {
+    renderBatch({ r1: [cp({ id: "c1" }), cp({ id: "c2" })] });
+    const toggle = screen.getByTestId("result-row-r1");
+    expect(toggle.className).toContain("focus-ring");
+    // Inset: the scroll container would clip a ring drawn outside it.
+    expect(toggle.className).toContain("focus-visible:-outline-offset-2");
+    const list = screen.getByTestId("step-card-c1").parentElement!;
+    expect(list.getAttribute("role")).toBe("list");
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .map((el) => el.getAttribute("data-testid")),
+    ).toEqual(["step-card-c1", "step-card-c2"]);
+  });
+
+  test("on its own, outside the batch list, a run's rows are no cursor items", () => {
+    renderRun([cp({ id: "c1" })]);
+    const toggle = screen.getByTestId("result-row-r1");
+    expect(toggle.hasAttribute("data-cursor-id")).toBe(false);
+    expect(toggle.hasAttribute("tabindex")).toBe(false);
+    expect(
+      screen.getByTestId("step-card-c1").hasAttribute("data-cursor-id"),
+    ).toBe(false);
   });
 });

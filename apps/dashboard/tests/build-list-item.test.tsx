@@ -34,6 +34,14 @@ const build: BuildRowData = {
 };
 
 describe("BuildListItem", () => {
+  test("has a focus ring, drawn inside its edges", () => {
+    render(<BuildListItem build={build} projectId="p1" selected={false} />);
+    const link = screen.getByRole("link");
+    expect(link.className).toContain("focus-ring");
+    // The history panel scrolls: a ring outside the item would be clipped.
+    expect(link.className).toContain("focus-visible:-outline-offset-2");
+  });
+
   test("links to the batch page and marks selection", () => {
     render(<BuildListItem build={build} projectId="p1" selected />);
     const link = screen.getByRole("link");

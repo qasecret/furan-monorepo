@@ -20,6 +20,8 @@ type Api = { current: ListCursor | null };
 
 interface HarnessProps {
   ids: string[];
+  /** The ids the hook is given, when they lag the rendered ones. */
+  known?: string[];
   api: Api;
   initialId?: string | null;
   /** Each item holds a button of its own (a step card's Undo). */
@@ -38,6 +40,7 @@ interface HarnessProps {
 /** A list page: a control before the list, the list, a control after it. */
 function Harness({
   ids,
+  known,
   api,
   initialId,
   inner = false,
@@ -46,7 +49,7 @@ function Harness({
   blurOnRemove = false,
 }: HarnessProps) {
   const listRef = useRef<HTMLUListElement>(null);
-  const items: CursorItem[] = ids.map((id) => ({ id }));
+  const items: CursorItem[] = (known ?? ids).map((id) => ({ id }));
   const cursor = useListCursor({ items, initialId, listRef });
   api.current = cursor;
   seen?.push(cursor.cursorId);
@@ -596,6 +599,40 @@ describe.each([
     rerender(<Harness ids={["a", "b", "d"]} api={api} />);
     expect(cursorOf(api).cursorId).toBe("a");
     expect(document.activeElement).toBe(item("a"));
+  });
+
+  it("focus that lands on an item before the list holds it sets the cursor once it does", () => {
+    // The batch page's "Back to batch": a run row and the focus handed to it
+    // arrive in one commit, before the list has heard of the row.
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c"]} known={["a", "b"]} api={api} />,
+      opts,
+    );
+    act(() => item("c").focus());
+    expect(cursorOf(api).cursorId).toBeNull();
+
+    rerender(<Harness ids={["a", "b", "c"]} api={api} />);
+    expect(cursorOf(api).cursorId).toBe("c");
+    expect(tabStops()).toEqual(["c"]);
+    // It was focused already: nothing moves.
+    expect(document.activeElement).toBe(item("c"));
+    expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  it("focus that has moved on before the list holds its item sets nothing", () => {
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c"]} known={["a", "b"]} api={api} />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("a"));
+    act(() => item("c").focus());
+    act(() => button("after").focus());
+
+    rerender(<Harness ids={["a", "b", "c"]} api={api} />);
+    expect(cursorOf(api).cursorId).toBe("a");
+    expect(document.activeElement).toBe(button("after"));
   });
 
   it("a nested list's focus does not move the outer cursor", () => {
