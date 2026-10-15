@@ -187,17 +187,26 @@ export function BatchDoneCard({
             switch (action) {
               case "continue":
                 return (
+                  // A long batch name wraps to a second line rather than
+                  // hiding the pending count at the end of the label.
                   <Button
                     key={action}
                     ref={ref}
                     variant={variantFor(action)}
-                    className="justify-between gap-2 aria-busy:cursor-progress"
+                    className="h-auto justify-between gap-2 whitespace-normal py-2.5 text-left aria-busy:cursor-progress"
                     aria-busy={busy}
                     onClick={onContinue}
                     data-testid="batch-done-continue"
                   >
-                    <span className="truncate">{labels.continue}</span>{" "}
-                    <span aria-hidden="true">→</span>
+                    <span
+                      className="min-w-0 break-words"
+                      data-testid="batch-done-continue-label"
+                    >
+                      {labels.continue}
+                    </span>{" "}
+                    <span aria-hidden="true" className="shrink-0">
+                      →
+                    </span>
                   </Button>
                 );
               case "clear":

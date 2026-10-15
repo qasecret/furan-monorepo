@@ -131,6 +131,23 @@ describe("BatchDoneCard", () => {
     ).toBeDefined();
   });
 
+  test("a long Continue label wraps instead of truncating, so the pending count stays visible", () => {
+    const name = "release-candidate nightly build for the checkout redesign";
+    const { getByRole, getByTestId } = renderCard({
+      nextBatch: { ...NEXT_BATCH, number: null, name, pending: 12 },
+    });
+    const full = `Continue to ${name} · main · 12 pending`;
+    const button = getByRole("button", { name: full });
+    const label = getByTestId("batch-done-continue-label");
+    expect(label.textContent).toBe(full);
+    // Nothing clips it: the label may break, and the button grows with it.
+    expect(label.className.split(/\s+/)).not.toContain("truncate");
+    expect(button.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(["h-auto", "whitespace-normal"]),
+    );
+    expect(button.className.split(/\s+/)).not.toContain("truncate");
+  });
+
   test("filtered variant: 'Done with the filtered steps' + 'Clear filter (4 more in this batch)'", () => {
     const { getByRole, props: p } = renderCard({
       variant: "filtered",

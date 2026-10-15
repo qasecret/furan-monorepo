@@ -290,9 +290,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
         optsRef.current.onUndo?.();
         e.preventDefault();
       },
-      // Zoom shortcuts. `=` is the unshifted key labeled "+" on US layouts —
-      // binding both `+` and `=` covers Shift-+ and bare-= without forcing
-      // users to chord. `0` resets to fit.
+      // Zoom shortcuts: `=` / `+` zoom in, `-` zooms out, `0` resets to fit.
+      // `=` is the unshifted key labeled "+" on US layouts, so zooming in
+      // needs no chord there. `+` is bound bare for layouts that send it
+      // without Shift, and as `Shift++` below for those that do.
       "=": () => {
         useViewerStore.getState().zoomBy(ZOOM_STEP);
       },
