@@ -6,7 +6,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { BATCHES_COMMANDS, type BatchesCtx } from "./batches-commands";
+import {
+  BATCHES_COMMANDS,
+  BATCHES_LIST_ATTR,
+  type BatchesCtx,
+} from "./batches-commands";
 import {
   NoBatchesMatch,
   NoBatchesYet,
@@ -466,7 +470,10 @@ export function InboxPage({ context }: Props) {
           id="inbox-batches-table"
           className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-raised shadow-raised"
         >
-          <div className="min-h-0 flex-1 overflow-auto">
+          {/* scroll-pt-11: room for the sticky header (41px) above the first
+              row a scroll can reach, so a row brought into view walking up is
+              never under it. */}
+          <div className="min-h-0 flex-1 overflow-auto scroll-pt-11">
             {showTable ? (
               <table className="w-full text-left text-sm">
                 <thead className="sticky top-0 z-10 border-b border-edge bg-sunken text-2xs uppercase tracking-wide text-fg-muted">
@@ -480,7 +487,7 @@ export function InboxPage({ context }: Props) {
                 </thead>
                 <tbody
                   ref={listRef}
-                  data-batches-list=""
+                  {...{ [BATCHES_LIST_ATTR]: "" }}
                   className="divide-y divide-edge-subtle"
                 >
                   {list.isLoading

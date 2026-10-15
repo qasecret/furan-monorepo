@@ -28,8 +28,11 @@ export interface BatchesCtx extends CommandCtx {
   show(status: ReviewStatus): void;
 }
 
+/** The attribute that marks the rows' container (the page sets it). */
+export const BATCHES_LIST_ATTR = "data-batches-list";
+
 /** The rows' container: the arrow keys and Home / End act only inside it. */
-export const BATCHES_LIST = "[data-batches-list]";
+export const BATCHES_LIST = `[${BATCHES_LIST_ATTR}]`;
 
 const hasRows = ({ rowCount }: BatchesCtx) => rowCount > 0;
 
@@ -48,7 +51,7 @@ const SHOW: ReadonlyArray<{ status: ReviewStatus; label: string }> = [
  *
  * - `j` / `k` work anywhere outside a text field (the first press focuses
  *   the first row); the arrows and Home / End only while focus is in the
- *   list, and they repeat when held.
+ *   list. All of them repeat when held (Ruling R23).
  * - Enter opens the row only from the list, where it is the row's; on any
  *   other control it stays that control's. `o` opens the cursor's row from
  *   anywhere.
@@ -59,8 +62,9 @@ export const BATCHES_COMMANDS: Command<BatchesCtx>[] = [
     id: "list.next",
     label: "Next row",
     group: "Navigate",
-    keys: ["j", { key: "ArrowDown", focusWithin: BATCHES_LIST, repeat: true }],
+    keys: ["j", { key: "ArrowDown", focusWithin: BATCHES_LIST }],
     scope: "batches",
+    repeat: true,
     enabled: hasRows,
     run: ({ next }) => next(),
   },
@@ -68,8 +72,9 @@ export const BATCHES_COMMANDS: Command<BatchesCtx>[] = [
     id: "list.prev",
     label: "Previous row",
     group: "Navigate",
-    keys: ["k", { key: "ArrowUp", focusWithin: BATCHES_LIST, repeat: true }],
+    keys: ["k", { key: "ArrowUp", focusWithin: BATCHES_LIST }],
     scope: "batches",
+    repeat: true,
     enabled: hasRows,
     run: ({ prev }) => prev(),
   },

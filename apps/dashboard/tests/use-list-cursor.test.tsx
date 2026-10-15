@@ -463,6 +463,8 @@ describe.each([
       opts,
     );
     act(() => cursorOf(api).setCursor("b", true));
+    // The timers the test environment keeps of its own.
+    const idle = vi.getTimerCount();
 
     // A filter change: the rows give way to a loading state, then come back.
     rerender(<Harness ids={[]} api={api} />);
@@ -473,6 +475,8 @@ describe.each([
     rerender(<Harness ids={["a", "b", "c"]} api={api} />);
     expect(cursorOf(api).cursorId).toBe("b");
     expect(document.activeElement).toBe(item("b"));
+    // The items are back: the window has nothing left to wait for.
+    expect(vi.getTimerCount()).toBe(idle);
 
     // The window ended while focus was back in the list: it keeps what it
     // knows of where focus is, and still follows its item out.
@@ -521,18 +525,42 @@ describe.each([
         opts,
       );
       act(() => cursorOf(api).setCursor("b", true));
+      // The timers the test environment keeps of its own.
+      const idle = vi.getTimerCount();
       rerender(<Harness ids={[]} api={api} />);
+      expect(vi.getTimerCount()).toBe(idle + 1);
 
       // Well inside the window, but the reviewer did something else.
       act(() => {
         vi.advanceTimersByTime(300);
         document.body.dispatchEvent(new Event(type, { bubbles: true }));
       });
+      // Dropped at once, not left to run out (the environment's own timer
+      // has fired by now).
+      expect(vi.getTimerCount()).toBe(0);
       rerender(<Harness ids={["a", "b", "c"]} api={api} />);
       expect(document.activeElement).toBe(document.body);
       expect(cursorOf(api).cursorId).toBe("b");
     },
   );
+
+  it("an emptied list leaves no timer behind when it unmounts", () => {
+    vi.useFakeTimers();
+    const api: Api = { current: null };
+    const { rerender, unmount } = render(
+      <Harness ids={["a", "b", "c"]} api={api} />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("b", true));
+    // The timers the test environment keeps of its own.
+    const idle = vi.getTimerCount();
+    rerender(<Harness ids={[]} api={api} />);
+    // Waiting out the window for a list that may come back.
+    expect(vi.getTimerCount()).toBe(idle + 1);
+
+    unmount();
+    expect(vi.getTimerCount()).toBe(idle);
+  });
 
   it("a keydown in a list that still has items keeps the focus record", () => {
     const api: Api = { current: null };

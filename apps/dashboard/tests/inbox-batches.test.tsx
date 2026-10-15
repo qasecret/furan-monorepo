@@ -70,6 +70,10 @@ vi.mock("@/lib/trpc", () => ({
   },
 }));
 
+import {
+  BATCHES_LIST,
+  BATCHES_LIST_ATTR,
+} from "@/app/(protected)/inbox/_components/batches-commands";
 import { InboxPage } from "@/app/(protected)/inbox/_components/inbox-page";
 import Page from "@/app/(protected)/inbox/page";
 import { CommandPalette } from "@/components/cmdk/command-palette";
@@ -1068,18 +1072,24 @@ describe("Batches: keyboard review (spec §4.2)", () => {
         .filter(({ scope }) => scope === "batches")
         .map(({ command }) => [
           command.id,
-          { label: command.label, keys: command.keys ?? [] },
+          {
+            label: command.label,
+            keys: command.keys ?? [],
+            repeat: command.repeat,
+          },
         ]),
     );
-    const inList = "[data-batches-list]";
+    const inList = BATCHES_LIST;
     expect(table).toEqual({
       "list.next": {
         label: "Next row",
-        keys: ["j", { key: "ArrowDown", focusWithin: inList, repeat: true }],
+        keys: ["j", { key: "ArrowDown", focusWithin: inList }],
+        repeat: true,
       },
       "list.prev": {
         label: "Previous row",
-        keys: ["k", { key: "ArrowUp", focusWithin: inList, repeat: true }],
+        keys: ["k", { key: "ArrowUp", focusWithin: inList }],
+        repeat: true,
       },
       "list.first": {
         label: "First row",
@@ -1103,14 +1113,38 @@ describe("Batches: keyboard review (spec §4.2)", () => {
     });
   });
 
-  test("the list is marked, and a row is one Tab stop whose link is not tabbable", async () => {
+  test("the rows sit in the marked list, and its scroll container leaves room for the sticky header", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    const list = row("b1").closest(BATCHES_LIST);
+    expect(list).not.toBeNull();
+    expect(list?.hasAttribute(BATCHES_LIST_ATTR)).toBe(true);
+    expect(list?.contains(row("b3"))).toBe(true);
+    // The selector the commands use is built from the one attribute name.
+    expect(BATCHES_LIST).toBe(`[${BATCHES_LIST_ATTR}]`);
+  });
+
+  test("the scroll container leaves room for the sticky header", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // Walking up, `scrollIntoView` aligns a row to the top of this container:
+    // under the sticky header unless the container's scroll padding is as
+    // tall as the header (an opaque row of 41px: 12 + 16 + 12 + a 1px rule).
+    const header = row("b1").closest("table")?.querySelector("thead");
+    expect(header?.classList.contains("sticky")).toBe(true);
+    expect(header?.classList.contains("top-0")).toBe(true);
+    const scroller = row("b1").closest(".overflow-auto");
+    expect(scroller?.classList.contains("scroll-pt-11")).toBe(true);
+  });
+
+  test("a row is one Tab stop and its link is not tabbable", async () => {
     const user = userEvent.setup();
     serve({ main: result(three()) });
     render(<Keyboard context={ctxOf()} />);
 
-    const list = row("b1").closest("[data-batches-list]");
-    expect(list).not.toBeNull();
-    expect(list?.contains(row("b3"))).toBe(true);
+    const list = row("b1").closest(BATCHES_LIST);
 
     // The focused row shows a ring (where the cursor is).
     for (const id of ["b1", "b2", "b3"]) {
@@ -1284,15 +1318,30 @@ describe("Batches: keyboard review (spec §4.2)", () => {
     press("Home");
     expect(document.activeElement).toBe(row("b1"));
 
-    // Held, the arrows keep going; j and k do not repeat.
+    // Held, the arrows keep going.
     press("ArrowDown", { repeat: true });
     press("ArrowDown", { repeat: true });
     expect(document.activeElement).toBe(row("b3"));
-    press("Home");
-    press("j", { repeat: true });
-    expect(document.activeElement).toBe(row("b1"));
-    press("ArrowDown", { repeat: true });
+    press("ArrowUp", { repeat: true });
     expect(document.activeElement).toBe(row("b2"));
+  });
+
+  test("holding j walks the rows", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // The first press focuses the first row; the key held repeats from there
+    // (Ruling R23), and k walks back the same way.
+    press("j");
+    expect(document.activeElement).toBe(row("b1"));
+    const held = press("j", { repeat: true });
+    expect(document.activeElement).toBe(row("b2"));
+    expect(held.defaultPrevented).toBe(true);
+    press("j", { repeat: true });
+    expect(document.activeElement).toBe(row("b3"));
+    press("k", { repeat: true });
+    press("k", { repeat: true });
+    expect(document.activeElement).toBe(row("b1"));
   });
 
   test("s starts reviewing and is disabled with the button", async () => {
@@ -1562,36 +1611,36 @@ describe("Batches: keyboard review (spec §4.2)", () => {
     });
   });
 
-  test.each([
-    ["search", searchBox],
-    ["branch", branchBox],
-  ])(
-    "typing s j k / a ? in the %s field triggers nothing",
-    async (_name, field) => {
+  test("typing s j k / a ? in the search or branch field triggers nothing", async () => {
+    for (const [name, field] of [
+      ["search", searchBox],
+      ["branch", branchBox],
+    ] as const) {
       const user = userEvent.setup();
       serve({ main: result(three()), pending: 7 });
-      render(<Keyboard context={ctxOf()} />);
+      const { unmount } = render(<Keyboard context={ctxOf()} />);
 
       await user.click(field());
-      expect(document.activeElement).toBe(field());
+      expect(document.activeElement, name).toBe(field());
       await user.keyboard("sjk/a?");
 
       // All of it was typed, and none of it was a command.
-      expect((field() as HTMLInputElement).value).toBe("sjk/a?");
-      expect(document.activeElement).toBe(field());
-      expect(fetchNext).not.toHaveBeenCalled();
-      expect(routerMock.push).not.toHaveBeenCalled();
-      expect(usePaletteStore.getState().open).toBe(false);
-      expect(useShortcutsSheet.getState().open).toBe(false);
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect((field() as HTMLInputElement).value, name).toBe("sjk/a?");
+      expect(document.activeElement, name).toBe(field());
+      expect(fetchNext, name).not.toHaveBeenCalled();
+      expect(routerMock.push, name).not.toHaveBeenCalled();
+      expect(usePaletteStore.getState().open, name).toBe(false);
+      expect(useShortcutsSheet.getState().open, name).toBe(false);
+      expect(screen.queryByRole("dialog"), name).toBeNull();
 
-      // Arrows, Home, End and Enter are the field's too.
+      // Arrows, Home and End are the field's too.
       for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
         press(key);
-        expect(document.activeElement, key).toBe(field());
+        expect(document.activeElement, `${name} ${key}`).toBe(field());
       }
-    },
-  );
+      unmount();
+    }
+  });
 
   test("a cursor left behind by a status change goes back to its row when the list returns", () => {
     serve({ main: result(three()) });
