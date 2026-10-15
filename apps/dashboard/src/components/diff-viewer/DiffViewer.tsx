@@ -2,7 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
@@ -27,6 +27,15 @@ import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
+import {
+  bindingKey,
+  formatKeyLabel,
+  isCharacterBinding,
+  lowerFirst,
+} from "@/lib/commands/keys";
+import { usePlatform } from "@/lib/commands/platform";
+import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
+import { useRegisteredCommands } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
@@ -903,72 +912,105 @@ export function DiffViewer({
               )}
               {/* Keyboard hint bar (reference TestStep): floats over the
                   canvas; ←/→ navigate steps, J/K the next / previous pending
-                  step, A approve, R reject, and ⌘Z undo while there is an
-                  action to take back. */}
-              <div
-                className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
-                data-testid="diff-viewer-shortcut-hints"
-              >
-                <div className="flex items-center gap-3 rounded-lg bg-overlay/90 px-3 py-1.5 text-xs text-fg-muted shadow-overlay backdrop-blur">
-                  <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      ←
-                    </kbd>
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      →
-                    </kbd>
-                    navigate
-                  </span>
-                  {loopOn && (
-                    <>
-                      <span className="h-3 w-px bg-edge-strong" aria-hidden />
-                      <span
-                        className="flex items-center gap-1.5"
-                        data-testid="shortcut-hint-loop"
-                      >
-                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                          J
-                        </kbd>
-                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                          K
-                        </kbd>
-                        next/prev pending
-                      </span>
-                    </>
-                  )}
-                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
-                  <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      A
-                    </kbd>
-                    approve
-                  </span>
-                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
-                  <span className="flex items-center gap-1.5">
-                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                      R
-                    </kbd>
-                    reject
-                  </span>
-                  {undoCount > 0 && (
-                    <>
-                      <span className="h-3 w-px bg-edge-strong" aria-hidden />
-                      <span
-                        className="flex items-center gap-1.5"
-                        data-testid="shortcut-hint-undo"
-                      >
-                        <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
-                          ⌘Z
-                        </kbd>
-                        undo
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
+                  step while the loop is on, A approve, R reject, and ⌘Z undo
+                  while there is an action to take back. */}
+              <ShortcutHints
+                show={{
+                  "viewer.nextPending": loopOn,
+                  "viewer.prevPending": loopOn,
+                  "review.undo": undoCount > 0,
+                }}
+              />
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** The hint bar's word for a command, and the test id of its group. */
+const HINTS: Record<string, { text: string; testId?: string }> = {
+  "viewer.prevStep": { text: "navigate" },
+  "viewer.nextStep": { text: "navigate" },
+  "viewer.nextPending": {
+    text: "next/prev pending",
+    testId: "shortcut-hint-loop",
+  },
+  "viewer.prevPending": {
+    text: "next/prev pending",
+    testId: "shortcut-hint-loop",
+  },
+  "review.approve": { text: "approve" },
+  "review.reject": { text: "reject" },
+  "review.undo": { text: "undo", testId: "shortcut-hint-undo" },
+};
+
+const HINT_KEY_CAP =
+  "rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary";
+
+interface HintGroup {
+  text: string;
+  testId?: string;
+  /** One cap per command: its first key that works. */
+  keys: string[];
+}
+
+/**
+ * The floating key hints over the canvas (spec §4.4), made from the
+ * registry's `primary` commands: the viewer's, then the global ones (⌘Z).
+ * Each shows its first key; commands that share a word share a group (← →
+ * navigate). A command the role may not run is never shown, nor a key the
+ * single-key switch has turned off. `show` hides a command for the page's own
+ * reasons (no review loop, nothing to undo).
+ */
+function ShortcutHints({ show }: { show: Partial<Record<string, boolean>> }) {
+  const commands = useRegisteredCommands();
+  const platform = usePlatform();
+  const [singleKeys] = useSingleKeyShortcuts();
+
+  const groups: HintGroup[] = [];
+  const primary = commands
+    .filter(({ command }) => command.primary && show[command.id] !== false)
+    // The page's keys first; the order within a scope is the registry's.
+    .sort(
+      (a, b) => Number(a.scope === "global") - Number(b.scope === "global"),
+    );
+  for (const { command } of primary) {
+    const key = (command.keys ?? [])
+      .map(bindingKey)
+      .find((k) => singleKeys || !isCharacterBinding(k));
+    if (key === undefined) continue;
+    const cap = formatKeyLabel(key, platform);
+    const hint = HINTS[command.id] ?? { text: lowerFirst(command.label) };
+    const last = groups.at(-1);
+    if (last?.text === hint.text) last.keys.push(cap);
+    else groups.push({ ...hint, keys: [cap] });
+  }
+  if (groups.length === 0) return null;
+
+  return (
+    <div
+      className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
+      data-testid="diff-viewer-shortcut-hints"
+    >
+      <div className="flex items-center gap-3 rounded-lg bg-overlay/90 px-3 py-1.5 text-xs text-fg-muted shadow-overlay backdrop-blur">
+        {groups.map((group, i) => (
+          <Fragment key={`${group.text}:${group.keys.join(" ")}`}>
+            {i > 0 && <span className="h-3 w-px bg-edge-strong" aria-hidden />}
+            <span
+              className="flex items-center gap-1.5"
+              data-testid={group.testId}
+            >
+              {group.keys.map((cap) => (
+                <kbd key={cap} className={HINT_KEY_CAP}>
+                  {cap}
+                </kbd>
+              ))}
+              {group.text}
+            </span>
+          </Fragment>
+        ))}
       </div>
     </div>
   );

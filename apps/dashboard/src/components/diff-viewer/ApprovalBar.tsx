@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { useCommandKeys } from "@/lib/commands/registry";
 import { statusStyle } from "@/lib/status-style";
 
 interface Props {
@@ -114,6 +115,11 @@ export function ApprovalBar({
   // them (override, still processing) shows them disabled, with the reason.
   const showStepActions =
     view === "pending" || view === "overridden" || view === "not-reviewable";
+
+  // The keys that do what Approve and Reject do, from the registry: none for
+  // a role that cannot review, or while single-key shortcuts are off.
+  const approveKeys = useCommandKeys("review.approve");
+  const rejectKeys = useCommandKeys("review.reject");
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -215,6 +221,12 @@ export function ApprovalBar({
                 testId="reject-button"
                 variant="destructive"
                 onClick={actions.reject}
+                ariaKeyShortcuts={rejectKeys.ariaKeyShortcuts}
+                title={
+                  rejectKeys.titleSuffix
+                    ? `Reject${rejectKeys.titleSuffix}`
+                    : undefined
+                }
               >
                 Reject
               </DisabledAwareButton>
@@ -227,11 +239,12 @@ export function ApprovalBar({
                 // The older-capture question, if it opens, hands focus back to
                 // this button when it closes.
                 onClick={(e) => actions.approve(e.currentTarget)}
-                title={
+                ariaKeyShortcuts={approveKeys.ariaKeyShortcuts}
+                title={`${
                   state === "new"
                     ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
                     : "Promotes this step's candidate as the new baseline for its test variation."
-                }
+                }${approveKeys.titleSuffix}`}
               >
                 {state === "new" ? "Save as baseline" : "Approve"}
               </DisabledAwareButton>

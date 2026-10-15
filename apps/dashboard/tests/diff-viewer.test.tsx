@@ -2502,13 +2502,37 @@ describe("DiffViewer undo shortcut and hint", () => {
         .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
     });
     const hint = r.getByTestId("shortcut-hint-undo");
-    expect(hint.querySelector("kbd")?.textContent).toBe("⌘Z");
+    // jsdom is not a Mac: $mod is Ctrl (a Mac's ⌘Z is checked below).
+    expect(hint.querySelector("kbd")?.textContent).toBe("Ctrl+Z");
     expect(hint.textContent).toContain("undo");
 
     act(() => {
       useUndoStore.getState().drop("a1");
     });
     expect(r.queryByTestId("shortcut-hint-undo")).toBeNull();
+    cleanup();
+
+    // On a Mac it reads ⌘Z.
+    const mac = vi.spyOn(navigator, "platform", "get");
+    mac.mockReturnValue("MacIntel");
+    try {
+      act(() => {
+        useUndoStore.getState().push({
+          actionId: "a2",
+          label: "Approved 'CP-1'",
+          runIds: [RUN_ID],
+        });
+      });
+      const onMac = render(
+        <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
+      );
+      expect(
+        onMac.getByTestId("shortcut-hint-undo").querySelector("kbd")
+          ?.textContent,
+      ).toBe("⌘Z");
+    } finally {
+      mac.mockRestore();
+    }
   });
 
   test("⌘Z undoes through the review hook, with no action id (the newest)", () => {
@@ -2530,6 +2554,127 @@ describe("DiffViewer undo shortcut and hint", () => {
     pressCtrlZ();
     input.remove();
     expect(reviewSpies.undo).not.toHaveBeenCalled();
+  });
+});
+
+// The bar of key hints over the canvas, and the hints on the buttons, are
+// made from the registry: only what the reviewer's role may run, with the
+// keys that work.
+describe("DiffViewer key hints come from the registry", () => {
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
+    resetReviewSpies();
+    // An action to take back: ⌘Z is due.
+    useUndoStore.setState({ stack: [] });
+    useUndoStore
+      .getState()
+      .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
+  });
+  afterEach(() => {
+    cleanup();
+    useUndoStore.setState({ stack: [] });
+  });
+
+  const viewer = () => (
+    <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />
+  );
+  /** The key caps of the hint bar, in order. */
+  const hintKeys = (r: ReturnType<typeof render>) =>
+    [
+      ...r.getByTestId("diff-viewer-shortcut-hints").querySelectorAll("kbd"),
+    ].map((k) => k.textContent);
+
+  test("hint bar lists only allowed primary commands", () => {
+    // A reviewer: steps, pending steps, the decisions and undo.
+    const reviewer = render(viewer());
+    expect(hintKeys(reviewer)).toEqual([
+      "←",
+      "→",
+      "J",
+      "K",
+      "A",
+      "R",
+      "Ctrl+Z",
+    ]);
+    const bar = reviewer.getByTestId("diff-viewer-shortcut-hints");
+    expect(bar.textContent).toBe(
+      "←→navigateJKnext/prev pendingAapproveRrejectCtrl+Zundo",
+    );
+    cleanup();
+
+    // A guest: navigation only. No decision, and nothing of theirs to undo.
+    keyboard.role = "guest";
+    const guest = render(viewer());
+    expect(hintKeys(guest)).toEqual(["←", "→", "J", "K"]);
+    expect(guest.getByTestId("diff-viewer-shortcut-hints").textContent).toBe(
+      "←→navigateJKnext/prev pending",
+    );
+    expect(guest.queryByTestId("shortcut-hint-undo")).toBeNull();
+    cleanup();
+
+    // Single-key shortcuts off: only the keys that still do something.
+    keyboard.role = "editor";
+    useSingleKeyStore.setState({ on: false });
+    const off = render(viewer());
+    expect(hintKeys(off)).toEqual(["←", "→", "Ctrl+Z"]);
+    expect(off.queryByTestId("shortcut-hint-loop")).toBeNull();
+  });
+
+  test("Approve button carries aria-keyshortcuts A and title (A)", () => {
+    const r = render(viewer());
+    const approve = r.getByTestId("approve-checkpoint-button");
+    expect(approve.getAttribute("aria-keyshortcuts")).toBe("A");
+    expect(approve.getAttribute("title")).toBe(
+      "Promotes this step's candidate as the new baseline for its test variation. (A)",
+    );
+    const reject = r.getByTestId("reject-button");
+    expect(reject.getAttribute("aria-keyshortcuts")).toBe("R X");
+    expect(reject.getAttribute("title")).toBe("Reject (R)");
+    // Next pending is J's button.
+    const next = r.getByTestId("header-next-pending");
+    expect(next.getAttribute("aria-keyshortcuts")).toBe("J");
+    expect(next.getAttribute("title")).toBe("Next pending step (J)");
+    cleanup();
+
+    // A guest has no decision keys to name; J is still theirs.
+    keyboard.role = "guest";
+    const guest = render(viewer());
+    expect(
+      guest
+        .getByTestId("approve-checkpoint-button")
+        .hasAttribute("aria-keyshortcuts"),
+    ).toBe(false);
+    expect(
+      guest.getByTestId("approve-checkpoint-button").getAttribute("title"),
+    ).toBe(
+      "Promotes this step's candidate as the new baseline for its test variation.",
+    );
+    expect(
+      guest.getByTestId("reject-button").hasAttribute("aria-keyshortcuts"),
+    ).toBe(false);
+    expect(guest.getByTestId("reject-button").hasAttribute("title")).toBe(
+      false,
+    );
+    expect(
+      guest
+        .getByTestId("header-next-pending")
+        .getAttribute("aria-keyshortcuts"),
+    ).toBe("J");
+    cleanup();
+
+    // With single-key shortcuts off, no button names a key that does nothing.
+    keyboard.role = "editor";
+    useSingleKeyStore.setState({ on: false });
+    const off = render(viewer());
+    expect(
+      off
+        .getByTestId("approve-checkpoint-button")
+        .hasAttribute("aria-keyshortcuts"),
+    ).toBe(false);
+    expect(off.getByTestId("header-next-pending").getAttribute("title")).toBe(
+      "Next pending step",
+    );
   });
 });
 

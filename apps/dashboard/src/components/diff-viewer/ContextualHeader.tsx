@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
+import { useCommandKeys } from "@/lib/commands/registry";
 
 /** The review loop's place in the header: how many are left, and the way on. */
 export interface HeaderLoop {
@@ -164,6 +165,9 @@ export function ContextualHeader({
 function LoopControls({ loop }: { loop: HeaderLoop }) {
   const { remaining, onNextPending, pending, nextLabel, cue, error, onRetry } =
     loop;
+  // J's button: its key, from the registry (none while single-key shortcuts
+  // are off).
+  const nextKeys = useCommandKeys("viewer.nextPending");
   return (
     <div className="flex items-center gap-2" data-testid="header-loop">
       {remaining ? (
@@ -214,7 +218,8 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
         className="h-8 gap-1 px-3 text-xs"
         aria-label="Next pending step"
         aria-busy={pending ?? false}
-        title="Next pending step (J)"
+        aria-keyshortcuts={nextKeys.ariaKeyShortcuts}
+        title={`Next pending step${nextKeys.titleSuffix}`}
         data-testid="header-next-pending"
         onClick={onNextPending}
         disabled={!onNextPending}
