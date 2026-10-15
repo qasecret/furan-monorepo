@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { tinykeys } from "tinykeys";
@@ -30,16 +29,12 @@ interface ShortcutOptions {
   onReject?: () => void;
   /** ⌘Z / Ctrl+Z: takes back the newest review action. */
   onUndo?: () => void;
-  prevDiffHref?: string | null;
-  nextDiffHref?: string | null;
   onHelpToggle?: () => void;
   onNextDiff?: () => void;
   onPrevDiff?: () => void;
   /**
    * Step (checkpoint) navigation for ←/→ — the reference TestStep binds the
-   * arrows to "navigate" between steps. When supplied these take precedence
-   * over prev/nextDiffHref (run-level navigation, currently inert under
-   * ADR-038); callers without checkpoints fall back to the href behaviour.
+   * arrows to "navigate" between the run's own steps.
    */
   onPrevStep?: () => void;
   onNextStep?: () => void;
@@ -107,16 +102,15 @@ function hasTextSelection(): boolean {
 /**
  * Wires keyboard shortcuts for the DiffViewer.
  *
- * `optsRef` indirection: callbacks (approve/reject/help) and href targets
- * are read through a ref so the underlying tinykeys binding does not need
- * to be torn down on every parent re-render.
+ * `optsRef` indirection: callbacks (approve/reject/help, step and queue
+ * navigation) are read through a ref so the underlying tinykeys binding does
+ * not need to be torn down on every parent re-render.
  *
  * `?` is bound both bare and as `Shift+?` because on US-layout the `?`
  * key requires shift; tinykeys matches `key`, which is already `?` once
  * shift is held, but binding both keeps it robust across layouts.
  */
 export function useDiffViewerShortcuts(opts: ShortcutOptions) {
-  const router = useRouter();
   const mode = useViewerStore((s) => s.mode);
   const setMode = useViewerStore((s) => s.setMode);
   const viewport = useViewerStore((s) => s.viewport);
@@ -127,20 +121,10 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
   useEffect(() => {
     const bindings: Record<string, (e: KeyboardEvent) => void> = {
       ArrowLeft: () => {
-        const o = optsRef.current;
-        if (o.onPrevStep) {
-          o.onPrevStep();
-          return;
-        }
-        if (o.prevDiffHref) router.push(o.prevDiffHref);
+        optsRef.current.onPrevStep?.();
       },
       ArrowRight: () => {
-        const o = optsRef.current;
-        if (o.onNextStep) {
-          o.onNextStep();
-          return;
-        }
-        if (o.nextDiffHref) router.push(o.nextDiffHref);
+        optsRef.current.onNextStep?.();
       },
       D: () => {
         // Toggle the single-image difference view.
@@ -296,5 +280,5 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       ]),
     );
     return tinykeys(window, guarded);
-  }, [router, mode, setMode, viewport, setViewport]);
+  }, [mode, setMode, viewport, setViewport]);
 }

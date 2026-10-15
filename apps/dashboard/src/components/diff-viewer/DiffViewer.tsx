@@ -467,7 +467,7 @@ export function DiffViewer({
 
   // ←/→ step navigation over the checkpoint list (the reference TestStep
   // binds the arrows to "navigate"). Computed before the early-returns so the
-  // shortcut hook can consume them; falls back to run-level href nav.
+  // shortcut hook can consume them.
   const navIndex = checkpointSummaries.findIndex(
     (c) => c.id === selectedCheckpointId,
   );
@@ -483,12 +483,6 @@ export function DiffViewer({
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
-    prevDiffHref: data?.prevRunId
-      ? `/projects/${data.projectId}/runs/${data.prevRunId}/diffs/${data.prevRunId}`
-      : null,
-    nextDiffHref: data?.nextRunId
-      ? `/projects/${data.projectId}/runs/${data.nextRunId}/diffs/${data.nextRunId}`
-      : null,
     onApprove: review.approve,
     onReject: review.reject,
     // ⌘Z takes back the newest review action: no id.

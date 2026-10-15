@@ -1,12 +1,6 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock next/navigation router.
-const pushMock = vi.fn();
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
-}));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -36,7 +30,6 @@ describe("useDiffViewerShortcuts", () => {
       kindOverrides: new Map(),
       selectedIgnoreId: null,
     });
-    pushMock.mockReset();
   });
   afterEach(() => {
     // Unmount any mounted renderHook trees so tinykeys bindings registered
@@ -47,12 +40,16 @@ describe("useDiffViewerShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("ArrowRight pushes the next-diff href if provided", () => {
+  it("ArrowLeft / ArrowRight move between the run's own steps", () => {
+    const onPrevStep = vi.fn();
+    const onNextStep = vi.fn();
     renderHook(() =>
-      useDiffViewerShortcuts({ viewports: [], nextDiffHref: "/next" }),
+      useDiffViewerShortcuts({ viewports: [], onPrevStep, onNextStep }),
     );
     act(() => press("ArrowRight"));
-    expect(pushMock).toHaveBeenCalledWith("/next");
+    expect(onNextStep).toHaveBeenCalledOnce();
+    act(() => press("ArrowLeft"));
+    expect(onPrevStep).toHaveBeenCalledOnce();
   });
 
   it("O cycles the mode", () => {
@@ -469,8 +466,6 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     renderHook(() =>
       useDiffViewerShortcuts({
         viewports: ["1280x720", "375x812"],
-        nextDiffHref: "/next",
-        prevDiffHref: "/prev",
         ...callbacks,
       }),
     );
@@ -479,14 +474,12 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   function expectNothingFired(before: ReturnType<typeof snapshot>) {
     for (const cb of Object.values(callbacks))
       expect(cb).not.toHaveBeenCalled();
-    expect(pushMock).not.toHaveBeenCalled();
     expect(snapshot()).toEqual(before);
   }
 
   let focused: HTMLElement | null = null;
   beforeEach(() => {
     vi.clearAllMocks();
-    pushMock.mockReset();
   });
   afterEach(() => {
     // Unmount hook trees first so tinykeys bindings don't accumulate.

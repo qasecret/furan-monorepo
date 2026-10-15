@@ -90,8 +90,6 @@ interface MockData {
   autoApproved: boolean;
   status: RunStatusLite;
   statusOverride?: "passed" | "failed" | null;
-  prevRunId: string | null;
-  nextRunId: string | null;
   checkpointContexts?: Record<string, unknown>;
 }
 const defaultMockData: MockData = {
@@ -111,8 +109,6 @@ const defaultMockData: MockData = {
   // to drive its enabled-state + status pill. Default `unresolved` so the
   // embedded ApprovalBar is in its canonical reviewable state.
   status: "unresolved",
-  prevRunId: null,
-  nextRunId: null,
 };
 let mockGetByIdData: MockData = { ...defaultMockData };
 // ADR-038 checkpoint list — configurable per-test so the side step-arrows

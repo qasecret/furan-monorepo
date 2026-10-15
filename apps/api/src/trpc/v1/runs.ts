@@ -565,12 +565,6 @@ export const runsRouter = t.router({
       // ADR-038: run-level ignoreAreas removed from test_runs. Return null.
       const runIgnoreAreas: IgnoreRegion[] | null = null;
 
-      // ADR-038: sibling runs are now linked via the build/project, not
-      // a single variation. Return null for prevRunId/nextRunId for now;
-      // Phase 5 will implement the new navigation model.
-      const prevRunId: string | null = null;
-      const nextRunId: string | null = null;
-
       // ADR-032: autoApproved is true iff at least one baselines row
       // exists for this run with userId IS NULL (the system-approved
       // signal). Single PK-indexed lookup; cheap.
@@ -721,8 +715,6 @@ export const runsRouter = t.router({
         variationIgnoreAreas: firstContext.variationIgnoreAreas,
         checkpointContexts,
         autoApproved,
-        prevRunId,
-        nextRunId,
       };
     }),
 
