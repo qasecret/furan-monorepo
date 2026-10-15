@@ -102,10 +102,31 @@ describe("legacy /runs/:runId/diffs/:diffId redirect", () => {
   );
 
   test("goes to _first, and does not throw, when the lookup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(apiGet).mockRejectedValue(new Error("ECONNREFUSED"));
     expect(await redirectedTo(renderPage(STEP_A))).toBe(
       `/projects/p1/runs/${RUN}/checkpoints/_first`,
     );
+    warn.mockRestore();
+  });
+
+  test("logs a warning with the run id and the error message when the lookup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(apiGet).mockRejectedValue(new Error("ECONNREFUSED"));
+    await redirectedTo(renderPage(STEP_A));
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = warn.mock.calls[0]?.join(" ") ?? "";
+    expect(line).toContain(RUN);
+    expect(line).toContain("ECONNREFUSED");
+    warn.mockRestore();
+  });
+
+  test("a lookup that answers (even with an error status) does not warn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(apiGet).mockResolvedValue({ status: 404, data: null });
+    await redirectedTo(renderPage(STEP_A));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   test.each([
