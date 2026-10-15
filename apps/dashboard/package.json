@@ -57,7 +57,7 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.6.1",
     "eslint": "^9.17.0",
-    "eslint-config-next": "^15.5.27",
+    "eslint-config-next": "^16.4.0",
     "jsdom": "^25.0.1",
     "postcss": "^8.5.29",
     "tailwindcss": "^4.3.3",
