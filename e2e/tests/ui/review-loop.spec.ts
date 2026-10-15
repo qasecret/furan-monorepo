@@ -330,13 +330,37 @@ test.describe.serial("ui: review loop", () => {
     await expect(proceed).toBeFocused();
   });
 
-  test("Enter continues to batch A; A moves to its next test with the cue", async ({}, testInfo) => {
+  test("Enter continues to batch A; K wraps to its other test and J comes back; A moves on with the cue", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["review.loop"]));
+
+    const sidebar = page.getByTestId("test-info-sidebar");
+    const pill = page.getByTestId("header-loop-remaining");
 
     await page.keyboard.press("Enter");
     // Batch A's first pending step: its first test, `cart`.
     await expect(page).toHaveURL(stepUrl(first, "cart"));
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    // Two steps need review in A, `cart` on screen and `profile` (R33). The
+    // pill also says the loop has its answer, so the keys act.
+    await expect(sidebar).toContainText("1/2 cart");
+    await expect(pill).toHaveText("2 left in batch");
+
+    // K: nothing needs review before `cart` in the batch, so it wraps to the
+    // batch's other end, the other test's step. A backward move has no cue.
+    await page.keyboard.press("k");
+    await expect(page).toHaveURL(stepUrl(second, "profile"));
+    await expect(sidebar).toContainText("1/1 profile");
+    await expect(pill).toHaveText("2 left in batch");
+
+    // J: nothing after `profile`, so it wraps back to `cart`, with the cue,
+    // whose count is the pill's there.
+    await page.keyboard.press("j");
+    await expect(page).toHaveURL(stepUrl(first, "cart"));
+    await expect(page.getByTestId("review-announcer")).toHaveText(
+      "Next test: cart · 2 left in batch",
+    );
+    await expect(sidebar).toContainText("1/2 cart");
+    await expect(pill).toHaveText("2 left in batch");
 
     await approveWithA();
 
@@ -413,7 +437,7 @@ test.describe.serial("ui: review loop", () => {
     );
   });
 
-  test("Back to batch keeps a viewport filter in the URL and the select", async ({}, testInfo) => {
+  test("Back to batch keeps a viewport filter in the URL and the select; browser Back returns to the step", async ({}, testInfo) => {
     testInfo.annotations.push(...coverAnnotations(["review.loop"]));
 
     // The phone test's step, with the batch filtered to the phone viewport.
@@ -433,6 +457,13 @@ test.describe.serial("ui: review loop", () => {
     const select = page.getByTestId("facet-select-viewport");
     await expect(select).toHaveText(PHONE);
     await expect(select).toHaveAccessibleName(`Viewport: ${PHONE}`);
+
+    // The browser's Back, once: the step again, its filter still in the URL.
+    await page.goBack();
+    await expect(page).toHaveURL(
+      new RegExp(`${stepPath(second, "profile")}\\?viewport=${PHONE}$`),
+    );
+    await expect(page.getByTestId("contextual-header-back")).toBeVisible();
   });
 
   test("An old /diffs/ link lands on its exact step, filter kept", async ({}, testInfo) => {
