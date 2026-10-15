@@ -28,6 +28,11 @@ interface HarnessProps {
   ownOnFocus?: boolean;
   /** Gets the cursor each render saw. */
   seen?: (string | null)[];
+  /**
+   * An item removed from the page reports a blur first, as some browsers do
+   * while the commit takes it out (`relatedTarget` null).
+   */
+  blurOnRemove?: boolean;
 }
 
 /** A list page: a control before the list, the list, a control after it. */
@@ -38,6 +43,7 @@ function Harness({
   inner = false,
   ownOnFocus = false,
   seen,
+  blurOnRemove = false,
 }: HarnessProps) {
   const listRef = useRef<HTMLUListElement>(null);
   const items: CursorItem[] = ids.map((id) => ({ id }));
@@ -52,6 +58,18 @@ function Harness({
           <li
             key={id}
             data-testid={`item-${id}`}
+            ref={
+              blurOnRemove
+                ? (el) => () => {
+                    el?.dispatchEvent(
+                      new FocusEvent("focusout", {
+                        bubbles: true,
+                        relatedTarget: null,
+                      }),
+                    );
+                  }
+                : undefined
+            }
             {...cursor.itemProps(id)}
             {...(ownOnFocus ? { onFocus: () => undefined } : {})}
           >
@@ -91,6 +109,90 @@ function Nested({ api }: { api: Api }) {
   );
 }
 
+/**
+ * Two lists, one inside an item of the other. Each hook owns the items it was
+ * given: the outer one is handed `a`, `b` and `c`, the inner one `inner:1`.
+ */
+function Inside({
+  outer,
+  inner,
+  seen,
+}: {
+  outer: Api;
+  inner: Api;
+  seen?: (string | null)[];
+}) {
+  const outerRef = useRef<HTMLUListElement>(null);
+  const innerRef = useRef<HTMLUListElement>(null);
+  const outerCursor = useListCursor({
+    items: [{ id: "a" }, { id: "b" }, { id: "c" }],
+    listRef: outerRef,
+  });
+  const innerCursor = useListCursor({
+    items: [{ id: "inner:1" }],
+    listRef: innerRef,
+  });
+  outer.current = outerCursor;
+  inner.current = innerCursor;
+  seen?.push(outerCursor.cursorId);
+  return (
+    <ul ref={outerRef}>
+      <li data-testid="item-a" {...outerCursor.itemProps("a")}>
+        a
+      </li>
+      <li data-testid="item-b" {...outerCursor.itemProps("b")}>
+        b
+        <ul ref={innerRef}>
+          <li data-testid="item-inner:1" {...innerCursor.itemProps("inner:1")}>
+            inner
+          </li>
+        </ul>
+      </li>
+      <li data-testid="item-c" {...outerCursor.itemProps("c")}>
+        c
+      </li>
+    </ul>
+  );
+}
+
+/** Two sibling lists on one page, each with a cursor of its own. */
+function Siblings({ left, right }: { left: Api; right: Api }) {
+  const leftRef = useRef<HTMLUListElement>(null);
+  const rightRef = useRef<HTMLUListElement>(null);
+  const leftCursor = useListCursor({
+    items: [{ id: "l1" }, { id: "l2" }, { id: "l3" }],
+    listRef: leftRef,
+  });
+  const rightCursor = useListCursor({
+    items: [{ id: "r1" }, { id: "r2" }, { id: "r3" }],
+    listRef: rightRef,
+  });
+  left.current = leftCursor;
+  right.current = rightCursor;
+  return (
+    <div>
+      <ul ref={leftRef}>
+        {["l1", "l2", "l3"].map((id) => (
+          <li key={id} data-testid={`item-${id}`} {...leftCursor.itemProps(id)}>
+            {id}
+          </li>
+        ))}
+      </ul>
+      <ul ref={rightRef}>
+        {["r1", "r2", "r3"].map((id) => (
+          <li
+            key={id}
+            data-testid={`item-${id}`}
+            {...rightCursor.itemProps(id)}
+          >
+            {id}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 const item = (id: string): HTMLElement => screen.getByTestId(`item-${id}`);
 const button = (name: string): HTMLElement =>
   screen.getByRole("button", { name });
@@ -115,6 +217,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   scrollSpy.mockRestore();
 });
 
@@ -350,6 +453,194 @@ describe.each([
     rerender(<Harness ids={["a", "d"]} api={api} />);
     expect(cursorOf(api).cursorId).toBe("d");
     expect(document.activeElement).toBe(item("a"));
+  });
+
+  it("focus returns when items come back within the loading window", () => {
+    vi.useFakeTimers();
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c"]} api={api} />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("b", true));
+
+    // A filter change: the rows give way to a loading state, then come back.
+    rerender(<Harness ids={[]} api={api} />);
+    expect(document.activeElement).toBe(document.body);
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    rerender(<Harness ids={["a", "b", "c"]} api={api} />);
+    expect(cursorOf(api).cursorId).toBe("b");
+    expect(document.activeElement).toBe(item("b"));
+
+    // The window ended while focus was back in the list: it keeps what it
+    // knows of where focus is, and still follows its item out.
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    rerender(<Harness ids={["a", "c"]} api={api} />);
+    expect(document.activeElement).toBe(item("c"));
+
+    // The item it was on is not among those that come back: the one now at
+    // its index gets it.
+    rerender(<Harness ids={[]} api={api} />);
+    rerender(<Harness ids={["a", "x", "y"]} api={api} />);
+    expect(cursorOf(api).cursorId).toBe("x");
+    expect(document.activeElement).toBe(item("x"));
+  });
+
+  it("an emptied list does not take focus when items arrive later", () => {
+    vi.useFakeTimers();
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c"]} api={api} />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("b", true));
+
+    // Emptied, and the next items arrive long after (an event while the
+    // reviewer is elsewhere): nothing takes focus.
+    rerender(<Harness ids={[]} api={api} />);
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    rerender(<Harness ids={["a", "b", "c"]} api={api} />);
+    expect(document.activeElement).toBe(document.body);
+    expect(cursorOf(api).cursorId).toBe("b");
+    expect(tabStops()).toEqual(["b"]);
+  });
+
+  it.each(["keydown", "pointerdown"])(
+    "a %s while the list is empty drops the focus record",
+    (type) => {
+      vi.useFakeTimers();
+      const api: Api = { current: null };
+      const { rerender } = render(
+        <Harness ids={["a", "b", "c"]} api={api} />,
+        opts,
+      );
+      act(() => cursorOf(api).setCursor("b", true));
+      rerender(<Harness ids={[]} api={api} />);
+
+      // Well inside the window, but the reviewer did something else.
+      act(() => {
+        vi.advanceTimersByTime(300);
+        document.body.dispatchEvent(new Event(type, { bubbles: true }));
+      });
+      rerender(<Harness ids={["a", "b", "c"]} api={api} />);
+      expect(document.activeElement).toBe(document.body);
+      expect(cursorOf(api).cursorId).toBe("b");
+    },
+  );
+
+  it("a keydown in a list that still has items keeps the focus record", () => {
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c", "d"]} api={api} />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("b", true));
+
+    // A reviewer decides with a key and the decided item leaves the list:
+    // the key was pressed, yet focus still goes with the item.
+    act(() => {
+      document.body.dispatchEvent(new Event("keydown", { bubbles: true }));
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    rerender(<Harness ids={["a", "c", "d"]} api={api} />);
+    expect(document.activeElement).toBe(item("c"));
+  });
+
+  it("focus lost with a non-cursor item returns to the cursor item", () => {
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c", "d"]} api={api} />,
+      opts,
+    );
+    // Focus is on c; the cursor was put on a without moving focus.
+    act(() => item("c").focus());
+    act(() => cursorOf(api).setCursor("a"));
+    expect(cursorOf(api).cursorId).toBe("a");
+    expect(document.activeElement).toBe(item("c"));
+
+    // c goes: focus has nowhere to be, so it comes to the cursor.
+    rerender(<Harness ids={["a", "b", "d"]} api={api} />);
+    expect(cursorOf(api).cursorId).toBe("a");
+    expect(document.activeElement).toBe(item("a"));
+  });
+
+  it("a nested list's focus does not move the outer cursor", () => {
+    const outer: Api = { current: null };
+    const inner: Api = { current: null };
+    const seen: (string | null)[] = [];
+    render(<Inside outer={outer} inner={inner} seen={seen} />, opts);
+    act(() => cursorOf(outer).setCursor("a"));
+
+    act(() => item("inner:1").focus());
+    // The inner list's item is the inner cursor's; the outer cursor never
+    // names it, not even for a render.
+    expect(cursorOf(inner).cursorId).toBe("inner:1");
+    expect(cursorOf(outer).cursorId).toBe("a");
+    expect(seen).not.toContain("inner:1");
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>(LIST_ITEM))
+        .filter((el) => el.tabIndex === 0)
+        .map((el) => el.getAttribute("data-cursor-id")),
+    ).toEqual(["a", "inner:1"]);
+
+    // An outer item still takes the outer cursor.
+    act(() => item("c").focus());
+    expect(cursorOf(outer).cursorId).toBe("c");
+    expect(cursorOf(inner).cursorId).toBe("inner:1");
+  });
+
+  it("an item removed with a blur reported during the commit still hands focus on", () => {
+    const api: Api = { current: null };
+    const { rerender } = render(
+      <Harness ids={["a", "b", "c", "d"]} api={api} blurOnRemove />,
+      opts,
+    );
+    act(() => cursorOf(api).setCursor("b", true));
+    expect(document.activeElement).toBe(item("b"));
+
+    // The browser reports the blur (nothing receives focus) as b is taken
+    // out; that is no click on the page's background.
+    rerender(<Harness ids={["a", "c", "d"]} api={api} blurOnRemove />);
+    expect(cursorOf(api).cursorId).toBe("c");
+    expect(document.activeElement).toBe(item("c"));
+  });
+
+  it("two sibling lists keep separate cursors", () => {
+    const left: Api = { current: null };
+    const right: Api = { current: null };
+    render(<Siblings left={left} right={right} />, opts);
+
+    act(() => cursorOf(left).next());
+    act(() => cursorOf(left).next());
+    expect(cursorOf(left).cursorId).toBe("l2");
+    expect(cursorOf(right).cursorId).toBeNull();
+
+    act(() => cursorOf(right).last());
+    expect(cursorOf(right).cursorId).toBe("r3");
+    expect(cursorOf(left).cursorId).toBe("l2");
+    expect(document.activeElement).toBe(item("r3"));
+
+    // Each list's Tab stop is its own cursor.
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>(LIST_ITEM))
+        .filter((el) => el.tabIndex === 0)
+        .map((el) => el.getAttribute("data-cursor-id")),
+    ).toEqual(["l2", "r3"]);
+
+    // Focus in one list never sets the other's cursor, and moves from the
+    // other's cursor do not start from this one's.
+    act(() => item("l3").focus());
+    expect(cursorOf(left).cursorId).toBe("l3");
+    expect(cursorOf(right).cursorId).toBe("r3");
+    act(() => cursorOf(right).prev());
+    expect(document.activeElement).toBe(item("r2"));
+    expect(cursorOf(left).cursorId).toBe("l3");
   });
 
   it("initialId places the cursor without focusing", () => {

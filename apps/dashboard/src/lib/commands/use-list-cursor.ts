@@ -26,7 +26,23 @@ import { LIST_ITEM } from "./guard";
  *   disappears, it moves to the item now at the index its item last had, or
  *   to the last item. It takes focus with it only when focus went with the
  *   item; focus elsewhere on the page is never moved.
+ * - **Focus lost with an item** (the element focus was on has left the page
+ *   and nothing else has focus) goes back to the cursor item, whether or not
+ *   the cursor moved.
+ * - **An emptied list** (rows giving way to a loading state) holds that
+ *   record of where focus was for at most `KEEP_FOCUS_MS`: items that come
+ *   back inside it get focus back, later ones (an event while the reviewer
+ *   is elsewhere) never do. A key press or a pointer press in the meantime
+ *   drops it at once.
+ * - **Ids.** Only the ids in `items` are this list's: focus on an item of
+ *   another list (one nested in this one) never moves its cursor.
  */
+
+/**
+ * How long an emptied list keeps the record of where focus was (Ruling R21):
+ * enough for a filter change to reload, not for a later arrival to take focus.
+ */
+export const KEEP_FOCUS_MS = 2000;
 
 /** An entry of the list, in the order the cursor walks it. */
 export interface CursorItem {
@@ -84,8 +100,16 @@ export function useListCursor({
   initialId = null,
   listRef,
 }: {
+  /** The list's items in walking order. The ids must be unique. */
   items: CursorItem[];
+  /**
+   * Where the cursor starts, without focus or scrolling. It is read when the
+   * hook mounts (a later change is ignored), and it applies only if the first
+   * non-empty `items` contain it: until then the cursor waits, and an id the
+   * list never held is dropped (no cursor).
+   */
   initialId?: string | null;
+  /** The element that holds every item (`itemProps`'s elements). */
   listRef: RefObject<HTMLElement | null>;
 }): ListCursor {
   const [cursorId, setCursorId] = useState<string | null>(initialId);
@@ -103,10 +127,26 @@ export function useListCursor({
   // The element in the list focus last landed on, until focus goes
   // somewhere else. If the list then loses it, focus went with the item.
   const focusedRef = useRef<Element | null>(null);
+  // Set while the list is empty and holds a record of focus: the timer that
+  // lets the record go (`KEEP_FOCUS_MS`).
+  const emptiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useLayoutEffect(() => {
     idsRef.current = ids;
   }, [ids]);
+
+  /** Ends the wait of an emptied list, if there is one. */
+  const stopWaiting = useCallback(() => {
+    if (emptiedTimer.current === null) return;
+    clearTimeout(emptiedTimer.current);
+    emptiedTimer.current = null;
+  }, []);
+
+  /** An emptied list lets go of where focus was. */
+  const forgetFocus = useCallback(() => {
+    stopWaiting();
+    focusedRef.current = null;
+  }, [stopWaiting]);
 
   /** Moves the cursor to `id`; with `focus`, focus and the view follow. */
   const place = useCallback(
@@ -136,7 +176,9 @@ export function useListCursor({
       if (!list.contains(target)) return;
       focusedRef.current = target;
       const id = itemIdOf(list, target);
-      if (id !== null && id !== cursorRef.current) place(id, false);
+      // An item of another list (nested in this one) is not this cursor's.
+      if (id === null || !idsRef.current.includes(id)) return;
+      if (id !== cursorRef.current) place(id, false);
     },
     [listRef, place],
   );
@@ -184,42 +226,69 @@ export function useListCursor({
         }
       });
     };
+    // The reviewer has moved on while the list was empty: where focus was is
+    // no longer where they are.
+    const onUserInput = () => {
+      if (emptiedTimer.current !== null) forgetFocus();
+    };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
+    document.addEventListener("keydown", onUserInput, true);
+    document.addEventListener("pointerdown", onUserInput, true);
     return () => {
       document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("keydown", onUserInput, true);
+      document.removeEventListener("pointerdown", onUserInput, true);
     };
-  }, [listRef, noteFocus]);
+  }, [listRef, noteFocus, forgetFocus]);
 
-  // Keep the cursor's index; when its item is gone, move it to that index.
+  // Gone, the list waits for nothing.
+  useLayoutEffect(() => stopWaiting, [stopWaiting]);
+
+  // Keep the cursor's index; when its item is gone, move it to that index;
+  // and give focus back to the cursor if it was lost with an item.
   useLayoutEffect(() => {
-    const id = cursorRef.current;
+    if (ids.length === 0) {
+      // Emptied (or not yet filled): the cursor waits for items, and a record
+      // of focus is kept only for a short while, in case this is a reload.
+      if (focusedRef.current !== null && emptiedTimer.current === null) {
+        emptiedTimer.current = setTimeout(forgetFocus, KEEP_FOCUS_MS);
+      }
+      return;
+    }
+    stopWaiting();
+    let id = cursorRef.current;
     if (id === null) return;
     const at = ids.indexOf(id);
     if (at >= 0) {
       indexRef.current = at;
-      return;
+    } else {
+      const was = indexRef.current;
+      if (was === null) {
+        // An initialId the list doesn't hold.
+        place(null, false);
+        return;
+      }
+      id = ids[Math.min(was, ids.length - 1)] ?? null;
+      if (id === null) return;
+      place(id, false);
     }
-    // Nothing to move to yet: an initialId, or the cursor, waits for items.
-    if (ids.length === 0) return;
-    const was = indexRef.current;
-    if (was === null) {
-      // An initialId the list doesn't hold.
-      place(null, false);
-      return;
-    }
-    // Focus went with the item when the element it was on has left the
-    // page and nothing else has it. Anywhere else, it stays.
+    // Focus went with an item when the element it was on has left the page
+    // and nothing else has it: it comes to the cursor item, which is the one
+    // at that index when the cursor's own item was the one removed. Anywhere
+    // else, it stays.
     const focused = focusedRef.current;
     const active = document.activeElement;
-    const focusWentWithIt =
+    if (
       focused !== null &&
       !focused.isConnected &&
-      (active === null || active === document.body);
-    const to = ids[Math.min(was, ids.length - 1)];
-    if (to !== undefined) place(to, focusWentWithIt);
-  }, [ids, cursorId, place]);
+      (active === null || active === document.body)
+    ) {
+      focusedRef.current = null;
+      place(id, true);
+    }
+  }, [ids, cursorId, place, forgetFocus, stopWaiting]);
 
   const setCursor = useCallback(
     (id: string, focus = false) => {
