@@ -198,8 +198,15 @@ export const StepCard = memo(function StepCard({
   // ends with it, and never comes back by itself.
   const canAskStale = canReview && needsReviewer && newerCapture !== null;
   const [staleOpener, setStaleOpener] = useState<HTMLElement | null>(null);
+  // The batch list's continuation for a question its `a` key asked (R26):
+  // kept while the question is open, then, once Confirm has decided, until
+  // the question has closed (`afterClose`), when it places focus itself.
+  const onDecided = useRef<(() => void) | null>(null);
+  const afterClose = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (!canAskStale) setStaleOpener(null);
+    if (canAskStale) return;
+    onDecided.current = null;
+    setStaleOpener(null);
   }, [canAskStale]);
   const returnFocusTo = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -212,12 +219,14 @@ export const StepCard = memo(function StepCard({
     if (target?.isConnected) target.focus();
   }, [staleOpener]);
 
-  const approveStep = (opener: HTMLElement) => {
+  const approveStep = (opener: HTMLElement, then?: () => void) => {
     if (newerCapture) {
+      onDecided.current = then ?? null;
       setStaleOpener(opener);
       return;
     }
     decideStep("approved");
+    then?.();
   };
 
   // Inside the batch list: the card is a cursor item (spec §6), and the
@@ -227,7 +236,7 @@ export const StepCard = memo(function StepCard({
   const item = useCursorItem(stepItemId(id));
   const decidable = canReview && needsReviewer && header.canApprove;
   useRegisterStepActions(id, {
-    approve: () => {
+    approve: (then) => {
       const el = card.current;
       if (!decidable || el === null) return;
       // The question's Cancel gives focus back to what had it: the card, or
@@ -235,6 +244,7 @@ export const StepCard = memo(function StepCard({
       const active = document.activeElement;
       approveStep(
         active instanceof HTMLElement && el.contains(active) ? active : el,
+        then,
       );
     },
     reject: () => {
@@ -242,8 +252,7 @@ export const StepCard = memo(function StepCard({
     },
     open,
     needsReviewer,
-    canReview: decidable,
-    asksFirst: newerCapture !== null,
+    decidable,
   });
   const approveKeys = useCommandKeys("batch.approve");
   const rejectKeys = useCommandKeys("batch.reject");
@@ -346,19 +355,38 @@ export const StepCard = memo(function StepCard({
               <StaleStepConfirm
                 buildName={newerCapture.buildName}
                 open={staleOpener !== null}
-                onCancel={() => setStaleOpener(null)}
+                onCancel={() => {
+                  onDecided.current = null;
+                  setStaleOpener(null);
+                }}
                 onConfirm={() => {
                   const opener = staleOpener;
-                  setStaleOpener(null);
+                  const then = onDecided.current;
+                  onDecided.current = null;
                   // The step may have changed under the dialog: approve only
                   // what is still approvable.
-                  if (header.canApprove) {
+                  const approving = header.canApprove;
+                  if (approving && then !== null) {
+                    // The list moves focus on, once the question has let
+                    // go of it: not back to the card first.
+                    returnFocusTo.current = null;
+                    afterClose.current = then;
+                  }
+                  setStaleOpener(null);
+                  if (approving) {
                     decideStep(
                       "approved",
                       opener !== null &&
                         toolbar.current?.contains(opener) === true,
                     );
                   }
+                }}
+                onCloseAutoFocus={(e) => {
+                  const then = afterClose.current;
+                  afterClose.current = null;
+                  if (then === null) return;
+                  e.preventDefault();
+                  then();
                 }}
               />
             )}

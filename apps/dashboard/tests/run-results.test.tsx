@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -730,6 +731,49 @@ describe("BatchResults: the cursor's items (spec §4.3, §6)", () => {
         .getAllByRole("listitem")
         .map((el) => el.getAttribute("data-testid")),
     ).toEqual(["step-card-c1", "step-card-c2"]);
+  });
+
+  test("the cursor survives a load-more append", () => {
+    const props = {
+      projectId: "p1",
+      branchName: "main",
+      ctx: ctxOf(),
+      view: "list" as const,
+      canReview: true,
+      revealRunId: null,
+      onRevealed: () => undefined,
+      busy: false,
+    };
+    type Runs = ComponentProps<typeof BatchResults>["runs"];
+    listCheckpointsMock.mockImplementation(({ runId }: { runId: string }) => ({
+      data: {
+        items:
+          runId === "r1"
+            ? [cp({ id: "c1" }), cp({ id: "c2" })]
+            : [cp({ id: `${runId}-c` })],
+      },
+      isLoading: false,
+    }));
+    const view = render(<BatchResults {...props} runs={[run("r1")] as Runs} />);
+    const card = screen.getByTestId("step-card-c2");
+    act(() => card.focus());
+    const stops = () =>
+      ids(
+        Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-cursor-id][tabindex="0"]',
+          ),
+        ),
+      );
+    expect(stops()).toEqual(["step:c2"]);
+
+    // Load more: the next page's runs are appended (a new array).
+    view.rerender(
+      <BatchResults {...props} runs={[run("r1"), run("r2")] as Runs} />,
+    );
+    expect(screen.getByTestId("step-card-r2-c")).toBeDefined();
+    expect(stops()).toEqual(["step:c2"]);
+    expect(document.activeElement).toBe(screen.getByTestId("step-card-c2"));
   });
 
   test("on its own, outside the batch list, a run's rows are no cursor items", () => {

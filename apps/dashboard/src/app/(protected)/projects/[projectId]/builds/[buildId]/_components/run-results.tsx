@@ -174,9 +174,9 @@ interface Props {
 /**
  * Renders one test (run) as one-or-more result rows — one per environment its
  * checkpoints were captured in. Each row expands to the step cards for that
- * environment.
+ * environment. Memoized: a cursor move redraws the list, not every run.
  */
-export function RunResults({
+export const RunResults = memo(function RunResults({
   projectId,
   runId,
   testName,
@@ -292,7 +292,7 @@ export function RunResults({
       ))}
     </>
   );
-}
+});
 
 /** The id "Back to batch" links to (`#run-<runId>`). */
 const anchorIdOf = (runId: string): string => `run-${runId}`;
@@ -462,10 +462,15 @@ const ResultRow = memo(function ResultRow({
       </button>
       {hasSteps && open && (
         <div className="px-4 pb-4">
+          {/* Not a Tab stop: an overflowing scroller with no tabbable
+              content is one in Chromium, and focus there is on no item.
+              scroll-px-4: a card brought into view sideways keeps room for
+              its focus ring. */}
           <div
             role="list"
+            tabIndex={-1}
             className={cn(
-              "rounded-lg border border-edge bg-sunken p-4",
+              "rounded-lg border border-edge bg-sunken p-4 scroll-px-4",
               view === "grid"
                 ? "flex flex-wrap gap-4"
                 : "flex gap-4 overflow-x-auto",
@@ -592,7 +597,7 @@ export function BatchResults({
   const canDecide = () => {
     if (at?.kind !== "step") return false;
     const actions = steps.get(at.stepId);
-    return actions !== undefined && actions.needsReviewer && actions.canReview;
+    return actions !== undefined && actions.needsReviewer && actions.decidable;
   };
 
   useCommands<BatchCtx>("batch", BATCH_COMMANDS, {
@@ -623,11 +628,14 @@ export function BatchResults({
         steps.get(at.stepId)?.open();
       } else if (at?.kind === "run") {
         // Enter is the row's own toggle (R22); `o` and the palette open the
-        // run's first step.
+        // row's own first step, in its environment (R28), or the run's
+        // first when the row has none.
         if (key === "Enter") {
           if (atRow?.expandable) atRow.setOpen(!atRow.open);
         } else {
-          router.push(diffViewerHref(projectId, at.runId, undefined, ctx));
+          router.push(
+            diffViewerHref(projectId, at.runId, atRow?.stepIds[0], ctx),
+          );
         }
       }
     },
@@ -645,19 +653,20 @@ export function BatchResults({
           (i) =>
             i.kind === "step" && steps.get(i.stepId)?.needsReviewer === true,
         );
+      // On, with focus, once the step is decided, so the next `a` / `r`
+      // works at once. A refusal does not bring it back: the toast says what
+      // happened (spec §4.3).
+      const goOn = () => {
+        if (nextStep !== undefined) cursor.setCursor(nextStep.id, true);
+      };
       if (kind === "approved") {
-        // An older capture: Approve asks first, as the card's button does.
-        // Nothing is decided yet, so the cursor stays, and the question's
-        // Cancel gives focus back to this card.
-        const asks = actions.asksFirst;
-        actions.approve();
-        if (asks) return;
+        // For an older capture the card asks first, as its button does: the
+        // cursor goes on after Confirm (R26), stays on Cancel.
+        actions.approve(goOn);
       } else {
         actions.reject();
+        goOn();
       }
-      // On, with focus, so the next `a` / `r` works at once. A refusal does
-      // not bring it back: the toast says what happened (spec §4.3).
-      if (nextStep !== undefined) cursor.setCursor(nextStep.id, true);
     },
   });
 

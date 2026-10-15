@@ -1,3 +1,4 @@
+import { LIST_ITEM } from "@/lib/commands/guard";
 import type { Command, CommandCtx } from "@/lib/commands/types";
 import { canReviewRole } from "@/lib/roles";
 
@@ -26,8 +27,9 @@ export interface BatchCtx extends CommandCtx {
   canOpen: boolean;
   /**
    * Opens the step in the viewer. On a run row, Enter (`key`) toggles it as
-   * its own button does, and anything else (`o`, the palette) opens the run's
-   * first step (R22).
+   * its own button does, and anything else (`o`, the palette) opens the
+   * row's own first step, or the run's first when the row has none (R22,
+   * R28).
    */
   open(key: string | undefined): void;
   /**
@@ -36,7 +38,10 @@ export interface BatchCtx extends CommandCtx {
    * decided now.
    */
   canDecide(): boolean;
-  /** The step card's own Approve / Reject; the cursor goes on (spec §4.3). */
+  /**
+   * The step card's own Approve / Reject; the cursor goes on once the step
+   * is decided (spec §4.3; after the stale-step question's Confirm, R26).
+   */
   decide(kind: "approved" | "rejected"): void;
 }
 
@@ -51,8 +56,16 @@ export interface BatchPageCtx extends CommandCtx {
 /** The attribute that marks the list of run rows and steps (the list sets it). */
 export const BATCH_LIST_ATTR = "data-batch-list";
 
-/** The list: the arrow keys, Home / End, Enter, `a` and `r` act only inside it. */
+/** The list: ↑ / ↓ and Home / End act only inside it. */
 export const BATCH_LIST = `[${BATCH_LIST_ATTR}]`;
+
+/**
+ * Focus on an item of the list (or on a control inside one): ← / →, Enter,
+ * `a` and `r` act only there, so they act on the item that has focus, which
+ * is the cursor (R24). Focus on the list's background, a step row's
+ * scroller say, is no item's.
+ */
+export const BATCH_ITEM = `${BATCH_LIST} ${LIST_ITEM}`;
 
 const hasItems = ({ itemCount }: BatchCtx) => itemCount > 0;
 const mayReview = ({ role }: CommandCtx) => canReviewRole(role);
@@ -64,11 +77,14 @@ const mayReview = ({ role }: CommandCtx) => canReviewRole(role);
  * - `j` / `k` work anywhere outside a text field (the first press focuses
  *   the first item); the arrows and Home / End only while focus is in the
  *   list. All of them repeat when held (R23).
- * - Enter acts only from the list, where it is the item's: Enter on a run
- *   row's own button reaches the command (the button is the cursor item, and
- *   guard rule 7 exempts it), which toggles it exactly as a click would;
- *   Enter on a card's buttons stays theirs. `o` opens from anywhere.
- * - `a` and `r` decide the focused step, so only from the list.
+ * - Enter, ← / →, `a` and `r` act only with focus on an item (`BATCH_ITEM`):
+ *   on the item that has focus, never on a cursor left elsewhere (R24).
+ *   Enter on a run row's own button reaches the command (the button is the
+ *   cursor item, and guard rule 7 exempts it), which toggles it exactly as a
+ *   click would; Enter on a card's buttons stays theirs. `o` opens from
+ *   anywhere.
+ * - `a` and `r` are no palette actions (R27): with focus in the palette, the
+ *   step they would decide shows no focus.
  */
 export const BATCH_COMMANDS: Command<BatchCtx>[] = [
   {
@@ -114,7 +130,7 @@ export const BATCH_COMMANDS: Command<BatchCtx>[] = [
     label: "Expand run",
     group: "View",
     keys: ["ArrowRight"],
-    focusWithin: BATCH_LIST,
+    focusWithin: BATCH_ITEM,
     scope: "batch",
     enabled: ({ canExpand }) => canExpand,
     run: ({ expand }) => expand(),
@@ -124,7 +140,7 @@ export const BATCH_COMMANDS: Command<BatchCtx>[] = [
     label: "Collapse run",
     group: "View",
     keys: ["ArrowLeft"],
-    focusWithin: BATCH_LIST,
+    focusWithin: BATCH_ITEM,
     scope: "batch",
     enabled: ({ canCollapse }) => canCollapse,
     run: ({ collapse }) => collapse(),
@@ -133,7 +149,7 @@ export const BATCH_COMMANDS: Command<BatchCtx>[] = [
     id: "batch.open",
     label: "Open step",
     group: "Navigate",
-    keys: [{ key: "Enter", focusWithin: BATCH_LIST }, "o"],
+    keys: [{ key: "Enter", focusWithin: BATCH_ITEM }, "o"],
     scope: "batch",
     enabled: ({ canOpen }) => canOpen,
     run: ({ open }, meta) => open(meta?.key),
@@ -143,8 +159,9 @@ export const BATCH_COMMANDS: Command<BatchCtx>[] = [
     label: "Approve step",
     group: "Review",
     keys: ["a"],
-    focusWithin: BATCH_LIST,
+    focusWithin: BATCH_ITEM,
     scope: "batch",
+    palette: false,
     allowed: mayReview,
     enabled: ({ canDecide }) => canDecide(),
     run: ({ decide }) => decide("approved"),
@@ -154,8 +171,9 @@ export const BATCH_COMMANDS: Command<BatchCtx>[] = [
     label: "Reject step",
     group: "Review",
     keys: ["r"],
-    focusWithin: BATCH_LIST,
+    focusWithin: BATCH_ITEM,
     scope: "batch",
+    palette: false,
     allowed: mayReview,
     enabled: ({ canDecide }) => canDecide(),
     run: ({ decide }) => decide("rejected"),

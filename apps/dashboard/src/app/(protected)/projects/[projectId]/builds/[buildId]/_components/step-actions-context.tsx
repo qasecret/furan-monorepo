@@ -17,9 +17,12 @@ import {
 export interface StepActions {
   /**
    * What the card's Approve button does: decides, or, for a step a later
-   * run captured again, asks the stale-step question first (`asksFirst`).
+   * run captured again, asks the stale-step question first. `onDecided`
+   * runs once the step is decided: at once, or after the question's
+   * Confirm, once the question has closed (never on Cancel). Then it, not
+   * the card, places focus (R26).
    */
-  approve(): void;
+  approve(onDecided?: () => void): void;
   /** What the card's Reject button does. */
   reject(): void;
   /** The step waits for a reviewer (new or unresolved). */
@@ -29,12 +32,7 @@ export interface StepActions {
    * takes decisions (not overridden or still processing) with none of this
    * step's on its way.
    */
-  canReview: boolean;
-  /**
-   * Approve only asks (an older capture): nothing is decided until the
-   * question is answered.
-   */
-  asksFirst: boolean;
+  decidable: boolean;
   /** Opens the step in the viewer, with the page's review context. */
   open(): void;
 }
@@ -96,17 +94,14 @@ export function useRegisterStepActions(id: string, actions: StepActions): void {
   useLayoutEffect(() => {
     if (registry === null) return;
     return registry.register(id, {
-      approve: () => live.current.approve(),
+      approve: (onDecided) => live.current.approve(onDecided),
       reject: () => live.current.reject(),
       open: () => live.current.open(),
       get needsReviewer() {
         return live.current.needsReviewer;
       },
-      get canReview() {
-        return live.current.canReview;
-      },
-      get asksFirst() {
-        return live.current.asksFirst;
+      get decidable() {
+        return live.current.decidable;
       },
     });
   }, [registry, id]);

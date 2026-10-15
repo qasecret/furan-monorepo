@@ -42,6 +42,22 @@ vi.mock("@/hooks/use-authed-image", () => ({
   },
 }));
 
+/** A query that was not asked (the palette's search, with nothing typed). */
+const IDLE_QUERY = vi.hoisted(() => ({
+  data: undefined,
+  isPending: false,
+  isError: false,
+  isFetching: false,
+}));
+// The palette reads the current project; the batch page does not.
+vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
+  useCurrentProject: () => ({
+    currentProjectId: "p1",
+    currentProject: null,
+    projects: [],
+  }),
+}));
+
 const getByIdMock = vi.fn();
 const listMock = vi.fn();
 const listCheckpointsMock = vi.fn();
@@ -57,7 +73,12 @@ vi.mock("@/lib/trpc", () => ({
       review: { next: { fetch: fetchNext, invalidate: invalidateNext } },
       runs: { facets: { invalidate: invalidateFacets } },
     }),
-    builds: { getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) } },
+    builds: {
+      getById: { useQuery: (...a: unknown[]) => getByIdMock(...a) },
+      // The palette's batch search; nothing is typed into it here.
+      list: { useQuery: () => IDLE_QUERY },
+    },
+    variations: { list: { useQuery: () => IDLE_QUERY } },
     runs: {
       list: { useQuery: (...a: unknown[]) => listMock(...a) },
       listCheckpoints: {
@@ -103,11 +124,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  BATCH_ITEM,
   BATCH_LIST,
   BATCH_LIST_ATTR,
 } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/batch-commands";
 import { BatchPage } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/batch-page";
 import BuildDetailPage from "@/app/(protected)/projects/[projectId]/builds/[buildId]/page";
+import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { ShortcutsSheet } from "@/components/shortcuts/shortcuts-sheet";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
@@ -1712,10 +1735,14 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
             ...(command.focusWithin !== undefined && {
               focusWithin: command.focusWithin,
             }),
+            ...(command.palette !== undefined && { palette: command.palette }),
           },
         ]),
     );
     const inList = BATCH_LIST;
+    // ← / →, Enter, a and r: only with focus on an item (R24).
+    const onItem = BATCH_ITEM;
+    expect(BATCH_ITEM).toBe(`${BATCH_LIST} [data-cursor-id]`);
     expect(table).toEqual({
       "list.next": {
         label: "Next item",
@@ -1738,26 +1765,28 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
       "batch.expand": {
         label: "Expand run",
         keys: ["ArrowRight"],
-        focusWithin: inList,
+        focusWithin: onItem,
       },
       "batch.collapse": {
         label: "Collapse run",
         keys: ["ArrowLeft"],
-        focusWithin: inList,
+        focusWithin: onItem,
       },
       "batch.open": {
         label: "Open step",
-        keys: [{ key: "Enter", focusWithin: inList }, "o"],
+        keys: [{ key: "Enter", focusWithin: onItem }, "o"],
       },
       "batch.approve": {
         label: "Approve step",
         keys: ["a"],
-        focusWithin: inList,
+        focusWithin: onItem,
+        palette: false,
       },
       "batch.reject": {
         label: "Reject step",
         keys: ["r"],
-        focusWithin: inList,
+        focusWithin: onItem,
+        palette: false,
       },
       "batch.start": { label: "Start reviewing", keys: ["s"] },
     });
@@ -1893,10 +1922,10 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     expect(wideRow().getAttribute("aria-expanded")).toBe("true");
     expect(routerMock.push).not.toHaveBeenCalled();
 
-    // `o` on a run row opens the run's first step, with the context.
+    // `o` on a run row opens the row's own first step, with the context.
     press("o");
     expect(routerMock.push).toHaveBeenCalledWith(
-      "/projects/p1/runs/r1/checkpoints/_first?status=failed&browser=chromium",
+      "/projects/p1/runs/r1/checkpoints/c1?status=failed&browser=chromium",
     );
     expect(wideRow().getAttribute("aria-expanded")).toBe("true");
 
@@ -2082,12 +2111,42 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     expect(reviewSpies.decide).not.toHaveBeenCalled();
     expect(focused()).toBe("step:c1");
 
-    // Asked again and confirmed: approved, as the button's question does.
+    // Escape is a Cancel too.
+    press("a");
+    await screen.findByTestId("stale-step-dialog");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(focused()).toBe("step:c1");
+  });
+
+  test("after confirming a stale approval the cursor moves to the next step needing review", async () => {
+    serveBatch({ c1: { newerCapture: NEWER } });
+    render(<Keyboard />);
+    walkTo("step:c1");
+
     press("a");
     fireEvent.click(await screen.findByTestId("stale-step-confirm"));
+    // Approved, as the button's question does.
     expect(reviewSpies.decide).toHaveBeenCalledOnce();
     expect(reviewSpies.decide).toHaveBeenCalledWith(
       expect.objectContaining({ checkpointIds: ["c1"], kind: "approved" }),
+    );
+    // Once the question has closed, the cursor goes on, with focus: c2 was
+    // passed by the machine, so c3.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(focused()).toBe("step:c3");
+    expect(tabStops()).toEqual(["step:c3"]);
+    // The next key works at once.
+    press("r");
+    expect(reviewSpies.decide).toHaveBeenLastCalledWith(
+      expect.objectContaining({ checkpointIds: ["c3"], kind: "rejected" }),
     );
   });
 
@@ -2194,6 +2253,118 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     for (const label of ["Next item", "Open step", "Approve step"]) {
       expect(within(sheet).getByText(label)).toBeDefined();
     }
+  });
+
+  test("the step scroller is not a Tab stop", () => {
+    serveBatch();
+    render(<Keyboard />);
+    const scroller = screen.getByTestId("step-card-c1").parentElement!;
+    expect(scroller.getAttribute("role")).toBe("list");
+    expect(scroller.className).toContain("overflow-x-auto");
+    // An overflowing scroller with nothing tabbable in it is a Tab stop in
+    // Chromium unless it says otherwise.
+    expect(scroller.getAttribute("tabindex")).toBe("-1");
+    // A card scrolled into view sideways keeps room for its ring.
+    expect(scroller.className).toContain("scroll-px-4");
+  });
+
+  test("with focus on the step scroller, a decides nothing and is not prevented", () => {
+    serveBatch();
+    render(<Keyboard />);
+    walkTo("step:c4");
+    // Focus on r1's scroller (a click there, say): on no item.
+    const scroller = screen.getByTestId("step-card-c1").parentElement!;
+    act(() => scroller.focus());
+    expect(document.activeElement).toBe(scroller);
+
+    for (const key of ["a", "r", "Enter", "ArrowLeft", "ArrowRight"]) {
+      expect(press(key).defaultPrevented, key).toBe(false);
+    }
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByTestId("result-row-r2")[0]!.getAttribute("aria-expanded"),
+    ).toBe("true");
+    // j / k still work from there.
+    expect(press("j").defaultPrevented).toBe(true);
+    expect(focused()).toBe("step:c5");
+  });
+
+  test("the palette offers no batch-page Approve or Reject", async () => {
+    serveBatch();
+    render(
+      <>
+        <Keyboard />
+        <CommandPalette userRole="editor" userId="u1" />
+      </>,
+    );
+    walkTo("step:c1");
+    act(() => usePaletteStore.getState().setOpen(true));
+    const palette = await screen.findByTestId("command-palette");
+    const actions = within(
+      within(palette).getByRole("group", { name: "Actions" }),
+    )
+      .getAllByRole("option")
+      .map((o) => o.firstElementChild?.textContent ?? "");
+    // The step under the cursor needs review, yet the palette, which holds
+    // focus, decides nothing (R27); moving and opening are still offered.
+    expect(actions).not.toContain("Approve step");
+    expect(actions).not.toContain("Reject step");
+    expect(actions).toEqual(
+      expect.arrayContaining(["Next item", "Open step", "Start reviewing"]),
+    );
+    act(() => usePaletteStore.getState().setOpen(false));
+
+    // The keys and the sheet keep them.
+    act(() => useShortcutsSheet.getState().setOpen(true));
+    const sheet = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(within(sheet).getByText("Approve step")).toBeDefined();
+    expect(within(sheet).getByText("Reject step")).toBeDefined();
+  });
+
+  test("o on a second environment row opens that row's first step", () => {
+    serveBatch();
+    render(<Keyboard search="status=all" />);
+    walkTo(`run:r1:${NARROW}`);
+    expect(press("o").defaultPrevented).toBe(true);
+    // c3, the narrow viewport's own, not the run's first (c1, another
+    // environment).
+    expect(routerMock.push).toHaveBeenCalledWith(
+      "/projects/p1/runs/r1/checkpoints/c3?status=all",
+    );
+    // A row with no steps falls back to the run's first.
+    walkTo("run:r3:none");
+    press("o");
+    expect(routerMock.push).toHaveBeenLastCalledWith(
+      "/projects/p1/runs/r3/checkpoints/_first?status=all",
+    );
+  });
+
+  test("the next step needing review skips a collapsed row's pending steps", () => {
+    serveBatch();
+    render(<Keyboard />);
+    // Collapse r1's narrow row: its c3 is no item now.
+    walkTo(`run:r1:${NARROW}`);
+    press("ArrowLeft");
+    expect(screen.queryByTestId("step-card-c3")).toBeNull();
+
+    act(() => item("step:c1").focus());
+    press("a");
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ checkpointIds: ["c1"], kind: "approved" }),
+    );
+    expect(focused()).toBe("step:c4");
+  });
+
+  test("a cursor move redraws no run", () => {
+    serveBatch();
+    render(<Keyboard />);
+    press("j");
+    const drawn = listCheckpointsMock.mock.calls.length;
+    for (const key of ["j", "j", "k", "End", "Home"]) press(key);
+    expect(focused()).toBe(`run:r1:${WIDE}`);
+    // Each run's list asks for its steps once per render: none redrew.
+    expect(listCheckpointsMock.mock.calls.length).toBe(drawn);
   });
 
   test("the card's Approve and Reject show their keys", () => {

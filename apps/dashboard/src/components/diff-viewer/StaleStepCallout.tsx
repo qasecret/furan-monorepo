@@ -66,6 +66,11 @@ interface ConfirmProps {
   open: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /**
+   * As the question closes and would put focus back: `preventDefault` keeps
+   * it from doing so, for a caller that places focus itself.
+   */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -78,6 +83,7 @@ export function StaleStepConfirm({
   open,
   onCancel,
   onConfirm,
+  onCloseAutoFocus,
 }: ConfirmProps) {
   return (
     <AlertDialog
@@ -86,7 +92,10 @@ export function StaleStepConfirm({
         if (!next) onCancel();
       }}
     >
-      <AlertDialogContent data-testid="stale-step-dialog">
+      <AlertDialogContent
+        data-testid="stale-step-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Approve an older capture?</AlertDialogTitle>
           <AlertDialogDescription>

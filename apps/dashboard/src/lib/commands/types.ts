@@ -97,6 +97,12 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   repeat?: boolean;
   /** Shown in the viewer's floating hint bar. */
   primary?: boolean;
+  /**
+   * `false`: never one of the palette's Actions, though its keys and the
+   * sheet keep it. For a command that acts on the focused item, which has no
+   * visible focus while the palette is open (R27).
+   */
+  palette?: false;
   /** ⌘Z: still fires inside a `[data-passes-undo]` dialog. */
   passesUndo?: boolean;
 }

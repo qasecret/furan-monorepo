@@ -691,11 +691,13 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
     const actions = registry.get("c1");
     expect(actions).toBeDefined();
     expect(actions?.needsReviewer).toBe(true);
-    expect(actions?.canReview).toBe(true);
-    expect(actions?.asksFirst).toBe(false);
+    expect(actions?.decidable).toBe(true);
 
-    // What the keys run is what a click on the buttons does.
-    act(() => actions?.approve());
+    // What the keys run is what a click on the buttons does; a plain
+    // approval runs the list's continuation at once.
+    const decided = vi.fn();
+    act(() => actions?.approve(decided));
+    expect(decided).toHaveBeenCalledOnce();
     fireEvent.click(button("step-approve-c1"));
     expect(reviewSpies.decide).toHaveBeenCalledTimes(2);
     expect(reviewSpies.decide.mock.calls[0]).toEqual(
@@ -724,7 +726,7 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
     // Read live: once decided, it no longer needs a reviewer.
     card.show(cp({ state: "approved", decision: decision("approved") }));
     expect(registry.get("c1")?.needsReviewer).toBe(false);
-    expect(registry.get("c1")?.canReview).toBe(false);
+    expect(registry.get("c1")?.decidable).toBe(false);
 
     card.unmount();
     expect(registry.get("c1")).toBeUndefined();
@@ -737,7 +739,7 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
       run: { ...RUN, statusOverride: "passed" },
     });
     expect(registry.get("c1")?.needsReviewer).toBe(true);
-    expect(registry.get("c1")?.canReview).toBe(false);
+    expect(registry.get("c1")?.decidable).toBe(false);
     act(() => registry.get("c1")?.approve());
     act(() => registry.get("c1")?.reject());
     expect(reviewSpies.decide).not.toHaveBeenCalled();
@@ -746,7 +748,7 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
     card.unmount();
     inFlight.add("c1");
     renderCard(cp(), { registry });
-    expect(registry.get("c1")?.canReview).toBe(false);
+    expect(registry.get("c1")?.decidable).toBe(false);
     act(() => registry.get("c1")?.approve());
     expect(reviewSpies.decide).not.toHaveBeenCalled();
   });
@@ -754,7 +756,7 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
   test("a reader who may not review registers no decision", () => {
     const registry = createStepActions();
     renderCard(cp(), { registry, canReview: false });
-    expect(registry.get("c1")?.canReview).toBe(false);
+    expect(registry.get("c1")?.decidable).toBe(false);
     act(() => registry.get("c1")?.approve());
     act(() => registry.get("c1")?.reject());
     expect(reviewSpies.decide).not.toHaveBeenCalled();
@@ -768,19 +770,60 @@ describe("StepCard in the batch list's keys (spec §4.3, §6)", () => {
     const card = screen.getByTestId("step-card-c1");
     card.tabIndex = 0;
     act(() => card.focus());
-    expect(registry.get("c1")?.asksFirst).toBe(true);
 
-    act(() => registry.get("c1")?.approve());
+    const decided = vi.fn();
+    act(() => registry.get("c1")?.approve(decided));
     const dialog = await screen.findByTestId("stale-step-dialog");
     expect(dialog.textContent).toContain("Approve an older capture?");
     expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(decided).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("stale-step-cancel"));
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(reviewSpies.decide).not.toHaveBeenCalled();
+    expect(decided).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(card);
+  });
+
+  test("Confirm runs the list's continuation once the question has closed, and focus is not put back first", async () => {
+    const registry = createStepActions();
+    renderCard(cp({ newerCapture: NEWER } as Partial<StepCheckpoint>), {
+      registry,
+    });
+    const card = screen.getByTestId("step-card-c1");
+    card.tabIndex = 0;
+    act(() => card.focus());
+    const elsewhere = document.createElement("button");
+    document.body.appendChild(elsewhere);
+    // Where the list puts focus: what it finds there afterwards stays.
+    const decided = vi.fn(() => elsewhere.focus());
+    act(() => registry.get("c1")?.approve(decided));
+    await screen.findByTestId("stale-step-dialog");
+
+    // Focus is not handed back to the card on the way.
+    const cardFocus = vi.spyOn(card, "focus");
+    fireEvent.click(screen.getByTestId("stale-step-confirm"));
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("stale-step-dialog")).toBeNull();
+    expect(decided).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(cardFocus).not.toHaveBeenCalled();
+    cardFocus.mockRestore();
+
+    // A later question from the button carries no continuation.
+    decided.mockClear();
+    fireEvent.click(button("step-approve-c1"));
+    fireEvent.click(await screen.findByTestId("stale-step-confirm"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(decided).not.toHaveBeenCalled();
+    elsewhere.remove();
   });
 });
 
