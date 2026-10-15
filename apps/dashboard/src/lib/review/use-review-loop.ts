@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { create } from "zustand";
 
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { reserveAnnouncement } from "@/lib/review/review-announcer";
@@ -56,6 +57,12 @@ export interface ReviewLoop {
   /** The done card to show, or null. */
   card: ReviewCard | null;
   dismissCard(): void;
+  /**
+   * The cue of the forward move that opened this test ("Next test: ‹name› ·
+   * ‹N› left in batch") while it is shown, for about 3 s (R15); else null.
+   * Only the loop's own forward moves have one: K's do not (R16).
+   */
+  cue: string | null;
 }
 
 /** The viewer's own title for a run with no name. */
@@ -66,6 +73,41 @@ const WAIT_LIMIT_MS = 10_000;
 
 const cueText = (name: string, left: number) =>
   `Next test: ${name} · ${left} left in batch`;
+
+/** How long the visible cue stays up (R15). */
+const CUE_MS = 3_000;
+
+interface LoopCueState {
+  /** The last forward move's cue, and the test (run) it opened. */
+  cue: { text: string; runId: string } | null;
+}
+
+/**
+ * The visible twin of the spoken cue (R15), for the header of the test the
+ * loop moved to. A store, not state: the move replaces the page that made it,
+ * and the chip is shown by the page it opens. It is taken down after about
+ * 3 s, or at once by the next move.
+ */
+export const useLoopCue = create<LoopCueState>(() => ({ cue: null }));
+
+/** The pending take-down; one for the page, restarted by every cue. */
+let cueTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showCue(text: string, runId: string): void {
+  clearTimeout(cueTimer);
+  useLoopCue.setState({ cue: { text, runId } });
+  cueTimer = setTimeout(() => useLoopCue.setState({ cue: null }), CUE_MS);
+}
+
+/**
+ * A move is being made: a cue still waiting for its test's name, or still on
+ * screen, is about a place being left.
+ */
+function supersedeCues(): void {
+  reserveAnnouncement();
+  clearTimeout(cueTimer);
+  if (useLoopCue.getState().cue !== null) useLoopCue.setState({ cue: null });
+}
 
 /**
  * The review loop (spec §3.4, §4.2): after a decision the viewer moves to the
@@ -186,18 +228,23 @@ export function useReviewLoop({
   const announceMove = useCallback(
     (target: { runId: string }, left: number) => {
       // Said only if no later cue was reserved by then: a name that arrives
-      // after the next move's cue belongs to a place already left.
+      // after the next move's cue belongs to a place already left. What is
+      // said is also shown, on the test it names (R15).
       const say = reserveAnnouncement();
+      const cue = (name: string | null) => {
+        const text = cueText(name ?? UNTITLED_RUN, left);
+        if (say(text)) showCue(text, target.runId);
+      };
       const cached = utils.runs.getById.getData({ runId: target.runId });
       if (cached) {
-        say(cueText(cached.name ?? UNTITLED_RUN, left));
+        cue(cached.name);
         return;
       }
       // Not loaded yet (the prefetch is still on its way): the move does not
       // wait for the name; it is said when the run arrives.
       void utils.runs.getById.fetch({ runId: target.runId }).then(
-        (run) => say(cueText(run.name ?? UNTITLED_RUN, left)),
-        () => say(cueText(UNTITLED_RUN, left)),
+        (run) => cue(run.name),
+        () => cue(null),
       );
     },
     [utils],
@@ -211,8 +258,7 @@ export function useReviewLoop({
     ): void => {
       epoch.current += 1;
       moving.current = true;
-      // A cue still waiting for its name belongs to a place being left.
-      reserveAnnouncement();
+      supersedeCues();
       const href = diffViewerHref(
         projectId,
         target.runId,
@@ -229,7 +275,7 @@ export function useReviewLoop({
   const transition = useCallback(
     (answer: NextAnswer) => {
       epoch.current += 1;
-      reserveAnnouncement();
+      supersedeCues();
       switch (answer.scope) {
         case "run":
           if (answer.target) goTo(answer.target, "replace");
@@ -342,6 +388,10 @@ export function useReviewLoop({
   }, [active, at, atKey, utils, projectId, loopContext, goTo]);
 
   const dismissCard = useCallback(() => setShown(null), []);
+  // The cue is shown on the test it names, not on the one the move left.
+  const cue = useLoopCue((s) =>
+    s.cue !== null && s.cue.runId === runId ? s.cue.text : null,
+  );
   const refetch = query.refetch;
   const retry = useCallback(() => {
     void refetch();
@@ -357,5 +407,6 @@ export function useReviewLoop({
     afterDecision: advance,
     card: shown?.card ?? null,
     dismissCard,
+    cue: enabled ? cue : null,
   };
 }

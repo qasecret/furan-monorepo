@@ -17,6 +17,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api-client", () => ({ apiGet: vi.fn() }));
 
 import LegacyDiffPage from "@/app/(protected)/projects/[projectId]/runs/[runId]/diffs/[diffId]/page";
+import RunPage from "@/app/(protected)/projects/[projectId]/runs/[runId]/page";
 import { apiGet } from "@/lib/api-client";
 
 const RUN = "11111111-1111-4111-8111-111111111111";
@@ -173,5 +174,39 @@ describe("legacy /runs/:runId/diffs/:diffId redirect", () => {
       }),
     );
     expect(to).toBe("/projects/p%201/runs/r%2F1/checkpoints/_first");
+  });
+});
+
+// The bare run link opens the run's first step, and keeps the review context
+// (spec §3.3): the viewer resolves `_first` with it still in the URL.
+describe("bare /runs/:runId redirect", () => {
+  function renderRun(
+    searchParams: Record<string, string | string[] | undefined> = {},
+  ) {
+    return RunPage({
+      params: Promise.resolve({ projectId: "p1", runId: RUN }),
+      searchParams: Promise.resolve(searchParams),
+    });
+  }
+
+  test("opens the run's first step", async () => {
+    expect(await redirectedTo(renderRun())).toBe(
+      `/projects/p1/runs/${RUN}/checkpoints/_first`,
+    );
+  });
+
+  test("keeps the review context, and drops what is not one", async () => {
+    expect(
+      await redirectedTo(
+        renderRun({
+          status: "failed",
+          os: "macOS",
+          utm_source: "mail",
+          device: "",
+        }),
+      ),
+    ).toBe(
+      `/projects/p1/runs/${RUN}/checkpoints/_first?status=failed&os=macOS`,
+    );
   });
 });

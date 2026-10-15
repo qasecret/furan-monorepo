@@ -1,25 +1,133 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import { useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Review-action spies: the keyboard shortcuts and the ApprovalBar buttons
 // must reach the server through the SAME call (see the hotkey parity block at
 // the bottom of this file). The review hook is mocked: its own suite covers
 // what a decision does to the caches and the server.
-const { reviewSpies, routerSpies, setIgnoreAreasSpy } = vi.hoisted(() => ({
-  // The ignore-region Save's wire input, so a test can see which step's
-  // variation it targets.
-  setIgnoreAreasSpy: vi.fn(),
-  reviewSpies: {
-    decide: vi.fn(),
-    undo: vi.fn(),
-    isInFlight: vi.fn((_id: string) => false),
-  },
-  // One router object for every render, so effects that depend on it don't
-  // re-run each time.
-  routerSpies: { push: vi.fn(), replace: vi.fn() },
-}));
-vi.mock("@/lib/review/use-review-mutations", () => ({
-  useReviewMutations: () => reviewSpies,
+const {
+  reviewSpies,
+  routerSpies,
+  setIgnoreAreasSpy,
+  nextQuery,
+  utilsMock,
+  realReview,
+  server,
+  mutationFor,
+} = vi.hoisted(() => {
+  /** A procedure's utils, as the viewer, the loop and the review hook use them. */
+  const procedure = () => ({
+    invalidate: vi.fn(),
+    cancel: vi.fn(async () => undefined),
+    getData: vi.fn(),
+    setData: vi.fn(),
+    prefetch: vi.fn(),
+    fetch: vi.fn(),
+  });
+  // What the review "server" answers, when the real review hook is on.
+  const server = {
+    approve: vi.fn(),
+    reject: vi.fn(),
+    approveGroup: vi.fn(),
+    rejectGroup: vi.fn(),
+    approveBuild: vi.fn(),
+    revert: vi.fn(),
+  };
+  interface Lifecycle {
+    onMutate?: (vars: unknown) => unknown;
+    onSuccess?: (data: unknown, vars: unknown) => unknown;
+    onError?: (err: unknown, vars: unknown) => unknown;
+    onSettled?: (data: unknown, err: unknown, vars: unknown) => unknown;
+  }
+  // The slice of TanStack's mutation lifecycle the review hook relies on.
+  async function runMutation(
+    name: keyof typeof server,
+    opts: Lifecycle,
+    vars: unknown,
+  ) {
+    await opts.onMutate?.(vars);
+    try {
+      const data: unknown = await server[name](vars);
+      await opts.onSuccess?.(data, vars);
+      await opts.onSettled?.(data, null, vars);
+    } catch (err) {
+      await opts.onError?.(err, vars);
+      await opts.onSettled?.(undefined, err, vars);
+    }
+  }
+  return {
+    // The ignore-region Save's wire input, so a test can see which step's
+    // variation it targets.
+    setIgnoreAreasSpy: vi.fn(),
+    reviewSpies: {
+      decide: vi.fn(),
+      undo: vi.fn(),
+      isInFlight: vi.fn((_id: string) => false),
+    },
+    // One router object for every render, so effects that depend on it don't
+    // re-run each time.
+    routerSpies: { push: vi.fn(), replace: vi.fn() },
+    // What the live `review.next` query answers (the review loop), set per
+    // test, and every call it got.
+    nextQuery: {
+      data: undefined as unknown,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null as { message: string } | null,
+      refetch: vi.fn(),
+      calls: [] as Array<{ input: unknown; options: { enabled?: boolean } }>,
+    },
+    // One utils object for every render, like tRPC's.
+    utilsMock: {
+      runs: {
+        getById: procedure(),
+        listCheckpoints: procedure(),
+        list: procedure(),
+        facets: procedure(),
+        getCheckpointGroup: procedure(),
+      },
+      builds: {
+        getById: procedure(),
+        list: procedure(),
+        pendingCount: procedure(),
+      },
+      review: { next: procedure() },
+    },
+    // Off: the review hook is the spies above. On: the real hook, over the
+    // stubbed mutations below (for what a refusal does after the loop moved).
+    realReview: { on: false },
+    server,
+    // Like TanStack's, `mutate` is stable and calls the latest lifecycle.
+    mutationFor: (name: keyof typeof server) => ({
+      useMutation: (opts: Lifecycle) => {
+        const latest = useRef(opts);
+        latest.current = opts;
+        const mutate = useCallback((vars: unknown) => {
+          void runMutation(name, latest.current, vars);
+        }, []);
+        return { mutate, isPending: false };
+      },
+    }),
+  };
+});
+vi.mock("@/lib/review/use-review-mutations", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../src/lib/review/use-review-mutations")
+    >();
+  return {
+    ...actual,
+    useReviewMutations: () =>
+      realReview.on ? actual.useReviewMutations() : reviewSpies,
+  };
+});
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
 // Tracks how many times a Pixi Application has been initialized. Module-level
@@ -66,8 +174,8 @@ vi.mock("pixi.js", () => ({
   },
 }));
 
-// Mock next/navigation — DiffViewer now invokes useDiffViewerShortcuts
-// which calls useRouter at render time.
+// Mock next/navigation — DiffViewer and its review loop navigate with
+// useRouter.
 vi.mock("next/navigation", () => ({
   useRouter: () => routerSpies,
 }));
@@ -111,6 +219,11 @@ const defaultMockData: MockData = {
   status: "unresolved",
 };
 let mockGetByIdData: MockData = { ...defaultMockData };
+// `runs.getById` failing (e.g. a shared link to a run that is gone).
+let mockGetByIdError: { message: string; data?: { code: string } } | null =
+  null;
+// A refetch that fails keeps the data it had (a run deleted while open).
+let mockGetByIdKeepsData = false;
 // ADR-038 checkpoint list — configurable per-test so the side step-arrows
 // (which need total > 1) can be exercised. Empty by default.
 let mockCheckpoints: { items: unknown[] } = { items: [] };
@@ -124,28 +237,29 @@ vi.mock("../src/lib/trpc", () => {
   const noopMutation = () => ({ mutate: () => undefined, isPending: false });
   return {
     trpc: {
-      useUtils: () => ({
-        runs: {
-          getById: { invalidate: () => undefined },
-          listCheckpoints: { invalidate: () => undefined },
-        },
-      }),
+      useUtils: () => utilsMock,
       runs: {
         getById: {
           useQuery: () => ({
-            data: mockGetByIdData,
+            data:
+              mockGetByIdError && !mockGetByIdKeepsData
+                ? undefined
+                : mockGetByIdData,
             isLoading: false,
-            error: null,
+            error: mockGetByIdError,
           }),
         },
         // ADR-038: checkpoint list — configurable via mockCheckpoints.
         listCheckpoints: {
+          _def: () => ({ path: ["runs", "listCheckpoints"] }),
           useQuery: () => ({
             data: mockCheckpoints,
             isLoading: false,
             error: null,
           }),
         },
+        // The review hook's cache patch reads the runs lists by key.
+        list: { _def: () => ({ path: ["runs", "list"] }) },
         overrideStatus: { useMutation: noopMutation },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: {
@@ -182,6 +296,28 @@ vi.mock("../src/lib/trpc", () => {
           useQuery: () => ({ data: { items: [] }, isLoading: false }),
         },
       },
+      review: {
+        // The review loop's answer, set per test through `nextQuery`.
+        next: {
+          useQuery: (input: unknown, options: { enabled?: boolean }) => {
+            nextQuery.calls.push({ input, options });
+            return {
+              data: nextQuery.data,
+              isLoading: nextQuery.isLoading,
+              isFetching: nextQuery.isFetching,
+              isError: nextQuery.isError,
+              error: nextQuery.error,
+              refetch: nextQuery.refetch,
+            };
+          },
+        },
+        approve: mutationFor("approve"),
+        reject: mutationFor("reject"),
+        approveGroup: mutationFor("approveGroup"),
+        rejectGroup: mutationFor("rejectGroup"),
+        approveBuild: mutationFor("approveBuild"),
+        revert: mutationFor("revert"),
+      },
     },
   };
 });
@@ -210,13 +346,41 @@ class StubEventSource {
 
 import { DiffViewer } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
+import { useLoopCue } from "../src/lib/review/use-review-loop";
 import { useUndoStore } from "../src/lib/review/use-undo-store";
+
+/** Every mock the review loop reads, back to "no answer yet". */
+function resetLoop() {
+  nextQuery.data = undefined;
+  nextQuery.isLoading = false;
+  nextQuery.isFetching = false;
+  nextQuery.isError = false;
+  nextQuery.error = null;
+  nextQuery.refetch.mockReset();
+  nextQuery.calls = [];
+  for (const group of Object.values(utilsMock)) {
+    for (const proc of Object.values(group)) {
+      for (const fn of Object.values(proc)) fn.mockReset();
+    }
+  }
+  utilsMock.runs.getById.getData.mockReturnValue({ name: "Checkout" });
+  for (const fn of Object.values(server)) fn.mockReset();
+  realReview.on = false;
+  mockGetByIdError = null;
+  mockGetByIdKeepsData = false;
+  vi.mocked(toast.error).mockReset();
+  vi.mocked(toast.success).mockReset();
+  useLoopCue.setState({ cue: null });
+  useReviewAnnouncer.setState({ text: "", seq: 0 });
+}
 
 describe("DiffViewer", () => {
   beforeEach(() => {
     pixiInitCount = 0;
     mockGetByIdData = { ...defaultMockData };
     mockCheckpoints = { items: [] };
+    resetLoop();
     useViewerStore.setState({
       mode: "side-by-side",
       opacity: 0.5,
@@ -559,6 +723,7 @@ function resetReviewSpies() {
   reviewSpies.isInFlight.mockReturnValue(false);
   routerSpies.push.mockReset();
   routerSpies.replace.mockReset();
+  resetLoop();
 }
 
 describe("DiffViewer review hotkeys share the ApprovalBar action path", () => {
@@ -851,72 +1016,431 @@ describe("DiffViewer stale-capture guard", () => {
   });
 });
 
-// R35: the viewer moves on as soon as the decision is made, not when the
-// server answers; the target is the next step that still needs a reviewer.
-describe("DiffViewer auto-advance", () => {
-  beforeEach(() => {
-    mockGetByIdData = { ...defaultMockData, projectId: "proj-1" };
-    resetReviewSpies();
+// The review loop drives the viewer (spec §5.4): decisions, J / K and the
+// header's Next pending all move on the answer of `review.next`, and every
+// link keeps the review context.
+describe("DiffViewer: the review loop", () => {
+  const PROJECT = "proj-1";
+  const BUILD = "build-1";
+  const OTHER_RUN = "run-2";
+
+  type Answer = {
+    target: { buildId: string; runId: string; checkpointId: string } | null;
+    scope: "run" | "batch" | "nextBatch" | "none";
+    remaining: {
+      run: number;
+      batch: number;
+      batchUnfiltered: number;
+      projectBatches: number;
+    };
+    nextBatch: null;
+  };
+  const answer = (over: Partial<Answer> = {}): Answer => ({
+    target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c3" },
+    scope: "run",
+    remaining: { run: 1, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+    nextBatch: null,
+    ...over,
   });
-  afterEach(() => cleanup());
+  /** An answer whose next step is in another test of the batch. */
+  const intoOtherRun = (batch = 4) =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "s9" },
+      scope: "batch",
+      remaining: { run: 0, batch, batchUnfiltered: batch, projectBatches: 2 },
+    });
+  const stepUrl = (runId: string, id: string, query = "") =>
+    `/projects/${PROJECT}/runs/${runId}/checkpoints/${id}${query}`;
 
-  const checkpointUrl = (id: string) =>
-    `/projects/proj-1/runs/${RUN_ID}/checkpoints/${id}`;
+  function renderViewer(
+    props: Partial<ComponentProps<typeof DiffViewer>> = {},
+  ) {
+    return render(
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId="c1"
+        {...props}
+      />,
+    );
+  }
 
-  test("approving moves to the next pending step, including a new one", () => {
+  const pressAsync = (key: string, init: KeyboardEventInit = {}) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, ...init }),
+      );
+    });
+
+  beforeEach(() => {
+    mockGetByIdData = {
+      ...defaultMockData,
+      projectId: PROJECT,
+      buildId: BUILD,
+    };
+    // In-run order would take c1 to c2, the next pending step of this run.
     mockCheckpoints = {
       items: [
         stepFixture("c1", "unresolved"),
-        stepFixture("c2", "approved"),
+        stepFixture("c2", "unresolved"),
         stepFixture("c3", "new"),
       ],
     };
-    render(
-      <DiffViewer runId={RUN_ID} projectId="proj-1" initialCheckpointId="c1" />,
-    );
-    press("A");
-    expect(reviewSpies.decide).toHaveBeenCalledOnce();
-    expect(routerSpies.replace).toHaveBeenCalledWith(checkpointUrl("c3"));
+    resetReviewSpies();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
   });
 
-  test("wraps around to a pending step earlier in the run", () => {
-    mockCheckpoints = {
-      items: [
-        stepFixture("c1", "unresolved"),
-        stepFixture("c2", "passed"),
-        stepFixture("c3", "unresolved"),
-      ],
-    };
-    render(
-      <DiffViewer runId={RUN_ID} projectId="proj-1" initialCheckpointId="c3" />,
-    );
+  test("a decision runs loop.afterDecision (not nextPendingCheckpointId)", () => {
+    // The loop says c3, where the in-run walk would have said c2.
+    nextQuery.data = answer();
+    renderViewer();
+    press("A");
+    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c3"));
+    cleanup();
+
+    // Rejecting moves too, here into the next test of the batch.
+    resetReviewSpies();
+    nextQuery.data = intoOtherRun();
+    renderViewer();
     press("R");
-    expect(reviewSpies.decide).toHaveBeenCalledOnce();
-    expect(routerSpies.replace).toHaveBeenCalledWith(checkpointUrl("c1"));
-  });
-
-  test("stays put when no other step needs a reviewer", () => {
-    mockCheckpoints = {
-      items: [stepFixture("c1", "unresolved"), stepFixture("c2", "approved")],
-    };
-    render(
-      <DiffViewer runId={RUN_ID} projectId="proj-1" initialCheckpointId="c1" />,
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "rejected", checkpointIds: ["c1"] }),
     );
-    press("A");
-    expect(reviewSpies.decide).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledTimes(1);
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
     expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 
-  test("does not move when nothing was decided", () => {
-    mockCheckpoints = {
-      items: [stepFixture("c1", "approved"), stepFixture("c2", "unresolved")],
-    };
-    render(
-      <DiffViewer runId={RUN_ID} projectId="proj-1" initialCheckpointId="c1" />,
+  test("Mark as Bug does not advance (R35)", () => {
+    nextQuery.data = answer();
+    const r = renderViewer();
+    fireEvent.click(r.getByTestId("mark-as-bug-button"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "rejected", checkpointIds: ["c1"] }),
     );
-    press("A");
-    expect(reviewSpies.decide).not.toHaveBeenCalled();
     expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("a decision with no answer yet waits for it, then moves once", () => {
+    nextQuery.isLoading = true;
+    nextQuery.isFetching = true;
+    const r = renderViewer();
+    press("A");
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    nextQuery.isLoading = false;
+    nextQuery.isFetching = false;
+    nextQuery.data = answer();
+    r.rerender(
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId="c1"
+      />,
+    );
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c3"));
+  });
+
+  test("J / K call the loop and never fire while typing or in a dialog; repeat ignored", async () => {
+    nextQuery.data = intoOtherRun();
+    utilsMock.review.next.fetch.mockResolvedValue(
+      answer({ target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c0" } }),
+    );
+    renderViewer();
+
+    // Typing in a field.
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    await pressAsync("J");
+    await pressAsync("K");
+    input.remove();
+    // Focus inside a dialog.
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.innerHTML = "<button>Cancel</button>";
+    document.body.appendChild(dialog);
+    dialog.querySelector("button")!.focus();
+    await pressAsync("J");
+    await pressAsync("K");
+    dialog.remove();
+    // Auto-repeat.
+    await pressAsync("J", { repeat: true });
+    await pressAsync("K", { repeat: true });
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
+
+    // K asks for the previous pending step of this one, and goes there.
+    await pressAsync("K");
+    expect(utilsMock.review.next.fetch).toHaveBeenCalledWith({
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN_ID, checkpointId: "c1" },
+      direction: "prev",
+      facets: {},
+    });
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c0"));
+    cleanup();
+
+    // J goes to the next one (a fresh page, as after the route commits).
+    renderViewer();
+    await pressAsync("j");
+    expect(routerSpies.push).toHaveBeenCalledTimes(1);
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
+  });
+
+  test("header shows N left in batch · M in filter and Next pending", () => {
+    nextQuery.data = answer({
+      remaining: { run: 1, batch: 3, batchUnfiltered: 8, projectBatches: 2 },
+    });
+    const r = renderViewer({
+      reviewContext: {
+        status: "needs-review",
+        facets: { browser: "chromium" },
+      },
+    });
+    expect(r.getByTestId("header-loop-remaining").textContent).toBe(
+      "8 left in batch · 3 in filter",
+    );
+    const next = r.getByTestId("header-next-pending");
+    expect(next.getAttribute("aria-label")).toBe("Next pending step");
+    fireEvent.click(next);
+    expect(routerSpies.replace).toHaveBeenCalledWith(
+      stepUrl(RUN_ID, "c3", "?browser=chromium"),
+    );
+  });
+
+  test("without facets the pill is N left in batch", () => {
+    nextQuery.data = answer({
+      remaining: { run: 1, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+    });
+    const r = renderViewer({ reviewContext: { status: "failed", facets: {} } });
+    expect(r.getByTestId("header-loop-remaining").textContent).toBe(
+      "3 left in batch",
+    );
+  });
+
+  test("no pill before the loop has answered; Next pending is there already", () => {
+    nextQuery.isLoading = true;
+    const r = renderViewer();
+    expect(r.queryByTestId("header-loop-remaining")).toBeNull();
+    expect(r.getByTestId("header-next-pending")).toBeDefined();
+  });
+
+  test("Back to batch keeps the context and anchors the run", () => {
+    const r = renderViewer({
+      reviewContext: { status: "failed", facets: { viewport: "1280x720" } },
+    });
+    expect(r.getByTestId("contextual-header-back").getAttribute("href")).toBe(
+      `/projects/${PROJECT}/builds/${BUILD}?status=failed&viewport=1280x720#run-${RUN_ID}`,
+    );
+  });
+
+  test("hint bar lists J / K", () => {
+    const r = renderViewer();
+    const hint = r.getByTestId("shortcut-hint-loop");
+    const keys = [...hint.querySelectorAll("kbd")];
+    expect(keys.map((k) => k.textContent)).toEqual(["J", "K"]);
+    expect(hint.textContent).toContain("next/prev pending");
+    // The same key caps as the others in the bar.
+    const approveKey = [
+      ...r.getByTestId("diff-viewer-shortcut-hints").querySelectorAll("kbd"),
+    ].find((k) => k.textContent === "A");
+    expect(keys[0]!.className).toBe(approveKey!.className);
+  });
+
+  test("already_decided after an advance: one rollback toast, loop refetches, no second navigation", async () => {
+    // The real review hook, over a server that says a teammate decided first.
+    realReview.on = true;
+    server.approve.mockRejectedValue({
+      message: "already_decided",
+      data: {
+        code: "CONFLICT",
+        details: {
+          winner: { kind: "approved", actorName: "Ana", checkpointId: "c1" },
+        },
+      },
+    });
+    // The caches the review hook patches, as loaded: the step list (it names
+    // the step in the toast) and the run.
+    utilsMock.runs.listCheckpoints.getData.mockReturnValue(mockCheckpoints);
+    utilsMock.runs.getById.getData.mockReturnValue({
+      ...mockGetByIdData,
+      name: "Checkout",
+      statusOverride: null,
+      checkpointContexts: {},
+    });
+    nextQuery.data = answer();
+    const qc = new QueryClient();
+    const wrap = (ui: ReactNode) => (
+      <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
+    );
+    const viewer = (
+      <DiffViewer runId={RUN_ID} projectId={PROJECT} initialCheckpointId="c1" />
+    );
+    const r = render(wrap(viewer));
+
+    // The decision moves on at once...
+    await pressAsync("A");
+    expect(server.approve).toHaveBeenCalledOnce();
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.replace).toHaveBeenCalledWith(stepUrl(RUN_ID, "c3"));
+    // ...and the refusal comes back: one toast naming the step.
+    expect(toast.error).toHaveBeenCalledOnce();
+    expect(toast.error).toHaveBeenCalledWith("Ana already approved C1");
+    expect(toast.success).not.toHaveBeenCalled();
+    // The loop's answer is refetched.
+    expect(utilsMock.review.next.invalidate).toHaveBeenCalledOnce();
+
+    // The refetch lands, with another answer: nothing moves again.
+    nextQuery.isFetching = true;
+    r.rerender(wrap(viewer));
+    nextQuery.isFetching = false;
+    nextQuery.data = intoOtherRun();
+    r.rerender(wrap(viewer));
+    await act(async () => {});
+    expect(routerSpies.replace).toHaveBeenCalledTimes(1);
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledOnce();
+  });
+
+  test("run not found: loop affordances hidden, review.next not called", async () => {
+    mockGetByIdError = {
+      message: "Run not found",
+      data: { code: "NOT_FOUND" },
+    };
+    // Even with an answer in the cache; and both for a link to a run that is
+    // gone, and for a run deleted while it was open (its refetch fails and
+    // the query keeps the data it had).
+    nextQuery.data = answer();
+    for (const keepsData of [false, true]) {
+      mockGetByIdKeepsData = keepsData;
+      nextQuery.calls = [];
+      const r = renderViewer();
+      expect(r.getByText("Error: Run not found")).toBeDefined();
+      expect(r.queryByTestId("header-next-pending")).toBeNull();
+      expect(r.queryByTestId("header-loop-remaining")).toBeNull();
+      expect(nextQuery.calls.length).toBeGreaterThan(0);
+      expect(nextQuery.calls.every((c) => c.options.enabled === false)).toBe(
+        true,
+      );
+      await pressAsync("J");
+      await pressAsync("K");
+      expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
+      expect(routerSpies.push).not.toHaveBeenCalled();
+      expect(routerSpies.replace).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
+  test("read-only viewer still navigates", async () => {
+    const readOnly: Array<Partial<MockData>> = [
+      // Overridden by hand.
+      { status: "failed", statusOverride: "failed" },
+      // Not reviewable yet.
+      { status: "running" },
+    ];
+    for (const over of readOnly) {
+      resetReviewSpies();
+      mockGetByIdData = {
+        ...defaultMockData,
+        projectId: PROJECT,
+        buildId: BUILD,
+        ...over,
+      };
+      nextQuery.data = intoOtherRun();
+      const r = renderViewer();
+      // Deciding is off...
+      press("A");
+      expect(reviewSpies.decide).not.toHaveBeenCalled();
+      // ...moving is not: the button,
+      fireEvent.click(r.getByTestId("header-next-pending"));
+      expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
+      cleanup();
+      // and J on a fresh page.
+      renderViewer();
+      await pressAsync("J");
+      expect(routerSpies.push).toHaveBeenCalledTimes(2);
+      cleanup();
+    }
+  });
+
+  test("the loop is fed the step on screen once _first has resolved", () => {
+    renderViewer({ initialCheckpointId: "_first" });
+    const asked = nextQuery.calls.filter((c) => c.options.enabled);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.at(-1)!.input).toEqual({
+      projectId: PROJECT,
+      at: { buildId: BUILD, runId: RUN_ID, checkpointId: "c1" },
+      facets: {},
+    });
+    expect(JSON.stringify(nextQuery.calls.map((c) => c.input))).not.toContain(
+      "_first",
+    );
+    // And it follows the steps the reviewer opens.
+    press("ArrowRight");
+    expect(nextQuery.calls.at(-1)!.input).toEqual(
+      expect.objectContaining({
+        at: { buildId: BUILD, runId: RUN_ID, checkpointId: "c2" },
+      }),
+    );
+  });
+
+  test("_first resolves without losing the review context", () => {
+    renderViewer({
+      initialCheckpointId: "_first",
+      reviewContext: { status: "failed", facets: { os: "macOS" } },
+    });
+    expect(routerSpies.replace).toHaveBeenCalledWith(
+      stepUrl(RUN_ID, "c1", "?status=failed&os=macOS"),
+    );
+  });
+
+  test("← / → keep the review context", () => {
+    renderViewer({
+      reviewContext: { status: "failed", facets: { os: "macOS" } },
+    });
+    press("ArrowRight");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl(RUN_ID, "c2", "?status=failed&os=macOS"),
+    );
+  });
+
+  test("the cue chip shows on the test the loop moved to, for about 3 s", async () => {
+    vi.useFakeTimers();
+    nextQuery.data = intoOtherRun(4);
+    renderViewer();
+    await pressAsync("J");
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
+    cleanup();
+
+    // The route commits: the viewer of the test the move opened.
+    const r = renderViewer({ runId: OTHER_RUN, initialCheckpointId: "s9" });
+    const chip = r.getByTestId("header-loop-cue");
+    expect(chip.textContent).toBe("Next test: Checkout · 4 left in batch");
+    expect(chip.getAttribute("aria-hidden")).toBe("true");
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(r.queryByTestId("header-loop-cue")).toBeNull();
+  });
+
+  test("a failed lookup says so beside the pill, with Retry", () => {
+    nextQuery.isError = true;
+    nextQuery.error = { message: "Something went wrong" };
+    nextQuery.data = answer();
+    const r = renderViewer();
+    expect(r.getByTestId("header-loop-error").textContent).toBe(
+      "Couldn't load the next step.",
+    );
+    // What it knew before the failure is not shown as the count.
+    expect(r.queryByTestId("header-loop-remaining")).toBeNull();
+    fireEvent.click(r.getByTestId("header-loop-retry"));
+    expect(nextQuery.refetch).toHaveBeenCalledOnce();
   });
 });
 

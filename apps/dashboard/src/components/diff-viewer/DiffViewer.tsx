@@ -6,11 +6,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
-import {
-  nextPendingCheckpointId,
-  type CheckpointSummary,
-} from "./checkpoint-nav";
-import { ContextualHeader } from "./ContextualHeader";
+import type { CheckpointSummary } from "./checkpoint-nav";
+import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
@@ -29,11 +26,17 @@ import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
 
 import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
+import { useReviewLoop } from "@/lib/review/use-review-loop";
 import { useUndoStore } from "@/lib/review/use-undo-store";
-import type { ReviewContext } from "@/lib/review-context";
-import { trpc } from "@/lib/trpc";
+import {
+  batchHref,
+  DEFAULT_REVIEW_STATUS,
+  type ReviewContext,
+} from "@/lib/review-context";
+import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 interface Props {
   runId: string;
@@ -45,10 +48,29 @@ interface Props {
   initialCheckpointId?: string;
   /**
    * What the reviewer was looking at when the viewer opened (status chip and
-   * environment facets), parsed from the page's URL. Accepted here so the page
-   * can hand it over; the review loop reads it from this prop.
+   * environment facets), parsed from the page's URL. Every link the viewer
+   * makes carries it, and the review loop walks inside it.
    */
   reviewContext?: ReviewContext;
+}
+
+/** A viewer opened without a review context: the default chip, no facets. */
+const NO_REVIEW_CONTEXT: ReviewContext = {
+  status: DEFAULT_REVIEW_STATUS,
+  facets: {},
+};
+
+/**
+ * The header pill: what is left in the batch, after this step. With facets
+ * set it also says how many of them are inside the filter.
+ */
+function remainingLabel(
+  remaining: RouterOutputs["review"]["next"]["remaining"],
+  filtered: boolean,
+): string {
+  return filtered
+    ? `${remaining.batchUnfiltered} left in batch · ${remaining.batch} in filter`
+    : `${remaining.batch} left in batch`;
 }
 
 /**
@@ -136,9 +158,11 @@ export function DiffViewer({
   diffId,
   projectId,
   initialCheckpointId,
+  reviewContext,
 }: Props) {
   const router = useRouter();
   const utils = trpc.useUtils();
+  const context = reviewContext ?? NO_REVIEW_CONTEXT;
 
   // ADR-038: checkpoint selection state
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<string>(
@@ -158,25 +182,30 @@ export function DiffViewer({
       if (firstId) {
         setSelectedCheckpointId(firstId);
         if (projectId) {
-          router.replace(
-            `/projects/${projectId}/runs/${runId}/checkpoints/${firstId}`,
-          );
+          // The review context stays in the URL: a reload keeps the scope.
+          router.replace(diffViewerHref(projectId, runId, firstId, context));
         }
       }
     }
-  }, [selectedCheckpointId, checkpointsQuery.data, projectId, runId, router]);
+  }, [
+    selectedCheckpointId,
+    checkpointsQuery.data,
+    projectId,
+    runId,
+    router,
+    context,
+  ]);
 
-  // ADR-038: sync URL when user navigates between checkpoints
+  // ADR-038: sync URL when user navigates between checkpoints, keeping the
+  // review context.
   const handleCheckpointSelect = useCallback(
     (id: string) => {
       setSelectedCheckpointId(id);
       if (projectId) {
-        router.replace(
-          `/projects/${projectId}/runs/${runId}/checkpoints/${id}`,
-        );
+        router.replace(diffViewerHref(projectId, runId, id, context));
       }
     },
-    [projectId, runId, router],
+    [projectId, runId, router, context],
   );
 
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
@@ -193,15 +222,6 @@ export function DiffViewer({
     }));
   }, [checkpointsQuery.data]);
 
-  // After a decision the viewer moves to the next step that still needs a
-  // reviewer (wrapping within the run), or stays when none does.
-  const advanceToNextPending = useCallback(() => {
-    const nextId = nextPendingCheckpointId(
-      checkpointSummaries,
-      selectedCheckpointId,
-    );
-    if (nextId) handleCheckpointSelect(nextId);
-  }, [checkpointSummaries, selectedCheckpointId, handleCheckpointSelect]);
   const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
@@ -224,16 +244,31 @@ export function DiffViewer({
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
 
+  // The review loop (spec §5.4), asked from the step on screen once `_first`
+  // has resolved. Off until the run has loaded, and for a run that failed to
+  // load (a deleted run, another project's): no Next pending, no J / K, and no
+  // `review.next` call. A run that may not take decisions (overridden, not
+  // reviewable) still navigates; only deciding is off.
+  const loopOn = Boolean(data) && !error;
+  const loop = useReviewLoop({
+    projectId: data?.projectId ?? "",
+    buildId: data?.buildId ?? undefined,
+    runId,
+    checkpointId: activeCheckpointId,
+    context,
+    enabled: loopOn,
+  });
+
   // One set of review actions shared by the <ApprovalBar> buttons and the
   // A / R keyboard shortcuts, so a keypress always takes the button's path:
   // per-checkpoint decision, the step-state and run gates, unsaved ignore
-  // regions folded in, the older-capture question, and auto-advance to the
-  // next pending step.
+  // regions folded in, the older-capture question, and the move to the next
+  // pending step (the loop; Mark as Bug does not move).
   const review = useReviewActions({
     runId,
     checkpointId: activeCheckpointId,
     status: data?.status,
-    onResolved: advanceToNextPending,
+    onResolved: loop.afterDecision,
   });
   const undoCount = useUndoStore((s) => s.stack.length);
 
@@ -492,6 +527,8 @@ export function DiffViewer({
     onPrevDiff: stepper.prev,
     onPrevStep,
     onNextStep,
+    onNextPending: loopOn ? loop.goNext : undefined,
+    onPrevPending: loopOn ? loop.goPrev : undefined,
   });
 
   if (isLoading)
@@ -504,6 +541,23 @@ export function DiffViewer({
     return <div className="p-4 text-sm text-fg-secondary">No run data.</div>;
 
   const isEmpty = data?.status === "empty";
+
+  // The header's review loop (the run has loaded, so the loop is on). The
+  // count is the answer's, so none until it has come, and none after a failed
+  // lookup (what it knew before is stale).
+  const facetsSet = Object.keys(context.facets).length > 0;
+  const headerLoop: HeaderLoop = {
+    remaining:
+      loop.next && !loop.error
+        ? remainingLabel(loop.next.remaining, facetsSet)
+        : "",
+    onNextPending: loop.goNext,
+    nextLabel: "Next pending",
+    ...(loop.cue ? { cue: loop.cue } : {}),
+    ...(loop.error
+      ? { error: "Couldn't load the next step.", onRetry: loop.retry }
+      : {}),
+  };
 
   // Step prev/next for the contextual header — walks the checkpoint list.
   const cpIndex = checkpointSummaries.findIndex(
@@ -615,12 +669,14 @@ export function DiffViewer({
           title={data.name ?? "Untitled run"}
           status={data.status}
           branch={data.branchName}
+          // Back to the batch as the reviewer left it, scrolled to this run.
           backHref={
             data.buildId
-              ? `/projects/${data.projectId}/builds/${data.buildId}`
+              ? batchHref(data.projectId, data.buildId, context, runId)
               : undefined
           }
           nav={headerNav}
+          loop={headerLoop}
           rightActions={
             <ApprovalBar
               runId={runId}
@@ -783,8 +839,9 @@ export function DiffViewer({
                 />
               )}
               {/* Keyboard hint bar (reference TestStep): floats over the
-                  canvas; ←/→ navigate steps, A approve, R reject, and ⌘Z
-                  undo while there is an action to take back. */}
+                  canvas; ←/→ navigate steps, J/K the next / previous pending
+                  step, A approve, R reject, and ⌘Z undo while there is an
+                  action to take back. */}
               <div
                 className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
                 data-testid="diff-viewer-shortcut-hints"
@@ -798,6 +855,19 @@ export function DiffViewer({
                       →
                     </kbd>
                     navigate
+                  </span>
+                  <span className="h-3 w-px bg-edge-strong" aria-hidden />
+                  <span
+                    className="flex items-center gap-1.5"
+                    data-testid="shortcut-hint-loop"
+                  >
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                      J
+                    </kbd>
+                    <kbd className="rounded border border-edge-strong bg-hover px-1.5 py-0.5 font-mono text-2xs text-fg-secondary">
+                      K
+                    </kbd>
+                    next/prev pending
                   </span>
                   <span className="h-3 w-px bg-edge-strong" aria-hidden />
                   <span className="flex items-center gap-1.5">

@@ -54,13 +54,16 @@ export function announce(text: string): void {
  * Take a place in the order of announcements for words that are not ready yet
  * (a name still being fetched). The returned function says them only if
  * nothing was announced or reserved since: words that arrive after a later
- * move's cue would be a cue for a place the reviewer has already left.
+ * move's cue would be a cue for a place the reviewer has already left. It
+ * returns whether they were said.
  */
-export function reserveAnnouncement(): (text: string) => void {
+export function reserveAnnouncement(): (text: string) => boolean {
   order += 1;
   const mine = order;
   return (text) => {
-    if (mine === order) announce(text);
+    if (mine !== order) return false;
+    announce(text);
+    return true;
   };
 }
 

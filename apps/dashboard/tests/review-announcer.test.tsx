@@ -106,6 +106,14 @@ describe("reserveAnnouncement", () => {
     expect(useReviewAnnouncer.getState().text).toBe("later");
   });
 
+  test("says whether the words were said", () => {
+    const early = reserveAnnouncement();
+    const late = reserveAnnouncement();
+    expect(early("too late")).toBe(false);
+    expect(late("in time")).toBe(true);
+    expect(useReviewAnnouncer.getState().text).toBe("in time");
+  });
+
   test("is dropped when anything else was announced meanwhile", () => {
     const say = reserveAnnouncement();
     announce("something else");

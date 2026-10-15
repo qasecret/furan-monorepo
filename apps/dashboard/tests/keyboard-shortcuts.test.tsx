@@ -52,6 +52,27 @@ describe("useDiffViewerShortcuts", () => {
     expect(onPrevStep).toHaveBeenCalledOnce();
   });
 
+  it("J / K invoke onNextPending / onPrevPending, either case", () => {
+    const onNextPending = vi.fn();
+    const onPrevPending = vi.fn();
+    renderHook(() =>
+      useDiffViewerShortcuts({ viewports: [], onNextPending, onPrevPending }),
+    );
+    act(() => press("j"));
+    act(() => press("J"));
+    expect(onNextPending).toHaveBeenCalledTimes(2);
+    act(() => press("k"));
+    act(() => press("K"));
+    expect(onPrevPending).toHaveBeenCalledTimes(2);
+  });
+
+  it("J / K do nothing without the loop", () => {
+    renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
+    // No handler: nothing to call, and nothing throws.
+    act(() => press("J"));
+    act(() => press("K"));
+  });
+
   it("O cycles the mode", () => {
     renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     act(() => press("O"));
@@ -386,6 +407,8 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     "A",
     "R",
     "X",
+    "J",
+    "K",
     "C",
     "I",
     "?",
@@ -417,6 +440,8 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     onPrevDiff: vi.fn(),
     onPrevStep: vi.fn(),
     onNextStep: vi.fn(),
+    onNextPending: vi.fn(),
+    onPrevPending: vi.fn(),
   };
 
   // A state in which every key above would visibly change something.
@@ -608,5 +633,19 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     });
     expect(callbacks.onApprove).not.toHaveBeenCalled();
     expect(callbacks.onReject).not.toHaveBeenCalled();
+  });
+
+  it("ignores auto-repeat so holding J/K cannot walk the queue", () => {
+    mountHook();
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "J", bubbles: true, repeat: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "K", bubbles: true, repeat: true }),
+      );
+    });
+    expect(callbacks.onNextPending).not.toHaveBeenCalled();
+    expect(callbacks.onPrevPending).not.toHaveBeenCalled();
   });
 });

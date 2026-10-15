@@ -38,6 +38,13 @@ interface ShortcutOptions {
    */
   onPrevStep?: () => void;
   onNextStep?: () => void;
+  /**
+   * J / K: the next / previous step that still needs a reviewer, in the
+   * review loop's order (across the runs of the batch, inside the filter).
+   * Absent when the loop is off (the run did not load).
+   */
+  onNextPending?: () => void;
+  onPrevPending?: () => void;
 }
 
 // <input> types that take no typed text — single-key shortcuts still apply
@@ -175,6 +182,16 @@ export function useDiffViewerShortcuts(opts: ShortcutOptions) {
       X: (e) => {
         if (e.repeat) return;
         optsRef.current.onReject?.();
+      },
+      // The review loop. Auto-repeat is ignored too: holding J must not walk
+      // the queue one step per repeat.
+      J: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onNextPending?.();
+      },
+      K: (e) => {
+        if (e.repeat) return;
+        optsRef.current.onPrevPending?.();
       },
       C: () => {
         const store = useViewerStore.getState();

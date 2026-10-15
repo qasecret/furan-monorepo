@@ -10,7 +10,7 @@ import {
 } from "vitest";
 
 import { useReviewAnnouncer } from "@/lib/review/review-announcer";
-import { useReviewLoop } from "@/lib/review/use-review-loop";
+import { useLoopCue, useReviewLoop } from "@/lib/review/use-review-loop";
 import type { ReviewContext } from "@/lib/review-context";
 import type { RouterOutputs } from "@/lib/trpc";
 
@@ -138,6 +138,7 @@ beforeEach(() => {
   // A target run that is already cached, with a name.
   utils.runs.getById.getData.mockReturnValue({ name: "Checkout" });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
+  useLoopCue.setState({ cue: null });
 });
 
 afterEach(() => {
@@ -1035,5 +1036,92 @@ describe("useReviewLoop: guards for the wired viewer", () => {
     act(() => result.current.goNext());
     act(() => result.current.afterDecision());
     expect(router.replace).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useReviewLoop: the visible cue (R15)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  const intoOtherRun = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+      remaining: { run: 0, batch: 4, batchUnfiltered: 4, projectBatches: 1 },
+    });
+  const CUE = "Next test: Checkout · 4 left in batch";
+
+  test("a forward move into another test shows its cue there, for about 3 s", () => {
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    // Not on the test being left...
+    expect(result.current.cue).toBeNull();
+    // ...but on the one the move opened (a new page in the viewer).
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    expect(result.current.cue).toBe(CUE);
+    act(() => vi.advanceTimersByTime(2_999));
+    expect(result.current.cue).toBe(CUE);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current.cue).toBeNull();
+  });
+
+  test("a decision's move into another test shows the cue as well", () => {
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.afterDecision());
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    expect(result.current.cue).toBe(CUE);
+  });
+
+  test("waits for the test's name when it is not cached", async () => {
+    const slow = deferred<{ name: string | null }>();
+    utils.runs.getById.getData.mockReturnValue(undefined);
+    utils.runs.getById.fetch.mockReturnValue(slow.promise);
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    expect(result.current.cue).toBeNull();
+    await act(async () => slow.resolve({ name: "Checkout" }));
+    expect(result.current.cue).toBe(CUE);
+  });
+
+  test("a K move into another test shows no cue (R16)", async () => {
+    utils.review.next.fetch.mockResolvedValue(intoOtherRun());
+    const { result, rerender } = setup();
+    await act(async () => result.current.goPrev());
+    expect(router.push).toHaveBeenCalledOnce();
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    expect(result.current.cue).toBeNull();
+  });
+
+  test("a later move takes it down at once", async () => {
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    rerender(args({ runId: OTHER_RUN, checkpointId: "step-9" }));
+    expect(result.current.cue).toBe(CUE);
+    // K goes back to the step before, in this same test.
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-8" },
+        scope: "run",
+      }),
+    );
+    await act(async () => result.current.goPrev());
+    expect(router.replace).toHaveBeenCalledOnce();
+    expect(result.current.cue).toBeNull();
+  });
+
+  test("is not shown while the loop is off", () => {
+    query.data = intoOtherRun();
+    const { result, rerender } = setup();
+    act(() => result.current.goNext());
+    rerender(
+      args({ runId: OTHER_RUN, checkpointId: "step-9", enabled: false }),
+    );
+    expect(result.current.cue).toBeNull();
   });
 });

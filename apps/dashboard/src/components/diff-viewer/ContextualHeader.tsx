@@ -1,11 +1,40 @@
 "use client";
 
 import type { RunStatus } from "@furan/shared-types";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsRight,
+  RefreshCw,
+} from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
+import { Button } from "@/components/ui/button";
+
+/** The review loop's place in the header: how many are left, and the way on. */
+export interface HeaderLoop {
+  /**
+   * "‹N› left in batch", or "‹N› left in batch · ‹M› in filter" with facets
+   * set; empty until the count is known (no pill then).
+   */
+  remaining: string;
+  /** Next pending: the same move as J. */
+  onNextPending?: () => void;
+  /** The Next pending button's text. */
+  nextLabel: string;
+  /**
+   * The cue of the move that opened this test, while it is shown (R15). The
+   * chip is aria-hidden: the live region has already said it.
+   */
+  cue?: string;
+  /** Why the next step could not be looked up; shown beside the pill. */
+  error?: string;
+  /** Look it up again after `error`. */
+  onRetry?: () => void;
+}
 
 interface Props {
   /** Test / run name — the bold breadcrumb leaf. */
@@ -26,13 +55,16 @@ interface Props {
   };
   /** Right-aligned slot for actions (approve / reject / mark-as-bug, …). */
   rightActions?: ReactNode;
+  /** The review loop: the pill, the cue and Next pending. Absent: hidden. */
+  loop?: HeaderLoop;
 }
 
 /**
  * Single-row contextual top bar above the diff viewer, modelled on the
  * reference TestStep header: back ← · breadcrumb (branch / test) · step
- * prev-next · status, with a right-aligned action slot. Pure presentation —
- * the DiffViewer composes the data and actions.
+ * prev-next · status, with a right-aligned action slot led by the review
+ * loop (left in batch · Next pending). Pure presentation — the DiffViewer
+ * composes the data and actions.
  */
 export function ContextualHeader({
   title,
@@ -42,6 +74,7 @@ export function ContextualHeader({
   branch,
   nav,
   rightActions,
+  loop,
 }: Props) {
   return (
     <header
@@ -107,9 +140,79 @@ export function ContextualHeader({
         ) : null}
         {statusNode ?? (status ? <RunStatusBadge status={status} /> : null)}
       </div>
-      {rightActions ? (
-        <div className="flex shrink-0 items-center gap-2">{rightActions}</div>
+      {rightActions || loop ? (
+        <div className="flex shrink-0 items-center gap-2">
+          {loop ? <LoopControls loop={loop} /> : null}
+          {loop && rightActions ? (
+            <span className="h-4 w-px bg-edge" aria-hidden />
+          ) : null}
+          {rightActions}
+        </div>
       ) : null}
     </header>
+  );
+}
+
+/** Left in batch, the move's cue, a failed lookup, and Next pending. */
+function LoopControls({ loop }: { loop: HeaderLoop }) {
+  const { remaining, onNextPending, nextLabel, cue, error, onRetry } = loop;
+  return (
+    <div className="flex items-center gap-2" data-testid="header-loop">
+      {remaining ? (
+        <span
+          className="whitespace-nowrap rounded-full border border-edge px-2 py-0.5 text-xs tabular-nums text-fg-secondary"
+          data-testid="header-loop-remaining"
+        >
+          {remaining}
+        </span>
+      ) : null}
+      {cue ? (
+        // Seen, not heard: the live region announces the same words. Bounded,
+        // so a long test name cannot push the actions out of the header.
+        <span
+          aria-hidden="true"
+          className="max-w-64 truncate rounded-md bg-hover px-2 py-0.5 text-2xs text-fg-secondary motion-safe:[animation:var(--animate-overlay-in)]"
+          data-testid="header-loop-cue"
+        >
+          {cue}
+        </span>
+      ) : null}
+      {/* Always mounted, only its text changes: a screen reader announces a
+          change inside a live region that was already there. Empty, it is
+          visually hidden and out of the flow. */}
+      <span
+        role="status"
+        className={
+          error ? "whitespace-nowrap text-2xs text-fg-muted" : "sr-only"
+        }
+        data-testid="header-loop-error"
+      >
+        {error ?? ""}
+      </span>
+      {error && onRetry ? (
+        <Button
+          variant="ghost"
+          className="h-7 gap-1 px-2 text-xs"
+          aria-label="Retry loading the next step"
+          data-testid="header-loop-retry"
+          onClick={onRetry}
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          Retry
+        </Button>
+      ) : null}
+      <Button
+        variant="secondary"
+        className="h-8 gap-1 px-3 text-xs"
+        aria-label="Next pending step"
+        title="Next pending step (J)"
+        data-testid="header-next-pending"
+        onClick={onNextPending}
+        disabled={!onNextPending}
+      >
+        {nextLabel}
+        <ChevronsRight className="h-4 w-4" aria-hidden />
+      </Button>
+    </div>
   );
 }
