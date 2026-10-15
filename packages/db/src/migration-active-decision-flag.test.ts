@@ -24,7 +24,8 @@ import {
  * has_active_decision`, true exactly when the step has a `checkpoint_decisions`
  * row with `reverted_at IS NULL`; the trigger on `checkpoint_decisions` that is
  * its only maintainer; the backfill, under a SHARE lock on
- * `checkpoint_decisions`; and the partial indexes and statistics.
+ * `checkpoint_decisions` and retried after a deadlock; and the partial indexes
+ * and statistics.
  *
  * Like the other data-migration tests, this seeds rows on the already-migrated
  * database, executes the migration file from disk and asserts. The file is
@@ -477,6 +478,216 @@ describe.runIf(RUN_INTEGRATION)("0040_active_decision_flag migration", () => {
       await backfill;
       expect(await flagsOf({ step: locked.step })).toEqual({ step: false });
       // The block also corrected the control's stale flag.
+      expect(await flagsOf({ step: control.step })).toEqual({ step: false });
+    } finally {
+      for (const commit of [...held]) await commit().catch(() => {});
+      await a.close();
+      await b.close();
+    }
+  });
+
+  /**
+   * The deadlock the backfill's retry survives. Under an autocommit runner a
+   * decision write that has already locked a step row (an undo of a
+   * re-diffed approve clears the step's verdict before stamping its decision;
+   * a run deletion's cascade can reach its steps before their decisions) then
+   * waits
+   * for the backfill's SHARE lock, while the backfill's UPDATE waits for that
+   * step row. After `deadlock_timeout` (1 s by default) Postgres aborts the
+   * one whose wait began first: here, deterministically, the backfill (it
+   * waits for the step 300 ms before the undo stamps).
+   *
+   * Driven on three connections in the READ COMMITTED mode both runners use:
+   * the undo on B locks its step and is held; the backfill on A takes SHARE
+   * and waits for that step; then the undo stamps its decision, closing the
+   * cycle:
+   * - the backfill without the retry fails the migration with
+   *   `deadlock_detected` (the deadlock is real);
+   * - the migration's block rolls the attempt back (the undo then stamps its
+   *   decision), waits again for SHARE behind the still-open undo, and once
+   *   it commits ends exact: the undone step's flag is `false`.
+   */
+  it("the backfill retries after a deadlock and still ends exact", async () => {
+    const block = statements().find((s) =>
+      s.includes('UPDATE "screenshots" AS s'),
+    );
+    expect(block).toBeDefined();
+    expect(block).toMatch(
+      /LOOP[\s\S]*EXCEPTION WHEN deadlock_detected THEN[\s\S]*END LOOP;/,
+    );
+    const lock = /LOCK TABLE "checkpoint_decisions" IN SHARE MODE;/.exec(
+      block!,
+    )?.[0];
+    const update = /UPDATE "screenshots" AS s[\s\S]*?;/.exec(block!)?.[0];
+    expect(lock).toBeDefined();
+    expect(update).toBeDefined();
+    // The same lock and UPDATE, without the retry.
+    const once = `DO $$ BEGIN ${lock} ${update} END $$;`;
+
+    const a = createDb();
+    const b = createDb();
+    const held: Array<() => Promise<void>> = [];
+    try {
+      /** A step whose decision is active but whose flag is still the legacy false. */
+      async function legacyActive(label: string) {
+        const runId = await seedRun(label);
+        const step = await seedStep(runId, label);
+        const decision = await seedDecision(runId, step);
+        await db
+          .update(screenshots)
+          .set({ hasActiveDecision: false })
+          .where(eq(screenshots.id, step));
+        return { step, decision };
+      }
+
+      /** Resolves when `p` settles, or throws after `ms`. */
+      async function within<T>(p: Promise<T>, ms: number, what: string) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            p,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`timed out: ${what}`)),
+                ms,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      /**
+       * An undo of a re-diffed approve on B: it clears the step's verdict
+       * (locking the step row) and is held; `stamp()` then reverts the
+       * decision and resolves once that write is through; `commit()` commits.
+       * `pid` is B's backend, the one the backfill waits for.
+       */
+      async function holdUndo(step: string, decision: string) {
+        let toStamp!: () => void;
+        const stampGate = new Promise<void>((r) => (toStamp = r));
+        let toCommit!: () => void;
+        const commitGate = new Promise<void>((r) => (toCommit = r));
+        let locked!: () => void;
+        const isLocked = new Promise<void>((r) => (locked = r));
+        let stamped!: () => void;
+        const isStamped = new Promise<void>((r) => (stamped = r));
+        let pid = 0;
+        const done = b.db.transaction(async (tx) => {
+          const [me] = await tx.execute<{ pid: number }>(
+            sql`select pg_backend_pid() as pid`,
+          );
+          pid = Number(me!.pid);
+          await tx
+            .update(screenshots)
+            .set({ verdict: null, verdictAt: null })
+            .where(eq(screenshots.id, step));
+          locked();
+          await stampGate;
+          await tx
+            .update(checkpointDecisions)
+            .set({ revertedAt: new Date(), revertedBy: userId })
+            .where(eq(checkpointDecisions.id, decision));
+          stamped();
+          await commitGate;
+        });
+        await Promise.race([isLocked, done]);
+        const commit = async () => {
+          held.splice(held.indexOf(commit), 1);
+          toStamp();
+          toCommit();
+          await done;
+        };
+        held.push(commit);
+        return {
+          pid,
+          stamp: async () => {
+            // Each waiter checks for a deadlock once, `deadlock_timeout` after
+            // its own wait began, and the first to check is the victim. The
+            // backfill is already waiting; a clear head start keeps it first
+            // whatever the timers' jitter.
+            await new Promise((r) => setTimeout(r, 300));
+            toStamp();
+            await within(
+              Promise.race([isStamped, done]),
+              10_000,
+              "the undo's stamp",
+            );
+          },
+          commit,
+        };
+      }
+
+      /**
+       * Whether a backend (A's backfill: nothing else here waits for B) is
+       * waiting for B's `wait` lock: its step row or a table.
+       */
+      async function waitsFor(
+        blocker: number,
+        wait: "transactionid" | "relation",
+      ) {
+        const [row] = await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from pg_stat_activity
+              where wait_event_type = 'Lock' and wait_event = ${wait}
+                and ${blocker}::int = any(pg_blocking_pids(pid))`,
+        );
+        return Number(row!.n) > 0;
+      }
+
+      async function until(cond: () => Promise<boolean>, what: string) {
+        const deadline = Date.now() + 5_000;
+        while (!(await cond())) {
+          if (Date.now() > deadline) throw new Error(`never: ${what}`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+
+      // Without the retry: the deadlock fails the backfill.
+      const control = await legacyActive("deadlock-control");
+      const controlUndo = await holdUndo(control.step, control.decision);
+      const failed = a.db.execute(sql.raw(once)).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      await until(
+        () => waitsFor(controlUndo.pid, "transactionid"),
+        "the bare backfill waits for the locked step",
+      );
+      await controlUndo.stamp();
+      const error = (await within(failed, 10_000, "the bare backfill")) as {
+        code?: string;
+        cause?: { code?: string };
+      } | null;
+      expect(error?.code ?? error?.cause?.code).toBe("40P01");
+      await controlUndo.commit();
+
+      // The migration's block: the attempt rolls back, the undo goes
+      // through, and the retry ends exact.
+      const subject = await legacyActive("deadlock-retry");
+      const undo = await holdUndo(subject.step, subject.decision);
+      let finished = false;
+      const backfill = a.db.execute(sql.raw(block!)).then(() => {
+        finished = true;
+      });
+      await until(
+        () => waitsFor(undo.pid, "transactionid"),
+        "the backfill waits for the locked step",
+      );
+      // The cycle: the stamp waits for SHARE until the backfill's attempt
+      // is chosen as the victim and rolled back.
+      await undo.stamp();
+      expect(finished).toBe(false);
+      // The retry waits for SHARE again, behind the still-open undo.
+      await until(
+        () => waitsFor(undo.pid, "relation"),
+        "the retry waits for SHARE behind the undo",
+      );
+      expect(finished).toBe(false);
+      await undo.commit();
+      await within(backfill, 10_000, "the retried backfill");
+      expect(await flagsOf({ step: subject.step })).toEqual({ step: false });
+      // The control's undo committed too: its flag is right as well.
       expect(await flagsOf({ step: control.step })).toEqual({ step: false });
     } finally {
       for (const commit of [...held]) await commit().catch(() => {});

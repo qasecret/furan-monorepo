@@ -129,11 +129,17 @@ function close(projectId: string): void {
  * list, or both (a status flip on a run also changes the build's
  * aggregate counters). We invalidate both namespaces unconditionally —
  * the cost is bounded by the server's 1.5s debounce so callers can't
- * thrash this.
+ * thrash this. The `[["builds"]]` prefix also covers `builds.pendingCount`
+ * (the Batches badge).
+ *
+ * The review loop's `review.next` (the Next target, its counts and the
+ * next batch) changes with the same events: a run finishing or a step
+ * being diffed opens new work, another reviewer's decision closes it.
  */
 function invalidateLists(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: [["runs"]] });
   void qc.invalidateQueries({ queryKey: [["builds"]] });
+  void qc.invalidateQueries({ queryKey: [["review", "next"]] });
 }
 
 /**

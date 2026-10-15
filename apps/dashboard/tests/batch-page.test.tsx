@@ -852,6 +852,14 @@ describe("BatchPage environment facets", () => {
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   });
 
+  test("a batch with no tests offers Back to batches, keeping the status", () => {
+    withBuild();
+    listMock.mockReturnValue(emptyList());
+    render(batchPage("status=all"));
+    const back = screen.getByRole("link", { name: "Back to batches" });
+    expect(back.getAttribute("href")).toBe("/inbox?status=all");
+  });
+
   test("a chip with nothing in it is a filtered list, not 'nothing to review'", () => {
     withBuild();
     listMock.mockReturnValue(emptyList());

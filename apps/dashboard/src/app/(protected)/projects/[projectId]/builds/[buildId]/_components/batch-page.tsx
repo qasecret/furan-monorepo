@@ -328,9 +328,7 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
               onShowAll={() => setContext({ status: "all" })}
             />
           ) : ctx.status === "all" && !hasFacets ? (
-            <p className="p-10 text-center text-sm text-fg-secondary">
-              No tests in this batch.
-            </p>
+            <NoTests ctx={ctx} />
           ) : (
             <NoTestsMatch onClear={clearFilters} />
           )
@@ -430,6 +428,29 @@ function NothingToReview({
         data-testid="batch-show-all"
       >
         Show all tests
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * A batch with no tests at all: nothing to filter or review here, so the next
+ * action is the Batches page, with the status kept.
+ */
+function NoTests({ ctx }: { ctx: ReviewContext }) {
+  return (
+    <div
+      className="flex flex-col items-center gap-3 px-5 py-16 text-center"
+      data-testid="batch-empty-no-tests"
+    >
+      <p className="text-base font-medium text-fg">No tests in this batch.</p>
+      <Button asChild variant="secondary">
+        <Link
+          href={`/inbox${serializeReviewContext(ctx, ["status"])}`}
+          data-testid="batch-back-to-batches"
+        >
+          Back to batches
+        </Link>
       </Button>
     </div>
   );

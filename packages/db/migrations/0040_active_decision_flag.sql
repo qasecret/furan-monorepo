@@ -21,9 +21,10 @@
 --
 -- Re-applying this file is safe and leaves the data as it is: the column,
 -- indexes and statistics are created only if missing, and the backfill
--- rewrites no row whose flag is already right. The function and the trigger
--- are replaced in place (never dropped, so no decision write can slip through
--- without the trigger) and `ANALYZE` runs again.
+-- rewrites no row whose flag is already right (a retried attempt included).
+-- The function and the trigger are replaced in place (never dropped, so no
+-- decision write can slip through without the trigger) and `ANALYZE` runs
+-- again.
 --
 -- Locks, by runner:
 -- - drizzle-kit (`drizzle-kit migrate`: every pending file in ONE
@@ -37,7 +38,9 @@
 --   the backfill block holds SHARE on `checkpoint_decisions` (decision writes
 --   wait, reads do not) while it runs; each `CREATE INDEX` holds SHARE on
 --   `screenshots` (writes wait, reads do not) while it builds; `ANALYZE`
---   blocks neither.
+--   blocks neither. A decision write that locked its step first (an undo
+--   that clears a re-diffed verdict, a run or project deletion cascading to
+--   its steps) can deadlock with the backfill; the backfill retries, below.
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "has_active_decision" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
 -- Invoker rights (no SECURITY DEFINER): the UPDATE runs as whoever wrote the
@@ -96,19 +99,46 @@ CREATE OR REPLACE TRIGGER "checkpoint_decisions_sync_active_flag"
 -- nothing, and the UPDATE would then set `true` from its older snapshot,
 -- hiding a pending step. Inside drizzle-kit's single transaction it is
 -- harmless.
+--
+-- The lock can deadlock. A decision write that has already locked a step
+-- row (an undo of a re-diffed approve clears the step's verdict before it
+-- stamps the decision; a run or project deletion's cascade can reach the
+-- steps before their decisions) waits for SHARE, while the UPDATE waits for
+-- that step row. After `deadlock_timeout` Postgres aborts one of the two:
+-- the other write (its caller can retry), or, when the backfill takes longer
+-- than that to reach the row, the backfill. So each attempt is a
+-- subtransaction: on
+-- `deadlock_detected` it rolls back, which releases its SHARE lock and lets
+-- the other write finish, and the backfill tries again, up to five times
+-- (sleeping 0.2 s, 0.4 s, ... between attempts) before it gives up and
+-- fails the migration. A retried attempt takes a fresh lock and a fresh
+-- snapshot, so it is exact in the same way.
 DO $$
+DECLARE
+  tries int := 0;
 BEGIN
-  LOCK TABLE "checkpoint_decisions" IN SHARE MODE;
-  UPDATE "screenshots" AS s
-     SET "has_active_decision" = c."active"
-    FROM (
-      SELECT x."id", d."id" IS NOT NULL AS "active"
-      FROM "screenshots" AS x
-      LEFT JOIN "checkpoint_decisions" AS d
-        ON d."screenshot_id" = x."id" AND d."reverted_at" IS NULL
-    ) AS c
-   WHERE c."id" = s."id"
-     AND s."has_active_decision" IS DISTINCT FROM c."active";
+  LOOP
+    BEGIN
+      LOCK TABLE "checkpoint_decisions" IN SHARE MODE;
+      UPDATE "screenshots" AS s
+         SET "has_active_decision" = c."active"
+        FROM (
+          SELECT x."id", d."id" IS NOT NULL AS "active"
+          FROM "screenshots" AS x
+          LEFT JOIN "checkpoint_decisions" AS d
+            ON d."screenshot_id" = x."id" AND d."reverted_at" IS NULL
+        ) AS c
+       WHERE c."id" = s."id"
+         AND s."has_active_decision" IS DISTINCT FROM c."active";
+      EXIT;
+    EXCEPTION WHEN deadlock_detected THEN
+      tries := tries + 1;
+      IF tries >= 5 THEN
+        RAISE;
+      END IF;
+      PERFORM pg_sleep(0.2 * tries);
+    END;
+  END LOOP;
 END
 $$;
 --> statement-breakpoint

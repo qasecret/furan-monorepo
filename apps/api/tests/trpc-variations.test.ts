@@ -417,6 +417,49 @@ d("tRPC variations router", () => {
     expect(res.items[0]!.buildId).toBe(s.buildId);
   });
 
+  test("history names a build without a number by its name and CI id", async () => {
+    const [b] = await h.db
+      .insert(builds)
+      .values({
+        projectId: s.projectId,
+        branchName: "main",
+        name: "nightly",
+        ciBuildId: "ci-123456789012345",
+      })
+      .returning();
+    const [run] = await h.db
+      .insert(testRuns)
+      .values({
+        projectId: s.projectId,
+        buildId: b!.id,
+        name: "run-unnumbered",
+        branchName: "main",
+        status: "passed",
+      })
+      .returning();
+    await h.db.insert(screenshots).values({
+      runId: run!.id,
+      projectId: s.projectId,
+      testVariationId: s.variationId,
+      name: "LoginPage.darkMode",
+      viewport: "1280x720",
+      browser: "chromium",
+      imageKey: "aaaa",
+    });
+    const client = mkClient(h, s.editorJwt);
+    const res = await client.variations.history.query({
+      projectId: s.projectId,
+      variationId: s.variationId,
+    });
+    const row = res.items.find((i) => i.id === run!.id)!;
+    expect(row).toMatchObject({
+      buildId: b!.id,
+      buildNumber: null,
+      buildName: "nightly",
+      buildCiBuildId: "ci-123456789012345",
+    });
+  });
+
   test("history returns null buildNumber when run has no build (defensive)", async () => {
     // test_runs.buildId is notNull in the schema, so the LEFT JOIN's NULL branch
     // is exercised only if a build row is missing — guard against that path anyway.
