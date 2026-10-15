@@ -311,6 +311,14 @@ export function useReviewMutations() {
     void utils.runs.getById.invalidate();
     void utils.runs.list.invalidate();
     void utils.builds.getById.invalidate();
+    // A decision (or its undo) moves a batch in or out of Needs review, so the
+    // Batches list, the sidebar badge and the review loop's counts and next
+    // target must not keep what was decided.
+    void utils.builds.list.invalidate();
+    void utils.builds.pendingCount.invalidate();
+    void utils.review.next.invalidate();
+    // The batch page's environment filter shows each value's pending steps.
+    void utils.runs.facets.invalidate();
     // A group's members change with every decision (and undo) of any of them,
     // so the callout that offers the group must not keep what was decided.
     void utils.runs.getCheckpointGroup.invalidate();

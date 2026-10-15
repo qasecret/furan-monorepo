@@ -42,6 +42,7 @@ vi.mock("@/lib/review/use-review-mutations", async (importActual) => {
 
 import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
 import { useInFlightStore } from "@/lib/review/use-review-mutations";
+import { parseReviewContext } from "@/lib/review-context";
 
 type Item = Record<string, unknown> & { id: string; imageKey: string };
 
@@ -64,6 +65,10 @@ const C = item("c");
 // Another environment, so another result row of the same run.
 const D = item("d", { os: "windows", browser: "firefox" });
 
+// One object for the whole file, as the batch page hands the list one object
+// for as long as the URL's filters are the same.
+const CTX = parseReviewContext(new URLSearchParams());
+
 const view = (items: Item[]) => {
   listCheckpointsMock.mockReturnValue({ data: { items }, isLoading: false });
   return (
@@ -73,6 +78,7 @@ const view = (items: Item[]) => {
       testName="Login"
       branchName="main"
       fallbackStatus="unresolved"
+      ctx={CTX}
       view="list"
       canReview={true}
     />

@@ -32,6 +32,7 @@ import { useRunEvents, type RunEvent } from "@/hooks/useRunEvents";
 import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
 import { useUndoStore } from "@/lib/review/use-undo-store";
+import type { ReviewContext } from "@/lib/review-context";
 import { trpc } from "@/lib/trpc";
 
 interface Props {
@@ -42,6 +43,12 @@ interface Props {
   projectId?: string;
   /** ADR-038: checkpoint id to display initially; "_first" means use the first checkpoint. */
   initialCheckpointId?: string;
+  /**
+   * What the reviewer was looking at when the viewer opened (status chip and
+   * environment facets), parsed from the page's URL. Accepted here so the page
+   * can hand it over; the review loop reads it from this prop.
+   */
+  reviewContext?: ReviewContext;
 }
 
 /**

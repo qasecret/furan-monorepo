@@ -8,19 +8,29 @@ import { buildDisplayName } from "@/lib/build-display-name";
 import { buildStatusMeta } from "@/lib/build-status-meta";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
+import {
+  batchHref,
+  PANEL_LINK_KEYS,
+  type ReviewContext,
+} from "@/lib/review-url";
 
 interface Props {
   build: BuildRowData;
   projectId: string;
   selected: boolean;
+  /**
+   * The review context in the URL. The link carries the status, facets and
+   * `props` of it (`PANEL_LINK_KEYS`); branch and search belong to Batches.
+   */
+  context?: ReviewContext;
 }
 
 /** Full-bleed build entry in the history panel → opens the batch page. */
-export function BuildListItem({ build, projectId, selected }: Props) {
+export function BuildListItem({ build, projectId, selected, context }: Props) {
   const meta = buildStatusMeta(build.aggregateStatus);
   return (
     <Link
-      href={`/projects/${projectId}/builds/${build.id}`}
+      href={batchHref(projectId, build.id, context, undefined, PANEL_LINK_KEYS)}
       aria-current={selected ? "page" : undefined}
       data-testid={`build-list-item-${build.id}`}
       className={cn(
@@ -47,8 +57,18 @@ export function BuildListItem({ build, projectId, selected }: Props) {
       <div className="mt-1 text-xs tabular-nums text-fg-muted">
         {formatBatchDateTime(build.createdAt)}
       </div>
-      <div className={cn("mt-0.5 text-xs font-medium", meta.text)}>
-        {meta.word}
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className={cn("text-xs font-medium", meta.text)}>
+          {meta.word}
+        </span>
+        {build.pendingCheckpoints > 0 && (
+          <span
+            className="text-2xs tabular-nums text-fg-muted"
+            data-testid={`build-list-item-pending-${build.id}`}
+          >
+            {build.pendingCheckpoints} pending
+          </span>
+        )}
       </div>
     </Link>
   );
