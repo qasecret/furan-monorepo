@@ -118,10 +118,22 @@ function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return e;
 }
 
-/** The keys of the dispatcher's latest tinykeys map. */
+/**
+ * The keys the dispatcher's latest bind holds: one bind is two tinykeys maps,
+ * the sequences' then the single keys' (R10).
+ */
 function boundKeys(): string[] {
-  const call = vi.mocked(tinykeys).mock.calls.at(-1);
-  return call ? Object.keys(call[1]) : [];
+  return vi
+    .mocked(tinykeys)
+    .mock.calls.slice(-2)
+    .flatMap((call) => Object.keys(call[1]));
+}
+
+/** How many times the dispatcher has bound its keys (two maps each time). */
+function binds(): number {
+  const calls = vi.mocked(tinykeys).mock.calls.length;
+  expect(calls % 2, "tinykeys calls come in pairs").toBe(0);
+  return calls / 2;
 }
 
 beforeEach(() => {
@@ -334,7 +346,7 @@ describe("CommandDispatcher", () => {
         <Registrant scope="global" commands={[x]} ctx={{ value: "v1" }} />
       </Layout>,
     );
-    expect(tinykeys).toHaveBeenCalledTimes(1);
+    expect(binds()).toBe(1);
     expect(boundKeys()).toEqual(["x"]);
 
     // A re-render with a new ctx (a new element) binds nothing again…
@@ -343,7 +355,7 @@ describe("CommandDispatcher", () => {
         <Registrant scope="global" commands={[x]} ctx={{ value: "v2" }} />
       </Layout>,
     );
-    expect(tinykeys).toHaveBeenCalledTimes(1);
+    expect(binds()).toBe(1);
     // …and the bound handler still sees the new ctx.
     press("x");
     expect(run).toHaveBeenLastCalledWith(
@@ -353,21 +365,21 @@ describe("CommandDispatcher", () => {
     // Another registrant whose keys are already bound changes the commands,
     // not the key set.
     const viewer = mount("viewer", [command("viewer", "v.x", ["x"])]);
-    expect(tinykeys).toHaveBeenCalledTimes(1);
+    expect(binds()).toBe(1);
 
     // A new key rebinds, once, and drops the old listener.
     const y = mount("batches", [command("batches", "b.y", ["y"])]);
-    expect(tinykeys).toHaveBeenCalledTimes(2);
+    expect(binds()).toBe(2);
     expect(boundKeys().sort()).toEqual(["x", "y"]);
     viewer.unmount();
-    expect(tinykeys).toHaveBeenCalledTimes(2);
+    expect(binds()).toBe(2);
     run.mockClear();
     press("x");
     expect(run).toHaveBeenCalledTimes(1);
 
     // So does losing one.
     y.unmount();
-    expect(tinykeys).toHaveBeenCalledTimes(3);
+    expect(binds()).toBe(3);
     expect(boundKeys()).toEqual(["x"]);
   });
 
@@ -381,7 +393,7 @@ describe("CommandDispatcher", () => {
       </Layout>,
     );
     // Not allowed, `g a` is not bound; its `g` is still a prefix (R8).
-    expect(tinykeys).toHaveBeenCalledTimes(1);
+    expect(binds()).toBe(1);
     expect(boundKeys()).not.toContain("g a");
     expect(boundKeys()).toContain("g (\\S)");
 
@@ -390,19 +402,19 @@ describe("CommandDispatcher", () => {
         <Registrant scope="global" commands={[adminOnly]} />
       </Layout>,
     );
-    expect(tinykeys).toHaveBeenCalledTimes(2);
+    expect(binds()).toBe(2);
     expect(boundKeys()).toContain("g a");
 
     // The same prefix from another sequence changes nothing.
     mount("viewer", [
       command("viewer", "viewer.other", ["g x"], { allowed: () => false }),
     ]);
-    expect(tinykeys).toHaveBeenCalledTimes(2);
+    expect(binds()).toBe(2);
     // A new prefix, even of a command no one may run, rebinds.
     mount("viewer", [
       command("viewer", "viewer.zed", ["z x"], { allowed: () => false }),
     ]);
-    expect(tinykeys).toHaveBeenCalledTimes(3);
+    expect(binds()).toBe(3);
     expect(boundKeys()).toContain("z (\\S)");
   });
 
@@ -437,6 +449,73 @@ describe("CommandDispatcher", () => {
     press("a");
     expect(approve).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("g then 0 does not fit", () => {
+    // "0" is an integer-like key: an object lists it before every other
+    // key, so in one tinykeys map it would run before the sequences and the
+    // prefix catch-alls had a chance to take it.
+    const fit = vi.fn();
+    render(
+      <Layout role="editor">
+        <GlobalCommands />
+        <Registrant
+          scope="viewer"
+          commands={[command("viewer", "viewer.fit", ["0"], { run: fit })]}
+        />
+      </Layout>,
+    );
+
+    press("g");
+    const zero = press("0");
+    expect(fit).not.toHaveBeenCalled();
+    expect(zero.defaultPrevented).toBe(true);
+    // Nor with Shift, as a layout that needs it for digits sends it.
+    press("g");
+    press("0", { shiftKey: true });
+    expect(fit).not.toHaveBeenCalled();
+
+    // On its own, `0` fits.
+    const own = press("0");
+    expect(fit).toHaveBeenCalledTimes(1);
+    expect(own.defaultPrevented).toBe(true);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("a disabled sequence's last key is swallowed", () => {
+    const analytics = vi.fn();
+    const approve = vi.fn();
+    render(
+      <Layout role="admin">
+        <Registrant
+          scope="global"
+          commands={[
+            command("global", "go.analytics", ["g a"], {
+              run: analytics,
+              enabled: () => false,
+            }),
+          ]}
+        />
+        <Registrant
+          scope="viewer"
+          commands={[
+            command("viewer", "review.approve", ["a"], { run: approve }),
+          ]}
+        />
+      </Layout>,
+    );
+
+    press("g");
+    const a = press("a");
+    // The sequence does not run, and its last key is still taken: the
+    // viewer's `a` never sees it.
+    expect(analytics).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
+    expect(a.defaultPrevented).toBe(true);
+
+    // On its own, `a` approves.
+    press("a");
+    expect(approve).toHaveBeenCalledTimes(1);
   });
 
   /** The layout's global keys and a viewer `a`, for the prefix tests. */

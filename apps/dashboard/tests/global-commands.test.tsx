@@ -100,6 +100,17 @@ function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return e;
 }
 
+/**
+ * The keys the dispatcher's latest bind holds: one bind is two tinykeys maps,
+ * the sequences' then the single keys' (R10).
+ */
+function boundKeys(): string[] {
+  return vi
+    .mocked(tinykeys)
+    .mock.calls.slice(-2)
+    .flatMap((call) => Object.keys(call[1]));
+}
+
 function find(id: string): ResolvedCommand | undefined {
   return resolveCommands().find((c) => c.command.id === id);
 }
@@ -261,10 +272,8 @@ describe("GlobalCommands", () => {
       press(key);
     }
     expect(pushMock).not.toHaveBeenCalled();
-    expect(Object.keys(vi.mocked(tinykeys).mock.calls.at(-1)![1])).not.toEqual(
-      expect.arrayContaining(["g a"]),
-    );
-    const bound = Object.keys(vi.mocked(tinykeys).mock.calls.at(-1)![1]);
+    expect(boundKeys()).not.toEqual(expect.arrayContaining(["g a"]));
+    const bound = boundKeys();
     expect(bound).toContain("g i");
     expect(bound).not.toContain("g a");
     expect(bound).not.toContain("g p");
@@ -380,7 +389,7 @@ describe("GlobalCommands", () => {
     // R9: undo takes back a review decision, which a guest cannot make.
     render(<Layout role="guest" />);
     expect(find("review.undo")).toBeUndefined();
-    const bound = Object.keys(vi.mocked(tinykeys).mock.calls.at(-1)![1]);
+    const bound = boundKeys();
     expect(bound).not.toContain("$mod+z");
     expect(bound).toContain("$mod+k");
     const e = press("z", { ctrlKey: true });

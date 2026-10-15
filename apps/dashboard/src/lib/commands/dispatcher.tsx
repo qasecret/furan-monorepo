@@ -116,28 +116,39 @@ function swallow(e: KeyboardEvent, prefix: string): void {
 }
 
 /**
- * The tinykeys map for `keys` and the sequence `prefixes`. tinykeys runs
- * every binding a key press matches, in this order (object key order puts
- * integer-like keys such as "0" first; no sequence ends in one):
+ * The two tinykeys maps for `keys` and the sequence `prefixes`, bound in this
+ * order. tinykeys runs every binding of a map a key press matches, in the
+ * map's key order, and listeners run in the order they were added. An
+ * object lists integer-like keys ("0") before every other key, so the
+ * sequences and catch-alls must be a map of their own, bound first: in one
+ * map, a viewer's `0` would run before a stray `g`'s catch-all took it.
  *
+ * `sequences`, bound first:
  * 1. The sequences. One that completes on "a" ("g a") runs, and calls
  *    `preventDefault`, before anything else sees the "a".
  * 2. A catch-all per prefix: any other printable key after "g", bare or
  *    with Shift (`(\S)`: Tab, Esc, Enter and arrows are not swallowed),
  *    is swallowed. It shares tinykeys' sequence state and 1 s window.
- * 3. The single keys, then their Shift twins. After 1 or 2 took the key,
- *    the guard (rule 1) makes them yield.
- * 4. The prefixes themselves, noting whether the guard gave that press to
+ * 3. The prefixes themselves, noting whether the guard gave that press to
  *    something else: "g" typed in a field arms tinykeys' sequences all the
  *    same, so a sequence or a swallow that follows it (after a click moved
- *    focus) does nothing.
+ *    focus) does nothing. It is noted before the press reaches a command
+ *    bound to the prefix key itself, in `singles`. (A digit prefix would be
+ *    listed, and noted, before the sequences; no sequence starts with one.)
+ *
+ * `singles`, bound second: the single keys, then their Shift twins. After
+ * a sequence or a catch-all took the key, the guard (rule 1) makes them
+ * yield.
  */
-function keyMap(keys: string[], prefixes: string[]): KeyBindingMap {
+function keyMaps(
+  keys: string[],
+  prefixes: string[],
+): { sequences: KeyBindingMap; singles: KeyBindingMap } {
   let prefixOwned = false;
-  const map: KeyBindingMap = {};
-  const singles = keys.filter((k) => !isSequence(k));
+  const sequences: KeyBindingMap = {};
+  const singles: KeyBindingMap = {};
   for (const key of keys.filter(isSequence)) {
-    map[key] = (e) => {
+    sequences[key] = (e) => {
       if (!prefixOwned) dispatch(e, key);
     };
   }
@@ -145,38 +156,39 @@ function keyMap(keys: string[], prefixes: string[]): KeyBindingMap {
     const stray = (e: KeyboardEvent) => {
       if (!prefixOwned) swallow(e, p);
     };
-    map[`${p} (\\S)`] = stray;
-    map[`${p} Shift+(\\S)`] = stray;
-  }
-  for (const key of singles) map[key] = (e) => dispatch(e, key);
-  for (const key of singles) {
-    const twin = shiftedTwin(key);
-    // A command may bind the shifted key itself ("Shift++"): that one wins.
-    if (twin !== null && !(twin in map)) map[twin] = (e) => dispatch(e, key);
+    sequences[`${p} (\\S)`] = stray;
+    sequences[`${p} Shift+(\\S)`] = stray;
   }
   for (const p of prefixes) {
-    const own = map[p];
-    map[p] = (e) => {
-      // Before its own command (if any) runs and prevents the default.
+    sequences[p] = (e) => {
       prefixOwned = keyIsOwnedElsewhere(
         e,
         p,
         {},
         { singleKeys: singleKeysOn() },
       );
-      own?.(e);
     };
   }
-  return map;
+  const bare = keys.filter((k) => !isSequence(k));
+  for (const key of bare) singles[key] = (e) => dispatch(e, key);
+  for (const key of bare) {
+    const twin = shiftedTwin(key);
+    // A command may bind the shifted key itself ("Shift++"): that one wins.
+    if (twin !== null && !(twin in singles)) {
+      singles[twin] = (e) => dispatch(e, key);
+    }
+  }
+  return { sequences, singles };
 }
 
 /**
- * The one key listener of the dashboard (spec §3.3), mounted once in the
+ * The one key dispatcher of the dashboard (spec §3.3), mounted once in the
  * protected layout. It binds every key of the active, `allowed` commands,
- * and the sequence prefixes of all of them (R8), with a single
- * `tinykeys(window, …)`, and binds again only when those keys or prefixes
- * change: a scope mounting with keys already bound, or a page re-rendering,
- * binds nothing. At a key press it finds the command by key (most specific
+ * and the sequence prefixes of all of them (R8), with two
+ * `tinykeys(window, …)` listeners (sequences first, then single keys: see
+ * `keyMaps`), and binds again only when those keys or prefixes change: a
+ * scope mounting with keys already bound, or a page re-rendering, binds
+ * nothing. At a key press it finds the command by key (most specific
  * scope first), then applies the guard (spec §3.4, the single-key switch
  * included), then `enabled`, then `preventDefault()` and `run`.
  */
@@ -198,7 +210,14 @@ export function CommandDispatcher(): null {
       prefixes: string[];
     };
     if (keys.length === 0 && prefixes.length === 0) return;
-    return tinykeys(window, keyMap(keys, prefixes));
+    const { sequences, singles } = keyMaps(keys, prefixes);
+    // In this order: see `keyMaps`.
+    const unbindSequences = tinykeys(window, sequences);
+    const unbindSingles = tinykeys(window, singles);
+    return () => {
+      unbindSequences();
+      unbindSingles();
+    };
   }, [bound]);
 
   return null;
