@@ -12,10 +12,21 @@
  * that calls `close()`, and only when it evicts. Consumers read bitmaps and
  * never close them.
  *
- * No blob URLs are made anywhere on this path.
+ * Pins: a bitmap on screen must never be closed, however tall the screenshots.
+ * `useImageSet` pins the keys it was asked to show; eviction skips pinned
+ * entries, so the limits bite on everything else (prefetched and past steps).
+ *
+ * No object URL is made on the way to a bitmap unless the browser refuses the
+ * blob twice (see `decodeImage`).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import type { Size } from "./viewer-geometry";
 
@@ -61,13 +72,24 @@ export interface BitmapCache {
   /** The image for `key`, counted as used now; `undefined` when not held. */
   get(key: string): LoadedImage | undefined;
   /**
-   * Take an image. Evicts the least recently used images until both limits
-   * hold, closing each evicted bitmap. The image just stored is never evicted
-   * by its own insertion, so one image larger than the whole budget is kept
-   * rather than closed under its caller. If `key` is already held, the held
+   * Take an image, then evict the least recently used unpinned images until
+   * both limits hold, closing each. The limits count every held image, pinned
+   * or not, but only unpinned ones are ever evicted. So a pinned set over
+   * budget is allowed, and an unpinned newcomer that does not fit beside it is
+   * the one dropped (closed, and not held). If `key` is already held, the held
    * image stays (it may be on screen) and the bitmap offered is closed.
    */
   set(img: LoadedImage): void;
+  /**
+   * Pin `keys` (a key need not be held yet) so they are never evicted. Pins
+   * are counted, so each call needs its own release. The returned function
+   * releases them (once; later calls do nothing). A release does not act at
+   * once: a microtask later the budget is restored by evicting unpinned
+   * entries, and when no pin is left at all the cache is emptied. A pin taken
+   * again in the same synchronous run (a step change, a remount) keeps its
+   * entry.
+   */
+  retain(keys: readonly string[]): () => void;
   /** Estimated bytes held. */
   bytes(): number;
   /** Number of images held. */
@@ -81,9 +103,23 @@ export function createBitmapCache(limits: {
   // A Map iterates in insertion order, so re-inserting on use keeps the least
   // recently used entry first.
   const entries = new Map<string, LoadedImage>();
+  const pins = new Map<string, number>();
+  let pinCount = 0;
   let total = 0;
+  let settling = false;
   const cost = (img: LoadedImage): number =>
     img.size.w * img.size.h * BYTES_PER_PIXEL;
+
+  /** Evict unpinned entries, oldest first, until the given limits hold. */
+  function evict(maxEntries: number, maxBytes: number): void {
+    for (const [key, oldest] of entries) {
+      if (entries.size <= maxEntries && total <= maxBytes) return;
+      if (pins.has(key)) continue;
+      entries.delete(key);
+      total -= cost(oldest);
+      oldest.bitmap.close();
+    }
+  }
 
   function get(key: string): LoadedImage | undefined {
     const img = entries.get(key);
@@ -101,16 +137,38 @@ export function createBitmapCache(limits: {
     }
     entries.set(img.key, img);
     total += cost(img);
-    for (const [key, oldest] of entries) {
-      if (key === img.key) break;
-      if (entries.size <= limits.maxEntries && total <= limits.maxBytes) break;
-      entries.delete(key);
-      total -= cost(oldest);
-      oldest.bitmap.close();
-    }
+    evict(limits.maxEntries, limits.maxBytes);
   }
 
-  return { get, set, bytes: () => total, size: () => entries.size };
+  function settleSoon(): void {
+    if (settling) return;
+    settling = true;
+    queueMicrotask(() => {
+      settling = false;
+      if (pinCount === 0) evict(0, 0);
+      else evict(limits.maxEntries, limits.maxBytes);
+    });
+  }
+
+  function retain(keys: readonly string[]): () => void {
+    const taken = [...new Set(keys)];
+    for (const key of taken) pins.set(key, (pins.get(key) ?? 0) + 1);
+    pinCount += taken.length;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const key of taken) {
+        const n = (pins.get(key) ?? 1) - 1;
+        if (n === 0) pins.delete(key);
+        else pins.set(key, n);
+      }
+      pinCount -= taken.length;
+      settleSoon();
+    };
+  }
+
+  return { get, set, retain, bytes: () => total, size: () => entries.size };
 }
 
 /** The one cache the viewer shares. Exported for tests. */
@@ -123,34 +181,37 @@ export function storageUrl(key: string): string {
   return `${browserEnv.NEXT_PUBLIC_API_URL}/api/v1/storage/${encodeURIComponent(key)}`;
 }
 
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("could not read the image"));
-    reader.readAsDataURL(blob);
-  });
-}
-
 /**
  * Decode an image blob into a bitmap.
  *
- * `createImageBitmap(blob)` is stricter than an image element about some PNG
- * variants (odiff's RGBA diff overlay occasionally trips it). When it refuses,
- * decode through an `HTMLImageElement` and bitmap that. A data: URL feeds the
- * element so no object URL is needed. Rejects when both routes fail.
+ * `createImageBitmap(blob)` can be stricter than an image element about some
+ * PNG variants, or refuse a blob whose type is missing or wrong. Two fallbacks,
+ * cheapest first:
+ *   1. the same bytes re-typed as image/png (a zero-copy view);
+ *   2. an `HTMLImageElement` fed by an object URL, revoked as soon as the
+ *      element has been bitmapped (the bitmap keeps no reference to the URL).
+ * Rejects when all three routes fail.
  */
 export async function decodeImage(blob: Blob): Promise<ImageBitmap> {
   try {
     return await createImageBitmap(blob);
   } catch {
+    // Fall through to the re-typed blob.
+  }
+  try {
+    return await createImageBitmap(blob.slice(0, blob.size, "image/png"));
+  } catch {
     // Fall through to the image element.
   }
-  const img = new Image();
-  img.src = await readAsDataUrl(blob);
-  await img.decode();
-  return createImageBitmap(img);
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return await createImageBitmap(img);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function abortError(): DOMException {
@@ -175,9 +236,14 @@ async function fetchAndDecode(
   };
   // Decoding cannot be aborted, so a bitmap can finish after everyone stopped
   // waiting for it. It is still the right bitmap for its key: the cache keeps
-  // it (and owns closing it) for the reviewer's next visit.
+  // it for the reviewer's next visit, unless it does not fit beside what is
+  // pinned, in which case the cache has already closed it.
   bitmapCache.set(image);
-  return bitmapCache.get(key) ?? image;
+  const kept = bitmapCache.get(key);
+  if (kept === undefined) {
+    throw new Error(`no room in the bitmap cache for ${key}`);
+  }
+  return kept;
 }
 
 /** One network fetch + decode, shared by everyone waiting for the same key. */
@@ -258,17 +324,21 @@ const NOT_REQUESTED: RoleResult = {
 };
 const LOADING: RoleResult = { image: undefined, failed: false, settled: false };
 
-/** What the last finished load of one role said, and which request it answered. */
+/** How the last finished load of one role ended, and which request it answered. */
 interface Outcome {
   key: string;
   attempt: number;
-  result: LoadedImage | "failed";
+  result: "loaded" | "failed";
 }
 
 /**
  * One role's image. The cache answers a key it already holds on the render
  * itself, so a step that was prefetched opens with no loading frame; otherwise
  * an effect loads it. `attempt` restarts a failed load.
+ *
+ * The image itself is always read from the cache, never kept here: the key is
+ * pinned by `useImageSet` for as long as it is requested, so the cache cannot
+ * have closed it.
  */
 function useRoleImage(key: string | null, attempt: number): RoleResult {
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -277,9 +347,9 @@ function useRoleImage(key: string | null, attempt: number): RoleResult {
     if (key === null || bitmapCache.get(key) !== undefined) return;
     const controller = new AbortController();
     loadImage(key, controller.signal).then(
-      (image) => {
+      () => {
         if (!controller.signal.aborted) {
-          setOutcome({ key, attempt, result: image });
+          setOutcome({ key, attempt, result: "loaded" });
         }
       },
       () => {
@@ -292,14 +362,18 @@ function useRoleImage(key: string | null, attempt: number): RoleResult {
   }, [key, attempt]);
 
   if (key === null) return NOT_REQUESTED;
-  // Reading counts as use, which keeps what is on screen away from eviction.
   const cached = bitmapCache.get(key);
-  if (cached !== undefined)
+  if (cached !== undefined) {
     return { image: cached, failed: false, settled: true };
-  if (outcome?.key !== key || outcome.attempt !== attempt) return LOADING;
-  return outcome.result === "failed"
-    ? { image: undefined, failed: true, settled: true }
-    : { image: outcome.result, failed: false, settled: true };
+  }
+  if (
+    outcome?.key === key &&
+    outcome.attempt === attempt &&
+    outcome.result === "failed"
+  ) {
+    return { image: undefined, failed: true, settled: true };
+  }
+  return LOADING;
 }
 
 const NO_PREFETCH: readonly ImageSetRequest[] = [];
@@ -341,33 +415,33 @@ export function useImageSet(
 
   const ready = baseline.settled && current.settled && diff.settled;
 
-  // Keys, not arrays, drive the effect: callers pass fresh arrays every render.
+  // Keys, not arrays, drive the effects: callers pass fresh arrays every render.
   const activeKeys = uniqueKeys([req]);
   const activeSig = JSON.stringify(activeKeys);
   const aheadSig = JSON.stringify(
     uniqueKeys(prefetch).filter((key) => !activeKeys.includes(key)),
   );
 
+  // The keys on screen are pinned, whether their image is already cached or
+  // still on the wire, so the cache can never close one under the viewer. A
+  // layout effect, so the pin is in place before anything can draw the image.
+  useLayoutEffect(
+    () => bitmapCache.retain(JSON.parse(activeSig) as string[]),
+    [activeSig],
+  );
+
   useEffect(() => {
     if (!ready) return;
-    const held = JSON.parse(activeSig) as string[];
     const ahead = JSON.parse(aheadSig) as string[];
     if (ahead.length === 0) return;
     const controller = new AbortController();
     for (const key of ahead) {
-      loadImage(key, controller.signal).then(
-        () => {
-          // Whatever just arrived may have pushed the oldest entries out;
-          // the images on screen must not be among them.
-          for (const k of held) bitmapCache.get(k);
-        },
-        () => {
-          // Silent: nothing was asked for yet, so nothing is owed.
-        },
-      );
+      loadImage(key, controller.signal).catch(() => {
+        // Silent: nothing was asked for yet, so nothing is owed.
+      });
     }
     return () => controller.abort();
-  }, [ready, activeSig, aheadSig]);
+  }, [ready, aheadSig]);
 
   const images = useMemo(() => {
     const out: Partial<Record<ImageRole, LoadedImage>> = {};

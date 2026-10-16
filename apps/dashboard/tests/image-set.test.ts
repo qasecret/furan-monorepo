@@ -47,6 +47,7 @@ let bitmaps: Map<string, FakeBitmap>;
 let honourAbort: boolean;
 let createImageBitmapMock: ReturnType<typeof vi.fn>;
 let createObjectURL: ReturnType<typeof vi.fn>;
+let revokeObjectURL: ReturnType<typeof vi.fn>;
 let prefix: string;
 let counter = 0;
 
@@ -156,10 +157,13 @@ beforeEach(() => {
   });
   vi.stubGlobal("createImageBitmap", createImageBitmapMock);
 
-  // jsdom has no object URLs; a spy proves nobody asks for one.
-  createObjectURL = vi.fn(() => "blob:never");
+  // jsdom has no object URLs; spies show who asks for one, and that it is let go.
+  createObjectURL = vi.fn(() => "blob:fake-url");
+  revokeObjectURL = vi.fn();
   URL.createObjectURL =
     createObjectURL as unknown as typeof URL.createObjectURL;
+  URL.revokeObjectURL =
+    revokeObjectURL as unknown as typeof URL.revokeObjectURL;
 });
 
 afterEach(() => {
@@ -168,6 +172,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   delete (URL as { createObjectURL?: unknown }).createObjectURL;
+  delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL;
 });
 
 function mount(
@@ -195,56 +200,87 @@ describe("storageUrl", () => {
 });
 
 describe("decodeImage", () => {
-  const blob = (): Blob => new Blob(["png"]);
+  const blob = (): Blob => new Blob(["png"], { type: "image/webp" });
 
-  it("decodes the blob directly when it can", async () => {
+  it("decodes the blob directly when it can, with no object URL", async () => {
     const bm = fakeBitmap(3, 4);
     createImageBitmapMock.mockResolvedValueOnce(bm);
     const b = blob();
     await expect(decodeImage(b)).resolves.toBe(bm);
     expect(createImageBitmapMock).toHaveBeenCalledTimes(1);
     expect(createImageBitmapMock).toHaveBeenCalledWith(b);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
   describe("when createImageBitmap rejects the blob", () => {
-    let decoded: string[];
+    let decodedSrcs: string[];
 
     beforeEach(() => {
-      decoded = [];
+      decodedSrcs = [];
       stubImageDecode(function (this: HTMLImageElement) {
-        decoded.push(this.src);
+        decodedSrcs.push(this.src);
         return Promise.resolve();
       });
     });
 
-    it("falls back to an image element, then bitmaps that", async () => {
-      const bm = fakeBitmap(7, 9);
+    it("retries the same bytes typed as image/png, with no object URL", async () => {
+      const bm = fakeBitmap(5, 6);
       createImageBitmapMock
         .mockRejectedValueOnce(new Error("InvalidStateError"))
         .mockResolvedValueOnce(bm);
-      await expect(decodeImage(blob())).resolves.toBe(bm);
+      const b = blob();
+      await expect(decodeImage(b)).resolves.toBe(bm);
+
       expect(createImageBitmapMock).toHaveBeenCalledTimes(2);
-      expect(createImageBitmapMock.mock.calls[1]![0]).toBeInstanceOf(
-        HTMLImageElement,
-      );
-      // A data: URL, so the fallback needs no object URL either.
-      expect(decoded).toHaveLength(1);
-      expect(decoded[0]).toMatch(/^data:/);
+      const retyped = createImageBitmapMock.mock.calls[1]![0] as Blob;
+      expect(retyped).toBeInstanceOf(Blob);
+      expect(retyped).not.toBe(b);
+      expect(retyped.type).toBe("image/png");
+      expect(retyped.size).toBe(b.size);
+      expect(decodedSrcs).toEqual([]);
       expect(createObjectURL).not.toHaveBeenCalled();
     });
 
-    it("rejects when the image element cannot decode it either", async () => {
-      createImageBitmapMock.mockRejectedValueOnce(new Error("first"));
-      stubImageDecode(() => Promise.reject(new Error("EncodingError")));
-      await expect(decodeImage(blob())).rejects.toThrow("EncodingError");
-      expect(createImageBitmapMock).toHaveBeenCalledTimes(1);
-    });
+    describe("and the re-typed blob too", () => {
+      beforeEach(() => {
+        createImageBitmapMock
+          .mockRejectedValueOnce(new Error("first"))
+          .mockRejectedValueOnce(new Error("second"));
+      });
 
-    it("rejects when bitmapping the decoded image fails too", async () => {
-      createImageBitmapMock
-        .mockRejectedValueOnce(new Error("first"))
-        .mockRejectedValueOnce(new Error("second"));
-      await expect(decodeImage(blob())).rejects.toThrow("second");
+      it("decodes through an image element on one object URL, revoked once it is bitmapped", async () => {
+        const bm = fakeBitmap(7, 9);
+        createImageBitmapMock.mockResolvedValueOnce(bm);
+        await expect(decodeImage(blob())).resolves.toBe(bm);
+
+        expect(createImageBitmapMock).toHaveBeenCalledTimes(3);
+        const img = createImageBitmapMock.mock.calls[2]![0];
+        expect(img).toBeInstanceOf(HTMLImageElement);
+        expect(decodedSrcs).toEqual(["blob:fake-url"]);
+        expect(createObjectURL).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake-url");
+        // Not before the bitmap was made from the element.
+        expect(revokeObjectURL.mock.invocationCallOrder[0]!).toBeGreaterThan(
+          createImageBitmapMock.mock.invocationCallOrder[2]!,
+        );
+      });
+
+      it("rejects, and still revokes the URL, when the image element cannot decode it", async () => {
+        stubImageDecode(() => Promise.reject(new Error("EncodingError")));
+        await expect(decodeImage(blob())).rejects.toThrow("EncodingError");
+        expect(createImageBitmapMock).toHaveBeenCalledTimes(2);
+        expect(createObjectURL).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      });
+
+      it("rejects, and still revokes the URL, when bitmapping the decoded image fails too", async () => {
+        createImageBitmapMock.mockRejectedValueOnce(new Error("third"));
+        await expect(decodeImage(blob())).rejects.toThrow("third");
+        expect(createObjectURL).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });
@@ -301,15 +337,16 @@ describe("createBitmapCache", () => {
     expect(c.bitmap.close).not.toHaveBeenCalled();
   });
 
-  it("keeps an image bigger than the whole budget rather than closing what it just stored", () => {
+  it("drops an unpinned image bigger than the whole budget, closed", () => {
     const cache = createBitmapCache({ maxEntries: 12, maxBytes: 1000 });
     const small = loaded("small", 2, 2);
     const huge = loaded("huge", 100, 100);
     cache.set(small);
     cache.set(huge);
 
-    expect(cache.get("huge")).toBe(huge);
-    expect(huge.bitmap.close).not.toHaveBeenCalled();
+    expect(cache.get("huge")).toBeUndefined();
+    expect(cache.size()).toBe(0);
+    expect(huge.bitmap.close).toHaveBeenCalledTimes(1);
     expect(small.bitmap.close).toHaveBeenCalledTimes(1);
   });
 
@@ -333,6 +370,173 @@ describe("createBitmapCache", () => {
     cache.set(loaded("b", 20, 20));
     expect(cache.bytes()).toBe(1600);
     expect(cache.size()).toBe(1);
+  });
+});
+
+describe("createBitmapCache: pins", () => {
+  /** One microtask: a release acts then. */
+  const flush = (): Promise<void> => Promise.resolve();
+  const big = (key: string, mb = 200) =>
+    loaded(key, 10000, (mb * 1_000_000) / 40000);
+
+  it("never evicts a pinned image past the entry limit", () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    cache.retain(["k0"]);
+    const imgs = Array.from({ length: 13 }, (_, i) => loaded(`k${i}`, 10, 10));
+    for (const img of imgs) cache.set(img);
+
+    expect(cache.size()).toBe(12);
+    expect(imgs[0]!.bitmap.close).not.toHaveBeenCalled();
+    expect(cache.get("k0")).toBe(imgs[0]);
+    // The oldest unpinned one went instead.
+    expect(imgs[1]!.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(cache.get("k1")).toBeUndefined();
+  });
+
+  it("allows a pinned set over the byte budget, closing none of it", () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    cache.retain(["a", "b", "c"]);
+    const imgs = [big("a"), big("b"), big("c")]; // 600 MB
+    for (const img of imgs) cache.set(img);
+
+    expect(cache.size()).toBe(3);
+    expect(cache.bytes()).toBe(600_000_000);
+    for (const img of imgs) expect(img.bitmap.close).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pinned image bigger than the whole budget", () => {
+    const cache = createBitmapCache({ maxEntries: 12, maxBytes: 1000 });
+    cache.retain(["huge"]);
+    const huge = loaded("huge", 100, 100);
+    cache.set(huge);
+
+    expect(cache.get("huge")).toBe(huge);
+    expect(huge.bitmap.close).not.toHaveBeenCalled();
+  });
+
+  it("drops, and closes, an unpinned newcomer that does not fit beside the pinned set", () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    cache.retain(["a", "b", "c"]);
+    for (const k of ["a", "b", "c"]) cache.set(big(k));
+    const late = big("late");
+    cache.set(late);
+
+    expect(cache.get("late")).toBeUndefined();
+    expect(late.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(cache.size()).toBe(3);
+    expect(cache.bytes()).toBe(600_000_000);
+  });
+
+  it("makes room for a newcomer that fits beside the pinned set by evicting older unpinned images", () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    cache.retain(["a", "b", "c"]);
+    for (const k of ["a", "b", "c"]) cache.set(big(k, 100)); // 300 MB pinned
+    const old = big("old", 100);
+    const fresh = big("fresh", 100);
+    cache.set(old); // 400 MB: fits
+    cache.set(fresh); // 500 MB: the oldest unpinned goes
+
+    expect(old.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(cache.get("old")).toBeUndefined();
+    expect(cache.get("fresh")).toBe(fresh);
+    expect(fresh.bitmap.close).not.toHaveBeenCalled();
+    expect(cache.bytes()).toBe(400_000_000);
+  });
+
+  it("holds a pin on a key that is not cached yet", () => {
+    const cache = createBitmapCache({ maxEntries: 1, maxBytes: 1e9 });
+    cache.retain(["later"]);
+    const later = loaded("later", 10, 10);
+    cache.set(later);
+    cache.set(loaded("other", 10, 10));
+
+    expect(cache.get("later")).toBe(later);
+    expect(later.bitmap.close).not.toHaveBeenCalled();
+  });
+
+  it("restores the budget when pins are released, closing the oldest first", async () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    cache.retain(["elsewhere"]); // another viewer is still mounted
+    const release = cache.retain(["a", "b", "c"]);
+    const [a, b, c] = [big("a"), big("b"), big("c")];
+    for (const img of [a, b, c]) cache.set(img);
+    release();
+    // Nothing acts inside the release itself.
+    expect(a.bitmap.close).not.toHaveBeenCalled();
+
+    await flush();
+    expect(a.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(b.bitmap.close).not.toHaveBeenCalled();
+    expect(c.bitmap.close).not.toHaveBeenCalled();
+    expect(cache.bytes()).toBe(400_000_000);
+    expect(cache.size()).toBe(2);
+  });
+
+  it("counts pins: a key stays pinned until every holder has released it", async () => {
+    const cache = createBitmapCache({ maxEntries: 1, maxBytes: 1e9 });
+    const first = cache.retain(["a"]);
+    const second = cache.retain(["a"]);
+    const a = loaded("a", 10, 10);
+    cache.set(a);
+    cache.set(loaded("b", 10, 10));
+
+    first();
+    first(); // releasing twice must not drop the other holder's pin
+    await flush();
+    expect(a.bitmap.close).not.toHaveBeenCalled();
+
+    second();
+    await flush();
+    // With no pin left at all the cache is emptied (see below).
+    expect(a.bitmap.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("empties the cache when the last pin is released", async () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    const release = cache.retain(["a"]);
+    const a = loaded("a", 10, 10);
+    const b = loaded("b", 10, 10);
+    cache.set(a);
+    cache.set(b);
+    release();
+    await flush();
+
+    expect(cache.size()).toBe(0);
+    expect(cache.bytes()).toBe(0);
+    expect(a.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(b.bitmap.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps unpinned images, within the limits, while some other pin is held", async () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    const releaseA = cache.retain(["a"]);
+    cache.retain(["c"]);
+    const b = loaded("b", 10, 10);
+    cache.set(loaded("a", 10, 10));
+    cache.set(b);
+    releaseA();
+    await flush();
+
+    expect(cache.get("b")).toBe(b);
+    expect(b.bitmap.close).not.toHaveBeenCalled();
+  });
+
+  it("keeps everything when a pin is taken again in the same synchronous run", async () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    const release = cache.retain(["a"]);
+    const a = loaded("a", 10, 10);
+    const b = loaded("b", 10, 10);
+    cache.set(a);
+    cache.set(b);
+
+    release(); // a remount: the old pin goes, the new one comes in the same run
+    cache.retain(["a"]);
+    await flush();
+
+    expect(cache.get("a")).toBe(a);
+    expect(cache.get("b")).toBe(b);
+    expect(a.bitmap.close).not.toHaveBeenCalled();
+    expect(b.bitmap.close).not.toHaveBeenCalled();
   });
 });
 
@@ -441,23 +645,139 @@ describe("useImageSet: one fetch per key", () => {
   });
 });
 
-describe("useImageSet: the shared bitmap cache", () => {
-  it("fills the module cache, which closes what it evicts", async () => {
-    const { result } = mount(req(null, k("first"), null));
+describe("useImageSet: what is on screen is never closed", () => {
+  const BIG = { w: 10000, h: 5000 }; // 200 MB
+  const MID = { w: 10000, h: 2500 }; // 100 MB
+
+  it("keeps three 200 MB images open while they are shown", async () => {
+    for (const id of ["Ab", "Ac", "Ad"]) sizes.set(k(id), BIG);
+    const { result } = mount(stepReq("A")); // 600 MB, over the 400 MB budget
     await respondAll();
     await waitFor(() => expect(result.current.status).toBe("ready"));
-    const first = bitmaps.get(k("first"))!;
-    expect(__viewerBitmapCache.get(k("first"))?.bitmap).toBe(first);
+    await settle();
 
-    // Twelve more distinct keys push the oldest out.
-    for (let i = 0; i < 12; i++) {
-      const m = mount(req(null, k(`more${i}`), null));
-      await respondAll();
-      await waitFor(() => expect(m.result.current.status).toBe("ready"));
-      m.unmount();
+    expect(Object.keys(result.current.images).sort()).toEqual([
+      "baseline",
+      "current",
+      "diff",
+    ]);
+    for (const id of ["Ab", "Ac", "Ad"]) {
+      expect(bitmaps.get(k(id))!.close).not.toHaveBeenCalled();
     }
-    expect(__viewerBitmapCache.get(k("first"))).toBeUndefined();
-    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(__viewerBitmapCache.bytes()).toBeGreaterThanOrEqual(600_000_000);
+  });
+
+  it("drops a large prefetch that lands after the current set instead of closing an image on screen", async () => {
+    for (const id of ["Ab", "Ac", "Ad"]) sizes.set(k(id), MID); // 300 MB
+    sizes.set(k("Nc"), { w: 10000, h: 4000 }); // 160 MB: 460 MB in all
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = mount(stepReq("A"), [req(null, k("Nc"), null)]);
+    await respondAll();
+    await waitFor(() => expect(callsFor(k("Nc"))).toHaveLength(1));
+    await respondAll();
+    await settle();
+
+    expect(result.current.status).toBe("ready");
+    expect(result.current.failed).toEqual({});
+    expect(Object.keys(result.current.images)).toHaveLength(3);
+    for (const id of ["Ab", "Ac", "Ad"]) {
+      expect(bitmaps.get(k(id))!.close).not.toHaveBeenCalled();
+      expect(__viewerBitmapCache.get(k(id))).toBeDefined();
+    }
+    // The newcomer is the one that did not fit.
+    expect(bitmaps.get(k("Nc"))!.close).toHaveBeenCalledTimes(1);
+    expect(__viewerBitmapCache.get(k("Nc"))).toBeUndefined();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("keeps an image that was served from the cache when something else floods the cache", async () => {
+    const one = mount(stepReq("A"), [stepReq("N")]);
+    await respondAll();
+    await waitFor(() => expect(calls).toHaveLength(6));
+    await respondAll();
+    await settle();
+    one.rerender({ r: stepReq("N"), ahead: [] });
+    expect(one.result.current.status).toBe("ready"); // from the cache, at render
+    await settle();
+
+    // Another viewer pins 600 MB and squeezes everything unpinned out.
+    for (const id of ["Zb", "Zc", "Zd"]) sizes.set(k(id), BIG);
+    const two = mount(stepReq("Z"));
+    await respondAll();
+    await waitFor(() => expect(two.result.current.status).toBe("ready"));
+    await settle();
+
+    for (const id of ["Nb", "Nc", "Nd"]) {
+      expect(bitmaps.get(k(id))!.close).not.toHaveBeenCalled();
+    }
+    one.rerender({ r: stepReq("N"), ahead: [] });
+    expect(one.result.current.status).toBe("ready");
+    expect(Object.keys(one.result.current.images)).toHaveLength(3);
+    // The step it left, no longer shown, was squeezed out.
+    for (const id of ["Ab", "Ac", "Ad"]) {
+      expect(bitmaps.get(k(id))!.close).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("closes the oldest image of a step only once the viewer has left it", async () => {
+    for (const id of ["Ab", "Ac", "Ad"]) sizes.set(k(id), BIG);
+    const { result, rerender } = mount(stepReq("A"));
+    await respondAll();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await settle();
+    expect(bitmaps.get(k("Ab"))!.close).not.toHaveBeenCalled();
+
+    rerender({ r: stepReq("B"), ahead: [] }); // two small keys, one small diff
+    await respondAll();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await settle();
+
+    expect(bitmaps.get(k("Ab"))!.close).toHaveBeenCalledTimes(1);
+    expect(bitmaps.get(k("Ac"))!.close).not.toHaveBeenCalled();
+    expect(bitmaps.get(k("Ad"))!.close).not.toHaveBeenCalled();
+    expect(__viewerBitmapCache.bytes()).toBeLessThanOrEqual(
+      BITMAP_CACHE_LIMITS.maxBytes,
+    );
+  });
+
+  it("keeps an image the next step shares, even when the step it leaves was over budget", async () => {
+    sizes.set(k("S"), BIG);
+    sizes.set(k("Ac"), BIG);
+    sizes.set(k("Ad"), MID); // 500 MB pinned
+    const { result, rerender } = mount(req(k("S"), k("Ac"), k("Ad")));
+    await respondAll();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await settle();
+
+    rerender({ r: req(k("S"), k("Bc"), k("Bd")), ahead: [] });
+    await respondAll();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await settle();
+
+    expect(result.current.images.baseline?.key).toBe(k("S"));
+    expect(bitmaps.get(k("S"))!.close).not.toHaveBeenCalled();
+    expect(__viewerBitmapCache.get(k("S"))).toBeDefined();
+    // What the viewer left behind is what gave way.
+    expect(bitmaps.get(k("Ac"))!.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes what it held once the last viewer unmounts, and loads afresh after that", async () => {
+    const { result, unmount } = mount(stepReq("A"));
+    await respondAll();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    for (const id of ["Ab", "Ac", "Ad"]) {
+      expect(bitmaps.get(k(id))!.close).not.toHaveBeenCalled();
+    }
+
+    unmount();
+    await settle();
+    for (const id of ["Ab", "Ac", "Ad"]) {
+      expect(bitmaps.get(k(id))!.close).toHaveBeenCalledTimes(1);
+    }
+    expect(__viewerBitmapCache.size()).toBe(0);
+
+    mount(stepReq("A"));
+    expect(calls).toHaveLength(6);
   });
 });
 
@@ -634,7 +954,9 @@ describe("useImageSet: failure and retry", () => {
     expect(result.current.failed).toEqual({});
     expect(result.current.images.diff?.bitmap).toBe(bm);
     expect(result.current.images.diff?.size).toEqual({ w: 11, h: 13 });
-    expect(createObjectURL).not.toHaveBeenCalled();
+    // The last resort made one object URL and let it go.
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 });
 
