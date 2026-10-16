@@ -182,6 +182,15 @@ export function zoomAbout(
   };
 }
 
+/** The area two rects share; null when they share none. */
+export function intersectRect(a: Rect, b: Rect): Rect | null {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.w, b.x + b.w);
+  const bottom = Math.min(a.y + a.h, b.y + b.h);
+  return right > x && bottom > y ? { x, y, w: right - x, h: bottom - y } : null;
+}
+
 export function worldToCanvas(t: Transform, p: Point): Point {
   return { x: p.x * t.scale + t.x, y: p.y * t.scale + t.y };
 }

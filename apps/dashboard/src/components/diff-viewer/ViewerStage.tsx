@@ -833,13 +833,20 @@ export function ViewerStage({
     />
   );
 
-  // The hatching's tooltips on pane `pane`, once its images are drawn.
+  // The hatching's tooltips on pane `pane`, once its images are drawn, cut
+  // to where the mode shows each image (Swipe's sides).
   const hatchTooltips = (pane: number) =>
-    sceneReady && transform ? (
+    sceneReady && transform && viewportSize ? (
       <HatchTooltips
         world={world}
         images={(renderer.hatched[pane] ?? []).filter(fits)}
         transform={transform}
+        within={renderer.shownIn?.({
+          world,
+          transform,
+          canvas: viewportSize,
+          swipe,
+        })}
       />
     ) : null;
   // Where the focus goes when a focused Retry's card goes (M2): its pane.
@@ -935,12 +942,15 @@ export function ViewerStage({
     );
   }
 
+  // The single stage clips (`overflow-clip`) rather than hiding its
+  // overflow: a clip is no scroll container, so Swipe's handle can stick to
+  // the viewer's scroll pane and stay on screen on a tall card (M1).
   return (
     <div className="flex min-h-full p-6">
       <div className="relative m-auto w-full">
         <div
           style={aspectStyle(world?.size)}
-          className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
+          className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
           ref={singleRef}
           data-testid="single-stage-host"
           data-mode={shown}
@@ -951,7 +961,11 @@ export function ViewerStage({
           {hatchTooltips(0)}
           {editorOverlay}
           {shown === "swipe" && sceneReady && (
-            <SwipeHandle value={swipe} onChange={setSwipe} />
+            <SwipeHandle
+              value={swipe}
+              onChange={setSwipe}
+              stageWidth={viewportSize?.w}
+            />
           )}
         </div>
         <StageStates

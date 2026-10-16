@@ -31,7 +31,10 @@ import type {
 } from "@/components/diff-viewer/image-set";
 import type { DiffRegion } from "@/components/diff-viewer/layers/regionTypes";
 import { RENDERERS } from "@/components/diff-viewer/modes/types";
-import { SwipeHandle } from "@/components/diff-viewer/SwipeHandle";
+import {
+  HANDLE_EDGE_INSET,
+  SwipeHandle,
+} from "@/components/diff-viewer/SwipeHandle";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
 import { useViewState } from "@/components/diff-viewer/view-state";
@@ -197,9 +200,29 @@ function rectOf(g: Graphics) {
   return { x: x!, y: y!, w: w!, h: h! };
 }
 
+/** The area an image is clipped to, in world px. */
+const clipOf = (w: Box, side: "baseline" | "current") =>
+  rectOf(child(w, side).mask as Graphics);
+
 /** Where the current image's clip starts, in world px. */
-const maskX = (w: Box): number =>
-  rectOf(child(w, "current").mask as Graphics).x;
+const maskX = (w: Box): number => clipOf(w, "current").x;
+
+/** The hatching's tooltips, as titled canvas rects. */
+const tooltips = () =>
+  screen.getAllByTestId("hatch-tooltip").map((el) => ({
+    title: el.title,
+    x: parseFloat(el.style.left),
+    y: parseFloat(el.style.top),
+    w: parseFloat(el.style.width),
+    h: parseFloat(el.style.height),
+  }));
+
+/** Where the handle's centre is, in px of a stage `width` px wide. */
+function handleCentre(width: number): number {
+  const value = Number(slider().getAttribute("aria-valuenow")) / 100;
+  const nudge = /translateX\((-?[\d.]+)px\)/.exec(slider().style.transform);
+  return value * width + (nudge ? parseFloat(nudge[1]!) : 0);
+}
 
 /** The divider's centre, in canvas px, under the world's own placement. */
 function dividerOnCanvas(w: Box): number {
@@ -316,7 +339,7 @@ describe("Swipe on the stage", () => {
     return r;
   }
 
-  test("its layers, bottom to top: both images, both hatchings, the divider, then the regions and the ignore regions (R9)", async () => {
+  test("its layers, bottom to top: each image clipped to its side with its hatching, the divider, then the regions and the ignore regions (R9, R15)", async () => {
     const { set, request } = step({
       baseline: loaded("b", 400, 300),
       current: loaded("c", 400, 250),
@@ -331,19 +354,24 @@ describe("Swipe on the stage", () => {
     expect(labels(world)).toEqual([
       "baseline",
       "current",
-      "hatch:baseline",
-      "hatch:current",
       "divider",
       "regions",
       "ignore",
     ]);
-    // The current image and the clip that keeps it right of the divider.
-    const current = child(world, "current");
-    expect(labels(current)).toEqual(["current:image", "current:mask"]);
-    expect(current.mask).toBe(child(current, "current:mask"));
-    // Each image drawn once, the current one inside its clip.
+    // Each image with its hatching, under the clip that keeps both on its
+    // side of the divider.
+    for (const side of ["baseline", "current"] as const) {
+      const shown = child(world, side);
+      expect(labels(shown)).toEqual([
+        `${side}:image`,
+        `hatch:${side}`,
+        `${side}:mask`,
+      ]);
+      expect(shown.mask).toBe(child(shown, `${side}:mask`));
+    }
+    // Each image drawn once, inside its clip.
     expect(fake.registry.sprites.map((s) => s.label).sort()).toEqual([
-      "baseline",
+      "baseline:image",
       "current:image",
     ]);
   });
@@ -354,15 +382,119 @@ describe("Swipe on the stage", () => {
     // At 50% of an 800 px canvas, under fit: the middle of the world.
     expect(maskX(world)).toBeCloseTo(splitAt(0.5), 9);
     expect(maskX(world)).toBeCloseTo(200, 9);
-    const clip = rectOf(child(world, "current").mask as Graphics);
+    const clip = clipOf(world, "current");
     expect(clip).toMatchObject({ y: 0, h: WORLD.h });
     expect(clip.x + clip.w).toBeCloseTo(WORLD.w, 9);
+    // The baseline's is the rest: from the world's left edge to the divider.
+    expect(clipOf(world, "baseline")).toEqual({ x: 0, y: 0, w: 200, h: 300 });
 
     // Panned, the same canvas fraction is another world point.
     act(() => useViewState.getState().setView({ zoom: 1, panX: 30, panY: 0 }));
     await flush();
     expect(maskX(world)).toBeCloseTo(splitAt(0.5), 9);
     expect(maskX(world)).toBeCloseTo(170, 9);
+  });
+
+  test("where the current image doesn't reach, the right of the divider shows no baseline (R15)", async () => {
+    // A page that lost content: the current is narrower and shorter.
+    const { set, request } = step({
+      baseline: loaded("b", 400, 300),
+      current: loaded("c", 300, 200),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    const world = stageWorld();
+
+    // The baseline's clip ends at the divider, wherever it is.
+    expect(clipOf(world, "baseline")).toEqual({ x: 0, y: 0, w: 200, h: 300 });
+    expect(clipOf(world, "current")).toEqual({ x: 200, y: 0, w: 200, h: 300 });
+    act(() => useViewState.getState().setSwipe(0.9));
+    await flush();
+    // 0.9 × 800 = 720 canvas px = 360 world px: past the current's 300.
+    expect(clipOf(world, "baseline")).toEqual({ x: 0, y: 0, w: 360, h: 300 });
+    expect(clipOf(world, "current")).toEqual({ x: 360, y: 0, w: 40, h: 300 });
+    // The current's hatching is clipped with it, to the right.
+    expect(labels(child(world, "current"))).toContain("hatch:current");
+  });
+
+  test("where the baseline doesn't reach, the left of the divider shows no current (R15)", async () => {
+    const { set, request } = step({
+      baseline: loaded("b", 300, 200),
+      current: loaded("c", 400, 300),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    const world = stageWorld();
+
+    expect(clipOf(world, "current")).toEqual({ x: 200, y: 0, w: 200, h: 300 });
+    expect(clipOf(world, "baseline")).toEqual({ x: 0, y: 0, w: 200, h: 300 });
+    expect(labels(child(world, "baseline"))).toContain("hatch:baseline");
+
+    // A divider panned off the world's left leaves no baseline at all...
+    act(() => useViewState.getState().setView({ zoom: 1, panX: 300, panY: 0 }));
+    await flush();
+    expect(clipOf(world, "baseline")).toEqual({
+      x: -100,
+      y: 0,
+      w: 0,
+      h: 300,
+    });
+    expect(clipOf(world, "current")).toEqual({
+      x: -100,
+      y: 0,
+      w: 500,
+      h: 300,
+    });
+    // ...and off its right, no current.
+    act(() =>
+      useViewState.getState().setView({ zoom: 1, panX: -300, panY: 0 }),
+    );
+    await flush();
+    expect(clipOf(world, "baseline")).toEqual({ x: 0, y: 0, w: 500, h: 300 });
+    expect(clipOf(world, "current")).toEqual({ x: 500, y: 0, w: 0, h: 300 });
+  });
+
+  test("the hatching's tooltips are cut to their image's side (R15)", async () => {
+    const shown = step({
+      baseline: loaded("b", 400, 300),
+      current: loaded("c", 300, 200),
+    });
+    const r = render(
+      <ViewerStage set={shown.set} request={shown.request} regions={[]} />,
+    );
+    await flush();
+    // The current's two strips, right of the divider (canvas 400) only, at
+    // 2 canvas px per world px. Uncut, the bottom one would start at 0.
+    const current = "Not in the current screenshot";
+    expect(tooltips()).toEqual([
+      { title: current, x: 600, y: 0, w: 200, h: 600 },
+      { title: current, x: 400, y: 400, w: 200, h: 200 },
+    ]);
+    // They follow the divider.
+    act(() => useViewState.getState().setSwipe(0.9));
+    await flush();
+    expect(tooltips()).toEqual([
+      { title: current, x: 720, y: 0, w: 80, h: 600 },
+    ]);
+
+    // The mirror: the baseline's, left of the divider only.
+    counter += 1;
+    useViewState.getState().resetView({ reducedMotion: false });
+    const mirrored = step({
+      baseline: loaded("b", 300, 200),
+      current: loaded("c", 400, 300),
+    });
+    r.rerender(
+      <ViewerStage
+        set={mirrored.set}
+        request={mirrored.request}
+        regions={[]}
+      />,
+    );
+    await flush();
+    expect(tooltips()).toEqual([
+      { title: "Not in the baseline", x: 0, y: 400, w: 400, h: 200 },
+    ]);
   });
 
   test("the divider is a 2 px line in --ring, across the whole canvas, at the swipe", async () => {
@@ -525,6 +657,62 @@ describe("Swipe on the stage", () => {
     expect(maskX(stageWorld())).toBeCloseTo(splitAt(0.5), 9);
   });
 
+  test("on a tall card the handle stays on screen: sticky in the strip, in a stage that clips without scrolling (M1)", async () => {
+    // A 1440×10000 full page: the card is far taller than the viewer. On a
+    // device whose textures take it.
+    fake.registry.maxTextureSize = 16384;
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 10000),
+      current: loaded("c", 1440, 10000),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    // Mid-height in a full-height strip, held 16 px inside the scroll pane.
+    const strip = screen.getByTestId("swipe-divider");
+    expect(strip.className.split(" ")).toEqual(
+      expect.arrayContaining([
+        "inset-y-0",
+        "flex",
+        "flex-col",
+        "justify-center",
+      ]),
+    );
+    expect(slider().className.split(" ")).toEqual(
+      expect.arrayContaining(["sticky", "top-4", "bottom-4"]),
+    );
+    // Sticky holds to the nearest scroll container. The stage clips without
+    // being one, and nothing else in the stage scrolls or hides, so that is
+    // the viewer's scroll pane.
+    const host = screen.getByTestId("single-stage-host");
+    expect(host.className).toContain("overflow-clip");
+    for (let el = slider().parentElement; el; el = el.parentElement) {
+      expect(el.className).not.toMatch(/overflow-(hidden|auto|scroll)/);
+    }
+  });
+
+  test("at 0% and 100% the handle keeps whole inside the card, its focus ring too (M4)", async () => {
+    await swipeStage();
+    act(() => slider().focus());
+    fireEvent.keyDown(slider(), { key: "Home" });
+    await flush();
+    expect(HANDLE_EDGE_INSET).toBe(16);
+    expect(handleCentre(VIEWPORT.w)).toBe(16);
+    // The strip, the divider's own place, stays on the divider.
+    expect(screen.getByTestId("swipe-divider").style.left).toBe("0%");
+
+    fireEvent.keyDown(slider(), { key: "End" });
+    await flush();
+    expect(handleCentre(VIEWPORT.w)).toBe(VIEWPORT.w - 16);
+
+    fireEvent.keyDown(slider(), { key: "Home" });
+    fireEvent.keyDown(slider(), { key: "ArrowRight", shiftKey: true });
+    await flush();
+    // Away from the sides it is on the divider.
+    expect(slider().style.transform).toBe("");
+    expect(handleCentre(VIEWPORT.w)).toBe(80);
+  });
+
   test("no handle until the images are in, and none in another mode; leaving Swipe takes its layers with it", async () => {
     const images = swipeStep();
     const r = render(
@@ -543,8 +731,10 @@ describe("Swipe on the stage", () => {
     await flush();
     expect(screen.getByRole("slider")).toBeDefined();
     const world = stageWorld();
-    const current = child(world, "current");
-    const clip = child(current, "current:mask");
+    const sides = (["baseline", "current"] as const).map((side) => {
+      const shown = child(world, side);
+      return { shown, clip: child(shown, `${side}:mask`) };
+    });
     const divider = child(world, "divider");
 
     setMode("overlay");
@@ -557,9 +747,11 @@ describe("Swipe on the stage", () => {
       "hatch:current",
       "ignore",
     ]);
-    expect(current.destroyed).toBe(true);
-    expect(current.mask).toBeNull();
-    expect(clip.destroyed).toBe(true);
+    for (const { shown, clip } of sides) {
+      expect(shown.destroyed).toBe(true);
+      expect(shown.mask).toBeNull();
+      expect(clip.destroyed).toBe(true);
+    }
     expect(divider.destroyed).toBe(true);
   });
 });
@@ -568,15 +760,18 @@ describe("Swipe on the stage", () => {
 function Controlled({
   initial = 0.5,
   onChange,
+  stageWidth,
 }: {
   initial?: number;
   onChange?: (v: number) => void;
+  stageWidth?: number;
 }) {
   const [value, setValue] = useState(initial);
   return (
     <div data-testid="stage" className="relative">
       <SwipeHandle
         value={value}
+        stageWidth={stageWidth}
         onChange={(v) => {
           onChange?.(v);
           setValue(v);
@@ -617,6 +812,17 @@ describe("SwipeHandle", () => {
     expect(press("ArrowLeft")).toBe(0);
     expect(press("ArrowLeft", true)).toBe(0);
     expect(s.getAttribute("aria-valuetext")).toBe("0% baseline");
+  });
+
+  test("near a side the handle moves in to stay 16 px from it; with no width it stays on the divider", () => {
+    const { unmount } = render(<Controlled initial={0.1} stageWidth={100} />);
+    // At 10 px of 100 the centre moves in to 16.
+    expect(slider().style.transform).toBe("translateX(6px)");
+    expect(handleCentre(100)).toBe(16);
+    unmount();
+
+    render(<Controlled initial={0} />);
+    expect(slider().style.transform).toBe("");
   });
 
   test("other keys and chords are left alone (Alt+← is the browser's back)", () => {
@@ -669,11 +875,18 @@ describe("the handle's keys are its own", () => {
   function Viewer({
     onNextStep,
     onPrevStep,
+    onNextPending = () => {},
   }: {
     onNextStep: () => void;
     onPrevStep: () => void;
+    onNextPending?: () => void;
   }) {
-    useDiffViewerShortcuts({ viewports: [], onNextStep, onPrevStep });
+    useDiffViewerShortcuts({
+      viewports: [],
+      onNextStep,
+      onPrevStep,
+      onNextPending,
+    });
     const swipe = useViewState((s) => s.swipe);
     const setSwipe = useViewState((s) => s.setSwipe);
     return (
@@ -716,5 +929,30 @@ describe("the handle's keys are its own", () => {
     fireEvent.keyDown(document.body, { key: "ArrowRight" });
     expect(onNextStep).toHaveBeenCalledOnce();
     expect(useViewState.getState().swipe).toBe(1);
+  });
+
+  test("the app's other keys still work with the handle focused (M2)", () => {
+    const onNextStep = vi.fn();
+    const onNextPending = vi.fn();
+    render(
+      <Keyboard>
+        <Viewer
+          onNextStep={onNextStep}
+          onPrevStep={vi.fn()}
+          onNextPending={onNextPending}
+        />
+      </Keyboard>,
+    );
+    act(() => slider().focus());
+
+    // J is not the handle's: the review loop's next pending step runs.
+    fireEvent.keyDown(slider(), { key: "j" });
+    expect(onNextPending).toHaveBeenCalledOnce();
+    expect(useViewState.getState().swipe).toBe(0.5);
+    // → stays the handle's.
+    fireEvent.keyDown(slider(), { key: "ArrowRight" });
+    expect(onNextStep).not.toHaveBeenCalled();
+    expect(useViewState.getState().swipe).toBeCloseTo(0.52, 9);
+    expect(document.activeElement).toBe(slider());
   });
 });

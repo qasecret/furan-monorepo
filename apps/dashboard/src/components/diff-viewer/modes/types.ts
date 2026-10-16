@@ -1,7 +1,7 @@
 import type { Container } from "pixi.js";
 
 import type { ImageRole } from "../image-set";
-import type { Size, Transform, World } from "../viewer-geometry";
+import type { Rect, Size, Transform, World } from "../viewer-geometry";
 import type { ViewerMode } from "../viewer-prefs";
 
 import { diff } from "./diff";
@@ -56,6 +56,12 @@ export interface ModeHandle {
   dispose(): void;
 }
 
+/** What says where Swipe's divider is: the world, placed on a canvas. */
+export type SplitInput = Pick<
+  RenderInput,
+  "world" | "transform" | "canvas" | "swipe"
+>;
+
 /** A layer the host mounts above a renderer's own. */
 export type HostLayer = "shading" | "regions" | "ignore";
 
@@ -85,6 +91,14 @@ export interface ModeRenderer {
    * tooltips over the same areas.
    */
   hatched: readonly (readonly HatchedImage[])[];
+  /**
+   * Where each image shows, in world px, for a mode that shows an image in
+   * only part of the world (Swipe: the baseline left of the divider, the
+   * current right of it, R15). It clips the image and its hatching there,
+   * and the host clips the hatching's tooltips to the same area. Absent:
+   * each image shows over the whole world.
+   */
+  shownIn?(input: SplitInput): Record<HatchedImage, Rect>;
 }
 
 /**

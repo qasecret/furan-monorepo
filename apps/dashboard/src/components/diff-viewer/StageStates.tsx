@@ -5,7 +5,9 @@ import { useId, useLayoutEffect, useRef } from "react";
 import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
 import { RENDERERS, type HatchedImage } from "./modes/types";
 import {
+  intersectRect,
   worldToCanvas,
+  type Rect,
   type Size,
   type Transform,
   type World,
@@ -333,24 +335,31 @@ export function StageStates({
  * Invisible hit areas over the hatching of `images` in one pane, each with
  * its tooltip (spec §3.1), placed by the world's transform. Under the
  * editor's overlay; pointer events reach the stage's pan and zoom through
- * them.
+ * them. With `within`, an image's are cut to the area it shows in (Swipe's
+ * sides, R15), as its hatching is.
  */
 export function HatchTooltips({
   world,
   images,
   transform,
+  within,
 }: {
   world: World;
   images: readonly HatchedImage[];
   transform: Transform;
+  within?: Partial<Record<HatchedImage, Rect>>;
 }) {
   return images.flatMap((image) =>
-    world.missing[image].map((r) => {
+    world.missing[image].flatMap((missing) => {
+      const area = within?.[image];
+      const r = area ? intersectRect(missing, area) : missing;
+      if (!r) return [];
       const from = worldToCanvas(transform, { x: r.x, y: r.y });
       const to = worldToCanvas(transform, { x: r.x + r.w, y: r.y + r.h });
       return (
         <div
-          key={`${image}:${r.x},${r.y}`}
+          // The strip's own key: a swipe resizes it, it stays the same node.
+          key={`${image}:${missing.x},${missing.y}`}
           className="absolute"
           style={{
             left: from.x,

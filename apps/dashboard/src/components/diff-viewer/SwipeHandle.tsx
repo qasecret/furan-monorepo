@@ -14,11 +14,29 @@ const valueText = (percent: number) => `${percent}% baseline`;
 
 const clamp = (v: number, max: number) => Math.min(max, Math.max(0, v));
 
+/**
+ * How far the handle's centre keeps from the stage's sides: half the handle
+ * (12 px) and its focus ring (a 2 px outline 2 px out), so the card cuts off
+ * neither at 0% or 100% (M4). The same inset keeps it from the scroll pane's
+ * top and bottom (`top-4 bottom-4`).
+ */
+export const HANDLE_EDGE_INSET = 16;
+
+/** How far the handle's centre moves off the divider to stay that far in. */
+function edgeNudge(value: number, width: number | undefined): number {
+  if (width === undefined || !(width > 0)) return 0;
+  const at = value * width;
+  const inset = Math.min(HANDLE_EDGE_INSET, width / 2);
+  return Math.min(Math.max(at, inset), width - inset) - at;
+}
+
 interface Props {
   /** The divider, as a fraction of the stage's width (0..1). */
   value: number;
   /** A new fraction, within 0..1. */
   onChange(value: number): void;
+  /** The stage's width in px, to keep the handle inside it at the ends. */
+  stageWidth?: number;
 }
 
 /**
@@ -28,7 +46,12 @@ interface Props {
  *
  * - **Place.** In % of the stage, so a resize or a browser zoom keeps it at
  *   its fraction without waiting for a render (Review Focus 5), as the
- *   canvas's divider does.
+ *   canvas's divider does. Near the sides the handle alone moves in, to stay
+ *   whole inside the card (M4); the strip stays on the divider.
+ * - **On screen.** The handle sits mid-height and is sticky, 16 px inside
+ *   the viewer's scroll pane: on a card taller than the pane it stays in
+ *   view, at the nearest edge of the visible part (M1). That needs the stage
+ *   to clip without being a scroll container (`overflow-clip`).
  * - **Pointer.** A drag on the strip or the handle moves the divider by the
  *   pointer's travel, so a press alone moves nothing. The pointer is
  *   captured, so the drag holds when it leaves the strip. The listeners are
@@ -41,7 +64,7 @@ interface Props {
  *   `defaultPrevented`), at the ends too. Chords are left alone: Alt+← is
  *   the browser's back.
  */
-export function SwipeHandle({ value, onChange }: Props) {
+export function SwipeHandle({ value, onChange, stageWidth }: Props) {
   const stripRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
   // The pointer listeners are bound once and read the latest props.
@@ -130,11 +153,12 @@ export function SwipeHandle({ value, onChange }: Props) {
     onChange(clamp(next, 100) / 100);
   };
 
+  const nudge = edgeNudge(value, stageWidth);
   return (
     <div
       ref={stripRef}
       data-testid="swipe-divider"
-      className="absolute inset-y-0 z-10 w-6 -translate-x-1/2 cursor-ew-resize touch-none select-none"
+      className="absolute inset-y-0 z-10 flex w-6 -translate-x-1/2 cursor-ew-resize touch-none select-none flex-col items-center justify-center"
       style={{ left: `${value * 100}%` }}
     >
       <div
@@ -148,7 +172,10 @@ export function SwipeHandle({ value, onChange }: Props) {
         aria-valuenow={percent}
         aria-valuetext={valueText(percent)}
         onKeyDown={onKeyDown}
-        className="absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-ring bg-raised text-fg-secondary shadow-raised focus-ring"
+        className="sticky top-4 bottom-4 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-ring bg-raised text-fg-secondary shadow-raised focus-ring"
+        style={
+          nudge === 0 ? undefined : { transform: `translateX(${nudge}px)` }
+        }
       >
         <ChevronsLeftRight className="h-3.5 w-3.5" aria-hidden />
       </div>
