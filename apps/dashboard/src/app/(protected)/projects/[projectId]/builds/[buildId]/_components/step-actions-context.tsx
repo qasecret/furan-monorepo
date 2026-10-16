@@ -4,9 +4,12 @@ import {
   createContext,
   useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
 } from "react";
+
+import { useCommandKeys } from "@/lib/commands/registry";
 
 /**
  * What a step card does, as its own buttons do it, for the batch page's keys
@@ -61,7 +64,30 @@ export function createStepActions(): StepActionsRegistry {
 
 const StepActionsContext = createContext<StepActionsRegistry | null>(null);
 
-/** Hands the batch list's registry to the step cards below it. */
+/** The hint for one of a card's decision buttons (`useCommandKeys`'s). */
+export interface StepKeyHint {
+  ariaKeyShortcuts?: string;
+  /** " (A)", or "" when the key does nothing (none, or the switch is off). */
+  titleSuffix: string;
+}
+
+/** The hints for a card's Approve and Reject: `batch.approve` / `.reject`. */
+export interface StepKeys {
+  approve: StepKeyHint;
+  reject: StepKeyHint;
+}
+
+const NO_HINT: StepKeyHint = { titleSuffix: "" };
+const NO_STEP_KEYS: StepKeys = { approve: NO_HINT, reject: NO_HINT };
+
+const StepKeysContext = createContext<StepKeys>(NO_STEP_KEYS);
+
+/**
+ * Hands the batch list's registry to the step cards below it, with the
+ * keys their Approve and Reject buttons name. The keys are read here, once
+ * for the page, not once per card: a card redraws when they change (the
+ * single-key switch, the role), never for another change to the registry.
+ */
 export function StepActionsProvider({
   value,
   children,
@@ -69,11 +95,41 @@ export function StepActionsProvider({
   value: StepActionsRegistry;
   children: ReactNode;
 }) {
+  const approve = useCommandKeys("batch.approve");
+  const reject = useCommandKeys("batch.reject");
+  const keys = useMemo<StepKeys>(
+    () => ({
+      approve: hint(approve.ariaKeyShortcuts, approve.titleSuffix),
+      reject: hint(reject.ariaKeyShortcuts, reject.titleSuffix),
+    }),
+    [
+      approve.ariaKeyShortcuts,
+      approve.titleSuffix,
+      reject.ariaKeyShortcuts,
+      reject.titleSuffix,
+    ],
+  );
   return (
     <StepActionsContext.Provider value={value}>
-      {children}
+      <StepKeysContext.Provider value={keys}>
+        {children}
+      </StepKeysContext.Provider>
     </StepActionsContext.Provider>
   );
+}
+
+function hint(
+  ariaKeyShortcuts: string | undefined,
+  titleSuffix: string,
+): StepKeyHint {
+  return ariaKeyShortcuts === undefined
+    ? { titleSuffix }
+    : { ariaKeyShortcuts, titleSuffix };
+}
+
+/** A card's Approve and Reject hints; none for a card outside a batch list. */
+export function useStepKeys(): StepKeys {
+  return useContext(StepKeysContext);
 }
 
 /** The batch list's registry, or null for a card outside one. */

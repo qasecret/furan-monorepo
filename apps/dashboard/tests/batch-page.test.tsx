@@ -141,6 +141,7 @@ import {
   CommandRoleProvider,
   resolveCommands,
   useCommandRegistry,
+  useCommands,
 } from "@/lib/commands/registry";
 import { parseReviewContext } from "@/lib/review-context";
 import type { ViewerRole } from "@/lib/roles";
@@ -2437,6 +2438,45 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     expect(approve.hasAttribute("title")).toBe(false);
     expect(
       screen.getByTestId("batch-start-reviewing").hasAttribute("title"),
+    ).toBe(false);
+  });
+
+  test("the page reads the step keys once: a registry change redraws no step card", () => {
+    // Each card's image key counts its renders.
+    serveBatch({ c1: { imageKey: "k1" }, c4: { imageKey: "k4" } });
+    render(<Keyboard />);
+    const drawn = new Map(cardRenders);
+    expect(drawn.size).toBeGreaterThan(0);
+
+    // Another command registers (another page part mounting): the cards'
+    // keys are as they were, so no card redraws.
+    function Other() {
+      useCommands(
+        "global",
+        [
+          {
+            id: "test.other",
+            label: "Other",
+            group: "Help",
+            keys: ["$mod+F2"],
+            scope: "global",
+            run: () => undefined,
+          },
+        ],
+        {},
+      );
+      return null;
+    }
+    render(<Other />);
+    expect(resolveCommands().some((c) => c.command.id === "test.other")).toBe(
+      true,
+    );
+    expect(new Map(cardRenders)).toEqual(drawn);
+
+    // A change to the keys themselves still reaches every card.
+    act(() => useSingleKeyStore.setState({ on: false }));
+    expect(
+      screen.getByTestId("step-approve-c1").hasAttribute("aria-keyshortcuts"),
     ).toBe(false);
   });
 });
