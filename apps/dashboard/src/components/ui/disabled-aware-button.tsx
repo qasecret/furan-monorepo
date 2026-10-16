@@ -54,6 +54,11 @@ export interface DisabledAwareButtonProps {
   label?: string;
   /** The keys that do what it does (`useCommandKeys`), e.g. "A". */
   ariaKeyShortcuts?: string;
+  /**
+   * -1 takes it out of the Tab order (a control inside a list item that is
+   * not the list's Tab stop); it can still be clicked and focused.
+   */
+  tabIndex?: number;
 }
 
 /**
@@ -87,6 +92,7 @@ export const DisabledAwareButton = forwardRef<
     className,
     label,
     ariaKeyShortcuts,
+    tabIndex,
   },
   ref,
 ) {
@@ -114,6 +120,7 @@ export const DisabledAwareButton = forwardRef<
             aria-describedby={explained ? reasonId : undefined}
             aria-label={label}
             aria-keyshortcuts={ariaKeyShortcuts}
+            tabIndex={tabIndex}
             // The tooltip replaces a native title on an explained button.
             title={explained ? undefined : title}
             data-testid={testId}

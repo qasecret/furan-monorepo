@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { lowerFirst } from "./keys";
 import type { ResolvedCommand } from "./registry";
-import type { Command, CommandCtx } from "./types";
+import type { Command, CommandCtx, RunMeta } from "./types";
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -23,14 +23,16 @@ function failed(command: Command): void {
 /**
  * Runs a registered command the way every surface does (the key dispatcher,
  * the palette): with its live ctx, only while `enabled` holds, calling
- * `before` (the dispatcher's `preventDefault`) just before `run`. A command
- * that throws or rejects (any thenable), or whose `enabled` throws, is
- * reported with `Couldn't ‹label›` and never rethrown, so the next key press
- * or palette choice works as before. Returns whether it ran.
+ * `before` (the dispatcher's `preventDefault`) just before `run`, and telling
+ * `run` how it ran (`meta`: the key that matched; `{}` from the palette). A
+ * command that throws or rejects (any thenable), or whose `enabled` throws,
+ * is reported with `Couldn't ‹label›` and never rethrown, so the next key
+ * press or palette choice works as before. Returns whether it ran.
  */
 export function runCommand(
   resolved: ResolvedCommand,
   before?: () => void,
+  meta: RunMeta = {},
 ): boolean {
   const { command } = resolved;
   let ctx: CommandCtx;
@@ -43,7 +45,7 @@ export function runCommand(
   }
   before?.();
   try {
-    const result: unknown = command.run(ctx);
+    const result: unknown = command.run(ctx, meta);
     if (isThenable(result)) {
       void Promise.resolve(result).catch(() => failed(command));
     }

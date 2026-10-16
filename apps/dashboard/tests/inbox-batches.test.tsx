@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -24,6 +25,10 @@ const toastMock = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast: toastMock }));
 vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => undefined,
+}));
+// The global commands' ⌘Z: no review session here.
+vi.mock("@/lib/review/use-review-mutations", () => ({
+  useReviewMutations: () => ({ undo: vi.fn() }),
 }));
 vi.mock("@/app/(protected)/_components/current-project-provider", () => ({
   useCurrentProject: () => ({
@@ -51,12 +56,40 @@ vi.mock("@/lib/trpc", () => ({
       list: { useQuery: (...a: unknown[]) => listMock(...a) },
       pendingCount: { useQuery: (...a: unknown[]) => pendingMock(...a) },
     },
+    // The palette's test search; nothing is typed into it here.
+    variations: {
+      list: {
+        useQuery: () => ({
+          data: undefined,
+          isPending: false,
+          isError: false,
+          isFetching: false,
+        }),
+      },
+    },
   },
 }));
 
+import {
+  BATCHES_LIST,
+  BATCHES_LIST_ATTR,
+} from "@/app/(protected)/inbox/_components/batches-commands";
 import { InboxPage } from "@/app/(protected)/inbox/_components/inbox-page";
 import Page from "@/app/(protected)/inbox/page";
+import { CommandPalette } from "@/components/cmdk/command-palette";
+import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { ShortcutsSheet } from "@/components/shortcuts/shortcuts-sheet";
+import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
+import { CommandDispatcher } from "@/lib/commands/dispatcher";
+import { GlobalCommands } from "@/lib/commands/global-commands";
+import { useSingleKeyStore } from "@/lib/commands/prefs";
+import {
+  CommandRoleProvider,
+  resolveCommands,
+  useCommandRegistry,
+} from "@/lib/commands/registry";
 import { parseReviewContext, type ReviewContext } from "@/lib/review-context";
+import type { ViewerRole } from "@/lib/roles";
 
 const ctxOf = (search = ""): ReviewContext => {
   urlState.search = search;
@@ -155,6 +188,11 @@ beforeEach(() => {
   invalidate.pendingCount.mockReset();
   for (const fn of Object.values(toastMock)) fn.mockReset();
   urlState.search = "";
+  useCommandRegistry.setState({ entries: [], role: "guest" });
+  useSingleKeyStore.setState({ on: true });
+  usePaletteStore.setState({ open: false });
+  useShortcutsSheet.setState({ open: false });
+  localStorage.clear();
   serve({});
 });
 afterEach(() => {
@@ -944,5 +982,679 @@ describe("Batches: the server page", () => {
     expect(pageEl?.props).toEqual({
       context: { status: "needs-review", facets: {} },
     });
+  });
+});
+
+describe("Batches: keyboard review (spec §4.2)", () => {
+  const target = { buildId: "b1", runId: "r1", checkpointId: "c1" };
+  const three = () => [
+    build({ id: "b1", number: 3 }),
+    build({ id: "b2", number: 2 }),
+    build({ id: "b3", number: 1 }),
+  ];
+
+  /** The protected layout's keyboard parts around the page. */
+  function Keyboard({
+    context,
+    role = "editor",
+  }: {
+    context: ReviewContext;
+    role?: ViewerRole;
+  }) {
+    return (
+      <CommandRoleProvider role={role}>
+        <GlobalCommands />
+        <CommandDispatcher />
+        <InboxPage context={context} />
+        <ShortcutsSheet />
+        <CommandPalette userRole={role} userId="u1" />
+      </CommandRoleProvider>
+    );
+  }
+
+  /** A keydown on the focused element, as the browser sends it. */
+  function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+    const e = new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      (document.activeElement ?? document.body).dispatchEvent(e);
+    });
+    return e;
+  }
+
+  const row = (id: string) => screen.getByTestId(`inbox-batch-row-${id}`);
+  const focusOn = (el: HTMLElement) => act(() => el.focus());
+  const searchBox = () => screen.getByTestId("inbox-search-input");
+  const branchBox = () => screen.getByTestId("inbox-branch-input");
+  const startButton = () => screen.getByTestId("inbox-start-reviewing");
+
+  /** Lets the palette finish closing: a picked command runs then. */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  async function openPalette(): Promise<HTMLElement> {
+    act(() => usePaletteStore.getState().setOpen(true));
+    return screen.findByTestId("command-palette");
+  }
+
+  /** The labels of the palette's Actions, in order. */
+  function actions(palette: HTMLElement): string[] {
+    return within(within(palette).getByRole("group", { name: "Actions" }))
+      .getAllByRole("option")
+      .map((o) => o.firstElementChild?.textContent ?? "");
+  }
+
+  function openSheet(): HTMLElement {
+    act(() => useShortcutsSheet.getState().setOpen(true));
+    return screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+  }
+
+  /** The keys of a sheet row: one entry per key, its tokens as rendered. */
+  function keysOf(li: HTMLElement): string[][] {
+    return Array.from(li.querySelectorAll("kbd"))
+      .filter((k) => k.parentElement?.closest("kbd") == null)
+      .map((outer) =>
+        Array.from(outer.children).map((child) => child.textContent ?? ""),
+      );
+  }
+
+  test("registers spec §4.2's commands with their labels, keys and scope", () => {
+    render(<Keyboard context={ctxOf()} />);
+    const table = Object.fromEntries(
+      resolveCommands()
+        .filter(({ scope }) => scope === "batches")
+        .map(({ command }) => [
+          command.id,
+          {
+            label: command.label,
+            keys: command.keys ?? [],
+            repeat: command.repeat,
+          },
+        ]),
+    );
+    const inList = BATCHES_LIST;
+    expect(table).toEqual({
+      "list.next": {
+        label: "Next row",
+        keys: ["j", { key: "ArrowDown", focusWithin: inList }],
+        repeat: true,
+      },
+      "list.prev": {
+        label: "Previous row",
+        keys: ["k", { key: "ArrowUp", focusWithin: inList }],
+        repeat: true,
+      },
+      "list.first": {
+        label: "First row",
+        keys: [{ key: "Home", focusWithin: inList, repeat: true }],
+      },
+      "list.last": {
+        label: "Last row",
+        keys: [{ key: "End", focusWithin: inList, repeat: true }],
+      },
+      "batches.open": {
+        label: "Open batch",
+        keys: [{ key: "Enter", focusWithin: inList }, "o"],
+      },
+      "batches.start": { label: "Start reviewing", keys: ["s"] },
+      "search.focus": { label: "Search batches", keys: ["/"] },
+      "batches.show.needs-review": { label: "Show: Needs review", keys: [] },
+      "batches.show.failed": { label: "Show: Failed", keys: [] },
+      "batches.show.running": { label: "Show: Running", keys: [] },
+      "batches.show.passed": { label: "Show: Passed", keys: [] },
+      "batches.show.all": { label: "Show: All", keys: [] },
+    });
+  });
+
+  test("the rows sit in the marked list, and its scroll container leaves room for the sticky header", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    const list = row("b1").closest(BATCHES_LIST);
+    expect(list).not.toBeNull();
+    expect(list?.hasAttribute(BATCHES_LIST_ATTR)).toBe(true);
+    expect(list?.contains(row("b3"))).toBe(true);
+    // The selector the commands use is built from the one attribute name.
+    expect(BATCHES_LIST).toBe(`[${BATCHES_LIST_ATTR}]`);
+  });
+
+  test("the scroll container leaves room for the sticky header", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // Walking up, `scrollIntoView` aligns a row to the top of this container:
+    // under the sticky header unless the container's scroll padding is as
+    // tall as the header (an opaque row of 41px: 12 + 16 + 12 + a 1px rule).
+    const header = row("b1").closest("table")?.querySelector("thead");
+    expect(header?.classList.contains("sticky")).toBe(true);
+    expect(header?.classList.contains("top-0")).toBe(true);
+    const scroller = row("b1").closest(".overflow-auto");
+    expect(scroller?.classList.contains("scroll-pt-11")).toBe(true);
+  });
+
+  test("a row is one Tab stop and its link is not tabbable", async () => {
+    const user = userEvent.setup();
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    const list = row("b1").closest(BATCHES_LIST);
+
+    // The focused row shows a ring (where the cursor is).
+    for (const id of ["b1", "b2", "b3"]) {
+      expect(row(id).classList.contains("focus-ring")).toBe(true);
+    }
+
+    // The first row is the one stop until a row is the cursor; no link is.
+    expect([row("b1"), row("b2"), row("b3")].map((r) => r.tabIndex)).toEqual([
+      0, -1, -1,
+    ]);
+    for (const id of ["b1", "b2", "b3"]) {
+      const link = within(row(id)).getByRole("link");
+      expect(link.tabIndex).toBe(-1);
+      // Still a real link: middle-click and open-in-new-tab keep working.
+      expect(link.getAttribute("href")).toContain(`/builds/${id}`);
+    }
+
+    // Tab from the search box (the last control before the table) enters
+    // the list on the row, and the next Tab leaves it.
+    focusOn(searchBox());
+    await user.tab();
+    expect(document.activeElement).toBe(row("b1"));
+    await user.tab();
+    expect(list?.contains(document.activeElement)).toBe(false);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(row("b1"));
+
+    // The cursor row is the stop.
+    press("j");
+    expect(document.activeElement).toBe(row("b2"));
+    expect([row("b1"), row("b2"), row("b3")].map((r) => r.tabIndex)).toEqual([
+      -1, 0, -1,
+    ]);
+  });
+
+  test("j focuses the first row, j/k move, Enter opens", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf("status=failed")} />);
+    expect(document.activeElement).toBe(document.body);
+
+    // From anywhere on the page, the first press is the first row.
+    press("j");
+    expect(document.activeElement).toBe(row("b1"));
+    press("j");
+    expect(document.activeElement).toBe(row("b2"));
+    press("j");
+    expect(document.activeElement).toBe(row("b3"));
+    // The end holds: no wrap.
+    press("j");
+    expect(document.activeElement).toBe(row("b3"));
+    press("k");
+    expect(document.activeElement).toBe(row("b2"));
+
+    // Enter opens the row's batch, the status kept: the row link's address.
+    const enter = press("Enter");
+    const href = within(row("b2")).getByRole("link").getAttribute("href");
+    expect(href).toBe("/projects/p1/builds/b2?status=failed");
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith(href);
+    expect(enter.defaultPrevented).toBe(true);
+
+    // So does o.
+    routerMock.push.mockClear();
+    press("k");
+    const o = press("o");
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith(
+      "/projects/p1/builds/b1?status=failed",
+    );
+    expect(o.defaultPrevented).toBe(true);
+  });
+
+  test("the first k also focuses the first row, and a click or Tab focus sets the cursor", async () => {
+    const user = userEvent.setup();
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    press("k");
+    expect(document.activeElement).toBe(row("b1"));
+
+    // A click on a row (which also opens it) is where j starts from.
+    await user.click(row("b3"));
+    expect(routerMock.push).toHaveBeenCalledWith("/projects/p1/builds/b3");
+    focusOn(startButton());
+    press("k");
+    expect(document.activeElement).toBe(row("b2"));
+  });
+
+  test("o opens the cursor row from anywhere, Enter only from the list", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // No cursor yet: nothing to open.
+    const none = press("o");
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(none.defaultPrevented).toBe(false);
+
+    press("j");
+    press("j");
+    expect(document.activeElement).toBe(row("b2"));
+
+    // Focus has moved on to another control: Enter is that control's.
+    focusOn(screen.getByRole("button", { name: "Refresh" }));
+    const enter = press("Enter");
+    expect(routerMock.push).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(false);
+
+    // Nor is it the page's when nothing in particular has focus.
+    act(() => (document.activeElement as HTMLElement).blur());
+    expect(document.activeElement).toBe(document.body);
+    expect(press("Enter").defaultPrevented).toBe(false);
+    expect(routerMock.push).not.toHaveBeenCalled();
+
+    // But o still opens the cursor row.
+    press("o");
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith("/projects/p1/builds/b2");
+  });
+
+  test("Enter on a status chip keeps the chip's own action", async () => {
+    const user = userEvent.setup();
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    press("j");
+    expect(document.activeElement).toBe(row("b1"));
+    focusOn(chip("Failed"));
+    await user.keyboard("{Enter}");
+
+    // The chip was pressed; no batch was opened.
+    expect(routerMock.replace).toHaveBeenLastCalledWith(
+      "/inbox?status=failed",
+      {
+        scroll: false,
+      },
+    );
+    expect(routerMock.push).not.toHaveBeenCalled();
+  });
+
+  test("arrows move only inside the list; outside they do nothing", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // Outside the list the browser keeps them (to scroll the page).
+    const outside = chip("Failed");
+    focusOn(outside);
+    for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+      const e = press(key);
+      expect(e.defaultPrevented, key).toBe(false);
+      expect(document.activeElement, key).toBe(outside);
+    }
+
+    // With a cursor on a row, and focus away from it: still nothing.
+    press("j");
+    expect(document.activeElement).toBe(row("b1"));
+    focusOn(outside);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(outside);
+    press("j");
+    // The arrow did not move the cursor: j went from the first row.
+    expect(document.activeElement).toBe(row("b2"));
+
+    // Inside the list they move, and the page does not scroll.
+    const down = press("ArrowDown");
+    expect(document.activeElement).toBe(row("b3"));
+    expect(down.defaultPrevented).toBe(true);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(row("b2"));
+    press("End");
+    expect(document.activeElement).toBe(row("b3"));
+    press("Home");
+    expect(document.activeElement).toBe(row("b1"));
+
+    // Held, the arrows keep going.
+    press("ArrowDown", { repeat: true });
+    press("ArrowDown", { repeat: true });
+    expect(document.activeElement).toBe(row("b3"));
+    press("ArrowUp", { repeat: true });
+    expect(document.activeElement).toBe(row("b2"));
+  });
+
+  test("holding j walks the rows", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    // The first press focuses the first row; the key held repeats from there
+    // (Ruling R23), and k walks back the same way.
+    press("j");
+    expect(document.activeElement).toBe(row("b1"));
+    const held = press("j", { repeat: true });
+    expect(document.activeElement).toBe(row("b2"));
+    expect(held.defaultPrevented).toBe(true);
+    press("j", { repeat: true });
+    expect(document.activeElement).toBe(row("b3"));
+    press("k", { repeat: true });
+    press("k", { repeat: true });
+    expect(document.activeElement).toBe(row("b1"));
+  });
+
+  test("s starts reviewing and is disabled with the button", async () => {
+    serve({ pending: 7 });
+    fetchNext.mockResolvedValue({ target, scope: "nextBatch" });
+    render(<Keyboard context={ctxOf("status=failed")} />);
+    expect(startButton().getAttribute("aria-disabled")).toBeNull();
+
+    // The button's own call: the project's first pending step, the status kept.
+    const s = press("s");
+    expect(s.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(routerMock.push).toHaveBeenCalledWith(
+        "/projects/p1/runs/r1/checkpoints/c1?status=failed",
+      ),
+    );
+    expect(fetchNext).toHaveBeenCalledTimes(1);
+    expect(fetchNext).toHaveBeenCalledWith({ projectId: "p1" });
+  });
+
+  test("s follows the branch and the search like the button does", async () => {
+    serve({
+      pending: 7,
+      filtered: result([build({ id: "b2" })]),
+    });
+    fetchList.mockResolvedValue({ items: [build({ id: "b2" })] });
+    fetchNext.mockResolvedValue({
+      target: { buildId: "b2", runId: "r2", checkpointId: "c2" },
+      scope: "nextBatch",
+    });
+    render(<Keyboard context={ctxOf("branch=feature%2Fnew-nav")} />);
+
+    press("s");
+    await waitFor(() =>
+      expect(routerMock.push).toHaveBeenCalledWith(
+        "/projects/p1/runs/r2/checkpoints/c2",
+      ),
+    );
+    expect(fetchNext).toHaveBeenCalledWith({
+      projectId: "p1",
+      at: { buildId: "b2" },
+    });
+  });
+
+  test("s does nothing, and is left to the browser, while the button is disabled", async () => {
+    // Nothing is pending.
+    serve({ pending: 0 });
+    const { unmount } = render(<Keyboard context={ctxOf()} />);
+    expect(startButton().getAttribute("aria-disabled")).toBe("true");
+    const none = press("s");
+    expect(none.defaultPrevented).toBe(false);
+    expect(fetchNext).not.toHaveBeenCalled();
+    unmount();
+
+    // The count is still loading.
+    serve({ pending: null });
+    const loading = render(<Keyboard context={ctxOf()} />);
+    expect((startButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(press("s").defaultPrevented).toBe(false);
+    expect(fetchNext).not.toHaveBeenCalled();
+    loading.unmount();
+
+    // It is already opening the first step.
+    serve({ pending: 2 });
+    let finish: (v: unknown) => void = () => undefined;
+    fetchNext.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<Keyboard context={ctxOf()} />);
+    expect(press("s").defaultPrevented).toBe(true);
+    expect(startButton().getAttribute("aria-disabled")).toBe("true");
+    expect(press("s").defaultPrevented).toBe(false);
+    expect(fetchNext).toHaveBeenCalledTimes(1);
+    finish({ target, scope: "nextBatch" });
+    await waitFor(() => expect(routerMock.push).toHaveBeenCalledTimes(1));
+  });
+
+  test("the Start reviewing button names its key, unless single-key shortcuts are off", () => {
+    serve({ pending: 3 });
+    render(<Keyboard context={ctxOf()} />);
+    expect(startButton().getAttribute("aria-keyshortcuts")).toBe("S");
+    expect(startButton().getAttribute("title")).toBe("Start reviewing (S)");
+
+    // Off, `s` does nothing, so the button must not promise it.
+    act(() => useSingleKeyStore.setState({ on: false }));
+    expect(startButton().getAttribute("aria-keyshortcuts")).toBeNull();
+    expect(startButton().getAttribute("title")).toBeNull();
+    expect(press("s").defaultPrevented).toBe(false);
+    expect(fetchNext).not.toHaveBeenCalled();
+  });
+
+  test("/ focuses search", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+
+    const slash = press("/");
+    expect(document.activeElement).toBe(searchBox());
+    // Taken: the slash is not typed into the box.
+    expect(slash.defaultPrevented).toBe(true);
+    // The page's own search, not the palette the global one opens.
+    expect(usePaletteStore.getState().open).toBe(false);
+
+    // From a row too.
+    press("Escape");
+    focusOn(row("b2"));
+    press("/");
+    expect(document.activeElement).toBe(searchBox());
+  });
+
+  test("the sheet on Batches lists these commands", () => {
+    serve({ main: result(three()) });
+    render(<Keyboard context={ctxOf()} />);
+    const sheet = openSheet();
+
+    const section = within(sheet).getByRole("region", {
+      name: "On this page (Batches)",
+    });
+    const rows = within(section)
+      .getAllByRole("listitem")
+      .map((li) => ({
+        label: li.firstElementChild?.textContent,
+        keys: keysOf(li),
+      }));
+    expect(rows).toEqual([
+      { label: "Next row", keys: [["J"], ["↓"]] },
+      { label: "Previous row", keys: [["K"], ["↑"]] },
+      { label: "First row", keys: [["Home"]] },
+      { label: "Last row", keys: [["End"]] },
+      { label: "Open batch", keys: [["Enter"], ["O"]] },
+      { label: "Start reviewing", keys: [["S"]] },
+      { label: "Search batches", keys: [["/"]] },
+    ]);
+
+    // The global Search keeps no `/` there: the page's takes it.
+    const everywhere = within(sheet).getByRole("region", {
+      name: "Everywhere",
+    });
+    expect(within(everywhere).queryByText("Search")).toBeNull();
+  });
+
+  test("palette lists Show: Failed and it sets the chip", async () => {
+    serve({ main: result(three()), pending: 3 });
+    render(<Keyboard context={ctxOf()} />);
+    const palette = await openPalette();
+
+    // The page's own actions, with no cursor yet (so no Open batch).
+    expect(actions(palette)).toEqual([
+      "Next row",
+      "Previous row",
+      "First row",
+      "Last row",
+      "Start reviewing",
+      "Search batches",
+      "Show: Needs review",
+      "Show: Failed",
+      "Show: Running",
+      "Show: Passed",
+      "Show: All",
+    ]);
+
+    fireEvent.click(
+      within(palette).getByRole("option", { name: "Show: Failed" }),
+    );
+    await settle();
+    expect(routerMock.replace).toHaveBeenLastCalledWith(
+      "/inbox?status=failed",
+      {
+        scroll: false,
+      },
+    );
+
+    // And the others write their own chip's status.
+    for (const [label, url] of [
+      ["Show: Running", "/inbox?status=running"],
+      ["Show: Passed", "/inbox?status=passed"],
+      ["Show: All", "/inbox?status=all"],
+      ["Show: Needs review", "/inbox"],
+    ] as const) {
+      const again = await openPalette();
+      fireEvent.click(within(again).getByRole("option", { name: label }));
+      await settle();
+      expect(routerMock.replace).toHaveBeenLastCalledWith(url, {
+        scroll: false,
+      });
+    }
+  });
+
+  test("palette: Open batch appears with a cursor row, and Search batches focuses the box after it closes", async () => {
+    serve({ main: result(three()), pending: 3 });
+    render(<Keyboard context={ctxOf("status=all")} />);
+
+    press("j");
+    const palette = await openPalette();
+    expect(actions(palette)).toContain("Open batch");
+    expect(
+      within(palette)
+        .getByRole("option", { name: "Open batch" })
+        .getAttribute("aria-keyshortcuts"),
+    ).toBe("Enter O");
+
+    fireEvent.click(
+      within(palette).getByRole("option", { name: "Search batches" }),
+    );
+    await settle();
+    expect(document.activeElement).toBe(searchBox());
+
+    // Open batch, picked from the palette, opens the cursor row.
+    focusOn(row("b1"));
+    const again = await openPalette();
+    fireEvent.click(within(again).getByRole("option", { name: "Open batch" }));
+    await settle();
+    expect(routerMock.push).toHaveBeenCalledWith(
+      "/projects/p1/builds/b1?status=all",
+    );
+  });
+
+  test("palette leaves out the row commands with no rows, and Start reviewing while it is disabled", async () => {
+    serve({ main: result([]), latest: result([build()]), pending: 0 });
+    render(<Keyboard context={ctxOf("status=all")} />);
+    const palette = await openPalette();
+    expect(actions(palette)).toEqual([
+      "Search batches",
+      "Show: Needs review",
+      "Show: Failed",
+      "Show: Running",
+      "Show: Passed",
+      "Show: All",
+    ]);
+  });
+
+  describe("while the next page loads", () => {
+    const page = (items: unknown[], nextCursor: string | null) => ({
+      ...result(items),
+      data: { items, nextCursor },
+    });
+
+    /** On the first row, with Load more clicked: the table shows skeletons. */
+    function loading() {
+      serve({ main: page([build({ id: "b1" })], "cursor-2") });
+      const view = render(<Keyboard context={ctxOf()} />);
+      press("j");
+      expect(document.activeElement).toBe(row("b1"));
+      fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+      serve({ main: result([], { data: undefined, isLoading: true }) });
+      view.rerender(<Keyboard context={ctxOf()} />);
+      expect(screen.queryByTestId("inbox-batch-row-b1")).toBeNull();
+      return view;
+    }
+
+    test("there is nothing to walk or open", () => {
+      loading();
+      expect(press("j").defaultPrevented).toBe(false);
+      expect(press("k").defaultPrevented).toBe(false);
+      expect(press("o").defaultPrevented).toBe(false);
+      expect(routerMock.push).not.toHaveBeenCalled();
+    });
+
+    test("focus returns to the row it was on when the page is in", () => {
+      const { rerender } = loading();
+      serve({ main: page([build({ id: "b2", number: 41 })], null) });
+      rerender(<Keyboard context={ctxOf()} />);
+      expect(document.activeElement).toBe(row("b1"));
+      press("j");
+      expect(document.activeElement).toBe(row("b2"));
+    });
+  });
+
+  test("typing s j k / a ? in the search or branch field triggers nothing", async () => {
+    for (const [name, field] of [
+      ["search", searchBox],
+      ["branch", branchBox],
+    ] as const) {
+      const user = userEvent.setup();
+      serve({ main: result(three()), pending: 7 });
+      const { unmount } = render(<Keyboard context={ctxOf()} />);
+
+      await user.click(field());
+      expect(document.activeElement, name).toBe(field());
+      await user.keyboard("sjk/a?");
+
+      // All of it was typed, and none of it was a command.
+      expect((field() as HTMLInputElement).value, name).toBe("sjk/a?");
+      expect(document.activeElement, name).toBe(field());
+      expect(fetchNext, name).not.toHaveBeenCalled();
+      expect(routerMock.push, name).not.toHaveBeenCalled();
+      expect(usePaletteStore.getState().open, name).toBe(false);
+      expect(useShortcutsSheet.getState().open, name).toBe(false);
+      expect(screen.queryByRole("dialog"), name).toBeNull();
+
+      // Arrows, Home and End are the field's too.
+      for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+        press(key);
+        expect(document.activeElement, `${name} ${key}`).toBe(field());
+      }
+      unmount();
+    }
+  });
+
+  test("a cursor left behind by a status change goes back to its row when the list returns", () => {
+    serve({ main: result(three()) });
+    const { rerender } = render(<Keyboard context={ctxOf()} />);
+    press("j");
+    press("j");
+    expect(document.activeElement).toBe(row("b2"));
+
+    // A new status: the rows give way to a loading state, then come back.
+    serve({ main: result([], { data: undefined, isLoading: true }) });
+    rerender(<Keyboard context={ctxOf("status=all")} />);
+    expect(screen.queryByTestId("inbox-batch-row-b2")).toBeNull();
+    serve({ main: result(three()) });
+    rerender(<Keyboard context={ctxOf("status=all")} />);
+    expect(document.activeElement).toBe(row("b2"));
   });
 });

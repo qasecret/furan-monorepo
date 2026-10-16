@@ -173,12 +173,41 @@ describe("CommandDispatcher", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({ role: "editor", value: "v1" }),
+      { key: "x" },
     );
     expect(e.defaultPrevented).toBe(true);
 
     // Another key runs nothing, and is left to the browser.
     expect(press("y").defaultPrevented).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("run receives the matched key", () => {
+    // One command, several keys: `run` is told which one ran it (R22), as
+    // the binding names it, whatever the event spelled.
+    const run = vi.fn();
+    render(<Layout />);
+    mount("batch", [
+      command("batch", "batch.open", [{ key: "Enter" }, "o", "?", "g x"], {
+        run,
+      }),
+    ]);
+
+    press("Enter");
+    expect(run).toHaveBeenLastCalledWith(expect.anything(), { key: "Enter" });
+    press("o");
+    expect(run).toHaveBeenLastCalledWith(expect.anything(), { key: "o" });
+    // Caps Lock: the binding's key, not the event's.
+    press("O");
+    expect(run).toHaveBeenLastCalledWith(expect.anything(), { key: "o" });
+    // The Shift twin of a bare "?" runs as "?".
+    press("?", { shiftKey: true });
+    expect(run).toHaveBeenLastCalledWith(expect.anything(), { key: "?" });
+    // A sequence, as written.
+    press("g");
+    press("x");
+    expect(run).toHaveBeenLastCalledWith(expect.anything(), { key: "g x" });
+    expect(run).toHaveBeenCalledTimes(5);
   });
 
   it("respects scope precedence", () => {
@@ -385,6 +414,7 @@ describe("CommandDispatcher", () => {
     press("x");
     expect(run).toHaveBeenLastCalledWith(
       expect.objectContaining({ value: "v2" }),
+      { key: "x" },
     );
 
     // Another registrant whose keys are already bound changes the commands,

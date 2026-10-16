@@ -386,7 +386,10 @@ function PaletteBody({
   // actions too (undo, when there is something to take back). Undo comes
   // last: Enter on a fresh palette must never take back a decision.
   const actions = [
-    ...commands.filter((c) => c.scope !== "global" && enabledNow(c)),
+    ...commands.filter(
+      (c) =>
+        c.scope !== "global" && c.command.palette !== false && enabledNow(c),
+    ),
     ...commands.filter(
       (c) =>
         c.scope === "global" &&

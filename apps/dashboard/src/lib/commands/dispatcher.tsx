@@ -67,8 +67,9 @@ function dispatch(e: KeyboardEvent, key: string): void {
   if (keyIsOwnedElsewhere(e, key, opts, { singleKeys: singleKeysOn() })) {
     return;
   }
-  // Not enabled: the key is left to the browser (no `preventDefault`).
-  runCommand(resolved, () => e.preventDefault());
+  // Not enabled: the key is left to the browser (no `preventDefault`). The
+  // command learns which of its keys ran it (R22).
+  runCommand(resolved, () => e.preventDefault(), { key: bindingKey(binding) });
 }
 
 /**

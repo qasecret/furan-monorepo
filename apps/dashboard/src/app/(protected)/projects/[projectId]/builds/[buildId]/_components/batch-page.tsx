@@ -7,16 +7,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ApprovePendingDialog } from "./approve-pending-dialog";
+import { BATCH_PAGE_COMMANDS, type BatchPageCtx } from "./batch-commands";
 import { BatchHeader } from "./batch-header";
 import { ContextualToolbar, type ResultView } from "./contextual-toolbar";
 import { FacetSelects } from "./facet-selects";
-import { RESULT_GRID, RunResults } from "./run-results";
+import { BatchResults, RESULT_GRID } from "./run-results";
 
 import { Button } from "@/components/ui/button";
 import { PageContainer } from "@/components/ui/page-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { cn } from "@/lib/cn";
+import { useCommands } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import {
   batchHref,
@@ -70,6 +72,9 @@ interface Paging {
   pages: number;
   accumulated: RunRow[];
 }
+
+/** No runs to show: one array, so the list's items stay the same. */
+const NO_RUNS: RunRow[] = [];
 
 const firstPage = (key: string): Paging => ({
   key,
@@ -226,6 +231,35 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
     setStarting(false);
   };
 
+  // The runs the list shows: none while loading, on an error, or when the
+  // filter leaves none (an empty state shows instead).
+  const showRuns = !list.isLoading && !list.isError && items.length > 0;
+
+  const startCount = loop?.remaining.batch;
+  // The queue could not be read (and there is no earlier answer to show):
+  // Start reviewing says so and a press asks again.
+  const queueFailed = canReview && next.isError && next.data === undefined;
+  const startReason = queueFailed
+    ? "Couldn't load the review queue"
+    : startCount === 0
+      ? "Nothing to review in this batch"
+      : starting
+        ? "Opening the first step…"
+        : null;
+  const pressStart = queueFailed
+    ? () => void next.refetch()
+    : () => void startReviewing();
+  // The button and its key (`s`) are one: pressable exactly when it is. A
+  // failed queue is pressable (the press asks again).
+  const canStart =
+    canReview &&
+    (queueFailed || (startCount !== undefined && startReason === null));
+
+  useCommands<BatchPageCtx>("batch", BATCH_PAGE_COMMANDS, {
+    canStart,
+    start: pressStart,
+  });
+
   // A genuine missing build is a 404. Any other build error with no data
   // (FORBIDDEN, network, 500, transient background-refetch) gets a real
   // error state instead of masquerading as a 404 or a headerless shell.
@@ -257,11 +291,6 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
   // pending that shows its own empty state.
   const clearFilters = () =>
     setContext({ status: DEFAULT_REVIEW_STATUS, facets: {} });
-
-  const startCount = loop?.remaining.batch;
-  // The queue could not be read (and there is no earlier answer to show):
-  // Start reviewing says so and a press asks again.
-  const queueFailed = canReview && next.isError && next.data === undefined;
 
   return (
     <PageContainer fullBleed>
@@ -297,30 +326,38 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
             ? {
                 count: startCount,
                 failed: queueFailed,
-                reason: queueFailed
-                  ? "Couldn't load the review queue"
-                  : startCount === 0
-                    ? "Nothing to review in this batch"
-                    : starting
-                      ? "Opening the first step…"
-                      : null,
-                onClick: queueFailed
-                  ? () => void next.refetch()
-                  : () => void startReviewing(),
+                reason: startReason,
+                onClick: pressStart,
               }
             : undefined
         }
       />
-      <div className="flex-1 overflow-y-auto">
+      {/* scroll-pt-9: room for the sticky column header (33px) above the
+          first item a scroll can reach, so an item brought into view walking
+          up is never under it. */}
+      <div className="flex-1 overflow-y-auto scroll-pt-9">
         <ResultsColumnHeader />
-        {list.isLoading ? (
-          <RowSkeletons />
-        ) : list.isError ? (
-          <p className="p-8 text-center text-sm text-destructive">
-            Error loading tests: {list.error?.message}
-          </p>
-        ) : items.length === 0 ? (
-          ctx.status === "needs-review" && !hasFacets ? (
+        {/* Mounted whatever the list shows, so its keys stay registered
+            (listed in the sheet, off while there is nothing to walk) and its
+            cursor outlives a reload. Without runs it shows `children`. */}
+        <BatchResults
+          projectId={projectId}
+          runs={showRuns ? items : NO_RUNS}
+          branchName={build?.branchName ?? null}
+          ctx={ctx}
+          view={view}
+          canReview={canReview}
+          revealRunId={anchorRunId}
+          onRevealed={onRevealed}
+          busy={list.isPlaceholderData}
+        >
+          {list.isLoading ? (
+            <RowSkeletons />
+          ) : list.isError ? (
+            <p className="p-8 text-center text-sm text-destructive">
+              Error loading tests: {list.error?.message}
+            </p>
+          ) : ctx.status === "needs-review" && !hasFacets ? (
             <NothingToReview
               projectId={projectId}
               ctx={ctx}
@@ -331,29 +368,8 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
             <NoTests ctx={ctx} />
           ) : (
             <NoTestsMatch onClear={clearFilters} />
-          )
-        ) : (
-          <div data-testid="batch-results" aria-busy={list.isPlaceholderData}>
-            {items.map((row) => (
-              <RunResults
-                key={row.id}
-                projectId={projectId}
-                runId={row.id}
-                testName={row.name}
-                branchName={build?.branchName ?? null}
-                fallbackStatus={row.status}
-                statusOverride={row.statusOverride}
-                ctx={ctx}
-                pendingCount={row.pendingCount}
-                stepCount={row.stepCount}
-                view={view}
-                canReview={canReview}
-                reveal={row.id === anchorRunId}
-                onRevealed={onRevealed}
-              />
-            ))}
-          </div>
-        )}
+          )}
+        </BatchResults>
         {list.data?.nextCursor && (
           <div className="flex justify-center p-3">
             <Button
