@@ -1,5 +1,6 @@
 import type { Command, CommandCtx } from "@/lib/commands/types";
 import type { ReviewStatus } from "@/lib/review-url";
+import { canReviewRole } from "@/lib/roles";
 
 /**
  * What the Batches page's commands act on: the page's live state, handed to
@@ -56,6 +57,8 @@ const SHOW: ReadonlyArray<{ status: ReviewStatus; label: string }> = [
  *   other control it stays that control's. `o` opens the cursor's row from
  *   anywhere.
  * - `/` is the page's own, over the global one that opens the palette.
+ * - Start reviewing (`s`) is a reviewer's only: a guest's `review.next` is
+ *   refused.
  */
 export const BATCHES_COMMANDS: Command<BatchesCtx>[] = [
   {
@@ -111,6 +114,9 @@ export const BATCHES_COMMANDS: Command<BatchesCtx>[] = [
     group: "Review",
     keys: ["s"],
     scope: "batches",
+    // `review.next` refuses a role that can't review: no key, palette action
+    // or sheet row that could only fail (as the batch page's `batch.start`).
+    allowed: ({ role }) => canReviewRole(role),
     enabled: ({ canStart }) => canStart,
     run: ({ start }) => start(),
   },
