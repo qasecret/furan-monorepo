@@ -33,6 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
+import { useCommandKeys, type CommandKeys } from "@/lib/commands/registry";
 import { trpc } from "@/lib/trpc";
 
 const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
@@ -40,6 +41,20 @@ const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
   { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
   { value: "difference", label: "Diff only", Icon: Layers },
 ];
+
+/**
+ * A control's title from its command's keys (`useCommandKeys`): "Zoom out
+ * (-)". An icon-only control keeps its name as the tooltip when there is no
+ * key to name (`keep`); a control with its name on screen then has none.
+ */
+function hintTitle(
+  label: string,
+  { titleSuffix }: CommandKeys,
+  keep = false,
+): string | undefined {
+  if (titleSuffix) return `${label}${titleSuffix}`;
+  return keep ? label : undefined;
+}
 
 interface Props {
   /** The current run id — needed for the setIgnoreAreas mutation. */
@@ -134,6 +149,17 @@ export function ViewerToolbar({
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
 
+  // Every key hint here comes from the viewer's commands (spec §5.4): one
+  // source, dropped with the single-key switch, absent with no command.
+  const zoomOutKeys = useCommandKeys("viewer.zoomOut");
+  const fitKeys = useCommandKeys("viewer.fit");
+  const zoomInKeys = useCommandKeys("viewer.zoomIn");
+  const prevChangeKeys = useCommandKeys("viewer.prevRegion");
+  const nextChangeKeys = useCommandKeys("viewer.nextRegion");
+  const differenceKeys = useCommandKeys("viewer.difference");
+  const highlightKeys = useCommandKeys("viewer.highlight");
+  const editorKeys = useCommandKeys("editor.toggle");
+
   // Fullscreen toggle for the diff-viewer root (reference TestStep toolbar).
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
@@ -220,6 +246,8 @@ export function ViewerToolbar({
       >
         {MODES.map((m) => {
           const active = mode === m.value;
+          // `d` toggles the difference view: its tab names the key.
+          const keys = m.value === "difference" ? differenceKeys : undefined;
           return (
             <button
               key={m.value}
@@ -227,6 +255,8 @@ export function ViewerToolbar({
               role="tab"
               data-mode={m.value}
               aria-selected={active}
+              aria-keyshortcuts={keys?.ariaKeyShortcuts}
+              title={keys ? hintTitle(m.label, keys) : undefined}
               onClick={() => setMode(m.value)}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
@@ -259,7 +289,8 @@ export function ViewerToolbar({
           className="px-2 py-1 text-xs h-7 w-7"
           data-testid="zoom-out-button"
           aria-label="Zoom out"
-          title="Zoom out (−)"
+          aria-keyshortcuts={zoomOutKeys.ariaKeyShortcuts}
+          title={hintTitle("Zoom out", zoomOutKeys, true)}
           onClick={() => zoomBy(1 / ZOOM_STEP)}
         >
           <ZoomOut className="h-4 w-4" aria-hidden />
@@ -270,7 +301,8 @@ export function ViewerToolbar({
           className="px-2 py-1 text-xs tabular-nums h-7 min-w-[3.5rem]"
           data-testid="zoom-reset-button"
           aria-label={`Reset zoom (currently ${Math.round(zoom * 100)}%)`}
-          title="Fit to canvas (0)"
+          aria-keyshortcuts={fitKeys.ariaKeyShortcuts}
+          title={hintTitle("Fit to canvas", fitKeys, true)}
           onClick={() => resetZoom()}
         >
           {Math.round(zoom * 100)}%
@@ -281,7 +313,8 @@ export function ViewerToolbar({
           className="px-2 py-1 text-xs h-7 w-7"
           data-testid="zoom-in-button"
           aria-label="Zoom in"
-          title="Zoom in (+)"
+          aria-keyshortcuts={zoomInKeys.ariaKeyShortcuts}
+          title={hintTitle("Zoom in", zoomInKeys, true)}
           onClick={() => zoomBy(ZOOM_STEP)}
         >
           <ZoomIn className="h-4 w-4" aria-hidden />
@@ -315,6 +348,8 @@ export function ViewerToolbar({
             className="h-7 w-7 px-0 text-xs"
             data-testid="diff-prev"
             aria-label="Previous change"
+            aria-keyshortcuts={prevChangeKeys.ariaKeyShortcuts}
+            title={hintTitle("Previous change", prevChangeKeys, true)}
             onClick={stepper.prev}
           >
             <ChevronLeft className="h-4 w-4" aria-hidden />
@@ -331,6 +366,8 @@ export function ViewerToolbar({
             className="h-7 w-7 px-0 text-xs"
             data-testid="diff-next"
             aria-label="Next change"
+            aria-keyshortcuts={nextChangeKeys.ariaKeyShortcuts}
+            title={hintTitle("Next change", nextChangeKeys, true)}
             onClick={stepper.next}
           >
             <ChevronRight className="h-4 w-4" aria-hidden />
@@ -358,6 +395,8 @@ export function ViewerToolbar({
           id="highlight-toggle"
           checked={highlightActive}
           onCheckedChange={setHighlightActive}
+          aria-keyshortcuts={highlightKeys.ariaKeyShortcuts}
+          title={hintTitle("Highlight diffs", highlightKeys)}
           data-testid="highlight-toggle"
         />
         <Label htmlFor="highlight-toggle" className="cursor-pointer text-xs">
@@ -376,6 +415,8 @@ export function ViewerToolbar({
           variant="secondary"
           className="gap-1.5 px-2 py-1 text-xs"
           data-testid="edit-regions-toggle"
+          aria-keyshortcuts={editorKeys.ariaKeyShortcuts}
+          title={hintTitle("Edit regions", editorKeys)}
           onClick={() => setIgnoreEditMode("variation")}
         >
           <Pencil className="h-4 w-4" aria-hidden />
@@ -387,6 +428,8 @@ export function ViewerToolbar({
           variant="default"
           className="gap-1.5 px-2 py-1 text-xs"
           data-testid="edit-regions-toggle"
+          aria-keyshortcuts={editorKeys.ariaKeyShortcuts}
+          title={hintTitle("Done editing", editorKeys)}
           onClick={() => setIgnoreEditMode("off")}
         >
           <Check className="h-4 w-4" aria-hidden />
