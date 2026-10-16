@@ -160,6 +160,26 @@ async function settle(): Promise<void> {
   });
 }
 
+/**
+ * What a screen reader is told is chosen: the search box (and the list) name
+ * the one row that is chosen, by its id. cmdk keeps that name only when its
+ * own select runs, so a row chosen any other way is chosen but not named.
+ */
+function expectNamesChosenRow(palette: HTMLElement) {
+  const chosen = palette.querySelectorAll(
+    '[role="option"][aria-selected="true"]',
+  );
+  expect(chosen).toHaveLength(1);
+  const id = chosen[0]?.id;
+  expect(id).toBeTruthy();
+  expect(
+    screen.getByTestId("command-input").getAttribute("aria-activedescendant"),
+  ).toBe(id);
+  expect(
+    palette.querySelector("[cmdk-list]")?.getAttribute("aria-activedescendant"),
+  ).toBe(id);
+}
+
 beforeEach(() => {
   backend.calls = [];
   pushMock.mockReset();
@@ -849,6 +869,114 @@ describe("CommandPalette", () => {
     await settle();
     expect(focus).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  describe("the search box names the chosen row (R30)", () => {
+    const chosenLabel = (palette: HTMLElement) =>
+      palette.querySelector('[role="option"][aria-selected="true"]')
+        ?.firstElementChild?.textContent;
+
+    test("right after the palette opens", async () => {
+      // With something to undo and no page actions, undo is the first row and
+      // is not the one chosen: Batches is.
+      act(() =>
+        useUndoStore
+          .getState()
+          .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+      );
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      await waitFor(() => expectNamesChosenRow(palette));
+      expect(chosenLabel(palette)).toBe("Batches");
+    });
+
+    test("after a search is typed and cleared", async () => {
+      act(() =>
+        useUndoStore
+          .getState()
+          .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+      );
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      const input = screen.getByTestId("command-input");
+      fireEvent.change(input, { target: { value: "settings" } });
+      expect(chosenLabel(palette)).toBe("Settings");
+
+      fireEvent.change(input, { target: { value: "" } });
+      // The starting row again, and named: undo, which cmdk chooses first, is
+      // not what the search box says.
+      await waitFor(() => expect(chosenLabel(palette)).toBe("Batches"));
+      await waitFor(() => expectNamesChosenRow(palette));
+    });
+
+    test("after the page's first action is the starting row", async () => {
+      render(
+        <Shell role="editor">
+          <Viewer viewports={[]} onApprove={vi.fn()} />
+        </Shell>,
+      );
+      const palette = await openPalette();
+      await waitFor(() => expectNamesChosenRow(palette));
+      expect(chosenLabel(palette)).toBe(labels(palette, "Actions")[0]);
+    });
+
+    test("after an arrow key", async () => {
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      fireEvent.keyDown(screen.getByTestId("command-input"), {
+        key: "ArrowDown",
+      });
+      expect(chosenLabel(palette)).toBe("Settings");
+      expectNamesChosenRow(palette);
+    });
+
+    test("a typed search keeps cmdk's own choice", async () => {
+      // Undo and Batches both match "a"; cmdk chooses the first, undo, for
+      // the typed text. The starting row is not put back over it.
+      act(() =>
+        useUndoStore
+          .getState()
+          .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+      );
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      await waitFor(() => expectNamesChosenRow(palette));
+      fireEvent.change(screen.getByTestId("command-input"), {
+        target: { value: "a" },
+      });
+      expect(chosenLabel(palette)).toBe("Undo last review action");
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      });
+      expect(chosenLabel(palette)).toBe("Undo last review action");
+      expect(undoMock).not.toHaveBeenCalled();
+    });
+
+    test("naming the row does not choose another, run anything or reach the page", async () => {
+      act(() =>
+        useUndoStore
+          .getState()
+          .push({ actionId: "a1", label: "Approved home", runIds: ["r1"] }),
+      );
+      // What the page's listeners see while the palette names its row.
+      const seen: string[] = [];
+      const onEvent = (e: Event) => seen.push(e.type);
+      const types = ["pointermove", "keydown"];
+      for (const type of types) window.addEventListener(type, onEvent);
+      try {
+        render(<Shell role="editor" />);
+        const palette = await openPalette();
+        await waitFor(() => expectNamesChosenRow(palette));
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        });
+        expect(chosenLabel(palette)).toBe("Batches");
+        expect(undoMock).not.toHaveBeenCalled();
+        expect(seen).toEqual([]);
+      } finally {
+        for (const type of types) window.removeEventListener(type, onEvent);
+      }
+    });
   });
 
   test("a key another scope takes is not shown on the command", async () => {
