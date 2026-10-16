@@ -1,18 +1,8 @@
 import { type Container as PixiContainer, Container, Graphics } from "pixi.js";
 
-import type { BBox, DiffRegion, Severity } from "./regionTypes";
+import { asSeverity, type BBox, type DiffRegion } from "./regionTypes";
 
-/**
- * Severity → fill color (0xRRGGBB).
- * v1.0 palette per spec §4.4 / §6.2 — high-contrast and color-blind friendly.
- */
-const SEVERITY_COLORS: Record<Severity, number> = {
-  breaking: 0xff0000,
-  major: 0xff8800,
-  minor: 0xffdd00,
-  cosmetic: 0x4488ff,
-  none: 0x888888,
-};
+import { SEVERITY_CANVAS_HEX } from "@/lib/severity-style";
 
 function isBBox(v: unknown): v is BBox {
   if (!v || typeof v !== "object") return false;
@@ -22,12 +12,6 @@ function isBBox(v: unknown): v is BBox {
     typeof o.y === "number" &&
     typeof o.width === "number" &&
     typeof o.height === "number"
-  );
-}
-
-function colorFor(sev: string): number {
-  return (
-    (SEVERITY_COLORS as Record<string, number>)[sev] ?? SEVERITY_COLORS.none
   );
 }
 
@@ -58,7 +42,7 @@ export function mountDiffOverlayLayer(
     const { x, y, width, height } = region.bbox;
     if (width === 0 && height === 0) continue;
 
-    const color = colorFor(region.severity);
+    const color = SEVERITY_CANVAS_HEX[asSeverity(region.severity)];
     const isSelected = region.id === selectedRegionId;
 
     const fillAlpha = !hasSelection ? 0.2 : isSelected ? 0.45 : 0.05;

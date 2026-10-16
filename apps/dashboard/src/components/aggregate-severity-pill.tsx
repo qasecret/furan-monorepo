@@ -1,16 +1,13 @@
 "use client";
 
-import type { Severity } from "@/components/diff-viewer/layers/regionTypes";
+import { worstSeverity } from "@furan/shared-types";
+
+import {
+  asSeverity,
+  type Severity,
+} from "@/components/diff-viewer/layers/regionTypes";
 import { cn } from "@/lib/cn";
 import { SEVERITY_STYLE } from "@/lib/severity-style";
-
-const SEVERITY_RANK: Record<Severity, number> = {
-  breaking: 4,
-  major: 3,
-  minor: 2,
-  cosmetic: 1,
-  none: 0,
-};
 
 interface AggregateResult {
   severity: Severity;
@@ -25,28 +22,11 @@ interface AggregateResult {
 export function aggregateSeverity(
   regions: { severity: string }[],
 ): AggregateResult | null {
-  if (regions.length === 0) return null;
+  const severities = regions.map((r) => asSeverity(r.severity));
+  const max = worstSeverity(severities);
+  if (max === null || max === "none") return null;
 
-  let max: Severity = "none";
-  for (const r of regions) {
-    const s: Severity = isSeverity(r.severity) ? r.severity : "none";
-    if (SEVERITY_RANK[s] > SEVERITY_RANK[max]) max = s;
-  }
-  if (max === "none") return null;
-
-  let count = 0;
-  for (const r of regions) if (r.severity === max) count++;
-  return { severity: max, count };
-}
-
-function isSeverity(s: string): s is Severity {
-  return (
-    s === "breaking" ||
-    s === "major" ||
-    s === "minor" ||
-    s === "cosmetic" ||
-    s === "none"
-  );
+  return { severity: max, count: severities.filter((s) => s === max).length };
 }
 
 // Chip colours come from the shared severity map (lib/severity-style.ts), so

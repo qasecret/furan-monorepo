@@ -1,3 +1,4 @@
+import { SEVERITIES } from "@furan/shared-types";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 
@@ -39,6 +40,21 @@ describe("aggregateSeverity", () => {
         { severity: "minor" },
       ]),
     ).toEqual({ severity: "major", count: 3 });
+  });
+
+  // The shared table is the one order: whichever of two severities is worse
+  // wins, whatever the input order.
+  test.each(
+    SEVERITIES.flatMap((worse, i) =>
+      SEVERITIES.slice(i + 1).map((better) => [worse, better] as const),
+    ).filter(([worse]) => worse !== "none"),
+  )("%s outranks %s, in either input order", (worse, better) => {
+    expect(
+      aggregateSeverity([{ severity: better }, { severity: worse }]),
+    ).toEqual({ severity: worse, count: 1 });
+    expect(
+      aggregateSeverity([{ severity: worse }, { severity: better }]),
+    ).toEqual({ severity: worse, count: 1 });
   });
 
   test("unknown severity string → treated as 'none'", () => {

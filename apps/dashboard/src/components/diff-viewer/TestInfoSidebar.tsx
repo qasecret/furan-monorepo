@@ -1,5 +1,6 @@
 "use client";
 
+import { SEVERITY_LABEL } from "@furan/shared-types";
 import { History, Info, MessageSquare } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -56,14 +57,6 @@ function cap(value: string | null): string {
 function val(value: string | null | undefined): string {
   return value && value.trim() ? value : "—";
 }
-
-const SEV_LABEL: Record<Severity, string> = {
-  breaking: "Breaking",
-  major: "Major",
-  minor: "Minor",
-  cosmetic: "Cosmetic",
-  none: "None",
-};
 
 /** The highest severity among the regions; `none` when there is nothing to flag. */
 function worstSeverity(regions: DiffRegion[]): Severity {
@@ -127,7 +120,7 @@ function StatCards({
       {/* The same severity chip as the region badges and the run header's
           aggregate pill (lib/severity-style.ts). */}
       <StatCard
-        value={SEV_LABEL[sev]}
+        value={SEVERITY_LABEL[sev]}
         label="Severity"
         valueClass={cn("rounded-md border px-1.5", SEVERITY_STYLE[sev])}
       />
