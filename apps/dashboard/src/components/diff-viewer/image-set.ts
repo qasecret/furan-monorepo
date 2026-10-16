@@ -56,7 +56,12 @@ export interface ImageSetState {
   retry: (role: ImageRole) => void;
 }
 
-const ROLES = ["baseline", "current", "diff"] as const;
+/** Every role, in a fixed order: the baseline, the current image, the diff. */
+export const IMAGE_ROLES: readonly ImageRole[] = [
+  "baseline",
+  "current",
+  "diff",
+];
 
 /** 12 bitmaps and 400 MB (w x h x 4 bytes each). */
 export const BITMAP_CACHE_LIMITS = {
@@ -391,7 +396,7 @@ const NO_PREFETCH: readonly ImageSetRequest[] = [];
 function uniqueKeys(reqs: readonly ImageSetRequest[]): string[] {
   const keys = new Set<string>();
   for (const r of reqs) {
-    for (const role of ROLES) {
+    for (const role of IMAGE_ROLES) {
       const key = r[role];
       if (key !== null) keys.add(key);
     }

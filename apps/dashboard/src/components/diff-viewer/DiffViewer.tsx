@@ -21,6 +21,7 @@ import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import { useImageSet, type ImageSetRequest } from "./image-set";
 import type { DiffRegion } from "./layers/regionTypes";
+import { isPixelDiffRegion } from "./region-visibility";
 import { useReviewActions } from "./review-actions";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
@@ -710,13 +711,14 @@ export function DiffViewer({
     Boolean(data.autoApproved);
   // Without a baseline (a new test) only side by side is available (R2).
   const hasBaseline = imageRequest.baseline !== null;
-  // R4: the step has a pixel diff when it has a region (the canvas draws
-  // them), or a diff percent above 0. The run's percent is its worst step's,
-  // so it is this step's only on a run of one.
+  // R4: the step has a pixel diff when it has a region that is pixel
+  // evidence (not an accessibility finding or an audit row), or a diff
+  // percent above 0. The run's percent is its worst step's, so it is this
+  // step's only on a run of one.
   const runDiffPercent =
     (data as { diffPercent?: number | null }).diffPercent ?? null;
   const stepHasDiff =
-    regions.length > 0 ||
+    regions.some(isPixelDiffRegion) ||
     (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
 
   return (

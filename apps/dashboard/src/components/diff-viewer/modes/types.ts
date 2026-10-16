@@ -57,6 +57,11 @@ export interface ModeRenderer {
   panes: 1 | 2;
   /** The images that must have loaded (or failed) before it mounts. */
   needs(input: { hasBaseline: boolean }): ImageRole[];
+  /**
+   * The images it puts on a texture (diff waits for the baseline but never
+   * draws it). One the GPU can't hold is left out of its input.
+   */
+  draws: readonly ImageRole[];
   /** `worlds.length === panes`. Adds the mode's own layers to them. */
   mount(worlds: Container[], input: RenderInput): ModeHandle;
   /**

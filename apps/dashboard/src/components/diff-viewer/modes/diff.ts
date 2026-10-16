@@ -19,6 +19,7 @@ export const diff: ModeRenderer = {
   panes: 1,
   needs: () => ["baseline", "current", "diff"],
   host: { pane: 0, layers: SINGLE_STAGE_HOST_LAYERS },
+  draws: ["current", "diff"],
   hatched: [["current"]],
   mount([world], input) {
     const mount = createMount();

@@ -32,11 +32,13 @@ import type {
   ImageSetState,
   LoadedImage,
 } from "@/components/diff-viewer/image-set";
+import { isPixelDiffRegion } from "@/components/diff-viewer/region-visibility";
 import {
   FALLBACK_MAX_TEXTURE_SIZE,
   readMaxTextureSize,
   stageStates,
   StageStates,
+  statesForPane,
   type StageState,
 } from "@/components/diff-viewer/StageStates";
 import type { Size } from "@/components/diff-viewer/viewer-geometry";
@@ -320,7 +322,7 @@ describe("stageStates", () => {
     }
   });
 
-  test("too large: a screenshot past the texture limit (Review Focus 1)", () => {
+  test("too large: a drawn screenshot past the texture limit, named by its image (Review Focus 1)", () => {
     const tall = { w: 1440, h: 20000 };
     const states = stageStates(
       input({
@@ -332,30 +334,189 @@ describe("stageStates", () => {
         maxTextureSize: 16384,
       }),
     );
-    expect(states).toEqual([{ kind: "too-large", size: tall, max: 16384 }]);
+    expect(states).toEqual([
+      { kind: "too-large", role: "current", size: tall, max: 16384 },
+    ]);
   });
 
-  test("too large: a baseline past the limit too, and nothing at the limit", () => {
+  test("too large: only the images the mode draws, each said (I2)", () => {
     const wide = { w: 17000, h: 900 };
+    const ok = { w: 1440, h: 900 };
+    const max = 16384;
+    // Side by side and overlay draw the baseline.
+    for (const mode of ["side-by-side", "overlay"] as const) {
+      expect(
+        stageStates(
+          input({
+            mode,
+            sizes: { baseline: wide, current: ok },
+            maxTextureSize: max,
+          }),
+        ),
+      ).toEqual([{ kind: "too-large", role: "baseline", size: wide, max }]);
+    }
+    // Diff waits for the baseline, for the world, but never draws it.
+    expect(
+      kinds(
+        stageStates(
+          input({
+            mode: "diff",
+            sizes: { baseline: wide, current: ok, diff: ok },
+            maxTextureSize: max,
+          }),
+        ),
+      ),
+    ).not.toContain("too-large");
+    // Diff draws the diff image.
     expect(
       stageStates(
         input({
-          sizes: { baseline: wide, current: { w: 1440, h: 900 } },
-          maxTextureSize: 16384,
+          mode: "diff",
+          sizes: { baseline: ok, current: ok, diff: wide },
+          maxTextureSize: max,
         }),
       ),
-    ).toEqual([{ kind: "too-large", size: wide, max: 16384 }]);
+    ).toEqual([{ kind: "too-large", role: "diff", size: wide, max }]);
+    // Every drawn image past it.
     expect(
       stageStates(
         input({
-          sizes: {
-            baseline: { w: 16384, h: 16384 },
-            current: { w: 16384, h: 16384 },
-          },
+          mode: "overlay",
+          sizes: { baseline: wide, current: wide },
+          maxTextureSize: max,
+        }),
+      ),
+    ).toEqual([
+      { kind: "too-large", role: "baseline", size: wide, max },
+      { kind: "too-large", role: "current", size: wide, max },
+    ]);
+  });
+
+  test("too large: at the limit is within it", () => {
+    const edge = { w: 16384, h: 16384 };
+    expect(
+      stageStates(
+        input({
+          sizes: { baseline: edge, current: edge },
           maxTextureSize: 16384,
         }),
       ),
     ).toEqual([]);
+  });
+
+  test("Diff: no pixel changes needs both screenshots (M4)", () => {
+    const onlyBaseline = stageStates(
+      input({
+        mode: "diff",
+        stepHasDiff: false,
+        set: set({ baseline: image("baseline", 100, 200) }),
+        sizes: { baseline: { w: 100, h: 200 } },
+      }),
+    );
+    expect(kinds(onlyBaseline)).not.toContain("diff-no-changes");
+    const onlyCurrent = stageStates(
+      input({
+        mode: "diff",
+        stepHasDiff: false,
+        set: set({ current: image("current", 100, 200) }, { baseline: true }),
+        sizes: { current: { w: 100, h: 200 } },
+      }),
+    );
+    expect(kinds(onlyCurrent)).toEqual(["failed"]);
+  });
+
+  describe("retrying (M2)", () => {
+    test("a retried image the mode needs, still on its way", () => {
+      const states = stageStates(
+        input({
+          set: set({ current: image("current", 100, 200) }, {}, "loading"),
+          sizes: { current: { w: 100, h: 200 } },
+          retrying: ["baseline"],
+        }),
+      );
+      expect(states).toEqual([
+        { kind: "loading" },
+        { kind: "retrying", roles: ["baseline"] },
+      ]);
+    });
+
+    test("not once it has settled, nor for an image the mode doesn't draw or wait for", () => {
+      // In: settled.
+      expect(stageStates(input({ retrying: ["baseline"] }))).toEqual([]);
+      // Failed again: failed, with its Retry back.
+      expect(
+        stageStates(
+          input({
+            set: set(
+              { current: image("current", 100, 200) },
+              { baseline: true },
+            ),
+            retrying: ["baseline"],
+          }),
+        ),
+      ).toEqual([{ kind: "failed", roles: ["baseline"] }]);
+      // Side by side never waits for the diff image.
+      expect(
+        stageStates(
+          input({
+            set: set(
+              {
+                baseline: image("baseline", 100, 200),
+                current: image("current", 100, 200),
+              },
+              {},
+              "loading",
+            ),
+            retrying: ["diff"],
+          }),
+        ),
+      ).toEqual([]);
+    });
+  });
+});
+
+describe("statesForPane", () => {
+  test("pane A has the baseline's states, pane B every other", () => {
+    const size = { w: 9000, h: 9000 };
+    const states: StageState[] = [
+      { kind: "failed", roles: ["baseline", "current"] },
+      { kind: "retrying", roles: ["diff"] },
+      { kind: "no-baseline" },
+      { kind: "too-large", role: "baseline", size, max: 8192 },
+      { kind: "too-large", role: "current", size, max: 8192 },
+    ];
+    expect(statesForPane(states, "baseline")).toEqual([
+      { kind: "failed", roles: ["baseline"] },
+      { kind: "no-baseline" },
+      { kind: "too-large", role: "baseline", size, max: 8192 },
+    ]);
+    expect(statesForPane(states, "current")).toEqual([
+      { kind: "failed", roles: ["current"] },
+      { kind: "retrying", roles: ["diff"] },
+      { kind: "too-large", role: "current", size, max: 8192 },
+    ]);
+  });
+});
+
+describe("isPixelDiffRegion (I1)", () => {
+  const region = (source: string) => ({
+    id: source,
+    severity: "major",
+    category: "visual",
+    bbox: { x: 0, y: 0, width: 1, height: 1 },
+    description: "",
+    source,
+  });
+
+  test("accessibility findings and the dynamic-text audit rows are no pixel diff", () => {
+    expect(isPixelDiffRegion(region("axe"))).toBe(false);
+    expect(isPixelDiffRegion(region("dynamic_text"))).toBe(false);
+  });
+
+  test("pixel findings are, and so are the layout-suppressed rows, which come from one", () => {
+    for (const source of ["l1_pixel", "vlm", "layout_suppressed"]) {
+      expect(isPixelDiffRegion(region(source)), source).toBe(true);
+    }
   });
 });
 
@@ -450,7 +611,12 @@ describe("StageStates: the copy (spec §8)", () => {
     ],
     [{ kind: "diff-legacy-missing" }, "No diff image was kept for this step."],
     [
-      { kind: "too-large", size: { w: 1440, h: 20000 }, max: 16384 },
+      {
+        kind: "too-large",
+        role: "current",
+        size: { w: 1440, h: 20000 },
+        max: 16384,
+      },
       "This screenshot is too large to draw on this device (1440×20000; the limit is 16384 px).",
     ],
   ])("%o reads its sentence", (state, copy) => {
@@ -482,14 +648,67 @@ describe("StageStates: the copy (spec §8)", () => {
     ).toBeDefined();
   });
 
-  test("loading has no message (the canvas skeleton shows it), and nothing renders for no state", () => {
+  test("loading has no message (the canvas skeleton shows it), and no state none", () => {
     const loading = render(
       <StageStates states={[{ kind: "loading" }]} onRetry={() => {}} />,
     );
-    expect(loading.container.innerHTML).toBe("");
+    expect(screen.getByRole("status").textContent).toBe("");
     loading.unmount();
-    const none = render(<StageStates states={[]} onRetry={() => {}} />);
-    expect(none.container.innerHTML).toBe("");
+    render(<StageStates states={[]} onRetry={() => {}} />);
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  test("the live region is there before its message, so the message is announced (M3)", () => {
+    const r = render(<StageStates states={[]} onRetry={() => {}} />);
+    const region = screen.getByRole("status");
+    r.rerender(
+      <StageStates states={[{ kind: "no-baseline" }]} onRetry={() => {}} />,
+    );
+    expect(screen.getByRole("status")).toBe(region);
+    expect(
+      within(region).getByText(
+        "No baseline yet. Approve this step to make it the baseline.",
+      ),
+    ).toBeDefined();
+  });
+
+  test("only a card with Retry takes the pointer: the others let it through to the canvas (M1)", () => {
+    render(
+      <StageStates
+        states={[
+          { kind: "failed", roles: ["diff"] },
+          { kind: "diff-legacy-missing" },
+        ]}
+        onRetry={() => {}}
+      />,
+    );
+    const message = screen.getByText("No diff image was kept for this step.");
+    expect(message.className).toContain("pointer-events-none");
+    expect(message.className).not.toContain("pointer-events-auto");
+    const retryCard = screen.getByRole("button", {
+      name: "Retry",
+    }).parentElement!;
+    expect(retryCard.className).toContain("pointer-events-auto");
+    expect(screen.getByTestId("stage-states").className).toContain(
+      "pointer-events-none",
+    );
+  });
+
+  test("a retried image keeps its card, its Retry busy and inert, until it settles (M2)", () => {
+    const onRetry = vi.fn();
+    render(
+      <StageStates
+        states={[{ kind: "retrying", roles: ["baseline"] }]}
+        onRetry={onRetry}
+      />,
+    );
+    expect(screen.getByText("Couldn't load the baseline.")).toBeDefined();
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry.getAttribute("aria-disabled")).toBe("true");
+    expect(retry.getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(retry);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 });
 

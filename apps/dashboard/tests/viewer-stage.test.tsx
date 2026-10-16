@@ -5,6 +5,7 @@ import {
   render,
   within,
 } from "@testing-library/react";
+import { useCallback, useState } from "react";
 import {
   afterAll,
   afterEach,
@@ -285,6 +286,7 @@ import {
   type LoadedImage,
 } from "@/components/diff-viewer/image-set";
 import type { DiffRegion } from "@/components/diff-viewer/layers/regionTypes";
+import { DIFF_CURRENT_ALPHA } from "@/components/diff-viewer/modes/diff";
 import { RENDERERS } from "@/components/diff-viewer/modes/types";
 import type { ElementMap } from "@/components/diff-viewer/useElementMap";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
@@ -1878,7 +1880,10 @@ describe("what the stage can't show (spec §3.4)", () => {
     for (const id of hosts) {
       expect(page().getByTestId(id).getAttribute("aria-busy")).toBe("true");
     }
-    expect(page().queryByTestId("stage-states")).toBeNull();
+    // The live regions are there, and say nothing.
+    for (const region of page().getAllByTestId("stage-states")) {
+      expect(region.textContent).toBe("");
+    }
     expect(fake.registry.sprites).toHaveLength(0);
 
     r.rerender(
@@ -1990,10 +1995,14 @@ describe("what the stage can't show (spec §3.4)", () => {
     expect(page().queryByText(/No pixel changes/)).toBeNull();
   });
 
-  test("too large: the renderer is not mounted, and the limit is the GL context's (Review Focus 1)", async () => {
+  /** The labels of the sprites still on a stage. */
+  const sprites = () =>
+    fake.registry.sprites.filter((s) => !s.destroyed).map((s) => s.label);
+  const TOO_LARGE = /too large to draw on this device/;
+
+  test("too large: a current image past the GL context's limit is left out, the baseline drawn, and pane B says so (Review Focus 1, I2)", async () => {
     fake.registry.maxTextureSize = 16384;
-    const sideBySide = vi.spyOn(RENDERERS["side-by-side"], "mount");
-    const overlay = vi.spyOn(RENDERERS.overlay, "mount");
+    const mount = vi.spyOn(RENDERERS["side-by-side"], "mount");
     const { set, request } = step({
       baseline: loaded("b", 1440, 900),
       current: loaded("c", 1440, 20000),
@@ -2001,26 +2010,101 @@ describe("what the stage can't show (spec §3.4)", () => {
     render(<ViewerStage set={set} request={request} regions={REGIONS} />);
     await flush();
 
-    expect(sideBySide).not.toHaveBeenCalled();
-    expect(fake.registry.sprites).toHaveLength(0);
-    expect(labels(worldIn("candidate-canvas-host"))).toEqual([]);
+    expect(mount).toHaveBeenCalledOnce();
+    expect(sprites()).toEqual(["baseline"]);
+    // Never a texture of it.
+    expect(fake.registry.textures.map((t) => t.width * t.height)).not.toContain(
+      1440 * 20000,
+    );
+    expect(labels(worldIn("baseline-canvas-host"))).toContain("baseline");
     expect(
       within(paneOf("candidate-canvas-host")).getByText(
         "This screenshot is too large to draw on this device (1440×20000; the limit is 16384 px).",
       ),
     ).toBeDefined();
-
-    // Nor on one stage; and the limit holds through the stage's new app.
-    setMode("overlay");
-    await flush();
-    expect(overlay).not.toHaveBeenCalled();
-    expect(fake.registry.sprites).toHaveLength(0);
-    expect(labels(worldIn("single-stage-host"))).toEqual([]);
     expect(
-      within(paneOf("single-stage-host")).getByText(
-        /too large to draw on this device \(1440×20000; the limit is 16384 px\)/,
+      within(paneOf("baseline-canvas-host")).queryByText(TOO_LARGE),
+    ).toBeNull();
+  });
+
+  test("too large: a baseline past the limit still lets side by side draw the current image, and pane A says so (I2)", async () => {
+    fake.registry.maxTextureSize = 16384;
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 20000),
+      current: loaded("c", 1440, 900),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(sprites()).toEqual(["current"]);
+    expect(labels(worldIn("candidate-canvas-host"))).toContain("current");
+    // Its size still makes the world: the current image is hatched below.
+    expect(
+      layer(worldIn("candidate-canvas-host"), "hatch:current").points().length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(paneOf("baseline-canvas-host")).getByText(
+        "This screenshot is too large to draw on this device (1440×20000; the limit is 16384 px).",
       ),
     ).toBeDefined();
+    expect(
+      within(paneOf("candidate-canvas-host")).queryByText(TOO_LARGE),
+    ).toBeNull();
+    // No tooltip over a strip of an image that is not drawn.
+    expect(
+      paneOf("baseline-canvas-host").querySelector(
+        '[data-testid="hatch-tooltip"]',
+      ),
+    ).toBeNull();
+  });
+
+  test("too large: Diff never draws the baseline, so a baseline past the limit blocks nothing (I2)", async () => {
+    fake.registry.maxTextureSize = 16384;
+    setMode("diff");
+    const diffMount = vi.spyOn(RENDERERS.diff, "mount");
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 20000),
+      current: loaded("c", 1440, 900),
+      diff: loaded("d", 1440, 900),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(diffMount).toHaveBeenCalledOnce();
+    expect(sprites()).toEqual(["current", "diff"]);
+    expect(page().queryByText(TOO_LARGE)).toBeNull();
+  });
+
+  test("too large: with nothing left to draw the renderer is not mounted, in any mode", async () => {
+    fake.registry.maxTextureSize = 16384;
+    const mounts = (["side-by-side", "overlay", "diff"] as const).map((m) =>
+      vi.spyOn(RENDERERS[m], "mount"),
+    );
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 20000),
+      current: loaded("c", 1440, 20000),
+      diff: loaded("d", 1440, 20000),
+    });
+    render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+    await flush();
+    expect(labels(worldIn("candidate-canvas-host"))).toEqual([]);
+    expect(
+      within(paneOf("baseline-canvas-host")).getByText(TOO_LARGE),
+    ).toBeDefined();
+    expect(
+      within(paneOf("candidate-canvas-host")).getByText(TOO_LARGE),
+    ).toBeDefined();
+
+    for (const mode of ["overlay", "diff"] as const) {
+      setMode(mode);
+      await flush();
+      expect(labels(worldIn("single-stage-host"))).toEqual([]);
+      expect(
+        within(paneOf("single-stage-host")).getAllByText(TOO_LARGE).length,
+      ).toBeGreaterThan(0);
+    }
+    for (const mount of mounts) expect(mount).not.toHaveBeenCalled();
+    expect(fake.registry.sprites).toHaveLength(0);
   });
 
   test("too large is the GL context's limit, not the fallback's", async () => {
@@ -2034,24 +2118,189 @@ describe("what the stage can't show (spec §3.4)", () => {
     await flush();
 
     expect(mount).toHaveBeenCalledOnce();
-    expect(page().queryByText(/too large/)).toBeNull();
+    expect(sprites()).toEqual(["baseline", "current"]);
+    expect(page().queryByText(TOO_LARGE)).toBeNull();
   });
 
   test("too large, with no GL context to ask: the 8192 fallback", async () => {
     const mount = vi.spyOn(RENDERERS["side-by-side"], "mount");
     const { set, request } = step({
-      baseline: loaded("b", 1440, 9000),
+      baseline: loaded("b", 1440, 900),
       current: loaded("c", 1440, 9000),
     });
     render(<ViewerStage set={set} request={request} regions={[]} />);
     await flush();
 
-    expect(mount).not.toHaveBeenCalled();
+    expect(mount).toHaveBeenCalledOnce();
+    expect(sprites()).toEqual(["baseline"]);
     expect(
-      page().getByText(
+      within(paneOf("candidate-canvas-host")).getByText(
         "This screenshot is too large to draw on this device (1440×9000; the limit is 8192 px).",
       ),
     ).toBeDefined();
+  });
+
+  test("Diff, a failed diff image: the faded current image, a Retry for the diff image, and no claim of no changes (M6)", async () => {
+    setMode("diff");
+    const retry = vi.fn();
+    const baseline = loaded("b", 100, 100);
+    const current = loaded("c", 100, 100);
+    render(
+      <ViewerStage
+        set={imageSet({ baseline, current }, { failed: { diff: true }, retry })}
+        request={{
+          baseline: baseline.key,
+          current: current.key,
+          diff: k("failed-d"),
+        }}
+        regions={[]}
+        stepHasDiff={false}
+      />,
+    );
+    await flush();
+
+    expect(labels(worldIn("single-stage-host"))).toEqual([
+      "current",
+      "hatch:current",
+      "ignore",
+    ]);
+    expect(
+      fake.registry.sprites.find((s) => s.label === "current")!.alpha,
+    ).toBe(DIFF_CURRENT_ALPHA);
+    const stage = within(paneOf("single-stage-host"));
+    expect(stage.getByText("Couldn't load the diff image.")).toBeDefined();
+    fireEvent.click(stage.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledWith("diff");
+    expect(page().queryByText(/No pixel changes/)).toBeNull();
+  });
+
+  test("Diff, with no word on the step's diff: an audit row is no pixel diff (I1)", async () => {
+    setMode("diff");
+    const { set, request } = step({
+      baseline: loaded("b", 100, 100),
+      current: loaded("c", 100, 100),
+    });
+    const audit = (source: string, id: string): DiffRegion => ({
+      ...REGIONS[0]!,
+      id,
+      source,
+    });
+    render(
+      <ViewerStage
+        set={set}
+        request={request}
+        regions={[audit("dynamic_text", "t1"), audit("axe", "a1")]}
+        legacyMissing
+      />,
+    );
+    await flush();
+
+    expect(
+      page().getByText(
+        "No pixel changes between the baseline and the current screenshot.",
+      ),
+    ).toBeDefined();
+    expect(page().queryByText(/No diff image was kept/)).toBeNull();
+  });
+
+  describe("Retry keeps the keyboard's place (M2)", () => {
+    /**
+     * The stage under an image set that does what `useImageSet` does on a
+     * Retry: the role is on its way again at once, in the same update.
+     */
+    const control: {
+      settle?: (
+        images: ImageSetState["images"],
+        failed?: ImageSetState["failed"],
+      ) => void;
+    } = {};
+    function Retrying({
+      initial,
+      request,
+      onRetry,
+    }: {
+      initial: ImageSetState;
+      request: ImageSetRequest;
+      onRetry: (role: ImageRole) => void;
+    }) {
+      const [set, setSet] = useState(initial);
+      control.settle = (images, failed = {}) =>
+        setSet((s) => ({ ...s, status: "ready", images, failed }));
+      const retry = useCallback(
+        (role: ImageRole) => {
+          onRetry(role);
+          setSet((s) => {
+            const failed = { ...s.failed };
+            delete failed[role];
+            return { ...s, status: "loading", failed };
+          });
+        },
+        [onRetry],
+      );
+      return (
+        <ViewerStage set={{ ...set, retry }} request={request} regions={[]} />
+      );
+    }
+
+    async function failedBaseline() {
+      const onRetry = vi.fn();
+      const current = loaded("c", 100, 100);
+      const baseline = loaded("b", 100, 100);
+      const request: ImageSetRequest = {
+        baseline: baseline.key,
+        current: current.key,
+        diff: null,
+      };
+      render(
+        <Retrying
+          initial={imageSet({ current }, { failed: { baseline: true } })}
+          request={request}
+          onRetry={onRetry}
+        />,
+      );
+      await flush();
+      const paneA = within(paneOf("baseline-canvas-host"));
+      const button = paneA.getByRole("button", { name: "Retry" });
+      act(() => button.focus());
+      fireEvent.click(button);
+      await flush();
+      return { onRetry, button, paneA, baseline, current };
+    }
+
+    test("the card stays while the image loads again, its Retry focused, busy and inert", async () => {
+      const { onRetry, button, paneA } = await failedBaseline();
+      expect(onRetry).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledWith("baseline");
+      expect(document.activeElement).toBe(button);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(paneA.getByText("Couldn't load the baseline.")).toBeDefined();
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.getAttribute("aria-busy")).toBe("true");
+      fireEvent.click(button);
+      expect(onRetry).toHaveBeenCalledOnce();
+    });
+
+    test("failed again: the same Retry, focused, takes a press again", async () => {
+      const { onRetry, button, current } = await failedBaseline();
+      act(() => control.settle!({ current }, { baseline: true }));
+      await flush();
+      expect(document.activeElement).toBe(button);
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      fireEvent.click(button);
+      expect(onRetry).toHaveBeenCalledTimes(2);
+    });
+
+    test("in: the card goes, and the focus goes to its pane, not the page", async () => {
+      const { baseline, current } = await failedBaseline();
+      act(() => control.settle!({ baseline, current }));
+      await flush();
+      expect(
+        within(paneOf("baseline-canvas-host")).queryByRole("button"),
+      ).toBeNull();
+      expect(document.activeElement).toBe(
+        page().getByTestId("baseline-canvas-host"),
+      );
+    });
   });
 
   test("back on a step before the one in between settled: it mounts again only once all its images are in (NB1)", async () => {

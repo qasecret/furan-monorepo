@@ -1,8 +1,8 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
 
-import type { ImageRole, ImageSetState } from "./image-set";
+import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
 import { RENDERERS, type HatchedImage } from "./modes/types";
 import {
   worldToCanvas,
@@ -13,6 +13,7 @@ import {
 import { modeAvailable, type ViewerMode } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
 /**
  * What the viewer's stage can't show, and says instead (spec §3.4): DOM over
@@ -21,11 +22,14 @@ import { Button } from "@/components/ui/button";
 export type StageState =
   | { kind: "loading" }
   | { kind: "failed"; roles: ImageRole[] }
+  /** Failed, then retried, and on its way again: its card stays, busy (M2). */
+  | { kind: "retrying"; roles: ImageRole[] }
   | { kind: "no-baseline" }
   | { kind: "diff-size-mismatch"; baseline: Size; current: Size }
   | { kind: "diff-legacy-missing" }
   | { kind: "diff-no-changes" }
-  | { kind: "too-large"; size: Size; max: number };
+  /** An image the mode draws that the GPU can't hold: it is left out (I2). */
+  | { kind: "too-large"; role: ImageRole; size: Size; max: number };
 
 export interface StageStatesInput {
   /** The chosen mode; one the step can't show is side by side (R2). */
@@ -34,12 +38,14 @@ export interface StageStatesInput {
   hasBaseline: boolean;
   /** The step's diff image was never kept apart from its run's (`stepDiffKey`). */
   legacyMissing: boolean;
-  /** R4: the step has at least one diff region, or a diff percent above 0. */
+  /** R4: the step has a pixel-diff region, or a diff percent above 0. */
   stepHasDiff: boolean;
   /** The loaded images' sizes. */
-  sizes: { baseline?: Size; current?: Size };
+  sizes: { baseline?: Size; current?: Size; diff?: Size };
   /** The GPU's largest texture side, in px (`readMaxTextureSize`). */
   maxTextureSize: number;
+  /** The roles whose Retry was pressed for the images now asked for. */
+  retrying?: readonly ImageRole[];
 }
 
 /**
@@ -50,37 +56,49 @@ export interface StageStatesInput {
  *   draw is not waited for).
  * - **failed:** the images the mode needs that failed; the others don't stop
  *   it, or show.
+ * - **retrying:** the retried ones the mode needs, while they are on their
+ *   way again.
  * - **no-baseline:** a new test. Only side by side can show it.
- * - **too-large:** a screenshot wider or taller than the GPU's textures; the
- *   current one first.
- * - **Diff only:** sizes that differ give no pixel diff. With the same sizes
- *   and no diff image asked for (the step's key is null), R4: a step with no
- *   diff has no changes, and a step with a diff on a legacy run lost its
- *   image to history. A step with a diff on a run of one step says nothing.
+ * - **too-large:** each image the mode draws that is wider or taller than the
+ *   GPU's textures (Diff waits for the baseline but never draws it).
+ * - **Diff only:** sizes that differ give no pixel diff. With both
+ *   screenshots in at the same size and no diff image asked for (the step's
+ *   key is null), R4: a step with no diff has no changes, and a step with a
+ *   diff on a legacy run lost its image to history. A step with a diff on a
+ *   run of one step says nothing.
  */
 export function stageStates(input: StageStatesInput): StageState[] {
   const { set, hasBaseline, sizes, maxTextureSize: max } = input;
   const mode = modeAvailable(input.mode, hasBaseline)
     ? input.mode
     : "side-by-side";
-  const needs = RENDERERS[mode].needs({ hasBaseline });
+  const renderer = RENDERERS[mode];
+  const needs = renderer.needs({ hasBaseline });
   const { images, failed } = set;
   const states: StageState[] = [];
 
-  const waiting = needs.some((r) => images[r] === undefined && !failed[r]);
-  if (set.status === "loading" && waiting) states.push({ kind: "loading" });
+  const onItsWay = (r: ImageRole) => images[r] === undefined && !failed[r];
+  if (set.status === "loading" && needs.some(onItsWay)) {
+    states.push({ kind: "loading" });
+  }
 
   const failedRoles = needs.filter((r) => failed[r] === true);
   if (failedRoles.length > 0) {
     states.push({ kind: "failed", roles: failedRoles });
   }
+  const retrying = needs.filter(
+    (r) => input.retrying?.includes(r) === true && onItsWay(r),
+  );
+  if (retrying.length > 0) states.push({ kind: "retrying", roles: retrying });
 
   if (!hasBaseline) states.push({ kind: "no-baseline" });
 
-  const tooLarge = [sizes.current, sizes.baseline].find(
-    (s): s is Size => s !== undefined && (s.w > max || s.h > max),
-  );
-  if (tooLarge) states.push({ kind: "too-large", size: tooLarge, max });
+  for (const role of renderer.draws) {
+    const size = sizes[role];
+    if (size && (size.w > max || size.h > max)) {
+      states.push({ kind: "too-large", role, size, max });
+    }
+  }
 
   if (mode === "diff") {
     const { baseline, current } = sizes;
@@ -94,7 +112,8 @@ export function stageStates(input: StageStatesInput): StageState[] {
     ) {
       states.push({ kind: "diff-size-mismatch", baseline, current });
     } else if (noDiffImage && !input.stepHasDiff) {
-      states.push({ kind: "diff-no-changes" });
+      // Only with both screenshots in can it say they are the same (M4).
+      if (baseline && current) states.push({ kind: "diff-no-changes" });
     } else if (noDiffImage && input.legacyMissing) {
       states.push({ kind: "diff-legacy-missing" });
     }
@@ -103,21 +122,30 @@ export function stageStates(input: StageStatesInput): StageState[] {
 }
 
 /**
- * The states for one pane of side by side: the baseline's (its failure, and
- * that there is none) over pane A, every other over pane B.
+ * The states for one pane of side by side: the baseline's (its failure and
+ * retry, its size, and that there is none) over pane A, every other over
+ * pane B.
  */
 export function statesForPane(
   states: StageState[],
   pane: "baseline" | "current",
 ): StageState[] {
+  const here = (role: ImageRole) =>
+    (role === "baseline") === (pane === "baseline");
   return states.flatMap((s): StageState[] => {
-    if (s.kind === "failed") {
-      const roles = s.roles.filter(
-        (r) => (r === "baseline") === (pane === "baseline"),
-      );
-      return roles.length > 0 ? [{ kind: "failed", roles }] : [];
+    switch (s.kind) {
+      case "failed":
+      case "retrying": {
+        const roles = s.roles.filter(here);
+        return roles.length > 0 ? [{ kind: s.kind, roles }] : [];
+      }
+      case "too-large":
+        return here(s.role) ? [s] : [];
+      case "no-baseline":
+        return pane === "baseline" ? [s] : [];
+      default:
+        return pane === "baseline" ? [] : [s];
     }
-    return (s.kind === "no-baseline") === (pane === "baseline") ? [s] : [];
   });
 }
 
@@ -167,30 +195,59 @@ export const HATCH_TOOLTIP: Record<HatchedImage, string> = {
 };
 
 const CARD =
-  "pointer-events-auto flex max-w-md items-center gap-3 rounded-lg border border-edge bg-overlay px-3 py-2 text-left text-xs text-fg-secondary shadow-overlay";
+  "flex max-w-md items-center gap-3 rounded-lg border border-edge bg-overlay px-3 py-2 text-left text-xs text-fg-secondary shadow-overlay";
 
+/** A sentence and nothing to press: the pointer goes through to the canvas. */
 function Message({ children }: { children: string }) {
-  return <p className={CARD}>{children}</p>;
+  return <p className={cn(CARD, "pointer-events-none")}>{children}</p>;
 }
 
+/**
+ * A failed image and its Retry. Retried, it stays while the image is on its
+ * way again, with Retry busy and inert, so the keyboard keeps its place (M2);
+ * failed again, the same Retry takes a press again. When it goes with the
+ * focus on its Retry (the image came in), the focus goes to `onFocusLost`.
+ */
 function Failed({
   role,
+  busy,
   onRetry,
+  onFocusLost,
 }: {
   role: ImageRole;
+  busy: boolean;
   onRetry(role: ImageRole): void;
+  onFocusLost?: () => void;
 }) {
   const id = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  const focusLost = useRef(onFocusLost);
+  useLayoutEffect(() => {
+    focusLost.current = onFocusLost;
+  });
+  useLayoutEffect(() => {
+    const el = button.current;
+    // A deleted component's layout cleanup runs before its DOM is removed:
+    // the button still has the focus here, if it had it.
+    return () => {
+      if (el !== null && el === document.activeElement) focusLost.current?.();
+    };
+  }, []);
   return (
-    <div className={CARD}>
+    <div className={cn(CARD, "pointer-events-auto")}>
       <p id={id}>{FAILED[role]}</p>
       {/* Named "Retry" as the copy says; the message describes which. */}
       <Button
+        ref={button}
         type="button"
         variant="secondary"
-        className="h-7 shrink-0 px-2 text-xs"
+        className="h-7 shrink-0 px-2 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"
         aria-describedby={id}
-        onClick={() => onRetry(role)}
+        aria-disabled={busy || undefined}
+        aria-busy={busy || undefined}
+        onClick={() => {
+          if (!busy) onRetry(role);
+        }}
       >
         {RETRY}
       </Button>
@@ -201,30 +258,50 @@ function Failed({
 /**
  * The states' messages, over the top of the stage (a tall screenshot's card
  * runs below the fold). Loading has none: the canvas skeleton, the empty
- * card, shows it. The box lets pointer events through to the canvas but on
- * its messages.
+ * card, shows it.
+ *
+ * - The polite live region is always there, empty when there is nothing to
+ *   say, so a message that appears in it is announced (M3).
+ * - Only a card with Retry takes the pointer; the region and every other card
+ *   let it through to the canvas, so the editor, pan and zoom work under
+ *   them (M1).
+ * - The images' cards come first, one per role in a fixed order, so a card
+ *   going from failed to retrying and back is the same element, and keeps
+ *   the focus.
  */
 export function StageStates({
   states,
   onRetry,
+  onFocusLost,
 }: {
   states: StageState[];
   onRetry(role: ImageRole): void;
+  /** Where the focus goes when a focused Retry's card goes. */
+  onFocusLost?: () => void;
 }) {
-  const shown = states.filter((s) => s.kind !== "loading");
-  if (shown.length === 0) return null;
+  const rolesOf = (kind: "failed" | "retrying") =>
+    states.flatMap((s) => (s.kind === kind ? s.roles : []));
+  const failed = rolesOf("failed");
+  const retrying = rolesOf("retrying");
   return (
     <div
       className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-center gap-2 p-3"
       role="status"
       data-testid="stage-states"
     >
-      {shown.map((s) => {
+      {IMAGE_ROLES.filter(
+        (r) => failed.includes(r) || retrying.includes(r),
+      ).map((role) => (
+        <Failed
+          key={`image:${role}`}
+          role={role}
+          busy={!failed.includes(role)}
+          onRetry={onRetry}
+          onFocusLost={onFocusLost}
+        />
+      ))}
+      {states.map((s) => {
         switch (s.kind) {
-          case "failed":
-            return s.roles.map((role) => (
-              <Failed key={`failed:${role}`} role={role} onRetry={onRetry} />
-            ));
           case "no-baseline":
             return <Message key={s.kind}>{NO_BASELINE}</Message>;
           case "diff-size-mismatch":
@@ -238,8 +315,13 @@ export function StageStates({
           case "diff-legacy-missing":
             return <Message key={s.kind}>{LEGACY_MISSING}</Message>;
           case "too-large":
-            return <Message key={s.kind}>{tooLarge(s.size, s.max)}</Message>;
+            return (
+              <Message key={`${s.kind}:${s.role}`}>
+                {tooLarge(s.size, s.max)}
+              </Message>
+            );
           default:
+            // Loading has no message; the images' cards are above.
             return null;
         }
       })}

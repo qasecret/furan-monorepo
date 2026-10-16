@@ -6,7 +6,14 @@
 import "pixi.js/unsafe-eval";
 import { useTheme } from "next-themes";
 import { Application, Container } from "pixi.js";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   applyCanvasBackground,
@@ -16,6 +23,7 @@ import {
 } from "./canvas-theme";
 import { orderDiffRegions } from "./diff-order";
 import {
+  IMAGE_ROLES,
   retainImages,
   type ImageRole,
   type ImageSetRequest,
@@ -32,7 +40,7 @@ import {
   type RenderInput,
 } from "./modes/types";
 import { pointerToImage } from "./pointer-to-image";
-import { isRegionShown } from "./region-visibility";
+import { isPixelDiffRegion, isRegionShown } from "./region-visibility";
 import {
   HatchTooltips,
   readMaxTextureSize,
@@ -112,8 +120,8 @@ interface Props {
    */
   legacyMissing?: boolean;
   /**
-   * R4: the step has a pixel diff (a diff region, or a diff percent above 0).
-   * Defaults to whether `regions` has any.
+   * R4: the step has a pixel diff (a pixel-diff region, or a diff percent
+   * above 0). Defaults to whether `regions` has a pixel-diff region.
    */
   stepHasDiff?: boolean;
 }
@@ -126,6 +134,8 @@ interface Stage {
   apps: Application[];
   worlds: Container[];
 }
+
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** Fallback dimensions used before the host element has been laid out. */
 const FALLBACK_W = 800;
@@ -207,7 +217,7 @@ export function ViewerStage({
   regions,
   elementMap,
   legacyMissing = false,
-  stepHasDiff = regions.length > 0,
+  stepHasDiff = regions.some(isPixelDiffRegion),
 }: Props) {
   const paneARef = useRef<HTMLDivElement>(null);
   const paneBRef = useRef<HTMLDivElement>(null);
@@ -323,21 +333,63 @@ export function ViewerStage({
     setSettledKey((key) => (settled ? needKey : key === needKey ? key : null));
   }, [settled, needKey]);
 
+  // The image keys whose Retry was pressed. While one is on its way again,
+  // its card stays, busy, and keeps the keyboard's place (M2).
+  const [retried, setRetried] = useState<ReadonlySet<string>>(NO_KEYS);
+  const retryImage = set.retry;
+  const onRetry = useCallback(
+    (role: ImageRole) => {
+      const key = request[role];
+      if (key !== null) setRetried((keys) => new Set(keys).add(key));
+      retryImage(role);
+    },
+    [request, retryImage],
+  );
+  const retrying = IMAGE_ROLES.filter((role) => {
+    const key = request[role];
+    return (
+      key !== null &&
+      retried.has(key) &&
+      images[role] === undefined &&
+      !failed[role]
+    );
+  });
+  const stillRetried = new Set(retrying.map((role) => request[role]!));
+  // A retried image that has settled, or is no longer asked for, is let go.
+  useEffect(() => {
+    if (stillRetried.size < retried.size) setRetried(stillRetried);
+  });
+
   const states = stageStates({
     mode,
     set,
     hasBaseline,
     legacyMissing,
     stepHasDiff,
-    sizes: { baseline: images.baseline?.size, current: images.current?.size },
+    sizes: {
+      baseline: images.baseline?.size,
+      current: images.current?.size,
+      diff: images.diff?.size,
+    },
     maxTextureSize: maxTextureSize ?? Number.POSITIVE_INFINITY,
+    retrying,
   });
   const loading = states.some((s) => s.kind === "loading");
-  // A texture the GPU can't hold would draw as nothing, or as garbage.
-  const tooLarge = states.some((s) => s.kind === "too-large");
-  const ready = (settled || settledKey === needKey) && !tooLarge;
+  // An image the GPU can't hold would draw as nothing, or as garbage: it is
+  // left out, and the renderer draws around it, as around a failed one (I2).
+  // Its size still makes the world.
+  const fits = (role: ImageRole) =>
+    !states.some((s) => s.kind === "too-large" && s.role === role);
+  const baselineFits = fits("baseline");
+  const currentFits = fits("current");
+  const diffFits = fits("diff");
+  // Nothing the mode draws can go on a texture: nothing mounts.
+  const blocked =
+    !renderer.draws.every(fits) &&
+    !renderer.draws.some((role) => images[role] !== undefined && fits(role));
+  const ready = (settled || settledKey === needKey) && !blocked;
   const drawn = (role: ImageRole) =>
-    needs.includes(role) ? images[role]?.bitmap : undefined;
+    needs.includes(role) && fits(role) ? images[role]?.bitmap : undefined;
   const baselineBitmap = drawn("baseline");
   const currentBitmap = drawn("current");
   const diffBitmap = drawn("diff");
@@ -376,9 +428,9 @@ export function ViewerStage({
         ? {
             world,
             images: {
-              baseline: images.baseline?.bitmap,
-              current: images.current?.bitmap,
-              diff: images.diff?.bitmap,
+              baseline: baselineFits ? images.baseline?.bitmap : undefined,
+              current: currentFits ? images.current?.bitmap : undefined,
+              diff: diffFits ? images.diff?.bitmap : undefined,
             },
             opacity,
             swipe,
@@ -387,7 +439,18 @@ export function ViewerStage({
             scale,
           }
         : null,
-    [world, images, opacity, swipe, flickerFrame, hatchColor, scale],
+    [
+      world,
+      images,
+      baselineFits,
+      currentFits,
+      diffFits,
+      opacity,
+      swipe,
+      flickerFrame,
+      hatchColor,
+      scale,
+    ],
   );
   const hasInput = input !== null;
 
@@ -745,10 +808,13 @@ export function ViewerStage({
     sceneReady && transform ? (
       <HatchTooltips
         world={world}
-        images={renderer.hatched[pane] ?? []}
+        images={(renderer.hatched[pane] ?? []).filter(fits)}
         transform={transform}
       />
     ) : null;
+  // Where the focus goes when a focused Retry's card goes (M2): its pane.
+  const focusPane = (ref: React.RefObject<HTMLDivElement | null>) => () =>
+    ref.current?.focus({ preventScroll: true });
 
   // Container layout: the pane wrapper is given an explicit min height so
   // the Pixi canvas has a stable box to fill (and the ResizeObserver fires
@@ -782,15 +848,17 @@ export function ViewerStage({
               <div
                 ref={paneARef}
                 data-testid="baseline-canvas-host"
+                tabIndex={-1}
                 aria-busy={loading || undefined}
                 style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
               >
                 {hatchTooltips(0)}
               </div>
               <StageStates
                 states={statesForPane(states, "baseline")}
-                onRetry={set.retry}
+                onRetry={onRetry}
+                onFocusLost={focusPane(paneARef)}
               />
             </div>
           </div>
@@ -811,9 +879,10 @@ export function ViewerStage({
               <div
                 ref={paneBRef}
                 data-testid="candidate-canvas-host"
+                tabIndex={-1}
                 aria-busy={loading || undefined}
                 style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
               >
                 {request.current === null && (
                   <CanvasEmptyState label="Waiting for capture…">
@@ -826,7 +895,8 @@ export function ViewerStage({
               </div>
               <StageStates
                 states={statesForPane(states, "current")}
-                onRetry={set.retry}
+                onRetry={onRetry}
+                onFocusLost={focusPane(paneBRef)}
               />
             </div>
           </div>
@@ -840,17 +910,22 @@ export function ViewerStage({
       <div className="relative m-auto w-full">
         <div
           style={aspectStyle(world?.size)}
-          className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+          className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
           ref={singleRef}
           data-testid="single-stage-host"
           data-mode={shown}
+          tabIndex={-1}
           aria-busy={loading || undefined}
           onPointerUp={handleDiffRegionClick}
         >
           {hatchTooltips(0)}
           {editorOverlay}
         </div>
-        <StageStates states={states} onRetry={set.retry} />
+        <StageStates
+          states={states}
+          onRetry={onRetry}
+          onFocusLost={focusPane(singleRef)}
+        />
       </div>
     </div>
   );

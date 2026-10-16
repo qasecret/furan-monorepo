@@ -145,31 +145,33 @@ vi.mock("sonner", () => ({
 // so the regression test can read it without any reference to the mock class.
 let pixiInitCount = 0;
 
-// Mock pixi.js — we test toolbar/store behavior, not WebGL.
-vi.mock("pixi.js", () => ({
-  Application: class {
-    canvas = document.createElement("canvas");
-    stage = { addChild: () => {} };
-    screen = { width: 600, height: 400 };
-    ticker = { add: () => {}, remove: () => {} };
-    async init() {
-      pixiInitCount++;
+// Mock pixi.js — we test toolbar/store behavior, not WebGL. Enough of it for
+// a mode to mount over images that load: inert display objects.
+vi.mock("pixi.js", () => {
+  const point = () => ({ set: () => {} });
+  class Container {
+    label = "";
+    alpha = 1;
+    eventMode = "passive";
+    cursor = "";
+    scale = point();
+    position = point();
+    children: unknown[] = [];
+    addChild<T>(c: T): T {
+      this.children = this.children.filter((x) => x !== c);
+      this.children.push(c);
+      return c;
+    }
+    removeChild<T>(c: T): T {
+      this.children = this.children.filter((x) => x !== c);
+      return c;
+    }
+    on() {
+      return this;
     }
     destroy() {}
-  },
-  Assets: { load: async () => ({}) },
-  Sprite: class {
-    width = 0;
-    height = 0;
-    alpha = 1;
-  },
-  Container: class {
-    children: unknown[] = [];
-    addChild(c: unknown) {
-      this.children.push(c);
-    }
-  },
-  Graphics: class {
+  }
+  class Graphics extends Container {
     rect() {
       return this;
     }
@@ -182,8 +184,42 @@ vi.mock("pixi.js", () => ({
     stroke() {
       return this;
     }
-  },
-}));
+    clear() {
+      return this;
+    }
+    moveTo() {
+      return this;
+    }
+    lineTo() {
+      return this;
+    }
+  }
+  class Sprite extends Container {
+    width = 0;
+    height = 0;
+    constructor(public texture?: unknown) {
+      super();
+    }
+  }
+  return {
+    Application: class {
+      canvas = document.createElement("canvas");
+      stage = new Container();
+      screen = { width: 600, height: 400 };
+      ticker = { add: () => {}, remove: () => {} };
+      async init() {
+        pixiInitCount++;
+      }
+      destroy() {}
+    },
+    Assets: { load: async () => ({}) },
+    Sprite,
+    Container,
+    Graphics,
+    Text: Container,
+    Texture: { from: () => ({ destroy: () => {} }) },
+  };
+});
 
 // Mock next/navigation — DiffViewer and its review loop navigate with
 // useRouter.
@@ -1118,15 +1154,40 @@ describe("DiffViewer", () => {
         ),
       );
     }
+    /**
+     * Every storage read answers with an image that decodes to 100×100, so
+     * both screenshots are in, at the same size.
+     */
+    function loadingStorage() {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            blob: () => Promise.resolve(new Blob(["png"])),
+          } as unknown as Response),
+        ),
+      );
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(() =>
+          Promise.resolve({ width: 100, height: 100, close: () => {} }),
+        ),
+      );
+    }
+    // Keys no other test uses: the image loader's cache is module-wide.
+    let keyCount = 0;
+    const fresh = (name: string) => `cs${++keyCount}-${name}`;
     const inDiff = () =>
       useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
-    const region = (screenshotId: string) => ({
-      id: `r-${screenshotId}`,
+    const region = (screenshotId: string, source = "l1_pixel") => ({
+      id: `r-${screenshotId}-${source}`,
       severity: "major",
       category: "visual",
       bbox: { x: 1, y: 1, width: 5, height: 5 },
       description: "A change",
-      source: "l1_pixel",
+      source,
       screenshotId,
     });
     /** A run of two steps, diffed before steps kept their own images. */
@@ -1134,10 +1195,10 @@ describe("DiffViewer", () => {
       mockGetByIdData = {
         ...defaultMockData,
         diffName: "diff-of-step-1",
-        baselineScreenshot: { id: "base", imageKey: "base-img" },
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
         screenshots: [
-          { id: "c1", imageKey: "img-1", diffImageKey: null },
-          { id: "c2", imageKey: "img-2", diffImageKey: null },
+          { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+          { id: "c2", imageKey: fresh("img-2"), diffImageKey: null },
         ],
         diffRegions: regions,
       };
@@ -1191,7 +1252,7 @@ describe("DiffViewer", () => {
     });
 
     test("Diff on a legacy step with no diff: no pixel changes (R4)", async () => {
-      failingStorage();
+      loadingStorage();
       inDiff();
       // Step 1's region is not step 2's.
       legacyRun([region("c1")]);
@@ -1204,6 +1265,45 @@ describe("DiffViewer", () => {
       expect(r.queryByText(/No diff image was kept/)).toBeNull();
     });
 
+    test.each(["dynamic_text", "axe"])(
+      "Diff on a step of a multi-step run with only %s rows: no pixel changes, not a lost image (I1)",
+      async (source) => {
+        loadingStorage();
+        inDiff();
+        legacyRun([region("c2", source)]);
+        const r = openStep("c2");
+        expect(
+          await r.findByText(
+            "No pixel changes between the baseline and the current screenshot.",
+          ),
+        ).toBeDefined();
+        expect(r.queryByText(/No diff image was kept/)).toBeNull();
+      },
+    );
+
+    test("Diff on a one-step run with only audit rows and no diff image: no pixel changes (I1)", async () => {
+      loadingStorage();
+      inDiff();
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: null,
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
+        screenshots: [
+          { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+        ],
+        diffRegions: [region("c1", "dynamic_text"), region("c1", "axe")],
+      };
+      mockCheckpoints = {
+        items: [{ id: "c1", name: "Home", state: "unresolved" }],
+      };
+      const r = openStep("c1");
+      expect(
+        await r.findByText(
+          "No pixel changes between the baseline and the current screenshot.",
+        ),
+      ).toBeDefined();
+    });
+
     test.each([
       { diffPercent: 2.5, says: null },
       {
@@ -1213,21 +1313,28 @@ describe("DiffViewer", () => {
     ])(
       "Diff on a one-step run with no diff image and a diff percent of $diffPercent (R4)",
       async ({ diffPercent, says }) => {
-        failingStorage();
+        loadingStorage();
         inDiff();
         mockGetByIdData = {
           ...defaultMockData,
           diffName: null,
           diffPercent,
-          baselineScreenshot: { id: "base", imageKey: "base-img" },
-          screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+          baselineScreenshot: { id: "base", imageKey: fresh("base") },
+          screenshots: [
+            { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+          ],
         };
         mockCheckpoints = {
           items: [{ id: "c1", name: "Home", state: "unresolved" }],
         };
         const r = openStep("c1");
-        // Every image has failed by now.
-        await r.findByText("Couldn't load the current screenshot.");
+        // Both screenshots are in.
+        await vi.waitFor(() =>
+          expect(
+            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+          ).toBe(false),
+        );
+        await act(async () => {});
         if (says) {
           expect(r.getByText(says)).toBeDefined();
         } else {
