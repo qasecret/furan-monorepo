@@ -19,7 +19,10 @@ import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
-import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
+import {
+  IgnoreRegionListPanel,
+  useIgnoreRegionsInView,
+} from "./IgnoreRegionListPanel";
 import { useImageSet, type ImageSetRequest } from "./image-set";
 import { InfoRail } from "./InfoRail";
 import type { DiffRegion } from "./layers/regionTypes";
@@ -457,6 +460,8 @@ export function DiffViewer({
   // sit alongside the other ignore-editor selectors (the list is the info
   // rail's content while the editor is open, below).
   const activeViewport = useViewerStore((s) => s.viewport);
+  // What the rail's strip counts in the editor: the list's own regions.
+  const ignoreRegionsInView = useIgnoreRegionsInView(activeViewport || null);
   const setViewport = useViewerStore((s) => s.setViewport);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
   const deleteSelected = useViewerStore((s) => s.deleteSelected);
@@ -991,12 +996,15 @@ export function DiffViewer({
                 )}
               </div>
               <InfoRail
-                editor={
-                  <IgnoreRegionListPanel
-                    viewport={activeViewport || null}
-                    onDelete={handleDeleteIgnoreRegion}
-                  />
-                }
+                editor={{
+                  content: (
+                    <IgnoreRegionListPanel
+                      viewport={activeViewport || null}
+                      onDelete={handleDeleteIgnoreRegion}
+                    />
+                  ),
+                  count: ignoreRegionsInView.length,
+                }}
               >
                 <TestInfoSidebar
                   test={data.name ?? "Untitled run"}

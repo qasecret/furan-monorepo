@@ -23,6 +23,9 @@ import { useReviewMutations } from "@/lib/review/use-review-mutations";
 import { trpc } from "@/lib/trpc";
 
 type Decision = NonNullable<CheckpointItem["decision"]>;
+
+/** Mark as Bug's word, in the editor, on where its note went (spec §8, R26). */
+const NOTE_ADDED = "Note added to Comments";
 type NewerCapture = NonNullable<CheckpointItem["newerCapture"]>;
 
 export interface UseReviewActionsArgs {
@@ -310,11 +313,21 @@ export function useReviewActions({
     // open the comments tab so the reviewer logs why. It rejects this step
     // only, never the run's others, and stays on it: the note is about the
     // step on screen. The comment is run-scoped, so it names the step.
+    //
+    // The note is this run's draft (R25), so it can only ever land in this
+    // run's box, on screen or not, and never over a note already written.
+    // In the ignore-region editor the rail holds the editor's regions and
+    // the comments can't open: the reviewer is told where the note went.
     markAsBug: () => {
       if (!header.canReject) return;
       if (!rejectStep(`Marked ${quoted} as a bug`)) return;
       const store = useViewerStore.getState();
-      store.setCommentPrefill(`Marked ${quoted} as a bug: `);
+      const added = store.addCommentNote(
+        runId,
+        `Marked ${quoted} as a bug: `,
+        run?.comment ?? null,
+      );
+      if (added && store.ignoreEditMode !== "off") toast.info(NOTE_ADDED);
       store.setCommentPanelOpen(true);
     },
     approveAllCheckpoints: () => {

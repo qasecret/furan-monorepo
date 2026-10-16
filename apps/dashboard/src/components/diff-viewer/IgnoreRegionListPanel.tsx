@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 
-import { RailHideButton } from "./InfoRail";
+import { RailHideButton, useRailHeadingId } from "./InfoRail";
 import type { DraftIgnoreArea } from "./useViewerStore";
 import { useViewerStore } from "./useViewerStore";
 
@@ -35,23 +35,35 @@ const KIND_LABEL: Record<DraftIgnoreArea["kind"], string> = {
 const HEADING = "Ignore regions";
 
 /**
+ * The editor's regions on `viewport`'s screenshot; all of them when it is
+ * null (a run with one viewport). The list shows these, and the rail's strip
+ * counts them.
+ */
+export function useIgnoreRegionsInView(
+  viewport: string | null,
+): DraftIgnoreArea[] {
+  const regions = useViewerStore((s) => s.draftIgnoreAreas);
+  return useMemo(
+    () => regions.filter((r) => !viewport || r.viewport === viewport),
+    [regions, viewport],
+  );
+}
+
+/**
  * The ignore-region editor's regions for the viewport on screen. While the
  * editor is open it is the info rail's content (spec §5): the rail holds the
- * landmark and the width, and its "Hide details" ends the heading's row. It
- * never sits beside the rail as a second column.
+ * landmark, which the heading names, and the width, and its "Hide details"
+ * ends the heading's row. It never sits beside the rail as a second column.
  */
 export function IgnoreRegionListPanel({
   viewport,
   onDelete,
 }: IgnoreRegionListPanelProps) {
-  const regions = useViewerStore((s) => s.draftIgnoreAreas);
+  const forViewport = useIgnoreRegionsInView(viewport);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
-
-  const forViewport = useMemo(
-    () => regions.filter((r) => !viewport || r.viewport === viewport),
-    [regions, viewport],
-  );
+  // In the rail, the heading names it (`aria-labelledby`).
+  const headingId = useRailHeadingId();
 
   return (
     <section
@@ -59,7 +71,9 @@ export function IgnoreRegionListPanel({
       data-testid="ignore-region-list-panel"
     >
       <div className="flex shrink-0 items-center gap-1.5 border-b border-edge p-2">
-        <h2 className="text-sm font-medium text-fg">{HEADING}</h2>
+        <h2 id={headingId} className="text-sm font-medium text-fg">
+          {HEADING}
+        </h2>
         <span
           className="text-sm tabular-nums text-fg-muted"
           data-testid="ignore-region-count"

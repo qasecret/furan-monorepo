@@ -106,11 +106,12 @@ interface State {
   viewport: string;
   commentPanelOpen: boolean;
   /**
-   * One-shot seed text for the embedded comment editor. "Mark as bug" sets
-   * this + opens the comments tab; RunCommentPanel consumes it once (then
-   * clears it) so the reviewer lands on a pre-filled note.
+   * Each run's unsent comment, by run id: what its comment box holds where
+   * that differs from the saved comment (R25). It outlives the box, which
+   * unmounts when the rail collapses, changes tab or holds the ignore-region
+   * editor, and a successful save drops it. Runs never share one.
    */
-  commentPrefill: string | null;
+  commentDrafts: Readonly<Record<string, string>>;
 
   // ADR-031 ignore-region editor state.
   ignoreEditMode: IgnoreEditMode;
@@ -171,7 +172,18 @@ interface State {
 
   setViewport: (viewport: string) => void;
   setCommentPanelOpen: (open: boolean) => void;
-  setCommentPrefill: (value: string | null) => void;
+  /** Sets `runId`'s unsent comment; null drops it. */
+  setCommentDraft: (runId: string, text: string | null) => void;
+  /**
+   * Mark as Bug's note: `text` becomes `runId`'s draft when its box is
+   * empty (its draft, else `saved`, the run's saved comment), so a note
+   * already written is never clobbered. True when it was added.
+   */
+  addCommentNote: (
+    runId: string,
+    text: string,
+    saved: string | null,
+  ) => boolean;
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   setRegionInputMode: (mode: RegionInputMode) => void;
@@ -244,10 +256,10 @@ interface State {
   applySaveSuccess: (scope: "run" | "variation") => void;
 }
 
-export const useViewerStore = create<State>((set) => ({
+export const useViewerStore = create<State>((set, get) => ({
   viewport: "",
   commentPanelOpen: false,
-  commentPrefill: null,
+  commentDrafts: {},
 
   ignoreEditMode: "off",
   regionInputMode: "drag",
@@ -267,7 +279,23 @@ export const useViewerStore = create<State>((set) => ({
 
   setViewport: (viewport) => set({ viewport }),
   setCommentPanelOpen: (commentPanelOpen) => set({ commentPanelOpen }),
-  setCommentPrefill: (commentPrefill) => set({ commentPrefill }),
+  setCommentDraft: (runId, text) =>
+    set((s) => {
+      if (text === null) {
+        if (s.commentDrafts[runId] === undefined) return {};
+        const rest: Record<string, string> = { ...s.commentDrafts };
+        delete rest[runId];
+        return { commentDrafts: rest };
+      }
+      if (s.commentDrafts[runId] === text) return {};
+      return { commentDrafts: { ...s.commentDrafts, [runId]: text } };
+    }),
+  addCommentNote: (runId, text, saved) => {
+    const box = get().commentDrafts[runId] ?? saved ?? "";
+    if (box.trim().length > 0) return false;
+    get().setCommentDraft(runId, text);
+    return true;
+  },
 
   setIgnoreEditMode: (ignoreEditMode) =>
     set((s) => ({

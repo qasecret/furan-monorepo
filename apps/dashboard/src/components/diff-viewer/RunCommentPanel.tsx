@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 
 import { useViewerStore } from "./useViewerStore";
 
@@ -31,39 +31,39 @@ interface Props {
  * Keystrokes inside the textarea have their propagation stopped so the
  * dashboard's key dispatcher (e.g. the viewer's `A`/`R`/`C` commands from
  * `useDiffViewerShortcuts`) does not fire while the user is typing.
+ *
+ * The box holds the run's unsent draft when there is one, else its saved
+ * comment, live (R25). The draft is the viewer store's, by run, so it
+ * outlives this panel (a collapse, a tab switch, the ignore-region editor),
+ * and Mark as Bug's note lands in it whether or not the panel is on screen;
+ * a successful save drops it. There is nothing to rehydrate on mount.
  */
 export function RunCommentPanel({ runId, embedded = false }: Props) {
   const open = useViewerStore((s) => s.commentPanelOpen);
   const setOpen = useViewerStore((s) => s.setCommentPanelOpen);
-  const commentPrefill = useViewerStore((s) => s.commentPrefill);
-  const setCommentPrefill = useViewerStore((s) => s.setCommentPrefill);
+  const draft = useViewerStore((s) => s.commentDrafts[runId]);
+  const setCommentDraft = useViewerStore((s) => s.setCommentDraft);
   const utils = trpc.useUtils();
   const { data } = trpc.runs.getById.useQuery({ runId });
   const serverValue = data?.comment ?? "";
+  const value = draft ?? serverValue;
 
-  const [value, setValue] = useState(serverValue);
   const [error, setError] = useState<string | null>(null);
-
-  // Rehydrate the textarea when the cached run row changes (e.g. after a
-  // successful save invalidates the query). We do NOT depend on `open` —
-  // local state stays in sync even when the panel is closed so reopening
-  // shows the latest value immediately.
-  useEffect(() => {
-    setValue(serverValue);
-  }, [serverValue]);
-
-  // "Mark as bug" seeds a one-shot prefill; apply it once (only when the box
-  // is empty so we never clobber an existing note) then clear it so it
-  // doesn't re-apply on the next open.
-  useEffect(() => {
-    if (!embedded || commentPrefill == null) return;
-    setValue((v) => (v.trim().length === 0 ? commentPrefill : v));
-    setCommentPrefill(null);
-  }, [embedded, commentPrefill, setCommentPrefill]);
+  // What the last save sent: its success drops the draft only if nothing was
+  // typed since.
+  const sent = useRef<string | null>(null);
 
   const setComment = trpc.runs.setComment.useMutation({
     onMutate: () => setError(null),
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      // The saved comment into the cache first, so the box never shows the
+      // old one between dropping the draft and the refetch.
+      utils.runs.getById.setData({ runId }, (run) =>
+        run ? { ...run, comment: saved.comment } : run,
+      );
+      if (useViewerStore.getState().commentDrafts[runId] === sent.current) {
+        setCommentDraft(runId, null);
+      }
       void utils.runs.getById.invalidate({ runId });
     },
     onError: (e) => setError(e.message),
@@ -71,9 +71,15 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
 
   if (!embedded && !open) return null;
 
+  // A draft is what differs from the saved comment: typing back to it
+  // leaves none.
+  const edit = (next: string) =>
+    setCommentDraft(runId, next === serverValue ? null : next);
+
   const save = () => {
     const trimmed = value.trim();
     const toSubmit = trimmed.length === 0 ? null : value;
+    sent.current = value;
     setComment.mutate({ runId, comment: toSubmit });
   };
 
@@ -113,7 +119,7 @@ export function RunCommentPanel({ runId, embedded = false }: Props) {
       <textarea
         id="run-comment-textarea"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => edit(e.target.value)}
         onKeyDown={handleKeyDown}
         maxLength={MAX_LEN}
         rows={4}

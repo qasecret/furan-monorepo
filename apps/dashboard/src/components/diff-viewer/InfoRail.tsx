@@ -6,13 +6,16 @@ import {
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
 } from "lucide-react";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
@@ -41,9 +44,13 @@ import { useCommandKeys } from "@/lib/commands/registry";
 /** The rail's toggle command, whose keys the two buttons show. */
 const TOGGLE = "viewer.rail.toggle";
 
-/** The copy, verbatim from spec §8. */
+/** The copy, verbatim from spec §8 (R26). */
 const HIDE = "Hide details";
 const SHOW = "Show details";
+const DETAILS = "Details";
+const IGNORE_REGIONS = "Ignore regions";
+/** The editor's strip button: "Ignore regions (‹N›)". */
+const ignoreRegions = (count: number) => `${IGNORE_REGIONS} (${count})`;
 
 /** The collapsed strip's tabs, in the rail's order. */
 const STRIP_TABS: { tab: RailTab; label: string; Icon: typeof Info }[] = [
@@ -64,12 +71,24 @@ const ICON_BUTTON =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-ring focus-visible:-outline-offset-2";
 
 /**
- * The open rail's "Hide details" button, as its content places it: the rail
- * hands the button the ref it moves focus to.
+ * What the open rail hands its content: the ref "Hide details" takes (the
+ * button the rail moves focus to), and the id of the heading that names the
+ * rail in the editor ("Ignore regions").
  */
-const HideButtonRef = createContext<RefObject<HTMLButtonElement | null> | null>(
-  null,
-);
+interface RailSlots {
+  hideRef: RefObject<HTMLButtonElement | null>;
+  headingId: string;
+}
+const RailContext = createContext<RailSlots | null>(null);
+
+/**
+ * The id for the editor's "Ignore regions" heading: the rail's, which names
+ * the rail by it (`aria-labelledby`), or one of its own outside a rail.
+ */
+export function useRailHeadingId(): string {
+  const own = useId();
+  return useContext(RailContext)?.headingId ?? own;
+}
 
 /**
  * "Hide details" (spec §5), for the open rail's content to place at the end
@@ -78,12 +97,12 @@ const HideButtonRef = createContext<RefObject<HTMLButtonElement | null> | null>(
  * renders nothing.
  */
 export function RailHideButton({ className }: { className?: string }) {
-  const ref = useContext(HideButtonRef);
+  const rail = useContext(RailContext);
   const keys = useCommandKeys(TOGGLE);
-  if (ref === null) return null;
+  if (rail === null) return null;
   return (
     <button
-      ref={ref}
+      ref={rail.hideRef}
       type="button"
       aria-label={HIDE}
       aria-keyshortcuts={keys.ariaKeyShortcuts}
@@ -104,10 +123,11 @@ interface Props {
   children: ReactNode;
   /**
    * What it holds instead while the ignore-region editor is open: the
-   * editor's regions under "Ignore regions" (`IgnoreRegionListPanel`), with
-   * its own `RailHideButton`. Absent: the editor leaves the rail alone.
+   * editor's regions under "Ignore regions" (`IgnoreRegionListPanel`, with
+   * its own `RailHideButton` and the rail's heading id), and how many there
+   * are, for the collapsed strip. Absent: the editor leaves the rail alone.
    */
-  editor?: ReactNode;
+  editor?: { content: ReactNode; count: number };
   /** Told the tab the rail opened on, from its strip or a comment request. */
   onTab?: (tab: RailTab) => void;
 }
@@ -133,11 +153,15 @@ interface Props {
  *   store's `commentPanelOpen`) opens it on Comments, and is taken.
  * - **Edit mode.** While the ignore-region editor is open the rail holds
  *   the editor's regions (`editor`) in place of its content, one rail and
- *   never two columns; collapsed, its strip has only "Show details", as its
- *   tabs would open on what the editor hides. The tab is never changed by
- *   editing, so leaving the editor brings back the one the reviewer was on.
- *   Focus in what the swap takes away moves to the rail's toggle, which
- *   stays ("Hide details", or the strip's "Show details").
+ *   never two columns. Collapsed, its strip is one button, "Ignore regions
+ *   (‹N›)" with the count, which opens it (R26); the details' tabs would
+ *   open on what the editor hides. The tab is never changed by editing, so
+ *   leaving the editor brings back the one the reviewer was on. Focus in
+ *   what the swap takes away moves to the rail's toggle, which stays
+ *   ("Hide details", or the strip's button).
+ * - **Its name.** The landmark is "Details"; in the editor, its "Ignore
+ *   regions" heading names it (collapsed, where no heading is, the same
+ *   words do).
  *
  * The width, the collapsed state and the tab are the user's preferences
  * (`useViewerPrefs`); the tab is the content's to show (`prefs.railTab`).
@@ -158,6 +182,8 @@ export function InfoRail({ children, editor, onTab }: Props) {
   const keys = useCommandKeys(TOGGLE);
   const hideRef = useRef<HTMLButtonElement>(null);
   const showRef = useRef<HTMLButtonElement>(null);
+  const headingId = useId();
+  const slots = useMemo(() => ({ hideRef, headingId }), [headingId]);
 
   // On screen: the rail's keys act (`viewer.rail.toggle`, Esc's close).
   useEffect(() => {
@@ -240,19 +266,34 @@ export function InfoRail({ children, editor, onTab }: Props) {
         data-info-rail=""
         data-collapsed=""
         data-testid="test-info-sidebar"
+        aria-label={editing ? IGNORE_REGIONS : DETAILS}
         style={{ width: RAIL_STRIP_WIDTH }}
         className="flex shrink-0 flex-col items-center gap-1 border-l border-edge bg-canvas py-1"
       >
+        {/* One element either way, so focus on it survives the editor. */}
         <button
           ref={showRef}
           type="button"
-          aria-label={SHOW}
+          aria-label={editing ? ignoreRegions(editor.count) : SHOW}
           aria-keyshortcuts={keys.ariaKeyShortcuts}
-          title={`${SHOW}${keys.titleSuffix}`}
+          title={`${editing ? ignoreRegions(editor.count) : SHOW}${keys.titleSuffix}`}
           onClick={() => setRailCollapsed(false, { moveFocus: true })}
-          className={ICON_BUTTON}
+          className={cn(
+            ICON_BUTTON,
+            // In the editor: its icon over the count.
+            editing && "h-auto flex-col gap-0.5 py-1.5",
+          )}
         >
-          <PanelRightOpen className="h-4 w-4" aria-hidden />
+          {editing ? (
+            <>
+              <Pencil className="h-4 w-4" aria-hidden />
+              <span className="text-2xs font-medium tabular-nums" aria-hidden>
+                {editor.count}
+              </span>
+            </>
+          ) : (
+            <PanelRightOpen className="h-4 w-4" aria-hidden />
+          )}
         </button>
         {!editing && (
           <>
@@ -295,6 +336,9 @@ export function InfoRail({ children, editor, onTab }: Props) {
         data-info-rail=""
         data-rail-overlay={overlaid ? "" : undefined}
         data-testid="test-info-sidebar"
+        // Named "Details", or in the editor by its "Ignore regions" heading.
+        aria-label={editing ? undefined : DETAILS}
+        aria-labelledby={editing ? headingId : undefined}
         style={{ width }}
         className={cn(
           "flex shrink-0 flex-col border-l border-edge bg-canvas",
@@ -306,11 +350,11 @@ export function InfoRail({ children, editor, onTab }: Props) {
         )}
       >
         <RailResizer width={width} onResize={onResize} />
-        <HideButtonRef.Provider value={hideRef}>
+        <RailContext.Provider value={slots}>
           <div className="flex min-h-0 flex-1 flex-col">
-            {editing ? editor : children}
+            {editing ? editor.content : children}
           </div>
-        </HideButtonRef.Provider>
+        </RailContext.Provider>
       </aside>
     </>
   );

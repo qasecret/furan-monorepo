@@ -1498,6 +1498,44 @@ describe("DiffViewer", () => {
     expect(within(rail).getByTestId("info-stat-cards")).toBeDefined();
   });
 
+  test("in the editor a collapsed rail is one button, Ignore regions (N), counting the list's own regions (the viewport on screen)", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, railCollapsed: true },
+    });
+    const region = (id: string, viewport: string) => ({
+      id,
+      x: 1,
+      y: 1,
+      width: 10,
+      height: 10,
+      viewport,
+      paddingPx: 0,
+      kind: "ignore" as const,
+    });
+    useViewerStore.setState({ viewport: "1280x720", draftIgnoreAreas: [] });
+    const r = render(<DiffViewer runId="r1" diffId="d1" />);
+    press("i");
+    act(() =>
+      useViewerStore.setState({
+        draftIgnoreAreas: [region("d1", "1280x720"), region("d2", "375x812")],
+      }),
+    );
+    const open = r.getByRole("button", { name: "Ignore regions (1)" });
+    fireEvent.click(open);
+    expect(
+      within(
+        r.getByRole("complementary", { name: "Ignore regions" }),
+      ).getAllByTestId("ignore-region-item"),
+    ).toHaveLength(1);
+    act(() =>
+      useViewerStore.setState({
+        viewport: "",
+        draftIgnoreAreas: [],
+        ignoreEditMode: "off",
+      }),
+    );
+  });
+
   test("diff stepper renders counter and advances on next click", () => {
     mockGetByIdData = {
       ...defaultMockData,
@@ -2129,6 +2167,52 @@ describe("DiffViewer: the review loop", () => {
     );
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("R25: Mark as Bug in the editor puts its note in this run's draft and says so; another run's comment box stays empty", () => {
+    vi.mocked(toast.info).mockClear();
+    useViewerStore.setState({ commentDrafts: {} });
+    const r = renderViewer();
+    press("i");
+    fireEvent.click(r.getByTestId("mark-as-bug-button"));
+    expect(reviewSpies.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "rejected", checkpointIds: ["c1"] }),
+    );
+    expect(useViewerStore.getState().commentDrafts).toEqual({
+      [RUN_ID]: "Marked 'C1' as a bug: ",
+    });
+    // The rail holds the editor's regions: where the note went is said.
+    expect(toast.info).toHaveBeenCalledWith("Note added to Comments");
+    cleanup();
+
+    // A step of another run, the editor still open; then out of it, on
+    // Comments (the tab the note made the one that comes back).
+    const other = renderViewer({ runId: OTHER_RUN, initialCheckpointId: "s9" });
+    press("Escape");
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+    const box = other.getByTestId("comment-textarea") as HTMLTextAreaElement;
+    expect(box.value).toBe("");
+    expect(useViewerStore.getState().commentDrafts).toEqual({
+      [RUN_ID]: "Marked 'C1' as a bug: ",
+    });
+    cleanup();
+
+    // Back on the first run, the note is in its box.
+    const first = renderViewer();
+    expect(
+      (first.getByTestId("comment-textarea") as HTMLTextAreaElement).value,
+    ).toBe("Marked 'C1' as a bug: ");
+  });
+
+  test("Mark as Bug out of the editor opens the note in the rail, with nothing more to say", () => {
+    vi.mocked(toast.info).mockClear();
+    useViewerStore.setState({ commentDrafts: {} });
+    const r = renderViewer();
+    fireEvent.click(r.getByTestId("mark-as-bug-button"));
+    expect(
+      (r.getByTestId("comment-textarea") as HTMLTextAreaElement).value,
+    ).toBe("Marked 'C1' as a bug: ");
+    expect(toast.info).not.toHaveBeenCalled();
   });
 
   test("a decision with no answer yet waits for it, then moves once", () => {

@@ -35,7 +35,10 @@ import { createBackend, TrpcBackend } from "./trpc-backend";
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
-import { IgnoreRegionListPanel } from "@/components/diff-viewer/IgnoreRegionListPanel";
+import {
+  IgnoreRegionListPanel,
+  useIgnoreRegionsInView,
+} from "@/components/diff-viewer/IgnoreRegionListPanel";
 import { InfoRail } from "@/components/diff-viewer/InfoRail";
 import { useRailState } from "@/components/diff-viewer/rail-state";
 import { TestInfoSidebar } from "@/components/diff-viewer/TestInfoSidebar";
@@ -109,12 +112,13 @@ function Viewer({
   stepLabel?: string;
 }) {
   useDiffViewerShortcuts({ viewports: [], ...opts });
+  const count = useIgnoreRegionsInView(null).length;
   return (
     <div className="relative flex">
       <button type="button">Outside</button>
       <InfoRail
         {...(onTab ? { onTab } : {})}
-        editor={<IgnoreRegionListPanel viewport={null} />}
+        editor={{ content: <IgnoreRegionListPanel viewport={null} />, count }}
       >
         <TestInfoSidebar {...INFO} stepLabel={stepLabel} />
       </InfoRail>
@@ -253,7 +257,7 @@ beforeEach(() => {
   useShortcutsSheet.setState({ open: false });
   useViewerStore.setState({
     commentPanelOpen: false,
-    commentPrefill: null,
+    commentDrafts: {},
     ignoreEditMode: "off",
     draftIgnoreAreas: [],
     selectedIgnoreId: null,
@@ -739,12 +743,13 @@ describe("below 1024 px", () => {
       </Page>,
     );
     act(() => useViewerStore.getState().setIgnoreEditMode("run"));
-    fireEvent.click(button("Show details"));
+    // In the editor the strip's button names the editor's regions (R26).
+    fireEvent.click(button("Ignore regions (0)"));
     expect(document.activeElement).toBe(button("Hide details"));
 
     expect(press("Escape").defaultPrevented).toBe(true);
     expect(rail().style.width).toBe("40px");
-    expect(document.activeElement).toBe(button("Show details"));
+    expect(document.activeElement).toBe(button("Ignore regions (0)"));
     // The rail took that Esc: the editor is still open.
     expect(useViewerStore.getState().ignoreEditMode).toBe("run");
   });
@@ -760,7 +765,7 @@ describe("below 1024 px", () => {
       useViewerStore.getState().setIgnoreEditMode("run");
       useViewState.setState({ selectedRegionId: "r1" });
     });
-    fireEvent.click(button("Show details"));
+    fireEvent.click(button("Ignore regions (0)"));
     const outside = button("Outside");
     act(() => outside.focus());
 
@@ -878,8 +883,11 @@ describe("the ignore-region editor: one rail (spec §5)", () => {
     expect(stored()?.railTab).toBe("history");
   });
 
-  test("collapsed, it is the strip, with Show details alone; opened, it shows Ignore regions, and t folds it again", () => {
+  test("Task 14 M3: collapsed, the strip's one button is Ignore regions (N), with the count; it opens the rail on them, and t folds it again", () => {
     prefsAre({ railCollapsed: true });
+    useViewerStore.setState({
+      draftIgnoreAreas: [DRAFT, { ...DRAFT, id: "d2" }],
+    });
     render(
       <Page>
         <Viewer />
@@ -888,23 +896,68 @@ describe("the ignore-region editor: one rail (spec §5)", () => {
     edit();
     expect(rail().style.width).toBe("40px");
     // Its tabs would open on what the editor hides.
-    expect(
-      within(rail())
-        .getAllByRole("button")
-        .map((b) => b.getAttribute("aria-label")),
-    ).toEqual(["Show details"]);
+    const strip = within(rail()).getAllByRole("button");
+    expect(strip.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Ignore regions (2)",
+    ]);
+    const open = button("Ignore regions (2)");
+    expect(open.textContent).toBe("2");
+    expect(open.getAttribute("title")).toBe("Ignore regions (2) (T)");
+    expect(open.getAttribute("aria-keyshortcuts")).toBe("T");
+    // The count follows the editor's regions.
+    act(() => useViewerStore.setState({ draftIgnoreAreas: [DRAFT] }));
+    expect(button("Ignore regions (1)").textContent).toBe("1");
 
-    fireEvent.click(button("Show details"));
+    fireEvent.click(button("Ignore regions (1)"));
     expect(ignoreHeading()).not.toBeNull();
     expect(document.activeElement).toBe(button("Hide details"));
     expect(screen.getAllByRole("complementary")).toHaveLength(1);
 
     press("t");
     expect(rail().style.width).toBe("40px");
-    expect(document.activeElement).toBe(button("Show details"));
-    // Out of the editor, the strip has its tabs again.
+    expect(document.activeElement).toBe(button("Ignore regions (1)"));
+    // Out of the editor, the strip is Show details and its tabs again.
     leave();
+    expect(button("Show details")).toBeDefined();
     expect(button("Comments")).toBeDefined();
+  });
+
+  test("Task 14 M3: below 1024 px, the strip's Ignore regions (N) opens the rail over the canvas", () => {
+    setWindowWidth(900);
+    useViewerStore.setState({ draftIgnoreAreas: [DRAFT] });
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    fireEvent.click(button("Ignore regions (1)"));
+    expect(rail().classList.contains("absolute")).toBe(true);
+    expect(ignoreHeading()).not.toBeNull();
+    expect(railSpace()).toEqual(["40px"]);
+  });
+
+  test("Task 14 M2: the landmark is named Details, and in the editor by its Ignore regions heading", () => {
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    expect(screen.getByRole("complementary", { name: "Details" })).toBe(rail());
+    edit();
+    const named = screen.getByRole("complementary", {
+      name: "Ignore regions",
+    });
+    expect(named.getAttribute("aria-labelledby")).toBe(ignoreHeading()!.id);
+    expect(named.hasAttribute("aria-label")).toBe(false);
+
+    // Collapsed, the strip is named for what it opens on.
+    fireEvent.click(button("Hide details"));
+    expect(screen.getByRole("complementary", { name: "Ignore regions" })).toBe(
+      rail(),
+    );
+    leave();
+    expect(screen.getByRole("complementary", { name: "Details" })).toBe(rail());
   });
 
   test("c is the browser's in the editor, where the comments can't be shown; out of it, c shows them", () => {
@@ -934,7 +987,7 @@ describe("the ignore-region editor: one rail (spec §5)", () => {
     act(() => useViewerStore.getState().setCommentPanelOpen(true));
     expect(useViewerStore.getState().commentPanelOpen).toBe(false);
     // Opening it would show the editor's regions, not the comments.
-    expect(button("Show details")).toBeDefined();
+    expect(button("Ignore regions (0)")).toBeDefined();
     expect(useViewerPrefs.getState().prefs.railTab).toBe("comments");
 
     leave();
@@ -981,7 +1034,7 @@ describe("the ignore-region editor: one rail (spec §5)", () => {
     fireEvent.click(button("Hide details"));
     act(() => button("Comments").focus());
     press("i");
-    expect(document.activeElement).toBe(button("Show details"));
+    expect(document.activeElement).toBe(button("Ignore regions (1)"));
   });
 
   test("below 1024 px, the editor's rail overlays the canvas like the details do, and Esc with focus in it closes the rail first", () => {
@@ -992,7 +1045,7 @@ describe("the ignore-region editor: one rail (spec §5)", () => {
       </Page>,
     );
     edit();
-    fireEvent.click(button("Show details"));
+    fireEvent.click(button("Ignore regions (0)"));
     expect(rail().classList.contains("absolute")).toBe(true);
     expect(ignoreHeading()).not.toBeNull();
     expect(railSpace()).toEqual(["40px"]);

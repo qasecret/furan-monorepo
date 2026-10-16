@@ -296,7 +296,10 @@ export function TestInfoSidebar({
           />
         )}
 
-        {tab === "comments" && <RunCommentPanel runId={runId} embedded />}
+        {tab === "comments" && (
+          // One box per run: its error and its last save are that run's.
+          <RunCommentPanel key={runId} runId={runId} embedded />
+        )}
       </div>
     </div>
   );

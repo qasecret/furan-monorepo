@@ -216,7 +216,7 @@ beforeEach(() => {
   overrideOnError = undefined;
   vi.mocked(toast.error).mockClear();
   useUndoStore.setState({ stack: [] });
-  useViewerStore.setState({ commentPanelOpen: false, commentPrefill: null });
+  useViewerStore.setState({ commentPanelOpen: false, commentDrafts: {} });
   arrange();
 });
 afterEach(() => cleanup());
@@ -283,10 +283,11 @@ describe("ApprovalBar: a step that needs review", () => {
       label: "Marked 'home' as a bug",
     });
     expect(useViewerStore.getState().commentPanelOpen).toBe(true);
-    // The note is run-scoped, so the prefill names the step it is about.
-    expect(useViewerStore.getState().commentPrefill).toBe(
-      "Marked 'home' as a bug: ",
-    );
+    // The note is run-scoped, so it names the step it is about, and it is
+    // that run's draft (R25): it can never land on another run's box.
+    expect(useViewerStore.getState().commentDrafts).toEqual({
+      [RUN_ID]: "Marked 'home' as a bug: ",
+    });
   });
 
   it("folds the viewer's unsaved ignore regions into the approval (ADR-036)", () => {
