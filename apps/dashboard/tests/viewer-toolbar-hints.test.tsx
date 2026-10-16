@@ -83,7 +83,11 @@ function hints(): Record<string, [string | null, string | null]> {
     zoomIn: read(screen.getByTestId("zoom-in-button")),
     prevChange: read(screen.getByTestId("diff-prev")),
     nextChange: read(screen.getByTestId("diff-next")),
-    diff: read(screen.getByRole("tab", { name: "Diff" })),
+    sideBySide: read(screen.getByRole("radio", { name: "Side by side" })),
+    swipe: read(screen.getByRole("radio", { name: "Swipe" })),
+    flicker: read(screen.getByRole("radio", { name: "Flicker" })),
+    overlay: read(screen.getByRole("radio", { name: "Overlay" })),
+    diff: read(screen.getByRole("radio", { name: "Diff" })),
     highlight: read(screen.getByTestId("highlight-toggle")),
     editor: read(screen.getByTestId("edit-regions-toggle")),
   };
@@ -106,14 +110,15 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in (=)", "= Plus"],
       prevChange: ["Previous change (P)", "P"],
       nextChange: ["Next change (N)", "N"],
-      diff: ["Diff (D)", "D"],
+      // Each mode's radio names its own key, 1–5.
+      sideBySide: ["Side by side (1)", "1"],
+      swipe: ["Swipe (2)", "2"],
+      flicker: ["Flicker (3)", "3"],
+      overlay: ["Overlay (4)", "4"],
+      diff: ["Diff (5)", "5"],
       highlight: ["Highlight diffs (H)", "H"],
       editor: ["Edit regions (I)", "I"],
     });
-    // Only the diff view's tab is D's.
-    expect(
-      screen.getByRole("tab", { name: "Side by side" }).getAttribute("title"),
-    ).toBeNull();
 
     // The same key ends the editor.
     act(() => useViewerStore.setState({ ignoreEditMode: "variation" }));
@@ -133,6 +138,10 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
+      sideBySide: [null, null],
+      swipe: [null, null],
+      flicker: [null, null],
+      overlay: [null, null],
       diff: [null, null],
       highlight: [null, null],
       editor: [null, null],
@@ -150,6 +159,10 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
+      sideBySide: [null, null],
+      swipe: [null, null],
+      flicker: [null, null],
+      overlay: [null, null],
       diff: [null, null],
       highlight: [null, null],
       editor: [null, null],

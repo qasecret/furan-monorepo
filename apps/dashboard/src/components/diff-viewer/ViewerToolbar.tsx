@@ -4,19 +4,26 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeftRight,
   Layers,
   Maximize2,
   Minimize2,
   Pencil,
+  Repeat,
   SlidersHorizontal,
   SplitSquareHorizontal,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
-import type { ViewerMode } from "./comparison-modes";
+import {
+  VIEWER_MODE_COMMAND,
+  VIEWER_MODE_LABEL,
+  VIEWER_MODES,
+  type ViewerMode,
+} from "./comparison-modes";
 import { FlickerControls } from "./FlickerControls";
 import { buildIgnoreAreasPayload } from "./ignore-area-payload";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
@@ -26,8 +33,12 @@ import type { DiffStepper } from "./useDiffStepper";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import { useEffectiveMode, useSetViewerMode } from "./viewer-mode";
-import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
+import {
+  useAvailableModes,
+  useEffectiveMode,
+  useSetViewerMode,
+} from "./viewer-mode";
+import { useViewerPrefs } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -37,11 +48,14 @@ import { cn } from "@/lib/cn";
 import { useCommandKeys, type CommandKeys } from "@/lib/commands/registry";
 import { trpc } from "@/lib/trpc";
 
-const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
-  { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
-  { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
-  { value: "diff", label: "Diff", Icon: Layers },
-];
+/** Each mode's icon in the radio group. */
+const MODE_ICON: Record<ViewerMode, typeof Layers> = {
+  "side-by-side": SplitSquareHorizontal,
+  swipe: ChevronsLeftRight,
+  flicker: Repeat,
+  overlay: SlidersHorizontal,
+  diff: Layers,
+};
 
 /**
  * A control's title from its command's keys (`useCommandKeys`): "Zoom out
@@ -110,6 +124,137 @@ interface Props {
 /** A disabled mode's tooltip (spec §8). */
 const NEEDS_A_BASELINE = "Needs a baseline";
 
+/** Where each arrow key moves in the group: the native radio pattern. */
+const ARROW_STEP: Record<string, 1 | -1> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1,
+};
+
+/**
+ * The comparison mode control (spec §4.1): a radio group named "Comparison
+ * mode", one radio per mode, the mode on screen checked. It follows the
+ * native radio pattern: one tab stop (the checked radio), ←/↑ and →/↓ move
+ * the check, and the mode with it, to the previous or next radio, round from
+ * the ends, and Home / End to the first or last. A mode the step can't show
+ * (no baseline) stays focusable and named, but inert, says why in its
+ * tooltip, and the arrows pass it by. The keys are the group's: an arrow
+ * here never moves to another step, and a held one moves once.
+ */
+function ComparisonModes({ hasBaseline }: { hasBaseline: boolean }) {
+  // The viewer's one mode, and its way to change it: stored, and in the URL.
+  const mode = useEffectiveMode(hasBaseline);
+  const setMode = useSetViewerMode();
+  const available = useAvailableModes(hasBaseline);
+  const radios = useRef<Partial<Record<ViewerMode, HTMLButtonElement>>>({});
+
+  /** Checks `next`, shows it, and puts the focus on its radio. */
+  const select = (next: ViewerMode) => {
+    if (next !== mode) setMode(next);
+    radios.current[next]?.focus();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const choosable = VIEWER_MODES.filter((m) => available[m]);
+    if (choosable.length === 0) return;
+    const from = e.currentTarget.dataset.mode as ViewerMode;
+    let next: ViewerMode | undefined;
+    if (e.key === "Home") next = choosable[0];
+    else if (e.key === "End") next = choosable.at(-1);
+    else if (e.key in ARROW_STEP) {
+      const step = ARROW_STEP[e.key]!;
+      const n = VIEWER_MODES.length;
+      let at = VIEWER_MODES.indexOf(from);
+      for (let i = 0; i < n; i += 1) {
+        at = (at + step + n) % n;
+        if (available[VIEWER_MODES[at]!]) break;
+      }
+      next = VIEWER_MODES[at];
+    } else return;
+    // The group's key, not the page's (step navigation) nor the browser's.
+    e.preventDefault();
+    // A held arrow moves once: each mode is a new URL, and a round trip.
+    if (e.repeat) return;
+    if (next) select(next);
+  };
+
+  return (
+    <div
+      className="flex items-center gap-1 rounded-lg border border-edge bg-sunken p-1"
+      role="radiogroup"
+      aria-label="Comparison mode"
+    >
+      {VIEWER_MODES.map((m) => (
+        <ModeRadio
+          key={m}
+          mode={m}
+          checked={mode === m}
+          disabled={!available[m]}
+          onSelect={() => setMode(m)}
+          onKeyDown={onKeyDown}
+          radioRef={(el) => {
+            if (el) radios.current[m] = el;
+            else delete radios.current[m];
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One radio of the group, with its command's key hint (`useCommandKeys`). */
+function ModeRadio({
+  mode,
+  checked,
+  disabled,
+  onSelect,
+  onKeyDown,
+  radioRef,
+}: {
+  mode: ViewerMode;
+  checked: boolean;
+  disabled: boolean;
+  onSelect(): void;
+  onKeyDown(e: KeyboardEvent<HTMLButtonElement>): void;
+  radioRef(el: HTMLButtonElement | null): void;
+}) {
+  const keys = useCommandKeys(VIEWER_MODE_COMMAND[mode]);
+  const label = VIEWER_MODE_LABEL[mode];
+  const Icon = MODE_ICON[mode];
+  return (
+    <button
+      ref={radioRef}
+      type="button"
+      role="radio"
+      data-mode={mode}
+      aria-checked={checked}
+      // One tab stop: the checked radio (roving tabindex).
+      tabIndex={checked ? 0 : -1}
+      // Focusable and named, but inert, so its tooltip says why.
+      aria-disabled={disabled || undefined}
+      aria-keyshortcuts={disabled ? undefined : keys.ariaKeyShortcuts}
+      title={disabled ? NEEDS_A_BASELINE : hintTitle(label, keys)}
+      onClick={() => {
+        if (!disabled) onSelect();
+      }}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
+        checked
+          ? "bg-raised text-fg shadow-raised"
+          : disabled
+            ? "cursor-not-allowed text-fg-muted opacity-50"
+            : "text-fg-muted hover:text-fg",
+      )}
+    >
+      <Icon className="h-4 w-4" aria-hidden />
+      {label}
+    </button>
+  );
+}
+
 export function ViewerToolbar({
   runId,
   checkpointId,
@@ -121,9 +266,8 @@ export function ViewerToolbar({
   hasBaseline = true,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
-  // The viewer's one mode, and its way to change it: stored, and in the URL.
+  // The viewer's one mode: its own controls show with it.
   const mode = useEffectiveMode(hasBaseline);
-  const setMode = useSetViewerMode();
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
@@ -166,7 +310,6 @@ export function ViewerToolbar({
   const zoomInKeys = useCommandKeys("viewer.zoomIn");
   const prevChangeKeys = useCommandKeys("viewer.prevRegion");
   const nextChangeKeys = useCommandKeys("viewer.nextRegion");
-  const differenceKeys = useCommandKeys("viewer.difference");
   const highlightKeys = useCommandKeys("viewer.highlight");
   const editorKeys = useCommandKeys("editor.toggle");
 
@@ -249,52 +392,7 @@ export function ViewerToolbar({
 
   return (
     <div className="flex items-center gap-4 flex-wrap p-2 border-b border-edge bg-canvas">
-      <div
-        className="flex items-center gap-1 rounded-lg border border-edge bg-sunken p-1"
-        role="tablist"
-        aria-label="View mode"
-      >
-        {MODES.map((m) => {
-          const active = mode === m.value;
-          // Focusable and named, but inert, so its tooltip says why.
-          const disabled = !modeAvailable(m.value, hasBaseline);
-          // `d` toggles the diff view: its tab names the key.
-          const keys =
-            m.value === "diff" && !disabled ? differenceKeys : undefined;
-          return (
-            <button
-              key={m.value}
-              type="button"
-              role="tab"
-              data-mode={m.value}
-              aria-selected={active}
-              aria-disabled={disabled || undefined}
-              aria-keyshortcuts={keys?.ariaKeyShortcuts}
-              title={
-                disabled
-                  ? NEEDS_A_BASELINE
-                  : keys
-                    ? hintTitle(m.label, keys)
-                    : undefined
-              }
-              onClick={() => {
-                if (!disabled) setMode(m.value);
-              }}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
-                active
-                  ? "bg-raised text-fg shadow-raised"
-                  : disabled
-                    ? "cursor-not-allowed text-fg-muted opacity-50"
-                    : "text-fg-muted hover:text-fg",
-              )}
-            >
-              <m.Icon className="h-4 w-4" aria-hidden />
-              {m.label}
-            </button>
-          );
-        })}
-      </div>
+      <ComparisonModes hasBaseline={hasBaseline} />
 
       {mode === "flicker" && <FlickerControls />}
 

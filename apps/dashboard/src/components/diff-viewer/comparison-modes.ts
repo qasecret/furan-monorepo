@@ -6,7 +6,7 @@
  * (`viewer-prefs`, `viewer-mode`).
  */
 
-/** The comparison modes, in their order on the keys 1–5. */
+/** The comparison modes, in their order on the keys 1–5 and in `o`'s cycle. */
 export const VIEWER_MODES = [
   "side-by-side",
   "swipe",
@@ -15,6 +15,24 @@ export const VIEWER_MODES = [
   "diff",
 ] as const;
 export type ViewerMode = (typeof VIEWER_MODES)[number];
+
+/** Each mode's name (spec §8): the toolbar's radio and its command's label. */
+export const VIEWER_MODE_LABEL: Readonly<Record<ViewerMode, string>> = {
+  "side-by-side": "Side by side",
+  swipe: "Swipe",
+  flicker: "Flicker",
+  overlay: "Overlay",
+  diff: "Diff",
+};
+
+/** Each mode's command (spec §4.1), the one its key and its radio run. */
+export const VIEWER_MODE_COMMAND: Readonly<Record<ViewerMode, string>> = {
+  "side-by-side": "viewer.mode.sideBySide",
+  swipe: "viewer.mode.swipe",
+  flicker: "viewer.mode.flicker",
+  overlay: "viewer.mode.overlay",
+  diff: "viewer.mode.diff",
+};
 
 /**
  * The mode a `?view` names, or null: an unknown value is ignored (spec

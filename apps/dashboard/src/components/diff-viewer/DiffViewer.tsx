@@ -37,6 +37,7 @@ import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { useViewerMode, ViewerModeProvider } from "./viewer-mode";
 import { useViewerPrefs } from "./viewer-prefs";
+import { ViewerLinkProvider } from "./ViewerLink";
 import { ViewerStage } from "./ViewerStage";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
@@ -245,19 +246,26 @@ export function DiffViewer({
   // link the viewer makes carries the URL's view. A mode change writes the
   // URL of the step on screen, which a step change shows before its route
   // commits; while the review loop is on its way to another step, that move
-  // takes the mode instead (R20; the loop is set up below).
+  // takes the mode instead (R20; the loop is set up below), and so does a
+  // link's navigation (R22). The ignore-region editor's override (R3) is the
+  // step's: a step change clears it.
   const retargetLoopMove = useRef<(view: ViewerMode) => boolean>(() => false);
   const viewerMode = useViewerMode({
     urlView,
     hasBaseline,
+    ...(activeCheckpointId ? { step: activeCheckpointId } : {}),
     ...(projectId && activeCheckpointId
       ? { path: diffViewerHref(projectId, runId, activeCheckpointId) }
       : {}),
     retarget: (view) => retargetLoopMove.current(view),
   });
   const viewerModeContext = useMemo(
-    () => ({ view: viewerMode.view, setMode: viewerMode.setMode }),
-    [viewerMode.view, viewerMode.setMode],
+    () => ({
+      view: viewerMode.view,
+      setMode: viewerMode.setMode,
+      available: viewerMode.available,
+    }),
+    [viewerMode.view, viewerMode.setMode, viewerMode.available],
   );
 
   // ADR-038: resolve "_first" sentinel to the real first checkpoint id
@@ -645,11 +653,12 @@ export function DiffViewer({
     onPrevPending: loopOn && keysOn ? loop.goPrev : undefined,
     // Esc is the card's while it is up, wherever focus is: back to the batch.
     onEscape: card && backHref ? () => loop.leave(backHref) : undefined,
-    // A mode's own keys apply only where the step can show that mode (R2);
-    // they read the mode on screen, and change it in the URL too.
+    // A mode's keys apply only where the step can show that mode (R2); they
+    // read the mode on screen, and change it in the URL too.
     hasBaseline,
     urlView: viewerMode.view,
     setMode: viewerMode.setMode,
+    available: viewerMode.available,
   });
 
   if (isLoading)
@@ -765,7 +774,7 @@ export function DiffViewer({
     regions.some(isPixelDiffRegion) ||
     (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
 
-  return (
+  const viewer = (
     <div
       className="flex flex-col h-full"
       data-diff-id={diffId ?? selectedCheckpointId}
@@ -1018,6 +1027,13 @@ export function DiffViewer({
         )}
       </div>
     </div>
+  );
+  // The viewer's links tell the loop when their navigation starts, so a
+  // mode change meanwhile takes them along (R22).
+  return (
+    <ViewerLinkProvider value={loop.linkNavigating}>
+      {viewer}
+    </ViewerLinkProvider>
   );
 }
 

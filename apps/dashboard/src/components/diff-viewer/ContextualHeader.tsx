@@ -9,8 +9,9 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
+
+import { ViewerLink } from "./ViewerLink";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
@@ -95,14 +96,15 @@ export function ContextualHeader({
       <div className="flex min-w-0 items-center gap-3">
         {backHref ? (
           <>
-            <Link
+            {/* A mode change while it is on its way takes it along (R22). */}
+            <ViewerLink
               href={backHref}
               aria-label="Back to batch"
               data-testid="contextual-header-back"
               className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-ring"
             >
               <ArrowLeft className="h-5 w-5" aria-hidden />
-            </Link>
+            </ViewerLink>
             <span className="h-4 w-px bg-edge" aria-hidden />
           </>
         ) : null}

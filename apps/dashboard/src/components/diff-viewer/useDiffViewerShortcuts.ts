@@ -2,20 +2,22 @@
 
 import { toast } from "sonner";
 
-import type { ViewerMode } from "./comparison-modes";
+import {
+  VIEWER_MODE_COMMAND,
+  VIEWER_MODE_LABEL,
+  VIEWER_MODES,
+  type ViewerMode,
+} from "./comparison-modes";
 import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import { readEffectiveMode } from "./viewer-mode";
-import { useViewerPrefs } from "./viewer-prefs";
+import { modeInEditor, readEffectiveMode } from "./viewer-mode";
+import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";
 import { canReviewRole } from "@/lib/roles";
-
-/** The modes `o` cycles through: the toolbar's. */
-const MODES: ViewerMode[] = ["side-by-side", "overlay", "diff"];
 
 /**
  * What the viewer's keys act on. A callback is given exactly when its key
@@ -57,8 +59,8 @@ export interface ShortcutOptions {
   onEscape?: () => void;
   /**
    * The step has a baseline. Without one only side by side is on screen
-   * (R2), whatever mode is chosen, so a mode's own keys (`f`) are disabled.
-   * Defaults to true.
+   * (R2), whatever mode is chosen, so the other modes' keys (2–5, `d`) and a
+   * mode's own keys (`f`) are disabled. Defaults to true.
    */
   hasBaseline?: boolean;
   /**
@@ -72,6 +74,12 @@ export interface ShortcutOptions {
    * URL. Absent: the preference alone.
    */
   setMode?: (mode: ViewerMode) => void;
+  /**
+   * The modes the step on screen can show (`useViewerMode().available`): a
+   * mode's key is on only where it is (R2, Task 8 M7). Absent: read from
+   * `hasBaseline`.
+   */
+  available?: Record<ViewerMode, boolean>;
 }
 
 interface ViewerCtx extends CommandCtx, ShortcutOptions {}
@@ -86,11 +94,52 @@ const prefs = () => useViewerPrefs.getState();
  */
 const modeShown = ({ urlView = null, hasBaseline = true }: ViewerCtx) =>
   readEffectiveMode(urlView, hasBaseline);
-/** Chooses a mode the way the viewer does, or, with no viewer, stores it. */
-const chooseMode = ({ setMode }: ViewerCtx, mode: ViewerMode) => {
-  if (setMode) setMode(mode);
+/** The step on screen can show `mode` (R2): its key and its radio are on. */
+const isAvailable = (
+  { available, hasBaseline = true }: ViewerCtx,
+  mode: ViewerMode,
+) => available?.[mode] ?? modeAvailable(mode, hasBaseline);
+/**
+ * Chooses a mode the way the viewer does, or, with no viewer, stores it. A
+ * mode the step can't show is never chosen, nor stored (Task 8 M7).
+ */
+const chooseMode = (ctx: ViewerCtx, mode: ViewerMode) => {
+  if (!isAvailable(ctx, mode)) return;
+  if (ctx.setMode) ctx.setMode(mode);
   else prefs().set("mode", mode);
 };
+/**
+ * The mode `o` goes to: the next in the keys' order (spec §4.1), round from
+ * the last, that would show as itself. It skips what the step can't show (no
+ * baseline), and, in the ignore-region editor, Swipe and Flicker, which show
+ * as side by side there (§4.4). Null: no other mode to go to.
+ */
+function nextMode(ctx: ViewerCtx): ViewerMode | null {
+  const from = VIEWER_MODES.indexOf(modeShown(ctx));
+  const editing = isEditing();
+  for (let i = 1; i < VIEWER_MODES.length; i += 1) {
+    const mode = VIEWER_MODES[(from + i) % VIEWER_MODES.length]!;
+    if (!isAvailable(ctx, mode)) continue;
+    if (editing && modeInEditor(mode) !== mode) continue;
+    return mode;
+  }
+  return null;
+}
+
+/**
+ * Spec §4.1: one command per mode, on 1–5, in the modes' order. Each is on
+ * only where the step can show its mode (a key that does nothing is the
+ * browser's), and anyone's: none is a decision.
+ */
+const MODE_COMMANDS: Command<ViewerCtx>[] = VIEWER_MODES.map((mode, i) => ({
+  id: VIEWER_MODE_COMMAND[mode],
+  label: VIEWER_MODE_LABEL[mode],
+  group: "View",
+  keys: [String(i + 1)],
+  scope: "viewer",
+  enabled: (ctx) => isAvailable(ctx, mode),
+  run: (ctx) => chooseMode(ctx, mode),
+}));
 
 const given = (callback: (() => void) | undefined) => callback !== undefined;
 
@@ -248,13 +297,16 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     enabled: ({ onReject }) => given(onReject),
     run: ({ onReject }) => onReject?.(),
   },
+  ...MODE_COMMANDS,
   {
+    // To Diff, and back to the mode it was left from. Off where the step
+    // can't show Diff (no baseline), so it never stores it there.
     id: "viewer.difference",
     label: "Toggle difference view",
     group: "View",
     keys: ["d"],
     scope: "viewer",
-    // To Diff, and back to the mode it was left from.
+    enabled: (ctx) => isAvailable(ctx, "diff"),
     run: (ctx) =>
       chooseMode(
         ctx,
@@ -262,13 +314,16 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
       ),
   },
   {
+    // The five modes in the keys' order, skipping what can't show; off when
+    // nothing else can (no baseline).
     id: "viewer.cycleMode",
     label: "Cycle view mode",
     group: "View",
     keys: ["o"],
     scope: "viewer",
+    enabled: (ctx) => nextMode(ctx) !== null,
     run: (ctx) => {
-      const next = MODES[(MODES.indexOf(modeShown(ctx)) + 1) % MODES.length];
+      const next = nextMode(ctx);
       if (next) chooseMode(ctx, next);
     },
   },

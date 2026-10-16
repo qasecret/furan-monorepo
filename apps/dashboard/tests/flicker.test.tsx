@@ -645,7 +645,7 @@ describe("the flicker on the stage", () => {
     expect(card.className).not.toMatch(/\b(flex|flex-col|gap-\d)\b/);
 
     // Out of Flicker the card is where it was: the same nodes, the same
-    // flow, only the label gone.
+    // flow, the label in the same place, naming Overlay (T12).
     setMode("overlay");
     await flush();
     expect(screen.getByTestId("single-stage-host")).toBe(host);
@@ -653,7 +653,10 @@ describe("the flicker on the stage", () => {
     expect(card.parentElement).toBe(root);
     expect(inFlow(card)).toEqual([host]);
     expect(inFlow(root)).toEqual([card]);
-    expect(screen.queryByTestId("canvas-mode-label")).toBeNull();
+    expect(screen.getByTestId("canvas-mode-label").parentElement).toBe(card);
+    expect(screen.getByTestId("canvas-mode-label").textContent).toBe(
+      "Current over baseline",
+    );
     setMode("flicker");
     await flush();
     expect(screen.getByTestId("single-stage-host")).toBe(host);
@@ -705,7 +708,10 @@ describe("the flicker on the stage", () => {
       "regions",
       "ignore",
     ]);
-    expect(screen.queryByTestId("canvas-mode-label")).toBeNull();
+    // The label names Overlay now, and no frame.
+    expect(screen.getByTestId("canvas-mode-label").textContent).toBe(
+      "Current over baseline",
+    );
     expect(vi.getTimerCount()).toBe(0);
     const before = view().flickerFrame;
     tick(2000);

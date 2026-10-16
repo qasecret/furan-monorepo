@@ -127,9 +127,23 @@ export interface ReviewLoop {
    * reviewer on that step with J / K latched. So the navigation is made again
    * in `view`, the same kind (push or replace), and is the one the loop now
    * waits for; a `leave` (not a viewer URL) goes on as it is. True when there
-   * was one, so the viewer writes nothing.
+   * was one, so the viewer writes nothing. A link's navigation
+   * (`linkNavigating`) is one too.
    */
   retarget(view: ViewerMode | null): boolean;
+  /**
+   * R22: a `<Link>` inside the viewer has started its navigation (its
+   * `onNavigate`). Next makes it; until the route commits it is on its way as
+   * a move of the loop's is, so a mode change re-targets it (`retarget`)
+   * instead of writing the URL of the step on screen, which would call it
+   * off. `inView` is its URL in another mode, for a link to a step; without
+   * it (a link out of the viewer) the URL is the same in every mode, and the
+   * navigation goes on as it is.
+   */
+  linkNavigating(
+    href: string,
+    inView?: (view: ViewerMode | null) => string,
+  ): void;
   /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
    * ‹N› left in batch", with facets "· ‹M› in filter") while it is shown, for
@@ -461,9 +475,9 @@ export function useReviewLoop({
   // This instance has sent the reviewer elsewhere itself (a move, or leave):
   // it hands nothing off when it goes.
   const departing = useRef(false);
-  // The navigation this instance made that is on its way (a move, or leave),
-  // until the step on screen changes or it is given up on (5 s): how it was
-  // made, its URL, and its URL in another comparison mode (R20).
+  // The navigation on its way from this step (a move, leave, or a link's,
+  // R22), until the step on screen changes or it is given up on (5 s): how it
+  // was made, its URL, and its URL in another comparison mode (R20).
   const inFlight = useRef<{
     how: "push" | "replace";
     href: string;
@@ -856,6 +870,19 @@ export function useReviewLoop({
     [router],
   );
 
+  const linkNavigating = useCallback(
+    (href: string, inView?: (view: ViewerMode | null) => string) => {
+      // Next pushes a link's URL (none of the viewer's links replaces).
+      inFlight.current = {
+        how: "push",
+        href,
+        inView: inView ?? (() => href),
+        at: Date.now(),
+      };
+    },
+    [],
+  );
+
   const retarget = useCallback(
     (view: ViewerMode | null) => {
       const move = inFlight.current;
@@ -1001,6 +1028,7 @@ export function useReviewLoop({
     cardBusy: busy !== null,
     leave,
     retarget,
+    linkNavigating,
     cue: cue?.text ?? null,
   };
 }

@@ -12,9 +12,9 @@ import { useCommandKeys } from "@/lib/commands/registry";
 
 /**
  * Flicker's clock and its DOM (spec §4.3): the timer that swaps the frames,
- * the toolbar's Play / Pause, the label naming the frame on screen, and the
- * live region that says a swap by hand. The frames themselves are the
- * renderer's (`modes/flicker.ts`).
+ * the toolbar's Play / Pause, and the live region that says a swap by hand.
+ * The frames themselves are the renderer's (`modes/flicker.ts`); the label
+ * naming the frame on screen is the canvas's (`CanvasModeLabel`).
  */
 
 /** One swap every 500 ms: 2 a second, under WCAG 2.3.1's 3 flashes. */
@@ -187,31 +187,6 @@ export function FlickerControls() {
       <Icon className="h-4 w-4" aria-hidden />
       {label}
     </Button>
-  );
-}
-
-/** The label's copy (spec §8). */
-const FRAME_LABEL: Record<FlickerFrame, string> = {
-  baseline: "Baseline",
-  current: "Current",
-};
-
-/**
- * Names the frame on screen, on the canvas (spec §4.1, R18): overlaid on the
- * card's top-left, out of the layout, so the card never moves for it. It
- * lets the pointer through to the canvas, and follows every swap. Not a live
- * region: while the flicker plays it changes twice a second. Placed in the
- * card's wrapper, beside the stage's states, which sit over it.
- */
-export function FlickerFrameLabel() {
-  const frame = useViewState((s) => s.flickerFrame);
-  return (
-    <div
-      className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-edge bg-overlay px-2 py-0.5 text-2xs font-medium uppercase tracking-wider text-fg-secondary shadow-overlay"
-      data-testid="canvas-mode-label"
-    >
-      {FRAME_LABEL[frame]}
-    </div>
   );
 }
 

@@ -738,9 +738,9 @@ describe("the toolbar without a baseline", () => {
   });
 
   const modeButtons = () =>
-    screen
-      .getAllByRole("tab")
-      .filter((t) => t.hasAttribute("data-mode")) as HTMLButtonElement[];
+    within(
+      screen.getByRole("radiogroup", { name: "Comparison mode" }),
+    ).getAllByRole("radio") as HTMLButtonElement[];
 
   test("every mode but side by side is aria-disabled, titled Needs a baseline, and does nothing", () => {
     render(<ViewerToolbar runId="r1" checkpointId="c1" hasBaseline={false} />);
@@ -764,7 +764,7 @@ describe("the toolbar without a baseline", () => {
     useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
     render(<ViewerToolbar runId="r1" checkpointId="c1" hasBaseline={false} />);
     const selected = modeButtons().filter(
-      (b) => b.getAttribute("aria-selected") === "true",
+      (b) => b.getAttribute("aria-checked") === "true",
     );
     expect(selected.map((b) => b.dataset.mode)).toEqual(["side-by-side"]);
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");

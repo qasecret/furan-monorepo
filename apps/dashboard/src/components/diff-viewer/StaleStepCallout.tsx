@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
-
 import type { ViewerMode } from "./comparison-modes";
+import { ViewerLink } from "./ViewerLink";
 
 import {
   AlertDialog,
@@ -42,6 +41,15 @@ interface CalloutProps {
  * stays neutral.
  */
 export function StaleStepCallout({ newer, context, view }: CalloutProps) {
+  // The newer capture's step, in a comparison mode.
+  const inView = (mode: ViewerMode | null) =>
+    diffViewerHref(
+      newer.projectId,
+      newer.runId,
+      newer.checkpointId ?? undefined,
+      context,
+      mode,
+    );
   return (
     <div
       role="status"
@@ -49,19 +57,15 @@ export function StaleStepCallout({ newer, context, view }: CalloutProps) {
       className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-status-unresolved/25 bg-status-unresolved/10 px-3 py-1.5 text-xs text-fg"
     >
       <span>{staleCopy(newer.buildName)}</span>
-      <Link
-        href={diffViewerHref(
-          newer.projectId,
-          newer.runId,
-          newer.checkpointId ?? undefined,
-          context,
-          view,
-        )}
+      {/* A mode change while it is on its way takes it along (R22). */}
+      <ViewerLink
+        href={inView(view ?? null)}
+        inView={inView}
         data-testid="stale-step-link"
         className="rounded-sm font-medium text-fg underline underline-offset-2 hover:text-fg-secondary focus-ring"
       >
         Open the newer capture
-      </Link>
+      </ViewerLink>
     </div>
   );
 }

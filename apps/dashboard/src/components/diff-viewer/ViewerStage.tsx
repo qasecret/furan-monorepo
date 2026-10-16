@@ -23,12 +23,9 @@ import {
   readCanvasDivider,
   readCanvasHatch,
 } from "./canvas-theme";
+import { CanvasModeLabel } from "./CanvasModeLabel";
 import { orderDiffRegions } from "./diff-order";
-import {
-  FlickerAnnouncer,
-  FlickerFrameLabel,
-  useFlickerTimer,
-} from "./FlickerControls";
+import { FlickerAnnouncer, useFlickerTimer } from "./FlickerControls";
 import {
   IMAGE_ROLES,
   retainImages,
@@ -106,9 +103,11 @@ import { computeFocusView } from "./world-fit";
  * - **Flicker** swaps its frames on its clock (`useFlickerTimer`), which runs
  *   only once both frames are on the stage, so the first frame drawn is the
  *   baseline. A swap reaches the renderer as an update, never a remount, and
- *   both images are on the GPU from the mount. A label on the canvas names
- *   the frame on screen, and a polite live region, kept mounted across
- *   layouts, says a swap by hand.
+ *   both images are on the GPU from the mount. A polite live region, kept
+ *   mounted across layouts, says a swap by hand.
+ * - **A label on each card** (`CanvasModeLabel`, R18) names what it shows,
+ *   in every mode: overlaid on its top-left, out of the layout, so no mode
+ *   moves a card for it. In Flicker it names the frame on screen.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
@@ -233,8 +232,8 @@ function destroyApp(app: Application): void {
 }
 
 /**
- * Small inline "≠" badge marking an image that has differences. Lives in the
- * label row above the card (not over the image) so it never obscures content.
+ * Small inline "≠" badge marking an image that has differences, in side by
+ * side's labels on the canvas.
  */
 function DiffBadge() {
   return (
@@ -908,82 +907,63 @@ export function ViewerStage({
   // sit over a card, outside it: the card's own listeners (pan) never see a
   // press on a Retry button.
   if (panes === 2) {
-    const baselineLabel = hasBaseline ? "Baseline" : "No baseline";
-    // Reference TestStep layout: a floating, uppercase label above each clean
-    // shadowed card (no bordered box with an inset header bar). The card IS the
-    // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
+    // Reference TestStep layout: two clean shadowed cards. Each card IS the
+    // Pixi canvas host (rounded + overflow-hidden clips the canvas corners),
+    // named by its label on the canvas (R18).
     return (
       <div className="flex min-h-full p-6">
         {flickerAnnouncer}
         <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
-          <div className="flex flex-col gap-2">
+          <div className="relative">
             <div
-              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
-              title={baselineLabel}
-              aria-label={baselineLabel}
+              ref={paneARef}
+              data-testid="baseline-canvas-host"
+              tabIndex={-1}
+              aria-busy={loading || undefined}
+              style={aspectStyle(world?.size)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
-                aria-hidden
-              />
-              {baselineLabel}
+              {hatchTooltips(0)}
+            </div>
+            <CanvasModeLabel
+              mode={mode}
+              pane="baseline"
+              hasBaseline={hasBaseline}
+            >
               {hasBaseline && shownRegions.length > 0 && <DiffBadge />}
-            </div>
-            <div className="relative">
-              <div
-                ref={paneARef}
-                data-testid="baseline-canvas-host"
-                tabIndex={-1}
-                aria-busy={loading || undefined}
-                style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
-              >
-                {hatchTooltips(0)}
-              </div>
-              <StageStates
-                states={statesForPane(states, "baseline")}
-                onRetry={onRetry}
-                onFocusLost={focusPane(paneARef)}
-              />
-            </div>
+            </CanvasModeLabel>
+            <StageStates
+              states={statesForPane(states, "baseline")}
+              onRetry={onRetry}
+              onFocusLost={focusPane(paneARef)}
+            />
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="relative">
             <div
-              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
-              title="Candidate"
-              aria-label="Candidate"
+              ref={paneBRef}
+              data-testid="candidate-canvas-host"
+              tabIndex={-1}
+              aria-busy={loading || undefined}
+              style={aspectStyle(world?.size)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
-                aria-hidden
-              />
-              Current
+              {request.current === null && (
+                <CanvasEmptyState label="Waiting for capture…">
+                  The SDK upload for this run hasn’t arrived yet. This panel
+                  will fill in automatically when the screenshot lands.
+                </CanvasEmptyState>
+              )}
+              {hatchTooltips(1)}
+              {editorOverlay}
+            </div>
+            <CanvasModeLabel mode={mode} pane="current">
               {shownRegions.length > 0 && <DiffBadge />}
-            </div>
-            <div className="relative">
-              <div
-                ref={paneBRef}
-                data-testid="candidate-canvas-host"
-                tabIndex={-1}
-                aria-busy={loading || undefined}
-                style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
-              >
-                {request.current === null && (
-                  <CanvasEmptyState label="Waiting for capture…">
-                    The SDK upload for this run hasn’t arrived yet. This panel
-                    will fill in automatically when the screenshot lands.
-                  </CanvasEmptyState>
-                )}
-                {hatchTooltips(1)}
-                {editorOverlay}
-              </div>
-              <StageStates
-                states={statesForPane(states, "current")}
-                onRetry={onRetry}
-                onFocusLost={focusPane(paneBRef)}
-              />
-            </div>
+            </CanvasModeLabel>
+            <StageStates
+              states={statesForPane(states, "current")}
+              onRetry={onRetry}
+              onFocusLost={focusPane(paneBRef)}
+            />
           </div>
         </div>
       </div>
@@ -1018,7 +998,7 @@ export function ViewerStage({
           )}
         </div>
         {/* On the canvas, out of the flow (R18): the states sit over it. */}
-        {mode === "flicker" && <FlickerFrameLabel />}
+        <CanvasModeLabel mode={mode} />
         <StageStates
           states={states}
           onRetry={onRetry}

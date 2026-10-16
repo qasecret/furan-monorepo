@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import {
 import { create } from "zustand";
 
 import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
+import { useViewerStore } from "./useViewerStore";
 import { modeAvailable, modeOnStep, useViewerPrefs } from "./viewer-prefs";
 
 export { parseViewParam } from "./comparison-modes";
@@ -49,13 +51,25 @@ export function effectiveMode({
   return modeOnStep(editorOverride ?? urlView ?? preferred, hasBaseline);
 }
 
+/**
+ * Which modes a step can show (R2): every mode but side by side needs a
+ * baseline.
+ */
+export function availableModes(
+  hasBaseline: boolean,
+): Record<ViewerMode, boolean> {
+  return Object.fromEntries(
+    VIEWER_MODES.map((m) => [m, modeAvailable(m, hasBaseline)]),
+  ) as Record<ViewerMode, boolean>;
+}
+
 // ---------- the editor's override (R3) ----------
 
 /**
  * R3: the mode the ignore-region editor puts on screen while it is open (from
- * Swipe or Flicker it shows side by side; Task 12 sets it). Session-only: it
- * outranks `?view` and the preference, and is never stored nor written to the
- * URL.
+ * Swipe or Flicker it shows side by side). Session-only: it outranks `?view`
+ * and the preference, and is never stored nor written to the URL. The viewer
+ * keeps it (`useViewerMode`).
  */
 const useEditorOverride = create<{ mode: ViewerMode | null }>(() => ({
   mode: null,
@@ -63,7 +77,30 @@ const useEditorOverride = create<{ mode: ViewerMode | null }>(() => ({
 
 /** Sets the editor's override, or clears it (null). */
 export function setEditorOverride(mode: ViewerMode | null): void {
-  useEditorOverride.setState({ mode });
+  if (useEditorOverride.getState().mode !== mode) {
+    useEditorOverride.setState({ mode });
+  }
+}
+
+/**
+ * The mode the ignore-region editor shows for the mode on screen (spec
+ * §4.4). It always draws on the current image, which Swipe shows only on one
+ * side of the divider and Flicker only every other frame: there it shows side
+ * by side, and draws on pane B. Every other mode it draws on as it is.
+ */
+export function modeInEditor(mode: ViewerMode): ViewerMode {
+  return mode === "swipe" || mode === "flicker" ? "side-by-side" : mode;
+}
+
+/** The editor's override for the mode on screen: none where it draws on it. */
+function editorOverrideFor(mode: ViewerMode): ViewerMode | null {
+  const shown = modeInEditor(mode);
+  return shown === mode ? null : shown;
+}
+
+/** The ignore-region editor is open. */
+export function editorOpen(): boolean {
+  return useViewerStore.getState().ignoreEditMode !== "off";
 }
 
 /**
@@ -99,6 +136,8 @@ export interface ViewerModeContextValue {
   view: ViewerMode | null;
   /** `useViewerMode().setMode`. */
   setMode(mode: ViewerMode): void;
+  /** `useViewerMode().available`; absent, read from the step's baseline. */
+  available?: Record<ViewerMode, boolean>;
 }
 
 /**
@@ -121,6 +160,18 @@ export function useSetViewerMode(): (mode: ViewerMode) => void {
   return useContext(ViewerModeContext).setMode;
 }
 
+/**
+ * Which modes the step on screen can show, for a part of the viewer: the
+ * viewer's `available` (N3: one place), or, outside one, the step's own.
+ */
+export function useAvailableModes(
+  hasBaseline: boolean,
+): Record<ViewerMode, boolean> {
+  const { available } = useContext(ViewerModeContext);
+  const own = useMemo(() => availableModes(hasBaseline), [hasBaseline]);
+  return available ?? own;
+}
+
 // ---------- the viewer ----------
 
 export interface ViewerModeInput {
@@ -128,6 +179,12 @@ export interface ViewerModeInput {
   urlView: ViewerMode | null;
   /** The step on screen has a baseline. */
   hasBaseline: boolean;
+  /**
+   * The step on screen (its checkpoint id). The editor's override (R3) is
+   * the step's: a new step clears it, and sets it again only if the editor
+   * is still open on Swipe or Flicker there.
+   */
+  step?: string;
   /**
    * The path of the step on screen, when the viewer knows it. A step change
    * shows its step at once and replaces the URL; until the route commits,
@@ -154,7 +211,9 @@ export interface ViewerModeState {
    * once. A mode the step can't show is not chosen on it. Choosing the mode
    * on screen again, when no `?view` named it, only stores it: nothing changes
    * on screen, so nothing is written. While a navigation to another step is
-   * on its way, that navigation takes the mode instead (R20).
+   * on its way, that navigation takes the mode instead (R20). In the
+   * ignore-region editor, Swipe and Flicker wait for it to close, and side by
+   * side shows meanwhile (R3, spec §4.4).
    */
   setMode(mode: ViewerMode): void;
   /**
@@ -167,11 +226,14 @@ export interface ViewerModeState {
 
 /**
  * The viewer's mode, its URL and its preference. Called once, by the viewer,
- * which hands `view` and `setMode` to its parts (`ViewerModeProvider`).
+ * which hands `view`, `setMode` and `available` to its parts
+ * (`ViewerModeProvider`). It also keeps the ignore-region editor's override
+ * (R3).
  */
 export function useViewerMode({
   urlView,
   hasBaseline,
+  step,
   path,
   retarget,
 }: ViewerModeInput): ViewerModeState {
@@ -223,6 +285,9 @@ export function useViewerMode({
       useViewerPrefs.setState({
         previousMode: from !== next && from !== "diff" ? from : before,
       });
+      // In the editor, the mode it can draw on shows now; Swipe and Flicker
+      // wait, as side by side, for it to close (R3, spec §4.4).
+      if (editorOpen()) setEditorOverride(editorOverrideFor(next));
       // Nothing to write: the URL names it already, or it is the mode on
       // screen and no `?view` chose it (M2). Only the preference changes.
       if (now.view === next || (now.view === null && from === next)) return;
@@ -240,13 +305,35 @@ export function useViewerMode({
     [router],
   );
 
-  const available = useMemo(
-    () =>
-      Object.fromEntries(
-        VIEWER_MODES.map((m) => [m, modeAvailable(m, hasBaseline)]),
-      ) as Record<ViewerMode, boolean>,
-    [hasBaseline],
-  );
+  // R3, spec §4.4: the editor's override, kept in line with the editor and
+  // the mode chosen for the step on screen. Opened on Swipe or Flicker, the
+  // editor shows side by side; closed (Esc, I, Done), the chosen mode is
+  // back, as nothing else changed. It follows the editor at once, in the
+  // store's own change, so no frame shows the editor on Swipe or Flicker.
+  // It is the step's and this viewer's: a step change clears it, and so does
+  // the viewer going, so it never outlives what it was set for (M4).
+  useLayoutEffect(() => {
+    const apply = () => {
+      const { view: shown, hasBaseline: baseline } = live.current;
+      const chosen = effectiveMode({
+        editorOverride: null,
+        urlView: shown,
+        preferred: useViewerPrefs.getState().prefs.mode,
+        hasBaseline: baseline,
+      });
+      setEditorOverride(editorOpen() ? editorOverrideFor(chosen) : null);
+    };
+    apply();
+    const off = useViewerStore.subscribe((s, prev) => {
+      if (s.ignoreEditMode !== prev.ignoreEditMode) apply();
+    });
+    return () => {
+      off();
+      setEditorOverride(null);
+    };
+  }, [step, view, hasBaseline]);
+
+  const available = useMemo(() => availableModes(hasBaseline), [hasBaseline]);
 
   return { mode, available, setMode, view };
 }

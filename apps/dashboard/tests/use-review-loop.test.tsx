@@ -544,6 +544,32 @@ describe("useReviewLoop.retarget: a mode change while a navigation is on its way
     expect(retarget(result, "diff")).toBe(false);
     expect(router.push).toHaveBeenCalledOnce();
   });
+
+  test("R22: a link's navigation to a step goes again in the new mode, a push, until its route commits", () => {
+    const { result, rerender } = setup({ view: "overlay" });
+    const newer = (view: string | null) =>
+      url("r9", "s9", view ? `?view=${view}` : "");
+    // Next makes the link's own navigation; the loop only hears of it.
+    act(() => result.current.linkNavigating(newer("overlay"), newer));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(retarget(result, "swipe")).toBe(true);
+    expect(router.push.mock.calls).toEqual([[newer("swipe")]]);
+    expect(router.replace).not.toHaveBeenCalled();
+    // The same mode again: the navigation already goes there.
+    expect(retarget(result, "swipe")).toBe(true);
+    expect(router.push).toHaveBeenCalledOnce();
+    // Committed: nothing is on its way from here any more.
+    rerender(args({ view: "swipe", runId: "r9", checkpointId: "s9" }));
+    expect(retarget(result, "diff")).toBe(false);
+  });
+
+  test("R22: a link out of the viewer goes on as it is", () => {
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.linkNavigating("/projects/p1/builds/b1"));
+    expect(retarget(result, "diff")).toBe(true);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
 });
 
 describe("useReviewLoop: the cue's test name", () => {
