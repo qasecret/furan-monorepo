@@ -1,8 +1,8 @@
 import type { Container } from "pixi.js";
 
+import type { ViewerMode } from "../comparison-modes";
 import type { ImageRole } from "../image-set";
 import type { Rect, Size, Transform, World } from "../viewer-geometry";
-import type { ViewerMode } from "../viewer-prefs";
 
 import { diff } from "./diff";
 import { flicker } from "./flicker";

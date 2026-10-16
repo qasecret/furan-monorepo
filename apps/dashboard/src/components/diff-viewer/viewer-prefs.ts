@@ -13,10 +13,6 @@ import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
  * defaults for the visit.
  */
 
-// The modes live in a server-safe module (the page reads `?view`); the
-// viewer imports them from here, beside the preference that holds one.
-export { VIEWER_MODES, type ViewerMode };
-
 export type RailTab = "info" | "history" | "comments";
 
 /** The info rail's width range, in px. */
@@ -178,4 +174,12 @@ export const useViewerPrefs = create<ViewerPrefsState>((set, get) => ({
  */
 export function modeAvailable(mode: ViewerMode, hasBaseline: boolean): boolean {
   return hasBaseline || mode === "side-by-side";
+}
+
+/**
+ * The mode a step shows for a chosen one (R2): that mode where the step can
+ * show it, else side by side. Idempotent.
+ */
+export function modeOnStep(mode: ViewerMode, hasBaseline: boolean): ViewerMode {
+  return modeAvailable(mode, hasBaseline) ? mode : "side-by-side";
 }

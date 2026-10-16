@@ -2,12 +2,13 @@
 
 import { toast } from "sonner";
 
+import type { ViewerMode } from "./comparison-modes";
 import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
 import { readEffectiveMode } from "./viewer-mode";
-import { useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import { useViewerPrefs } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";

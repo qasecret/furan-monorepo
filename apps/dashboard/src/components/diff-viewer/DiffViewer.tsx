@@ -15,6 +15,7 @@ import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { BatchDoneCard } from "./BatchDoneCard";
 import type { CheckpointSummary } from "./checkpoint-nav";
+import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -35,7 +36,7 @@ import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { useViewerMode, ViewerModeProvider } from "./viewer-mode";
-import { useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import { useViewerPrefs } from "./viewer-prefs";
 import { ViewerStage } from "./ViewerStage";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
@@ -243,13 +244,16 @@ export function DiffViewer({
   // baseline (R2). Every part of the viewer reads this one mode, and every
   // link the viewer makes carries the URL's view. A mode change writes the
   // URL of the step on screen, which a step change shows before its route
-  // commits.
+  // commits; while the review loop is on its way to another step, that move
+  // takes the mode instead (R20; the loop is set up below).
+  const retargetLoopMove = useRef<(view: ViewerMode) => boolean>(() => false);
   const viewerMode = useViewerMode({
     urlView,
     hasBaseline,
     ...(projectId && activeCheckpointId
       ? { path: diffViewerHref(projectId, runId, activeCheckpointId) }
       : {}),
+    retarget: (view) => retargetLoopMove.current(view),
   });
   const viewerModeContext = useMemo(
     () => ({ view: viewerMode.view, setMode: viewerMode.setMode }),
@@ -351,6 +355,7 @@ export function DiffViewer({
     stepInFilter: stepHere.inFilter,
     decisionInFlight,
   });
+  retargetLoopMove.current = loop.retarget;
   const undoCount = useUndoStore((s) => s.stack.length);
   // The done card (spec §5.4) takes the canvas's place once the step on
   // screen is settled: not while a decision waits for its answer, and not

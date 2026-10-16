@@ -17,6 +17,10 @@ vi.mock("sonner", () => ({
 }));
 
 import {
+  VIEWER_MODES,
+  type ViewerMode,
+} from "@/components/diff-viewer/comparison-modes";
+import {
   useDiffViewerShortcuts,
   type ShortcutOptions,
 } from "@/components/diff-viewer/useDiffViewerShortcuts";
@@ -33,8 +37,6 @@ import {
   prefsKey,
   readViewerPrefs,
   useViewerPrefs,
-  VIEWER_MODES,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { CommandDispatcher } from "@/lib/commands/dispatcher";
 import { useSingleKeyStore } from "@/lib/commands/prefs";
@@ -222,6 +224,50 @@ describe("useViewerMode", () => {
     expect(result.current.view).toBeNull();
     // The preference it stored still shows.
     expect(result.current.mode).toBe("swipe");
+  });
+
+  test("M2: the mode on screen chosen again, with no ?view, is only stored: no URL write, no round trip", () => {
+    prefer("overlay");
+    const retarget = vi.fn(() => true);
+    const { result } = viewer({ urlView: null, retarget });
+    act(() => result.current.setMode("overlay"));
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    expect(retarget).not.toHaveBeenCalled();
+    expect(result.current.view).toBeNull();
+    expect(stored()).toBe("overlay");
+    cleanup();
+
+    // A stored Swipe on a step with no baseline shows side by side: choosing
+    // side by side stores it, and writes nothing either.
+    prefer("swipe");
+    const noBaseline = viewer({ urlView: null, hasBaseline: false });
+    act(() => noBaseline.result.current.setMode("side-by-side"));
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    expect(stored()).toBe("side-by-side");
+  });
+
+  test("R20: while a navigation to another step is on its way, it takes the mode, and this step's URL is left alone", () => {
+    const retarget = vi.fn(() => true);
+    const { result } = viewer({ urlView: "overlay", retarget });
+    act(() => result.current.setMode("diff"));
+    expect(retarget).toHaveBeenCalledOnce();
+    expect(retarget).toHaveBeenCalledWith("diff");
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    expect(nav.router.push).not.toHaveBeenCalled();
+    // Shown, and stored, at once.
+    expect(result.current.mode).toBe("diff");
+    expect(stored()).toBe("diff");
+  });
+
+  test("R20: with none on its way, the step's own URL is written", () => {
+    const retarget = vi.fn(() => false);
+    const { result } = viewer({ urlView: "overlay", retarget });
+    act(() => result.current.setMode("diff"));
+    expect(retarget).toHaveBeenCalledWith("diff");
+    expect(nav.router.replace).toHaveBeenCalledWith(
+      `${STEP}?${CONTEXT}&view=diff`,
+      { scroll: false },
+    );
   });
 
   test("selecting the mode the URL already shows stores it, and leaves the URL alone", () => {

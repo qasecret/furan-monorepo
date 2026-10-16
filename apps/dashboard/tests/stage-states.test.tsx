@@ -27,6 +27,10 @@ vi.mock("@/lib/trpc", () => {
   };
 });
 
+import {
+  VIEWER_MODES,
+  type ViewerMode,
+} from "@/components/diff-viewer/comparison-modes";
 import type {
   ImageRole,
   ImageSetState,
@@ -46,8 +50,6 @@ import {
   DEFAULT_VIEWER_PREFS,
   modeAvailable,
   useViewerPrefs,
-  VIEWER_MODES,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { ViewerToolbar } from "@/components/diff-viewer/ViewerToolbar";
 
@@ -320,6 +322,20 @@ describe("stageStates", () => {
       );
       expect(states).toEqual([{ kind: "no-baseline" }]);
     }
+  });
+
+  test("a chosen mode the step can't show is side by side here too: Diff's failed diff image is not its business (N1)", () => {
+    const current = image("current", 100, 200);
+    const states = stageStates(
+      input({
+        mode: "diff",
+        hasBaseline: false,
+        stepHasDiff: false,
+        set: set({ current }, { diff: true }),
+        sizes: { current: current.size },
+      }),
+    );
+    expect(states).toEqual([{ kind: "no-baseline" }]);
   });
 
   test("too large: a drawn screenshot past the texture limit, named by its image (Review Focus 1)", () => {

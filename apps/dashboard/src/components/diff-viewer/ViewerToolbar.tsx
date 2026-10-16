@@ -16,6 +16,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import type { ViewerMode } from "./comparison-modes";
 import { FlickerControls } from "./FlickerControls";
 import { buildIgnoreAreasPayload } from "./ignore-area-payload";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
@@ -26,7 +27,7 @@ import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
 import { useEffectiveMode, useSetViewerMode } from "./viewer-mode";
-import { modeAvailable, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";

@@ -23,6 +23,7 @@ vi.mock("pixi.js/unsafe-eval", () => ({}));
 vi.mock("pixi.js", async () => (await import("./pixi-fake")).pixiModule);
 
 import { FALLBACK_CANVAS_DIVIDER } from "@/components/diff-viewer/canvas-theme";
+import type { ViewerMode } from "@/components/diff-viewer/comparison-modes";
 import type {
   ImageRole,
   ImageSetRequest,
@@ -46,7 +47,6 @@ import {
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { ViewerStage } from "@/components/diff-viewer/ViewerStage";
 import { CommandDispatcher } from "@/lib/commands/dispatcher";

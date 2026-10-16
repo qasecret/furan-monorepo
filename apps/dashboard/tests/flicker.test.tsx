@@ -31,6 +31,7 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import type { ViewerMode } from "@/components/diff-viewer/comparison-modes";
 import {
   FLICKER_INTERVAL_MS,
   FlickerControls,
@@ -54,7 +55,6 @@ import {
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { ViewerStage } from "@/components/diff-viewer/ViewerStage";
 import { ShortcutsSheet } from "@/components/shortcuts/shortcuts-sheet";

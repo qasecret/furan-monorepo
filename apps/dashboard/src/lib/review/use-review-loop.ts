@@ -121,6 +121,16 @@ export interface ReviewLoop {
    */
   leave(href: string): void;
   /**
+   * R20: the comparison mode changed while a navigation this loop made (a
+   * move, or `leave`) is on its way. The viewer must not write the URL of the
+   * step on screen meanwhile: Next would call the navigation off, leaving the
+   * reviewer on that step with J / K latched. So the navigation is made again
+   * in `view`, the same kind (push or replace), and is the one the loop now
+   * waits for; a `leave` (not a viewer URL) goes on as it is. True when there
+   * was one, so the viewer writes nothing.
+   */
+  retarget(view: ViewerMode | null): boolean;
+  /**
    * The cue of the forward move that opened this test ("Next test: ‹name› ·
    * ‹N› left in batch", with facets "· ‹M› in filter") while it is shown, for
    * about 3 s (R15); else null. Only the loop's own forward moves have one:
@@ -451,11 +461,21 @@ export function useReviewLoop({
   // This instance has sent the reviewer elsewhere itself (a move, or leave):
   // it hands nothing off when it goes.
   const departing = useRef(false);
+  // The navigation this instance made that is on its way (a move, or leave),
+  // until the step on screen changes or it is given up on (5 s): how it was
+  // made, its URL, and its URL in another comparison mode (R20).
+  const inFlight = useRef<{
+    how: "push" | "replace";
+    href: string;
+    inView: (view: ViewerMode | null) => string;
+    at: number;
+  } | null>(null);
   useLayoutEffect(() => {
     atKeyRef.current = atKey;
     prevPending.current = null;
     moving.current = false;
     departing.current = false;
+    inFlight.current = null;
   }, [atKey]);
   /** A move is on its way to the screen, and not given up on yet. */
   const isMoving = useCallback(
@@ -612,6 +632,19 @@ export function useReviewLoop({
       loopHandoff.slot = null;
       movedAt.current = Date.now();
       lastHref.current = href;
+      inFlight.current = {
+        how,
+        href,
+        inView: (view) =>
+          diffViewerHref(
+            projectId,
+            target.runId,
+            target.checkpointId,
+            context,
+            view,
+          ),
+        at: movedAt.current,
+      };
       supersedeCues();
       if (how === "replace") router.replace(href);
       else router.push(href);
@@ -812,7 +845,33 @@ export function useReviewLoop({
     (href: string) => {
       epoch.current += 1;
       departing.current = true;
+      inFlight.current = {
+        how: "push",
+        href,
+        inView: () => href,
+        at: Date.now(),
+      };
       router.push(href);
+    },
+    [router],
+  );
+
+  const retarget = useCallback(
+    (view: ViewerMode | null) => {
+      const move = inFlight.current;
+      if (!move || Date.now() - move.at >= MOVE_LIMIT_MS) return false;
+      const href = move.inView(view);
+      // Unchanged (a leave): the navigation on its way already goes there.
+      if (href === move.href) return true;
+      // The move again, in the new mode: a new navigation, so its 5 s start
+      // again, and it is the one a second J / K is checked against.
+      move.href = href;
+      move.at = Date.now();
+      movedAt.current = move.at;
+      lastHref.current = href;
+      if (move.how === "replace") router.replace(href);
+      else router.push(href);
+      return true;
     },
     [router],
   );
@@ -941,6 +1000,7 @@ export function useReviewLoop({
     clearFilter,
     cardBusy: busy !== null,
     leave,
+    retarget,
     cue: cue?.text ?? null,
   };
 }

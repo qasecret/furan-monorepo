@@ -2,6 +2,7 @@
 
 import { useId, useLayoutEffect, useRef } from "react";
 
+import type { ViewerMode } from "./comparison-modes";
 import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
 import { RENDERERS, type HatchedImage } from "./modes/types";
 import {
@@ -12,7 +13,7 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import type { ViewerMode } from "./viewer-prefs";
+import { modeOnStep } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -35,8 +36,9 @@ export type StageState =
 
 export interface StageStatesInput {
   /**
-   * The mode on screen (`viewer-mode`'s effective mode): one the step can't
-   * show is already side by side (R2).
+   * The mode on screen (`viewer-mode`'s effective mode). One the step can't
+   * show is side by side (R2), here too: a caller passing a chosen mode still
+   * gets the step's.
    */
   mode: ViewerMode;
   set: ImageSetState;
@@ -73,7 +75,8 @@ export interface StageStatesInput {
  *   run of one step says nothing.
  */
 export function stageStates(input: StageStatesInput): StageState[] {
-  const { mode, set, hasBaseline, sizes, maxTextureSize: max } = input;
+  const { set, hasBaseline, sizes, maxTextureSize: max } = input;
+  const mode = modeOnStep(input.mode, hasBaseline);
   const renderer = RENDERERS[mode];
   const needs = renderer.needs({ hasBaseline });
   const { images, failed } = set;

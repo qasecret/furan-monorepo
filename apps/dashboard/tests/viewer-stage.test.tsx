@@ -22,6 +22,7 @@ import { fake } from "./pixi-fake";
 vi.mock("pixi.js/unsafe-eval", () => ({}));
 vi.mock("pixi.js", async () => (await import("./pixi-fake")).pixiModule);
 
+import type { ViewerMode } from "@/components/diff-viewer/comparison-modes";
 import {
   __viewerBitmapCache,
   useImageSet,
@@ -43,7 +44,6 @@ import {
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { ViewerStage } from "@/components/diff-viewer/ViewerStage";
 

@@ -13,7 +13,7 @@ import {
 import { create } from "zustand";
 
 import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
-import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
+import { modeAvailable, modeOnStep, useViewerPrefs } from "./viewer-prefs";
 
 export { parseViewParam } from "./comparison-modes";
 
@@ -46,8 +46,7 @@ export function effectiveMode({
   preferred,
   hasBaseline,
 }: ModeInputs): ViewerMode {
-  const chosen = editorOverride ?? urlView ?? preferred;
-  return modeAvailable(chosen, hasBaseline) ? chosen : "side-by-side";
+  return modeOnStep(editorOverride ?? urlView ?? preferred, hasBaseline);
 }
 
 // ---------- the editor's override (R3) ----------
@@ -136,6 +135,14 @@ export interface ViewerModeInput {
    * would call the step change off. Defaults to the URL's path.
    */
   path?: string;
+  /**
+   * R20: a navigation to another step on its way (the review loop's move, or
+   * its `leave`), which a mode change would call off by writing the URL of
+   * the step on screen: it is made again in the new mode instead
+   * (`useReviewLoop().retarget`). True when there was one; then the step on
+   * screen's URL is left alone.
+   */
+  retarget?: (view: ViewerMode) => boolean;
 }
 
 export interface ViewerModeState {
@@ -144,7 +151,10 @@ export interface ViewerModeState {
   /**
    * Stores the preference and replaces the URL with `view=‹mode›`, every
    * other param as it is (no history entry, no scroll), and shows the mode at
-   * once. A mode the step can't show is not chosen on it.
+   * once. A mode the step can't show is not chosen on it. Choosing the mode
+   * on screen again, when no `?view` named it, only stores it: nothing changes
+   * on screen, so nothing is written. While a navigation to another step is
+   * on its way, that navigation takes the mode instead (R20).
    */
   setMode(mode: ViewerMode): void;
   /**
@@ -163,6 +173,7 @@ export function useViewerMode({
   urlView,
   hasBaseline,
   path,
+  retarget,
 }: ViewerModeInput): ViewerModeState {
   const router = useRouter();
   const pathname = usePathname();
@@ -189,8 +200,15 @@ export function useViewerMode({
     latest.current = search;
   }, [search]);
   // What `setMode` acts on when it is called, not when it was made.
-  const live = useRef({ urlView, view, hasBaseline, path: path ?? pathname });
-  live.current = { urlView, view, hasBaseline, path: path ?? pathname };
+  const inputs = {
+    urlView,
+    view,
+    hasBaseline,
+    path: path ?? pathname,
+    retarget,
+  };
+  const live = useRef(inputs);
+  live.current = inputs;
 
   const setMode = useCallback(
     (next: ViewerMode) => {
@@ -205,8 +223,13 @@ export function useViewerMode({
       useViewerPrefs.setState({
         previousMode: from !== next && from !== "diff" ? from : before,
       });
-      if (now.view === next) return;
+      // Nothing to write: the URL names it already, or it is the mode on
+      // screen and no `?view` chose it (M2). Only the preference changes.
+      if (now.view === next || (now.view === null && from === next)) return;
       setWritten({ view: next, over: now.urlView });
+      // On the way to another step: the navigation takes the mode with it,
+      // and this step's URL is not written (that would call it off, R20).
+      if (now.retarget?.(next)) return;
       const params = new URLSearchParams(latest.current);
       params.set("view", next);
       latest.current = params.toString();

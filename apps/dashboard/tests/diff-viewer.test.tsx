@@ -399,6 +399,7 @@ class StubEventSource {
 (globalThis as unknown as { EventSource: typeof StubEventSource }).EventSource =
   StubEventSource;
 
+import type { ViewerMode } from "../src/components/diff-viewer/comparison-modes";
 import { DiffViewer as ViewerUnderTest } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { useViewState } from "../src/components/diff-viewer/view-state";
@@ -419,6 +420,7 @@ import { GlobalCommands } from "@/lib/commands/global-commands";
 import { useSingleKeyStore } from "@/lib/commands/prefs";
 import {
   CommandRoleProvider,
+  resolveCommands,
   useCommandRegistry,
 } from "@/lib/commands/registry";
 import { canReviewRole, type ViewerRole } from "@/lib/roles";
@@ -2441,6 +2443,88 @@ describe("DiffViewer: the review loop", () => {
     );
   });
 
+  describe("R20: a mode change while the loop's move is on its way", () => {
+    beforeEach(() => {
+      // A step with a baseline, so every mode is available; its images are
+      // never answered.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => new Promise<Response>(() => {})),
+      );
+      mockGetByIdData = {
+        ...mockGetByIdData,
+        baselineScreenshot: { id: "base", imageKey: "r20-base" },
+      };
+    });
+    afterEach(() => vi.unstubAllGlobals());
+    /** No navigation of the step on screen, c1, was ever made. */
+    const neverToC1 = () =>
+      [...routerSpies.replace.mock.calls, ...routerSpies.push.mock.calls].every(
+        ([href]) => !String(href).startsWith(stepUrl(RUN_ID, "c1")),
+      );
+    const stageMode = () =>
+      document
+        .querySelector("[data-testid=single-stage-host]")
+        ?.getAttribute("data-mode");
+
+    test("J, then d before the next test commits: the move goes again in Diff, a push, and this step's URL is never written", () => {
+      nextQuery.data = intoOtherRun();
+      renderViewer({ view: "overlay" });
+      press("J");
+      press("d");
+      expect(routerSpies.push.mock.calls).toEqual([
+        [stepUrl(OTHER_RUN, "s9", "?view=overlay")],
+        [stepUrl(OTHER_RUN, "s9", "?view=diff")],
+      ]);
+      expect(routerSpies.replace).not.toHaveBeenCalled();
+      expect(neverToC1()).toBe(true);
+      // The step being left shows Diff meanwhile.
+      expect(stageMode()).toBe("diff");
+      // J again is the same move: nothing more.
+      press("J");
+      expect(routerSpies.push).toHaveBeenCalledTimes(2);
+      cleanup();
+
+      // The next test's route commits: its viewer opens in Diff, and J and K
+      // move on from it.
+      utilsMock.review.next.fetch.mockResolvedValue(
+        answer({
+          target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c0" },
+        }),
+      );
+      nextQuery.data = answer();
+      renderViewer({ view: "diff" });
+      expect(stageMode()).toBe("diff");
+      press("J");
+      expect(routerSpies.replace).toHaveBeenLastCalledWith(
+        stepUrl(RUN_ID, "c3", "?view=diff"),
+      );
+    });
+
+    test("a decision's move, then o: the replace goes again in the new mode, never to this step", () => {
+      nextQuery.data = answer();
+      renderViewer({ view: "overlay" });
+      press("A");
+      press("o");
+      expect(routerSpies.replace.mock.calls).toEqual([
+        [stepUrl(RUN_ID, "c3", "?view=overlay")],
+        [stepUrl(RUN_ID, "c3", "?view=diff")],
+      ]);
+      expect(routerSpies.push).not.toHaveBeenCalled();
+      expect(neverToC1()).toBe(true);
+    });
+
+    test("with no move on its way, a mode change writes this step's URL", () => {
+      renderViewer({ view: "overlay" });
+      press("d");
+      expect(routerSpies.replace).toHaveBeenCalledOnce();
+      expect(routerSpies.replace).toHaveBeenCalledWith(
+        stepUrl(RUN_ID, "c1", "?view=diff"),
+        { scroll: false },
+      );
+    });
+  });
+
   test("with no view in the URL, the links carry none: the next step opens in the preference", () => {
     nextQuery.data = intoOtherRun();
     useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
@@ -3961,6 +4045,55 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     // With no ?view, the preference.
     openStep("c2");
     expect(shownMode()).toBe("diff");
+  });
+
+  test("M3: ?view over a different stored preference: the stage, the toolbar and the keys all show the URL's mode", () => {
+    /** What each surface of the viewer says the mode is. */
+    function surfaces() {
+      const tab = document.querySelector<HTMLElement>(
+        '[role="tab"][data-mode][aria-selected="true"]',
+      );
+      const f = resolveCommands().find(
+        (c) => c.command.id === "viewer.flicker.toggle",
+      );
+      return {
+        stage: shownMode(),
+        toolbarTab: tab?.dataset.mode ?? null,
+        flickerControls:
+          within(document.body).queryByRole("button", {
+            name: /^(Play|Pause)$/,
+          }) !== null,
+        opacitySlider:
+          document.querySelector('[data-testid="opacity-slider-wrap"]') !==
+          null,
+        flickerKey: f ? (f.command.enabled?.(f.ctx()) ?? true) : false,
+      };
+    }
+    const expected = (mode: ViewerMode) => ({
+      stage: mode,
+      // The toolbar's tabs are Side by side, Overlay and Diff (T12: five).
+      toolbarTab: ["side-by-side", "overlay", "diff"].includes(mode)
+        ? mode
+        : null,
+      flickerControls: mode === "flicker",
+      opacitySlider: mode === "overlay",
+      flickerKey: mode === "flicker",
+    });
+
+    useViewerPrefs.getState().hydrate("u1");
+    for (const [view, stored] of [
+      ["overlay", "diff"],
+      ["flicker", "overlay"],
+      ["diff", "flicker"],
+      ["side-by-side", "swipe"],
+    ] as const) {
+      act(() => useViewerPrefs.getState().set("mode", stored));
+      openStep("c2", { view });
+      expect(surfaces(), `?view=${view} over a stored ${stored}`).toEqual(
+        expected(view),
+      );
+      cleanup();
+    }
   });
 
   test("a tab changes the mode at once, stores it, and replaces the URL with view, keeping the rest", () => {
