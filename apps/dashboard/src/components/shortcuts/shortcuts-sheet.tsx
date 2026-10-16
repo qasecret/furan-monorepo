@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, type JSX } from "react";
+import { useId, useRef, type JSX } from "react";
 
 import { KeyChoices } from "./key-caps";
 import { useShortcutsSheet } from "./use-shortcuts-sheet";
@@ -22,6 +22,7 @@ import {
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 import {
+  commandLabel,
   resolveKeyMap,
   useRegisteredCommands,
   winningBindings,
@@ -59,7 +60,9 @@ interface Row {
  * another command (a page's `/` takes the global one), it is left out of this
  * command's row, so what the sheet lists is exactly what a key press runs.
  * A command with no key left has no row (palette only, or every key taken).
- * `commands` are the allowed ones, in registration order.
+ * `commands` are the allowed ones, in registration order. Each row has the
+ * command's name as things stand (`commandLabel`: "Hide details" or "Show
+ * details"), read when the sheet opens.
  */
 function rowsByScope(
   commands: ResolvedCommand[],
@@ -75,7 +78,7 @@ function rowsByScope(
     const tokens = formatKeys(bindings, platform);
     const row: Row = {
       id: command.id,
-      label: command.label,
+      label: commandLabel(resolved),
       keys: bindings.map((b, i) => ({
         tokens: tokens[i] ?? [],
         character: isCharacterBinding(bindingKey(b)),
@@ -145,10 +148,10 @@ export function ShortcutsSheet(): JSX.Element {
   /** Where focus goes back to on close: where it was as the sheet opened. */
   const opener = useRef<HTMLElement | null>(null);
 
-  const rows = useMemo(
-    () => rowsByScope(commands, platform),
-    [commands, platform],
-  );
+  // Built on each render, not memoised on the registry: a command's name can
+  // follow the page's state (`labelFor`), which changes no registration, and
+  // opening the sheet renders it. Open, it is modal: nothing behind changes.
+  const rows = rowsByScope(commands, platform);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

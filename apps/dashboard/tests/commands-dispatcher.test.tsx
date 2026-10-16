@@ -344,6 +344,27 @@ describe("CommandDispatcher", () => {
     expect(toast.error).toHaveBeenCalledTimes(3);
   });
 
+  it("a failing command named as things stand (labelFor) toasts the name it ran under", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let collapsed = false;
+    render(<Layout />);
+    mount("viewer", [
+      command("viewer", "viewer.rail.toggle", ["t"], {
+        label: "Hide details",
+        labelFor: () => (collapsed ? "Show details" : "Hide details"),
+        run: () => {
+          collapsed = !collapsed;
+          throw new Error("half done");
+        },
+      }),
+    ]);
+
+    press("t");
+    expect(toast.error).toHaveBeenLastCalledWith("Couldn't hide details");
+    press("t");
+    expect(toast.error).toHaveBeenLastCalledWith("Couldn't show details");
+  });
+
   it("an enabled check that throws is reported, runs nothing and leaves the key alone", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const run = vi.fn();

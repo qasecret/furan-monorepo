@@ -7,6 +7,7 @@ import { bindingOptions, formatKeys } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import {
   CommandRoleProvider,
+  commandLabel,
   resolveCommands,
   resolveKeyMap,
   useCommandKeys,
@@ -541,6 +542,35 @@ describe("command registry", () => {
       allowInDialog: "[data-done-card]",
       passesNonModal: true,
     });
+  });
+
+  it("commandLabel: labelFor names a command as things stand, from its live ctx; else, or when it throws, its label", () => {
+    let collapsed = false;
+    mount("viewer", [
+      command("viewer", "viewer.rail.toggle", ["t"], {
+        label: "Hide details",
+        labelFor: () => (collapsed ? "Show details" : "Hide details"),
+      }),
+      command("viewer", "viewer.fit", ["0"], { label: "Fit" }),
+      command("viewer", "viewer.broken", ["b"], {
+        label: "Broken",
+        labelFor: () => {
+          throw new Error("no state");
+        },
+      }),
+      command("viewer", "viewer.byRole", ["y"], {
+        label: "By role",
+        labelFor: ({ role }) => `As ${role}`,
+      }),
+    ]);
+    const label = (id: string) =>
+      commandLabel(resolveCommands().find((r) => r.command.id === id)!);
+    expect(label("viewer.rail.toggle")).toBe("Hide details");
+    collapsed = true;
+    expect(label("viewer.rail.toggle")).toBe("Show details");
+    expect(label("viewer.fit")).toBe("Fit");
+    expect(label("viewer.broken")).toBe("Broken");
+    expect(label("viewer.byRole")).toBe("As editor");
   });
 
   it("useCommandKeys gives aria-keyshortcuts and a title suffix", () => {

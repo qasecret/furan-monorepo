@@ -21,6 +21,7 @@ import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
 import { useImageSet, type ImageSetRequest } from "./image-set";
+import { InfoRail } from "./InfoRail";
 import type { DiffRegion } from "./layers/regionTypes";
 import { isPixelDiffRegion } from "./region-visibility";
 import { useReviewActions } from "./review-actions";
@@ -51,7 +52,11 @@ import {
 } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
-import { useCommandKeys, useRegisteredCommands } from "@/lib/commands/registry";
+import {
+  commandLabel,
+  useCommandKeys,
+  useRegisteredCommands,
+} from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
@@ -929,10 +934,12 @@ export function DiffViewer({
                 )}
               </div>
             )}
-            {/* Canvas + right INFO sidebar. The left checkpoint rail was
-                removed — navigation is the batch-detail grid (enter) plus the
-                top-bar prev/next stepper (move between checkpoints), matching
-                the reference's two-pane layout. */}
+            {/* Canvas + the info rail on the right (spec §5): resizable,
+                collapsible, and over the canvas below 1024 px, which this
+                row positions. The left checkpoint rail was removed —
+                navigation is the batch-detail grid (enter) plus the top-bar
+                prev/next stepper (move between checkpoints), matching the
+                reference's two-pane layout. */}
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex-1 min-w-0">
                 <div
@@ -982,29 +989,31 @@ export function DiffViewer({
                   </>
                 )}
               </div>
-              <TestInfoSidebar
-                test={data.name ?? "Untitled run"}
-                stepLabel={stepLabel}
-                match={cand?.matchLevel ?? null}
-                app={appName}
-                branch={data.branchName ?? null}
-                os={cand?.os ?? null}
-                browser={cand?.browser ?? null}
-                viewport={cand?.viewport ?? null}
-                startedAt={runMeta.createdAt ?? null}
-                duration={
-                  durationMs != null ? formatDuration(durationMs) : null
-                }
-                runBy={runByName}
-                pixelDiffPercent={runDiffPercent}
-                regions={regions}
-                vlmDescription={data?.vlmDescription ?? null}
-                testVariationId={
-                  selectedCheckpointItem?.testVariationId ?? null
-                }
-                currentBaselineKey={data.baselineName ?? null}
-                runId={runId}
-              />
+              <InfoRail>
+                <TestInfoSidebar
+                  test={data.name ?? "Untitled run"}
+                  stepLabel={stepLabel}
+                  match={cand?.matchLevel ?? null}
+                  app={appName}
+                  branch={data.branchName ?? null}
+                  os={cand?.os ?? null}
+                  browser={cand?.browser ?? null}
+                  viewport={cand?.viewport ?? null}
+                  startedAt={runMeta.createdAt ?? null}
+                  duration={
+                    durationMs != null ? formatDuration(durationMs) : null
+                  }
+                  runBy={runByName}
+                  pixelDiffPercent={runDiffPercent}
+                  regions={regions}
+                  vlmDescription={data?.vlmDescription ?? null}
+                  testVariationId={
+                    selectedCheckpointItem?.testVariationId ?? null
+                  }
+                  currentBaselineKey={data.baselineName ?? null}
+                  runId={runId}
+                />
+              </InfoRail>
               {ignoreEditMode !== "off" && (
                 <IgnoreRegionListPanel
                   viewport={activeViewport || null}
@@ -1092,11 +1101,14 @@ function ShortcutHints({ show }: { show: Partial<Record<string, boolean>> }) {
     .sort(
       (a, b) => Number(a.scope === "global") - Number(b.scope === "global"),
     );
-  for (const { command } of primary) {
+  for (const resolved of primary) {
+    const { command } = resolved;
     const [live] = liveBindings(command, singleKeys);
     if (live === undefined) continue;
     const cap = formatKeyLabel(bindingKey(live), platform);
-    const hint = HINTS[command.id] ?? { text: lowerFirst(command.label) };
+    const hint = HINTS[command.id] ?? {
+      text: lowerFirst(commandLabel(resolved)),
+    };
     const last = groups.at(-1);
     if (last?.text === hint.text) last.keys.push(cap);
     else groups.push({ ...hint, keys: [cap] });

@@ -1072,6 +1072,8 @@ describe("the viewer's keys are registry commands", () => {
       ["viewer.flicker.toggle", "Pause or swap flicker", ["f"]],
       ["viewer.highlight", "Toggle highlight", ["h"]],
       ["viewer.comments", "Toggle comments", ["c"]],
+      // Named as things stand ("Hide details" / "Show details", `labelFor`).
+      ["viewer.rail.toggle", "Hide details", ["t"]],
       ["viewer.zoomIn", "Zoom in", ["=", "+"]],
       ["viewer.zoomOut", "Zoom out", ["-"]],
       ["viewer.fit", "Fit", ["0"]],

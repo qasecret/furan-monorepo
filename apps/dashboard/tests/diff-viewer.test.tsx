@@ -1439,6 +1439,20 @@ describe("DiffViewer", () => {
     expect(r.queryByTestId("empty-run-card")).toBeNull();
   });
 
+  test("the step's details sit in the resizable rail, and t collapses it to the strip", () => {
+    const r = render(<DiffViewer runId="r1" diffId="d1" />);
+    const rail = r.getByTestId("test-info-sidebar");
+    expect(
+      within(rail).getByRole("separator", { name: "Resize details" }),
+    ).toBeDefined();
+    expect(rail.style.width).toBe("320px");
+    expect(within(rail).getByTestId("info-stat-cards")).toBeDefined();
+    press("t");
+    expect(r.getByTestId("test-info-sidebar").style.width).toBe("40px");
+    expect(r.getByRole("button", { name: "Show details" })).toBeDefined();
+    expect(r.queryByTestId("info-stat-cards")).toBeNull();
+  });
+
   test("diff stepper renders counter and advances on next click", () => {
     mockGetByIdData = {
       ...defaultMockData,

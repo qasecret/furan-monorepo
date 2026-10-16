@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 // Isolate the sidebar's tab logic + metadata rendering from the heavy child
 // panels (region list, comment editor) and their trpc dependencies.
@@ -23,8 +23,20 @@ vi.mock("@/lib/trpc", () => ({
 
 import type { DiffRegion } from "@/components/diff-viewer/layers/regionTypes";
 import { TestInfoSidebar } from "@/components/diff-viewer/TestInfoSidebar";
+import {
+  DEFAULT_VIEWER_PREFS,
+  useViewerPrefs,
+} from "@/components/diff-viewer/viewer-prefs";
 import { SEVERITY_STYLE } from "@/lib/severity-style";
 
+// The tab is a preference (spec §6.1): the store outlives each render.
+beforeEach(() => {
+  useViewerPrefs.setState({
+    userId: null,
+    prefs: DEFAULT_VIEWER_PREFS,
+    previousMode: "side-by-side",
+  });
+});
 afterEach(cleanup);
 
 const baseProps = {
@@ -114,6 +126,28 @@ describe("TestInfoSidebar", () => {
     fireEvent.click(screen.getByTestId("info-tab-comments"));
     expect(screen.getByTestId("comment-panel").textContent).toBe("embedded");
     expect(screen.queryByTestId("region-list-panel")).toBeNull();
+  });
+
+  test("is the rail's content: no landmark or fixed width of its own (InfoRail holds it)", () => {
+    const { container } = render(<TestInfoSidebar {...baseProps} />);
+    expect(container.querySelector("aside")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(container.querySelector(".w-80")).toBeNull();
+  });
+
+  test("its tab is the stored preference, and choosing one stores it", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, railTab: "history" },
+    });
+    render(<TestInfoSidebar {...baseProps} />);
+    const tab = (id: string) => screen.getByTestId(`info-tab-${id}`);
+    expect(tab("history").getAttribute("aria-pressed")).toBe("true");
+    expect(tab("info").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("info-stat-cards")).toBeNull();
+
+    fireEvent.click(tab("comments"));
+    expect(useViewerPrefs.getState().prefs.railTab).toBe("comments");
+    expect(tab("comments").getAttribute("aria-pressed")).toBe("true");
   });
 
   test("HISTORY tab explains itself when the checkpoint has no variation", () => {

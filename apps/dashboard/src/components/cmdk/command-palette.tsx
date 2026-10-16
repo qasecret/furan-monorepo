@@ -29,6 +29,7 @@ import { ariaKeyShortcuts, formatKeys } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 import {
+  commandLabel,
   resolveCommands,
   resolveKeyMap,
   useRegisteredCommands,
@@ -461,7 +462,9 @@ function PaletteBody({
     <Item
       key={`${resolved.scope}:${resolved.command.id}`}
       value={`${prefix}:${resolved.scope}:${resolved.command.id}`}
-      label={resolved.command.label}
+      // As things stand ("Hide details" or "Show details"): the body mounts
+      // each time the palette opens.
+      label={commandLabel(resolved)}
       keys={keys}
       ariaKeys={ariaKeys}
       onSelect={() => onPick(resolved)}

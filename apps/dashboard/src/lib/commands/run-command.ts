@@ -3,7 +3,7 @@
 import { toast } from "sonner";
 
 import { lowerFirst } from "./keys";
-import type { ResolvedCommand } from "./registry";
+import { commandLabel, type ResolvedCommand } from "./registry";
 import type { Command, CommandCtx, RunMeta } from "./types";
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -14,10 +14,11 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
-function failed(command: Command): void {
+/** Reports a failed run, by the name the command ran under. */
+function failed(command: Command, name: string = command.label): void {
   // The id only: an error's message or stack may carry data.
   console.warn("command failed", command.id);
-  toast.error(`Couldn't ${lowerFirst(command.label)}`);
+  toast.error(`Couldn't ${lowerFirst(name)}`);
 }
 
 /**
@@ -27,7 +28,9 @@ function failed(command: Command): void {
  * `run` how it ran (`meta`: the key that matched; `{}` from the palette). A
  * command that throws or rejects (any thenable), or whose `enabled` throws,
  * is reported with `Couldn't ‹label›` and never rethrown, so the next key
- * press or palette choice works as before. Returns whether it ran.
+ * press or palette choice works as before. The label is the one it ran
+ * under (`commandLabel`, read before `run`, which may change what it names).
+ * Returns whether it ran.
  */
 export function runCommand(
   resolved: ResolvedCommand,
@@ -43,14 +46,15 @@ export function runCommand(
     failed(command);
     return false;
   }
+  const name = commandLabel(resolved, ctx);
   before?.();
   try {
     const result: unknown = command.run(ctx, meta);
     if (isThenable(result)) {
-      void Promise.resolve(result).catch(() => failed(command));
+      void Promise.resolve(result).catch(() => failed(command, name));
     }
   } catch {
-    failed(command);
+    failed(command, name);
   }
   return true;
 }

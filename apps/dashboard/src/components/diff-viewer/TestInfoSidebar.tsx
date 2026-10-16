@@ -2,20 +2,18 @@
 
 import { SEVERITY_LABEL } from "@furan/shared-types";
 import { History, Info, MessageSquare } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type { DiffRegion, Severity } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
-import { useViewerStore } from "./useViewerStore";
+import { useViewerPrefs, type RailTab } from "./viewer-prefs";
 
 import { aggregateSeverity } from "@/components/aggregate-severity-pill";
 import { cn } from "@/lib/cn";
 import { formatBatchDateTime } from "@/lib/format";
 import { SEVERITY_STYLE } from "@/lib/severity-style";
 import { trpc } from "@/lib/trpc";
-
-type Tab = "info" | "history" | "comments";
 
 export interface TestInfoSidebarProps {
   /** TEST DETAILS */
@@ -43,7 +41,7 @@ export interface TestInfoSidebarProps {
   runId: string;
 }
 
-const TABS: { id: Tab; label: string; Icon: typeof Info }[] = [
+const TABS: { id: RailTab; label: string; Icon: typeof Info }[] = [
   { id: "info", label: "Info", Icon: Info },
   { id: "history", label: "History", Icon: History },
   { id: "comments", label: "Comments", Icon: MessageSquare },
@@ -165,8 +163,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /**
- * Right-hand contextual sidebar for the diff viewer, modelled on the
- * reference TestStep panel: INFO / HISTORY / COMMENTS tabs.
+ * The diff viewer's step details, modelled on the reference TestStep panel:
+ * INFO / HISTORY / COMMENTS tabs. It is the content of the info rail
+ * (`InfoRail`), which holds the landmark, the width and the collapse.
  *
  * - INFO surfaces Test Details, Environment and Execution metadata plus the
  *   functional detected-changes list (RegionListPanel, which still drives the
@@ -174,8 +173,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * - HISTORY shows the accepted-baseline timeline for the checkpoint's variation.
  * - COMMENTS embeds the per-run comment editor.
  *
- * The COMMENTS tab is wired to the viewer store's `commentPanelOpen` flag so
- * the ApprovalBar's "Comment" button focuses this tab.
+ * The tab is the user's preference (`prefs.railTab`, spec §6.1): it holds
+ * from step to step, and choosing one stores it. A request for the comments
+ * (`c`, Mark as Bug) reaches it through the rail, which opens on Comments.
  */
 export function TestInfoSidebar({
   test,
@@ -196,25 +196,13 @@ export function TestInfoSidebar({
   currentBaselineKey,
   runId,
 }: TestInfoSidebarProps) {
-  const [tab, setTab] = useState<Tab>("info");
-  const commentRequested = useViewerStore((s) => s.commentPanelOpen);
-  const setCommentRequested = useViewerStore((s) => s.setCommentPanelOpen);
-
-  // ApprovalBar's "Comment" button flips commentPanelOpen → focus this tab.
-  useEffect(() => {
-    if (commentRequested) setTab("comments");
-  }, [commentRequested]);
-
-  const selectTab = (next: Tab) => {
-    setTab(next);
-    if (next !== "comments" && commentRequested) setCommentRequested(false);
+  const tab = useViewerPrefs((s) => s.prefs.railTab);
+  const selectTab = (next: RailTab) => {
+    if (next !== tab) useViewerPrefs.getState().set("railTab", next);
   };
 
   return (
-    <aside
-      className="flex w-80 shrink-0 flex-col border-l border-edge bg-canvas"
-      data-testid="test-info-sidebar"
-    >
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center border-b border-edge">
         {TABS.map(({ id, label, Icon }) => {
           const active = tab === id;
@@ -306,7 +294,7 @@ export function TestInfoSidebar({
 
         {tab === "comments" && <RunCommentPanel runId={runId} embedded />}
       </div>
-    </aside>
+    </div>
   );
 }
 
