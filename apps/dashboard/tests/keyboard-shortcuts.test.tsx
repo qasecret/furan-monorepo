@@ -669,22 +669,37 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     });
   }
 
-  // The review loop's done card (BatchDoneCard) is a dialog that owns the
-  // keys while focus is in it, all but ⌘Z (undoing the decision that brought
-  // it up brings the step back, R20) and Esc (back to the batch).
-  const DONE_CARD = `<div role="dialog" data-done-card="" data-passes-undo=""><button>Continue</button></div>`;
+  // The review loop's done card (BatchDoneCard) is a non-modal dialog that
+  // owns the viewer's keys while focus is in it. Esc is the viewer's way
+  // back to the batch; the app's own keys, the global commands' (`?`, `/`,
+  // ⌘K, `g …`, and ⌘Z, whose undo brings the step back, R20), pass it (R33).
+  const DONE_CARD = `<div role="dialog" data-done-card="" data-non-modal=""><button>Continue</button></div>`;
+  const GLOBAL_SINGLE_KEYS = ["?", "/"];
 
-  it.each(SINGLE_KEYS.filter((key) => key !== "Escape"))(
-    "%s is ignored while focus is in the done card",
-    (key) => {
-      armEveryShortcut();
-      mountHook();
-      focusInto(DONE_CARD, "button");
-      const before = snapshot();
-      press(key);
-      expectNothingFired(before);
-    },
-  );
+  it.each(
+    SINGLE_KEYS.filter(
+      (key) => key !== "Escape" && !GLOBAL_SINGLE_KEYS.includes(key),
+    ),
+  )("%s is ignored while focus is in the done card", (key) => {
+    armEveryShortcut();
+    mountHook();
+    focusInto(DONE_CARD, "button");
+    const before = snapshot();
+    press(key);
+    expectNothingFired(before);
+  });
+
+  it("? opens the sheet and / the palette while focus is in the done card", () => {
+    armEveryShortcut();
+    mountHook();
+    focusInto(DONE_CARD, "button");
+    const before = snapshot();
+    press("?");
+    expect(snapshot()).toEqual({ ...before, sheetOpen: true });
+    act(() => useShortcutsSheet.setState({ open: false }));
+    press("/");
+    expect(snapshot()).toEqual({ ...before, paletteOpen: true });
+  });
 
   it("Ctrl+Z still undoes while focus is in the done card", () => {
     armEveryShortcut();
@@ -698,7 +713,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     haveSomethingToUndo();
     mountHook();
     focusInto(
-      `<div role="dialog" data-passes-undo=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,
+      `<div role="dialog" data-non-modal=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,
       "[role=menuitem]",
     );
     pressCtrlZ();
@@ -1114,14 +1129,14 @@ describe("the viewer's keys are registry commands", () => {
     expect(onEscape).not.toHaveBeenCalled();
     cleanup();
 
-    // Nor in another dialog that lets ⌘Z through: the done card is the one.
+    // Nor in another dialog the global keys pass: the done card is the one.
     render(
       <Keyboard>
         <Page dialog="none" />
       </Keyboard>,
     );
     const host = document.createElement("div");
-    host.innerHTML = `<div role="dialog" data-passes-undo=""><button>Keep</button></div>`;
+    host.innerHTML = `<div role="dialog" data-non-modal=""><button>Keep</button></div>`;
     document.body.appendChild(host);
     const keep = host.querySelector("button")!;
     act(() => keep.focus());
@@ -1148,6 +1163,62 @@ describe("the viewer's keys are registry commands", () => {
     pressOnFocus("Escape");
     expect(onLeave).toHaveBeenCalledOnce();
     expect(onEscape).toHaveBeenCalledOnce();
+  });
+
+  it("the done card passes ⌘K, ?, g i and ⌘Z, and keeps the viewer's keys (R33)", () => {
+    haveSomethingToUndo();
+    const watched = {
+      onApprove: vi.fn(),
+      onReject: vi.fn(),
+      onNextPending: vi.fn(),
+      onNextStep: vi.fn(),
+      onEscape: vi.fn(),
+    };
+    function Page() {
+      useDiffViewerShortcuts({ viewports: [], ...watched });
+      return (
+        <BatchDoneCard
+          variant="batch"
+          nextBatch={null}
+          batchUnfiltered={0}
+          onContinue={vi.fn()}
+          onClearFilter={vi.fn()}
+          onLeave={vi.fn()}
+          backHref="/back"
+          batchesHref="/inbox"
+        />
+      );
+    }
+    render(
+      <Keyboard role="editor">
+        <Page />
+      </Keyboard>,
+    );
+    // The card takes the focus when it appears, as the reviewer finds it.
+    const card = screen.getByRole("dialog", { name: "Batch done" });
+    expect(card.contains(document.activeElement)).toBe(true);
+
+    press("k", { ctrlKey: true });
+    expect(usePaletteStore.getState().open).toBe(true);
+    act(() => usePaletteStore.setState({ open: false }));
+    press("?");
+    expect(useShortcutsSheet.getState().open).toBe(true);
+    act(() => useShortcutsSheet.setState({ open: false }));
+    press("g");
+    press("i");
+    expect(pushMock).toHaveBeenCalledWith("/inbox");
+    press("z", { ctrlKey: true });
+    expect(undoMock).toHaveBeenCalledOnce();
+
+    // The viewer's own keys stay the card's.
+    for (const key of ["a", "r", "j", "ArrowRight"]) {
+      expect(press(key).defaultPrevented, key).toBe(false);
+    }
+    expect(watched.onApprove).not.toHaveBeenCalled();
+    expect(watched.onReject).not.toHaveBeenCalled();
+    expect(watched.onNextPending).not.toHaveBeenCalled();
+    expect(watched.onNextStep).not.toHaveBeenCalled();
+    expect(pushMock).toHaveBeenCalledTimes(1);
   });
 
   it("⌘C copies text normally outside the region editor", () => {

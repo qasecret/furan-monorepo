@@ -106,9 +106,16 @@ describe("command keys", () => {
       focusWithin: "[data-viewer]",
       repeat: true,
       allowInDialog: "[data-done-card]",
-      passesUndo: true,
     };
     expect(bindingOptions(escape, "Escape")).toEqual(escape);
+    expect(bindingOptions({ ...escape, scope: "viewer" }, "Escape")).toEqual(
+      escape,
+    );
+    // A global command's key passes a non-modal dialog (R33).
+    expect(bindingOptions({ ...escape, scope: "global" }, "Escape")).toEqual({
+      ...escape,
+      passesNonModal: true,
+    });
     expect(bindingOptions({}, "a")).toEqual({});
 
     expect(formatKeys(["r", "x"], "mac")).toEqual([["R"], ["X"]]);

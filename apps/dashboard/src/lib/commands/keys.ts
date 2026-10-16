@@ -14,7 +14,11 @@ export interface BindingOptions {
   repeat?: boolean;
   allowInText?: boolean;
   allowInDialog?: string;
-  passesUndo?: boolean;
+  /**
+   * The binding is a global command's: it passes a non-modal dialog
+   * (`[data-non-modal]`, guard rule 4, R33). Set from the command's scope.
+   */
+  passesNonModal?: boolean;
 }
 
 /** The key string of a binding: "a" for both "a" and `{ key: "a" }`. */
@@ -24,12 +28,15 @@ export function bindingKey(b: KeyBinding): string {
 
 /**
  * The options for one binding of `cmd`: a per-key `focusWithin` / `repeat` /
- * `allowInText` overrides the command's own; the rest come from the command.
+ * `allowInText` overrides the command's own; the rest come from the command,
+ * and a global command's keys pass a non-modal dialog (`passesNonModal`).
  */
 export function bindingOptions(
-  cmd: Pick<
-    Command,
-    "focusWithin" | "repeat" | "allowInText" | "allowInDialog" | "passesUndo"
+  cmd: Partial<
+    Pick<
+      Command,
+      "focusWithin" | "repeat" | "allowInText" | "allowInDialog" | "scope"
+    >
   >,
   b: KeyBinding,
 ): BindingOptions {
@@ -38,14 +45,14 @@ export function bindingOptions(
   const focusWithin = own?.focusWithin ?? cmd.focusWithin;
   const repeat = own?.repeat ?? cmd.repeat;
   const allowInText = own?.allowInText ?? cmd.allowInText;
-  const { allowInDialog, passesUndo } = cmd;
+  const { allowInDialog } = cmd;
   // Only the options that are set, so a spread never adds `undefined`s.
   return {
     ...(focusWithin !== undefined ? { focusWithin } : {}),
     ...(repeat !== undefined ? { repeat } : {}),
     ...(allowInText !== undefined ? { allowInText } : {}),
     ...(allowInDialog !== undefined ? { allowInDialog } : {}),
-    ...(passesUndo !== undefined ? { passesUndo } : {}),
+    ...(cmd.scope === "global" ? { passesNonModal: true } : {}),
   };
 }
 

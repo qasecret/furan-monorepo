@@ -32,7 +32,11 @@ function openPalette(): void {
   usePaletteStore.getState().setOpen(true);
 }
 
-/** Spec §4.1: the commands of every protected page. Static, as registered. */
+/**
+ * Spec §4.1: the commands of every protected page. Static, as registered.
+ * Being `global`, their keys pass a non-modal dialog, the done card, while
+ * the page's own keys stay its (guard rule 4, R33).
+ */
 const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
   {
     id: "palette.open",
@@ -43,8 +47,8 @@ const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
     // Open, it closes: its own search box has focus there.
     run: () => usePaletteStore.getState().toggle(),
     allowInDialog: "[data-command-palette]",
-    // From a page's text field too (the Batches search); never over another
-    // dialog or menu.
+    // From a page's text field too (the Batches search); never over a modal
+    // dialog or a menu (a non-modal one, the done card, it passes: R33).
     allowInText: true,
   },
   {
@@ -78,9 +82,8 @@ const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
     // it then, and the `?` sheet shows it as not available otherwise.
     enabled: () => useUndoStore.getState().stack.length > 0,
     // The newest action: no id. Not `allowInText`: in a field, ⌘Z is the
-    // field's own undo.
+    // field's own undo. Global, so it passes the done card (R20, R33).
     run: ({ undo }) => undo(),
-    passesUndo: true,
   },
   {
     id: "go.batches",

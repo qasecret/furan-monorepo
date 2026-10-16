@@ -494,33 +494,78 @@ describe("keyIsOwnedElsewhere", () => {
     expect(owned("ArrowDown")).toBe(false);
   });
 
-  it("passesUndo lets ⌘Z through a [data-passes-undo] dialog", () => {
+  it("a global binding passes a [data-non-modal] dialog; a page's key stays owned (R33)", () => {
     page(
-      `<div role="dialog" data-passes-undo><button id="card">Continue</button></div>` +
+      `<div role="dialog" data-non-modal><button id="card">Continue</button></div>` +
         `<div role="dialog"><button id="plain">x</button></div>`,
     );
-    const undo: Opts = { passesUndo: true };
+    const global: Opts = { passesNonModal: true };
+    const palette: Opts = { passesNonModal: true, allowInText: true };
 
+    // The done card: ⌘K, ?, g …, ⌘Z and / are the app's, not the card's.
     focus("#card");
-    expect(owned("$mod+z", undo)).toBe(false);
-    // Any other command stays out of that dialog.
-    expect(owned("$mod+z")).toBe(true);
-    expect(owned("a")).toBe(true);
+    for (const key of ["$mod+k", "?", "/", "g i", "g a", "g p", "$mod+z"]) {
+      expect(owned(key, global), key).toBe(false);
+    }
+    expect(owned("$mod+k", palette)).toBe(false);
+    // Every page, list and decision key stays the card's.
+    for (const key of [
+      "a",
+      "r",
+      "j",
+      "k",
+      "ArrowRight",
+      "ArrowLeft",
+      "Enter",
+      "Escape",
+      "?",
+      "g i",
+      "$mod+z",
+    ]) {
+      expect(owned(key), key).toBe(true);
+    }
+    // Enter on the card's own buttons is native activation, global or not.
+    expect(owned("Enter", global)).toBe(true);
+    // The single-key switch still turns the character keys off in it.
+    expect(owned("?", global, OFF)).toBe(true);
+    expect(owned("g i", global, OFF)).toBe(true);
+    expect(owned("$mod+k", global, OFF)).toBe(false);
 
-    // A dialog without the attribute keeps ⌘Z too.
+    // A dialog without the attribute (a modal) keeps them all.
     focus("#plain");
-    expect(owned("$mod+z", undo)).toBe(true);
+    for (const key of ["$mod+k", "?", "g i", "$mod+z"]) {
+      expect(owned(key, global), key).toBe(true);
+    }
+    expect(owned("$mod+k", palette)).toBe(true);
 
-    // Typing inside the dialog is still typing: native undo wins.
-    page(`<div role="dialog" data-passes-undo><input id="field" /></div>`);
+    // Typing inside the card is still typing: native undo wins, `?` is
+    // typed; only a binding allowed in text (⌘K) gets past the field.
+    page(`<div role="dialog" data-non-modal><input id="field" /></div>`);
     focus("#field");
-    expect(owned("$mod+z", undo)).toBe(true);
+    expect(owned("$mod+z", global)).toBe(true);
+    expect(owned("?", global)).toBe(true);
+    expect(owned("g i", global)).toBe(true);
+    expect(owned("$mod+k", palette)).toBe(false);
 
     // A menu opened inside it is its own owner.
     page(
-      `<div role="dialog" data-passes-undo><div role="menu"><div id="item" tabindex="0">x</div></div></div>`,
+      `<div role="dialog" data-non-modal><div role="menu"><div id="item" tabindex="0">x</div></div></div>`,
     );
     focus("#item");
-    expect(owned("$mod+z", undo)).toBe(true);
+    expect(owned("$mod+z", global)).toBe(true);
+    expect(owned("$mod+k", palette)).toBe(true);
+    expect(owned("?", global)).toBe(true);
+  });
+
+  it("only a global command's bindings pass a non-modal dialog", () => {
+    for (const scope of ["batches", "batch", "viewer"] as const) {
+      expect(bindingOptions({ scope }, "a"), scope).toEqual({});
+    }
+    expect(bindingOptions({ scope: "global" }, "?")).toEqual({
+      passesNonModal: true,
+    });
+    expect(
+      bindingOptions({ scope: "global", allowInText: true }, { key: "$mod+k" }),
+    ).toEqual({ passesNonModal: true, allowInText: true });
   });
 });
