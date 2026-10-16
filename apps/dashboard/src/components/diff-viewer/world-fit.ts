@@ -1,20 +1,6 @@
 import type { Application, Container } from "pixi.js";
 
-import { ZOOM_MAX, ZOOM_MIN } from "./useViewerStore";
-
-/**
- * The minimum scale we'll fit to so that "fit" never makes a screenshot
- * unreadably tiny. If the image is so much bigger than the canvas that
- * uniform-fit would produce a sub-readable scale, we clamp here and let
- * the user pan to inspect.
- */
-export const MIN_FIT_SCALE = 0.05;
-
-/**
- * Maximum upscale factor — images smaller than the canvas are scaled up
- * to fill it, but capped here to avoid blurry pixel-art blowups.
- */
-export const MAX_UPSCALE = 2;
+import { clampZoom, MAX_UPSCALE, MIN_FIT_SCALE } from "./viewer-geometry";
 
 /**
  * Compute the uniform scale that fits an image of `imgW × imgH` into a
@@ -93,7 +79,7 @@ export function computeFocusView(
     (screenW * targetFill) / w,
     (screenH * targetFill) / h,
   );
-  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, desiredScale / fitScale));
+  const zoom = clampZoom(desiredScale / fitScale);
   const scale = fitScale * zoom;
   const cx = bbox.x + bbox.width / 2;
   const cy = bbox.y + bbox.height / 2;

@@ -2,7 +2,14 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
@@ -22,7 +29,10 @@ import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
 import { useElementMap } from "./useElementMap";
+import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { useViewerPrefs } from "./viewer-prefs";
 import { ViewerCanvas } from "./ViewerCanvas";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
@@ -73,6 +83,11 @@ interface Props {
    * Reject, Mark as Bug, group approval, undo or override.
    */
   canReview: boolean;
+  /**
+   * Whose viewer preferences to read and store (spec §6.1), from the
+   * server's session. Null: the defaults, held in memory for the visit.
+   */
+  userId: string | null;
 }
 
 /** A viewer opened without a review context: the default chip, no facets. */
@@ -182,7 +197,13 @@ export function DiffViewer({
   initialCheckpointId,
   reviewContext,
   canReview,
+  userId,
 }: Props) {
+  // The user's preferences, read before anything here renders, so the first
+  // paint is already their mode and the canvas never mounts in a mode it then
+  // leaves. `hydrate` reads once per user (the viewer remounts on every step
+  // and the store outlives it), so from the second render on it does nothing.
+  if (userId !== null) useViewerPrefs.getState().hydrate(userId);
   const router = useRouter();
   const utils = trpc.useUtils();
   const context = reviewContext ?? NO_REVIEW_CONTEXT;
@@ -561,6 +582,18 @@ export function DiffViewer({
       (r) => !r.screenshotId || r.screenshotId === selectedCheckpointId,
     );
   }, [data?.diffRegions, selectedCheckpointId]);
+
+  // Each step, and each of its viewports, opens at fit with nothing selected
+  // (spec §6.2). The view-state store outlives the viewer's remount, so the
+  // reset is explicit. Reduced motion is read when the step opens: the
+  // flicker starts paused under it.
+  const resetView = useViewState((s) => s.resetView);
+  const reducedMotion = useReducedMotion();
+  const reducedMotionRef = useRef(reducedMotion);
+  reducedMotionRef.current = reducedMotion;
+  useEffect(() => {
+    resetView({ reducedMotion: reducedMotionRef.current });
+  }, [activeCheckpointId, activeViewport, resetView]);
 
   const stepper = useDiffStepper(regions);
   // ← / →'s keys, for the step buttons' hints (spec §5.4).

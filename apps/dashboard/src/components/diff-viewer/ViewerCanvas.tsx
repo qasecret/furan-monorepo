@@ -39,6 +39,9 @@ import {
   type DraftIgnoreArea,
   type IgnoreArea,
 } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import type { Size } from "./viewer-geometry";
+import { drawnMode, useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView, fitWorldToCanvas } from "./world-fit";
 
 interface Props {
@@ -104,6 +107,13 @@ type RegionDrag =
 /** Fallback dimensions used before the host element has been laid out. */
 const FALLBACK_W = 800;
 const FALLBACK_H = 600;
+
+/** The size of the image a pane fits; zero before it has loaded. */
+function spriteSize(sprite: Sprite | null): Size {
+  return sprite
+    ? { w: sprite.texture.width, h: sprite.texture.height }
+    : { w: 0, h: 0 };
+}
 
 function hostSize(el: HTMLElement | null): { w: number; h: number } {
   if (!el) return { w: FALLBACK_W, h: FALLBACK_H };
@@ -176,22 +186,23 @@ export function ViewerCanvas({
   // destroy() to unregister the pulse ticker callback.
   const shadingLayerRef = useRef<ShadingLayerResult | null>(null);
 
-  const mode = useViewerStore((s) => s.mode);
-  const opacity = useViewerStore((s) => s.opacity);
+  const mode = useViewerPrefs((s) => drawnMode(s.prefs.mode));
+  const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const opacityRef = useRef(opacity);
   opacityRef.current = opacity;
-  const highlightActive = useViewerStore((s) => s.highlightActive);
+  const highlight = useViewerPrefs((s) => s.prefs.highlight);
   // "Hide displacement" also drops position-only (layout) regions from the
   // canvas shading — not just the diff-stepper — so toggling it is visible.
-  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
+  const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
   const reducedMotion = useReducedMotion();
   // Zoom + pan state, applied uniformly to every pane via fitWorldToCanvas.
-  const zoom = useViewerStore((s) => s.zoom);
-  const panX = useViewerStore((s) => s.panX);
-  const panY = useViewerStore((s) => s.panY);
-  const focusBbox = useViewerStore((s) => s.focusBbox);
-  const setView = useViewerStore((s) => s.setView);
-  const setFocusBbox = useViewerStore((s) => s.setFocusBbox);
+  const zoom = useViewState((s) => s.zoom);
+  const panX = useViewState((s) => s.panX);
+  const panY = useViewState((s) => s.panY);
+  const focusBbox = useViewState((s) => s.focusBbox);
+  const setView = useViewState((s) => s.setView);
+  const setFocusBbox = useViewState((s) => s.setFocusBbox);
+  const resetZoom = useViewState((s) => s.resetZoom);
 
   // Ignore-region store slices.
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
@@ -204,8 +215,8 @@ export function ViewerCanvas({
   const paddingOverrides = useViewerStore((s) => s.paddingOverrides);
   const kindOverrides = useViewerStore((s) => s.kindOverrides);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
-  const selectedRegionId = useViewerStore((s) => s.selectedRegionId);
-  const setSelected = useViewerStore((s) => s.setSelected);
+  const selectedRegionId = useViewState((s) => s.selectedRegionId);
+  const setSelected = useViewState((s) => s.setSelected);
   const viewport = useViewerStore((s) => s.viewport);
   const addDraftRegion = useViewerStore((s) => s.addDraftRegion);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
@@ -222,6 +233,16 @@ export function ViewerCanvas({
   // app refs are populated. The shading effect listens to this value so it
   // fires once the canvas is ready without refs triggering re-runs themselves.
   const [canvasEpoch, setCanvasEpoch] = useState(0);
+
+  // Each mode lays its canvases out its own way (two half-width panes, or one
+  // stage), so a zoom and pan carried into another mode would land somewhere
+  // arbitrary: a mode change starts at fit.
+  const shownModeRef = useRef(mode);
+  useEffect(() => {
+    if (shownModeRef.current === mode) return;
+    shownModeRef.current = mode;
+    resetZoom();
+  }, [mode, resetZoom]);
 
   // Side-by-side: two pixi Applications, one per pane.
   // ONLY re-runs when the mode or image URLs change — NOT on overlay changes.
@@ -297,7 +318,7 @@ export function ViewerCanvas({
       // Read zoom + pan from the store at mount time so the initial fit
       // already reflects any persisted view (e.g. user hit "0" mid-load).
       const view = (() => {
-        const s = useViewerStore.getState();
+        const s = useViewState.getState();
         return { zoom: s.zoom, panX: s.panX, panY: s.panY };
       })();
       if (baselineSprite) {
@@ -334,10 +355,15 @@ export function ViewerCanvas({
       // middle-mouse (or plain primary when not editing) pans. Detach
       // tokens kept on the effect closure so cleanup is symmetric.
       if (baselineRef.current) {
-        detachBaselineCtrl = attachCanvasViewControl(baselineRef.current);
+        detachBaselineCtrl = attachCanvasViewControl(baselineRef.current, () =>
+          spriteSize(baselineSpriteRef.current),
+        );
       }
       if (candidateRef.current) {
-        detachCandidateCtrl = attachCanvasViewControl(candidateRef.current);
+        detachCandidateCtrl = attachCanvasViewControl(
+          candidateRef.current,
+          () => spriteSize(candidateSpriteRef.current),
+        );
       }
 
       // Refit on resize so the screenshot follows the viewport without
@@ -346,7 +372,7 @@ export function ViewerCanvas({
       // Helper so the RO callbacks pick up the current zoom/pan rather
       // than the value captured at mount time.
       const currentView = () => {
-        const s = useViewerStore.getState();
+        const s = useViewState.getState();
         return { zoom: s.zoom, panX: s.panX, panY: s.panY };
       };
       if (baselineRef.current) {
@@ -451,7 +477,7 @@ export function ViewerCanvas({
       shadingRegions,
       selectedRegionId,
       {
-        highlight: highlightActive,
+        highlight,
         reducedMotion,
         ticker: app.ticker,
       },
@@ -468,7 +494,7 @@ export function ViewerCanvas({
     mode,
     regions,
     selectedRegionId,
-    highlightActive,
+    highlight,
     hideDisplacement,
     reducedMotion,
   ]);
@@ -509,7 +535,7 @@ export function ViewerCanvas({
           candidateUrl
             ? mountImageLayer(world, candidateUrl, ac.signal)
             : Promise.resolve(null),
-          mode === "difference" && diffOverlayUrl
+          mode === "diff" && diffOverlayUrl
             ? mountImageLayer(world, diffOverlayUrl, ac.signal)
             : Promise.resolve(null),
         ]);
@@ -529,7 +555,7 @@ export function ViewerCanvas({
       // dimensions for any properly captured run.
       const fitSource = candidateSprite ?? baselineSprite ?? overlaySprite;
       const initialView = (() => {
-        const s = useViewerStore.getState();
+        const s = useViewState.getState();
         return { zoom: s.zoom, panX: s.panX, panY: s.panY };
       })();
       if (fitSource) {
@@ -542,7 +568,7 @@ export function ViewerCanvas({
         );
       }
 
-      if (mode === "difference" && regions.length > 0) {
+      if (mode === "diff" && regions.length > 0) {
         mountDiffOverlayLayer(world, regions, selectedRegionId);
       }
 
@@ -554,11 +580,13 @@ export function ViewerCanvas({
       singleWorldRef.current = world;
       singleAppRef.current = app;
       if (stageRef.current) {
-        detachCtrl = attachCanvasViewControl(stageRef.current);
+        detachCtrl = attachCanvasViewControl(stageRef.current, () =>
+          spriteSize(candidateSpriteRef.current ?? baselineSpriteRef.current),
+        );
       }
 
       const currentView = () => {
-        const s = useViewerStore.getState();
+        const s = useViewState.getState();
         return { zoom: s.zoom, panX: s.panX, panY: s.panY };
       };
       if (stageRef.current) {
@@ -772,13 +800,13 @@ export function ViewerCanvas({
   const pickModeActive =
     overlayActive && regionInputMode === "pick" && !!elementMap;
 
-  // Click on the difference canvas (not the ignore-region overlay) to
-  // select / deselect a diff region. Only active in difference mode;
+  // Click on the diff canvas (not the ignore-region overlay) to
+  // select / deselect a diff region. Only active in diff mode;
   // other modes don't show the overlay so clicking there is a no-op for
   // region selection. Gated on primary button (button === 0) to avoid
   // clobbering middle-mouse pan and right-click context menu.
   const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (mode !== "difference") return;
+    if (mode !== "diff") return;
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;

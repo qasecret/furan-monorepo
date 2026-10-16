@@ -2,14 +2,17 @@
 
 import type { Application, Container, Sprite } from "pixi.js";
 
-import { ZOOM_STEP, useViewerStore } from "./useViewerStore";
+import { useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { ZOOM_STEP, type Size } from "./viewer-geometry";
 import { fitWorldToCanvas, type ViewTransform } from "./world-fit";
 
 /**
  * Attach wheel-zoom + middle-mouse-pan listeners to a Pixi canvas. Returns
- * a teardown function. Pulls actions from the zustand store directly
+ * a teardown function. Pulls actions from the view-state store directly
  * (instead of accepting them as args) so the same wiring works for any
- * canvas in the viewer without needing per-pane prop drilling.
+ * canvas in the viewer without needing per-pane prop drilling. `world`
+ * reads the size of the image the pane fits, at the moment of the wheel.
  *
  * Wheel zoom is "trackpad/mouse-pinch" style — no modifier required, since
  * the canvas is a dedicated review surface and hijacking page scroll over
@@ -22,16 +25,19 @@ import { fitWorldToCanvas, type ViewTransform } from "./world-fit";
  * during edit). Space-bar pan would require a global keydown tracker;
  * deferred — middle-mouse already covers the "pan while editing" case.
  */
-export function attachCanvasViewControl(canvas: HTMLElement): () => void {
+export function attachCanvasViewControl(
+  canvas: HTMLElement,
+  world: () => Size,
+): () => void {
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const canvasSize = { width: rect.width, height: rect.height };
+    const viewport = { w: rect.width, h: rect.height };
     // deltaY > 0 = wheel toward user = zoom out; matches Google Maps,
     // Figma, every map-style viewer.
     const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-    useViewerStore.getState().zoomAt(factor, anchor, canvasSize);
+    useViewState.getState().zoomAt(factor, anchor, world(), viewport);
   };
 
   let panning = false;
@@ -64,7 +70,7 @@ export function attachCanvasViewControl(canvas: HTMLElement): () => void {
     const dy = e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
-    useViewerStore.getState().panBy(dx, dy);
+    useViewState.getState().panBy(dx, dy);
   };
 
   const onPointerUp = (e: PointerEvent) => {

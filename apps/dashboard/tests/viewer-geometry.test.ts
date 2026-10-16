@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   canvasToWorld,
+  clampZoom,
   fitScale,
   transformFor,
   worldFor,
@@ -172,6 +173,29 @@ describe("zoomAbout", () => {
     const after = worldToCanvas(transformFor(world, viewport, next), anchor);
     expect(after.x).toBeCloseTo(point.x, 6);
     expect(after.y).toBeCloseTo(point.y, 6);
+  });
+
+  test("a factor that is not a number gives a finite view, at fit zoom", () => {
+    for (const factor of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const next = zoomAbout(start, factor, { x: 1, y: 2 }, world, viewport);
+      expect(next.zoom, String(factor)).toBe(1);
+      expect(Number.isFinite(next.panX), String(factor)).toBe(true);
+      expect(Number.isFinite(next.panY), String(factor)).toBe(true);
+    }
+  });
+});
+
+describe("clampZoom", () => {
+  test("clamps to 0.25–8", () => {
+    expect(clampZoom(0.1)).toBe(0.25);
+    expect(clampZoom(2)).toBe(2);
+    expect(clampZoom(20)).toBe(8);
+  });
+
+  test("a zoom that is not a number is fit (1)", () => {
+    expect(clampZoom(Number.NaN)).toBe(1);
+    expect(clampZoom(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(clampZoom(Number.NEGATIVE_INFINITY)).toBe(1);
   });
 });
 

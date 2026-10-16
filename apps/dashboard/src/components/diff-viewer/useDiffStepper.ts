@@ -2,7 +2,8 @@ import { useMemo } from "react";
 
 import { orderDiffRegions } from "./diff-order";
 import type { DiffRegion } from "./layers/regionTypes";
-import { useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { useViewerPrefs } from "./viewer-prefs";
 
 export interface DiffStepper {
   count: number;
@@ -13,8 +14,8 @@ export interface DiffStepper {
 }
 
 export function useDiffStepper(regions: DiffRegion[]): DiffStepper {
-  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
-  const selectedRegionId = useViewerStore((s) => s.selectedRegionId);
+  const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
+  const selectedRegionId = useViewState((s) => s.selectedRegionId);
   const ordered = useMemo(
     () => orderDiffRegions(regions, { hideDisplacement }),
     [regions, hideDisplacement],
@@ -23,7 +24,7 @@ export function useDiffStepper(regions: DiffRegion[]): DiffStepper {
 
   const go = (dir: 1 | -1) => {
     if (ordered.length === 0) return;
-    const store = useViewerStore.getState();
+    const store = useViewState.getState();
     const currentIdx = ordered.findIndex(
       (r) => r.id === store.selectedRegionId,
     );

@@ -11,8 +11,27 @@
  * Pure: no pixi, no DOM, no state.
  */
 
-import { ZOOM_MAX, ZOOM_MIN } from "./useViewerStore";
-import { MAX_UPSCALE, MIN_FIT_SCALE } from "./world-fit";
+/**
+ * Zoom is relative to fit: 1 is fit, from 0.25 (repeated wheel-outs stop
+ * before a screenshot is unreadably small) to 8 (enough to read sub-pixel
+ * anti-aliasing), in steps of 1.25.
+ */
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 8;
+export const ZOOM_STEP = 1.25;
+
+/**
+ * Fit never shrinks below 0.05, so a huge screenshot stays readable (the
+ * reviewer pans), and never enlarges past 2×, so a small one does not blur.
+ */
+export const MIN_FIT_SCALE = 0.05;
+export const MAX_UPSCALE = 2;
+
+/** A zoom within the viewer's range; one that is not a number is fit (1). */
+export function clampZoom(z: number): number {
+  if (!Number.isFinite(z)) return 1;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+}
 
 export interface Size {
   w: number;
@@ -129,8 +148,9 @@ export function transformFor(
 
 /**
  * Zoom by `factor` about `point` (canvas px): the world point under `point`
- * stays under it. The resulting zoom is clamped to the viewer's zoom range;
- * when the clamp bites, the anchor still holds at the clamped zoom.
+ * stays under it. The resulting zoom is clamped to the viewer's zoom range
+ * (`clampZoom`: a factor that is not a number gives fit); when the clamp
+ * bites, the anchor still holds at the clamped zoom.
  */
 export function zoomAbout(
   view: View,
@@ -141,7 +161,7 @@ export function zoomAbout(
 ): View {
   const before = transformFor(world, viewport, view);
   const anchor = canvasToWorld(before, point);
-  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoom * factor));
+  const zoom = clampZoom(view.zoom * factor);
   const scale = fitScale(world, viewport) * zoom;
   // Where the world's top-left must land so `anchor` maps back onto `point`,
   // minus where it lands with no pan.

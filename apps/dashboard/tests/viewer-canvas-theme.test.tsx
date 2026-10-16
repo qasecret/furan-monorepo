@@ -42,7 +42,10 @@ vi.mock("pixi.js", () => ({
   Graphics: class {},
 }));
 
-import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import {
+  DEFAULT_VIEWER_PREFS,
+  useViewerPrefs,
+} from "../src/components/diff-viewer/viewer-prefs";
 import { ViewerCanvas } from "../src/components/diff-viewer/ViewerCanvas";
 import { ThemeProvider } from "../src/components/ui/theme-provider";
 
@@ -84,7 +87,7 @@ afterEach(() => {
   styleEl.remove();
   localStorage.clear();
   document.documentElement.className = "";
-  useViewerStore.setState({ mode: "side-by-side" });
+  useViewerPrefs.setState({ prefs: DEFAULT_VIEWER_PREFS });
 });
 
 function renderCanvas() {
@@ -130,7 +133,9 @@ describe("ViewerCanvas follows the theme", () => {
   });
 
   test("single-stage mode: the app repaints when the theme flips", async () => {
-    useViewerStore.setState({ mode: "overlay" });
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "overlay" },
+    });
     localStorage.setItem("furan-theme", "light");
     renderCanvas();
     await waitFor(() => expect(apps).toHaveLength(1));

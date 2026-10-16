@@ -92,9 +92,6 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     isPending = false;
     sessionStorage.clear();
     useViewerStore.setState({
-      mode: "side-by-side",
-      opacity: 0.5,
-      selectedRegionId: null,
       viewport: VP,
       commentPanelOpen: false,
       ignoreEditMode: "off",

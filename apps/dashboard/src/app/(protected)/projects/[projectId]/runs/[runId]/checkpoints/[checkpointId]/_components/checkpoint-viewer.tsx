@@ -54,12 +54,14 @@ interface Props {
   reviewContext: ReviewContext;
   /** The server's answer for the request's role (R14). */
   canReview: boolean;
+  /** The user whose viewer preferences apply; null with no user. */
+  userId: string | null;
 }
 
 /**
  * The checkpoint page's client part: the viewer (code-split, client-only)
  * and its tour. The page hands it what the server knows: the URL's step and
- * review context, and whether this viewer may decide.
+ * review context, whether this viewer may decide, and who they are.
  */
 export function CheckpointViewer({
   projectId,
@@ -67,6 +69,7 @@ export function CheckpointViewer({
   checkpointId,
   reviewContext,
   canReview,
+  userId,
 }: Props) {
   return (
     <>
@@ -78,6 +81,7 @@ export function CheckpointViewer({
           initialCheckpointId={checkpointId}
           reviewContext={reviewContext}
           canReview={canReview}
+          userId={userId}
         />
       </PageContainer>
     </>

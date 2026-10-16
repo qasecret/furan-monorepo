@@ -63,9 +63,6 @@ async function openRegionSettings(): Promise<void> {
 describe("RegionSettingsPopover", () => {
   beforeEach(() => {
     useViewerStore.setState({
-      mode: "side-by-side",
-      opacity: 0.5,
-      selectedRegionId: null,
       viewport: VP,
       commentPanelOpen: false,
       ignoreEditMode: "off",

@@ -3,7 +3,11 @@ import { create } from "zustand";
 import type { Bbox } from "./region-resize";
 import type { ElementBbox } from "./useElementMap";
 
-export type ViewerMode = "side-by-side" | "overlay" | "difference";
+/**
+ * The ignore-region editor's state, plus the step's viewport and the comment
+ * panel. The comparison preferences live in `viewer-prefs.ts` and the
+ * per-step view (zoom, pan, selection) in `view-state.ts`.
+ */
 
 /**
  * Region match modes. See
@@ -11,11 +15,7 @@ export type ViewerMode = "side-by-side" | "overlay" | "difference";
  * routing per mode + the v1-vs-deferred breakdown.
  */
 export type RegionKind =
-  | "ignore"
-  | "dynamic-text"
-  | "strict"
-  | "layout"
-  | "content";
+  "ignore" | "dynamic-text" | "strict" | "layout" | "content";
 
 /**
  * ADR-038 region kind tab — the kind filter shown above RegionListPanel.
@@ -24,11 +24,7 @@ export type RegionKind =
  * A11y) and drives which tab is active in `RegionKindTabs`.
  */
 export type RegionKindTab =
-  | "ignore"
-  | "layout"
-  | "floating"
-  | "content"
-  | "accessibility";
+  "ignore" | "layout" | "floating" | "content" | "accessibility";
 
 /** ADR-031: a single ignore region in image-pixel space. */
 export interface IgnoreArea {
@@ -106,20 +102,7 @@ export type IgnoreEditMode = "off" | "run" | "variation";
  */
 export type RegionInputMode = "drag" | "pick";
 
-/**
- * Min/max zoom factor relative to fit. 1.0 = fit-to-canvas (the default
- * computed by `world-fit.ts`). 4.0 = 4x of fit, which on a typical viewport
- * lets you read sub-pixel anti-aliasing. 0.25 prevents users from
- * accidentally shrinking past the readable threshold via repeated wheel-out.
- */
-export const ZOOM_MIN = 0.25;
-export const ZOOM_MAX = 8;
-export const ZOOM_STEP = 1.25;
-
 interface State {
-  mode: ViewerMode;
-  opacity: number;
-  selectedRegionId: string | null;
   viewport: string;
   commentPanelOpen: boolean;
   /**
@@ -128,28 +111,6 @@ interface State {
    * clears it) so the reviewer lands on a pre-filled note.
    */
   commentPrefill: string | null;
-  /**
-   * Zoom relative to fit-to-canvas. 1 = fit. Applied uniformly to both
-   * panes in side-by-side so reviewers compare like for like.
-   */
-  zoom: number;
-  /**
-   * Pan offset in canvas-CSS pixels, applied on top of the fit-centered
-   * position. (0,0) = centered like fit. Reset whenever zoom returns to 1
-   * via `resetZoom` so a "reset" feels like a fresh fit.
-   */
-  panX: number;
-  panY: number;
-  /** Set by the diff stepper to request the canvas frame a region; the
-   * canvas applies it via computeFocusView then clears it back to null. */
-  focusBbox: { x: number; y: number; width: number; height: number } | null;
-  hideDisplacement: boolean;
-  highlightActive: boolean;
-  setFocusBbox: (b: State["focusBbox"]) => void;
-  setHideDisplacement: (v: boolean) => void;
-  setHighlightActive: (v: boolean) => void;
-  /** Atomic zoom+pan set (stepper focus). */
-  setView: (v: { zoom: number; panX: number; panY: number }) => void;
 
   // ADR-031 ignore-region editor state.
   ignoreEditMode: IgnoreEditMode;
@@ -208,29 +169,9 @@ interface State {
   isTemporaryMode: boolean;
   setTemporaryMode: (v: boolean) => void;
 
-  setMode: (mode: ViewerMode) => void;
-  setOpacity: (opacity: number) => void;
-  setSelected: (id: string | null) => void;
   setViewport: (viewport: string) => void;
   setCommentPanelOpen: (open: boolean) => void;
   setCommentPrefill: (value: string | null) => void;
-  /** Multiplicative zoom (e.g. ZOOM_STEP for +1 step). Clamped to [MIN,MAX]. */
-  zoomBy: (factor: number) => void;
-  /**
-   * Zoom centered on a canvas-CSS-space anchor point so the world point under
-   * the anchor stays put. Used by the mouse-wheel + double-click handlers.
-   */
-  zoomAt: (
-    factor: number,
-    anchor: { x: number; y: number },
-    canvasSize: { width: number; height: number },
-  ) => void;
-  /** Direct zoom set; same clamping as zoomBy. */
-  setZoom: (zoom: number) => void;
-  /** Reset zoom AND pan — single call so the toolbar/Hotkey can use one action. */
-  resetZoom: () => void;
-  /** Increment current pan by (dx,dy) in canvas-CSS pixels. */
-  panBy: (dx: number, dy: number) => void;
 
   setIgnoreEditMode: (mode: IgnoreEditMode) => void;
   setRegionInputMode: (mode: RegionInputMode) => void;
@@ -303,26 +244,10 @@ interface State {
   applySaveSuccess: (scope: "run" | "variation") => void;
 }
 
-function clampZoom(z: number): number {
-  if (!Number.isFinite(z)) return 1;
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-}
-
 export const useViewerStore = create<State>((set) => ({
-  mode: "side-by-side",
-  opacity: 0.5,
-  selectedRegionId: null,
   viewport: "",
   commentPanelOpen: false,
   commentPrefill: null,
-  zoom: 1,
-  panX: 0,
-  panY: 0,
-  focusBbox: null,
-  hideDisplacement: false,
-  // On by default so the pink diff shading is prominent the
-  // moment a diff opens (matches the reference's active "Highlight diffs").
-  highlightActive: true,
 
   ignoreEditMode: "off",
   regionInputMode: "drag",
@@ -340,51 +265,9 @@ export const useViewerStore = create<State>((set) => ({
   isTemporaryMode: false,
   setTemporaryMode: (isTemporaryMode) => set({ isTemporaryMode }),
 
-  setMode: (mode) =>
-    // Mode change resets zoom — different modes (side-by-side vs overlay)
-    // have different canvas sizes, and persisting a zoom across the
-    // transition would feel arbitrary.
-    set({ mode, zoom: 1, panX: 0, panY: 0 }),
-  setOpacity: (opacity) => set({ opacity }),
-  setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setViewport: (viewport) => set({ viewport }),
   setCommentPanelOpen: (commentPanelOpen) => set({ commentPanelOpen }),
   setCommentPrefill: (commentPrefill) => set({ commentPrefill }),
-  zoomBy: (factor) => set((s) => ({ zoom: clampZoom(s.zoom * factor) })),
-  zoomAt: (factor, anchor, canvasSize) =>
-    set((s) => {
-      const nextZoom = clampZoom(s.zoom * factor);
-      if (nextZoom === s.zoom) return {};
-      // We want the world-space point currently under `anchor` to stay
-      // under `anchor` after zoom. The world transform is:
-      //   screen = center + pan + worldLocal * fitScale * zoom
-      // (where center = canvas/2 - imgFitSize/2; pan is our state)
-      // The portion that scales with zoom is `worldLocal * fitScale * zoom`.
-      // Treating that whole term as `delta`, we get
-      //   anchor = center + pan + delta
-      //   anchor = center + pan' + delta * (nextZoom/oldZoom)
-      // The center cancels, so
-      //   pan' = anchor - center - (anchor - center - pan) * ratio
-      // Rather than tracking fitScale here (the canvas owns that),
-      // approximate: scale pan around the anchor — visually identical
-      // when the image is centered fit. The canvas applies the math
-      // exactly via fitWorldToCanvas's center.
-      const ratio = nextZoom / s.zoom;
-      const cx = canvasSize.width / 2;
-      const cy = canvasSize.height / 2;
-      const offsetX = anchor.x - cx - s.panX;
-      const offsetY = anchor.y - cy - s.panY;
-      const panX = s.panX - offsetX * (ratio - 1);
-      const panY = s.panY - offsetY * (ratio - 1);
-      return { zoom: nextZoom, panX, panY };
-    }),
-  setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
-  resetZoom: () => set({ zoom: 1, panX: 0, panY: 0 }),
-  panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
-  setFocusBbox: (focusBbox) => set({ focusBbox }),
-  setHideDisplacement: (hideDisplacement) => set({ hideDisplacement }),
-  setHighlightActive: (highlightActive) => set({ highlightActive }),
-  setView: ({ zoom, panX, panY }) => set({ zoom: clampZoom(zoom), panX, panY }),
 
   setIgnoreEditMode: (ignoreEditMode) =>
     set((s) => ({

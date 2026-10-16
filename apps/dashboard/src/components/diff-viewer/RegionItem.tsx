@@ -4,7 +4,7 @@ import { SEVERITY_LABEL } from "@furan/shared-types";
 
 import { asSeverity, type DiffRegion } from "./layers/regionTypes";
 import { cleanDescription, sizeLabel } from "./region-format";
-import { useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
@@ -20,8 +20,8 @@ export function RegionItem({
    *  selected when any member is the active selection. */
   memberIds?: string[];
 }) {
-  const selectedId = useViewerStore((s) => s.selectedRegionId);
-  const setSelected = useViewerStore((s) => s.setSelected);
+  const selectedId = useViewState((s) => s.selectedRegionId);
+  const setSelected = useViewState((s) => s.setSelected);
   const ids = memberIds ?? [region.id];
   const count = ids.length;
   const isSelected = selectedId != null && ids.includes(selectedId);

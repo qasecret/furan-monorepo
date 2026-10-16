@@ -362,6 +362,12 @@ class StubEventSource {
 
 import { DiffViewer as ViewerUnderTest } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { useViewState } from "../src/components/diff-viewer/view-state";
+import {
+  DEFAULT_VIEWER_PREFS,
+  prefsKey,
+  useViewerPrefs,
+} from "../src/components/diff-viewer/viewer-prefs";
 import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
 import { loopHandoff, useLoopCue } from "../src/lib/review/use-review-loop";
 import { useInFlightStore } from "../src/lib/review/use-review-mutations";
@@ -404,21 +410,37 @@ function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
 
 /**
  * The viewer as the checkpoint page hands it out: `canReview` is the
- * server's answer for the same role the keyboard has, unless a test says.
+ * server's answer for the same role the keyboard has, unless a test says,
+ * and there is no user id (preferences in memory) unless a test gives one.
  */
 function DiffViewer(
-  props: Omit<ComponentProps<typeof ViewerUnderTest>, "canReview"> & {
+  props: Omit<
+    ComponentProps<typeof ViewerUnderTest>,
+    "canReview" | "userId"
+  > & {
     canReview?: boolean;
+    userId?: string | null;
   },
 ) {
   return (
-    <ViewerUnderTest canReview={canReviewRole(keyboard.role)} {...props} />
+    <ViewerUnderTest
+      canReview={canReviewRole(keyboard.role)}
+      userId={null}
+      {...props}
+    />
   );
 }
 
 beforeEach(() => {
   mockGroup = undefined;
   keyboard.role = "editor";
+  // A fresh visit: the default preferences, none read yet, and a fit view.
+  useViewerPrefs.setState({
+    userId: null,
+    prefs: DEFAULT_VIEWER_PREFS,
+    previousMode: "side-by-side",
+  });
+  useViewState.getState().resetView({ reducedMotion: false });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -459,13 +481,9 @@ describe("DiffViewer", () => {
     mockGetByIdData = { ...defaultMockData };
     mockCheckpoints = { items: [] };
     resetLoop();
-    useViewerStore.setState({
-      mode: "side-by-side",
-      opacity: 0.5,
-      selectedRegionId: null,
-      viewport: "",
-      highlightActive: false,
-      hideDisplacement: false,
+    useViewerStore.setState({ viewport: "" });
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, highlight: false },
     });
   });
   afterEach(() => {
@@ -484,15 +502,195 @@ describe("DiffViewer", () => {
     expect(r.getByRole("tab", { name: /^diff only$/i })).toBeDefined();
   });
 
-  test("clicking a tab updates useViewerStore.mode", () => {
+  test("clicking a tab sets the mode preference", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
-    expect(useViewerStore.getState().mode).toBe("overlay");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
 
     fireEvent.click(r.getByRole("tab", { name: /^diff only$/i }));
-    expect(useViewerStore.getState().mode).toBe("difference");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+  });
+
+  test("a mode change starts the canvas at fit: its panes lay out per mode", () => {
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    act(() => useViewState.getState().setView({ zoom: 3, panX: 40, panY: 9 }));
+    fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
+    expect(useViewState.getState()).toMatchObject({
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    });
+  });
+
+  test.each(["swipe", "flicker"] as const)(
+    "a %s preference shows as side by side until it has a renderer, and is kept",
+    (mode) => {
+      useViewerPrefs.setState({
+        prefs: { ...DEFAULT_VIEWER_PREFS, mode },
+      });
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expect(
+        r
+          .getByRole("tab", { name: /side by side/i })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(r.getByTestId("candidate-canvas-host")).toBeDefined();
+      expect(useViewerPrefs.getState().prefs.mode).toBe(mode);
+    },
+  );
+
+  describe("preferences", () => {
+    beforeEach(() => localStorage.clear());
+    afterEach(() => localStorage.clear());
+
+    test("mode persists across a remount via preferences", async () => {
+      localStorage.setItem(
+        prefsKey("u1"),
+        JSON.stringify({ ...DEFAULT_VIEWER_PREFS, mode: "overlay" }),
+      );
+      const r = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId="u1"
+        />,
+      );
+      expect(
+        r
+          .getByRole("tab", { name: /^overlay$/i })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(r.getByTestId("single-stage-host").dataset.mode).toBe("overlay");
+      // The first paint is already the saved mode: one stage was mounted, and
+      // never the two side-by-side panes before it.
+      await act(async () => {});
+      expect(pixiInitCount).toBe(1);
+
+      // A change is saved for this user, and the next visit opens on it.
+      fireEvent.click(r.getByRole("tab", { name: /^diff only$/i }));
+      r.unmount();
+      useViewerPrefs.setState({
+        userId: null,
+        prefs: DEFAULT_VIEWER_PREFS,
+      });
+      const again = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId="u1"
+        />,
+      );
+      expect(again.getByTestId("single-stage-host").dataset.mode).toBe("diff");
+    });
+
+    test("without a user the mode holds for the visit and nothing is stored", () => {
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
+      r.unmount();
+      const again = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expect(again.getByTestId("single-stage-host").dataset.mode).toBe(
+        "overlay",
+      );
+      expect(localStorage.length).toBe(0);
+    });
+  });
+
+  describe("the view resets", () => {
+    /** The view as a reviewer leaves it on a step. */
+    function leaveAView() {
+      act(() => {
+        useViewState.getState().setView({ zoom: 3, panX: 25, panY: -8 });
+        useViewState.getState().setSwipe(0.2);
+        useViewState.getState().setSelected("r1");
+      });
+    }
+    function expectAFreshView() {
+      expect(useViewState.getState()).toMatchObject({
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        swipe: 0.5,
+        selectedRegionId: null,
+      });
+    }
+
+    test("a step change resets the view", () => {
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      const r = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          projectId="p1"
+          initialCheckpointId="c1"
+        />,
+      );
+      leaveAView();
+      fireEvent.click(r.getByTestId("diff-viewer-step-next"));
+      expectAFreshView();
+    });
+
+    test("a viewport switch resets the view", () => {
+      mockGetByIdData = {
+        ...defaultMockData,
+        screenshots: [
+          { id: "c1", viewport: "1280x720" },
+          { id: "c2", viewport: "375x812" },
+        ],
+      };
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      leaveAView();
+      fireEvent.click(r.getByRole("button", { name: "375x812" }));
+      expect(useViewerStore.getState().viewport).toBe("375x812");
+      expectAFreshView();
+    });
+
+    test("a remount on the next step starts fresh too: the store outlives it", () => {
+      leaveAView();
+      render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expectAFreshView();
+    });
+
+    test("under reduced motion the flicker starts paused", () => {
+      const matchMedia = vi.fn((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      vi.stubGlobal("matchMedia", matchMedia);
+      try {
+        act(() => useViewState.getState().setFlicker("current", true));
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            diffId="d1"
+          />,
+        );
+        expect(useViewState.getState()).toMatchObject({
+          flickerFrame: "baseline",
+          flickerPlaying: false,
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   test("initializes the editor viewport from the run's screenshots (single-viewport run)", () => {
@@ -779,22 +977,22 @@ describe("DiffViewer", () => {
     expect(r.getByTestId("diff-counter").textContent).toContain("Diff 1 / 2");
   });
 
-  test("highlight-toggle button toggles highlightActive in the store", () => {
+  test("highlight-toggle button toggles the highlight preference", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
-    expect(useViewerStore.getState().highlightActive).toBe(false);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(false);
 
     // First click: activates highlight
     fireEvent.click(r.getByTestId("highlight-toggle"));
-    expect(useViewerStore.getState().highlightActive).toBe(true);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(true);
 
     // Second click: deactivates highlight
     fireEvent.click(r.getByTestId("highlight-toggle"));
-    expect(useViewerStore.getState().highlightActive).toBe(false);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(false);
   });
 
-  test("toggling highlightActive does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
+  test("toggling highlight does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
     // Render with regions so the shading layer has something to mount.
     mockGetByIdData = {
       ...defaultMockData,
@@ -872,14 +1070,14 @@ describe("DiffViewer", () => {
 
     // Toggle hide-displacement on
     fireEvent.click(r.getByTestId("hide-displacement-toggle"));
-    expect(useViewerStore.getState().hideDisplacement).toBe(true);
+    expect(useViewerPrefs.getState().prefs.hideDisplacement).toBe(true);
 
     // Layout region filtered: counter drops to "Diff 0 / 1"
     expect(r.getByTestId("diff-counter").textContent).toContain("0 / 1");
 
     // Toggle hide-displacement off
     fireEvent.click(r.getByTestId("hide-displacement-toggle"));
-    expect(useViewerStore.getState().hideDisplacement).toBe(false);
+    expect(useViewerPrefs.getState().prefs.hideDisplacement).toBe(false);
 
     // Layout region restored: counter back to "Diff 0 / 2"
     expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
@@ -2110,7 +2308,7 @@ describe("DiffViewer: the review loop", () => {
     const r = render(viewer());
     press("J");
     expect(card(r)).not.toBeNull();
-    const before = useViewerStore.getState().mode;
+    const before = useViewerPrefs.getState().prefs.mode;
 
     // Focus is on the card: the review keys, the moves and the viewer's own
     // keys all yield to it.
@@ -2119,7 +2317,7 @@ describe("DiffViewer: the review loop", () => {
     expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
-    expect(useViewerStore.getState().mode).toBe(before);
+    expect(useViewerPrefs.getState().prefs.mode).toBe(before);
 
     // A step needing review turns up in the batch (a teammate's undo), and
     // focus has left the card: J still waits while the card is up.
