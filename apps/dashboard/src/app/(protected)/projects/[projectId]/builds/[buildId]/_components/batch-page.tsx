@@ -332,10 +332,11 @@ export function BatchPage({ projectId, buildId, canReview, context }: Props) {
             : undefined
         }
       />
-      {/* scroll-pt-9: room for the sticky column header (33px) above the
+      {/* scroll-pt-10: room for the sticky column header (33px) above the
           first item a scroll can reach, so an item brought into view walking
-          up is never under it. */}
-      <div className="flex-1 overflow-y-auto scroll-pt-9">
+          up is never under it, nor is a step card's focus ring, drawn 4px
+          outside the card (33 + 4 = 37; 40px clears it). */}
+      <div className="flex-1 overflow-y-auto scroll-pt-10">
         <ResultsColumnHeader />
         {/* Mounted whatever the list shows, so its keys stay registered
             (listed in the sheet, off while there is nothing to walk) and its
