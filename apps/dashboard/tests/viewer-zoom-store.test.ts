@@ -53,12 +53,19 @@ describe("useViewState — zoom + pan", () => {
     expect(s.panY).toBe(0);
   });
 
-  it("panBy is additive", () => {
-    useViewState.getState().panBy(10, -5);
-    useViewState.getState().panBy(2, 3);
-    const s = useViewState.getState();
-    expect(s.panX).toBe(12);
-    expect(s.panY).toBe(-2);
+  it("panBy is additive, in world px: a drag over the transform's scale", () => {
+    useViewState.getState().panBy(10, -5, 1);
+    useViewState.getState().panBy(2, 3, 1);
+    expect(useViewState.getState()).toMatchObject({ panX: 12, panY: -2 });
+    // At 2 canvas px per world px, a 10 px drag is 5 world px.
+    useViewState.getState().panBy(10, -4, 2);
+    expect(useViewState.getState()).toMatchObject({ panX: 17, panY: -4 });
+  });
+
+  it("panBy ignores a scale that is not a positive number", () => {
+    useViewState.getState().panBy(10, 10, 0);
+    useViewState.getState().panBy(10, 10, Number.NaN);
+    expect(useViewState.getState()).toMatchObject({ panX: 0, panY: 0 });
   });
 
   it("zoomAt keeps the anchored point under the cursor (no-pan center)", () => {
@@ -77,11 +84,12 @@ describe("useViewState — zoom + pan", () => {
     // Canvas 400x200, anchor at (300, 100) — 100px right of center.
     // After zooming by 2x, the world point under (300,100) was at
     // (300 - 200) = +100 right of center; at new zoom that point would
-    // move to +200 right of center, so pan must shift -100 to compensate.
+    // move to +200 right of center, so pan must shift -100 canvas px to
+    // compensate: -50 world px at 2 canvas px per world px.
     useViewState.getState().zoomAt(2, { x: 300, y: 100 }, WORLD, VIEWPORT);
     const s = useViewState.getState();
     expect(s.zoom).toBe(2);
-    expect(s.panX).toBe(-100);
+    expect(s.panX).toBe(-50);
     expect(s.panY).toBe(0);
   });
 

@@ -19,6 +19,7 @@ function dirty() {
     flickerFrame: "current",
     flickerPlaying: false,
     selectedRegionId: "r1",
+    showSuppressed: true,
     focusBbox: { x: 1, y: 2, width: 3, height: 4 },
   });
 }
@@ -30,6 +31,7 @@ const DEFAULTS = {
   swipe: 0.5,
   flickerFrame: "baseline",
   selectedRegionId: null,
+  showSuppressed: false,
   focusBbox: null,
 };
 

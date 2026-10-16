@@ -1,10 +1,20 @@
 import { SEVERITIES } from "@furan/shared-types";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DiffRegion } from "../src/components/diff-viewer/layers/regionTypes";
 import { RegionListPanel } from "../src/components/diff-viewer/RegionListPanel";
 import { useViewState } from "../src/components/diff-viewer/view-state";
+import {
+  DEFAULT_VIEWER_PREFS,
+  useViewerPrefs,
+} from "../src/components/diff-viewer/viewer-prefs";
 import { SEVERITY_STYLE } from "../src/lib/severity-style";
 
 const mockRegions: DiffRegion[] = [
@@ -36,7 +46,9 @@ const mockRegions: DiffRegion[] = [
 
 describe("RegionListPanel", () => {
   beforeEach(() => {
-    useViewState.setState({ selectedRegionId: null });
+    // A fresh step: nothing selected, suppressed rows hidden.
+    useViewState.getState().resetView({ reducedMotion: false });
+    useViewerPrefs.setState({ prefs: DEFAULT_VIEWER_PREFS });
   });
   afterEach(() => {
     cleanup();
@@ -322,5 +334,45 @@ describe("RegionListPanel", () => {
     expect(row.getAttribute("aria-pressed")).toBe("true");
     expect(row.classList.contains("ring-ring")).toBe(true);
     expect(row.classList.contains("ring-brand")).toBe(false);
+  });
+
+  it("Show suppressed is the view's: it holds within a step and is off on the next (R10)", () => {
+    const audit: DiffRegion = {
+      id: "dt9",
+      severity: "none",
+      category: "text",
+      bbox: { x: 0, y: 0, width: 50, height: 20 },
+      description: "Dynamic text matched",
+      source: "dynamic_text",
+    };
+    const r = render(<RegionListPanel regions={[audit]} />);
+    fireEvent.click(
+      screen.getByTestId("show-suppressed-toggle").querySelector("input")!,
+    );
+    expect(useViewState.getState().showSuppressed).toBe(true);
+    // A remount (the rail's tab) keeps it.
+    r.unmount();
+    render(<RegionListPanel regions={[audit]} />);
+    expect(document.querySelector('[data-region-id="dt9"]')).not.toBeNull();
+
+    // The next step starts with it off.
+    act(() => useViewState.getState().resetView({ reducedMotion: false }));
+    expect(document.querySelector('[data-region-id="dt9"]')).toBeNull();
+  });
+
+  it("Hide displacement hides layout changes from the list too, as from the canvas", () => {
+    const layout: DiffRegion = {
+      id: "lay1",
+      severity: "major",
+      category: "layout",
+      bbox: { x: 0, y: 0, width: 50, height: 20 },
+      description: "Moved",
+      source: "l1_pixel",
+    };
+    render(<RegionListPanel regions={[layout, mockRegions[1]!]} />);
+    expect(document.querySelector('[data-region-id="lay1"]')).not.toBeNull();
+    act(() => useViewerPrefs.getState().set("hideDisplacement", true));
+    expect(document.querySelector('[data-region-id="lay1"]')).toBeNull();
+    expect(screen.getByText(/Regions \(1\)/)).toBeTruthy();
   });
 });

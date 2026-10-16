@@ -1,9 +1,25 @@
 import { type Container, type Graphics, Sprite, Texture } from "pixi.js";
 
-import { drawHatch, mountHatchLayer } from "../layers/HatchLayer";
+import {
+  drawHatch,
+  HATCH_SPACING,
+  mountHatchLayer,
+} from "../layers/HatchLayer";
 import type { Rect, World } from "../viewer-geometry";
 
-import type { ModeHandle, RenderInput } from "./types";
+import type { HostLayer, ModeHandle, RenderInput } from "./types";
+
+/**
+ * The host's layers on a single stage (overlay, diff): one constant, so a
+ * mode change between them keeps those layers mounted.
+ */
+export const SINGLE_STAGE_HOST_LAYERS: readonly HostLayer[] = [
+  "regions",
+  "ignore",
+];
+
+/** The hatch's world spacing for a scale: `HATCH_SPACING` on screen. */
+const hatchSpacing = (scale: number) => HATCH_SPACING / scale;
 
 /**
  * What one renderer mount adds to the stage, kept so it is torn down as one.
@@ -30,7 +46,7 @@ export interface Mount {
     rects: (world: World) => Rect[],
     input: RenderInput,
   ): void;
-  /** Redraws the hatching for a new world or a new colour. */
+  /** Redraws the hatching for a new world, scale or colour. */
   update(input: RenderInput): void;
   dispose(): void;
 }
@@ -40,6 +56,7 @@ interface Hatch {
   rects: (world: World) => Rect[];
   world: World;
   color: number;
+  scale: number;
 }
 
 /** Teardown is best effort: a leaked GPU texture beats a thrown cleanup. */
@@ -66,19 +83,40 @@ export function createMount(): Mount {
       return sprite;
     },
     hatch(parent, label, rects, input) {
-      const g = mountHatchLayer(parent, rects(input.world), input.colors.hatch);
+      const g = mountHatchLayer(
+        parent,
+        rects(input.world),
+        input.colors.hatch,
+        hatchSpacing(input.scale),
+      );
       g.label = label;
-      hatches.push({ g, rects, world: input.world, color: input.colors.hatch });
+      hatches.push({
+        g,
+        rects,
+        world: input.world,
+        color: input.colors.hatch,
+        scale: input.scale,
+      });
     },
     update(input) {
       if (disposed) return;
       for (const h of hatches) {
-        if (h.world === input.world && h.color === input.colors.hatch) {
+        if (
+          h.world === input.world &&
+          h.color === input.colors.hatch &&
+          h.scale === input.scale
+        ) {
           continue;
         }
-        drawHatch(h.g, h.rects(input.world), input.colors.hatch);
+        drawHatch(
+          h.g,
+          h.rects(input.world),
+          input.colors.hatch,
+          hatchSpacing(input.scale),
+        );
         h.world = input.world;
         h.color = input.colors.hatch;
+        h.scale = input.scale;
       }
     },
     dispose() {

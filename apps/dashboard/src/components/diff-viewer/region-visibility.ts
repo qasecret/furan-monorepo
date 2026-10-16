@@ -21,3 +21,26 @@ export function isRegionHidden(
 ): boolean {
   return !opts.showSuppressed && AUDIT_SOURCES.has(region.source);
 }
+
+/** What decides whether a region shows, on every region surface. */
+export interface RegionVisibility {
+  /** "Show suppressed": the audit rows show too. */
+  showSuppressed: boolean;
+  /** "Hide displacement": position-only (layout) changes are hidden. */
+  hideDisplacement: boolean;
+}
+
+/**
+ * The one visibility rule for every surface that shows regions: the region
+ * list, the canvas's severity rectangles and highlight shading, a click's
+ * hit-test on the canvas and the "has differences" badge (R10), and the diff
+ * stepper's order (which keeps the audit rows out). A region the list hides
+ * is never drawn or selectable on the canvas.
+ */
+export function isRegionShown(
+  region: DiffRegion,
+  { showSuppressed, hideDisplacement }: RegionVisibility,
+): boolean {
+  if (isRegionHidden(region, { showSuppressed })) return false;
+  return !(hideDisplacement && region.category === "layout");
+}

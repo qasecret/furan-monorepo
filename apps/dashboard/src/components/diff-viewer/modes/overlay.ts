@@ -1,6 +1,6 @@
 import type { Sprite } from "pixi.js";
 
-import { createMount, handleOf } from "./mount";
+import { createMount, handleOf, SINGLE_STAGE_HOST_LAYERS } from "./mount";
 import type { ModeRenderer } from "./types";
 
 /**
@@ -11,7 +11,7 @@ export const overlay: ModeRenderer = {
   panes: 1,
   needs: ({ hasBaseline }) =>
     hasBaseline ? ["baseline", "current"] : ["current"],
-  host: { pane: 0, layers: ["regions", "ignore"] },
+  host: { pane: 0, layers: SINGLE_STAGE_HOST_LAYERS },
   mount([world], input) {
     const mount = createMount();
     if (!world) return handleOf(mount);

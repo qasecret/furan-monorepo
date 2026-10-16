@@ -175,6 +175,16 @@ export function createBitmapCache(limits: {
 const bitmapCache = createBitmapCache(BITMAP_CACHE_LIMITS);
 export const __viewerBitmapCache: BitmapCache = bitmapCache;
 
+/**
+ * Pins `keys` in the viewer's cache until the returned function is called:
+ * for a holder of bitmaps other than `useImageSet`, such as the stage, which
+ * keeps drawing what it mounted until its own cleanup has run, whatever the
+ * image set that handed them over has let go of by then. Pins are counted.
+ */
+export function retainImages(keys: readonly string[]): () => void {
+  return bitmapCache.retain(keys);
+}
+
 // -- fetch and decode ---------------------------------------------------------
 
 export function storageUrl(key: string): string {

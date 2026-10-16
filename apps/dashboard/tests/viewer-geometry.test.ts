@@ -112,11 +112,28 @@ describe("transformFor", () => {
     expect(t.y).toBe(100);
   });
 
-  test("applies zoom about the centre, then pan", () => {
+  test("applies zoom about the centre, then pan in world px", () => {
     const t = transformFor(world, viewport, { zoom: 2, panX: 10, panY: -5 });
     expect(t.scale).toBe(4);
-    expect(t.x).toBe((400 - 200 * 4) / 2 + 10);
-    expect(t.y).toBe((400 - 100 * 4) / 2 - 5);
+    expect(t.x).toBe((400 - 200 * 4) / 2 + 10 * 4);
+    expect(t.y).toBe((400 - 100 * 4) / 2 - 5 * 4);
+  });
+
+  test("the same view shows the same world point at the centre of any viewport (R12)", () => {
+    const w = { w: 1440, h: 900 };
+    const view = { zoom: 4, panX: 720 - 1200, panY: 0 };
+    for (const vp of [
+      { w: 1000, h: 625 },
+      { w: 488, h: 305 },
+      { w: 1913, h: 1200 },
+    ]) {
+      const centre = worldToCanvas(transformFor(w, vp, view), {
+        x: 1200,
+        y: 450,
+      });
+      expect(centre.x).toBeCloseTo(vp.w / 2, 9);
+      expect(centre.y).toBeCloseTo(vp.h / 2, 9);
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { createMount, handleOf } from "./mount";
+import { createMount, handleOf, SINGLE_STAGE_HOST_LAYERS } from "./mount";
 import type { ModeRenderer } from "./types";
 
 /** The current image, faded so the changed pixels read over it. */
@@ -12,12 +12,13 @@ export const DIFF_IMAGE_ALPHA = 0.6;
 
 /**
  * The changed pixels over a faded current image, with the current image's
- * hatching. The baseline is not drawn.
+ * hatching. The baseline is not drawn, but it is waited for: it takes part in
+ * the world, so the world (its fit, the hatching) is final at the first draw.
  */
 export const diff: ModeRenderer = {
   panes: 1,
-  needs: () => ["current", "diff"],
-  host: { pane: 0, layers: ["regions", "ignore"] },
+  needs: () => ["baseline", "current", "diff"],
+  host: { pane: 0, layers: SINGLE_STAGE_HOST_LAYERS },
   mount([world], input) {
     const mount = createMount();
     if (!world) return handleOf(mount);

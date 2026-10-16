@@ -8,7 +8,10 @@ import { orderDiffRegions } from "../src/components/diff-viewer/diff-order";
 import { mountDiffOverlayLayer } from "../src/components/diff-viewer/layers/DiffOverlayLayer";
 import { mountDiffShadingLayer } from "../src/components/diff-viewer/layers/DiffShadingLayer";
 import type { DiffRegion } from "../src/components/diff-viewer/layers/regionTypes";
-import { isRegionHidden } from "../src/components/diff-viewer/region-visibility";
+import {
+  isRegionHidden,
+  isRegionShown,
+} from "../src/components/diff-viewer/region-visibility";
 import { RegionListPanel } from "../src/components/diff-viewer/RegionListPanel";
 import { SEVERITY_CANVAS_HEX, SEVERITY_STYLE } from "../src/lib/severity-style";
 
@@ -143,6 +146,51 @@ describe("isRegionHidden", () => {
       expect(isRegionHidden(r, { showSuppressed: true })).toBe(false);
     },
   );
+});
+
+describe("isRegionShown: the one rule for every region surface (R10)", () => {
+  test("an audit row shows only with Show suppressed on", () => {
+    const r = region({ source: "dynamic_text" });
+    expect(
+      isRegionShown(r, { showSuppressed: false, hideDisplacement: false }),
+    ).toBe(false);
+    expect(
+      isRegionShown(r, { showSuppressed: true, hideDisplacement: false }),
+    ).toBe(true);
+  });
+
+  test("a layout change hides with Hide displacement, whatever Show suppressed says", () => {
+    const r = region({ category: "layout" });
+    expect(
+      isRegionShown(r, { showSuppressed: false, hideDisplacement: false }),
+    ).toBe(true);
+    expect(
+      isRegionShown(r, { showSuppressed: true, hideDisplacement: true }),
+    ).toBe(false);
+  });
+
+  test("the stepper order keeps exactly the shown regions", () => {
+    const all = [
+      region({ id: "a" }),
+      region({ id: "b", category: "layout" }),
+      region({ id: "c", source: "layout_suppressed" }),
+    ];
+    for (const visibility of [
+      { showSuppressed: false, hideDisplacement: false },
+      { showSuppressed: true, hideDisplacement: true },
+    ]) {
+      expect(
+        orderDiffRegions(all, visibility)
+          .map((r) => r.id)
+          .sort(),
+      ).toEqual(
+        all
+          .filter((r) => isRegionShown(r, visibility))
+          .map((r) => r.id)
+          .sort(),
+      );
+    }
+  });
 });
 
 describe("the stepper order and the region list agree", () => {

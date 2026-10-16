@@ -6,7 +6,7 @@
 import "pixi.js/unsafe-eval";
 import { useTheme } from "next-themes";
 import { Application, Container } from "pixi.js";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   applyCanvasBackground,
@@ -15,7 +15,12 @@ import {
   readCanvasHatch,
 } from "./canvas-theme";
 import { orderDiffRegions } from "./diff-order";
-import type { ImageRole, ImageSetRequest, ImageSetState } from "./image-set";
+import {
+  retainImages,
+  type ImageRole,
+  type ImageSetRequest,
+  type ImageSetState,
+} from "./image-set";
 import { mountDiffOverlayLayer } from "./layers/DiffOverlayLayer";
 import { mountDiffShadingLayer } from "./layers/DiffShadingLayer";
 import { mountIgnoreRegionLayer } from "./layers/IgnoreRegionLayer";
@@ -27,6 +32,7 @@ import {
   type RenderInput,
 } from "./modes/types";
 import { pointerToImage } from "./pointer-to-image";
+import { isRegionShown } from "./region-visibility";
 import { attachCanvasViewControl } from "./useCanvasViewControl";
 import type { ElementMap } from "./useElementMap";
 import { hitTest, useIgnoreRegionEditor } from "./useIgnoreRegionEditor";
@@ -37,6 +43,7 @@ import {
   transformFor,
   worldFor,
   type Size,
+  type Transform,
   type World,
 } from "./viewer-geometry";
 import { drawnMode, useViewerPrefs } from "./viewer-prefs";
@@ -48,20 +55,27 @@ import { computeFocusView } from "./world-fit";
  *
  * - **Geometry.** Every image is placed in one world (`worldFor`: the union of
  *   the sizes, each image top-left at 1:1), fitted once and transformed once
- *   (`transformFor`). Every pane and every mode takes that one transform, so a
- *   mode change keeps the zoom and the pan (R8); only a step or a viewport
- *   change resets the view, and that is `DiffViewer`'s.
+ *   (`transformFor`). Every pane and every mode takes that one transform. The
+ *   pan is in world px (R12), so a mode change (a pane of another size) or a
+ *   resize keeps the area on screen (R8); only a step or a viewport change
+ *   resets the view, and that is `DiffViewer`'s.
  * - **Images** come from `useImageSet` (the caller's): this never fetches,
- *   and never closes a bitmap.
+ *   and never closes a bitmap. It pins what it has mounted until its own
+ *   cleanup, so no one else's release can close a bitmap it still draws.
  * - **Modes** are renderers (`modes/`) that build their own layers in a
  *   declared order. One mounts only when every image it needs has settled,
  *   so nothing lands on the stage as a fetch completes, and a step change
- *   clears the canvas until the new step's images are in.
+ *   clears the canvas until the new step's images are in. A retry keeps what
+ *   is mounted until the retried image settles.
  * - **The host's layers** (highlight shading, the severity rectangles, the
- *   ignore-region editor) are the existing ones, mounted here on the pane the
- *   renderer names and always stacked above its layers, in its order.
+ *   ignore regions) are the existing ones, mounted here on the pane the
+ *   renderer names and always stacked above its layers, in its order. Saved
+ *   ignore regions show read-only in every mode that draws the current image
+ *   (R9); the editor only makes them interactive. Every region surface uses
+ *   the region list's visibility (R10).
  * - **Pixi apps**: one per pane, kept across mode changes with the same pane
- *   count; zoom, pan, resizes and the theme update them in place.
+ *   count; zoom, pan, resizes and the theme update them in place, and a
+ *   resize refits before the next paint.
  */
 
 interface Props {
@@ -103,6 +117,14 @@ function aspectStyle(size?: Size): React.CSSProperties | undefined {
   return size && size.w > 0 && size.h > 0
     ? { aspectRatio: `${size.w} / ${size.h}` }
     : undefined;
+}
+
+/** Places every pane's world under the one transform. */
+function placeWorlds(worlds: readonly Container[], t: Transform): void {
+  for (const w of worlds) {
+    w.scale.set(t.scale);
+    w.position.set(t.x, t.y);
+  }
 }
 
 /**
@@ -167,8 +189,12 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   // for a stage no longer wanted is dropped, and nothing mounts on it.
   const generationRef = useRef(0);
   const handleRef = useRef<ModeHandle | null>(null);
-  // The world's size for the wheel's zoom-about-the-cursor.
-  const worldSizeRef = useRef<Size>({ w: 0, h: 0 });
+  // What the stage's DOM callbacks (resize, wheel, drag) read between
+  // renders: the world's size and the pane the transform is computed for.
+  const sceneRef = useRef<{ world: Size | null; hostPane: number }>({
+    world: null,
+    hostPane: 0,
+  });
   const { resolvedTheme } = useTheme();
 
   const mode = useViewerPrefs((s) => s.prefs.mode);
@@ -177,7 +203,7 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
   // "Hide displacement" also drops position-only (layout) regions from the
-  // canvas shading — not just the diff-stepper — so toggling it is visible.
+  // canvas — not just the diff-stepper — so toggling it is visible.
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
   const reducedMotion = useReducedMotion();
   const zoom = useViewState((s) => s.zoom);
@@ -190,8 +216,9 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const setFocusBbox = useViewState((s) => s.setFocusBbox);
   const selectedRegionId = useViewState((s) => s.selectedRegionId);
   const setSelected = useViewState((s) => s.setSelected);
+  const showSuppressed = useViewState((s) => s.showSuppressed);
 
-  // Ignore-region store slices, for the editor's layer.
+  // Ignore-region store slices, for the ignore regions' layer.
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const savedRunIgnoreAreas = useViewerStore((s) => s.savedRunIgnoreAreas);
   const savedVariationIgnoreAreas = useViewerStore(
@@ -208,7 +235,8 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
 
   const [stage, setStage] = useState<Stage | null>(null);
-  // Each pane host's size, in the stage's pane order.
+  // Each pane host's size, in the stage's pane order, for React's consumers
+  // (the stage's own callbacks keep theirs).
   const [hostSizes, setHostSizes] = useState<Size[]>([]);
   const [hatchColor, setHatchColor] = useState(() =>
     typeof document === "undefined" ? FALLBACK_CANVAS_HATCH : readCanvasHatch(),
@@ -216,6 +244,15 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
 
   const { images, failed } = set;
   const hasBaseline = request.baseline !== null;
+
+  // The regions every surface shows: the list's visibility (R10).
+  const shownRegions = useMemo(
+    () =>
+      regions.filter((r) =>
+        isRegionShown(r, { showSuppressed, hideDisplacement }),
+      ),
+    [regions, showSuppressed, hideDisplacement],
+  );
 
   // One world for every mode: every image that has loaded takes part, drawn
   // or not, so each mode shows the same world under the same transform.
@@ -228,8 +265,8 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     return worldFor(baselineSize ?? null, anchor, diffSize ?? null);
   }, [baselineSize, currentSize, diffSize]);
 
-  // The renderer waits for what it needs: each role it draws has loaded,
-  // failed, or was never asked for.
+  // The renderer waits for what it needs: each role has loaded, failed, or
+  // was never asked for.
   const needs = renderer.needs({ hasBaseline });
   const settled = needs.every(
     (role) =>
@@ -237,6 +274,15 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
       images[role] !== undefined ||
       failed[role] === true,
   );
+  // A retry puts a failed role back to loading: the images that were in are
+  // still the step's, so what is mounted stays until the retry settles. Only
+  // other keys (a step change) wait with an empty canvas.
+  const needKey = needs.map((role) => request[role] ?? "").join("|");
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (settled) setSettledKey(needKey);
+  }, [settled, needKey]);
+  const ready = settled || settledKey === needKey;
   const drawn = (role: ImageRole) =>
     needs.includes(role) ? images[role]?.bitmap : undefined;
   const baselineBitmap = drawn("baseline");
@@ -257,12 +303,19 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const scale = transform?.scale ?? 1;
 
   // Where the host draws its layers, once the renderer is on the stage.
-  const sceneReady = live !== null && settled && world !== null;
+  const sceneReady = live !== null && ready && world !== null;
   const hostWorld = sceneReady
     ? (live.worlds[renderer.host.pane] ?? null)
     : null;
   const hostApp = sceneReady ? (live.apps[renderer.host.pane] ?? null) : null;
   const hostLayers = renderer.host.layers;
+
+  useLayoutEffect(() => {
+    sceneRef.current = {
+      world: world?.size ?? null,
+      hostPane: renderer.host.pane,
+    };
+  });
 
   const input = useMemo<RenderInput | null>(
     () =>
@@ -278,9 +331,10 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
             swipe,
             flickerFrame,
             colors: { hatch: hatchColor },
+            scale,
           }
         : null,
-    [world, images, opacity, swipe, flickerFrame, hatchColor],
+    [world, images, opacity, swipe, flickerFrame, hatchColor, scale],
   );
   const hasInput = input !== null;
 
@@ -294,7 +348,9 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     const generation = ++generationRef.current;
     const isCurrent = () => generationRef.current === generation;
     const apps = hosts.map(() => new Application());
-    const ready = Promise.all(
+    // Every init settled, fulfilled or not: an app is destroyed only then
+    // (destroying one mid-init leaks the renderer it is still building).
+    const inits = Promise.allSettled(
       apps.map((app, i) => {
         const size = hostSize(hosts[i]!);
         return app.init({
@@ -309,47 +365,57 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     );
     const detach: Array<() => void> = [];
 
-    ready
-      .then(() => {
-        if (!isCurrent()) return;
-        liveAppsRef.current.push(...apps);
-        // The theme may have flipped while the apps were initialising.
-        applyCanvasBackground(apps, readCanvasBackground());
-        const worlds = apps.map((app, i) => {
-          hosts[i]!.appendChild(app.canvas);
-          // Every layer parents into the world, so one transform places all.
-          const world = new Container();
-          world.label = "world";
-          app.stage.addChild(world);
-          return world;
-        });
-        hosts.forEach((host, i) => {
-          // Wheel zoom and pan on the host, not the canvas, so events from
-          // the editor overlay (a sibling of the canvas) reach them too.
-          detach.push(
-            attachCanvasViewControl(host, () => worldSizeRef.current),
-          );
-          // Follow the host's size without remounting.
-          const ro = new ResizeObserver(() => {
-            const app = apps[i]!;
-            if (!isCurrent() || !app.renderer) return;
-            const size = hostSize(host);
-            app.renderer.resize(size.w, size.h);
-            setHostSizes((sizes) => {
-              const next = sizes.slice();
-              next[i] = size;
-              return next;
-            });
-          });
-          ro.observe(host);
-          detach.push(() => ro.disconnect());
-        });
-        setHostSizes(hosts.map(hostSize));
-        setStage({ generation, panes, apps, worlds });
-      })
-      .catch((err) => {
-        console.warn("viewer stage init failed", err);
+    void inits.then((results) => {
+      if (!isCurrent()) return;
+      const failure = results.find((r) => r.status === "rejected");
+      if (failure) {
+        console.warn("viewer stage init failed", failure.reason);
+        return;
+      }
+      liveAppsRef.current.push(...apps);
+      // The theme may have flipped while the apps were initialising.
+      applyCanvasBackground(apps, readCanvasBackground());
+      const worlds = apps.map((app, i) => {
+        hosts[i]!.appendChild(app.canvas);
+        // Every layer parents into the world, so one transform places all.
+        const world = new Container();
+        world.label = "world";
+        app.stage.addChild(world);
+        return world;
       });
+      const sizes = hosts.map(hostSize);
+      // The stage's world and the size its transform is computed for.
+      const geometry = () => ({
+        world: sceneRef.current.world ?? { w: 0, h: 0 },
+        viewport: sizes[sceneRef.current.hostPane] ?? hostSize(hosts[0]!),
+      });
+      hosts.forEach((host, i) => {
+        // Wheel zoom and pan on the host, not the canvas, so events from
+        // the editor overlay (a sibling of the canvas) reach them too.
+        detach.push(attachCanvasViewControl(host, geometry));
+        // Follow the host's size without remounting, and refit at once: the
+        // canvas paints at its new size this frame, so must the world.
+        const ro = new ResizeObserver(() => {
+          const app = apps[i]!;
+          if (!isCurrent() || !app.renderer) return;
+          const size = hostSize(host);
+          app.renderer.resize(size.w, size.h);
+          sizes[i] = size;
+          const { world, hostPane } = sceneRef.current;
+          if (i === hostPane && world) {
+            placeWorlds(
+              worlds,
+              transformFor(world, size, useViewState.getState()),
+            );
+          }
+          setHostSizes(sizes.slice());
+        });
+        ro.observe(host);
+        detach.push(() => ro.disconnect());
+      });
+      setHostSizes(sizes.slice());
+      setStage({ generation, panes, apps, worlds });
+    });
 
     return () => {
       if (isCurrent()) generationRef.current += 1;
@@ -358,20 +424,24 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
         (a) => !apps.includes(a),
       );
       setStage(null);
-      // Destroyed once init has settled (destroying an app mid-init leaks the
-      // renderer it is still building), and so after every effect cleanup of
-      // this commit: the renderer and the host's layers are gone by then.
-      const destroy = () => apps.forEach(destroyApp);
-      void ready.then(destroy, destroy);
+      // After every effect cleanup of this commit (a microtask at the
+      // earliest): the renderer and the host's layers are gone by then.
+      void inits.then(() => apps.forEach(destroyApp));
     };
   }, [panes]);
 
-  // The mode's renderer. It mounts once what it needs has settled, and again
+  // The mode's renderer. It mounts once what it needs is ready, and again
   // only for a new stage, a new renderer or new images to draw; everything
-  // else reaches it through `update`.
+  // else reaches it through `update`. It pins what it mounts.
   useEffect(() => {
     if (!stage || stage.generation !== generationRef.current) return;
-    if (stage.panes !== renderer.panes || !settled || !input) return;
+    if (stage.panes !== renderer.panes || !ready || !input) return;
+    const release = retainImages(
+      needs.flatMap((role) => {
+        const key = images[role]?.key;
+        return key === undefined ? [] : [key];
+      }),
+    );
     const handle = renderer.mount(stage.worlds, input);
     handleRef.current = handle;
     const hostPane = stage.worlds[renderer.host.pane];
@@ -379,12 +449,14 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     return () => {
       if (handleRef.current === handle) handleRef.current = null;
       handle.dispose();
+      // Only once the textures are gone may the cache close their bitmaps.
+      release();
     };
     // `input` is read as of the mount; its later changes go through `update`.
   }, [
     stage,
     renderer,
-    settled,
+    ready,
     baselineBitmap,
     currentBitmap,
     diffBitmap,
@@ -397,15 +469,11 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
 
   // One transform for every pane: fit, zoom and pan of the world.
   useEffect(() => {
-    worldSizeRef.current = world?.size ?? { w: 0, h: 0 };
     if (!stage || stage.generation !== generationRef.current || !transform) {
       return;
     }
-    for (const w of stage.worlds) {
-      w.scale.set(transform.scale);
-      w.position.set(transform.x, transform.y);
-    }
-  }, [stage, world, transform]);
+    placeWorlds(stage.worlds, transform);
+  }, [stage, transform]);
 
   // Repaint the canvas colours when the theme flips (pixi can't read CSS
   // variables). next-themes applies the html class in the PROVIDER's effect,
@@ -443,7 +511,10 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     hostWorld !== null && hostLayers.includes("shading") && highlight;
   useEffect(() => {
     if (!showShading || !hostWorld || !hostApp) return;
-    const shadingRegions = orderDiffRegions(regions, { hideDisplacement });
+    const shadingRegions = orderDiffRegions(regions, {
+      hideDisplacement,
+      showSuppressed,
+    });
     if (shadingRegions.length === 0) return;
     const layer = mountDiffShadingLayer(
       hostWorld,
@@ -468,21 +539,28 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     selectedRegionId,
     highlight,
     hideDisplacement,
+    showSuppressed,
     reducedMotion,
   ]);
 
   // The severity rectangles.
   const showRegions =
-    hostWorld !== null && hostLayers.includes("regions") && regions.length > 0;
+    hostWorld !== null &&
+    hostLayers.includes("regions") &&
+    shownRegions.length > 0;
   useEffect(() => {
     if (!showRegions || !hostWorld) return;
-    const layer = mountDiffOverlayLayer(hostWorld, regions, selectedRegionId);
+    const layer = mountDiffOverlayLayer(
+      hostWorld,
+      shownRegions,
+      selectedRegionId,
+    );
     layer.label = "regions";
     restack(hostWorld, hostLayers);
     return () => {
       destroyQuietly("regions layer", () => layer.destroy({ children: true }));
     };
-  }, [showRegions, hostWorld, hostLayers, regions, selectedRegionId]);
+  }, [showRegions, hostWorld, hostLayers, shownRegions, selectedRegionId]);
 
   // The current image's pixel under a pointer on the host pane: the editor
   // always draws on the current image.
@@ -504,11 +582,11 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   });
   const { overlayActive, pickModeActive, pickPreview, hoverCursor } = editor;
 
-  // The ignore-region editor's layer: remounted whenever the store data or
-  // the edit scope changes (it is cheap: one Graphics per region), and on
-  // zoom, so its handles stay a constant screen size.
-  const showIgnore =
-    hostWorld !== null && hostLayers.includes("ignore") && overlayActive;
+  // The ignore regions, wherever the current image is drawn: read-only, and
+  // interactive in the editor (R9). Remounted whenever the store data or the
+  // edit scope changes (it is cheap: one Graphics per region), and on zoom,
+  // so the editor's handles stay a constant screen size.
+  const showIgnore = hostWorld !== null && hostLayers.includes("ignore");
   useEffect(() => {
     if (!showIgnore || !hostWorld) return;
     // Apply padding + kind overrides to saved regions before handing them
@@ -535,7 +613,11 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
       scale,
       viewport,
       onSelect: (id) => setSelectedIgnoreId(id),
-      pickPreviewBbox: regionInputMode === "pick" ? pickPreview : null,
+      // A preview left from the editor (Esc while hovering) is not drawn.
+      pickPreviewBbox:
+        regionInputMode === "pick" && ignoreEditMode !== "off"
+          ? pickPreview
+          : null,
     });
     layer.label = "ignore";
     restack(hostWorld, hostLayers);
@@ -571,7 +653,7 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;
-    const bboxRegions = regions.flatMap((r) => {
+    const bboxRegions = shownRegions.flatMap((r) => {
       if (
         !r.bbox ||
         typeof r.bbox !== "object" ||
@@ -627,7 +709,7 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
                 aria-hidden
               />
               Baseline
-              {regions.length > 0 && <DiffBadge />}
+              {shownRegions.length > 0 && <DiffBadge />}
             </div>
             <div
               ref={paneARef}
@@ -654,7 +736,7 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
                 aria-hidden
               />
               Current
-              {regions.length > 0 && <DiffBadge />}
+              {shownRegions.length > 0 && <DiffBadge />}
             </div>
             <div
               ref={paneBRef}

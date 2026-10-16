@@ -57,7 +57,12 @@ export interface World {
   missing: { baseline: Rect[]; current: Rect[] };
 }
 
-/** Zoom multiplies the fit scale; pan is in canvas pixels. */
+/**
+ * Zoom multiplies the fit scale. Pan is in WORLD pixels (R12): the world
+ * point at the viewport's centre is `W/2 − panX` whatever the viewport's
+ * size, so a mode change (a pane of another size) or a resize keeps the area
+ * on screen.
+ */
 export interface View {
   zoom: number;
   panX: number;
@@ -132,7 +137,10 @@ export function fitScale(world: Size, viewport: Size): number {
   return Math.max(scale, MIN_FIT_SCALE);
 }
 
-/** The world centred in the viewport at fit scale, then zoomed, then panned. */
+/**
+ * The world centred in the viewport at fit scale, then zoomed, then panned
+ * (the pan in world px, so it scales with the world).
+ */
 export function transformFor(
   world: Size,
   viewport: Size,
@@ -141,8 +149,8 @@ export function transformFor(
   const scale = fitScale(world, viewport) * view.zoom;
   return {
     scale,
-    x: (viewport.w - world.w * scale) / 2 + view.panX,
-    y: (viewport.h - world.h * scale) / 2 + view.panY,
+    x: (viewport.w - world.w * scale) / 2 + view.panX * scale,
+    y: (viewport.h - world.h * scale) / 2 + view.panY * scale,
   };
 }
 
@@ -164,11 +172,13 @@ export function zoomAbout(
   const zoom = clampZoom(view.zoom * factor);
   const scale = fitScale(world, viewport) * zoom;
   // Where the world's top-left must land so `anchor` maps back onto `point`,
-  // minus where it lands with no pan.
+  // minus where it lands with no pan, in world px.
   return {
     zoom,
-    panX: point.x - anchor.x * scale - (viewport.w - world.w * scale) / 2,
-    panY: point.y - anchor.y * scale - (viewport.h - world.h * scale) / 2,
+    panX:
+      (point.x - anchor.x * scale - (viewport.w - world.w * scale) / 2) / scale,
+    panY:
+      (point.y - anchor.y * scale - (viewport.h - world.h * scale) / 2) / scale,
   };
 }
 

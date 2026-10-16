@@ -1,4 +1,4 @@
-import { Container } from "pixi.js";
+import { Container, type Graphics } from "pixi.js";
 import { describe, expect, test, vi } from "vitest";
 
 import {
@@ -133,5 +133,32 @@ describe("mountHatchLayer", () => {
       expect(x2).toBeLessThanOrEqual(116);
     }
     expect(rec.strokes).toEqual([expect.objectContaining({ color: 0x222222 })]);
+  });
+
+  test("takes the spacing in world px, for a screen spacing under a scale", () => {
+    const g = mountHatchLayer(
+      new Container(),
+      [{ x: 0, y: 0, w: 40, h: 40 }],
+      0,
+      2,
+    ) as unknown as Recorded;
+    const sums = segments(g)
+      .map(([x1, y1]) => x1 + y1)
+      .sort((a, b) => a - b);
+    for (let i = 1; i < sums.length; i++) {
+      expect(sums[i]! - sums[i - 1]!).toBeCloseTo(2, 9);
+    }
+    // A spacing that is not a positive number falls back to the default.
+    const fallback = segments(
+      drawHatch(
+        g as unknown as Graphics,
+        [{ x: 0, y: 0, w: 40, h: 40 }],
+        0,
+        0,
+      ) as unknown as Recorded,
+    );
+    expect(
+      fallback[1]![0] + fallback[1]![1] - (fallback[0]![0] + fallback[0]![1]),
+    ).toBeCloseTo(HATCH_SPACING, 9);
   });
 });

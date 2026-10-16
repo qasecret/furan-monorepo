@@ -26,13 +26,16 @@ export interface RenderInput {
   flickerFrame: "baseline" | "current";
   /** From the `--fg-muted` token, via `canvas-theme`. */
   colors: { hatch: number };
+  /** Canvas px per world px (the world transform's scale), for screen-sized marks. */
+  scale: number;
 }
 
 export interface ModeHandle {
   /**
-   * Applies the inputs a mount can take in place: the world (the hatching
-   * follows it), the opacity, the swipe, the flicker frame and the colours.
-   * The images are fixed for a mount; the host mounts again for new ones.
+   * Applies the inputs a mount can take in place: the world and the scale
+   * (the hatching follows them), the opacity, the swipe, the flicker frame
+   * and the colours. The images are fixed for a mount; the host mounts again
+   * for new ones.
    */
   update(input: RenderInput): void;
   /**

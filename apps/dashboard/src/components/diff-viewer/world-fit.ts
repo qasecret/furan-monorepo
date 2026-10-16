@@ -4,8 +4,8 @@ import { clampZoom, fitScale, type View } from "./viewer-geometry";
  * Compute a {zoom, panX, panY} that frames `bbox` centered in the canvas at
  * a comfortable size (bbox fills ~`targetFill` of the smaller canvas
  * dimension), clamped to the viewer's zoom range. Pure: `imgW × imgH` is the
- * world the stage draws, and the view is applied with the same fit as every
- * other (`transformFor`).
+ * world the stage draws, the pan is in world px, and the view is applied with
+ * the same fit as every other (`transformFor`).
  */
 export function computeFocusView(
   bbox: { x: number; y: number; width: number; height: number },
@@ -23,10 +23,9 @@ export function computeFocusView(
     (screenH * targetFill) / h,
   );
   const zoom = clampZoom(desiredScale / fit);
-  const scale = fit * zoom;
+  // The bbox's centre at the canvas's centre: the world's centre moved by
+  // the distance between the two.
   const cx = bbox.x + bbox.width / 2;
   const cy = bbox.y + bbox.height / 2;
-  const panX = scale * (imgW / 2 - cx);
-  const panY = scale * (imgH / 2 - cy);
-  return { zoom, panX, panY };
+  return { zoom, panX: imgW / 2 - cx, panY: imgH / 2 - cy };
 }
