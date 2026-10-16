@@ -25,6 +25,11 @@ export async function runL1Odiff(
     writeFileSync(cdPath, candidate);
     const result = await compare(blPath, cdPath, dfPath, {
       antialiasing: engineConfig.ignoreAntialiasing,
+      // Without this odiff compares only the area both images share, so a page
+      // that grew or shrank with a matching top would pass at 0%. With it a
+      // size change returns `layout-diff`, which maps to 100% below, like the
+      // other engines.
+      failOnLayoutDiff: true,
       ignoreRegions:
         ignoreAreas?.map((r) => ({
           x1: r.x,
