@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -206,6 +207,82 @@ describe("ShortcutsSheet", () => {
         .getByRole("switch", { name: "Single-key shortcuts" })
         .getAttribute("aria-checked"),
     ).toBe("true");
+  });
+
+  it("the panel, focused to be read, shows no focus outline", () => {
+    render(<Layout />);
+    openSheet();
+    expect(document.activeElement).toBe(sheet());
+    // It is a container to read from, not a control.
+    expect(sheet().className).toContain("outline-none");
+  });
+
+  describe("focus on close", () => {
+    it("closing the sheet returns focus to its opener", async () => {
+      const user = userEvent.setup();
+      render(
+        <Layout>
+          <button type="button">Somewhere</button>
+          <button type="button">Elsewhere</button>
+        </Layout>,
+      );
+      const somewhere = screen.getByRole("button", { name: "Somewhere" });
+      act(() => somewhere.focus());
+
+      // Opened from there (the `?` key's way), and closed with Esc.
+      openSheet();
+      expect(document.activeElement).toBe(sheet());
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(document.activeElement).toBe(somewhere));
+
+      // And again, from somewhere else, closed with the close button: it is
+      // that one that gets focus back, not the first opener.
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      act(() => elsewhere.focus());
+      openSheet();
+      await user.click(within(sheet()).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(document.activeElement).toBe(elsewhere));
+    });
+
+    it("an opener named by the one who opens it wins over where focus is", async () => {
+      // A menu item that opens the sheet is about to go, and takes the focus
+      // with it: the menu's own button is named instead.
+      const user = userEvent.setup();
+      render(
+        <Layout>
+          <button type="button">Menu button</button>
+          <button type="button">Menu item</button>
+        </Layout>,
+      );
+      const menuButton = screen.getByRole("button", { name: "Menu button" });
+      const item = screen.getByRole("button", { name: "Menu item" });
+      act(() => item.focus());
+      act(() => useShortcutsSheet.getState().openFrom(menuButton));
+      expect(document.activeElement).toBe(sheet());
+
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(document.activeElement).toBe(menuButton));
+
+      // The name is for that one opening only.
+      act(() => item.focus());
+      openSheet();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(document.activeElement).toBe(item));
+    });
+
+    it("with nothing focused when it opened, closing leaves focus alone and nothing breaks", async () => {
+      const user = userEvent.setup();
+      render(
+        <Layout>
+          <button type="button">Somewhere</button>
+        </Layout>,
+      );
+      expect(document.activeElement).toBe(document.body);
+      openSheet();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(document.activeElement).toBe(document.body);
+    });
   });
 
   it("lists this page's commands then Everywhere", () => {

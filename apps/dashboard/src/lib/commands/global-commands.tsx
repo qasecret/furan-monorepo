@@ -11,6 +11,7 @@ import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import { useTourOptional } from "@/components/tour/tour-context";
 import { useReviewMutations } from "@/lib/review/use-review-mutations";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import { canReviewRole, isAtLeastAdmin } from "@/lib/roles";
 
 /** What the global commands read when they run: the layout's live state. */
@@ -73,6 +74,9 @@ const GLOBAL_COMMANDS: Command<GlobalCtx>[] = [
     primary: true,
     // It takes back a review decision: a role that can't review has none.
     allowed: ({ role }) => canReviewRole(role),
+    // Only while this session has an action to take back: the palette lists
+    // it then, and the `?` sheet shows it as not available otherwise.
+    enabled: () => useUndoStore.getState().stack.length > 0,
     // The newest action: no id. Not `allowInText`: in a field, ⌘Z is the
     // field's own undo.
     run: ({ undo }) => undo(),

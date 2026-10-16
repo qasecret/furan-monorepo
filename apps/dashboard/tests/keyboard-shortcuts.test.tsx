@@ -26,6 +26,9 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
   useReviewMutations: () => ({ undo: undoMock }),
 }));
 
+import { createBackend, TrpcBackend } from "./trpc-backend";
+
+import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { BatchDoneCard } from "@/components/diff-viewer/BatchDoneCard";
@@ -60,6 +63,7 @@ import {
   useCommandKeys,
   useCommandRegistry,
 } from "@/lib/commands/registry";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 /**
@@ -130,8 +134,16 @@ const DRAFT = {
   kind: "ignore" as const,
 };
 
+/** ⌘Z takes back this session's newest review action: there is one. */
+function haveSomethingToUndo() {
+  useUndoStore.setState({
+    stack: [{ actionId: "a1", label: "Approved home", runIds: ["r1"] }],
+  });
+}
+
 function resetStores() {
   sessionStorage.clear();
+  useUndoStore.setState({ stack: [] });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -467,6 +479,7 @@ describe("useDiffViewerShortcuts", () => {
   // ⌘Z is the global `review.undo` now (Task 3): on the viewer's page it is
   // the same undo, through the one dispatcher.
   it("Ctrl+Z invokes the review undo and prevents the browser default", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     const ev = press("z", { ctrlKey: true });
     expect(undoMock).toHaveBeenCalledOnce();
@@ -476,12 +489,14 @@ describe("useDiffViewerShortcuts", () => {
   });
 
   it("Ctrl+Shift+Z (redo) does not invoke the review undo", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     press("Z", { ctrlKey: true, shiftKey: true });
     expect(undoMock).not.toHaveBeenCalled();
   });
 
   it("Ctrl+Z ignores auto-repeat and leaves the event alone", () => {
+    haveSomethingToUndo();
     mountViewer({ viewports: [] });
     const ev = press("z", { ctrlKey: true, repeat: true });
     expect(undoMock).not.toHaveBeenCalled();
@@ -536,6 +551,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
 
   // A state in which every key above would visibly change something.
   function armEveryShortcut() {
+    haveSomethingToUndo();
     usePaletteStore.setState({ open: false });
     useShortcutsSheet.setState({ open: false });
     useViewerStore.setState({
@@ -679,6 +695,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   });
 
   it("Ctrl+Z stays with a menu opened inside a dialog that lets it through", () => {
+    haveSomethingToUndo();
     mountHook();
     focusInto(
       `<div role="dialog" data-passes-undo=""><div role="menu"><div role="menuitem" tabindex="-1">x</div></div></div>`,
@@ -689,6 +706,7 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
   });
 
   it("still fires Ctrl+Z while focus sits on an ordinary toolbar button", () => {
+    haveSomethingToUndo();
     mountHook();
     focusInto(`<button>Overlay</button>`, "button");
     pressCtrlZ();
@@ -772,6 +790,7 @@ describe("the viewer's keys are registry commands", () => {
 
   /** Every key's effect is visible from here: the editor on, d1 selected. */
   function arm() {
+    haveSomethingToUndo();
     setClipboardRegion("p1", COPIED);
     useViewerStore.setState({
       mode: "side-by-side",
@@ -1224,10 +1243,6 @@ describe("the viewer's keys are registry commands", () => {
   });
 
   it("typing a into the open palette's input approves nothing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => [] })),
-    );
     const onApprove = vi.fn();
     const onReject = vi.fn();
     function Viewer() {
@@ -1236,7 +1251,14 @@ describe("the viewer's keys are registry commands", () => {
     }
     render(
       <Keyboard role="editor">
-        <CommandPalette userRole="editor" />
+        <CurrentProjectProvider
+          initialProjects={[]}
+          initialDefaultProjectId={null}
+        >
+          <TrpcBackend backend={createBackend()}>
+            <CommandPalette userRole="editor" userId="u1" />
+          </TrpcBackend>
+        </CurrentProjectProvider>
         <Viewer />
       </Keyboard>,
     );
@@ -1250,7 +1272,6 @@ describe("the viewer's keys are registry commands", () => {
     expect(onReject).not.toHaveBeenCalled();
     // The letters are the search's.
     expect((input as HTMLInputElement).value).toBe("arx");
-    vi.unstubAllGlobals();
   });
 
   it("g i in the viewer navigates and does not toggle the region editor", () => {

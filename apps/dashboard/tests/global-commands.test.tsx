@@ -29,6 +29,9 @@ vi.mock("tinykeys", async (importOriginal) => {
   return { ...actual, tinykeys: vi.fn(actual.tinykeys) };
 });
 
+import { createBackend, TrpcBackend } from "./trpc-backend";
+
+import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
@@ -54,6 +57,7 @@ import {
   type ResolvedCommand,
 } from "@/lib/commands/registry";
 import { useReviewAnnouncer } from "@/lib/review/review-announcer";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 // next-themes reads the OS scheme through matchMedia, which jsdom lacks.
@@ -130,7 +134,15 @@ function isEnabled(id: string): boolean {
   return resolved.command.enabled?.(resolved.ctx()) ?? true;
 }
 
+/** ⌘Z takes back this session's newest review action: there is one. */
+function haveSomethingToUndo() {
+  useUndoStore.setState({
+    stack: [{ actionId: "a1", label: "Approved home", runIds: ["r1"] }],
+  });
+}
+
 beforeEach(() => {
+  useUndoStore.setState({ stack: [] });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -297,13 +309,16 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘K opens the palette but not over an open dialog; inside the palette ⌘K closes it", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => [] })),
-    );
     render(
       <Layout>
-        <CommandPalette userRole="editor" />
+        <CurrentProjectProvider
+          initialProjects={[]}
+          initialDefaultProjectId={null}
+        >
+          <TrpcBackend backend={createBackend()}>
+            <CommandPalette userRole="editor" userId="u1" />
+          </TrpcBackend>
+        </CurrentProjectProvider>
       </Layout>,
     );
 
@@ -354,6 +369,7 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘Z calls undo", () => {
+    haveSomethingToUndo();
     render(
       <Layout role="editor">
         <div role="dialog" data-passes-undo="">
@@ -385,8 +401,24 @@ describe("GlobalCommands", () => {
     expect(undoMock).toHaveBeenCalledTimes(2);
   });
 
+  it("⌘Z with nothing to undo does nothing and leaves the key alone", () => {
+    // R16: the command is enabled while this session has an action to take
+    // back, which the palette lists it by.
+    render(<Layout role="editor" />);
+    expect(isEnabled("review.undo")).toBe(false);
+    const e = press("z", { ctrlKey: true });
+    expect(undoMock).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+
+    act(() => haveSomethingToUndo());
+    expect(isEnabled("review.undo")).toBe(true);
+    expect(press("z", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(undoMock).toHaveBeenCalledTimes(1);
+  });
+
   it("a guest has no ⌘Z binding and no undo row", () => {
     // R9: undo takes back a review decision, which a guest cannot make.
+    haveSomethingToUndo();
     render(<Layout role="guest" />);
     expect(find("review.undo")).toBeUndefined();
     const bound = boundKeys();
@@ -406,6 +438,7 @@ describe("GlobalCommands", () => {
   });
 
   it("⌘Z in a text field is native undo, not review undo", () => {
+    haveSomethingToUndo();
     render(
       <Layout>
         <input aria-label="Branch" />
@@ -423,6 +456,7 @@ describe("GlobalCommands", () => {
   it("⌘Z undoes once with the viewer mounted", () => {
     // The viewer's keys are registry commands and ⌘Z is not one of them: on
     // its page ⌘Z is this undo, once, whichever mounts first.
+    haveSomethingToUndo();
     const viewer = () =>
       renderHook(() => useDiffViewerShortcuts({ viewports: [] }));
     const layout = () => render(<Layout />);
@@ -520,5 +554,32 @@ describe("GlobalCommands", () => {
     await runCommand("help.tour");
     expect(tour?.state.active).toBe(true);
     expect(tour?.state.index).toBe(0);
+  });
+
+  it("Replay tour follows the current page: it is off again once the page with a tour is left", async () => {
+    const steps: TourStep[] = [{ target: "body", content: "Hello" }];
+    function Page({ id }: { id: string }) {
+      useTourSteps(id, steps);
+      return null;
+    }
+    const shell = (page: ReactNode) => (
+      <TourProvider>
+        <Layout />
+        {page}
+      </TourProvider>
+    );
+    localStorage.setItem("furan:tour:dismissed:inbox", "1");
+    localStorage.setItem("furan:tour:dismissed:variations", "1");
+
+    const view = render(shell(<Page id="inbox" />));
+    expect(isEnabled("help.tour")).toBe(true);
+
+    // To a page that has no tour of its own.
+    view.rerender(shell(null));
+    expect(isEnabled("help.tour")).toBe(false);
+
+    // To one that has: it is that page's tour that replays.
+    view.rerender(shell(<Page id="variations" />));
+    expect(isEnabled("help.tour")).toBe(true);
   });
 });

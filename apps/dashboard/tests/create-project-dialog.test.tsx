@@ -12,9 +12,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { toastError, routerPush } = vi.hoisted(() => ({
+const { toastError, routerPush, routerRefresh } = vi.hoisted(() => ({
   toastError: vi.fn(),
   routerPush: vi.fn(),
+  routerRefresh: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -24,7 +25,7 @@ vi.mock("sonner", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: routerPush,
-    refresh: vi.fn(),
+    refresh: routerRefresh,
     replace: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
@@ -55,6 +56,7 @@ function setupFetch(
 
 beforeEach(() => {
   routerPush.mockReset();
+  routerRefresh.mockReset();
   toastError.mockReset();
 });
 
@@ -112,6 +114,28 @@ describe("CreateProjectDialog", () => {
       unknown
     >;
     expect(body).toEqual({ name: "my-app" });
+  });
+
+  test("a created project refreshes the layout's project list", async () => {
+    // The protected layout keeps its server data across client navigations:
+    // without a refresh, the palette's "Jump to project" lacks the new one.
+    setupFetch(
+      () =>
+        new Response(JSON.stringify({ id: "new-id-2" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    render(<CreateProjectDialog />);
+    fireEvent.click(screen.getByTestId("create-project-button"));
+    fireEvent.change(screen.getByTestId("project-name-input"), {
+      target: { value: "fresh" },
+    });
+    fireEvent.click(screen.getByTestId("submit-create-project"));
+    await waitFor(() => {
+      expect(routerPush).toHaveBeenCalledWith("/projects/new-id-2");
+    });
+    expect(routerRefresh).toHaveBeenCalledOnce();
   });
 
   test("submits with mainBranchName override", async () => {

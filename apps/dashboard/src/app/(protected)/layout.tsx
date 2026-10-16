@@ -91,7 +91,7 @@ export default async function ProtectedLayout({
           >
             {children}
           </AppShell>
-          <CommandPalette userRole={userRole} />
+          <CommandPalette userRole={userRole} userId={me.data?.id ?? ""} />
           <ShortcutsSheet />
           <GlobalCommands />
           <CommandDispatcher />

@@ -32,6 +32,21 @@ describe("ProjectSelector", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  test("a long project name shrinks and ellipsizes instead of pushing the bar", () => {
+    // The top bar's left cluster is `min-w-0 flex-1`; the label and its text
+    // must be able to give way in it, or the bar's other controls overlap.
+    render(<ProjectSelector />);
+    const label = screen.getByTestId("project-selector-label");
+    expect(label.classList.contains("min-w-0")).toBe(true);
+    const name = screen.getByText("alpha");
+    expect(name.classList.contains("truncate")).toBe(true);
+    expect(name.classList.contains("min-w-0")).toBe(true);
+    // The icon keeps its size while the text gives way.
+    expect(label.querySelector("svg")?.classList.contains("shrink-0")).toBe(
+      true,
+    );
+  });
+
   test("on a project route the label shows the URL project's name", () => {
     pathname = "/projects/b/builds";
     render(<ProjectSelector />);
