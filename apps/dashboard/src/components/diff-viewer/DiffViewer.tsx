@@ -17,6 +17,7 @@ import { useReviewActions } from "./review-actions";
 import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
 import { StaleStepCallout } from "./StaleStepCallout";
+import { stepDiffKey } from "./step-diff-key";
 import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
@@ -497,8 +498,15 @@ export function DiffViewer({
       if (hit) proposePendingSnap(draft.id, hit);
     }
   }, [draftIgnoreAreas, elementMap, pendingSnaps, proposePendingSnap]);
-  // The L1 diff worker writes the diff overlay PNG to testRuns.diffName (key).
-  const diffOverlayKey = data?.diffName ?? null;
+  // The L1 diff worker writes each step's own diff overlay PNG to
+  // screenshots.diffImageKey (and the worst step's also to testRuns.diffName,
+  // which only a run with a single screenshot may borrow). `legacyMissing`:
+  // a step of a multi-step run diffed before steps kept their own images.
+  const { key: diffOverlayKey, legacyMissing: diffImageLegacyMissing } =
+    stepDiffKey(candidateScreenshot, {
+      diffName: data?.diffName ?? null,
+      screenshotCount: data?.screenshots.length ?? 0,
+    });
   const baselineSource = currentContext.baselineSource;
 
   const uniqueViewports = useMemo(() => {
@@ -856,7 +864,13 @@ export function DiffViewer({
                 the reference's two-pane layout. */}
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex-1 min-w-0">
-                <div id="diff-viewer-canvas" className="h-full overflow-auto">
+                <div
+                  id="diff-viewer-canvas"
+                  className="h-full overflow-auto"
+                  data-diff-image-legacy-missing={
+                    diffImageLegacyMissing ? "true" : undefined
+                  }
+                >
                   <ViewerCanvas
                     baselineUrl={baselineUrl}
                     candidateUrl={candidateUrl}

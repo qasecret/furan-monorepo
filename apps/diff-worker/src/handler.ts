@@ -1363,6 +1363,7 @@ async function handleDiffJobInner(
   //   no checkpoint had a baseline to compare against (nothing was compared).
   // - pixelMisMatchCount: SUM across checkpoints (NULL likewise).
   // - diffName: overlay key of the checkpoint with max diffPercent (or null).
+  //   Each checkpoint's own overlay key is `screenshots.diff_image_key`.
   // - baselineSource: tier of the worst checkpoint that resolved a baseline
   //   (first such checkpoint on ties); null when none resolved one.
   const compared = results.some((r) => !r.firstBaseline);
@@ -1475,14 +1476,17 @@ async function handleDiffJobInner(
       insertedRegionIds = inserted.map((r) => r.id);
     }
 
-    // Per checkpoint: its verdict (spec §3) and its ADR-042 signature for
+    // Per checkpoint: its verdict (spec §3), its ADR-042 signature for
     // build-scoped grouping (null when it was not diffed or had no meaningful
-    // regions → "ungrouped"). A re-diff rewrites both.
+    // regions → "ungrouped") and its own diff image (null when the diff
+    // produced none, or it was not diffed). A re-diff rewrites all three, so a
+    // checkpoint that no longer differs loses its image.
     for (const r of results) {
       await tx
         .update(screenshots)
         .set({
           diffSignature: r.diffSignature,
+          diffImageKey: r.diffImageKey,
           verdict: r.verdict,
           verdictAt: sql`clock_timestamp()`,
         })

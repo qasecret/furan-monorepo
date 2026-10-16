@@ -790,4 +790,117 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     expect((await runRow(s)).status).toBe("passed");
     expect(await verdicts(s, ["home"])).toEqual(["unresolved"]);
   }, 60_000);
+
+  /** Each checkpoint's stored diff image key, by name (null when it has none). */
+  async function diffImageKeys(
+    s: Scenario,
+    names: string[],
+  ): Promise<Array<string | null>> {
+    const rows = await db
+      .select({ id: screenshots.id, diffImageKey: screenshots.diffImageKey })
+      .from(screenshots)
+      .where(eq(screenshots.runId, s.candidateRunId));
+    const byId = new Map(rows.map((r) => [r.id, r.diffImageKey]));
+    return names.map((n) => byId.get(s.shotId[n]!) ?? null);
+  }
+
+  /**
+   * home: the square changes colour (red -> blue at 0,0), so ~13% of the image
+   * differs. cart: the square moves (red at 0,0 -> red at 144,144), so it
+   * leaves one place and appears in another and ~26% differs. cart is the
+   * worse diff; each has its own diff image.
+   */
+  async function twoDifferingCheckpoints(): Promise<CheckpointSpec[]> {
+    return [
+      { name: "home", baseline: await red0(), candidate: await blue0() },
+      { name: "cart", baseline: await red0(), candidate: await red144() },
+    ];
+  }
+
+  it("writes each checkpoint's own diff image key", async () => {
+    const s = await seed({ checkpoints: await twoDifferingCheckpoints() });
+
+    await diff(s);
+
+    const [homeKey, cartKey] = await diffImageKeys(s, ["home", "cart"]);
+    expect(homeKey).not.toBeNull();
+    expect(cartKey).not.toBeNull();
+    expect(homeKey).not.toBe(cartKey);
+    // Both images were stored, not just the worst one's.
+    expect(await storage.head(homeKey!)).not.toBeNull();
+    expect(await storage.head(cartKey!)).not.toBeNull();
+    // The run keeps pointing at the worse checkpoint's, for run-level views.
+    const run = await runRow(s);
+    expect(run.diffName).toBe(cartKey);
+  }, 60_000);
+
+  it("a checkpoint with no diff image has no key", async () => {
+    const s = await seed({ checkpoints: await threeCheckpoints() });
+
+    await diff(s);
+
+    // home changed; cart and checkout are identical to their baselines.
+    const [homeKey, cartKey, checkoutKey] = await diffImageKeys(s, [
+      "home",
+      "cart",
+      "checkout",
+    ]);
+    expect(homeKey).not.toBeNull();
+    expect(cartKey).toBeNull();
+    expect(checkoutKey).toBeNull();
+    expect((await runRow(s)).diffName).toBe(homeKey);
+  }, 60_000);
+
+  it("a re-diff rewrites each checkpoint's key, to NULL when it no longer differs", async () => {
+    const s = await seed({ checkpoints: await twoDifferingCheckpoints() });
+    await diff(s);
+    const [homeBefore, cartBefore] = await diffImageKeys(s, ["home", "cart"]);
+    expect(homeBefore).not.toBeNull();
+    expect(cartBefore).not.toBeNull();
+
+    // cart's candidate becomes the very image of its baseline (a late
+    // re-upload): same bytes, stored under its own key so it is diffed, not
+    // short-circuited as a hash match.
+    const same = await red0();
+    const sameKey = `${objectKey(same)}-${s.shotId.cart}-redo`;
+    await storage.put(sameKey, same, "image/png");
+    await db
+      .update(screenshots)
+      .set({ imageKey: sameKey })
+      .where(eq(screenshots.id, s.shotId.cart!));
+
+    await diff(s);
+
+    const [homeAfter, cartAfter] = await diffImageKeys(s, ["home", "cart"]);
+    expect(cartAfter).toBeNull();
+    // home is untouched by the re-diff, and the same input gives the same
+    // content-addressed key.
+    expect(homeAfter).toBe(homeBefore);
+    // The run's diff image is now home's, the only one left.
+    expect((await runRow(s)).diffName).toBe(homeAfter);
+  }, 60_000);
+
+  it("a re-diff that hash-matches a checkpoint to its baseline clears its key", async () => {
+    const s = await seed({
+      autoApproveFeature: true,
+      checkpoints: await twoDifferingCheckpoints(),
+    });
+    await diff(s);
+    expect((await diffImageKeys(s, ["cart"]))[0]).not.toBeNull();
+
+    // cart's candidate is now the baseline's own object (ADR-032 hash match):
+    // it is auto-approved without a diff, so it has no image at all.
+    const [baselineRow] = await db
+      .select({ imageKey: screenshots.imageKey })
+      .from(screenshots)
+      .where(eq(screenshots.id, s.baselineShotId.cart!));
+    await db
+      .update(screenshots)
+      .set({ imageKey: baselineRow!.imageKey })
+      .where(eq(screenshots.id, s.shotId.cart!));
+
+    await diff(s);
+
+    expect(await diffImageKeys(s, ["cart"])).toEqual([null]);
+  }, 60_000);
 });

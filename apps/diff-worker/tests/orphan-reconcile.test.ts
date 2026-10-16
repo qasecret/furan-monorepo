@@ -1,7 +1,22 @@
-import type { Storage, StorageObject } from "@furan/storage";
-import { describe, expect, test, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 
-import { reconcileOrphans } from "../src/orphan-reconcile.js";
+import {
+  builds,
+  createDb,
+  eq,
+  projects,
+  screenshots,
+  testRuns,
+  testVariations,
+  type DB,
+} from "@furan/db";
+import type { Storage, StorageObject } from "@furan/storage";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+
+import {
+  gatherReferencedKeys,
+  reconcileOrphans,
+} from "../src/orphan-reconcile.js";
 
 /** In-memory Storage stub exposing only `list` + `delete` (the sweep's surface). */
 function fakeStorage(objects: StorageObject[]): Storage {
@@ -65,5 +80,101 @@ describe("reconcileOrphans", () => {
     });
     expect(res.deleted).toBe(0);
     expect(storage.delete).not.toHaveBeenCalled();
+  });
+});
+
+const skip = !process.env.DATABASE_URL;
+const dbDescribe = skip ? describe.skip : describe;
+
+dbDescribe("gatherReferencedKeys (integration)", () => {
+  let db: DB;
+  let closeDb: () => Promise<void>;
+  let projectId: string;
+
+  beforeAll(async () => {
+    const created = createDb();
+    db = created.db;
+    closeDb = created.close;
+    const [p] = await db
+      .insert(projects)
+      .values({ name: `dw-orphan-${randomUUID()}`, mainBranchName: "main" })
+      .returning();
+    projectId = p!.id;
+  }, 60_000);
+
+  afterAll(async () => {
+    try {
+      await db.delete(projects).where(eq(projects.id, projectId));
+    } catch {
+      /* best-effort cleanup */
+    }
+    await closeDb();
+  });
+
+  /**
+   * A run whose one step has a diff image of its own, different from the run's
+   * `diff_name` (the run's worst step is another one). Keys no other row can
+   * hold, so every assertion is exact.
+   */
+  async function seedStepWithOwnDiff() {
+    const tag = randomUUID();
+    const keys = {
+      image: `${tag}-image`,
+      stepDiff: `${tag}-step-diff`,
+      runDiff: `${tag}-run-diff`,
+    };
+    const [b] = await db.insert(builds).values({ projectId }).returning();
+    const [run] = await db
+      .insert(testRuns)
+      .values({
+        buildId: b!.id,
+        projectId,
+        name: "run",
+        diffName: keys.runDiff,
+      })
+      .returning();
+    const [v] = await db
+      .insert(testVariations)
+      .values({
+        name: tag,
+        projectId,
+        branchName: "main",
+        browser: "chromium",
+        viewport: "400x400",
+      })
+      .returning();
+    await db.insert(screenshots).values({
+      runId: run!.id,
+      projectId,
+      testVariationId: v!.id,
+      name: tag,
+      imageKey: keys.image,
+      viewport: "400x400",
+      browser: "chromium",
+      diffImageKey: keys.stepDiff,
+    });
+    return { runId: run!.id, keys };
+  }
+
+  test("references per-step diff image keys", async () => {
+    const { keys } = await seedStepWithOwnDiff();
+
+    const referenced = await gatherReferencedKeys(db);
+
+    expect(referenced.has(keys.stepDiff)).toBe(true);
+    // The run-level keys stay referenced.
+    expect(referenced.has(keys.runDiff)).toBe(true);
+    expect(referenced.has(keys.image)).toBe(true);
+  });
+
+  test("stops referencing a step's diff image once its row is gone", async () => {
+    const { runId, keys } = await seedStepWithOwnDiff();
+    // Deleting the run cascades to its steps (retention does the same).
+    await db.delete(testRuns).where(eq(testRuns.id, runId));
+
+    const referenced = await gatherReferencedKeys(db);
+
+    expect(referenced.has(keys.stepDiff)).toBe(false);
+    expect(referenced.has(keys.runDiff)).toBe(false);
   });
 });

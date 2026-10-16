@@ -1,0 +1,19 @@
+-- 0041: screenshots.diff_image_key (spec 2026-10-16-diff-comparison §3.5).
+--
+-- The diff-worker computes and stores a diff image (PNG) for every checkpoint
+-- but persisted only the worst one, as `test_runs.diff_name`. The viewer drew
+-- that one image on every step of a multi-step run, and the nightly orphan
+-- reconcile deleted the other steps' images as unreferenced.
+--
+-- `diff_image_key` is the storage key of the step's own diff image, written by
+-- the diff-worker in the same UPDATE as the step's verdict. A re-diff rewrites
+-- it, to NULL when the new diff produced no image. `test_runs.diff_name` is
+-- unchanged: still the worst checkpoint's, for the run-level views.
+--
+-- Rows diffed before this migration keep NULL: their other steps' images were
+-- never kept apart from the run's, so there is nothing to backfill. The viewer
+-- falls back to `diff_name` for them only when the run has one screenshot.
+--
+-- Additive and idempotent: nullable, no default, no rewrite of existing rows,
+-- and re-applying this file is a no-op.
+ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_image_key" text;
