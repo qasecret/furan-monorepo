@@ -19,17 +19,24 @@ vi.mock("@/components/tour/page-tour", () => ({
     return null;
   },
 }));
-// The viewer's role, as the server reads it for the request.
-const session = vi.hoisted(() => ({ role: "editor" as string }));
+// The viewer, as the server reads it for the request.
+const session = vi.hoisted(() => ({
+  id: "u1" as string | null,
+  role: "editor" as string,
+}));
 vi.mock("@/lib/get-viewer", async () => {
   const roles =
     await vi.importActual<typeof import("@/lib/roles")>("@/lib/roles");
-  return { ...roles, getViewerRole: vi.fn(async () => session.role) };
+  return {
+    ...roles,
+    getViewer: vi.fn(async () => ({ id: session.id, role: session.role })),
+  };
 });
 
 import CheckpointPage from "@/app/(protected)/projects/[projectId]/runs/[runId]/checkpoints/[checkpointId]/page";
 
 beforeEach(() => {
+  session.id = "u1";
   session.role = "editor";
 });
 afterEach(() => {
@@ -110,6 +117,14 @@ describe("checkpoint page", () => {
       expect(props.canReview, role).toBe(canReview);
       cleanup();
     }
+  });
+
+  test("hands the viewer the user's id, for their saved preferences", async () => {
+    expect((await renderPage()).userId).toBe("u1");
+    cleanup();
+    // No user behind the session: the viewer keeps preferences in memory.
+    session.id = null;
+    expect((await renderPage()).userId).toBeNull();
   });
 
   test("the viewer's tour names no keys: a guest has no A, and the switch can turn them off (R35)", async () => {

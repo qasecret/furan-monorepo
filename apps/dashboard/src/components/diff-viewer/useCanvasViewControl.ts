@@ -1,15 +1,24 @@
 "use client";
 
-import type { Application, Container, Sprite } from "pixi.js";
+import { useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { fitScale, ZOOM_STEP, type Size } from "./viewer-geometry";
 
-import { ZOOM_STEP, useViewerStore } from "./useViewerStore";
-import { fitWorldToCanvas, type ViewTransform } from "./world-fit";
+/** The stage's world and viewport (the size its transform is computed for). */
+export interface CanvasGeometry {
+  world: Size;
+  viewport: Size;
+}
 
 /**
- * Attach wheel-zoom + middle-mouse-pan listeners to a Pixi canvas. Returns
- * a teardown function. Pulls actions from the zustand store directly
- * (instead of accepting them as args) so the same wiring works for any
- * canvas in the viewer without needing per-pane prop drilling.
+ * Attach wheel-zoom + middle-mouse-pan listeners to a pane of the viewer
+ * stage. Returns a teardown function. Pulls actions from the view-state
+ * store directly (instead of accepting them as args) so the same wiring works
+ * for every pane without per-pane prop drilling: the view is the stage's one
+ * world view, so zoom and pan move every pane together. `geometry` reads the
+ * world's size and the viewport the stage's transform uses, at the moment of
+ * the event: the wheel zooms about the cursor in that world, and a drag pans
+ * by its canvas px over the transform's scale (the pan is in world px).
  *
  * Wheel zoom is "trackpad/mouse-pinch" style — no modifier required, since
  * the canvas is a dedicated review surface and hijacking page scroll over
@@ -22,16 +31,19 @@ import { fitWorldToCanvas, type ViewTransform } from "./world-fit";
  * during edit). Space-bar pan would require a global keydown tracker;
  * deferred — middle-mouse already covers the "pan while editing" case.
  */
-export function attachCanvasViewControl(canvas: HTMLElement): () => void {
+export function attachCanvasViewControl(
+  canvas: HTMLElement,
+  geometry: () => CanvasGeometry,
+): () => void {
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const canvasSize = { width: rect.width, height: rect.height };
+    const { world, viewport } = geometry();
     // deltaY > 0 = wheel toward user = zoom out; matches Google Maps,
     // Figma, every map-style viewer.
     const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-    useViewerStore.getState().zoomAt(factor, anchor, canvasSize);
+    useViewState.getState().zoomAt(factor, anchor, world, viewport);
   };
 
   let panning = false;
@@ -64,7 +76,9 @@ export function attachCanvasViewControl(canvas: HTMLElement): () => void {
     const dy = e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
-    useViewerStore.getState().panBy(dx, dy);
+    const { world, viewport } = geometry();
+    const view = useViewState.getState();
+    view.panBy(dx, dy, fitScale(world, viewport) * view.zoom);
   };
 
   const onPointerUp = (e: PointerEvent) => {
@@ -102,25 +116,4 @@ export function attachCanvasViewControl(canvas: HTMLElement): () => void {
     canvas.removeEventListener("pointercancel", onPointerCancel);
     canvas.removeEventListener("contextmenu", onContextMenu);
   };
-}
-
-/**
- * Re-apply the world transform with the current zoom/pan state. Read
- * from a ref so the call is cheap on every store update — no React
- * reconciliation, just one matrix update per pane.
- */
-export function applyViewToPane(
-  app: Application | null,
-  world: Container | null,
-  sprite: Sprite | null,
-  view: ViewTransform,
-): void {
-  if (!app || !world || !sprite) return;
-  fitWorldToCanvas(
-    app,
-    world,
-    sprite.texture.width,
-    sprite.texture.height,
-    view,
-  );
 }

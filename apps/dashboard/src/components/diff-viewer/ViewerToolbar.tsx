@@ -21,12 +21,15 @@ import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
 import { RegionSettingsPopover } from "./RegionSettingsPopover";
 import { SensitivityControl } from "./SensitivityControl";
 import type { DiffStepper } from "./useDiffStepper";
+import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { ZOOM_STEP } from "./viewer-geometry";
 import {
-  selectEffectiveRegion,
-  useViewerStore,
-  ZOOM_STEP,
+  drawnMode,
+  modeAvailable,
+  useViewerPrefs,
   type ViewerMode,
-} from "./useViewerStore";
+} from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -39,7 +42,7 @@ import { trpc } from "@/lib/trpc";
 const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
   { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
   { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
-  { value: "difference", label: "Diff only", Icon: Layers },
+  { value: "diff", label: "Diff", Icon: Layers },
 ];
 
 /**
@@ -98,7 +101,16 @@ interface Props {
    * renders prev/next controls and a counter in the toolbar.
    */
   stepper?: DiffStepper;
+  /**
+   * The step has a baseline. Without one only side by side is available
+   * (R2): the other modes are shown disabled, and a stored one shows as side
+   * by side (it is kept).
+   */
+  hasBaseline?: boolean;
 }
+
+/** A disabled mode's tooltip (spec §8). */
+const NEEDS_A_BASELINE = "Needs a baseline";
 
 export function ViewerToolbar({
   runId,
@@ -108,15 +120,21 @@ export function ViewerToolbar({
   runDiffThresholdOverride = null,
   hasElementMap = false,
   stepper,
+  hasBaseline = true,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
-  const mode = useViewerStore((s) => s.mode);
-  const setMode = useViewerStore((s) => s.setMode);
-  const opacity = useViewerStore((s) => s.opacity);
-  const setOpacity = useViewerStore((s) => s.setOpacity);
-  const zoom = useViewerStore((s) => s.zoom);
-  const zoomBy = useViewerStore((s) => s.zoomBy);
-  const resetZoom = useViewerStore((s) => s.resetZoom);
+  const mode = useViewerPrefs((s) =>
+    drawnMode(
+      modeAvailable(s.prefs.mode, hasBaseline) ? s.prefs.mode : "side-by-side",
+    ),
+  );
+  const opacity = useViewerPrefs((s) => s.prefs.opacity);
+  const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
+  const highlight = useViewerPrefs((s) => s.prefs.highlight);
+  const setPref = useViewerPrefs((s) => s.set);
+  const zoom = useViewState((s) => s.zoom);
+  const zoomBy = useViewState((s) => s.zoomBy);
+  const resetZoom = useViewState((s) => s.resetZoom);
 
   const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
   const setIgnoreEditMode = useViewerStore((s) => s.setIgnoreEditMode);
@@ -130,10 +148,6 @@ export function ViewerToolbar({
   const markedForDeletion = useViewerStore((s) => s.markedForDeletion);
   const discardIgnoreChanges = useViewerStore((s) => s.discardIgnoreChanges);
   const applySaveSuccess = useViewerStore((s) => s.applySaveSuccess);
-  const hideDisplacement = useViewerStore((s) => s.hideDisplacement);
-  const setHideDisplacement = useViewerStore((s) => s.setHideDisplacement);
-  const highlightActive = useViewerStore((s) => s.highlightActive);
-  const setHighlightActive = useViewerStore((s) => s.setHighlightActive);
   const isTemporaryMode = useViewerStore((s) => s.isTemporaryMode);
   const setTemporaryMode = useViewerStore((s) => s.setTemporaryMode);
   const selectedIgnoreId = useViewerStore((s) => s.selectedIgnoreId);
@@ -246,8 +260,11 @@ export function ViewerToolbar({
       >
         {MODES.map((m) => {
           const active = mode === m.value;
-          // `d` toggles the difference view: its tab names the key.
-          const keys = m.value === "difference" ? differenceKeys : undefined;
+          // Focusable and named, but inert, so its tooltip says why.
+          const disabled = !modeAvailable(m.value, hasBaseline);
+          // `d` toggles the diff view: its tab names the key.
+          const keys =
+            m.value === "diff" && !disabled ? differenceKeys : undefined;
           return (
             <button
               key={m.value}
@@ -255,14 +272,25 @@ export function ViewerToolbar({
               role="tab"
               data-mode={m.value}
               aria-selected={active}
+              aria-disabled={disabled || undefined}
               aria-keyshortcuts={keys?.ariaKeyShortcuts}
-              title={keys ? hintTitle(m.label, keys) : undefined}
-              onClick={() => setMode(m.value)}
+              title={
+                disabled
+                  ? NEEDS_A_BASELINE
+                  : keys
+                    ? hintTitle(m.label, keys)
+                    : undefined
+              }
+              onClick={() => {
+                if (!disabled) setPref("mode", m.value);
+              }}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
                 active
                   ? "bg-raised text-fg shadow-raised"
-                  : "text-fg-muted hover:text-fg",
+                  : disabled
+                    ? "cursor-not-allowed text-fg-muted opacity-50"
+                    : "text-fg-muted hover:text-fg",
               )}
             >
               <m.Icon className="h-4 w-4" aria-hidden />
@@ -379,7 +407,7 @@ export function ViewerToolbar({
         <Switch
           id="hide-displacement-toggle"
           checked={hideDisplacement}
-          onCheckedChange={setHideDisplacement}
+          onCheckedChange={(v) => setPref("hideDisplacement", v)}
           data-testid="hide-displacement-toggle"
         />
         <Label
@@ -393,8 +421,8 @@ export function ViewerToolbar({
       <div className="flex items-center gap-2">
         <Switch
           id="highlight-toggle"
-          checked={highlightActive}
-          onCheckedChange={setHighlightActive}
+          checked={highlight}
+          onCheckedChange={(v) => setPref("highlight", v)}
           aria-keyshortcuts={highlightKeys.ariaKeyShortcuts}
           title={hintTitle("Highlight diffs", highlightKeys)}
           data-testid="highlight-toggle"
@@ -562,9 +590,14 @@ export function ViewerToolbar({
           data-testid="opacity-slider-wrap"
         >
           <span className="text-xs text-fg-secondary">{sliderLabel}</span>
+          {/* Each value shows live while the thumb moves; only the one it
+              is released on is stored. */}
           <Slider
             value={[Math.round(opacity * 100)]}
-            onValueChange={([v]) => setOpacity((v ?? 0) / 100)}
+            onValueChange={([v]) =>
+              setPref("opacity", (v ?? 0) / 100, { persist: false })
+            }
+            onValueCommit={([v]) => setPref("opacity", (v ?? 0) / 100)}
             min={0}
             max={100}
             step={1}

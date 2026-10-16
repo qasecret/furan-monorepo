@@ -145,31 +145,33 @@ vi.mock("sonner", () => ({
 // so the regression test can read it without any reference to the mock class.
 let pixiInitCount = 0;
 
-// Mock pixi.js — we test toolbar/store behavior, not WebGL.
-vi.mock("pixi.js", () => ({
-  Application: class {
-    canvas = document.createElement("canvas");
-    stage = { addChild: () => {} };
-    screen = { width: 600, height: 400 };
-    ticker = { add: () => {}, remove: () => {} };
-    async init() {
-      pixiInitCount++;
+// Mock pixi.js — we test toolbar/store behavior, not WebGL. Enough of it for
+// a mode to mount over images that load: inert display objects.
+vi.mock("pixi.js", () => {
+  const point = () => ({ set: () => {} });
+  class Container {
+    label = "";
+    alpha = 1;
+    eventMode = "passive";
+    cursor = "";
+    scale = point();
+    position = point();
+    children: unknown[] = [];
+    addChild<T>(c: T): T {
+      this.children = this.children.filter((x) => x !== c);
+      this.children.push(c);
+      return c;
+    }
+    removeChild<T>(c: T): T {
+      this.children = this.children.filter((x) => x !== c);
+      return c;
+    }
+    on() {
+      return this;
     }
     destroy() {}
-  },
-  Assets: { load: async () => ({}) },
-  Sprite: class {
-    width = 0;
-    height = 0;
-    alpha = 1;
-  },
-  Container: class {
-    children: unknown[] = [];
-    addChild(c: unknown) {
-      this.children.push(c);
-    }
-  },
-  Graphics: class {
+  }
+  class Graphics extends Container {
     rect() {
       return this;
     }
@@ -182,8 +184,42 @@ vi.mock("pixi.js", () => ({
     stroke() {
       return this;
     }
-  },
-}));
+    clear() {
+      return this;
+    }
+    moveTo() {
+      return this;
+    }
+    lineTo() {
+      return this;
+    }
+  }
+  class Sprite extends Container {
+    width = 0;
+    height = 0;
+    constructor(public texture?: unknown) {
+      super();
+    }
+  }
+  return {
+    Application: class {
+      canvas = document.createElement("canvas");
+      stage = new Container();
+      screen = { width: 600, height: 400 };
+      ticker = { add: () => {}, remove: () => {} };
+      async init() {
+        pixiInitCount++;
+      }
+      destroy() {}
+    },
+    Assets: { load: async () => ({}) },
+    Sprite,
+    Container,
+    Graphics,
+    Text: Container,
+    Texture: { from: () => ({ destroy: () => {} }) },
+  };
+});
 
 // Mock next/navigation — DiffViewer and its review loop navigate with
 // useRouter.
@@ -211,6 +247,7 @@ interface MockData {
   status: RunStatusLite;
   statusOverride?: "passed" | "failed" | null;
   checkpointContexts?: Record<string, unknown>;
+  diffPercent?: number | null;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -362,6 +399,12 @@ class StubEventSource {
 
 import { DiffViewer as ViewerUnderTest } from "../src/components/diff-viewer/DiffViewer";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { useViewState } from "../src/components/diff-viewer/view-state";
+import {
+  DEFAULT_VIEWER_PREFS,
+  prefsKey,
+  useViewerPrefs,
+} from "../src/components/diff-viewer/viewer-prefs";
 import { useReviewAnnouncer } from "../src/lib/review/review-announcer";
 import { loopHandoff, useLoopCue } from "../src/lib/review/use-review-loop";
 import { useInFlightStore } from "../src/lib/review/use-review-mutations";
@@ -404,21 +447,37 @@ function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
 
 /**
  * The viewer as the checkpoint page hands it out: `canReview` is the
- * server's answer for the same role the keyboard has, unless a test says.
+ * server's answer for the same role the keyboard has, unless a test says,
+ * and there is no user id (preferences in memory) unless a test gives one.
  */
 function DiffViewer(
-  props: Omit<ComponentProps<typeof ViewerUnderTest>, "canReview"> & {
+  props: Omit<
+    ComponentProps<typeof ViewerUnderTest>,
+    "canReview" | "userId"
+  > & {
     canReview?: boolean;
+    userId?: string | null;
   },
 ) {
   return (
-    <ViewerUnderTest canReview={canReviewRole(keyboard.role)} {...props} />
+    <ViewerUnderTest
+      canReview={canReviewRole(keyboard.role)}
+      userId={null}
+      {...props}
+    />
   );
 }
 
 beforeEach(() => {
   mockGroup = undefined;
   keyboard.role = "editor";
+  // A fresh visit: the default preferences, none read yet, and a fit view.
+  useViewerPrefs.setState({
+    userId: null,
+    prefs: DEFAULT_VIEWER_PREFS,
+    previousMode: "side-by-side",
+  });
+  useViewState.getState().resetView({ reducedMotion: false });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -459,20 +518,33 @@ describe("DiffViewer", () => {
     mockGetByIdData = { ...defaultMockData };
     mockCheckpoints = { items: [] };
     resetLoop();
-    useViewerStore.setState({
-      mode: "side-by-side",
-      opacity: 0.5,
-      selectedRegionId: null,
-      viewport: "",
-      highlightActive: false,
-      hideDisplacement: false,
+    useViewerStore.setState({ viewport: "" });
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, highlight: false },
     });
   });
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
-  test("renders the toolbar with all 3 mode tabs", () => {
+  /**
+   * A run whose step has a baseline, so every mode is available (R2). Its
+   * images are never answered: nothing reaches the network.
+   */
+  function withBaseline() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    mockGetByIdData = {
+      ...defaultMockData,
+      baselineScreenshot: { id: "base", imageKey: "base-img" },
+      screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+    };
+  }
+
+  test("renders the toolbar with all 3 mode tabs; the diff one reads Diff", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -481,18 +553,287 @@ describe("DiffViewer", () => {
     expect(r.getAllByRole("tablist").length).toBeGreaterThanOrEqual(1);
     expect(r.getByRole("tab", { name: /side by side/i })).toBeDefined();
     expect(r.getByRole("tab", { name: /^overlay$/i })).toBeDefined();
-    expect(r.getByRole("tab", { name: /^diff only$/i })).toBeDefined();
+    expect(r.getByRole("tab", { name: /^diff$/i })).toBeDefined();
   });
 
-  test("clicking a tab updates useViewerStore.mode", () => {
+  test("clicking a tab sets the mode preference", () => {
+    withBaseline();
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
     fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
-    expect(useViewerStore.getState().mode).toBe("overlay");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
 
-    fireEvent.click(r.getByRole("tab", { name: /^diff only$/i }));
-    expect(useViewerStore.getState().mode).toBe("difference");
+    fireEvent.click(r.getByRole("tab", { name: /^diff$/i }));
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+  });
+
+  test("a mode change keeps the zoom and the pan: every mode draws the one world (R8)", () => {
+    withBaseline();
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    act(() => useViewState.getState().setView({ zoom: 3, panX: 40, panY: 9 }));
+    fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
+    expect(useViewState.getState()).toMatchObject({
+      zoom: 3,
+      panX: 40,
+      panY: 9,
+    });
+    fireEvent.click(r.getByRole("tab", { name: /side by side/i }));
+    expect(useViewState.getState()).toMatchObject({
+      zoom: 3,
+      panX: 40,
+      panY: 9,
+    });
+  });
+
+  test.each(["swipe", "flicker"] as const)(
+    "a %s preference shows as side by side until it has a renderer, and is kept",
+    (mode) => {
+      useViewerPrefs.setState({
+        prefs: { ...DEFAULT_VIEWER_PREFS, mode },
+      });
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expect(
+        r
+          .getByRole("tab", { name: /side by side/i })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(r.getByTestId("candidate-canvas-host")).toBeDefined();
+      expect(useViewerPrefs.getState().prefs.mode).toBe(mode);
+    },
+  );
+
+  describe("preferences", () => {
+    beforeEach(() => localStorage.clear());
+    afterEach(() => localStorage.clear());
+
+    test("mode persists across a remount via preferences", async () => {
+      withBaseline();
+      localStorage.setItem(
+        prefsKey("u1"),
+        JSON.stringify({ ...DEFAULT_VIEWER_PREFS, mode: "overlay" }),
+      );
+      const r = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId="u1"
+        />,
+      );
+      expect(
+        r
+          .getByRole("tab", { name: /^overlay$/i })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(r.getByTestId("single-stage-host").dataset.mode).toBe("overlay");
+      // The first paint is already the saved mode: one stage was mounted, and
+      // never the two side-by-side panes before it.
+      await act(async () => {});
+      expect(pixiInitCount).toBe(1);
+
+      // A change is saved for this user, and the next visit opens on it.
+      fireEvent.click(r.getByRole("tab", { name: /^diff$/i }));
+      r.unmount();
+      useViewerPrefs.setState({
+        userId: null,
+        prefs: DEFAULT_VIEWER_PREFS,
+      });
+      const again = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId="u1"
+        />,
+      );
+      expect(again.getByTestId("single-stage-host").dataset.mode).toBe("diff");
+    });
+
+    test("a visit with no user after a user's: the defaults, and nothing written to that user", () => {
+      withBaseline();
+      localStorage.setItem(
+        prefsKey("u1"),
+        JSON.stringify({ ...DEFAULT_VIEWER_PREFS, mode: "overlay" }),
+      );
+      const first = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId="u1"
+        />,
+      );
+      expect(first.getByTestId("single-stage-host").dataset.mode).toBe(
+        "overlay",
+      );
+      first.unmount();
+
+      const r = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          diffId="d1"
+          userId={null}
+        />,
+      );
+      expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+      expect(r.getByTestId("candidate-canvas-host")).toBeDefined();
+      fireEvent.click(r.getByRole("tab", { name: /^diff$/i }));
+      expect(JSON.parse(localStorage.getItem(prefsKey("u1"))!).mode).toBe(
+        "overlay",
+      );
+    });
+
+    test("without a user the mode holds for the visit and nothing is stored", () => {
+      withBaseline();
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      fireEvent.click(r.getByRole("tab", { name: /^overlay$/i }));
+      r.unmount();
+      const again = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expect(again.getByTestId("single-stage-host").dataset.mode).toBe(
+        "overlay",
+      );
+      expect(localStorage.length).toBe(0);
+    });
+  });
+
+  describe("the view resets", () => {
+    /** The view as a reviewer leaves it on a step. */
+    function leaveAView() {
+      act(() => {
+        useViewState.getState().setView({ zoom: 3, panX: 25, panY: -8 });
+        useViewState.getState().setSwipe(0.2);
+        useViewState.getState().setSelected("r1");
+      });
+    }
+    function expectAFreshView() {
+      expect(useViewState.getState()).toMatchObject({
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        swipe: 0.5,
+        selectedRegionId: null,
+      });
+    }
+
+    test("a step change resets the view", () => {
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      const r = render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          projectId="p1"
+          initialCheckpointId="c1"
+        />,
+      );
+      leaveAView();
+      fireEvent.click(r.getByTestId("diff-viewer-step-next"));
+      expectAFreshView();
+    });
+
+    test("a viewport switch resets the view", () => {
+      mockGetByIdData = {
+        ...defaultMockData,
+        screenshots: [
+          { id: "c1", viewport: "1280x720" },
+          { id: "c2", viewport: "375x812" },
+        ],
+      };
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      leaveAView();
+      fireEvent.click(r.getByRole("button", { name: "375x812" }));
+      expect(useViewerStore.getState().viewport).toBe("375x812");
+      expectAFreshView();
+    });
+
+    test("new data for the same step (a refetch) keeps the view", () => {
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      const shots = () => [
+        { id: "c1", viewport: "1280x720" },
+        { id: "c2", viewport: "1280x720" },
+      ];
+      mockGetByIdData = { ...defaultMockData, screenshots: shots() };
+      const viewer = (
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          projectId="p1"
+          initialCheckpointId="c1"
+        />
+      );
+      const r = render(viewer);
+      leaveAView();
+      // What an SSE refresh brings: fresh objects, new regions, same step.
+      mockGetByIdData = {
+        ...defaultMockData,
+        screenshots: shots(),
+        diffRegions: [
+          {
+            id: "r1",
+            severity: "major",
+            category: "visual",
+            bbox: { x: 1, y: 2, width: 3, height: 4 },
+            description: "",
+            source: "l1_pixel",
+          },
+        ],
+      };
+      r.rerender(viewer);
+      expect(useViewState.getState()).toMatchObject({
+        zoom: 3,
+        panX: 25,
+        panY: -8,
+        swipe: 0.2,
+        selectedRegionId: "r1",
+      });
+    });
+
+    test("a remount on the next step starts fresh too: the store outlives it", () => {
+      leaveAView();
+      render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      expectAFreshView();
+    });
+
+    test("under reduced motion the flicker starts paused", () => {
+      const matchMedia = vi.fn((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      vi.stubGlobal("matchMedia", matchMedia);
+      try {
+        act(() => useViewState.getState().setFlicker("current", true));
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            diffId="d1"
+          />,
+        );
+        expect(useViewState.getState()).toMatchObject({
+          flickerFrame: "baseline",
+          flickerPlaying: false,
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   test("initializes the editor viewport from the run's screenshots (single-viewport run)", () => {
@@ -604,10 +945,13 @@ describe("DiffViewer", () => {
         ([url]) => String(url).split("/api/v1/storage/")[1] ?? "",
       );
     }
+    // Never answered: the step's own images stay loading, so the steps
+    // either side are not fetched ahead and every key asked for is this
+    // step's.
     async function withFetch(
       body: (fetchMock: ReturnType<typeof vi.fn>) => void | Promise<void>,
     ) {
-      const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+      const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
       vi.stubGlobal("fetch", fetchMock);
       try {
         await body(fetchMock);
@@ -692,6 +1036,83 @@ describe("DiffViewer", () => {
       });
     });
 
+    test("once the step's images are in, the steps either side are fetched ahead: their images, baselines and own diff images", async () => {
+      const ctx = (key: string) => ({
+        baselineScreenshot: { id: `base-of-${key}`, imageKey: key },
+        baselineSource: null,
+        variationIgnoreAreas: null,
+      });
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "pf-diff-of-the-run",
+        screenshots: [
+          { id: "c1", imageKey: "pf-img-1", diffImageKey: "pf-diff-1" },
+          { id: "c2", imageKey: "pf-img-2", diffImageKey: "pf-diff-2" },
+          // Diffed before steps kept their own images: none to fetch.
+          { id: "c3", imageKey: "pf-img-3", diffImageKey: null },
+        ],
+        checkpointContexts: {
+          c1: ctx("pf-base-1"),
+          c2: ctx("pf-base-2"),
+          c3: ctx("pf-base-3"),
+        },
+      };
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+          { id: "c3", name: "Cart", state: "unresolved" },
+        ],
+      };
+      const answers: Array<() => void> = [];
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answers.push(() => resolve(new Response(null, { status: 404 })));
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      try {
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c2"
+          />,
+        );
+        const step2 = ["pf-base-2", "pf-diff-2", "pf-img-2"];
+        await vi.waitFor(() =>
+          expect(requestedKeys(fetchMock).sort()).toEqual(step2),
+        );
+        // Nothing ahead while the step's own images are on the wire.
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        expect(requestedKeys(fetchMock).sort()).toEqual(step2);
+
+        // A failed image is settled too: the step is ready.
+        await act(async () => {
+          for (const answer of answers.splice(0)) answer();
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        await vi.waitFor(() =>
+          expect(requestedKeys(fetchMock).sort()).toEqual(
+            [
+              ...step2,
+              "pf-img-1",
+              "pf-base-1",
+              "pf-diff-1",
+              "pf-img-3",
+              "pf-base-3",
+            ].sort(),
+          ),
+        );
+        expect(requestedKeys(fetchMock)).not.toContain("pf-diff-of-the-run");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     test("a legacy single-step run still shows the run's diff image", async () => {
       mockGetByIdData = {
         ...defaultMockData,
@@ -719,6 +1140,209 @@ describe("DiffViewer", () => {
         ).toBe(false);
       });
     });
+  });
+
+  describe("what the canvas can't show", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** Every storage read answers 404: each image the step asks for fails. */
+    function failingStorage() {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({ ok: false, status: 404 } as unknown as Response),
+        ),
+      );
+    }
+    /**
+     * Every storage read answers with an image that decodes to 100×100, so
+     * both screenshots are in, at the same size.
+     */
+    function loadingStorage() {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            blob: () => Promise.resolve(new Blob(["png"])),
+          } as unknown as Response),
+        ),
+      );
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(() =>
+          Promise.resolve({ width: 100, height: 100, close: () => {} }),
+        ),
+      );
+    }
+    // Keys no other test uses: the image loader's cache is module-wide.
+    let keyCount = 0;
+    const fresh = (name: string) => `cs${++keyCount}-${name}`;
+    const inDiff = () =>
+      useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
+    const region = (screenshotId: string, source = "l1_pixel") => ({
+      id: `r-${screenshotId}-${source}`,
+      severity: "major",
+      category: "visual",
+      bbox: { x: 1, y: 1, width: 5, height: 5 },
+      description: "A change",
+      source,
+      screenshotId,
+    });
+    /** A run of two steps, diffed before steps kept their own images. */
+    function legacyRun(regions: unknown[]) {
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "diff-of-step-1",
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
+        screenshots: [
+          { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+          { id: "c2", imageKey: fresh("img-2"), diffImageKey: null },
+        ],
+        diffRegions: regions,
+      };
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+    }
+    const openStep = (checkpointId: string) =>
+      render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          projectId="p1"
+          initialCheckpointId={checkpointId}
+        />,
+      );
+
+    test("no baseline: every mode but side by side is unavailable, and the panes say why", () => {
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      for (const name of [/^overlay$/i, /^diff$/i]) {
+        const tab = r.getByRole("tab", { name });
+        expect(tab.getAttribute("aria-disabled")).toBe("true");
+        expect(tab.getAttribute("title")).toBe("Needs a baseline");
+      }
+      expect(
+        r
+          .getByRole("tab", { name: /side by side/i })
+          .hasAttribute("aria-disabled"),
+      ).toBe(false);
+      expect(r.getByText("No baseline")).toBeDefined();
+      expect(
+        r.getByText(
+          "No baseline yet. Approve this step to make it the baseline.",
+        ),
+      ).toBeDefined();
+    });
+
+    test("Diff on a legacy step with a region: no diff image was kept for it (R4)", async () => {
+      failingStorage();
+      inDiff();
+      legacyRun([region("c2")]);
+      const r = openStep("c2");
+      expect(
+        await r.findByText("No diff image was kept for this step."),
+      ).toBeDefined();
+      expect(r.queryByText(/No pixel changes/)).toBeNull();
+    });
+
+    test("Diff on a legacy step with no diff: no pixel changes (R4)", async () => {
+      loadingStorage();
+      inDiff();
+      // Step 1's region is not step 2's.
+      legacyRun([region("c1")]);
+      const r = openStep("c2");
+      expect(
+        await r.findByText(
+          "No pixel changes between the baseline and the current screenshot.",
+        ),
+      ).toBeDefined();
+      expect(r.queryByText(/No diff image was kept/)).toBeNull();
+    });
+
+    test.each(["dynamic_text", "axe"])(
+      "Diff on a step of a multi-step run with only %s rows: no pixel changes, not a lost image (I1)",
+      async (source) => {
+        loadingStorage();
+        inDiff();
+        legacyRun([region("c2", source)]);
+        const r = openStep("c2");
+        expect(
+          await r.findByText(
+            "No pixel changes between the baseline and the current screenshot.",
+          ),
+        ).toBeDefined();
+        expect(r.queryByText(/No diff image was kept/)).toBeNull();
+      },
+    );
+
+    test("Diff on a one-step run with only audit rows and no diff image: no pixel changes (I1)", async () => {
+      loadingStorage();
+      inDiff();
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: null,
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
+        screenshots: [
+          { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+        ],
+        diffRegions: [region("c1", "dynamic_text"), region("c1", "axe")],
+      };
+      mockCheckpoints = {
+        items: [{ id: "c1", name: "Home", state: "unresolved" }],
+      };
+      const r = openStep("c1");
+      expect(
+        await r.findByText(
+          "No pixel changes between the baseline and the current screenshot.",
+        ),
+      ).toBeDefined();
+    });
+
+    test.each([
+      { diffPercent: 2.5, says: null },
+      {
+        diffPercent: 0,
+        says: "No pixel changes between the baseline and the current screenshot.",
+      },
+    ])(
+      "Diff on a one-step run with no diff image and a diff percent of $diffPercent (R4)",
+      async ({ diffPercent, says }) => {
+        loadingStorage();
+        inDiff();
+        mockGetByIdData = {
+          ...defaultMockData,
+          diffName: null,
+          diffPercent,
+          baselineScreenshot: { id: "base", imageKey: fresh("base") },
+          screenshots: [
+            { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
+          ],
+        };
+        mockCheckpoints = {
+          items: [{ id: "c1", name: "Home", state: "unresolved" }],
+        };
+        const r = openStep("c1");
+        // Both screenshots are in.
+        await vi.waitFor(() =>
+          expect(
+            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+          ).toBe(false),
+        );
+        await act(async () => {});
+        if (says) {
+          expect(r.getByText(says)).toBeDefined();
+        } else {
+          expect(r.queryByText(/No pixel changes/)).toBeNull();
+          expect(r.queryByText(/No diff image was kept/)).toBeNull();
+        }
+      },
+    );
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
@@ -779,22 +1403,22 @@ describe("DiffViewer", () => {
     expect(r.getByTestId("diff-counter").textContent).toContain("Diff 1 / 2");
   });
 
-  test("highlight-toggle button toggles highlightActive in the store", () => {
+  test("highlight-toggle button toggles the highlight preference", () => {
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
-    expect(useViewerStore.getState().highlightActive).toBe(false);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(false);
 
     // First click: activates highlight
     fireEvent.click(r.getByTestId("highlight-toggle"));
-    expect(useViewerStore.getState().highlightActive).toBe(true);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(true);
 
     // Second click: deactivates highlight
     fireEvent.click(r.getByTestId("highlight-toggle"));
-    expect(useViewerStore.getState().highlightActive).toBe(false);
+    expect(useViewerPrefs.getState().prefs.highlight).toBe(false);
   });
 
-  test("toggling highlightActive does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
+  test("toggling highlight does NOT re-initialize the Pixi canvas (new Application + init must not re-run)", async () => {
     // Render with regions so the shading layer has something to mount.
     mockGetByIdData = {
       ...defaultMockData,
@@ -872,14 +1496,14 @@ describe("DiffViewer", () => {
 
     // Toggle hide-displacement on
     fireEvent.click(r.getByTestId("hide-displacement-toggle"));
-    expect(useViewerStore.getState().hideDisplacement).toBe(true);
+    expect(useViewerPrefs.getState().prefs.hideDisplacement).toBe(true);
 
     // Layout region filtered: counter drops to "Diff 0 / 1"
     expect(r.getByTestId("diff-counter").textContent).toContain("0 / 1");
 
     // Toggle hide-displacement off
     fireEvent.click(r.getByTestId("hide-displacement-toggle"));
-    expect(useViewerStore.getState().hideDisplacement).toBe(false);
+    expect(useViewerPrefs.getState().prefs.hideDisplacement).toBe(false);
 
     // Layout region restored: counter back to "Diff 0 / 2"
     expect(r.getByTestId("diff-counter").textContent).toContain("0 / 2");
@@ -2110,7 +2734,7 @@ describe("DiffViewer: the review loop", () => {
     const r = render(viewer());
     press("J");
     expect(card(r)).not.toBeNull();
-    const before = useViewerStore.getState().mode;
+    const before = useViewerPrefs.getState().prefs.mode;
 
     // Focus is on the card: the review keys, the moves and the viewer's own
     // keys all yield to it.
@@ -2119,7 +2743,7 @@ describe("DiffViewer: the review loop", () => {
     expect(utilsMock.review.next.fetch).not.toHaveBeenCalled();
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
-    expect(useViewerStore.getState().mode).toBe(before);
+    expect(useViewerPrefs.getState().prefs.mode).toBe(before);
 
     // A step needing review turns up in the batch (a teammate's undo), and
     // focus has left the card: J still waits while the card is up.

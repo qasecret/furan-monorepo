@@ -1,7 +1,7 @@
 import { compareSeverity } from "@furan/shared-types";
 
 import { asSeverity, type BBox, type DiffRegion } from "./layers/regionTypes";
-import { isRegionHidden } from "./region-visibility";
+import { isRegionShown } from "./region-visibility";
 
 function area(bbox: BBox | unknown): number {
   if (!bbox || typeof bbox !== "object") return 0;
@@ -11,15 +11,20 @@ function area(bbox: BBox | unknown): number {
 }
 
 /**
- * Stepper/list ordering for diff regions. Surfaces l1_pixel image regions
- * (the primary "what changed" signal) and drops only dynamic-text audit rows
- * (shown via the audit toggle) and, optionally, position-only `layout`
- * changes. Worst severity first, then larger area first.
+ * Stepper/shading ordering for diff regions. Surfaces l1_pixel image regions
+ * (the primary "what changed" signal) and drops what `isRegionShown` hides:
+ * the audit rows (unless "Show suppressed" is on) and, optionally,
+ * position-only `layout` changes. Worst severity first, then larger area
+ * first.
  */
 export function orderDiffRegions(
   regions: DiffRegion[],
-  opts: { hideDisplacement?: boolean } = {},
+  opts: { hideDisplacement?: boolean; showSuppressed?: boolean } = {},
 ): DiffRegion[] {
+  const visibility = {
+    showSuppressed: opts.showSuppressed ?? false,
+    hideDisplacement: opts.hideDisplacement ?? false,
+  };
   return (
     regions
       // Image-first (ADR-047): l1_pixel image regions ARE the meaningful set —
@@ -29,8 +34,7 @@ export function orderDiffRegions(
       // grouping.
       // ADR-053: layout_suppressed audit rows are hidden here too (shown via
       // the "Show suppressed" toggle), mirroring the engine's EXCLUDED_SOURCES.
-      .filter((r) => !isRegionHidden(r, { showSuppressed: false }))
-      .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
+      .filter((r) => isRegionShown(r, visibility))
       .slice()
       .sort(
         (a, b) =>

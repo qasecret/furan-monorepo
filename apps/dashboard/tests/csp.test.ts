@@ -49,7 +49,6 @@ describe("buildContentSecurityPolicy", () => {
   it("lets the browser reach a cross-origin api (fetch + SSE) by origin only", () => {
     expect(prod.get("connect-src")).toEqual([
       "'self'",
-      "blob:",
       "https://api.furan.example:8443",
     ]);
   });
@@ -58,12 +57,16 @@ describe("buildContentSecurityPolicy", () => {
     const rel = directives(
       buildContentSecurityPolicy({ nonce: "n", apiBase: "/api", dev: false }),
     );
-    expect(rel.get("connect-src")).toEqual(["'self'", "blob:"]);
+    expect(rel.get("connect-src")).toEqual(["'self'"]);
   });
 
-  it("allows blob:/data: images and blob: fetches (authed screenshots → object URLs)", () => {
+  it("allows blob:/data: images (authed screenshots → object URLs, the decode fallback's <img>)", () => {
     expect(prod.get("img-src")).toEqual(["'self'", "blob:", "data:"]);
     expect(prod.get("worker-src")).toEqual(["'self'", "blob:"]);
+  });
+
+  it("fetches no blob: URL: the viewer decodes the fetched blob itself (R6)", () => {
+    expect(prod.get("connect-src")).not.toContain("blob:");
   });
 
   it("relaxes only what `next dev` needs (eval for fast refresh, HMR socket)", () => {
@@ -77,7 +80,6 @@ describe("buildContentSecurityPolicy", () => {
     expect(dev.get("script-src")).toContain("'unsafe-eval'");
     expect(dev.get("connect-src")).toEqual([
       "'self'",
-      "blob:",
       "http://localhost:3000",
       "ws:",
     ]);

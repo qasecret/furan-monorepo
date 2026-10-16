@@ -40,10 +40,13 @@ import {
   useDiffViewerShortcuts,
   type ShortcutOptions,
 } from "@/components/diff-viewer/useDiffViewerShortcuts";
+import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
+import { useViewState } from "@/components/diff-viewer/view-state";
+import { ZOOM_STEP } from "@/components/diff-viewer/viewer-geometry";
 import {
-  useViewerStore,
-  ZOOM_STEP,
-} from "@/components/diff-viewer/useViewerStore";
+  DEFAULT_VIEWER_PREFS,
+  useViewerPrefs,
+} from "@/components/diff-viewer/viewer-prefs";
 import { useShortcutsSheet } from "@/components/shortcuts/use-shortcuts-sheet";
 import {
   AlertDialog,
@@ -148,14 +151,15 @@ function resetStores() {
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
   useShortcutsSheet.setState({ open: false });
+  useViewerPrefs.setState({
+    userId: null,
+    prefs: { ...DEFAULT_VIEWER_PREFS, highlight: false },
+    previousMode: "side-by-side",
+  });
+  useViewState.setState({ zoom: 1, panX: 0, panY: 0, selectedRegionId: null });
   useViewerStore.setState({
-    mode: "side-by-side",
-    opacity: 0.5,
-    selectedRegionId: null,
     viewport: "",
-    zoom: 1,
     commentPanelOpen: false,
-    highlightActive: false,
     ignoreEditMode: "off",
     savedRunIgnoreAreas: [],
     savedVariationIgnoreAreas: [],
@@ -221,33 +225,39 @@ describe("useDiffViewerShortcuts", () => {
       onPrevDiff: vi.fn(),
     };
     mountViewer({ viewports: [], ...others });
-    const before = useViewerStore.getState();
+    const viewer = () => ({
+      editor: useViewerStore.getState(),
+      view: useViewState.getState(),
+      prefs: useViewerPrefs.getState(),
+    });
+    const before = viewer();
     // Disabled: left to the browser.
     expect(press("J").defaultPrevented).toBe(false);
     expect(press("K").defaultPrevented).toBe(false);
     // Neither falls through to another binding, nor touches the viewer.
     for (const cb of Object.values(others)) expect(cb).not.toHaveBeenCalled();
-    expect(useViewerStore.getState()).toEqual(before);
+    expect(viewer()).toEqual(before);
     // The bindings are live: the same press of another key does fire.
     press("A");
     expect(others.onApprove).toHaveBeenCalledOnce();
   });
 
   it("Escape goes to onEscape instead of the viewer's own, when it is given", () => {
-    useViewerStore.setState({ ignoreEditMode: "run", selectedRegionId: "r1" });
+    useViewerStore.setState({ ignoreEditMode: "run" });
+    useViewState.setState({ selectedRegionId: "r1" });
     const onEscape = vi.fn();
     const { rerender } = mountViewer({ viewports: [], onEscape });
     press("Escape");
     expect(onEscape).toHaveBeenCalledOnce();
     // The viewer's own Esc did not run.
     expect(useViewerStore.getState().ignoreEditMode).toBe("run");
-    expect(useViewerStore.getState().selectedRegionId).toBe("r1");
+    expect(useViewState.getState().selectedRegionId).toBe("r1");
     // Without it, Esc is the viewer's again.
     rerender({ viewports: [] });
     press("Escape");
     expect(onEscape).toHaveBeenCalledOnce();
     expect(useViewerStore.getState().ignoreEditMode).toBe("off");
-    expect(useViewerStore.getState().selectedRegionId).toBeNull();
+    expect(useViewState.getState().selectedRegionId).toBeNull();
     // With nothing to leave or clear, Esc is the browser's.
     expect(press("Escape").defaultPrevented).toBe(false);
   });
@@ -263,15 +273,42 @@ describe("useDiffViewerShortcuts", () => {
   it("+ zooms in as a US keyboard sends it (Shift with =), once", () => {
     mountViewer({ viewports: [] });
     press("+", { shiftKey: true });
-    expect(useViewerStore.getState().zoom).toBeCloseTo(ZOOM_STEP);
+    expect(useViewState.getState().zoom).toBeCloseTo(ZOOM_STEP);
   });
 
   it("O cycles the mode", () => {
     mountViewer({ viewports: [] });
     press("O");
-    expect(useViewerStore.getState().mode).toBe("overlay");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
     press("O");
-    expect(useViewerStore.getState().mode).toBe("difference");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+    press("O");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+  });
+
+  it("O acts on the mode on screen: a swipe preference shows as side by side", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
+    });
+    mountViewer({ viewports: [] });
+    press("O");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
+  });
+
+  it("D goes to Diff and back to the mode it came from", () => {
+    mountViewer({ viewports: [] });
+    act(() => useViewerPrefs.getState().set("mode", "overlay"));
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
+
+    // From a mode with no renderer yet (R1), back to that same preference.
+    act(() => useViewerPrefs.getState().set("mode", "flicker"));
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("flicker");
   });
 
   it("A invokes onApprove", () => {
@@ -458,10 +495,9 @@ describe("useDiffViewerShortcuts", () => {
     const input = document.createElement("input");
     document.body.appendChild(input);
     input.focus();
-    useViewerStore.setState({ mode: "side-by-side" });
     mountViewer({ viewports: [] });
     press("D");
-    expect(useViewerStore.getState().mode).toBe("side-by-side");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
     input.remove();
   });
 
@@ -554,31 +590,33 @@ describe("useDiffViewerShortcuts — yields when another control owns the keyboa
     haveSomethingToUndo();
     usePaletteStore.setState({ open: false });
     useShortcutsSheet.setState({ open: false });
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, highlight: false },
+    });
+    useViewState.setState({ zoom: 2, selectedRegionId: "r1" });
     useViewerStore.setState({
-      mode: "side-by-side",
       viewport: "1280x720",
       commentPanelOpen: false,
-      highlightActive: false,
-      zoom: 2,
       ignoreEditMode: "run",
       draftIgnoreAreas: [DRAFT],
       selectedIgnoreId: "d1",
-      selectedRegionId: "r1",
     });
   }
 
   function snapshot() {
     const s = useViewerStore.getState();
+    const { prefs } = useViewerPrefs.getState();
+    const view = useViewState.getState();
     return {
-      mode: s.mode,
+      mode: prefs.mode,
       viewport: s.viewport,
       commentPanelOpen: s.commentPanelOpen,
-      highlightActive: s.highlightActive,
-      zoom: s.zoom,
+      highlight: prefs.highlight,
+      zoom: view.zoom,
       ignoreEditMode: s.ignoreEditMode,
       drafts: s.draftIgnoreAreas.length,
       selectedIgnoreId: s.selectedIgnoreId,
-      selectedRegionId: s.selectedRegionId,
+      selectedRegionId: view.selectedRegionId,
       paletteOpen: usePaletteStore.getState().open,
       sheetOpen: useShortcutsSheet.getState().open,
     };
@@ -807,31 +845,33 @@ describe("the viewer's keys are registry commands", () => {
   function arm() {
     haveSomethingToUndo();
     setClipboardRegion("p1", COPIED);
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, highlight: false },
+    });
+    useViewState.setState({ zoom: 2, selectedRegionId: "r1" });
     useViewerStore.setState({
-      mode: "side-by-side",
       viewport: "b",
       commentPanelOpen: false,
-      highlightActive: false,
-      zoom: 2,
       ignoreEditMode: "run",
       draftIgnoreAreas: [DRAFT],
       selectedIgnoreId: "d1",
-      selectedRegionId: "r1",
     });
   }
 
   function state() {
     const s = useViewerStore.getState();
+    const { prefs } = useViewerPrefs.getState();
+    const view = useViewState.getState();
     return {
-      mode: s.mode,
+      mode: prefs.mode,
       viewport: s.viewport,
       commentPanelOpen: s.commentPanelOpen,
-      highlightActive: s.highlightActive,
-      zoom: s.zoom,
+      highlight: prefs.highlight,
+      zoom: view.zoom,
       ignoreEditMode: s.ignoreEditMode,
       drafts: s.draftIgnoreAreas.length,
       selectedIgnoreId: s.selectedIgnoreId,
-      selectedRegionId: s.selectedRegionId,
+      selectedRegionId: view.selectedRegionId,
       palette: usePaletteStore.getState().open,
       sheet: useShortcutsSheet.getState().open,
       clipboard: JSON.stringify(getClipboardRegion("p1")),
@@ -887,14 +927,10 @@ describe("the viewer's keys are registry commands", () => {
     row("A", "a", "review.approve", { called: ["onApprove"] }),
     row("R", "r", "review.reject", { called: ["onReject"] }),
     row("X", "x", "review.reject", { called: ["onReject"] }),
-    // A mode change also resets the zoom (the store's own rule).
-    row("D", "d", "viewer.difference", {
-      changed: { mode: "difference", zoom: 1 },
-    }),
-    row("O", "o", "viewer.cycleMode", {
-      changed: { mode: "overlay", zoom: 1 },
-    }),
-    row("H", "h", "viewer.highlight", { changed: { highlightActive: true } }),
+    // The mode only: a mode change keeps the view (R8).
+    row("D", "d", "viewer.difference", { changed: { mode: "diff" } }),
+    row("O", "o", "viewer.cycleMode", { changed: { mode: "overlay" } }),
+    row("H", "h", "viewer.highlight", { changed: { highlight: true } }),
     row("C", "c", "viewer.comments", { changed: { commentPanelOpen: true } }),
     row("=", "=", "viewer.zoomIn", { changed: { zoom: 2 * ZOOM_STEP } }),
     row("+", "+", "viewer.zoomIn", { changed: { zoom: 2 * ZOOM_STEP } }),
@@ -1260,17 +1296,17 @@ describe("the viewer's keys are registry commands", () => {
   it("zoom repeats, A does not", () => {
     const onApprove = vi.fn();
     const onReject = vi.fn();
-    useViewerStore.setState({ zoom: 1 });
+    useViewState.setState({ zoom: 1 });
     mountViewer({ viewports: [], onApprove, onReject });
 
     press("=");
     press("=", { repeat: true });
     press("+", { repeat: true });
-    expect(useViewerStore.getState().zoom).toBeCloseTo(ZOOM_STEP ** 3);
+    expect(useViewState.getState().zoom).toBeCloseTo(ZOOM_STEP ** 3);
     press("-", { repeat: true });
-    expect(useViewerStore.getState().zoom).toBeCloseTo(ZOOM_STEP ** 2);
+    expect(useViewState.getState().zoom).toBeCloseTo(ZOOM_STEP ** 2);
     press("0", { repeat: true });
-    expect(useViewerStore.getState().zoom).toBe(1);
+    expect(useViewState.getState().zoom).toBe(1);
 
     // A held decision key decides once, on its first press.
     press("a");

@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, test } from "vitest";
 
 import type { DiffRegion } from "../src/components/diff-viewer/layers/regionTypes";
 import { useDiffStepper } from "../src/components/diff-viewer/useDiffStepper";
-import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
+import { useViewState } from "../src/components/diff-viewer/view-state";
+import {
+  DEFAULT_VIEWER_PREFS,
+  useViewerPrefs,
+} from "../src/components/diff-viewer/viewer-prefs";
 
 const regions: DiffRegion[] = [
   {
@@ -25,11 +29,8 @@ const regions: DiffRegion[] = [
 ];
 
 beforeEach(() => {
-  useViewerStore.setState({
-    selectedRegionId: null,
-    focusBbox: null,
-    hideDisplacement: false,
-  });
+  useViewState.setState({ selectedRegionId: null, focusBbox: null });
+  useViewerPrefs.setState({ prefs: DEFAULT_VIEWER_PREFS });
 });
 
 describe("useDiffStepper", () => {
@@ -41,17 +42,17 @@ describe("useDiffStepper", () => {
   test("next selects the worst region first, then sets focusBbox", () => {
     const { result } = renderHook(() => useDiffStepper(regions));
     act(() => result.current.next());
-    const s = useViewerStore.getState();
+    const s = useViewState.getState();
     expect(s.selectedRegionId).toBe("a");
     expect(s.focusBbox).toEqual({ x: 0, y: 0, width: 9, height: 9 });
     expect(result.current.index).toBe(0);
   });
 
   test("next wraps around", () => {
-    useViewerStore.setState({ selectedRegionId: "b" });
+    useViewState.setState({ selectedRegionId: "b" });
     const { result } = renderHook(() => useDiffStepper(regions));
     act(() => result.current.next());
-    expect(useViewerStore.getState().selectedRegionId).toBe("a");
+    expect(useViewState.getState().selectedRegionId).toBe("a");
   });
 
   test("two next() calls in one batch advance two steps (no stale index)", () => {
@@ -60,6 +61,6 @@ describe("useDiffStepper", () => {
       result.current.next();
       result.current.next();
     });
-    expect(useViewerStore.getState().selectedRegionId).toBe("b");
+    expect(useViewState.getState().selectedRegionId).toBe("b");
   });
 });

@@ -3,18 +3,17 @@
 import { toast } from "sonner";
 
 import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
-import {
-  selectEffectiveRegion,
-  useViewerStore,
-  ZOOM_STEP,
-  type ViewerMode,
-} from "./useViewerStore";
+import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
+import { useViewState } from "./view-state";
+import { ZOOM_STEP } from "./viewer-geometry";
+import { drawnMode, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";
 import { canReviewRole } from "@/lib/roles";
 
-const MODES: ViewerMode[] = ["side-by-side", "overlay", "difference"];
+/** The modes `o` cycles through: the toolbar's. */
+const MODES: ViewerMode[] = ["side-by-side", "overlay", "diff"];
 
 /**
  * What the viewer's keys act on. A callback is given exactly when its key
@@ -59,6 +58,10 @@ export interface ShortcutOptions {
 interface ViewerCtx extends CommandCtx, ShortcutOptions {}
 
 const store = () => useViewerStore.getState();
+const view = () => useViewState.getState();
+const prefs = () => useViewerPrefs.getState();
+/** The mode on screen. */
+const shownMode = () => drawnMode(prefs().prefs.mode);
 
 const given = (callback: (() => void) | undefined) => callback !== undefined;
 
@@ -222,9 +225,11 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "View",
     keys: ["d"],
     scope: "viewer",
+    // To Diff, and back to the mode it was left from.
     run: () =>
-      store().setMode(
-        store().mode === "difference" ? "side-by-side" : "difference",
+      prefs().set(
+        "mode",
+        shownMode() === "diff" ? prefs().previousMode : "diff",
       ),
   },
   {
@@ -234,8 +239,8 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["o"],
     scope: "viewer",
     run: () => {
-      const next = MODES[(MODES.indexOf(store().mode) + 1) % MODES.length];
-      if (next) store().setMode(next);
+      const next = MODES[(MODES.indexOf(shownMode()) + 1) % MODES.length];
+      if (next) prefs().set("mode", next);
     },
   },
   {
@@ -244,7 +249,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "View",
     keys: ["h"],
     scope: "viewer",
-    run: () => store().setHighlightActive(!store().highlightActive),
+    run: () => prefs().set("highlight", !prefs().prefs.highlight),
   },
   {
     id: "viewer.comments",
@@ -264,7 +269,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["=", "+"],
     scope: "viewer",
     repeat: true,
-    run: () => store().zoomBy(ZOOM_STEP),
+    run: () => view().zoomBy(ZOOM_STEP),
   },
   {
     id: "viewer.zoomOut",
@@ -273,7 +278,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["-"],
     scope: "viewer",
     repeat: true,
-    run: () => store().zoomBy(1 / ZOOM_STEP),
+    run: () => view().zoomBy(1 / ZOOM_STEP),
   },
   {
     id: "viewer.fit",
@@ -282,7 +287,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["0"],
     scope: "viewer",
     repeat: true,
-    run: () => store().resetZoom(),
+    run: () => view().resetZoom(),
   },
   {
     // F14/F15: the ignore-region editor (ADR-031).
@@ -346,7 +351,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     scope: "viewer",
     allowInDialog: "[data-done-card]",
     enabled: ({ onEscape }) =>
-      given(onEscape) || isEditing() || store().selectedRegionId !== null,
+      given(onEscape) || isEditing() || view().selectedRegionId !== null,
     run: ({ onEscape }) => {
       if (onEscape) {
         onEscape();
@@ -354,7 +359,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
       }
       if (isEditing()) store().setIgnoreEditMode("off");
       // Also clear the selected diff region (RegionListPanel selection).
-      store().setSelected(null);
+      view().setSelected(null);
     },
   },
 ];

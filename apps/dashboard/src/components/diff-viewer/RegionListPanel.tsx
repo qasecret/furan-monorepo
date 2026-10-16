@@ -11,8 +11,10 @@ import {
   type Severity,
 } from "./layers/regionTypes";
 import { groupRegions } from "./region-format";
-import { isRegionHidden } from "./region-visibility";
+import { isRegionShown } from "./region-visibility";
 import { RegionItem } from "./RegionItem";
+import { useViewState } from "./view-state";
+import { useViewerPrefs } from "./viewer-prefs";
 
 import {
   DropdownMenu,
@@ -51,7 +53,11 @@ export function RegionListPanel({
   // Dynamic-text audit rows (`source === "dynamic_text"`) are hidden by
   // default so they don't drown out actionable diff regions. Toggle reveals
   // them so reviewers can audit which OCR decisions Furan made for a run.
-  const [showSuppressed, setShowSuppressed] = useState(false);
+  // The toggle is the view's (reset per step), so the canvas shows what the
+  // list shows (R10), and so does "Hide displacement".
+  const showSuppressed = useViewState((s) => s.showSuppressed);
+  const setShowSuppressed = useViewState((s) => s.setShowSuppressed);
+  const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
 
   const categories = useMemo(() => {
     const set = new Set(regions.map((r) => r.category));
@@ -62,7 +68,7 @@ export function RegionListPanel({
     // Synthetic audit rows (dynamic-text OCR + Layout-suppressed content/color
     // changes, ADR-053) are hidden unless the toggle is on.
     return regions
-      .filter((r) => !isRegionHidden(r, { showSuppressed }))
+      .filter((r) => isRegionShown(r, { showSuppressed, hideDisplacement }))
       .filter((r) => severityFilter === "all" || r.severity === severityFilter)
       .filter((r) => categoryFilter === "all" || r.category === categoryFilter)
       .slice()
@@ -71,7 +77,13 @@ export function RegionListPanel({
           compareSeverity(asSeverity(a.severity), asSeverity(b.severity)) ||
           areaOf(b.bbox) - areaOf(a.bbox),
       );
-  }, [regions, severityFilter, categoryFilter, showSuppressed]);
+  }, [
+    regions,
+    severityFilter,
+    categoryFilter,
+    showSuppressed,
+    hideDisplacement,
+  ]);
 
   // Collapse visually-identical rows (same severity / category / source /
   // cleaned description / size) into a single "×N" entry so a run with many

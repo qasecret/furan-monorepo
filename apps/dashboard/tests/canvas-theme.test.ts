@@ -4,7 +4,9 @@ import {
   applyCanvasBackground,
   cssHexToPixi,
   FALLBACK_CANVAS_BG,
+  FALLBACK_CANVAS_HATCH,
   readCanvasBackground,
+  readCanvasHatch,
 } from "../src/components/diff-viewer/canvas-theme";
 
 describe("cssHexToPixi", () => {
@@ -42,6 +44,20 @@ describe("readCanvasBackground", () => {
     const el = document.createElement("div");
     expect(readCanvasBackground(el)).toBe(0xf3f4f6);
     expect(FALLBACK_CANVAS_BG).toBe(0xf3f4f6);
+  });
+});
+
+describe("readCanvasHatch", () => {
+  test("reads --fg-muted from the given root", () => {
+    const el = document.createElement("div");
+    el.style.setProperty("--fg-muted", "#8b8b94");
+    expect(readCanvasHatch(el)).toBe(0x8b8b94);
+  });
+
+  test("falls back to the light theme's --fg-muted when it is not set", () => {
+    const el = document.createElement("div");
+    expect(readCanvasHatch(el)).toBe(FALLBACK_CANVAS_HATCH);
+    expect(FALLBACK_CANVAS_HATCH).toBe(0x6a6a73);
   });
 });
 
