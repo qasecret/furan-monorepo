@@ -92,6 +92,33 @@ const unmeasuredReasons = (r: AxeResults): string[] =>
 const TWO_FRAMES =
   "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))";
 
+/** The viewer's comparison modes, as their radios read, on keys 1–5. */
+const VIEWER_MODES = ["Side by side", "Swipe", "Flicker", "Overlay", "Diff"];
+
+/**
+ * The canvas label's text, then every text it changes to, over 1.5 s: three
+ * swaps at Flicker's 500 ms rate, had it been playing. A MutationObserver,
+ * so a change between two looks is not missed.
+ */
+const LABEL_OVER_1500MS = `new Promise((resolve) => {
+  const read = () =>
+    document.querySelector('[data-testid="canvas-mode-label"]')?.textContent ?? null;
+  const seen = [read()];
+  const watch = new MutationObserver(() => {
+    const now = read();
+    if (now !== seen[seen.length - 1]) seen.push(now);
+  });
+  watch.observe(document.body, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+  });
+  setTimeout(() => {
+    watch.disconnect();
+    resolve(seen);
+  }, 1500);
+})`;
+
 /** A review decision sent to the server (`review.approve`, `review.reject`…). */
 const isDecision = (req: Request): boolean =>
   /\/trpc\/[^?]*\breview\.(approve|reject)/.test(req.url());
@@ -803,6 +830,86 @@ test.describe.serial("ui: keyboard review", () => {
 
     // And back on, from the same menu.
     await flipSingleKeysInHelp("on");
+  });
+
+  test("The viewer's keys: 1–5 pick each comparison mode, → on the swipe handle moves it 2%, with motion reduced Flicker stands still until F swaps it, T hides and shows the details", async ({}, testInfo) => {
+    testInfo.annotations.push(...coverAnnotations(["review.keyboard"]));
+
+    await expect(page).toHaveURL(atStep(settings, "settings"));
+    const modes = page.getByRole("radiogroup", { name: "Comparison mode" });
+
+    // 1–5: each key checks its mode's radio, and only it.
+    for (const [i, name] of VIEWER_MODES.entries()) {
+      await page.keyboard.press(String(i + 1));
+      await expect(
+        modes.getByRole("radio", { name, exact: true }),
+      ).toHaveAttribute("aria-checked", "true");
+      await expect(
+        modes.locator('[role="radio"][aria-checked="true"]'),
+      ).toHaveCount(1);
+    }
+
+    // Swipe: Tab to its handle, the slider, and → twice moves it 2% each.
+    await page.keyboard.press("2");
+    await expect(
+      modes.getByRole("radio", { name: "Swipe", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
+    const handle = page.getByRole("slider", { name: "Swipe position" });
+    await expect(handle).toHaveAttribute("aria-valuenow", "50");
+    await pressUntilFocused(page, "Tab", handle, 60);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(handle).toHaveAttribute("aria-valuenow", "54");
+    await expect(handle).toHaveAttribute("aria-valuetext", "54% baseline");
+
+    // Flicker with motion reduced: no Play, and the frame stands still (for
+    // 1.5 s, three swaps at its rate) until F swaps it, saying so. The flow's
+    // context prefers reduced motion throughout (see beforeAll), so nothing
+    // is emulated here, and nothing is left for the tests after this one.
+    // (`emulateMedia({ reducedMotion: null })` would not put the context's
+    // preference back: it lifts the emulation, motion and all.)
+    expect(
+      await page.evaluate(
+        'matchMedia("(prefers-reduced-motion: reduce)").matches',
+      ),
+      "the flow's context prefers reduced motion",
+    ).toBe(true);
+    await page.keyboard.press("3");
+    await expect(
+      modes.getByRole("radio", { name: "Flicker", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
+    const label = page.getByTestId("canvas-mode-label");
+    await expect(label).toHaveText("Baseline");
+    await expect(page.getByTestId("flicker-play-toggle")).toHaveCount(0);
+    expect(
+      await page.evaluate(LABEL_OVER_1500MS),
+      "the canvas label's texts over 1.5 s",
+    ).toEqual(["Baseline"]);
+    await page.keyboard.press("f");
+    await expect(label).toHaveText("Current");
+    await expect(page.getByTestId("flicker-status")).toHaveText(
+      "Showing current",
+    );
+
+    // T: the details rail folds to its strip, and T opens it again.
+    const rail = page.getByTestId("test-info-sidebar");
+    await expect(rail).not.toHaveAttribute("data-collapsed");
+    await page.keyboard.press("t");
+    await expect(rail).toHaveAttribute("data-collapsed", "");
+    await expect(
+      rail.getByRole("button", { name: "Show details", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("t");
+    await expect(rail).not.toHaveAttribute("data-collapsed");
+    await expect(
+      rail.getByRole("button", { name: "Hide details", exact: true }),
+    ).toBeVisible();
+
+    // Back to side by side for the rest of the flow.
+    await page.keyboard.press("1");
+    await expect(
+      modes.getByRole("radio", { name: "Side by side", exact: true }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 
   test("The palette and the ? sheet are legible in both themes", async ({}, testInfo) => {

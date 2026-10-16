@@ -91,6 +91,7 @@ const STATIC_NAMES = staticRoutes({
   multiRunId: "",
   multiBuildId: "",
   loopBuildId: "",
+  mismatch: { runId: "", checkpointId: "", projectId: "" },
 }).map((r) => r.name);
 
 /**

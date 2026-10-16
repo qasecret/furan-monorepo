@@ -30,8 +30,10 @@ jobs:
       # Node 22 + pnpm 9.15.0 + install (shared composite action).
       - uses: ./.github/actions/setup
 
-      - name: Install Playwright chromium
-        run: pnpm --filter @furan/e2e exec playwright install --with-deps chromium
+      # Chromium runs every UI spec; viewer-compare.spec.ts also opens the
+      # diff viewer in WebKit and Firefox.
+      - name: Install Playwright browsers
+        run: pnpm --filter @furan/e2e exec playwright install --with-deps chromium webkit firefox
 
       # infra/docker/.env is gitignored (local dev secret) — synthesize an
       # ephemeral one with RUNTIME-RANDOM secrets so nothing sensitive is
