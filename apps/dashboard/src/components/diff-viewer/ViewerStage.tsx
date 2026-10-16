@@ -33,6 +33,13 @@ import {
 } from "./modes/types";
 import { pointerToImage } from "./pointer-to-image";
 import { isRegionShown } from "./region-visibility";
+import {
+  HatchTooltips,
+  readMaxTextureSize,
+  stageStates,
+  StageStates,
+  statesForPane,
+} from "./StageStates";
 import { attachCanvasViewControl } from "./useCanvasViewControl";
 import type { ElementMap } from "./useElementMap";
 import { hitTest, useIgnoreRegionEditor } from "./useIgnoreRegionEditor";
@@ -46,7 +53,7 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { drawnMode, useViewerPrefs } from "./viewer-prefs";
+import { drawnMode, modeAvailable, useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView } from "./world-fit";
 
 /**
@@ -76,6 +83,12 @@ import { computeFocusView } from "./world-fit";
  * - **Pixi apps**: one per pane, kept across mode changes with the same pane
  *   count; zoom, pan, resizes and the theme update them in place, and a
  *   resize refits before the next paint.
+ * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
+ *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
+ *   Diff the reasons there is no diff image. Without a baseline only side by
+ *   side is available, so a stored mode that needs one draws as side by side
+ *   and is kept (R2). A screenshot larger than the GPU's textures is never
+ *   mounted. The hatching's tooltips are DOM hit areas over the strips.
  */
 
 interface Props {
@@ -93,6 +106,16 @@ interface Props {
    * to drag-only.
    */
   elementMap?: ElementMap | null;
+  /**
+   * The step should have had a diff image of its own and lost it to history
+   * (`stepDiffKey`): Diff says so when the step has a diff.
+   */
+  legacyMissing?: boolean;
+  /**
+   * R4: the step has a pixel diff (a diff region, or a diff percent above 0).
+   * Defaults to whether `regions` has any.
+   */
+  stepHasDiff?: boolean;
 }
 
 /** The pixi apps for one pane layout, one world container in each. */
@@ -178,7 +201,14 @@ function DiffBadge() {
   );
 }
 
-export function ViewerStage({ set, request, regions, elementMap }: Props) {
+export function ViewerStage({
+  set,
+  request,
+  regions,
+  elementMap,
+  legacyMissing = false,
+  stepHasDiff = regions.length > 0,
+}: Props) {
   const paneARef = useRef<HTMLDivElement>(null);
   const paneBRef = useRef<HTMLDivElement>(null);
   const singleRef = useRef<HTMLDivElement>(null);
@@ -197,7 +227,12 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   });
   const { resolvedTheme } = useTheme();
 
-  const mode = useViewerPrefs((s) => s.prefs.mode);
+  const hasBaseline = request.baseline !== null;
+  // A mode the step can't show draws as side by side; the choice is kept.
+  const chosenMode = useViewerPrefs((s) => s.prefs.mode);
+  const mode = modeAvailable(chosenMode, hasBaseline)
+    ? chosenMode
+    : "side-by-side";
   const shown = drawnMode(mode);
   const renderer = RENDERERS[mode];
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
@@ -241,9 +276,11 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const [hatchColor, setHatchColor] = useState(() =>
     typeof document === "undefined" ? FALLBACK_CANVAS_HATCH : readCanvasHatch(),
   );
+  // The GPU's largest texture side, read from the first stage's renderer and
+  // kept across stages. Unknown until then: nothing can be drawn before it.
+  const [maxTextureSize, setMaxTextureSize] = useState<number | null>(null);
 
   const { images, failed } = set;
-  const hasBaseline = request.baseline !== null;
 
   // The regions every surface shows: the list's visibility (R10).
   const shownRegions = useMemo(
@@ -280,9 +317,25 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
   const needKey = needs.map((role) => request[role] ?? "").join("|");
   const [settledKey, setSettledKey] = useState<string | null>(null);
   useEffect(() => {
-    if (settled) setSettledKey(needKey);
+    // Keys that have not settled forget the ones that had: coming back to
+    // those (a step and back before this one is in) waits for every image
+    // again, and never mounts what happens to be there (NB1).
+    setSettledKey((key) => (settled ? needKey : key === needKey ? key : null));
   }, [settled, needKey]);
-  const ready = settled || settledKey === needKey;
+
+  const states = stageStates({
+    mode,
+    set,
+    hasBaseline,
+    legacyMissing,
+    stepHasDiff,
+    sizes: { baseline: images.baseline?.size, current: images.current?.size },
+    maxTextureSize: maxTextureSize ?? Number.POSITIVE_INFINITY,
+  });
+  const loading = states.some((s) => s.kind === "loading");
+  // A texture the GPU can't hold would draw as nothing, or as garbage.
+  const tooLarge = states.some((s) => s.kind === "too-large");
+  const ready = (settled || settledKey === needKey) && !tooLarge;
   const drawn = (role: ImageRole) =>
     needs.includes(role) ? images[role]?.bitmap : undefined;
   const baselineBitmap = drawn("baseline");
@@ -373,6 +426,7 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
         return;
       }
       liveAppsRef.current.push(...apps);
+      setMaxTextureSize(readMaxTextureSize(apps[0]?.renderer));
       // The theme may have flipped while the apps were initialising.
       applyCanvasBackground(apps, readCanvasBackground());
       const worlds = apps.map((app, i) => {
@@ -686,12 +740,25 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
     />
   );
 
+  // The hatching's tooltips on pane `pane`, once its images are drawn.
+  const hatchTooltips = (pane: number) =>
+    sceneReady && transform ? (
+      <HatchTooltips
+        world={world}
+        images={renderer.hatched[pane] ?? []}
+        transform={transform}
+      />
+    ) : null;
+
   // Container layout: the pane wrapper is given an explicit min height so
   // the Pixi canvas has a stable box to fill (and the ResizeObserver fires
   // on real layout changes, not on every parent re-render). Each card takes
   // the world's aspect ratio: side by side, both panes are the same box,
-  // so the one transform places the world identically in both.
+  // so the one transform places the world identically in both. The states
+  // sit over a card, outside it: the card's own listeners (pan) never see a
+  // press on a Retry button.
   if (panes === 2) {
+    const baselineLabel = hasBaseline ? "Baseline" : "No baseline";
     // Reference TestStep layout: a floating, uppercase label above each clean
     // shadowed card (no bordered box with an inset header bar). The card IS the
     // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
@@ -701,28 +768,30 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
           <div className="flex flex-col gap-2">
             <div
               className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
-              title="Baseline"
-              aria-label="Baseline"
+              title={baselineLabel}
+              aria-label={baselineLabel}
             >
               <span
                 className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
                 aria-hidden
               />
-              Baseline
-              {shownRegions.length > 0 && <DiffBadge />}
+              {baselineLabel}
+              {hasBaseline && shownRegions.length > 0 && <DiffBadge />}
             </div>
-            <div
-              ref={paneARef}
-              data-testid="baseline-canvas-host"
-              style={aspectStyle(world?.size)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
-            >
-              {request.baseline === null && (
-                <CanvasEmptyState label="No baseline yet">
-                  Approve this run to set its candidate as the first baseline
-                  for this variation.
-                </CanvasEmptyState>
-              )}
+            <div className="relative">
+              <div
+                ref={paneARef}
+                data-testid="baseline-canvas-host"
+                aria-busy={loading || undefined}
+                style={aspectStyle(world?.size)}
+                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+              >
+                {hatchTooltips(0)}
+              </div>
+              <StageStates
+                states={statesForPane(states, "baseline")}
+                onRetry={set.retry}
+              />
             </div>
           </div>
           <div className="flex flex-col gap-2">
@@ -738,19 +807,27 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
               Current
               {shownRegions.length > 0 && <DiffBadge />}
             </div>
-            <div
-              ref={paneBRef}
-              data-testid="candidate-canvas-host"
-              style={aspectStyle(world?.size)}
-              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
-            >
-              {request.current === null && (
-                <CanvasEmptyState label="Waiting for capture…">
-                  The SDK upload for this run hasn’t arrived yet. This panel
-                  will fill in automatically when the screenshot lands.
-                </CanvasEmptyState>
-              )}
-              {editorOverlay}
+            <div className="relative">
+              <div
+                ref={paneBRef}
+                data-testid="candidate-canvas-host"
+                aria-busy={loading || undefined}
+                style={aspectStyle(world?.size)}
+                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+              >
+                {request.current === null && (
+                  <CanvasEmptyState label="Waiting for capture…">
+                    The SDK upload for this run hasn’t arrived yet. This panel
+                    will fill in automatically when the screenshot lands.
+                  </CanvasEmptyState>
+                )}
+                {hatchTooltips(1)}
+                {editorOverlay}
+              </div>
+              <StageStates
+                states={statesForPane(states, "current")}
+                onRetry={set.retry}
+              />
             </div>
           </div>
         </div>
@@ -760,21 +837,20 @@ export function ViewerStage({ set, request, regions, elementMap }: Props) {
 
   return (
     <div className="flex min-h-full p-6">
-      <div
-        style={aspectStyle(world?.size)}
-        className="relative m-auto w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
-        ref={singleRef}
-        data-testid="single-stage-host"
-        data-mode={shown}
-        onPointerUp={handleDiffRegionClick}
-      >
-        {request.baseline === null && request.current === null && (
-          <CanvasEmptyState label="Nothing to compare yet">
-            This run hasn’t been captured. As soon as the SDK uploads
-            screenshots, the diff renders here.
-          </CanvasEmptyState>
-        )}
-        {editorOverlay}
+      <div className="relative m-auto w-full">
+        <div
+          style={aspectStyle(world?.size)}
+          className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised"
+          ref={singleRef}
+          data-testid="single-stage-host"
+          data-mode={shown}
+          aria-busy={loading || undefined}
+          onPointerUp={handleDiffRegionClick}
+        >
+          {hatchTooltips(0)}
+          {editorOverlay}
+        </div>
+        <StageStates states={states} onRetry={set.retry} />
       </div>
     </div>
   );

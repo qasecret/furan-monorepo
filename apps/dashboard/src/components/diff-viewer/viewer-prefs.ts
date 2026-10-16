@@ -176,6 +176,15 @@ export const useViewerPrefs = create<ViewerPrefsState>((set, get) => ({
 }));
 
 /**
+ * Whether a mode can show a step (R2): every mode compares the current
+ * screenshot with the baseline but side by side, which shows the current
+ * screenshot alone when the step has no baseline (a new test).
+ */
+export function modeAvailable(mode: ViewerMode, hasBaseline: boolean): boolean {
+  return hasBaseline || mode === "side-by-side";
+}
+
+/**
  * The mode the canvas draws for a chosen one. Swipe and flicker have no
  * renderer yet: until theirs land they draw, and are labelled, as side by
  * side, and the chosen mode is kept as it is.

@@ -708,6 +708,16 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
+  // Without a baseline (a new test) only side by side is available (R2).
+  const hasBaseline = imageRequest.baseline !== null;
+  // R4: the step has a pixel diff when it has a region (the canvas draws
+  // them), or a diff percent above 0. The run's percent is its worst step's,
+  // so it is this step's only on a run of one.
+  const runDiffPercent =
+    (data as { diffPercent?: number | null }).diffPercent ?? null;
+  const stepHasDiff =
+    regions.length > 0 ||
+    (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
 
   return (
     <div
@@ -831,6 +841,7 @@ export function DiffViewer({
                 }
                 hasElementMap={!!elementMap}
                 stepper={stepper}
+                hasBaseline={hasBaseline}
               />
             </div>
             {showMetaStrip && (
@@ -879,6 +890,8 @@ export function DiffViewer({
                     request={imageRequest}
                     regions={regions}
                     elementMap={elementMap ?? null}
+                    legacyMissing={diffImageLegacyMissing}
+                    stepHasDiff={stepHasDiff}
                   />
                 </div>
                 {/* Large side step-arrows: navigate
@@ -926,9 +939,7 @@ export function DiffViewer({
                   durationMs != null ? formatDuration(durationMs) : null
                 }
                 runBy={runByName}
-                pixelDiffPercent={
-                  (data as { diffPercent?: number | null }).diffPercent ?? null
-                }
+                pixelDiffPercent={runDiffPercent}
                 regions={regions}
                 vlmDescription={data?.vlmDescription ?? null}
                 testVariationId={

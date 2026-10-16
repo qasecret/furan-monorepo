@@ -211,6 +211,7 @@ interface MockData {
   status: RunStatusLite;
   statusOverride?: "passed" | "failed" | null;
   checkpointContexts?: Record<string, unknown>;
+  diffPercent?: number | null;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -488,7 +489,24 @@ describe("DiffViewer", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
+
+  /**
+   * A run whose step has a baseline, so every mode is available (R2). Its
+   * images are never answered: nothing reaches the network.
+   */
+  function withBaseline() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    mockGetByIdData = {
+      ...defaultMockData,
+      baselineScreenshot: { id: "base", imageKey: "base-img" },
+      screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+    };
+  }
 
   test("renders the toolbar with all 3 mode tabs; the diff one reads Diff", () => {
     const r = render(
@@ -503,6 +521,7 @@ describe("DiffViewer", () => {
   });
 
   test("clicking a tab sets the mode preference", () => {
+    withBaseline();
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -514,6 +533,7 @@ describe("DiffViewer", () => {
   });
 
   test("a mode change keeps the zoom and the pan: every mode draws the one world (R8)", () => {
+    withBaseline();
     const r = render(
       <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
     );
@@ -556,6 +576,7 @@ describe("DiffViewer", () => {
     afterEach(() => localStorage.clear());
 
     test("mode persists across a remount via preferences", async () => {
+      withBaseline();
       localStorage.setItem(
         prefsKey("u1"),
         JSON.stringify({ ...DEFAULT_VIEWER_PREFS, mode: "overlay" }),
@@ -596,6 +617,7 @@ describe("DiffViewer", () => {
     });
 
     test("a visit with no user after a user's: the defaults, and nothing written to that user", () => {
+      withBaseline();
       localStorage.setItem(
         prefsKey("u1"),
         JSON.stringify({ ...DEFAULT_VIEWER_PREFS, mode: "overlay" }),
@@ -628,6 +650,7 @@ describe("DiffViewer", () => {
     });
 
     test("without a user the mode holds for the visit and nothing is stored", () => {
+      withBaseline();
       const r = render(
         <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
       );
@@ -1081,6 +1104,138 @@ describe("DiffViewer", () => {
         ).toBe(false);
       });
     });
+  });
+
+  describe("what the canvas can't show", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** Every storage read answers 404: each image the step asks for fails. */
+    function failingStorage() {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({ ok: false, status: 404 } as unknown as Response),
+        ),
+      );
+    }
+    const inDiff = () =>
+      useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
+    const region = (screenshotId: string) => ({
+      id: `r-${screenshotId}`,
+      severity: "major",
+      category: "visual",
+      bbox: { x: 1, y: 1, width: 5, height: 5 },
+      description: "A change",
+      source: "l1_pixel",
+      screenshotId,
+    });
+    /** A run of two steps, diffed before steps kept their own images. */
+    function legacyRun(regions: unknown[]) {
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "diff-of-step-1",
+        baselineScreenshot: { id: "base", imageKey: "base-img" },
+        screenshots: [
+          { id: "c1", imageKey: "img-1", diffImageKey: null },
+          { id: "c2", imageKey: "img-2", diffImageKey: null },
+        ],
+        diffRegions: regions,
+      };
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+    }
+    const openStep = (checkpointId: string) =>
+      render(
+        <DiffViewer
+          runId="00000000-0000-0000-0000-000000000000"
+          projectId="p1"
+          initialCheckpointId={checkpointId}
+        />,
+      );
+
+    test("no baseline: every mode but side by side is unavailable, and the panes say why", () => {
+      const r = render(
+        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+      );
+      for (const name of [/^overlay$/i, /^diff$/i]) {
+        const tab = r.getByRole("tab", { name });
+        expect(tab.getAttribute("aria-disabled")).toBe("true");
+        expect(tab.getAttribute("title")).toBe("Needs a baseline");
+      }
+      expect(
+        r
+          .getByRole("tab", { name: /side by side/i })
+          .hasAttribute("aria-disabled"),
+      ).toBe(false);
+      expect(r.getByText("No baseline")).toBeDefined();
+      expect(
+        r.getByText(
+          "No baseline yet. Approve this step to make it the baseline.",
+        ),
+      ).toBeDefined();
+    });
+
+    test("Diff on a legacy step with a region: no diff image was kept for it (R4)", async () => {
+      failingStorage();
+      inDiff();
+      legacyRun([region("c2")]);
+      const r = openStep("c2");
+      expect(
+        await r.findByText("No diff image was kept for this step."),
+      ).toBeDefined();
+      expect(r.queryByText(/No pixel changes/)).toBeNull();
+    });
+
+    test("Diff on a legacy step with no diff: no pixel changes (R4)", async () => {
+      failingStorage();
+      inDiff();
+      // Step 1's region is not step 2's.
+      legacyRun([region("c1")]);
+      const r = openStep("c2");
+      expect(
+        await r.findByText(
+          "No pixel changes between the baseline and the current screenshot.",
+        ),
+      ).toBeDefined();
+      expect(r.queryByText(/No diff image was kept/)).toBeNull();
+    });
+
+    test.each([
+      { diffPercent: 2.5, says: null },
+      {
+        diffPercent: 0,
+        says: "No pixel changes between the baseline and the current screenshot.",
+      },
+    ])(
+      "Diff on a one-step run with no diff image and a diff percent of $diffPercent (R4)",
+      async ({ diffPercent, says }) => {
+        failingStorage();
+        inDiff();
+        mockGetByIdData = {
+          ...defaultMockData,
+          diffName: null,
+          diffPercent,
+          baselineScreenshot: { id: "base", imageKey: "base-img" },
+          screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+        };
+        mockCheckpoints = {
+          items: [{ id: "c1", name: "Home", state: "unresolved" }],
+        };
+        const r = openStep("c1");
+        // Every image has failed by now.
+        await r.findByText("Couldn't load the current screenshot.");
+        if (says) {
+          expect(r.getByText(says)).toBeDefined();
+        } else {
+          expect(r.queryByText(/No pixel changes/)).toBeNull();
+          expect(r.queryByText(/No diff image was kept/)).toBeNull();
+        }
+      },
+    );
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {

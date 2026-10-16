@@ -212,7 +212,8 @@ describe("ViewerStage follows the theme", () => {
       prefs: { ...DEFAULT_VIEWER_PREFS, mode: "overlay" },
     });
     localStorage.setItem("furan-theme", "light");
-    renderStage();
+    // A step with a baseline: without one, overlay draws as side by side.
+    renderStage(mismatched());
     await waitFor(() => expect(fake.registry.apps).toHaveLength(1));
     expect(fake.registry.apps[0]!.renderer.background.color).toBe(0xf4f4f5);
 

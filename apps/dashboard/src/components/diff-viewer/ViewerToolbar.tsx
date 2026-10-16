@@ -24,7 +24,12 @@ import type { DiffStepper } from "./useDiffStepper";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import { drawnMode, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import {
+  drawnMode,
+  modeAvailable,
+  useViewerPrefs,
+  type ViewerMode,
+} from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -96,7 +101,16 @@ interface Props {
    * renders prev/next controls and a counter in the toolbar.
    */
   stepper?: DiffStepper;
+  /**
+   * The step has a baseline. Without one only side by side is available
+   * (R2): the other modes are shown disabled, and a stored one shows as side
+   * by side (it is kept).
+   */
+  hasBaseline?: boolean;
 }
+
+/** A disabled mode's tooltip (spec §8). */
+const NEEDS_A_BASELINE = "Needs a baseline";
 
 export function ViewerToolbar({
   runId,
@@ -106,9 +120,14 @@ export function ViewerToolbar({
   runDiffThresholdOverride = null,
   hasElementMap = false,
   stepper,
+  hasBaseline = true,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
-  const mode = useViewerPrefs((s) => drawnMode(s.prefs.mode));
+  const mode = useViewerPrefs((s) =>
+    drawnMode(
+      modeAvailable(s.prefs.mode, hasBaseline) ? s.prefs.mode : "side-by-side",
+    ),
+  );
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
@@ -241,8 +260,11 @@ export function ViewerToolbar({
       >
         {MODES.map((m) => {
           const active = mode === m.value;
+          // Focusable and named, but inert, so its tooltip says why.
+          const disabled = !modeAvailable(m.value, hasBaseline);
           // `d` toggles the diff view: its tab names the key.
-          const keys = m.value === "diff" ? differenceKeys : undefined;
+          const keys =
+            m.value === "diff" && !disabled ? differenceKeys : undefined;
           return (
             <button
               key={m.value}
@@ -250,14 +272,25 @@ export function ViewerToolbar({
               role="tab"
               data-mode={m.value}
               aria-selected={active}
+              aria-disabled={disabled || undefined}
               aria-keyshortcuts={keys?.ariaKeyShortcuts}
-              title={keys ? hintTitle(m.label, keys) : undefined}
-              onClick={() => setPref("mode", m.value)}
+              title={
+                disabled
+                  ? NEEDS_A_BASELINE
+                  : keys
+                    ? hintTitle(m.label, keys)
+                    : undefined
+              }
+              onClick={() => {
+                if (!disabled) setPref("mode", m.value);
+              }}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",
                 active
                   ? "bg-raised text-fg shadow-raised"
-                  : "text-fg-muted hover:text-fg",
+                  : disabled
+                    ? "cursor-not-allowed text-fg-muted opacity-50"
+                    : "text-fg-muted hover:text-fg",
               )}
             >
               <m.Icon className="h-4 w-4" aria-hidden />

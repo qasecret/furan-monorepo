@@ -49,6 +49,9 @@ export interface ModeHandle {
 /** A layer the host mounts above a renderer's own. */
 export type HostLayer = "shading" | "regions" | "ignore";
 
+/** An image whose missing area (`World.missing`) a renderer hatches. */
+export type HatchedImage = keyof World["missing"];
+
 export interface ModeRenderer {
   /** Side by side has 2; every other mode draws on one stage. */
   panes: 1 | 2;
@@ -61,6 +64,12 @@ export interface ModeRenderer {
    * which layers, bottom to top. They always sit above the mode's own.
    */
   host: { pane: number; layers: readonly HostLayer[] };
+  /**
+   * Per pane (an index into `worlds`), the images whose missing area it
+   * hatches, when that image is drawn. The host puts the hatching's
+   * tooltips over the same areas.
+   */
+  hatched: readonly (readonly HatchedImage[])[];
 }
 
 /**

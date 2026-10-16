@@ -11,9 +11,11 @@
  *   (Radix positioning, chart sizing) that nonces can't cover. Style injection
  *   is a far weaker primitive than script injection; scripts stay locked down.
  * - img-src blob:/data: — screenshots are fetched with credentials and shown
- *   as object URLs (use-authed-image), never loaded cross-origin by <img>;
- *   connect-src blob: because the diff viewer's ImageLayer re-reads those
- *   object URLs with fetch() to decode them into ImageBitmaps.
+ *   as object URLs (use-authed-image), never loaded cross-origin by <img>.
+ *   The diff viewer decodes each fetched blob straight into an ImageBitmap
+ *   (image-set's decodeImage); only its last-resort fallback draws the blob
+ *   through an <img> on an object URL. Nothing fetch()es a blob: URL, so
+ *   connect-src has no blob:.
  * - connect-src adds the api origin when NEXT_PUBLIC_API_URL is absolute
  *   (split-origin installs); a relative base (/api, single-origin) is 'self'.
  */
@@ -44,7 +46,6 @@ export function buildContentSecurityPolicy({
     "font-src": ["'self'", "data:"],
     "connect-src": [
       "'self'",
-      "blob:",
       ...(apiOrigin ? [apiOrigin] : []),
       ...(dev ? ["ws:"] : []),
     ],

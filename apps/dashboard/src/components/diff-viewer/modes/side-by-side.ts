@@ -12,6 +12,7 @@ export const sideBySide: ModeRenderer = {
   needs: ({ hasBaseline }) =>
     hasBaseline ? ["baseline", "current"] : ["current"],
   host: { pane: 1, layers: ["shading", "regions", "ignore"] },
+  hatched: [["baseline"], ["current"]],
   mount([paneA, paneB], input) {
     const mount = createMount();
     const { baseline, current } = input.images;

@@ -1,4 +1,10 @@
-import { act, cleanup, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  within,
+} from "@testing-library/react";
 import {
   afterAll,
   afterEach,
@@ -189,6 +195,15 @@ const fake = vi.hoisted(() => {
       resize: (w: number, h: number) => {
         this.screen = { width: w, height: h };
       },
+      // A WebGL context only when a test names its texture limit.
+      gl:
+        registry.maxTextureSize === null
+          ? undefined
+          : {
+              MAX_TEXTURE_SIZE: 0x0d33,
+              getParameter: (p: number) =>
+                p === 0x0d33 ? registry.maxTextureSize : null,
+            },
     };
     destroyed = false;
     /** Whether its init has finished (resolved or rejected). */
@@ -244,6 +259,8 @@ const fake = vi.hoisted(() => {
     holdInit: false,
     textures: [] as Texture[],
     sprites: [] as Sprite[],
+    /** The GL context's MAX_TEXTURE_SIZE; null: the renderer has no GL context. */
+    maxTextureSize: null as number | null,
   };
 
   return { Box, Graphics, Sprite, Texture, Text, Application, registry };
@@ -272,7 +289,10 @@ import { RENDERERS } from "@/components/diff-viewer/modes/types";
 import type { ElementMap } from "@/components/diff-viewer/useElementMap";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
 import { useViewState } from "@/components/diff-viewer/view-state";
-import { transformFor } from "@/components/diff-viewer/viewer-geometry";
+import {
+  transformFor,
+  worldToCanvas,
+} from "@/components/diff-viewer/viewer-geometry";
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
@@ -451,6 +471,7 @@ beforeEach(() => {
   fake.registry.holdInit = false;
   fake.registry.textures.length = 0;
   fake.registry.sprites.length = 0;
+  fake.registry.maxTextureSize = null;
   useViewerPrefs.setState({
     userId: null,
     prefs: DEFAULT_VIEWER_PREFS,
@@ -1722,5 +1743,484 @@ describe("the editor under a zoom, a pan and a taller baseline (M6a)", () => {
       ["pointerup", sx + 40, sy + 40],
     );
     expect(d1()).toMatchObject({ x: 60, y: 120, width: 140, height: 130 });
+  });
+});
+
+// The document's queries. (Not `screen`: the fake pixi Application has a
+// `screen` field, which the mock hoisting would read as the import.)
+const page = () => within(document.body);
+
+/** A host's pane: the host and the states shown over it. */
+const paneOf = (testId: string): HTMLElement =>
+  page().getByTestId(testId).parentElement!;
+
+/** An image set as `useImageSet` hands it over. */
+function imageSet(
+  images: ImageSetState["images"],
+  over: Partial<ImageSetState> = {},
+): ImageSetState {
+  return { status: "ready", images, failed: {}, retry: () => {}, ...over };
+}
+
+describe("what the stage can't show (spec §3.4)", () => {
+  test("a failed baseline: side by side still draws the current image, and says so over pane A, with Retry", async () => {
+    const retry = vi.fn();
+    const current = loaded("c", 100, 100);
+    render(
+      <ViewerStage
+        set={imageSet({ current }, { failed: { baseline: true }, retry })}
+        request={{ baseline: k("failed-b"), current: current.key, diff: null }}
+        regions={[]}
+      />,
+    );
+    await flush();
+
+    expect(labels(worldIn("candidate-canvas-host"))).toEqual([
+      "current",
+      "hatch:current",
+      "ignore",
+    ]);
+    expect(labels(worldIn("baseline-canvas-host"))).toEqual([]);
+    const paneA = within(paneOf("baseline-canvas-host"));
+    expect(paneA.getByText("Couldn't load the baseline.")).toBeDefined();
+    expect(
+      within(paneOf("candidate-canvas-host")).queryByText(/Couldn't load/),
+    ).toBeNull();
+    fireEvent.click(paneA.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledWith("baseline");
+  });
+
+  test.each(["overlay", "diff"] as const)(
+    "%s: a failed current image is said on the stage, with Retry",
+    async (mode) => {
+      setMode(mode);
+      const retry = vi.fn();
+      const baseline = loaded("b", 100, 100);
+      const diff = loaded("d", 100, 100);
+      render(
+        <ViewerStage
+          set={imageSet(
+            { baseline, diff },
+            { failed: { current: true }, retry },
+          )}
+          request={{
+            baseline: baseline.key,
+            current: k("failed-c"),
+            diff: diff.key,
+          }}
+          regions={[]}
+        />,
+      );
+      await flush();
+
+      const stage = within(paneOf("single-stage-host"));
+      expect(
+        stage.getByText("Couldn't load the current screenshot."),
+      ).toBeDefined();
+      fireEvent.click(stage.getByRole("button", { name: "Retry" }));
+      expect(retry).toHaveBeenCalledWith("current");
+    },
+  );
+
+  test("no baseline: the current image in pane B, pane A empty and labelled No baseline, with the message", async () => {
+    const { set, request } = step({ current: loaded("c", 100, 100) });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(labels(worldIn("candidate-canvas-host"))).toEqual([
+      "current",
+      "hatch:current",
+      "ignore",
+    ]);
+    expect(labels(worldIn("baseline-canvas-host"))).toEqual([]);
+    expect(page().getByText("No baseline")).toBeDefined();
+    expect(page().queryByText("Baseline")).toBeNull();
+    expect(
+      within(paneOf("baseline-canvas-host")).getByText(
+        "No baseline yet. Approve this step to make it the baseline.",
+      ),
+    ).toBeDefined();
+  });
+
+  test.each(["swipe", "flicker", "overlay", "diff"] as const)(
+    "no baseline, with %s stored: drawn as side by side, and the mode is kept",
+    async (mode) => {
+      setMode(mode);
+      const { set, request } = step({ current: loaded("c", 100, 100) });
+      render(<ViewerStage set={set} request={request} regions={[]} />);
+      await flush();
+
+      expect(page().queryByTestId("single-stage-host")).toBeNull();
+      expect(labels(worldIn("candidate-canvas-host"))).toContain("current");
+      expect(page().queryByText(/No pixel changes/)).toBeNull();
+      expect(useViewerPrefs.getState().prefs.mode).toBe(mode);
+    },
+  );
+
+  test("loading: the canvas skeleton, busy, with no message; done once the images are in", async () => {
+    const current = loaded("c", 100, 100);
+    const baseline = loaded("b", 100, 100);
+    const request: ImageSetRequest = {
+      baseline: baseline.key,
+      current: current.key,
+      diff: null,
+    };
+    const r = render(
+      <ViewerStage
+        set={imageSet({ current }, { status: "loading" })}
+        request={request}
+        regions={[]}
+      />,
+    );
+    await flush();
+    const hosts = ["baseline-canvas-host", "candidate-canvas-host"];
+    for (const id of hosts) {
+      expect(page().getByTestId(id).getAttribute("aria-busy")).toBe("true");
+    }
+    expect(page().queryByTestId("stage-states")).toBeNull();
+    expect(fake.registry.sprites).toHaveLength(0);
+
+    r.rerender(
+      <ViewerStage
+        set={imageSet({ baseline, current })}
+        request={request}
+        regions={[]}
+      />,
+    );
+    await flush();
+    for (const id of hosts) {
+      expect(page().getByTestId(id).hasAttribute("aria-busy")).toBe(false);
+    }
+  });
+
+  test("Diff, sizes that differ: the faded current image, its hatching and the message", async () => {
+    setMode("diff");
+    const { set, request } = step({
+      baseline: loaded("b", 100, 200),
+      current: loaded("c", 100, 300),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(labels(worldIn("single-stage-host"))).toEqual([
+      "current",
+      "hatch:current",
+      "ignore",
+    ]);
+    expect(
+      within(paneOf("single-stage-host")).getByText(
+        "The screenshots are different sizes (100×200 and 100×300), so there's no pixel diff. Compare them with Side by side, Swipe or Flicker.",
+      ),
+    ).toBeDefined();
+  });
+
+  test("Diff, a legacy step with a diff and no kept image: the faded current image and the rectangles, with the message (R4)", async () => {
+    setMode("diff");
+    const { set, request } = step({
+      baseline: loaded("b", 100, 100),
+      current: loaded("c", 100, 100),
+    });
+    render(
+      <ViewerStage
+        set={set}
+        request={request}
+        regions={REGIONS}
+        legacyMissing
+        stepHasDiff
+      />,
+    );
+    await flush();
+
+    expect(labels(worldIn("single-stage-host"))).toEqual([
+      "current",
+      "hatch:current",
+      "regions",
+      "ignore",
+    ]);
+    expect(
+      page().getByText("No diff image was kept for this step."),
+    ).toBeDefined();
+  });
+
+  test("Diff, no diff on the step: no pixel changes, whatever legacyMissing says (R4)", async () => {
+    setMode("diff");
+    const { set, request } = step({
+      baseline: loaded("b", 100, 100),
+      current: loaded("c", 100, 100),
+    });
+    render(
+      <ViewerStage
+        set={set}
+        request={request}
+        regions={[]}
+        legacyMissing
+        stepHasDiff={false}
+      />,
+    );
+    await flush();
+
+    expect(
+      page().getByText(
+        "No pixel changes between the baseline and the current screenshot.",
+      ),
+    ).toBeDefined();
+    expect(page().queryByText(/No diff image was kept/)).toBeNull();
+  });
+
+  test("Diff, with no word on the step's diff: a region of the step counts as one", async () => {
+    setMode("diff");
+    const { set, request } = step({
+      baseline: loaded("b", 100, 100),
+      current: loaded("c", 100, 100),
+    });
+    render(
+      <ViewerStage
+        set={set}
+        request={request}
+        regions={REGIONS}
+        legacyMissing
+      />,
+    );
+    await flush();
+
+    expect(
+      page().getByText("No diff image was kept for this step."),
+    ).toBeDefined();
+    expect(page().queryByText(/No pixel changes/)).toBeNull();
+  });
+
+  test("too large: the renderer is not mounted, and the limit is the GL context's (Review Focus 1)", async () => {
+    fake.registry.maxTextureSize = 16384;
+    const sideBySide = vi.spyOn(RENDERERS["side-by-side"], "mount");
+    const overlay = vi.spyOn(RENDERERS.overlay, "mount");
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 900),
+      current: loaded("c", 1440, 20000),
+    });
+    render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+    await flush();
+
+    expect(sideBySide).not.toHaveBeenCalled();
+    expect(fake.registry.sprites).toHaveLength(0);
+    expect(labels(worldIn("candidate-canvas-host"))).toEqual([]);
+    expect(
+      within(paneOf("candidate-canvas-host")).getByText(
+        "This screenshot is too large to draw on this device (1440×20000; the limit is 16384 px).",
+      ),
+    ).toBeDefined();
+
+    // Nor on one stage; and the limit holds through the stage's new app.
+    setMode("overlay");
+    await flush();
+    expect(overlay).not.toHaveBeenCalled();
+    expect(fake.registry.sprites).toHaveLength(0);
+    expect(labels(worldIn("single-stage-host"))).toEqual([]);
+    expect(
+      within(paneOf("single-stage-host")).getByText(
+        /too large to draw on this device \(1440×20000; the limit is 16384 px\)/,
+      ),
+    ).toBeDefined();
+  });
+
+  test("too large is the GL context's limit, not the fallback's", async () => {
+    fake.registry.maxTextureSize = 16384;
+    const mount = vi.spyOn(RENDERERS["side-by-side"], "mount");
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 9000),
+      current: loaded("c", 1440, 9000),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(mount).toHaveBeenCalledOnce();
+    expect(page().queryByText(/too large/)).toBeNull();
+  });
+
+  test("too large, with no GL context to ask: the 8192 fallback", async () => {
+    const mount = vi.spyOn(RENDERERS["side-by-side"], "mount");
+    const { set, request } = step({
+      baseline: loaded("b", 1440, 9000),
+      current: loaded("c", 1440, 9000),
+    });
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+
+    expect(mount).not.toHaveBeenCalled();
+    expect(
+      page().getByText(
+        "This screenshot is too large to draw on this device (1440×9000; the limit is 8192 px).",
+      ),
+    ).toBeDefined();
+  });
+
+  test("back on a step before the one in between settled: it mounts again only once all its images are in (NB1)", async () => {
+    const mount = vi.spyOn(RENDERERS["side-by-side"], "mount");
+    const a = {
+      baseline: loaded("A-b", 100, 100),
+      current: loaded("A-c", 100, 100),
+    };
+    const reqA: ImageSetRequest = {
+      baseline: a.baseline.key,
+      current: a.current.key,
+      diff: null,
+    };
+    const reqB: ImageSetRequest = {
+      baseline: k("B-b"),
+      current: k("B-c"),
+      diff: null,
+    };
+    const r = render(
+      <ViewerStage set={imageSet(a)} request={reqA} regions={[]} />,
+    );
+    await flush();
+    expect(mount).toHaveBeenCalledTimes(1);
+
+    // On to B, still loading; back to A while its baseline loads again.
+    r.rerender(
+      <ViewerStage
+        set={imageSet({}, { status: "loading" })}
+        request={reqB}
+        regions={[]}
+      />,
+    );
+    await flush();
+    r.rerender(
+      <ViewerStage
+        set={imageSet({ current: a.current }, { status: "loading" })}
+        request={reqA}
+        regions={[]}
+      />,
+    );
+    await flush();
+    expect(mount).toHaveBeenCalledTimes(1);
+    expect(fake.registry.sprites.filter((s) => !s.destroyed)).toEqual([]);
+
+    r.rerender(<ViewerStage set={imageSet(a)} request={reqA} regions={[]} />);
+    await flush();
+    expect(mount).toHaveBeenCalledTimes(2);
+    expect(labels(worldIn("baseline-canvas-host"))).toEqual([
+      "baseline",
+      "hatch:baseline",
+    ]);
+  });
+});
+
+describe("the hatching's tooltips (spec §3.1)", () => {
+  // A taller baseline and a wider current image: a 150×200 world, fit 2 in
+  // 800×600 at canvas (250, 100). The baseline misses the right strip
+  // (x 100–150), the current image the bottom one (y 100–200).
+  const BASELINE_STRIP = { x: 100, y: 0, w: 50, h: 200 };
+  const CURRENT_STRIP = { x: 0, y: 100, w: 150, h: 100 };
+  const WORLD = { w: 150, h: 200 };
+  const mismatched = () =>
+    step({
+      baseline: loaded("b", 100, 200),
+      current: loaded("c", 150, 100),
+      diff: loaded("d", 150, 100),
+    });
+
+  const tips = (testId: string): HTMLElement[] =>
+    Array.from(
+      page()
+        .getByTestId(testId)
+        .querySelectorAll<HTMLElement>('[data-testid="hatch-tooltip"]'),
+    );
+  const box = (el: HTMLElement) =>
+    [el.style.left, el.style.top, el.style.width, el.style.height].map(
+      parseFloat,
+    );
+  const onScreen = (
+    view: { zoom: number; panX: number; panY: number },
+    r: { x: number; y: number; w: number; h: number },
+  ) => {
+    const t = transformFor(WORLD, VIEWPORT, view);
+    const a = worldToCanvas(t, { x: r.x, y: r.y });
+    const b = worldToCanvas(t, { x: r.x + r.w, y: r.y + r.h });
+    return [a.x, a.y, b.x - a.x, b.y - a.y];
+  };
+
+  test("side by side: each pane's strip says which screenshot it is not in, under the world's transform", async () => {
+    const { set, request } = mismatched();
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    const fit = { zoom: 1, panX: 0, panY: 0 };
+
+    const [a, ...moreA] = tips("baseline-canvas-host");
+    expect(moreA).toEqual([]);
+    expect(a!.title).toBe("Not in the baseline");
+    expect(box(a!)).toEqual(onScreen(fit, BASELINE_STRIP));
+    expect(box(a!)).toEqual([450, 100, 100, 400]);
+
+    const [b, ...moreB] = tips("candidate-canvas-host");
+    expect(moreB).toEqual([]);
+    expect(b!.title).toBe("Not in the current screenshot");
+    expect(box(b!)).toEqual(onScreen(fit, CURRENT_STRIP));
+
+    // They follow the zoom and the pan.
+    const view = { zoom: 2, panX: 10, panY: -5 };
+    act(() => useViewState.getState().setView(view));
+    await flush();
+    expect(box(tips("baseline-canvas-host")[0]!)).toEqual(
+      onScreen(view, BASELINE_STRIP),
+    );
+    expect(box(tips("candidate-canvas-host")[0]!)).toEqual(
+      onScreen(view, CURRENT_STRIP),
+    );
+  });
+
+  test.each([
+    {
+      mode: "overlay" as const,
+      titles: ["Not in the baseline", "Not in the current screenshot"],
+      hatches: ["hatch:baseline", "hatch:current"],
+    },
+    {
+      mode: "diff" as const,
+      titles: ["Not in the current screenshot"],
+      hatches: ["hatch:current"],
+    },
+  ])(
+    "$mode: a tooltip for each hatching it draws",
+    async ({ mode, titles, hatches }) => {
+      setMode(mode);
+      const { set, request } = mismatched();
+      render(<ViewerStage set={set} request={request} regions={[]} />);
+      await flush();
+
+      expect(tips("single-stage-host").map((t) => t.title)).toEqual(titles);
+      const world = worldIn("single-stage-host");
+      expect(
+        labels(world).filter(
+          (l) => l.startsWith("hatch:") && layer(world, l).points().length > 0,
+        ),
+      ).toEqual(hatches);
+    },
+  );
+
+  test("none where the images cover the world, and none before they are drawn", async () => {
+    const same = fullStep();
+    const r = render(
+      <ViewerStage set={same.set} request={same.request} regions={[]} />,
+    );
+    await flush();
+    expect(tips("baseline-canvas-host")).toEqual([]);
+    expect(tips("candidate-canvas-host")).toEqual([]);
+
+    const { set, request } = mismatched();
+    r.rerender(
+      <ViewerStage
+        set={{
+          ...set,
+          status: "loading",
+          images: { current: set.images.current! },
+        }}
+        request={request}
+        regions={[]}
+      />,
+    );
+    await flush();
+    expect(tips("baseline-canvas-host")).toEqual([]);
+    expect(tips("candidate-canvas-host")).toEqual([]);
   });
 });

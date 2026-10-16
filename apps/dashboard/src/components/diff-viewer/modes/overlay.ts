@@ -12,6 +12,7 @@ export const overlay: ModeRenderer = {
   needs: ({ hasBaseline }) =>
     hasBaseline ? ["baseline", "current"] : ["current"],
   host: { pane: 0, layers: SINGLE_STAGE_HOST_LAYERS },
+  hatched: [["baseline", "current"]],
   mount([world], input) {
     const mount = createMount();
     if (!world) return handleOf(mount);
