@@ -6,9 +6,10 @@ import { create } from "zustand";
  * Global open/close state for the cmdk command palette.
  *
  * Exposed as a zustand store (rather than React context) so non-React
- * call sites — namely the diff viewer's tinykeys handler for `/` — can
- * call `usePaletteStore.getState().setOpen(true)` without needing a
- * provider in scope.
+ * call sites — namely the global commands `palette.open` (⌘K) and
+ * `search.focus` (`/`), run by the key dispatcher — can call
+ * `usePaletteStore.getState().setOpen(true)` without needing a provider in
+ * scope.
  */
 interface State {
   open: boolean;

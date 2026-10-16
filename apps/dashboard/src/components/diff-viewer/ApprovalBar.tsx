@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { useCommandKeys } from "@/lib/commands/registry";
 import { statusStyle } from "@/lib/status-style";
 
 interface Props {
@@ -60,6 +61,12 @@ interface Props {
    * standalone bar (and existing tests) are unchanged.
    */
   showStatus?: boolean;
+  /**
+   * The viewer may decide (the server's answer for the request's role,
+   * R14). False: a read-only bar. The step's state, its decision and the
+   * override still show; no button decides, undoes or overrides.
+   */
+  canReview: boolean;
 }
 
 /**
@@ -77,6 +84,7 @@ export function ApprovalBar({
   diffRegions,
   inline = false,
   showStatus = true,
+  canReview,
 }: Props) {
   const {
     status: effectiveStatus,
@@ -113,7 +121,13 @@ export function ApprovalBar({
   // The three step actions are the pending view's; a run that cannot take
   // them (override, still processing) shows them disabled, with the reason.
   const showStepActions =
-    view === "pending" || view === "overridden" || view === "not-reviewable";
+    canReview &&
+    (view === "pending" || view === "overridden" || view === "not-reviewable");
+
+  // The keys that do what Approve and Reject do, from the registry: none for
+  // a role that cannot review, or while single-key shortcuts are off.
+  const approveKeys = useCommandKeys("review.approve");
+  const rejectKeys = useCommandKeys("review.reject");
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -144,7 +158,7 @@ export function ApprovalBar({
         {/* Phase B: "same change in N checkpoints → Accept all" callout. In
             inline (header) mode the parent renders it below the header so it
             doesn't cram the single row; renders null when no group exists. */}
-        {!inline && (
+        {!inline && canReview && (
           <GroupApprovalCallout runId={runId} checkpointId={checkpointId} />
         )}
 
@@ -153,21 +167,23 @@ export function ApprovalBar({
               stays the rightmost CTA (reference TestStep layout). Commenting
               lives in the sidebar's COMMENTS tab, so there's no separate
               Comment button here. */}
-          {showRunMenu && <MoreMenu actions={actions} />}
+          {canReview && showRunMenu && <MoreMenu actions={actions} />}
 
           {/* The override cluster shows with whatever the step shows: a
               decided step keeps its chip beside it. */}
           {statusOverride && (
             <>
               <OverrideChip override={statusOverride} />
-              <Button
-                variant="secondary"
-                disabled={pending}
-                data-testid="reset-override"
-                onClick={() => actions.override("default")}
-              >
-                Reset to computed
-              </Button>
+              {canReview && (
+                <Button
+                  variant="secondary"
+                  disabled={pending}
+                  data-testid="reset-override"
+                  onClick={() => actions.override("default")}
+                >
+                  Reset to computed
+                </Button>
+              )}
             </>
           )}
 
@@ -176,11 +192,14 @@ export function ApprovalBar({
               decision={decision}
               busy={pending}
               onUndo={
-                decision.undo.allowed && !decisionLockedReason
+                canReview && decision.undo.allowed && !decisionLockedReason
                   ? () => actions.undo(decision.actionId)
                   : undefined
               }
-              unavailable={decisionLockedReason ?? undefined}
+              // Read-only, there is no Undo to explain the absence of.
+              unavailable={
+                canReview ? (decisionLockedReason ?? undefined) : undefined
+              }
             />
           )}
 
@@ -215,6 +234,12 @@ export function ApprovalBar({
                 testId="reject-button"
                 variant="destructive"
                 onClick={actions.reject}
+                ariaKeyShortcuts={rejectKeys.ariaKeyShortcuts}
+                title={
+                  rejectKeys.titleSuffix
+                    ? `Reject${rejectKeys.titleSuffix}`
+                    : undefined
+                }
               >
                 Reject
               </DisabledAwareButton>
@@ -227,11 +252,12 @@ export function ApprovalBar({
                 // The older-capture question, if it opens, hands focus back to
                 // this button when it closes.
                 onClick={(e) => actions.approve(e.currentTarget)}
-                title={
+                ariaKeyShortcuts={approveKeys.ariaKeyShortcuts}
+                title={`${
                   state === "new"
                     ? "Sets this candidate as the first baseline. Ignore regions are persisted onto the variation for future runs."
                     : "Promotes this step's candidate as the new baseline for its test variation."
-                }
+                }${approveKeys.titleSuffix}`}
               >
                 {state === "new" ? "Save as baseline" : "Approve"}
               </DisabledAwareButton>

@@ -83,8 +83,10 @@ type Action = "continue" | "clear" | "batches" | "batch";
  *
  * A dialog, so the viewer's shortcuts yield to it while focus is in it, but
  * not a modal one: no focus trap, and the header stays usable. ⌘Z still
- * reaches the viewer (`data-passes-undo`): undoing the decision that brought
- * the card up brings the step back.
+ * reaches the review undo (`data-passes-undo`): undoing the decision that
+ * brought the card up brings the step back. Esc does too (`data-done-card`,
+ * the viewer's `viewer.escape`), though the card's own handler takes it
+ * first when focus is in the card.
  */
 export function BatchDoneCard({
   variant,
@@ -168,6 +170,8 @@ export function BatchDoneCard({
         {...(variant === "all" ? { "aria-describedby": bodyId } : {})}
         tabIndex={-1}
         onKeyDown={onKeyDown}
+        // The one dialog the viewer's Esc (`viewer.escape`) fires in.
+        data-done-card=""
         data-passes-undo=""
         data-variant={variant}
         data-testid="batch-done-card"

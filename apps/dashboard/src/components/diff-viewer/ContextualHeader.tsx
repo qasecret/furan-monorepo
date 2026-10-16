@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
+import { useCommandKeys } from "@/lib/commands/registry";
 
 /** The review loop's place in the header: how many are left, and the way on. */
 export interface HeaderLoop {
@@ -83,6 +84,9 @@ export function ContextualHeader({
   rightActions,
   loop,
 }: Props) {
+  // ← / →'s keys, for the step buttons' hints (spec §5.4).
+  const prevKeys = useCommandKeys("viewer.prevStep");
+  const nextKeys = useCommandKeys("viewer.nextStep");
   return (
     <header
       className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-edge bg-canvas px-4"
@@ -123,6 +127,12 @@ export function ContextualHeader({
             <button
               type="button"
               aria-label="Previous step"
+              aria-keyshortcuts={prevKeys.ariaKeyShortcuts}
+              title={
+                prevKeys.titleSuffix
+                  ? `Previous step${prevKeys.titleSuffix}`
+                  : undefined
+              }
               data-testid="contextual-header-prev"
               onClick={nav.onPrev}
               disabled={!nav.onPrev}
@@ -136,6 +146,12 @@ export function ContextualHeader({
             <button
               type="button"
               aria-label="Next step"
+              aria-keyshortcuts={nextKeys.ariaKeyShortcuts}
+              title={
+                nextKeys.titleSuffix
+                  ? `Next step${nextKeys.titleSuffix}`
+                  : undefined
+              }
               data-testid="contextual-header-next"
               onClick={nav.onNext}
               disabled={!nav.onNext}
@@ -164,6 +180,9 @@ export function ContextualHeader({
 function LoopControls({ loop }: { loop: HeaderLoop }) {
   const { remaining, onNextPending, pending, nextLabel, cue, error, onRetry } =
     loop;
+  // J's button: its key, from the registry (none while single-key shortcuts
+  // are off).
+  const nextKeys = useCommandKeys("viewer.nextPending");
   return (
     <div className="flex items-center gap-2" data-testid="header-loop">
       {remaining ? (
@@ -214,7 +233,8 @@ function LoopControls({ loop }: { loop: HeaderLoop }) {
         className="h-8 gap-1 px-3 text-xs"
         aria-label="Next pending step"
         aria-busy={pending ?? false}
-        title="Next pending step (J)"
+        aria-keyshortcuts={nextKeys.ariaKeyShortcuts}
+        title={`Next pending step${nextKeys.titleSuffix}`}
         data-testid="header-next-pending"
         onClick={onNextPending}
         disabled={!onNextPending}

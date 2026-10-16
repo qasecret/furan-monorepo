@@ -52,6 +52,8 @@ export interface DisabledAwareButtonProps {
    * pressing it tries again).
    */
   label?: string;
+  /** The keys that do what it does (`useCommandKeys`), e.g. "A". */
+  ariaKeyShortcuts?: string;
 }
 
 /**
@@ -84,6 +86,7 @@ export const DisabledAwareButton = forwardRef<
     title,
     className,
     label,
+    ariaKeyShortcuts,
   },
   ref,
 ) {
@@ -110,6 +113,7 @@ export const DisabledAwareButton = forwardRef<
             aria-disabled={explained ? true : undefined}
             aria-describedby={explained ? reasonId : undefined}
             aria-label={label}
+            aria-keyshortcuts={ariaKeyShortcuts}
             // The tooltip replaces a native title on an explained button.
             title={explained ? undefined : title}
             data-testid={testId}
