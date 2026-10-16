@@ -18,6 +18,11 @@ const DiffViewer = dynamic(
   },
 );
 
+/**
+ * The viewer's tour. It names no keys: the keys a reader has depend on their
+ * role and the single-key switch, and the hint bar, the buttons' hints and
+ * the `?` sheet already show them from the command registry (spec §1.1).
+ */
 const DIFF_VIEWER_TOUR = [
   {
     target: "#diff-viewer-toolbar",
@@ -30,7 +35,7 @@ const DIFF_VIEWER_TOUR = [
     target: "#diff-viewer-canvas",
     title: "Diff canvas",
     content:
-      "Pixel-level diffs are rendered as red regions. Pan with click+drag, zoom with the mouse wheel. Use `A` to approve, `R` to reject, `C` to comment.",
+      "Pixel-level diffs are rendered as red regions. Pan with click+drag, zoom with the mouse wheel.",
     placement: "top" as const,
   },
   {

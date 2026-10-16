@@ -41,6 +41,7 @@ import type {
   CommandScope,
   KeyBinding,
 } from "@/lib/commands/types";
+import { useUndoStore } from "@/lib/review/use-undo-store";
 import type { ViewerRole } from "@/lib/roles";
 
 /** A registrant's own state, as a page would hand it to `useCommands`. */
@@ -137,6 +138,7 @@ function binds(): number {
 }
 
 beforeEach(() => {
+  useUndoStore.setState({ stack: [] });
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   usePaletteStore.setState({ open: false });
@@ -845,5 +847,135 @@ describe("CommandDispatcher", () => {
     const k = press("k", { ctrlKey: true });
     expect(usePaletteStore.getState().open).toBe(true);
     expect(k.defaultPrevented).toBe(true);
+  });
+});
+
+describe("the done card passes the app's keys, not the page's (R33)", () => {
+  /**
+   * The layout's global keys, the viewer's page keys, the done card (a
+   * non-modal dialog, holding focus as it does when it appears) and an
+   * ordinary modal dialog.
+   */
+  function onTheDoneCard(role: ViewerRole = "editor") {
+    const page = {
+      a: vi.fn(),
+      r: vi.fn(),
+      j: vi.fn(),
+      k: vi.fn(),
+      ArrowRight: vi.fn(),
+      ArrowLeft: vi.fn(),
+      Enter: vi.fn(),
+      Escape: vi.fn(),
+    };
+    render(
+      <Layout role={role}>
+        <GlobalCommands />
+        <Registrant
+          scope="viewer"
+          commands={Object.entries(page).map(([key, run]) =>
+            command("viewer", `viewer.${key}`, [key], { run }),
+          )}
+        />
+        <div
+          role="dialog"
+          aria-label="Batch done"
+          data-done-card=""
+          data-non-modal=""
+          tabIndex={-1}
+        >
+          <button type="button">Back to batch</button>
+        </div>
+        <div role="dialog" aria-label="Approve pending steps?">
+          <button type="button">Cancel</button>
+        </div>
+      </Layout>,
+    );
+    act(() => screen.getByRole("button", { name: "Back to batch" }).focus());
+    useUndoStore.setState({
+      stack: [{ actionId: "a1", label: "Approved home", runIds: ["r1"] }],
+    });
+    return page;
+  }
+
+  it("⌘K opens the palette, ? the sheet, g i goes to Batches, ⌘Z undoes", () => {
+    onTheDoneCard("editor");
+
+    const k = press("k", { ctrlKey: true });
+    expect(usePaletteStore.getState().open).toBe(true);
+    expect(k.defaultPrevented).toBe(true);
+    act(() => usePaletteStore.setState({ open: false }));
+
+    const q = press("?", { shiftKey: true });
+    expect(useShortcutsSheet.getState().open).toBe(true);
+    expect(q.defaultPrevented).toBe(true);
+    act(() => useShortcutsSheet.setState({ open: false }));
+
+    // `/` is the global search here too (the viewer has none of its own).
+    press("/");
+    expect(usePaletteStore.getState().open).toBe(true);
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // The prefix is recorded with the same exemption, or the sequence
+    // could never complete in the card.
+    const g = press("g");
+    const i = press("i");
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenLastCalledWith("/inbox");
+    expect(i.defaultPrevented).toBe(true);
+    expect(g.defaultPrevented).toBe(false);
+
+    const z = press("z", { ctrlKey: true });
+    expect(undoMock).toHaveBeenCalledTimes(1);
+    expect(z.defaultPrevented).toBe(true);
+  });
+
+  it("an admin's g a and g p go from the card too", () => {
+    onTheDoneCard("admin");
+
+    press("g");
+    press("a");
+    expect(pushMock).toHaveBeenLastCalledWith("/analytics");
+    press("g");
+    press("p");
+    expect(pushMock).toHaveBeenLastCalledWith("/projects");
+    expect(pushMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a, r, j, k, the arrows, Enter and Esc stay the card's", () => {
+    const page = onTheDoneCard("admin");
+
+    for (const key of Object.keys(page)) {
+      expect(press(key).defaultPrevented, key).toBe(false);
+    }
+    // Enter on the card itself, past its buttons, is the card's as well.
+    act(() => screen.getByRole("dialog", { name: "Batch done" }).focus());
+    expect(press("Enter").defaultPrevented).toBe(false);
+    for (const [key, run] of Object.entries(page)) {
+      expect(run, key).not.toHaveBeenCalled();
+    }
+
+    // An editor's `g` then `a`: no Analytics, and no approve either. The
+    // prefix is the app's here, so the stray `a` is taken, as on the page.
+    cleanup();
+    const editor = onTheDoneCard("editor");
+    press("g");
+    expect(press("a").defaultPrevented).toBe(true);
+    expect(editor.a).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("a modal dialog keeps ⌘K, ?, g i and ⌘Z", () => {
+    onTheDoneCard("admin");
+    act(() => screen.getByRole("button", { name: "Cancel" }).focus());
+
+    expect(press("k", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(press("?", { shiftKey: true }).defaultPrevented).toBe(false);
+    press("g");
+    expect(press("i").defaultPrevented).toBe(false);
+    expect(press("z", { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(usePaletteStore.getState().open).toBe(false);
+    expect(useShortcutsSheet.getState().open).toBe(false);
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(undoMock).not.toHaveBeenCalled();
   });
 });

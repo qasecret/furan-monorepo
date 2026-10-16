@@ -5,7 +5,9 @@ export type PageScope = "batches" | "batch" | "viewer";
 
 /**
  * Where a command applies. On a shared key the most specific scope wins:
- * `viewer` > `batch` > `batches` > `global`.
+ * `viewer` > `batch` > `batches` > `global`. A `global` command's keys are
+ * the app's, so they pass a non-modal dialog such as the done card (guard
+ * rule 4, R33); a page's keys stay that dialog's.
  */
 export type CommandScope = "global" | PageScope;
 
@@ -103,6 +105,4 @@ export interface Command<C extends CommandCtx = CommandCtx> {
    * visible focus while the palette is open (R27).
    */
   palette?: false;
-  /** ⌘Z: still fires inside a `[data-passes-undo]` dialog. */
-  passesUndo?: boolean;
 }

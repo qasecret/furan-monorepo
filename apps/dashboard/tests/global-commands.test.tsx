@@ -372,7 +372,7 @@ describe("GlobalCommands", () => {
     haveSomethingToUndo();
     render(
       <Layout role="editor">
-        <div role="dialog" data-passes-undo="">
+        <div role="dialog" data-non-modal="">
           <button type="button">Back to batch</button>
         </div>
         <div role="dialog">

@@ -11,7 +11,14 @@ vi.mock("next/dynamic", () => ({
       return <div data-testid="diff-viewer-stub" />;
     },
 }));
-vi.mock("@/components/tour/page-tour", () => ({ PageTour: () => null }));
+// The tour, as the page hands it its steps.
+const tour = vi.hoisted(() => ({ steps: [] as { content: string }[] }));
+vi.mock("@/components/tour/page-tour", () => ({
+  PageTour: ({ steps }: { steps: { content: string }[] }) => {
+    tour.steps = steps;
+    return null;
+  },
+}));
 // The viewer's role, as the server reads it for the request.
 const session = vi.hoisted(() => ({ role: "editor" as string }));
 vi.mock("@/lib/get-viewer", async () => {
@@ -28,6 +35,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   viewer.props = undefined;
+  tour.steps = [];
 });
 
 /** The server page, rendered as Next renders it: awaited, then mounted. */
@@ -101,6 +109,17 @@ describe("checkpoint page", () => {
       const props = await renderPage();
       expect(props.canReview, role).toBe(canReview);
       cleanup();
+    }
+  });
+
+  test("the viewer's tour names no keys: a guest has no A, and the switch can turn them off (R35)", async () => {
+    await renderPage();
+    expect(tour.steps.length).toBeGreaterThan(0);
+    for (const { content } of tour.steps) {
+      // A key as the copy wrote one ("`A`"), or "Use A to approve".
+      expect(content).not.toMatch(/`[^`]{1,3}`/);
+      expect(content).not.toMatch(/\b(?:Use|Press) [A-Z]\b/);
+      expect(content).not.toMatch(/to approve|to reject|to comment/);
     }
   });
 });

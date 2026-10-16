@@ -21,6 +21,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { expectNamesChosenRow } from "./palette-names";
 import { createBackend, TrpcBackend } from "./trpc-backend";
 
 const { pushMock, undoMock } = vi.hoisted(() => ({
@@ -158,28 +159,6 @@ async function settle(): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-}
-
-/**
- * What a screen reader is told is chosen: the search box (and the list) name
- * the one row that is chosen, by its id. cmdk keeps that name only when its
- * own select runs, so a row chosen any other way is chosen but not named.
- */
-function expectNamesChosenRow(palette: HTMLElement) {
-  const chosen = palette.querySelectorAll(
-    '[role="option"][aria-selected="true"]',
-  );
-  // One row is chosen, or none (no results); never more.
-  expect(chosen.length).toBeLessThanOrEqual(1);
-  const id = chosen[0]?.id ?? null;
-  expect(
-    screen.getByTestId("command-input").getAttribute("aria-activedescendant"),
-  ).toBe(id);
-  expect(
-    palette
-      .querySelector("[cmdk-list]")
-      ?.getAttribute("aria-activedescendant") ?? null,
-  ).toBe(id);
 }
 
 beforeEach(() => {
@@ -854,6 +833,58 @@ describe("CommandPalette", () => {
     expect(document.activeElement).toBe(somewhere);
   });
 
+  test("a pick of the page it is on goes nowhere and gives focus back (R36)", async () => {
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([{ id: "admin.members", label: "Members" }]),
+    );
+    render(
+      <Shell role="admin">
+        <button type="button">Somewhere</button>
+      </Shell>,
+    );
+    const somewhere = screen.getByRole("button", { name: "Somewhere" });
+    const picks: [heading: string, label: string, href: string][] = [
+      ["Go to", "Batches", "/inbox"],
+      ["Go to", "Settings", "/projects/p1/settings"],
+      ["Recent", "Members", "/admin/members"],
+      ["Projects", "Jump to project: Beta", "/projects/p2/builds"],
+      ["Account", "API tokens", "/account/tokens"],
+    ];
+    try {
+      for (const [heading, label, href] of picks) {
+        window.history.replaceState(null, "", href);
+        act(() => somewhere.focus());
+        press("k", { ctrlKey: true });
+        const palette = await screen.findByTestId("command-palette");
+        fireEvent.click(
+          within(group(palette, heading)).getByRole("option", { name: label }),
+        );
+        await settle();
+        expect(usePaletteStore.getState().open, label).toBe(false);
+        // Already there: nothing is pushed, and focus is not left on body.
+        expect(pushMock, label).not.toHaveBeenCalled();
+        expect(document.activeElement, label).toBe(somewhere);
+      }
+
+      // The same path with another query is another page: it goes there.
+      window.history.replaceState(null, "", "/inbox?status=failed");
+      act(() => somewhere.focus());
+      press("k", { ctrlKey: true });
+      const palette = await screen.findByTestId("command-palette");
+      fireEvent.click(
+        within(group(palette, "Go to")).getByRole("option", {
+          name: "Batches",
+        }),
+      );
+      await settle();
+      expect(pushMock).toHaveBeenCalledWith("/inbox");
+      expect(document.activeElement).not.toBe(somewhere);
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   test("focus goes back to the opener without scrolling the page", async () => {
     render(
       <Shell>
@@ -935,12 +966,13 @@ describe("CommandPalette", () => {
     });
 
     test.each([
-      ["commands only", "zoom", "Zoom in"],
-      ["a page only", "settings", "Settings"],
-      ["one command", "reject", "Reject step"],
+      ["commands only", "zoom", "Zoom in", undefined],
+      // The lone-row case (vi): one row left, and named.
+      ["a page only", "settings", "Settings", 1],
+      ["one command", "reject", "Reject step", 1],
     ])(
       "after a change that matches %s (cmdk's own first row)",
-      async (_what, text, first) => {
+      async (_what, text, first, rowCount) => {
         render(
           <Shell role="editor">
             <Viewer viewports={[]} onApprove={vi.fn()} onReject={vi.fn()} />
@@ -950,6 +982,9 @@ describe("CommandPalette", () => {
         const input = screen.getByTestId("command-input");
         fireEvent.change(input, { target: { value: text } });
         expect(chosenLabel(palette)).toBe(first);
+        if (rowCount !== undefined) {
+          expect(within(palette).getAllByRole("option")).toHaveLength(rowCount);
+        }
         await waitFor(() => expectNamesChosenRow(palette));
       },
     );
@@ -1065,6 +1100,77 @@ describe("CommandPalette", () => {
       const rows = within(palette).getAllByRole("option");
       fireEvent.pointerMove(rows[rows.length - 1] as HTMLElement);
       await waitFor(() => expectNamesChosenRow(palette));
+    });
+
+    test("a name that will not take is given up for that row only", async () => {
+      // A row whose name something keeps breaking: the palette gives up on
+      // it after its repairs, not on every row after it.
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      await waitFor(() => expectNamesChosenRow(palette));
+      const input = screen.getByTestId("command-input");
+      const breaksTokens = () => {
+        const chosen = palette.querySelector(
+          '[role="option"][aria-selected="true"]',
+        );
+        if (
+          chosen?.textContent?.startsWith("API tokens") &&
+          input.getAttribute("aria-activedescendant") !== "broken"
+        ) {
+          input.setAttribute("aria-activedescendant", "broken");
+        }
+      };
+      const breaker = new MutationObserver(breaksTokens);
+      breaker.observe(palette, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["aria-selected", "aria-activedescendant"],
+      });
+      // Each repair is a pointer the palette sends over the row: counted
+      // here, before the palette stops it.
+      let repairs = 0;
+      const countRepair = (e: Event) => {
+        if (e.target instanceof Element && e.target.closest("[cmdk-item]")) {
+          repairs += 1;
+        }
+      };
+      const wait = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        });
+      const tokens = () =>
+        within(palette).getByRole("option", { name: "API tokens" });
+      try {
+        fireEvent.pointerMove(tokens());
+        palette.addEventListener("pointermove", countRepair, true);
+        await wait();
+        // Tried, then given up: no more tries, and it stays broken.
+        expect(chosenLabel(palette)).toBe("API tokens");
+        expect(input.getAttribute("aria-activedescendant")).toBe("broken");
+        const first = repairs;
+        expect(first).toBeGreaterThan(0);
+        await wait();
+        expect(repairs).toBe(first);
+
+        // Away to a row that is named, and back: a check saw another row,
+        // so this one has its repairs again.
+        fireEvent.keyDown(input, { key: "ArrowUp" });
+        await wait();
+        expectNamesChosenRow(palette);
+        fireEvent.keyDown(input, { key: "ArrowDown" });
+        expect(chosenLabel(palette)).toBe("API tokens");
+        await wait();
+        expect(repairs).toBeGreaterThan(first);
+
+        // Another row chosen (cmdk's own choice for a typed search, which it
+        // leaves unnamed) is another name: it is repaired.
+        fireEvent.change(input, { target: { value: "settings" } });
+        expect(chosenLabel(palette)).toBe("Settings");
+        await waitFor(() => expectNamesChosenRow(palette));
+      } finally {
+        breaker.disconnect();
+        palette.removeEventListener("pointermove", countRepair, true);
+      }
     });
 
     test("a typed search keeps cmdk's own choice", async () => {

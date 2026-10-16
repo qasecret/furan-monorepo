@@ -33,11 +33,14 @@ export const KEYBOARD_OWNER_ROLES =
   '[role="menu"],[role="menubar"],[role="listbox"],[role="dialog"],[role="alertdialog"]';
 
 /**
- * A dialog that owns the bare keys but lets ⌘Z through: the review loop's
- * done card (BatchDoneCard), where undoing the decision that brought it up
- * brings the step back (R20).
+ * A non-modal dialog: inline in the page, no focus trap, nothing laid over
+ * it. It owns the page's keys while focus is in it, but the app's own keys,
+ * the global commands' (`passesNonModal`), pass it: ⌘K, `?`, `/`, `g …` and
+ * ⌘Z (R33). The one today is the review loop's done card (BatchDoneCard),
+ * where every review loop ends, and where undoing the decision that brought
+ * it up brings the step back (R20).
  */
-export const PASSES_UNDO = "[data-passes-undo]";
+export const NON_MODAL = "[data-non-modal]";
 
 /**
  * The element `useListCursor`'s `itemProps` marks as a list item. Enter on it
@@ -97,7 +100,11 @@ export function isTypingInInput(): boolean {
  *    when the binding sets `allowInText` (⌘K opens the palette from the
  *    Batches search box; ⌘Z does not set it, so it stays the field's undo);
  * 4. focus is inside a menu, listbox or dialog, unless it is the dialog
- *    `allowInDialog` names, or (`passesUndo`) a `[data-passes-undo]` one;
+ *    `allowInDialog` names, or a non-modal one (`[data-non-modal]`, the done
+ *    card) and the binding is a global command's (`passesNonModal`): the
+ *    app's keys (⌘K, `?`, `/`, `g …`, ⌘Z) pass it, while every page, list
+ *    and decision key (`a`, `j`, the arrows, Enter, Esc…) stays its own
+ *    (R33). The dispatcher records a sequence's prefix ("g") the same way;
  * 5. the key is auto-repeating and the binding does not repeat;
  * 6. single-key shortcuts are off and `key` is a character binding (a
  *    character key, or a sequence of them; arrows, Enter, Esc and anything
@@ -143,7 +150,7 @@ export function keyIsOwnedElsewhere(
   if (
     owner !== null &&
     !inAllowedDialog &&
-    !(opts.passesUndo && owner.matches(PASSES_UNDO))
+    !(opts.passesNonModal === true && owner.matches(NON_MODAL))
   ) {
     return true; // 4
   }

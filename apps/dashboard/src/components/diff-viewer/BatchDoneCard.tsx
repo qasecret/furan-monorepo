@@ -82,11 +82,13 @@ type Action = "continue" | "clear" | "batches" | "batch";
  * appears. Enter is the focused button's; Esc goes back to the batch.
  *
  * A dialog, so the viewer's shortcuts yield to it while focus is in it, but
- * not a modal one: no focus trap, and the header stays usable. ⌘Z still
- * reaches the review undo (`data-passes-undo`): undoing the decision that
- * brought the card up brings the step back. Esc does too (`data-done-card`,
- * the viewer's `viewer.escape`), though the card's own handler takes it
- * first when focus is in the card.
+ * not a modal one (`data-non-modal`): no focus trap, and the header stays
+ * usable. So the app's own keys, the global commands', pass it (R33): ⌘K
+ * opens the palette, `?` the sheet, `g i` goes to Batches, and ⌘Z reaches
+ * the review undo, where undoing the decision that brought the card up
+ * brings the step back. Esc does too (`data-done-card`, the viewer's
+ * `viewer.escape`), though the card's own handler takes it first when
+ * focus is in the card.
  */
 export function BatchDoneCard({
   variant,
@@ -172,7 +174,8 @@ export function BatchDoneCard({
         onKeyDown={onKeyDown}
         // The one dialog the viewer's Esc (`viewer.escape`) fires in.
         data-done-card=""
-        data-passes-undo=""
+        // Inline, not modal: the global keys pass it (guard rule 4, R33).
+        data-non-modal=""
         data-variant={variant}
         data-testid="batch-done-card"
         className="w-full max-w-md rounded-overlay bg-overlay p-6 text-fg shadow-overlay outline-none motion-safe:[animation:var(--animate-content-in)]"

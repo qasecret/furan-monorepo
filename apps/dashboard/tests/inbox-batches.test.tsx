@@ -1435,6 +1435,29 @@ describe("Batches: keyboard review (spec §4.2)", () => {
     expect(fetchNext).not.toHaveBeenCalled();
   });
 
+  test("a guest has no Start reviewing key, palette action or sheet row", async () => {
+    // review.next refuses a guest, so all three would only fail.
+    serve({ main: result(three()), pending: 3 });
+    render(<Keyboard context={ctxOf()} role="guest" />);
+
+    expect(press("s").defaultPrevented).toBe(false);
+    expect(fetchNext).not.toHaveBeenCalled();
+    expect(startButton().getAttribute("aria-keyshortcuts")).toBeNull();
+    expect(startButton().getAttribute("title")).toBeNull();
+
+    const palette = await openPalette();
+    expect(actions(palette)).not.toContain("Start reviewing");
+    expect(actions(palette)).toContain("Show: Failed");
+    act(() => usePaletteStore.getState().setOpen(false));
+
+    const sheet = openSheet();
+    const section = within(sheet).getByRole("region", {
+      name: "On this page (Batches)",
+    });
+    expect(within(section).queryByText("Start reviewing")).toBeNull();
+    expect(within(section).getByText("Search batches")).toBeTruthy();
+  });
+
   test("/ focuses search", () => {
     serve({ main: result(three()) });
     render(<Keyboard context={ctxOf()} />);

@@ -11,14 +11,13 @@ import { useRouter } from "next/navigation";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { stepItemId, useCursorItem } from "./batch-cursor-context";
-import { useRegisterStepActions } from "./step-actions-context";
+import { useRegisterStepActions, useStepKeys } from "./step-actions-context";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
 import { StaleStepConfirm } from "@/components/diff-viewer/StaleStepCallout";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
 import { cn } from "@/lib/cn";
-import { useCommandKeys } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import type { CheckpointItem } from "@/lib/review/optimistic";
 import {
@@ -254,8 +253,8 @@ export const StepCard = memo(function StepCard({
     needsReviewer,
     decidable,
   });
-  const approveKeys = useCommandKeys("batch.approve");
-  const rejectKeys = useCommandKeys("batch.reject");
+  // Read once for the page by the batch list (not a registry read per card).
+  const { approve: approveKeys, reject: rejectKeys } = useStepKeys();
   // The list is one Tab stop (spec §6): the card's own controls are in the
   // Tab order only while the card is that stop, after it. A click still
   // focuses them, which makes the card the cursor.

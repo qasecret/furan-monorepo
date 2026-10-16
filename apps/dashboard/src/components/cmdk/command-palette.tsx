@@ -129,6 +129,17 @@ function projectJump({ id, name }: ProjectListItem): Destination {
 }
 
 /**
+ * True when `href` is the page on screen: the same path and query as the
+ * address bar's (the hash is not a page).
+ */
+function isCurrentPage(href: string): boolean {
+  if (typeof window === "undefined") return false;
+  const here = window.location;
+  const there = new URL(href, here.href);
+  return there.pathname === here.pathname && there.search === here.search;
+}
+
+/**
  * Go to: Batches, Analytics (admins), the current project's Settings, then
  * the admin pages (admins).
  */
@@ -359,16 +370,20 @@ function PaletteBody({
   /**
    * A page: closes, remembers it in Recent (one of the palette's own by its
    * id, any other by its address too), goes. Going needs no focus, so it
-   * doesn't wait for the close.
+   * doesn't wait for the close. The page on screen is no navigation: nothing
+   * is pushed, and focus goes back to the opener as on any close (WCAG
+   * 2.4.3, R36). Pushing it would only fetch the same page again, and the
+   * router's own focus move after a navigation would race that restore.
    */
   const go = (page: Destination) => {
-    onNavigate();
+    const here = isCurrentPage(page.href);
+    if (!here) onNavigate();
     setOpen(false);
     recordRecent(
       userId,
       offered.has(page.id) ? { id: page.id, label: page.label } : page,
     );
-    router.push(page.href);
+    if (!here) router.push(page.href);
   };
 
   // A key shows only where a press runs this command now: its live keys
@@ -610,8 +625,9 @@ function PaletteBody({
  * search box are the search's: the dispatcher's guard owns them there.
  *
  * Focus: on close it goes back to where it was when the palette opened,
- * without scrolling, unless a page was picked: that page may focus something
- * of its own, and the opener is on the page being left. A picked command
+ * without scrolling, unless another page was picked: that page may focus
+ * something of its own, and the opener is on the page being left. (A pick
+ * of the page on screen goes nowhere, so focus goes back, R36.) A picked command
  * runs only then, once the palette has let go of focus (its focus trap would
  * pull a `.focus()` back), so a command that moves focus (to a search box, a
  * list row) keeps it. It is checked again then: still registered, allowed

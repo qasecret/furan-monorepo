@@ -4,7 +4,13 @@ import { useEffect, useMemo } from "react";
 import { tinykeys, type KeyBindingMap } from "tinykeys";
 
 import { keyIsOwnedElsewhere } from "./guard";
-import { bindingKey, bindingOptions, keyIdentity, shiftedTwin } from "./keys";
+import {
+  bindingKey,
+  bindingOptions,
+  keyIdentity,
+  shiftedTwin,
+  type BindingOptions,
+} from "./keys";
 import { singleKeysOn } from "./prefs";
 import {
   findBinding,
@@ -30,24 +36,40 @@ function activeKeys(commands: ResolvedCommand[]): string[] {
   return [...keys].sort();
 }
 
+/** A sequence's first step, and the guard options its press is read with. */
+interface Prefix {
+  key: string;
+  opts: BindingOptions;
+}
+
 /**
  * The first step of every sequence any registrant binds ("g" of "g i"),
  * `allowed` or not, sorted: an editor's `g` is a prefix although `g a` is
  * not theirs, so the `a` after it is never taken for the viewer's approve.
+ * A prefix passes a non-modal dialog when a global command's sequence
+ * starts with it, as that sequence does (R33): owned there, `g` would
+ * leave `g i` nothing to complete on the done card.
  */
 function sequencePrefixes(
   entries: readonly { commands: ResolvedCommand[] }[],
-): string[] {
-  const prefixes = new Set<string>();
+): Prefix[] {
+  const prefixes = new Map<string, BindingOptions>();
   for (const { commands } of entries) {
     for (const { command } of commands) {
       for (const b of command.keys ?? []) {
         const key = keyIdentity(bindingKey(b));
-        if (isSequence(key)) prefixes.add(key.split(" ")[0] ?? key);
+        if (!isSequence(key)) continue;
+        const prefix = key.split(" ")[0] ?? key;
+        const passes =
+          prefixes.get(prefix)?.passesNonModal === true ||
+          bindingOptions(command, b).passesNonModal === true;
+        prefixes.set(prefix, passes ? { passesNonModal: true } : {});
       }
     }
   }
-  return [...prefixes].sort();
+  return [...prefixes]
+    .map(([key, opts]) => ({ key, opts }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 /**
@@ -77,10 +99,14 @@ function dispatch(e: KeyboardEvent, key: string): void {
  * completed no sequence that ran: it is taken (`preventDefault`), so no
  * single-key command runs on it, and nothing else happens. When the guard
  * gives the key to something else (a text field, a dialog, the switch off),
- * it is left alone.
+ * it is left alone; it reads the key with the prefix's own options.
  */
-function swallow(e: KeyboardEvent, prefix: string): void {
-  if (!keyIsOwnedElsewhere(e, prefix, {}, { singleKeys: singleKeysOn() })) {
+function swallow(e: KeyboardEvent, prefix: Prefix): void {
+  if (
+    !keyIsOwnedElsewhere(e, prefix.key, prefix.opts, {
+      singleKeys: singleKeysOn(),
+    })
+  ) {
     e.preventDefault();
   }
 }
@@ -105,6 +131,8 @@ function swallow(e: KeyboardEvent, prefix: string): void {
  *    focus) does nothing. It is noted before the press reaches a command
  *    bound to the prefix key itself, in `singles`. (A digit prefix would be
  *    listed, and noted, before the sequences; no sequence starts with one.)
+ *    The guard reads the prefix with its own options (`sequencePrefixes`):
+ *    on the done card, `g` is the app's, as `g i` is (R33).
  *
  * `singles`, bound second: the single keys, then their Shift twins. After
  * a sequence or a catch-all took the key, the guard (rule 1) makes them
@@ -112,7 +140,7 @@ function swallow(e: KeyboardEvent, prefix: string): void {
  */
 function keyMaps(
   keys: string[],
-  prefixes: string[],
+  prefixes: Prefix[],
 ): { sequences: KeyBindingMap; singles: KeyBindingMap } {
   let prefixOwned = false;
   const sequences: KeyBindingMap = {};
@@ -126,17 +154,14 @@ function keyMaps(
     const stray = (e: KeyboardEvent) => {
       if (!prefixOwned) swallow(e, p);
     };
-    sequences[`${p} (\\S)`] = stray;
-    sequences[`${p} Shift+(\\S)`] = stray;
+    sequences[`${p.key} (\\S)`] = stray;
+    sequences[`${p.key} Shift+(\\S)`] = stray;
   }
   for (const p of prefixes) {
-    sequences[p] = (e) => {
-      prefixOwned = keyIsOwnedElsewhere(
-        e,
-        p,
-        {},
-        { singleKeys: singleKeysOn() },
-      );
+    sequences[p.key] = (e) => {
+      prefixOwned = keyIsOwnedElsewhere(e, p.key, p.opts, {
+        singleKeys: singleKeysOn(),
+      });
     };
   }
   const bare = keys.filter((k) => !isSequence(k));
@@ -177,7 +202,7 @@ export function CommandDispatcher(): null {
   useEffect(() => {
     const { keys, prefixes } = JSON.parse(bound) as {
       keys: string[];
-      prefixes: string[];
+      prefixes: Prefix[];
     };
     if (keys.length === 0 && prefixes.length === 0) return;
     const { sequences, singles } = keyMaps(keys, prefixes);
