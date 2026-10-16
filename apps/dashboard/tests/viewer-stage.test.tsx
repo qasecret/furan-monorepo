@@ -1322,13 +1322,18 @@ describe("what the stage keeps", () => {
   test("it pins what it draws: a cache trim while it is mounted closes nothing it holds (M1)", async () => {
     const baseline = loaded("pin-b", 100, 100);
     const current = loaded("pin-c", 100, 100);
+    // Loaded as the image set loads them: pinned (an idle cache keeps
+    // nothing).
+    const loading = __viewerBitmapCache.retain([baseline.key, current.key]);
     __viewerBitmapCache.set(baseline);
     __viewerBitmapCache.set(current);
     const { set, request } = step({ baseline, current });
     const r = render(<ViewerStage set={set} request={request} regions={[]} />);
     await flush();
 
-    // No one else pins them; a release elsewhere trims the cache.
+    // The image set lets go; no one else pins them; a release elsewhere
+    // trims the cache.
+    loading();
     __viewerBitmapCache.retain([k("elsewhere")])();
     await flush();
     expect(baseline.bitmap.close).not.toHaveBeenCalled();

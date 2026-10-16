@@ -13,12 +13,19 @@ export interface DiffStepper {
   prev: () => void;
 }
 
+/**
+ * `n` / `p` over the step's regions, worst first. They step through exactly
+ * what the region list and the canvas show (R10): "Hide displacement" drops
+ * the position-only changes, and the audit rows count only while "Show
+ * suppressed" is on.
+ */
 export function useDiffStepper(regions: DiffRegion[]): DiffStepper {
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
+  const showSuppressed = useViewState((s) => s.showSuppressed);
   const selectedRegionId = useViewState((s) => s.selectedRegionId);
   const ordered = useMemo(
-    () => orderDiffRegions(regions, { hideDisplacement }),
-    [regions, hideDisplacement],
+    () => orderDiffRegions(regions, { hideDisplacement, showSuppressed }),
+    [regions, hideDisplacement, showSuppressed],
   );
   const index = ordered.findIndex((r) => r.id === selectedRegionId);
 

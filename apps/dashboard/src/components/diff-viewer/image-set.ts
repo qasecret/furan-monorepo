@@ -82,7 +82,9 @@ export interface BitmapCache {
    * or not, but only unpinned ones are ever evicted. So a pinned set over
    * budget is allowed, and an unpinned newcomer that does not fit beside it is
    * the one dropped (closed, and not held). If `key` is already held, the held
-   * image stays (it may be on screen) and the bitmap offered is closed.
+   * image stays (it may be on screen) and the bitmap offered is closed. With
+   * no pin held at all (no viewer is open) nothing is kept: the image is
+   * closed at once, as the last release empties the cache (T5).
    */
   set(img: LoadedImage): void;
   /**
@@ -138,6 +140,13 @@ export function createBitmapCache(limits: {
     const held = get(img.key);
     if (held !== undefined) {
       if (held.bitmap !== img.bitmap) img.bitmap.close();
+      return;
+    }
+    // No viewer is open: a decode that lands now (decoding can't be aborted)
+    // has no one to show it, and kept it would stay for the rest of the
+    // session. Dropped, as an image with no room is.
+    if (pinCount === 0) {
+      img.bitmap.close();
       return;
     }
     entries.set(img.key, img);
@@ -301,8 +310,9 @@ async function fetchAndDecode(
   };
   // Decoding cannot be aborted, so a bitmap can finish after everyone stopped
   // waiting for it. It is still the right bitmap for its key: the cache keeps
-  // it for the reviewer's next visit, unless it does not fit beside what is
-  // pinned, in which case the cache has already closed it.
+  // it for the reviewer's next step, unless it does not fit beside what is
+  // pinned, or the viewer has gone (no pin is left), in which case the cache
+  // has already closed it.
   bitmapCache.set(image);
   const kept = bitmapCache.get(key);
   if (kept === undefined) {

@@ -29,7 +29,11 @@ const regions: DiffRegion[] = [
 ];
 
 beforeEach(() => {
-  useViewState.setState({ selectedRegionId: null, focusBbox: null });
+  useViewState.setState({
+    selectedRegionId: null,
+    focusBbox: null,
+    showSuppressed: false,
+  });
   useViewerPrefs.setState({ prefs: DEFAULT_VIEWER_PREFS });
 });
 
@@ -62,5 +66,49 @@ describe("useDiffStepper", () => {
       result.current.next();
     });
     expect(useViewState.getState().selectedRegionId).toBe("b");
+  });
+});
+
+describe("useDiffStepper follows Show suppressed (T7, R10)", () => {
+  // A finding, and an audit row bigger than it, which sorts first when shown.
+  const withAudit: DiffRegion[] = [
+    {
+      id: "finding",
+      severity: "major",
+      category: "text",
+      bbox: { x: 0, y: 0, width: 4, height: 4 },
+      description: "",
+      source: "l1_pixel",
+    },
+    {
+      id: "audit",
+      severity: "major",
+      category: "text",
+      bbox: { x: 10, y: 10, width: 20, height: 20 },
+      description: "",
+      source: "dynamic_text",
+    },
+  ];
+
+  test("with it off, n and p skip the audit rows, as the list and the canvas do", () => {
+    const { result } = renderHook(() => useDiffStepper(withAudit));
+    expect(result.current.count).toBe(1);
+    act(() => result.current.next());
+    expect(useViewState.getState().selectedRegionId).toBe("finding");
+    act(() => result.current.next());
+    expect(useViewState.getState().selectedRegionId).toBe("finding");
+  });
+
+  test("with it on, n and p step through the audit rows the list and the canvas show", () => {
+    const { result } = renderHook(() => useDiffStepper(withAudit));
+    act(() => useViewState.getState().setShowSuppressed(true));
+    expect(result.current.count).toBe(2);
+    act(() => result.current.next());
+    expect(useViewState.getState().selectedRegionId).toBe("audit");
+    expect(result.current.index).toBe(0);
+    act(() => result.current.next());
+    expect(useViewState.getState().selectedRegionId).toBe("finding");
+    act(() => result.current.prev());
+    expect(useViewState.getState().selectedRegionId).toBe("audit");
   });
 });
