@@ -63,6 +63,14 @@ export const screenshots = pgTable(
     // the diff-worker; a reviewer's decision lives in `checkpoint_decisions`.
     verdict: checkpointVerdictEnum("verdict"),
     verdictAt: timestamp("verdict_at", { withTimezone: true }),
+    // Migration 0041: the storage key of this checkpoint's own diff image (PNG),
+    // written by the diff-worker in the same UPDATE as `verdict`. A re-diff
+    // rewrites it, to NULL when the new diff produced no image. NULL on every
+    // row diffed before 0041 (the run's `test_runs.diff_name` is only its worst
+    // checkpoint's). Every key-bearing column must be registered with the
+    // storage proxy's ownership probes and the orphan reconcile
+    // (`gatherReferencedKeys`).
+    diffImageKey: text("diff_image_key"),
     // ADR-074 (migration 0040): true exactly when the step has an active
     // decision (a `checkpoint_decisions` row with `reverted_at IS NULL`).
     // A decision never rewrites the verdict, so without it every scan for

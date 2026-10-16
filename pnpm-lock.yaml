@@ -556,6 +556,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.131.0
         version: 0.131.0(zod@3.25.76)
+      '@furan/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
       '@google/genai':
         specifier: ^2.27.0
         version: 2.27.0

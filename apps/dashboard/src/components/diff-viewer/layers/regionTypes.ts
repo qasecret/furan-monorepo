@@ -5,7 +5,20 @@
  * pulling the inferred-output chain through pixi-side modules. The shape
  * matches @furan/db's `diff_regions` row exactly.
  */
-export type Severity = "breaking" | "major" | "minor" | "cosmetic" | "none";
+import { isSeverity, type Severity } from "@furan/shared-types";
+
+// The severity tiers live in @furan/shared-types; re-exported here so the
+// viewer files keep importing them with the other region types.
+export type { Severity } from "@furan/shared-types";
+
+/**
+ * A region's severity as a `Severity`. `DiffRegion.severity` is a plain string
+ * (rows persisted before a tier existed can carry any value), so every reader
+ * narrows it through here: an unknown value counts as `none`.
+ */
+export function asSeverity(value: string): Severity {
+  return isSeverity(value) ? value : "none";
+}
 
 export interface BBox {
   x: number;
@@ -16,7 +29,7 @@ export interface BBox {
 
 export interface DiffRegion {
   id: string;
-  severity: string; // narrowed to Severity at render time; tolerant of legacy values
+  severity: string; // narrow with asSeverity(); tolerant of legacy values
   category: string;
   bbox: BBox | unknown; // jsonb; tolerate non-object rows defensively
   description: string;

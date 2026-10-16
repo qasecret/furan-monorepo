@@ -110,7 +110,7 @@ type KeyOwnershipProbe = (
 ) => Promise<boolean>;
 
 const KEY_OWNERSHIP_PROBES: KeyOwnershipProbe[] = [
-  // screenshots.{image,dom,element_map}_key
+  // screenshots.{image,dom,element_map,diff_image}_key
   async (db, projectIds, key) => {
     const rows = await db
       .select({ id: screenshots.id })
@@ -122,6 +122,7 @@ const KEY_OWNERSHIP_PROBES: KeyOwnershipProbe[] = [
             eq(screenshots.imageKey, key),
             eq(screenshots.domKey, key),
             eq(screenshots.elementMapKey, key),
+            eq(screenshots.diffImageKey, key),
           ),
         ),
       )

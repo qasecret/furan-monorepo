@@ -1,16 +1,7 @@
-import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
+import { compareSeverity } from "@furan/shared-types";
 
-const SEVERITY_RANK: Record<Severity, number> = {
-  breaking: 0,
-  major: 1,
-  minor: 2,
-  cosmetic: 3,
-  none: 4,
-};
-
-function rank(sev: string): number {
-  return SEVERITY_RANK[sev as Severity] ?? SEVERITY_RANK.none;
-}
+import { asSeverity, type BBox, type DiffRegion } from "./layers/regionTypes";
+import { isRegionHidden } from "./region-visibility";
 
 function area(bbox: BBox | unknown): number {
   if (!bbox || typeof bbox !== "object") return 0;
@@ -38,14 +29,13 @@ export function orderDiffRegions(
       // grouping.
       // ADR-053: layout_suppressed audit rows are hidden here too (shown via
       // the "Show suppressed" toggle), mirroring the engine's EXCLUDED_SOURCES.
-      .filter(
-        (r) => r.source !== "dynamic_text" && r.source !== "layout_suppressed",
-      )
+      .filter((r) => !isRegionHidden(r, { showSuppressed: false }))
       .filter((r) => !(opts.hideDisplacement && r.category === "layout"))
       .slice()
       .sort(
         (a, b) =>
-          rank(a.severity) - rank(b.severity) || area(b.bbox) - area(a.bbox),
+          compareSeverity(asSeverity(a.severity), asSeverity(b.severity)) ||
+          area(b.bbox) - area(a.bbox),
       )
   );
 }

@@ -17,7 +17,8 @@ export interface OrphanReconcileResult {
 
 /**
  * Every storage key a DB row currently references:
- * `screenshots.{image,dom,element_map}_key` + `test_runs.{image,diff}_name`.
+ * `screenshots.{image,dom,element_map,diff_image}_key` +
+ * `test_runs.{image,diff}_name`.
  * Mirror this if a new key-bearing column/table is added (same list the
  * storage-proxy guards). Runs as the owner (workers bypass RLS) so it sees all
  * projects.
@@ -29,10 +30,11 @@ export async function gatherReferencedKeys(db: DB): Promise<Set<string>> {
       imageKey: screenshots.imageKey,
       domKey: screenshots.domKey,
       elementMapKey: screenshots.elementMapKey,
+      diffImageKey: screenshots.diffImageKey,
     })
     .from(screenshots);
   for (const r of shots) {
-    for (const k of [r.imageKey, r.domKey, r.elementMapKey]) {
+    for (const k of [r.imageKey, r.domKey, r.elementMapKey, r.diffImageKey]) {
       if (k) referenced.add(k);
     }
   }

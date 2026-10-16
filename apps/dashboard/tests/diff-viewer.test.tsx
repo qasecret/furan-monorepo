@@ -597,6 +597,130 @@ describe("DiffViewer", () => {
     expect(r.queryByTestId("diff-viewer-step-next")).toBeNull();
   });
 
+  describe("the diff image", () => {
+    /** The storage keys the viewer asked the proxy for, in request order. */
+    function requestedKeys(fetchMock: ReturnType<typeof vi.fn>): string[] {
+      return fetchMock.mock.calls.map(
+        ([url]) => String(url).split("/api/v1/storage/")[1] ?? "",
+      );
+    }
+    async function withFetch(
+      body: (fetchMock: ReturnType<typeof vi.fn>) => void | Promise<void>,
+    ) {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+      vi.stubGlobal("fetch", fetchMock);
+      try {
+        await body(fetchMock);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+
+    test("uses the step's own diff image, not the run's", async () => {
+      // The run's `diffName` is its worst step's (step 1); step 2 has its own.
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "diff-of-step-1",
+        screenshots: [
+          { id: "c1", imageKey: "img-1", diffImageKey: "diff-of-step-1" },
+          { id: "c2", imageKey: "img-2", diffImageKey: "diff-of-step-2" },
+        ],
+      };
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      await withFetch(async (fetchMock) => {
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c2"
+          />,
+        );
+        await vi.waitFor(() =>
+          expect(requestedKeys(fetchMock)).toContain("diff-of-step-2"),
+        );
+        expect(requestedKeys(fetchMock)).not.toContain("diff-of-step-1");
+        expect(
+          document
+            .getElementById("diff-viewer-canvas")
+            ?.hasAttribute("data-diff-image-legacy-missing"),
+        ).toBe(false);
+      });
+    });
+
+    test("a step of a multi-step run with no image of its own is not given the run's", async () => {
+      // A run diffed before steps kept their own images: `diffName` is the
+      // worst step's, so showing it on step 2 would draw step 1's diff.
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "diff-of-step-1",
+        screenshots: [
+          { id: "c1", imageKey: "img-1", diffImageKey: null },
+          { id: "c2", imageKey: "img-2", diffImageKey: null },
+        ],
+      };
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      await withFetch(async (fetchMock) => {
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c2"
+          />,
+        );
+        // The step's own image is requested, so the viewer has had its chance
+        // to ask for the diff image too.
+        await vi.waitFor(() =>
+          expect(requestedKeys(fetchMock)).toContain("img-2"),
+        );
+        expect(requestedKeys(fetchMock)).not.toContain("diff-of-step-1");
+        // Said so, for the canvas to tell the reviewer why there is no image.
+        expect(
+          document
+            .getElementById("diff-viewer-canvas")
+            ?.getAttribute("data-diff-image-legacy-missing"),
+        ).toBe("true");
+      });
+    });
+
+    test("a legacy single-step run still shows the run's diff image", async () => {
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: "diff-of-the-run",
+        screenshots: [{ id: "c1", imageKey: "img-1", diffImageKey: null }],
+      };
+      mockCheckpoints = {
+        items: [{ id: "c1", name: "Home", state: "unresolved" }],
+      };
+      await withFetch(async (fetchMock) => {
+        render(
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c1"
+          />,
+        );
+        await vi.waitFor(() =>
+          expect(requestedKeys(fetchMock)).toContain("diff-of-the-run"),
+        );
+        expect(
+          document
+            .getElementById("diff-viewer-canvas")
+            ?.hasAttribute("data-diff-image-legacy-missing"),
+        ).toBe(false);
+      });
+    });
+  });
+
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
     mockGetByIdData = {
       ...defaultMockData,

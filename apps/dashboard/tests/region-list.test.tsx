@@ -1,3 +1,4 @@
+import { SEVERITIES } from "@furan/shared-types";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -113,6 +114,41 @@ describe("RegionListPanel", () => {
     expect(
       document.querySelector('[data-source="dynamic_text"]'),
     ).not.toBeNull();
+  });
+
+  it("source='layout_suppressed' rows hidden by default; visible when toggle on", () => {
+    const regions: DiffRegion[] = [
+      {
+        id: "ls1",
+        severity: "none",
+        category: "layout",
+        bbox: { x: 0, y: 0, width: 50, height: 20 },
+        description: "Content change suppressed by the layout match level",
+        source: "layout_suppressed",
+      },
+      mockRegions[1]!,
+    ];
+    render(<RegionListPanel regions={regions} />);
+    expect(document.querySelector('[data-region-id="ls1"]')).toBeNull();
+    expect(screen.getByText(/Regions \(1\)/)).toBeTruthy();
+    fireEvent.click(
+      screen.getByTestId("show-suppressed-toggle").querySelector("input")!,
+    );
+    expect(document.querySelector('[data-region-id="ls1"]')).not.toBeNull();
+    expect(screen.getByText(/Regions \(2\)/)).toBeTruthy();
+  });
+
+  it("the severity filter offers 'all' then every severity, in table order", async () => {
+    render(<RegionListPanel regions={mockRegions} />);
+    // Radix DropdownMenu opens on keyboard activation of the focused trigger.
+    const trigger = screen.getByTestId("severity-filter-trigger");
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter", code: "Enter" });
+    await new Promise((r) => setTimeout(r, 0));
+    const options = Array.from(
+      document.querySelectorAll("[data-severity-option]"),
+    ).map((el) => el.getAttribute("data-severity-option"));
+    expect(options).toEqual(["all", ...SEVERITIES]);
   });
 
   it("renders l1_pixel (image) regions in the list", () => {

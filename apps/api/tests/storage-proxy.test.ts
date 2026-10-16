@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { builds, projectMembers, projects, testRuns, users } from "@furan/db";
+import {
+  builds,
+  projectMembers,
+  projects,
+  screenshots,
+  testRuns,
+  testVariations,
+  users,
+} from "@furan/db";
 import { createStorage, objectKey } from "@furan/storage";
 import { describe, expect, test } from "vitest";
 
@@ -132,6 +140,77 @@ d("GET /api/v1/storage/:key", () => {
 
       expect(res.statusCode).toBe(200);
       expect(Buffer.from(res.rawPayload).equals(TINY_PNG)).toBe(true);
+    } finally {
+      await h.close();
+    }
+  });
+
+  test("serves a step's own diff image to a member, and 404s a non-member", async () => {
+    // A step's diff image is referenced only by `screenshots.diff_image_key`
+    // (the run's `diff_name` names its worst step's), so the proxy must
+    // attribute that column to the project too.
+    const h = await createTestApp();
+    try {
+      const storage = createStorage();
+      const key = objectKey(TINY_PNG);
+      await storage.put(key, TINY_PNG, "image/png");
+
+      const [proj] = await h.db
+        .insert(projects)
+        .values({ name: `sp-${randomUUID()}` })
+        .returning();
+      const member = await seedUser(h, "editor");
+      await h.db
+        .insert(projectMembers)
+        .values({ userId: member.id, projectId: proj!.id });
+      const outsider = await seedUser(h, "editor");
+      const [build] = await h.db
+        .insert(builds)
+        .values({ projectId: proj!.id })
+        .returning();
+      const [run] = await h.db
+        .insert(testRuns)
+        .values({ buildId: build!.id, projectId: proj!.id, name: "t" })
+        .returning();
+      const [variation] = await h.db
+        .insert(testVariations)
+        .values({
+          name: "home",
+          projectId: proj!.id,
+          branchName: "main",
+          browser: "chromium",
+          viewport: "400x400",
+        })
+        .returning();
+      await h.db.insert(screenshots).values({
+        runId: run!.id,
+        projectId: proj!.id,
+        testVariationId: variation!.id,
+        name: "home",
+        imageKey: "0".repeat(64),
+        viewport: "400x400",
+        browser: "chromium",
+        diffImageKey: key,
+      });
+
+      const asMember = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: {
+          authorization: `Bearer ${h.app.jwt.sign({ sub: member.id, role: "editor" })}`,
+        },
+      });
+      expect(asMember.statusCode).toBe(200);
+      expect(Buffer.from(asMember.rawPayload).equals(TINY_PNG)).toBe(true);
+
+      const asOutsider = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/storage/${key}`,
+        headers: {
+          authorization: `Bearer ${h.app.jwt.sign({ sub: outsider.id, role: "editor" })}`,
+        },
+      });
+      expect(asOutsider.statusCode).toBe(404);
     } finally {
       await h.close();
     }

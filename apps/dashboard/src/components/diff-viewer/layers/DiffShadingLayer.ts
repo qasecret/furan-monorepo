@@ -5,28 +5,17 @@ import {
   type Ticker as PixiTicker,
 } from "pixi.js";
 
-import type { BBox, DiffRegion, Severity } from "./regionTypes";
+import { asSeverity, type BBox, type DiffRegion } from "./regionTypes";
+
+import { SEVERITY_CANVAS_HEX } from "@/lib/severity-style";
 
 /** Pink shading for changed pixels. */
 const PINK = 0xff4f9a;
-
-/** Severity → dot color (reused from DiffOverlayLayer's palette). */
-const SEVERITY_DOT: Record<Severity, number> = {
-  breaking: 0xff0000,
-  major: 0xff8800,
-  minor: 0xffdd00,
-  cosmetic: 0x4488ff,
-  none: 0x888888,
-};
 
 function isBBox(v: unknown): v is BBox {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
   return ["x", "y", "width", "height"].every((k) => typeof o[k] === "number");
-}
-
-function dotColor(sev: string): number {
-  return (SEVERITY_DOT as Record<string, number>)[sev] ?? SEVERITY_DOT.none;
 }
 
 /** Minimal ticker interface — matches Pixi's Application.ticker shape. */
@@ -111,9 +100,10 @@ export function mountDiffShadingLayer(
     group.addChild(g);
 
     const dot = new Graphics();
-    dot
-      .circle(x + width, y, 5)
-      .fill({ color: dotColor(region.severity), alpha: 1 });
+    dot.circle(x + width, y, 5).fill({
+      color: SEVERITY_CANVAS_HEX[asSeverity(region.severity)],
+      alpha: 1,
+    });
     group.addChild(dot);
 
     if (highlight) {

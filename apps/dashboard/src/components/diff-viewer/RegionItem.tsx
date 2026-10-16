@@ -1,33 +1,14 @@
 "use client";
 
-import type { DiffRegion, Severity } from "./layers/regionTypes";
+import { SEVERITY_LABEL } from "@furan/shared-types";
+
+import { asSeverity, type DiffRegion } from "./layers/regionTypes";
 import { cleanDescription, sizeLabel } from "./region-format";
 import { useViewerStore } from "./useViewerStore";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { SEVERITY_STYLE } from "@/lib/severity-style";
-
-const SEVERITY_LABEL: Record<Severity, string> = {
-  breaking: "Breaking",
-  major: "Major",
-  minor: "Minor",
-  cosmetic: "Cosmetic",
-  none: "None",
-};
-
-function asSeverity(v: string): Severity {
-  switch (v) {
-    case "breaking":
-    case "major":
-    case "minor":
-    case "cosmetic":
-    case "none":
-      return v;
-    default:
-      return "none";
-  }
-}
 
 export function RegionItem({
   region,

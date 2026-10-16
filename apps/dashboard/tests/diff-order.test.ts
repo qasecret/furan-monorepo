@@ -74,6 +74,17 @@ describe("orderDiffRegions", () => {
     expect(ordered.map((r) => r.id)).toEqual(["b", "a"]); // major before minor
   });
 
+  test("ranks a value that is not a severity with `none`, after every real severity", () => {
+    const out = orderDiffRegions([
+      region({ id: "legacy", severity: "legacy-value" }),
+      region({ id: "none", severity: "none" }),
+      region({ id: "cosmetic", severity: "cosmetic" }),
+    ]);
+    // `legacy` and `none` tie on rank and area, so the stable sort keeps
+    // their input order.
+    expect(out.map((r) => r.id)).toEqual(["cosmetic", "legacy", "none"]);
+  });
+
   test("hideDisplacement drops layout-category regions", () => {
     const out = orderDiffRegions(
       [

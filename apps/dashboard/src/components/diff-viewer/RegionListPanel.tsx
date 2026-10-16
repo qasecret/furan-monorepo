@@ -1,10 +1,17 @@
 "use client";
 
+import { compareSeverity, SEVERITIES } from "@furan/shared-types";
 import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { BBox, DiffRegion, Severity } from "./layers/regionTypes";
+import {
+  asSeverity,
+  type BBox,
+  type DiffRegion,
+  type Severity,
+} from "./layers/regionTypes";
 import { groupRegions } from "./region-format";
+import { isRegionHidden } from "./region-visibility";
 import { RegionItem } from "./RegionItem";
 
 import {
@@ -14,26 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const SEV_RANK: Record<Severity, number> = {
-  breaking: 4,
-  major: 3,
-  minor: 2,
-  cosmetic: 1,
-  none: 0,
-};
-
-const SEVERITY_FILTERS: Array<Severity | "all"> = [
-  "all",
-  "breaking",
-  "major",
-  "minor",
-  "cosmetic",
-  "none",
-];
-
-function rankOf(sev: string): number {
-  return SEV_RANK[sev as Severity] ?? 0;
-}
+const SEVERITY_FILTERS: Array<Severity | "all"> = ["all", ...SEVERITIES];
 
 function areaOf(b: BBox | unknown): number {
   if (
@@ -71,23 +59,18 @@ export function RegionListPanel({
   }, [regions]);
 
   const filtered = useMemo(() => {
+    // Synthetic audit rows (dynamic-text OCR + Layout-suppressed content/color
+    // changes, ADR-053) are hidden unless the toggle is on.
     return regions
-      .filter((r) => {
-        // Hide synthetic audit rows — dynamic-text OCR + Layout-suppressed
-        // content/color changes (ADR-053) — unless the toggle is on.
-        if (r.source === "dynamic_text" || r.source === "layout_suppressed")
-          return showSuppressed;
-        return true;
-      })
+      .filter((r) => !isRegionHidden(r, { showSuppressed }))
       .filter((r) => severityFilter === "all" || r.severity === severityFilter)
       .filter((r) => categoryFilter === "all" || r.category === categoryFilter)
       .slice()
-      .sort((a, b) => {
-        const sa = rankOf(a.severity);
-        const sb = rankOf(b.severity);
-        if (sa !== sb) return sb - sa;
-        return areaOf(b.bbox) - areaOf(a.bbox);
-      });
+      .sort(
+        (a, b) =>
+          compareSeverity(asSeverity(a.severity), asSeverity(b.severity)) ||
+          areaOf(b.bbox) - areaOf(a.bbox),
+      );
   }, [regions, severityFilter, categoryFilter, showSuppressed]);
 
   // Collapse visually-identical rows (same severity / category / source /
