@@ -9,10 +9,11 @@ import type { DiffRegion } from "./types.js";
  * Layout-suppressed rows (ADR-053), both audit-only and hidden from the diff
  * list/stepper. `layout_kept` is NOT excluded — it is a real structural
  * failure that should drive grouping. KEEP IN SYNC with the dashboard's
- * `orderDiffRegions` filter (apps/dashboard/.../diff-order.ts), which likewise
- * excludes dynamic_text + layout_suppressed. (Not a shared import: the
- * dashboard has its own region types and must not depend on this node-only
- * package.)
+ * `AUDIT_SOURCES` (apps/dashboard/.../diff-viewer/region-visibility.ts), the
+ * one rule behind the viewer's stepper order, region list and canvas, which
+ * likewise excludes dynamic_text + layout_suppressed. (Not a shared import:
+ * the dashboard has its own region types and must not depend on this
+ * node-only package.)
  */
 export const EXCLUDED_SOURCES = new Set<string>([
   "dynamic_text",

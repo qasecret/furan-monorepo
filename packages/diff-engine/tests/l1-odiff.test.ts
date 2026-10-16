@@ -196,6 +196,52 @@ describe.skipIf(skipReason !== null)(
       expect(d.regions.length).toBeGreaterThan(0);
     });
 
+    it("with Allow diff dimensions off (the default), a size change fails", async () => {
+      expect(DEFAULT_ENGINE_CONFIG.allowDiffDimensions).toBe(false);
+      const r = await runL1Odiff(
+        pagePng(1280, 800),
+        pagePng(1280, 1100),
+        undefined,
+        { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: false },
+      );
+
+      expect(r.diffPercent).toBe(100);
+      expect(r.diffImageBytes).toHaveLength(0);
+      expect(r.regions).toHaveLength(0);
+    });
+
+    it("with Allow diff dimensions on, a taller screenshot with a matching top compares the area both share, and passes", async () => {
+      // The project opted out of failing on a size change (R30): odiff
+      // compares only the shared area, as it did before R27.
+      const r = await runL1Odiff(
+        pagePng(1280, 800),
+        pagePng(1280, 1100),
+        undefined,
+        { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: true },
+      );
+
+      expect(r.diffPercent).toBe(0);
+      expect(r.pixelMismatchCount).toBe(0);
+      expect(r.diffImageBytes).toHaveLength(0);
+      expect(r.regions).toHaveLength(0);
+    });
+
+    it("with Allow diff dimensions on, a change inside the shared area is still a pixel diff", async () => {
+      const r = await runL1Odiff(
+        pagePng(1280, 800),
+        pagePng(1280, 1100, (x, y) =>
+          x >= 100 && x < 300 && y >= 100 && y < 200 ? [200, 30, 30] : null,
+        ),
+        undefined,
+        { ...DEFAULT_ENGINE_CONFIG, allowDiffDimensions: true },
+      );
+
+      expect(r.pixelMismatchCount).toBeGreaterThan(0);
+      expect(r.diffPercent).toBeGreaterThan(0);
+      expect(r.diffPercent).toBeLessThan(100);
+      expect(r.diffImageBytes.subarray(-IEND.length).equals(IEND)).toBe(true);
+    });
+
     it("runDiff fails a page that grew, with no image and no regions", async () => {
       const d = await runDiff({
         baseline: { image: pagePng(1280, 800) },
