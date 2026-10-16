@@ -20,3 +20,4 @@ export * from "./auto-rules.js";
 export * from "./roles.js";
 export * from "./error.js";
 export * from "./review.js";
+export * from "./severity.js";

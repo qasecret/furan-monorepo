@@ -1,11 +1,8 @@
-export type Severity = "breaking" | "major" | "minor" | "cosmetic" | "none";
+import type { Severity } from "@furan/shared-types";
+
+export type { Severity };
 export type RegionCategory =
-  | "text"
-  | "color"
-  | "layout"
-  | "image"
-  | "structural"
-  | "accessibility";
+  "text" | "color" | "layout" | "image" | "structural" | "accessibility";
 
 export interface DiffRegion {
   id: string;
