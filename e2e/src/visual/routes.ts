@@ -438,21 +438,27 @@ async function scrollMetric(
 
 /**
  * Fail unless `item`'s top is at or below the bottom of the sticky `header`:
- * the item is in view, not under the header. It is the item's box that is
- * measured (within a pixel: layout rounds). A step card's focus ring is
- * outside its box (`RING_OUT`), and on the batch page it reaches 1px under the
- * header (`scroll-pt-9` is 36px, the header 33px), which this does not count.
+ * the item is in view, not under the header. What counts is where the focus
+ * ring starts: for a step card (its ring is outside its box, `RING_OUT`) that
+ * is above the box, for a row (an inset ring) it is the box. Within half a
+ * pixel: layout rounds.
  */
 async function expectBelowHeader(
   item: Locator,
   header: Locator,
   what: string,
 ): Promise<void> {
+  const ring = (await item.getAttribute("data-testid"))?.startsWith(
+    "step-card-",
+  )
+    ? RING_OUT
+    : 0;
   const [at, bar] = await Promise.all([boxOf(item), boxOf(header)]);
+  const top = at.y - ring;
   expect(
-    at.y,
-    `${what}: its top is at ${at.y}px, the header ends at ${bar.y + bar.height}px`,
-  ).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+    top,
+    `${what}: its ${ring > 0 ? "ring" : "top"} starts at ${top}px, the header ends at ${bar.y + bar.height}px`,
+  ).toBeGreaterThanOrEqual(bar.y + bar.height - 0.5);
 }
 
 /**
@@ -974,11 +980,12 @@ export const STATES: ReadonlyArray<VisualState> = [
     cleanup: restoreViewport,
   },
   {
-    // The batch page scrolling under its sticky column header (`scroll-pt-9`,
+    // The batch page scrolling under its sticky column header (`scroll-pt-10`,
     // against a 33px header), on the loop batch (two runs, so a run row and a
     // step card sit above the last item). The window is made short enough to
     // scroll the list; End, then K back up to the first row: no item the cursor
-    // lands on may be under the header.
+    // lands on may be under the header (for a step card, its ring, which is
+    // outside its box, counts).
     name: "state-cursor-batch-scrolled",
     path: (f) => `/projects/${f.projectId}/builds/${f.loopBuildId}`,
     open: async (p) => {

@@ -160,7 +160,7 @@ means every screenshot test passed.
   Each waits for what it shows (and, for the palette search, that the selected
   row is the first batch). Five also measure, and resize the window to do it:
   `state-cursor-batches-scrolled` and `state-cursor-batch-scrolled` (a short
-  window; End, then K back up: no row or step is under the
+  window; End, then K back up: no row or step, ring included, is under the
   sticky header), `state-cursor-step-sideways` (a narrower window; a card's
   ring clears the sideways scroller's edges) and `state-topbar-tablet` /
   `state-topbar-phone` (768 and 375 wide; the project label and the palette
