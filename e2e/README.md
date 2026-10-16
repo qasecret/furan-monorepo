@@ -52,7 +52,8 @@ version`); older versions don't support them. Output: `e2e-coverage.md` /
 
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
-full-page PNG at a 1440×900 viewport, plus the interaction states in
+full-page PNG at a 1440×900 viewport (the states that resize the window are
+named below), plus the interaction states in
 `STATES` (the ⌘K palette on the viewer's actions and searching batches, the `?`
 sheet on each page, the Help menu, a menu open, a dialog open, the list cursor
 on a Batches row and on a step card, the top bar at tablet and phone widths, a
@@ -155,13 +156,15 @@ means every screenshot test passed.
   keyboard and command surface adds `state-palette-actions` (the viewer's
   Actions group), `state-palette-search` (typing "visual"), `state-sheet-batches`,
   `state-sheet-batch` and `state-sheet-viewer` (the `?` sheet), `state-help-menu`,
-  `state-cursor-batches` and `state-cursor-step` (the cursor's focus ring), and
-  five that also assert, not just look: `state-cursor-batches-scrolled` and
-  `state-cursor-batch-scrolled` (End, then K back up: no row or step under the
-  sticky header), `state-cursor-step-sideways` (a card's ring clears the
-  sideways scroller's edges) and `state-topbar-tablet` / `state-topbar-phone`
-  (the project label and the palette button do not overlap, the bar does not
-  scroll sideways). Not covered here: the stale-step Confirm moving the cursor
+  `state-cursor-batches` and `state-cursor-step` (the cursor's focus ring).
+  Each waits for what it shows (and, for the palette search, that the selected
+  row is the first batch). Five also measure, and resize the window to do it:
+  `state-cursor-batches-scrolled` and `state-cursor-batch-scrolled` (a short
+  window; End, then K back up: no row or step is under the
+  sticky header), `state-cursor-step-sideways` (a narrower window; a card's
+  ring clears the sideways scroller's edges) and `state-topbar-tablet` /
+  `state-topbar-phone` (768 and 375 wide; the project label and the palette
+  button do not overlap, the bar does not scroll sideways). Not covered here: the stale-step Confirm moving the cursor
   on (it needs a step with a newer capture, which the fixture does not have);
   it is checked in the dashboard's jsdom tests only. The
   All caught up card is not reachable here: the fixture always has pending

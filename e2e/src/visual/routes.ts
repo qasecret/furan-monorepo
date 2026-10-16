@@ -3,6 +3,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import type { ApiClient } from "../clients/api-client.js";
 
 import type { VisualFixture } from "./fixture.js";
+import { timeMasks } from "./masks.js";
 
 /**
  * Where a route or state goes: a fixed path, or one built from the fixture
@@ -241,8 +242,12 @@ const decisionToast = (p: Page, label: string) =>
 
 // ---- the keyboard and command surface -------------------------------------
 // Helpers for the palette, `?` sheet, list cursor and top-bar states below.
-// Every one of those states only looks: the viewport a few of them change is
-// put back by their `cleanup` (`restoreViewport`).
+// None of those states changes the fixture. The few that resize the viewport
+// put it back in their `cleanup` (`restoreViewport`).
+
+/** `text` as a RegExp source that matches exactly it. */
+const escapeRegExp = (text: string): string =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The palette button's name, in the top bar and at every width (Ruling R19). */
 const PALETTE_BUTTON = "Search or run a command…";
@@ -260,7 +265,7 @@ const paletteGroup = (p: Page, heading: string): Locator =>
     .locator("[cmdk-group]")
     .filter({
       has: p.locator("[cmdk-group-heading]", {
-        hasText: new RegExp(`^${heading}$`),
+        hasText: new RegExp(`^${escapeRegExp(heading)}$`),
       }),
     });
 
@@ -269,15 +274,32 @@ const batchRows = (p: Page): Locator =>
   p.locator("tbody[data-batches-list] tr[data-cursor-id]");
 
 /** The Batches table's scroller: the box that scrolls, under the sticky header. */
-const BATCHES_SCROLLER = "#inbox-batches-table > div";
+const batchesScroller = (p: Page): Locator =>
+  p.locator("#inbox-batches-table > div");
 
 /** A step card on the batch page. */
 const stepCards = (p: Page): Locator =>
   p.locator('[data-testid^="step-card-"]');
 
+/** The sideways scroller that holds a run row's step cards. */
+const stepRow = (p: Page): Locator => stepCards(p).first().locator("xpath=..");
+
 /** The cursor's items on the batch page, in walking order: run rows and steps. */
 const batchItems = (p: Page): Locator =>
   p.getByTestId("batch-results").locator("[data-cursor-id]");
+
+/**
+ * The batch page's list scroller: it holds the sticky column header, then the
+ * results.
+ */
+const batchScroller = (p: Page): Locator =>
+  p.getByTestId("batch-results").locator("xpath=..");
+
+/**
+ * How far a focus ring reaches outside its element: `focus-ring` is a 2px
+ * outline drawn 2px out. (A Batches or run row's ring is inset, `-outline-offset-2`.)
+ */
+const RING_OUT = 4;
 
 /**
  * Open the palette with its key: ⌘K on macOS, Ctrl+K elsewhere. Lower-case:
@@ -330,6 +352,13 @@ async function pressUntilFocused(
   );
 }
 
+/** The page's viewport; a page with none is an error. */
+function viewportOf(p: Page): { width: number; height: number } {
+  const size = p.viewportSize();
+  if (size === null) throw new Error("visual: the page has no viewport");
+  return size;
+}
+
 /** An element's box on the page; an element that is not on screen is an error. */
 async function boxOf(
   l: Locator,
@@ -351,7 +380,7 @@ async function resizeViewport(
   p: Page,
   size: { width: number; height: number },
 ): Promise<void> {
-  resizedFrom ??= p.viewportSize();
+  resizedFrom ??= viewportOf(p);
   await p.setViewportSize(size);
 }
 
@@ -367,20 +396,20 @@ async function restoreViewport(p: Page): Promise<void> {
 }
 
 /**
- * Make `scroller` scroll: shrink the viewport's height until it shows
- * `overflow` px less than its `content` (so a list the fixture makes short
- * has somewhere to scroll to). The page is as tall as the viewport and the
- * scroller takes what is left, so the two move one for one. Fails, saying
- * what it measured, if the scroller does not end up that much shorter.
+ * Make `scroller` scroll: set the viewport's height so that the scroller shows
+ * `overflow` px less than its `content` (so a list the fixture makes short has
+ * somewhere to scroll to; the window grows if the list already overflows by
+ * more). The page is as tall as the viewport and the scroller takes what is
+ * left, so the two move one for one. Fails, saying what it measured, if the
+ * scroller does not end up that much shorter.
  */
-async function shrinkToScroll(
+async function fitHeightToScroll(
   p: Page,
   scroller: Locator,
   content: number,
   overflow: number,
 ): Promise<void> {
-  const size = p.viewportSize();
-  if (size === null) throw new Error("visual: the page has no viewport");
+  const size = viewportOf(p);
   const shown = (await boxOf(scroller)).height;
   const height = Math.round(size.height - (shown - (content - overflow)));
   if (height < 200) {
@@ -397,17 +426,22 @@ async function shrinkToScroll(
 }
 
 /**
- * How far an element is scrolled down, in px. `element` is a page-side
- * expression for it (a string, like every page-side script here: the e2e
- * tsconfig has no DOM lib), e.g. `document.querySelector("main")`.
+ * A scroller's `scrollTop`, `scrollWidth` or `clientWidth`. Read in the page,
+ * from the element the locator finds: one way to name a scroller, the locator.
  */
-async function scrollTopOf(p: Page, element: string): Promise<number> {
-  return (await p.evaluate(`(${element}).scrollTop`)) as number;
+async function scrollMetric(
+  scroller: Locator,
+  metric: "scrollTop" | "scrollWidth" | "clientWidth",
+): Promise<number> {
+  return scroller.evaluate((el, key) => el[key], metric);
 }
 
 /**
  * Fail unless `item`'s top is at or below the bottom of the sticky `header`:
- * the item is in view, not under the header. (Within a pixel: layout rounds.)
+ * the item is in view, not under the header. It is the item's box that is
+ * measured (within a pixel: layout rounds). A step card's focus ring is
+ * outside its box (`RING_OUT`), and on the batch page it reaches 1px under the
+ * header (`scroll-pt-9` is 36px, the header 33px), which this does not count.
  */
 async function expectBelowHeader(
   item: Locator,
@@ -419,6 +453,57 @@ async function expectBelowHeader(
     at.y,
     `${what}: its top is at ${at.y}px, the header ends at ${bar.y + bar.height}px`,
   ).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+}
+
+/**
+ * The list cursor under a sticky header: J to the first item, End to the last
+ * (the list must have scrolled by then), then K back up to the first. Every
+ * item the cursor lands on must be clear of the `header` (`expectBelowHeader`),
+ * so the scroller's `scroll-pt-*` leaves room for it.
+ */
+async function expectCursorClearsHeader(
+  p: Page,
+  {
+    items,
+    scroller,
+    header,
+    what,
+  }: {
+    items: Locator;
+    scroller: Locator;
+    header: Locator;
+    what: string;
+  },
+): Promise<void> {
+  const count = await items.count();
+  await pressUntilFocused(p, "j", items.first(), 6);
+  await p.keyboard.press("End");
+  await expect(items.nth(count - 1)).toBeFocused();
+  expect(
+    await scrollMetric(scroller, "scrollTop"),
+    `${what}: End should have scrolled the list`,
+  ).toBeGreaterThan(0);
+  await expectBelowHeader(items.nth(count - 1), header, `${what} ${count}`);
+  for (let i = count - 2; i >= 0; i--) {
+    await p.keyboard.press("k");
+    await expect(items.nth(i)).toBeFocused();
+    await expectBelowHeader(items.nth(i), header, `${what} ${i + 1}`);
+  }
+}
+
+/**
+ * For a state whose dialog is over text the shared time masks cover: hide that
+ * text. A mask is painted over the page, the dialog included, at the box of
+ * every element it finds, hidden or not; a `display: none` element has no
+ * box, so nothing is painted for it. Only for that state: every other keeps
+ * its masks.
+ */
+async function hideMaskedTimes(p: Page): Promise<void> {
+  for (const mask of timeMasks(p)) {
+    await mask.evaluateAll((els) => {
+      for (const el of els) el.style.display = "none";
+    });
+  }
 }
 
 /**
@@ -683,13 +768,18 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   // ---- the keyboard and command surface ----------------------------------
-  // These only look. The few that resize the viewport (to make a list scroll,
-  // or to check the top bar at narrow widths) put it back in `cleanup`.
+  // None of these changes the fixture. The few that resize the viewport (to
+  // make a list scroll, or to check the top bar at narrow widths) put it back
+  // in `cleanup`.
   {
     // Batches, the palette key, then "visual" typed in the palette: the
     // project's batches that match, in their own Batches group. The letters
     // are the search's, though one of them (`s`) is the page's Start
-    // reviewing key.
+    // reviewing key. The admin's project is called "visual-sweep", so the
+    // Projects group also has a row for it; once the batches have answered
+    // the selected row must be the first one in the list, a batch, and not
+    // the project's (Ruling R29: cmdk only picks a first row when nothing is
+    // selected, so a row that was selected before the answer came kept it).
     name: "state-palette-search",
     path: "/inbox",
     open: async (p) => {
@@ -698,9 +788,23 @@ export const STATES: ReadonlyArray<VisualState> = [
       const input = p.getByTestId("command-input");
       await input.pressSequentially("visual");
       await expect(input).toHaveValue("visual");
+      const batches = paletteGroup(p, "Batches");
+      await expect(batches.locator("[cmdk-item]").first()).toBeVisible();
+
+      const items = paletteDialog(p).locator("[cmdk-item]");
+      const selected = '[cmdk-item][aria-selected="true"]';
       await expect(
-        paletteGroup(p, "Batches").locator("[cmdk-item]").first(),
-      ).toBeVisible();
+        paletteDialog(p).locator(selected),
+        "one row should be selected",
+      ).toHaveCount(1);
+      await expect(
+        items.first(),
+        "the selected row should be the first in the list",
+      ).toHaveAttribute("aria-selected", "true");
+      await expect(
+        batches.locator(selected),
+        "the selected row should be in the Batches group",
+      ).toHaveCount(1);
     },
   },
   {
@@ -712,6 +816,8 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   {
+    // The batch page's "Recent batch runs" panel has times in it, which the
+    // sweep masks; behind the sheet they would be painted over its rows.
     name: "state-sheet-batch",
     path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
     open: async (p) => {
@@ -720,6 +826,7 @@ export const STATES: ReadonlyArray<VisualState> = [
       ).toBeVisible();
       await openSheet(p, "On this page (Batch)");
     },
+    hold: hideMaskedTimes,
   },
   {
     name: "state-sheet-viewer",
@@ -754,8 +861,7 @@ export const STATES: ReadonlyArray<VisualState> = [
     open: async (p) => {
       const first = batchRows(p).first();
       await expect(first).toBeVisible();
-      await p.keyboard.press("j");
-      await expect(first).toBeFocused();
+      await pressUntilFocused(p, "j", first, 6);
       await expect(first).toHaveCSS("outline-style", "solid");
       await expect(first).toHaveCSS("outline-width", "2px");
     },
@@ -770,32 +876,19 @@ export const STATES: ReadonlyArray<VisualState> = [
     open: async (p) => {
       const rows = batchRows(p);
       await expect(rows.first()).toBeVisible();
-      const count = await rows.count();
       expect(
-        count,
+        await rows.count(),
         "the fixture should hold at least three batches that need review",
       ).toBeGreaterThanOrEqual(3);
       const table = await boxOf(p.locator("#inbox-batches-table table"));
-      await shrinkToScroll(p, p.locator(BATCHES_SCROLLER), table.height, 100);
-      const header = p.locator("#inbox-batches-table thead");
-
-      await p.keyboard.press("j");
-      await expect(rows.first()).toBeFocused();
-      await p.keyboard.press("End");
-      await expect(rows.nth(count - 1)).toBeFocused();
-      expect(
-        await scrollTopOf(
-          p,
-          `document.querySelector(${JSON.stringify(BATCHES_SCROLLER)})`,
-        ),
-        "End should have scrolled the list",
-      ).toBeGreaterThan(0);
-      await expectBelowHeader(rows.nth(count - 1), header, `row ${count}`);
-      for (let i = count - 2; i >= 0; i--) {
-        await p.keyboard.press("k");
-        await expect(rows.nth(i)).toBeFocused();
-        await expectBelowHeader(rows.nth(i), header, `row ${i + 1}`);
-      }
+      const scroller = batchesScroller(p);
+      await fitHeightToScroll(p, scroller, table.height, 100);
+      await expectCursorClearsHeader(p, {
+        items: rows,
+        scroller,
+        header: p.locator("#inbox-batches-table thead"),
+        what: "row",
+      });
     },
     cleanup: restoreViewport,
   },
@@ -814,48 +907,40 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   {
-    // A step card's ring in the sideways scroller (`scroll-px-4`). The batch
-    // page has a "Recent batch runs" panel beside the results, so the row of
-    // cards is the window's width less about 600px: at the sweep's 1440px it is
-    // 830px, and only the third card is partly out of view. The window is made
-    // narrower, so that the row is 520px: room for a card (320px) and its
-    // 16px of scroll padding on each side, but the second card (which ends at
-    // 672px of the row's content) is partly out of view. The cursor walks
-    // 1, 2, 3, 2, 1, and at each card its ring (2px, 2px out) must clear both
-    // edges of the row. Without the padding the second card would be flush
-    // with the right edge, and the first, coming back, with the left one.
+    // A step card's ring in the sideways scroller (`scroll-px-4`). The row of
+    // cards is the window's width less a constant (the sidebar, and the batch
+    // page's "Recent batch runs" panel beside the results), so one measure
+    // gives the window that makes it ROW px wide: room for a card and its
+    // scroll padding on both sides, but not for all three cards, so the second
+    // is partly out of view. The cursor walks 1, 2, 3, 2, 1, and at each card
+    // its ring (`RING_OUT`) must clear both edges of the row. Without the
+    // padding the second card would be flush with the right edge, and the
+    // first, coming back, with the left one.
     name: "state-cursor-step-sideways",
     path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
     open: async (p) => {
       const cards = stepCards(p);
+      const row = stepRow(p);
       await expect(cards.nth(2)).toBeVisible();
-      const size = p.viewportSize();
-      if (size === null) throw new Error("visual: the page has no viewport");
-      // The row's width, as a page-side expression. The row is the cards'
-      // container; it and the window differ by a constant, so one measure
-      // gives the window that makes it 520px.
-      const rowWidth = async (): Promise<number> =>
-        (await p.evaluate(
-          `document.querySelector('[data-testid^="step-card-"]').parentElement.clientWidth`,
-        )) as number;
+      const size = viewportOf(p);
       const ROW = 520;
+      const rowWidth = () => scrollMetric(row, "clientWidth");
       await resizeViewport(p, {
         width: size.width - ((await rowWidth()) - ROW),
         height: size.height,
       });
-      await expect
-        .poll(rowWidth, { message: `the row of cards should be ${ROW}px wide` })
-        .toBeLessThanOrEqual(ROW + 2);
-      const row = cards.first().locator("xpath=..");
+      await expect(async () => {
+        const width = await rowWidth();
+        expect(
+          Math.abs(width - ROW),
+          `the row of cards is ${width}px wide, not ${ROW}px (within 2px)`,
+        ).toBeLessThanOrEqual(2);
+      }).toPass({ timeout: 10_000 });
       expect(
-        (await p.evaluate(
-          `document.querySelector('[data-testid^="step-card-"]').parentElement.scrollWidth`,
-        )) as number,
+        await scrollMetric(row, "scrollWidth"),
         "the step cards should overflow their row",
       ).toBeGreaterThan(await rowWidth());
 
-      /** The ring (2px outline, 2px offset) must be inside the row's edges. */
-      const RING = 4;
       const expectRingClear = async (index: number): Promise<void> => {
         await expect(cards.nth(index)).toHaveCSS("outline-style", "solid");
         const [card, bounds] = await Promise.all([
@@ -866,11 +951,11 @@ export const STATES: ReadonlyArray<VisualState> = [
         expect(
           card.x - (bounds.x + 1),
           `card ${index + 1}: its ring should clear the row's left edge`,
-        ).toBeGreaterThanOrEqual(RING);
+        ).toBeGreaterThanOrEqual(RING_OUT);
         expect(
           bounds.x + bounds.width - 1 - (card.x + card.width),
           `card ${index + 1}: its ring should clear the row's right edge`,
-        ).toBeGreaterThanOrEqual(RING);
+        ).toBeGreaterThanOrEqual(RING_OUT);
       };
 
       await pressUntilFocused(p, "j", cards.nth(0), 6);
@@ -897,37 +982,24 @@ export const STATES: ReadonlyArray<VisualState> = [
     name: "state-cursor-batch-scrolled",
     path: (f) => `/projects/${f.projectId}/builds/${f.loopBuildId}`,
     open: async (p) => {
-      const results = p.getByTestId("batch-results");
       const items = batchItems(p);
       await expect
         .poll(() => items.count(), {
           message: "the loop batch should show two run rows and their steps",
         })
         .toBeGreaterThanOrEqual(4);
-      const count = await items.count();
-      const scroller = results.locator("xpath=..");
+      const scroller = batchScroller(p);
       const header = scroller.locator(":scope > div.sticky");
       const content =
-        (await boxOf(header)).height + (await boxOf(results)).height;
-      await shrinkToScroll(p, scroller, content, 120);
-
-      await p.keyboard.press("j");
-      await expect(items.first()).toBeFocused();
-      await p.keyboard.press("End");
-      await expect(items.nth(count - 1)).toBeFocused();
-      expect(
-        await scrollTopOf(
-          p,
-          `document.querySelector('[data-testid="batch-results"]').parentElement`,
-        ),
-        "End should have scrolled the list",
-      ).toBeGreaterThan(0);
-      await expectBelowHeader(items.nth(count - 1), header, `item ${count}`);
-      for (let i = count - 2; i >= 0; i--) {
-        await p.keyboard.press("k");
-        await expect(items.nth(i)).toBeFocused();
-        await expectBelowHeader(items.nth(i), header, `item ${i + 1}`);
-      }
+        (await boxOf(header)).height +
+        (await boxOf(p.getByTestId("batch-results"))).height;
+      await fitHeightToScroll(p, scroller, content, 120);
+      await expectCursorClearsHeader(p, {
+        items,
+        scroller,
+        header,
+        what: "item",
+      });
     },
     cleanup: restoreViewport,
   },
