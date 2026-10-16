@@ -267,7 +267,9 @@ the bootstrap admin's default for the run, as the review-loop spec does. Two
 batches need review, each of two tests with one changed step. On Batches `J`
 focuses the first row and `S` starts reviewing; `A` decides the step and the
 loop moves on with its cue, `A` again shows "Batch done", and Enter continues
-to the older batch. `G I` goes back to Batches; "Show: All" from the palette
+to the older batch. On that "Batch done" card, which is not modal, `⌘K` opens
+the palette and `?` the sheet, and Esc gives the card its focus back each
+time. `G I` goes back to Batches; "Show: All" from the palette
 (a Batches command, so the decided card stays in the list) and `J`, `J`,
 Enter open the older batch. On its page `J` reaches the run's row and then a
 step card; `A` makes the card read Approved and the cursor moves on to the
@@ -276,23 +278,27 @@ server is checked each time). `⌘K` with a batch's name opens that batch
 (the chosen row is the batch, and the search box names it:
 `aria-activedescendant`). With the "Approve pending" question open, `G I`
 keeps the page and `?` opens no sheet (and Esc then closes only the question);
-with nothing open `?` opens the page's sheet. Then "Single-key shortcuts" is
-turned off in the Help menu (Shift+Tab to the Help button, Enter, End,
-Space): `A` in the viewer does nothing, while "Approve step" in the palette
-approves that same step; the switch is turned back on the same way. Last, axe
-`color-contrast` runs on the palette (empty and searching) and on the `?`
-sheet in light and dark (problems fail the test, as in the sweep). It runs in
-`s3-full`.
+with nothing open `?` opens the page's sheet and `G I` goes to Batches. Back
+on the batch at its default view (Needs review), `A` on a step card takes its
+run off the list and the next card has focus; `⌘Z` brings it back. Then
+"Single-key shortcuts" is turned off in the Help menu (Shift+Tab to the Help
+button, Enter, End, Space): `A` in the viewer does nothing and sends no
+decision, while "Approve step" in the palette approves that same step; the
+switch is turned back on the same way. Then axe `color-contrast` runs on the
+palette (empty and searching) and on the `?` sheet in light and dark
+(problems fail the test, as in the sweep, and only symbol-only text may go
+unmeasured). Last, `A` on the last pending step brings up "All caught up",
+and `G I` goes to Batches from it. It runs in `s3-full`.
 
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 6 times (the seeder, then
-  the login, dashboard, review-flow, review-loop and keyboard-review specs), so repeated
-  Playwright runs against a kept stack trip it after a few iterations: the
-  login form then reads "Invalid email or password" and the api logs
-  `login_account_rate_limited` (429). Wait out the window, or recreate the
-  stack (`e2e:down` / `e2e:up`).
+  per-account login brake, ADR-063). A run signs in 6 times (the seeder,
+  then the login, dashboard, review-flow, review-loop and keyboard-review
+  specs), so repeated Playwright runs against a kept stack trip it after a
+  few iterations: the login form then reads "Invalid email or password" and
+  the api logs `login_account_rate_limited` (429). Wait out the window, or
+  recreate the stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
   (an identical feature-branch capture returns `new`, not `passed`).
 - **Element-map-dependent** diff capabilities (ignore/layout regions, axe a11y,

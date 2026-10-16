@@ -6,6 +6,7 @@ import {
   type BrowserContext,
   type Locator,
   type Page,
+  type Request,
 } from "@playwright/test";
 
 import { BOOTSTRAP_EMAIL, BOOTSTRAP_PASSWORD } from "../../scripts/compose.js";
@@ -65,6 +66,35 @@ function contrastProblems(r: AxeResults): string[] {
       : `${where}: ${d.fgColor ?? "?"} on ${d.bgColor ?? "?"} = ${d.contrastRatio ?? "?"}:1 (needs ${d.expectedContrastRatio ?? "?"})`;
   });
 }
+
+/**
+ * Why axe could not measure the pairs it left incomplete, one reason per node
+ * (its `messageKey`), leaving out those outside the viewport, which
+ * `contrastProblems` already counts as problems.
+ */
+const unmeasuredReasons = (r: AxeResults): string[] =>
+  r.incomplete.flatMap((rule) =>
+    rule.nodes
+      .filter((n) => !isOutsideViewport(n))
+      .map(
+        (n) =>
+          n.any
+            .map((c) => (c.data as { messageKey?: string } | null)?.messageKey)
+            .find((k) => k !== undefined) ?? "none",
+      ),
+  );
+
+/**
+ * Two animation frames in the page: long enough for a key press that did act
+ * to have rendered and sent what it sends, so a check that nothing happened
+ * is not just early.
+ */
+const TWO_FRAMES =
+  "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))";
+
+/** A review decision sent to the server (`review.approve`, `review.reject`…). */
+const isDecision = (req: Request): boolean =>
+  /\/trpc\/[^?]*\breview\.(approve|reject)/.test(req.url());
 
 /** How many nodes of `rules` axe reported. */
 const nodeCount = (rules: AxeResults["passes"]): number =>
@@ -210,6 +240,20 @@ test.describe.serial("ui: keyboard review", () => {
       .toEqual(expected);
   };
 
+  /**
+   * The Undo button of the newest toast (Sonner's front one) when that toast
+   * is the approval of `name`. The undo entry is made as the decision's
+   * answer arrives, with this toast: ⌘Z is pressed once it is offered, not as
+   * soon as the server has the decision. Older toasts can still be up (an
+   * earlier approval of the same step among them), so only the front counts.
+   */
+  const frontToast = (): Locator =>
+    page.locator('[data-sonner-toast][data-front="true"]');
+  const undoOffered = (name: string): Locator =>
+    frontToast()
+      .filter({ hasText: `Approved '${name}'` })
+      .getByRole("button", { name: "Undo" });
+
   /** The page's polite live region, which says where a move went. */
   const announcer = (): Locator => page.getByTestId("review-announcer");
   /** The viewer's pill: how many steps are left in the batch. */
@@ -282,6 +326,12 @@ test.describe.serial("ui: keyboard review", () => {
    * sends focus back to where it was while a toast is up (Sonner), so a walk
    * of any length could go round in a circle: the last decision's toast is
    * still up here.
+   *
+   * The assumption: on the viewer, after a client-side navigation, nothing
+   * has focus and Chromium starts the sequential walk at the top of the page
+   * (`<main>`), so Help is 3 stops back (Account menu, Theme, Help; the bell
+   * is not focusable). The bound of 12 allows for a few more top-bar stops,
+   * and a page that starts the walk elsewhere fails here, saying so.
    */
   const flipSingleKeysInHelp = async (now: "on" | "off"): Promise<void> => {
     await pressUntilFocused(page, "Shift+Tab", help(), 12);
@@ -457,6 +507,27 @@ test.describe.serial("ui: keyboard review", () => {
     });
     await expect(proceed).toBeFocused();
 
+    // The card is not modal, so the app's own keys pass it (R33): ⌘K opens
+    // the palette over it, and Esc gives the card its focus back; `?` opens
+    // this page's sheet, and Esc closes it the same way.
+    await openPalette();
+    await page.keyboard.press("Escape");
+    await expect(palette()).toHaveCount(0);
+    await expect(proceed).toBeFocused();
+    await page.keyboard.press("?");
+    const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(sheet).toBeVisible();
+    await expect(
+      sheet.getByRole("heading", {
+        name: "On this page (Diff viewer)",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    await expect(done).toBeVisible();
+    await expect(proceed).toBeFocused();
+
     // Enter: the older batch, on its first pending step.
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(atStep(checkout, "checkout"));
@@ -526,6 +597,7 @@ test.describe.serial("ui: keyboard review", () => {
     await expectStates(checkout, { checkout: "approved" });
 
     // ⌘Z / Ctrl+Z takes it back, with focus where the cursor moved.
+    await expect(undoOffered("checkout")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+z");
     await expect(checkoutCard).toHaveAttribute(
       "aria-label",
@@ -622,6 +694,55 @@ test.describe.serial("ui: keyboard review", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(page.url()).toBe(batchUrl);
+
+    // And G I is live on this page: with nothing open it goes to Batches.
+    await page.keyboard.press("g");
+    await page.keyboard.press("i");
+    await expect(page).toHaveURL((url) => url.pathname === "/inbox");
+
+    // Back to the batch, at its default view, as the palette opens a batch.
+    await openPalette();
+    await page.keyboard.type(BATCH_OLDER);
+    await expect(paletteGroup("Batches").locator("[cmdk-item]")).toHaveCount(1);
+    await expect(chosenRow()).toHaveText(/^kbd-batch-older/);
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(
+      (url) => atBatch(checkout)(url) && !url.searchParams.has("status"),
+    );
+  });
+
+  test("Needs review: A on a step card takes its run off the list, the next card has focus, and ⌘Z brings it back", async ({}, testInfo) => {
+    testInfo.annotations.push(...coverAnnotations(["review.keyboard"]));
+
+    // The batch at its default view (Needs review): both steps pending.
+    const checkoutCard = stepCard(checkout, "checkout");
+    const settingsCard = stepCard(settings, "settings");
+    await expect(checkoutCard).toBeVisible();
+    await expect(settingsCard).toBeVisible();
+    await pressUntilFocused(page, "j", checkoutCard, 3);
+
+    // A: decided, the run leaves the list (it no longer needs review), and
+    // the cursor is on the next step that does, with focus (spec §6: focus is
+    // never lost with an item).
+    await page.keyboard.press("a");
+    await expect(runRow(checkout)).toHaveCount(0);
+    await expect(checkoutCard).toHaveCount(0);
+    await expect(settingsCard).toBeFocused();
+    await expectStates(checkout, { checkout: "approved" });
+
+    // ⌘Z, once the Undo is offered: the run is back on the list, pending, and
+    // focus stays on the card it was on.
+    await expect(undoOffered("checkout")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expectStates(checkout, { checkout: "unresolved" });
+    await expect(checkoutCard).toHaveAttribute(
+      "aria-label",
+      "checkout, Unresolved",
+    );
+    await expect(settingsCard).toBeFocused();
+
+    // The cursor back on the first card, where the next test starts.
+    await pressUntilFocused(page, "k", checkoutCard, 3);
   });
 
   test("Switch: Single-key shortcuts off in the Help menu stops A; Approve step in the palette still approves", async ({}, testInfo) => {
@@ -637,25 +758,42 @@ test.describe.serial("ui: keyboard review", () => {
 
     await flipSingleKeysInHelp("off");
 
-    // A does nothing: the step is still the one on screen and still pending.
-    await page.keyboard.press("a");
-    await expect(approve).toBeVisible();
-    await expect(approve).toBeEnabled();
-    await expect(page).toHaveURL(atStep(checkout, "checkout"));
+    // A does nothing: no decision is sent, and the step is still the one on
+    // screen and still pending. The checks wait two frames first: the loop
+    // moves on as soon as a decision is made, so an A that did act would have
+    // shown it (and sent it) by then.
+    const decisions: string[] = [];
+    const onRequest = (req: Request): void => {
+      if (isDecision(req)) decisions.push(req.url());
+    };
+    page.on("request", onRequest);
+    try {
+      await page.keyboard.press("a");
+      await page.evaluate(TWO_FRAMES);
+      await expect(approve).toBeVisible();
+      await expect(approve).toBeEnabled();
+      await expect(page).toHaveURL(atStep(checkout, "checkout"));
+      expect(decisions, "a decision sent after A with the switch off").toEqual(
+        [],
+      );
 
-    // The command is all there in the palette, and approves THAT step: had A
-    // worked above, this would approve the next one.
-    await openPalette();
-    await page.keyboard.type("Approve step");
-    await expect(palette().locator("[cmdk-item]")).toHaveCount(1);
-    await expect(chosenRow()).toHaveText("Approve step");
-    await page.keyboard.press("Enter");
-    await expect(palette()).toHaveCount(0);
-    await expect(
-      page
-        .locator("[data-sonner-toast]")
-        .filter({ hasText: "Approved 'checkout'" }),
-    ).toBeVisible();
+      // The command is all there in the palette, and approves THAT step: had
+      // A worked above, this would approve the next one.
+      await openPalette();
+      await page.keyboard.type("Approve step");
+      await expect(palette().locator("[cmdk-item]")).toHaveCount(1);
+      await expect(chosenRow()).toHaveText("Approve step");
+      await page.keyboard.press("Enter");
+      await expect(palette()).toHaveCount(0);
+      // Its toast is the newest (earlier approvals of checkout may still be
+      // up).
+      await expect(frontToast()).toContainText("Approved 'checkout'");
+      // The control: the same watch sees the palette's decision, so its
+      // silence after A meant something.
+      expect(decisions.length, "the palette's decision was seen").toBe(1);
+    } finally {
+      page.off("request", onRequest);
+    }
     await expect(page).toHaveURL(atStep(settings, "settings"));
     await expect(announcer()).toHaveText(
       "Next test: settings · 1 left in batch",
@@ -686,10 +824,18 @@ test.describe.serial("ui: keyboard review", () => {
         .analyze();
       found[what] = contrastProblems(results);
       const passed = nodeCount(results.passes);
+      const reasons = unmeasuredReasons(results);
       testInfo.annotations.push({
         type: "color-contrast",
-        description: `${what}: ${found[what]?.length ?? 0} problem(s), ${passed} node(s) passed, ${nodeCount(results.incomplete)} incomplete`,
+        description: `${what}: ${found[what]?.length ?? 0} problem(s), ${passed} node(s) passed, ${nodeCount(results.incomplete)} incomplete (${[...new Set(reasons)].join(", ") || "none"})`,
       });
+      // Only symbol-only text (the arrow glyphs on key caps: `nonBmp`) may go
+      // unmeasured. Any other reason (an overlap, a translucent colour) would
+      // hide a real pair from the check.
+      expect(
+        reasons.filter((reason) => reason !== "nonBmp"),
+        `${what}: text axe could not measure`,
+      ).toEqual([]);
       // An empty result must not pass for a clean one: axe saw text.
       expect(
         passed + nodeCount(results.violations),
@@ -744,5 +890,24 @@ test.describe.serial("ui: keyboard review", () => {
     ).toEqual(Object.fromEntries(Object.keys(found).map((what) => [what, []])));
     // Both dialogs were checked in both themes.
     expect(Object.keys(found)).toHaveLength(6);
+  });
+
+  test("The done card at the end of the work: G I goes to Batches from it", async ({}, testInfo) => {
+    testInfo.annotations.push(...coverAnnotations(["review.keyboard"]));
+
+    // A on the last pending step: nothing is left anywhere in the project.
+    await expect(page).toHaveURL(atStep(settings, "settings"));
+    await approveWithA();
+    const done = page.getByRole("dialog", { name: "All caught up" });
+    await expect(done).toBeVisible();
+    await expect(
+      done.getByRole("link", { name: "Back to batches", exact: true }),
+    ).toBeFocused();
+    await expectStates(settings, { settings: "approved" });
+
+    // The card keeps the viewer's keys, but the app's G I passes it (R33).
+    await page.keyboard.press("g");
+    await page.keyboard.press("i");
+    await expect(page).toHaveURL((url) => url.pathname === "/inbox");
   });
 });
