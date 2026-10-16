@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import {
   builds,
@@ -68,6 +68,72 @@ async function seedUser(
     .returning();
   if (!u) throw new Error("user not seeded");
   return u;
+}
+
+/** A storage key no other row references: 64 random hex characters. */
+const unrelatedKey = () => randomBytes(32).toString("hex");
+
+/**
+ * A project with one step of its own: a build, a run, a variation and a
+ * screenshot, whose image is `imageKey` (an unrelated key unless given) and
+ * whose diff image is `diffImageKey`.
+ */
+async function seedProjectWithStep(
+  h: Awaited<ReturnType<typeof createTestApp>>,
+  keys: { imageKey?: string; diffImageKey?: string } = {},
+) {
+  const [project] = await h.db
+    .insert(projects)
+    .values({ name: `sp-${randomUUID()}` })
+    .returning();
+  const [build] = await h.db
+    .insert(builds)
+    .values({ projectId: project!.id })
+    .returning();
+  const [run] = await h.db
+    .insert(testRuns)
+    .values({ buildId: build!.id, projectId: project!.id, name: "t" })
+    .returning();
+  const [variation] = await h.db
+    .insert(testVariations)
+    .values({
+      name: "home",
+      projectId: project!.id,
+      branchName: "main",
+      browser: "chromium",
+      viewport: "400x400",
+    })
+    .returning();
+  await h.db.insert(screenshots).values({
+    runId: run!.id,
+    projectId: project!.id,
+    testVariationId: variation!.id,
+    name: "home",
+    imageKey: keys.imageKey ?? unrelatedKey(),
+    viewport: "400x400",
+    browser: "chromium",
+    diffImageKey: keys.diffImageKey ?? null,
+  });
+  return { project: project!, build: build! };
+}
+
+/**
+ * An editor who is a member of a project of their own, B, which has a step
+ * whose image is `ownKey` (its bytes stored): a caller with a real
+ * membership, so the proxy's project scoping runs for them (an editor with
+ * none is turned away before any key is looked up).
+ */
+async function seedOutsiderWithOwnProject(
+  h: Awaited<ReturnType<typeof createTestApp>>,
+) {
+  const outsider = await seedUser(h, "editor");
+  const ownKey = unrelatedKey();
+  await createStorage().put(ownKey, TINY_PNG, "image/png");
+  const { project } = await seedProjectWithStep(h, { imageKey: ownKey });
+  await h.db
+    .insert(projectMembers)
+    .values({ userId: outsider.id, projectId: project.id });
+  return { outsider, ownKey };
 }
 
 d("GET /api/v1/storage/:key", () => {
@@ -155,43 +221,17 @@ d("GET /api/v1/storage/:key", () => {
       const key = objectKey(TINY_PNG);
       await storage.put(key, TINY_PNG, "image/png");
 
-      const [proj] = await h.db
-        .insert(projects)
-        .values({ name: `sp-${randomUUID()}` })
-        .returning();
+      // Project A's step has the diff image.
+      const { project: a } = await seedProjectWithStep(h, {
+        diffImageKey: key,
+      });
       const member = await seedUser(h, "editor");
       await h.db
         .insert(projectMembers)
-        .values({ userId: member.id, projectId: proj!.id });
-      const outsider = await seedUser(h, "editor");
-      const [build] = await h.db
-        .insert(builds)
-        .values({ projectId: proj!.id })
-        .returning();
-      const [run] = await h.db
-        .insert(testRuns)
-        .values({ buildId: build!.id, projectId: proj!.id, name: "t" })
-        .returning();
-      const [variation] = await h.db
-        .insert(testVariations)
-        .values({
-          name: "home",
-          projectId: proj!.id,
-          branchName: "main",
-          browser: "chromium",
-          viewport: "400x400",
-        })
-        .returning();
-      await h.db.insert(screenshots).values({
-        runId: run!.id,
-        projectId: proj!.id,
-        testVariationId: variation!.id,
-        name: "home",
-        imageKey: "0".repeat(64),
-        viewport: "400x400",
-        browser: "chromium",
-        diffImageKey: key,
-      });
+        .values({ userId: member.id, projectId: a.id });
+      // The outsider is a member of B only, with a step of its own: the
+      // lookup runs, scoped to B, and must not find A's row.
+      const { outsider, ownKey } = await seedOutsiderWithOwnProject(h);
 
       const asMember = await h.app.inject({
         method: "GET",
@@ -203,14 +243,18 @@ d("GET /api/v1/storage/:key", () => {
       expect(asMember.statusCode).toBe(200);
       expect(Buffer.from(asMember.rawPayload).equals(TINY_PNG)).toBe(true);
 
-      const asOutsider = await h.app.inject({
-        method: "GET",
-        url: `/api/v1/storage/${key}`,
-        headers: {
-          authorization: `Bearer ${h.app.jwt.sign({ sub: outsider.id, role: "editor" })}`,
-        },
-      });
-      expect(asOutsider.statusCode).toBe(404);
+      const outsiderGets = (k: string) =>
+        h.app.inject({
+          method: "GET",
+          url: `/api/v1/storage/${k}`,
+          headers: {
+            authorization: `Bearer ${h.app.jwt.sign({ sub: outsider.id, role: "editor" })}`,
+          },
+        });
+      // Their own project's image: the membership is real.
+      expect((await outsiderGets(ownKey)).statusCode).toBe(200);
+      // Project A's diff image: not theirs.
+      expect((await outsiderGets(key)).statusCode).toBe(404);
     } finally {
       await h.close();
     }
@@ -223,17 +267,32 @@ d("GET /api/v1/storage/:key", () => {
       const key = objectKey(TINY_PNG);
       await storage.put(key, TINY_PNG, "image/png");
 
-      // An editor with no project membership must NOT be able to read a key
-      // owned by another tenant, even though the bytes are present in storage.
-      const outsider = await seedUser(h, "editor");
-      const token = h.app.jwt.sign({ sub: outsider.id, role: "editor" });
-
-      const res = await h.app.inject({
-        method: "GET",
-        url: `/api/v1/storage/${key}`,
-        headers: { authorization: `Bearer ${token}` },
+      // Another tenant, A, owns the key: as a step's image and as its run's
+      // diff.
+      const { project: a, build } = await seedProjectWithStep(h, {
+        imageKey: key,
       });
-      expect(res.statusCode).toBe(404);
+      await h.db.insert(testRuns).values({
+        buildId: build.id,
+        projectId: a.id,
+        name: "t2",
+        diffName: key,
+      });
+
+      // An editor of another project, B, must NOT be able to read it, even
+      // though the bytes are present in storage: the lookup runs for B and
+      // must not find A's rows.
+      const { outsider, ownKey } = await seedOutsiderWithOwnProject(h);
+      const token = h.app.jwt.sign({ sub: outsider.id, role: "editor" });
+      const get = (k: string) =>
+        h.app.inject({
+          method: "GET",
+          url: `/api/v1/storage/${k}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+
+      expect((await get(ownKey)).statusCode).toBe(200);
+      expect((await get(key)).statusCode).toBe(404);
     } finally {
       await h.close();
     }
