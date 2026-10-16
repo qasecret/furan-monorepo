@@ -17,8 +17,10 @@ import {
 
 import {
   applyCanvasBackground,
+  FALLBACK_CANVAS_DIVIDER,
   FALLBACK_CANVAS_HATCH,
   readCanvasBackground,
+  readCanvasDivider,
   readCanvasHatch,
 } from "./canvas-theme";
 import { orderDiffRegions } from "./diff-order";
@@ -48,6 +50,7 @@ import {
   StageStates,
   statesForPane,
 } from "./StageStates";
+import { SwipeHandle } from "./SwipeHandle";
 import { attachCanvasViewControl } from "./useCanvasViewControl";
 import type { ElementMap } from "./useElementMap";
 import { hitTest, useIgnoreRegionEditor } from "./useIgnoreRegionEditor";
@@ -91,6 +94,9 @@ import { computeFocusView } from "./world-fit";
  * - **Pixi apps**: one per pane, kept across mode changes with the same pane
  *   count; zoom, pan, resizes and the theme update them in place, and a
  *   resize refits before the next paint.
+ * - **Swipe's handle** is DOM over the stage (`SwipeHandle`), in % of it like
+ *   the canvas's divider, which is a fraction of the canvas: a resize keeps
+ *   both at their fraction, and the observer moves the divider at once.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
@@ -255,6 +261,7 @@ export function ViewerStage({
   const panX = useViewState((s) => s.panX);
   const panY = useViewState((s) => s.panY);
   const swipe = useViewState((s) => s.swipe);
+  const setSwipe = useViewState((s) => s.setSwipe);
   const flickerFrame = useViewState((s) => s.flickerFrame);
   const focusBbox = useViewState((s) => s.focusBbox);
   const setView = useViewState((s) => s.setView);
@@ -285,6 +292,11 @@ export function ViewerStage({
   const [hostSizes, setHostSizes] = useState<Size[]>([]);
   const [hatchColor, setHatchColor] = useState(() =>
     typeof document === "undefined" ? FALLBACK_CANVAS_HATCH : readCanvasHatch(),
+  );
+  const [dividerColor, setDividerColor] = useState(() =>
+    typeof document === "undefined"
+      ? FALLBACK_CANVAS_DIVIDER
+      : readCanvasDivider(),
   );
   // The GPU's largest texture side, read from the first stage's renderer and
   // kept across stages. Unknown until then: nothing can be drawn before it.
@@ -422,9 +434,10 @@ export function ViewerStage({
     };
   });
 
+  // What the renderer draws with, once the world is placed on a stage.
   const input = useMemo<RenderInput | null>(
     () =>
-      world
+      world && transform && viewportSize
         ? {
             world,
             images: {
@@ -435,8 +448,9 @@ export function ViewerStage({
             opacity,
             swipe,
             flickerFrame,
-            colors: { hatch: hatchColor },
-            scale,
+            colors: { hatch: hatchColor, divider: dividerColor },
+            transform,
+            canvas: viewportSize,
           }
         : null,
     [
@@ -449,10 +463,17 @@ export function ViewerStage({
       swipe,
       flickerFrame,
       hatchColor,
-      scale,
+      dividerColor,
+      transform,
+      viewportSize,
     ],
   );
   const hasInput = input !== null;
+  // The input as last rendered, for the resize observer (see the stage).
+  const inputRef = useRef<RenderInput | null>(null);
+  useLayoutEffect(() => {
+    inputRef.current = input;
+  });
 
   // The pixi apps: one per pane, made when the pane count changes and kept
   // across every other change.
@@ -520,10 +541,18 @@ export function ViewerStage({
           sizes[i] = size;
           const { world, hostPane } = sceneRef.current;
           if (i === hostPane && world) {
-            placeWorlds(
-              worlds,
-              transformFor(world, size, useViewState.getState()),
-            );
+            const t = transformFor(world, size, useViewState.getState());
+            placeWorlds(worlds, t);
+            // What the renderer draws to the canvas's size (Swipe's divider,
+            // the hatch's spacing) follows in the same frame.
+            const last = inputRef.current;
+            if (last) {
+              handleRef.current?.update({
+                ...last,
+                transform: t,
+                canvas: size,
+              });
+            }
           }
           setHostSizes(sizes.slice());
         });
@@ -602,6 +631,7 @@ export function ViewerStage({
       if (cancelled) return;
       applyCanvasBackground(liveAppsRef.current, readCanvasBackground());
       setHatchColor(readCanvasHatch());
+      setDividerColor(readCanvasDivider());
     });
     return () => {
       cancelled = true;
@@ -920,6 +950,9 @@ export function ViewerStage({
         >
           {hatchTooltips(0)}
           {editorOverlay}
+          {shown === "swipe" && sceneReady && (
+            <SwipeHandle value={swipe} onChange={setSwipe} />
+          )}
         </div>
         <StageStates
           states={states}

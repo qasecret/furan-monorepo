@@ -588,24 +588,35 @@ describe("DiffViewer", () => {
     });
   });
 
-  test.each(["swipe", "flicker"] as const)(
-    "a %s preference shows as side by side until it has a renderer, and is kept",
-    (mode) => {
-      useViewerPrefs.setState({
-        prefs: { ...DEFAULT_VIEWER_PREFS, mode },
-      });
-      const r = render(
-        <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
-      );
-      expect(
-        r
-          .getByRole("tab", { name: /side by side/i })
-          .getAttribute("aria-selected"),
-      ).toBe("true");
-      expect(r.getByTestId("candidate-canvas-host")).toBeDefined();
-      expect(useViewerPrefs.getState().prefs.mode).toBe(mode);
-    },
-  );
+  test("a flicker preference shows as side by side until it has a renderer, and is kept (R1)", () => {
+    withBaseline();
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
+    });
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(
+      r
+        .getByRole("tab", { name: /side by side/i })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(r.getByTestId("candidate-canvas-host")).toBeDefined();
+    expect(useViewerPrefs.getState().prefs.mode).toBe("flicker");
+  });
+
+  test("a swipe preference draws Swipe, on one stage, and is kept", () => {
+    withBaseline();
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
+    });
+    const r = render(
+      <DiffViewer runId="00000000-0000-0000-0000-000000000000" diffId="d1" />,
+    );
+    expect(r.getByTestId("single-stage-host").dataset.mode).toBe("swipe");
+    expect(r.queryByTestId("candidate-canvas-host")).toBeNull();
+    expect(useViewerPrefs.getState().prefs.mode).toBe("swipe");
+  });
 
   describe("preferences", () => {
     beforeEach(() => localStorage.clear());

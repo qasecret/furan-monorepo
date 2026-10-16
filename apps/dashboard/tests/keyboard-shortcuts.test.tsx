@@ -286,9 +286,9 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
   });
 
-  it("O acts on the mode on screen: a swipe preference shows as side by side", () => {
+  it("O acts on the mode on screen: a flicker preference shows as side by side (R1)", () => {
     useViewerPrefs.setState({
-      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
     });
     mountViewer({ viewports: [] });
     press("O");

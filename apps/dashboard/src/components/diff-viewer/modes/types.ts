@@ -1,12 +1,13 @@
 import type { Container } from "pixi.js";
 
 import type { ImageRole } from "../image-set";
-import type { World } from "../viewer-geometry";
+import type { Size, Transform, World } from "../viewer-geometry";
 import type { ViewerMode } from "../viewer-prefs";
 
 import { diff } from "./diff";
 import { overlay } from "./overlay";
 import { sideBySide } from "./side-by-side";
+import { swipe } from "./swipe";
 
 /**
  * The comparison modes as renderers (spec §3.3). Each builds its own layers
@@ -24,18 +25,27 @@ export interface RenderInput {
   /** Swipe's divider, as a fraction of the canvas width (0..1). */
   swipe: number;
   flickerFrame: "baseline" | "current";
-  /** From the `--fg-muted` token, via `canvas-theme`. */
-  colors: { hatch: number };
-  /** Canvas px per world px (the world transform's scale), for screen-sized marks. */
-  scale: number;
+  /**
+   * From the tokens, via `canvas-theme`: the hatching from `--fg-muted`,
+   * Swipe's divider from `--ring`.
+   */
+  colors: { hatch: number; divider: number };
+  /**
+   * World to canvas px on the host's pane, the transform the host places the
+   * world with. Its scale sizes the marks that keep a screen size (the
+   * hatch's spacing, the divider's width).
+   */
+  transform: Transform;
+  /** That pane's canvas, in canvas px: Swipe's divider is a fraction of it. */
+  canvas: Size;
 }
 
 export interface ModeHandle {
   /**
-   * Applies the inputs a mount can take in place: the world and the scale
-   * (the hatching follows them), the opacity, the swipe, the flicker frame
-   * and the colours. The images are fixed for a mount; the host mounts again
-   * for new ones.
+   * Applies the inputs a mount can take in place: the world, the transform
+   * and the canvas (the hatching and Swipe's divider follow them), the
+   * opacity, the swipe, the flicker frame and the colours. The images are
+   * fixed for a mount; the host mounts again for new ones.
    */
   update(input: RenderInput): void;
   /**
@@ -78,12 +88,12 @@ export interface ModeRenderer {
 }
 
 /**
- * Swipe and flicker draw as side by side until their renderers land (R1):
- * the chosen mode is kept, and drawn as `drawnMode` says.
+ * Flicker draws as side by side until its renderer lands (R1): the chosen
+ * mode is kept, and drawn as `drawnMode` says.
  */
 export const RENDERERS: Record<ViewerMode, ModeRenderer> = {
   "side-by-side": sideBySide,
-  swipe: sideBySide,
+  swipe,
   flicker: sideBySide,
   overlay,
   diff,

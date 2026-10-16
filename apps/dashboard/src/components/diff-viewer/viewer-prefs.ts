@@ -185,12 +185,10 @@ export function modeAvailable(mode: ViewerMode, hasBaseline: boolean): boolean {
 }
 
 /**
- * The mode the canvas draws for a chosen one. Swipe and flicker have no
- * renderer yet: until theirs land they draw, and are labelled, as side by
- * side, and the chosen mode is kept as it is.
+ * The mode the canvas draws for a chosen one. Flicker has no renderer yet:
+ * until it lands it draws, and is labelled, as side by side, and the chosen
+ * mode is kept as it is (R1).
  */
-export function drawnMode(
-  mode: ViewerMode,
-): Exclude<ViewerMode, "swipe" | "flicker"> {
-  return mode === "swipe" || mode === "flicker" ? "side-by-side" : mode;
+export function drawnMode(mode: ViewerMode): Exclude<ViewerMode, "flicker"> {
+  return mode === "flicker" ? "side-by-side" : mode;
 }

@@ -2,10 +2,10 @@
  * Theme bridge for the pixi diff canvas. Pixi cannot read CSS variables, so the
  * canvas colours are resolved from design tokens at runtime and pushed into
  * the live canvas when the theme changes: the letterbox from `--hover`, the
- * hatching from `--fg-muted`. The letterbox reads `--hover` rather than
- * `--sunken` so the bands outside the image stay distinct from a white
- * screenshot in light mode: #f4f4f5 on #fff is 1.10:1, where `--sunken`
- * (#fafafa) is 1.04:1.
+ * hatching from `--fg-muted`, Swipe's divider from `--ring`. The letterbox
+ * reads `--hover` rather than `--sunken` so the bands outside the image stay
+ * distinct from a white screenshot in light mode: #f4f4f5 on #fff is 1.10:1,
+ * where `--sunken` (#fafafa) is 1.04:1.
  */
 
 /** Used when `--hover` is unset or not a 6-digit hex (e.g. under jsdom). */
@@ -42,6 +42,20 @@ export function readCanvasHatch(root?: HTMLElement): number {
   const el = root ?? document.documentElement;
   const raw = getComputedStyle(el).getPropertyValue("--fg-muted");
   return cssHexToPixi(raw) ?? FALLBACK_CANVAS_HATCH;
+}
+
+/** The light theme's `--ring`, for when the token is unset or not a 6-digit hex. */
+export const FALLBACK_CANVAS_DIVIDER = 0x4d7c0f;
+
+/**
+ * Resolve the current `--ring` token to a pixi colour number: Swipe's
+ * divider, the same colour as the focus ring and its handle's edge.
+ * Browser-only, like `readCanvasBackground`.
+ */
+export function readCanvasDivider(root?: HTMLElement): number {
+  const el = root ?? document.documentElement;
+  const raw = getComputedStyle(el).getPropertyValue("--ring");
+  return cssHexToPixi(raw) ?? FALLBACK_CANVAS_DIVIDER;
 }
 
 /** Set the background of every initialised app; apps without a renderer yet are skipped. */
