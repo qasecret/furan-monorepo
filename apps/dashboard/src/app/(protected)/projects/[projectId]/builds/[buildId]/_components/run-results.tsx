@@ -6,11 +6,39 @@ import {
   type RunStatusOverride,
 } from "@furan/shared-types";
 import { ChevronDown, ChevronRight, Server } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
+import {
+  BATCH_COMMANDS,
+  BATCH_LIST_ATTR,
+  type BatchCtx,
+} from "./batch-commands";
+import {
+  BatchCursorProvider,
+  NO_STEPS_GROUP,
+  runRowId,
+  stepItemId,
+  useBatchCursorChannel,
+  useCursorItem,
+  useReportRow,
+  type RowReport,
+} from "./batch-cursor-context";
+import { createStepActions, StepActionsProvider } from "./step-actions-context";
 import { StepCard, type StepRun } from "./step-card";
 
 import { cn } from "@/lib/cn";
+import { useCommands } from "@/lib/commands/registry";
+import { useListCursor } from "@/lib/commands/use-list-cursor";
+import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { runStatusFor } from "@/lib/review/optimistic";
 import {
   useReviewMutations,
@@ -21,6 +49,7 @@ import { statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
+type RunRow = RouterOutputs["runs"]["list"]["items"][number];
 
 /**
  * Shared 7-column grid template for the result table — the column header
@@ -29,6 +58,9 @@ type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
  */
 export const RESULT_GRID =
   "grid items-center gap-3 grid-cols-[132px_116px_minmax(104px,1fr)_84px_72px_100px_84px]";
+
+/** A row with no steps: one array, so the row's report does not change. */
+const NO_CHECKPOINTS: Checkpoint[] = [];
 
 interface EnvGroup {
   key: string;
@@ -142,9 +174,9 @@ interface Props {
 /**
  * Renders one test (run) as one-or-more result rows — one per environment its
  * checkpoints were captured in. Each row expands to the step cards for that
- * environment.
+ * environment. Memoized: a cursor move redraws the list, not every run.
  */
-export function RunResults({
+export const RunResults = memo(function RunResults({
   projectId,
   runId,
   testName,
@@ -205,11 +237,13 @@ export function RunResults({
         runId={runId}
         testName={testName}
         branchName={branchName}
+        groupKey={NO_STEPS_GROUP}
+        index={0}
         os={null}
         browser="—"
         viewport="—"
         status={run.status}
-        checkpoints={[]}
+        checkpoints={NO_CHECKPOINTS}
         runPending={pendingCount}
         runSteps={stepCount}
         run={run}
@@ -234,6 +268,8 @@ export function RunResults({
           runId={runId}
           testName={testName}
           branchName={branchName}
+          groupKey={g.key}
+          index={i}
           os={g.os}
           browser={g.browser}
           viewport={g.viewport}
@@ -256,7 +292,7 @@ export function RunResults({
       ))}
     </>
   );
-}
+});
 
 /** The id "Back to batch" links to (`#run-<runId>`). */
 const anchorIdOf = (runId: string): string => `run-${runId}`;
@@ -266,6 +302,10 @@ interface RowProps {
   runId: string;
   testName: string;
   branchName: string | null;
+  /** The row's environment group (`NO_STEPS_GROUP` for a run without steps). */
+  groupKey: string;
+  /** Its place among its run's rows. */
+  index: number;
   os: string | null;
   browser: string;
   viewport: string;
@@ -292,6 +332,8 @@ const ResultRow = memo(function ResultRow({
   runId,
   testName,
   branchName,
+  groupKey,
+  index,
   os,
   browser,
   viewport,
@@ -325,6 +367,21 @@ const ResultRow = memo(function ResultRow({
       : `${pending} of ${total} pending`;
   const [open, setOpen] = useState(true);
 
+  // Its place in the batch list's cursor: the row's own toggle is the item
+  // (Enter on it toggles it, spec §4.3), and the list learns the steps it
+  // shows from here.
+  const rowId = runRowId(runId, groupKey);
+  const item = useCursorItem(rowId);
+  const stepIds = useMemo(() => checkpoints.map((c) => c.id), [checkpoints]);
+  useReportRow(rowId, {
+    runId,
+    index,
+    expandable: hasSteps,
+    open: hasSteps && open,
+    stepIds,
+    setOpen,
+  });
+
   // "Back to batch": once, bring this row to the middle of the page and focus
   // it. No `behavior`: the jump is instant, which also honours a reduced-motion
   // preference. Focus does not scroll a second time.
@@ -346,12 +403,14 @@ const ResultRow = memo(function ResultRow({
       <button
         ref={toggle}
         type="button"
+        {...item}
         data-testid={`result-row-${runId}`}
         aria-expanded={hasSteps ? open : undefined}
         onClick={() => hasSteps && setOpen((o) => !o)}
         className={cn(
           RESULT_GRID,
-          "w-full px-4 py-3 text-left transition-colors",
+          // Inset: the scroll container would clip a ring drawn outside.
+          "w-full px-4 py-3 text-left transition-colors focus-ring focus-visible:-outline-offset-2",
           hasSteps && "hover:bg-hover",
         )}
       >
@@ -403,9 +462,15 @@ const ResultRow = memo(function ResultRow({
       </button>
       {hasSteps && open && (
         <div className="px-4 pb-4">
+          {/* Not a Tab stop: an overflowing scroller with no tabbable
+              content is one in Chromium, and focus there is on no item.
+              scroll-px-4: a card brought into view sideways keeps room for
+              its focus ring. */}
           <div
+            role="list"
+            tabIndex={-1}
             className={cn(
-              "rounded-lg border border-edge bg-sunken p-4",
+              "rounded-lg border border-edge bg-sunken p-4 scroll-px-4",
               view === "grid"
                 ? "flex flex-wrap gap-4"
                 : "flex gap-4 overflow-x-auto",
@@ -434,3 +499,226 @@ const ResultRow = memo(function ResultRow({
     </div>
   );
 });
+
+/** An item of the batch list's cursor, in walking order. */
+type BatchItem =
+  | { id: string; kind: "run"; rowId: string; runId: string }
+  | { id: string; kind: "step"; rowId: string; stepId: string };
+
+/**
+ * The cursor's items (spec §4.3): each run in the page's order, each of its
+ * rows in capture order, and a row's steps after it while it shows them.
+ */
+function batchItems(
+  runs: readonly RunRow[],
+  rows: ReadonlyMap<string, RowReport>,
+): BatchItem[] {
+  const byRun = new Map<string, Array<[string, RowReport]>>();
+  for (const [rowId, row] of rows) {
+    const list = byRun.get(row.runId) ?? [];
+    list.push([rowId, row]);
+    byRun.set(row.runId, list);
+  }
+  const items: BatchItem[] = [];
+  for (const { id: runId } of runs) {
+    const own = (byRun.get(runId) ?? []).sort(
+      ([, a], [, b]) => a.index - b.index,
+    );
+    for (const [rowId, row] of own) {
+      items.push({ id: rowId, kind: "run", rowId, runId });
+      if (!row.open) continue;
+      for (const stepId of row.stepIds) {
+        items.push({ id: stepItemId(stepId), kind: "step", rowId, stepId });
+      }
+    }
+  }
+  return items;
+}
+
+interface BatchResultsProps {
+  projectId: string;
+  /** The runs on the page, in the order the suite ran them. */
+  runs: RunRow[];
+  branchName: string | null;
+  ctx: ReviewContext;
+  view: "list" | "grid";
+  canReview: boolean;
+  /** The run "Back to batch" landed on: its first row is revealed, once. */
+  revealRunId: string | null;
+  onRevealed: () => void;
+  /** The previous filter's runs are still showing. */
+  busy: boolean;
+  /** What shows instead while there are no runs (loading, empty, an error). */
+  children?: ReactNode;
+}
+
+/**
+ * The batch page's results: one `RunResults` per run, and the keyboard
+ * cursor over them (spec §4.3, §6). The cursor walks the run rows and, under
+ * a row that shows them, its step cards, in capture order; `a` / `r` decide
+ * the focused step through its card's own buttons' path, then the cursor
+ * goes on to the next step that needs a reviewer.
+ */
+export function BatchResults({
+  projectId,
+  runs,
+  branchName,
+  ctx,
+  view,
+  canReview,
+  revealRunId,
+  onRevealed,
+  busy,
+  children,
+}: BatchResultsProps) {
+  const router = useRouter();
+  const listRef = useRef<HTMLDivElement>(null);
+  const [steps] = useState(createStepActions);
+  const [rows, setRows] = useState<ReadonlyMap<string, RowReport>>(
+    () => new Map(),
+  );
+  const reportRow = useCallback((rowId: string, row: RowReport | null) => {
+    setRows((prev) => {
+      if (row === null && !prev.has(rowId)) return prev;
+      const next = new Map(prev);
+      if (row === null) next.delete(rowId);
+      else next.set(rowId, row);
+      return next;
+    });
+  }, []);
+  const items = useMemo(() => batchItems(runs, rows), [runs, rows]);
+  const cursor = useListCursor({ items, listRef });
+  // The items as of the latest render, for a continuation that runs later
+  // (after the stale-step question has closed).
+  const latestItems = useRef(items);
+  latestItems.current = items;
+  const channel = useBatchCursorChannel(cursor.itemProps, reportRow);
+
+  const at = items.find((i) => i.id === cursor.cursorId) ?? null;
+  const atRow = at === null ? undefined : rows.get(at.rowId);
+
+  /** The step under the cursor can be decided now (read at the key press). */
+  const canDecide = () => {
+    if (at?.kind !== "step") return false;
+    const actions = steps.get(at.stepId);
+    return actions !== undefined && actions.needsReviewer && actions.decidable;
+  };
+
+  useCommands<BatchCtx>("batch", BATCH_COMMANDS, {
+    itemCount: items.length,
+    next: cursor.next,
+    prev: cursor.prev,
+    first: cursor.first,
+    last: cursor.last,
+    canExpand: at?.kind === "run" && atRow?.expandable === true,
+    expand: () => {
+      if (at?.kind !== "run" || !atRow?.expandable) return;
+      if (!atRow.open) {
+        atRow.setOpen(true);
+        return;
+      }
+      const first = atRow.stepIds[0];
+      if (first !== undefined) cursor.setCursor(stepItemId(first), true);
+    },
+    canCollapse:
+      at?.kind === "step" || (at?.kind === "run" && atRow?.open === true),
+    collapse: () => {
+      if (at?.kind === "step") cursor.setCursor(at.rowId, true);
+      else if (at?.kind === "run" && atRow?.open) atRow.setOpen(false);
+    },
+    canOpen: at !== null,
+    open: (key) => {
+      if (at?.kind === "step") {
+        steps.get(at.stepId)?.open();
+      } else if (at?.kind === "run") {
+        // Enter is the row's own toggle (R22); `o` and the palette open the
+        // row's own first step, in its environment (R28), or the run's
+        // first when the row has none.
+        if (key === "Enter") {
+          if (atRow?.expandable) atRow.setOpen(!atRow.open);
+        } else {
+          router.push(
+            diffViewerHref(projectId, at.runId, atRow?.stepIds[0], ctx),
+          );
+        }
+      }
+    },
+    canDecide,
+    decide: (kind) => {
+      if (at?.kind !== "step" || !canDecide()) return;
+      const actions = steps.get(at.stepId);
+      if (actions === undefined) return;
+      // Read before the decision: the next step after this one, in capture
+      // order, that needs a reviewer.
+      const from = items.indexOf(at);
+      const nextStep = items
+        .slice(from + 1)
+        .find(
+          (i) =>
+            i.kind === "step" && steps.get(i.stepId)?.needsReviewer === true,
+        );
+      // On, with focus, once the step is decided, so the next `a` / `r`
+      // works at once. A refusal does not bring it back: the toast says what
+      // happened (spec §4.3).
+      const goOn = () => {
+        const held = (id: string) =>
+          latestItems.current.some((i) => i.id === id);
+        if (nextStep !== undefined && held(nextStep.id)) {
+          cursor.setCursor(nextStep.id, true);
+          return;
+        }
+        // Nowhere to go on to (nothing after it needs review, or that step
+        // has gone): focus stays where it is, unless the question took it
+        // with it, and then it comes back to this step's card.
+        const active = document.activeElement;
+        if (active === null || active === document.body) {
+          cursor.setCursor(at.id, true);
+        }
+      };
+      if (kind === "approved") {
+        // For an older capture the card asks first, as its button does: the
+        // cursor goes on after Confirm (R26), stays on Cancel.
+        actions.approve(goOn);
+      } else {
+        actions.reject();
+        goOn();
+      }
+    },
+  });
+
+  return (
+    <StepActionsProvider value={steps}>
+      <BatchCursorProvider value={channel}>
+        {runs.length === 0 ? (
+          children
+        ) : (
+          <div
+            ref={listRef}
+            {...{ [BATCH_LIST_ATTR]: "" }}
+            data-testid="batch-results"
+            aria-busy={busy}
+          >
+            {runs.map((row) => (
+              <RunResults
+                key={row.id}
+                projectId={projectId}
+                runId={row.id}
+                testName={row.name}
+                branchName={branchName}
+                fallbackStatus={row.status}
+                statusOverride={row.statusOverride}
+                ctx={ctx}
+                pendingCount={row.pendingCount}
+                stepCount={row.stepCount}
+                view={view}
+                canReview={canReview}
+                reveal={row.id === revealRunId}
+                onRevealed={onRevealed}
+              />
+            ))}
+          </div>
+        )}
+      </BatchCursorProvider>
+    </StepActionsProvider>
+  );
+}

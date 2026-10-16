@@ -1192,10 +1192,12 @@ describe("DiffViewer: the review loop", () => {
       ],
     };
     resetReviewSpies();
+    useUndoStore.setState({ stack: [] });
   });
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    useUndoStore.setState({ stack: [] });
   });
 
   test("a decision runs loop.afterDecision (not nextPendingCheckpointId)", () => {
@@ -1935,7 +1937,15 @@ describe("DiffViewer: the review loop", () => {
       r.getByRole("button", { name: CONTINUE }),
     );
 
-    // ⌘Z, with focus on the card: it reaches the viewer's undo.
+    // ⌘Z, with focus on the card: it reaches the viewer's undo (the decision
+    // is on the stack once the server has answered).
+    act(() => {
+      useUndoStore.getState().push({
+        actionId: "a1",
+        label: "Approved 'CP-1'",
+        runIds: [RUN_ID],
+      });
+    });
     act(() => {
       document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2558,6 +2568,11 @@ describe("DiffViewer undo shortcut and hint", () => {
   });
 
   test("⌘Z undoes through the review hook, with no action id (the newest)", () => {
+    act(() => {
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
+    });
     render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
     );
@@ -2567,6 +2582,11 @@ describe("DiffViewer undo shortcut and hint", () => {
   });
 
   test("⌘Z while typing in a text field does not undo", () => {
+    act(() => {
+      useUndoStore
+        .getState()
+        .push({ actionId: "a1", label: "Approved 'CP-1'", runIds: [RUN_ID] });
+    });
     render(
       <DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId="cp-1" />,
     );

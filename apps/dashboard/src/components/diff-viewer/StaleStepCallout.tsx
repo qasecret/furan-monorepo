@@ -66,6 +66,13 @@ interface ConfirmProps {
   open: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /**
+   * Radix's close auto-focus, once the question has unmounted and released
+   * its focus trap: the moment a caller that places focus itself can do so.
+   * The question has no trigger, so Radix restores no focus of its own;
+   * `preventDefault` would keep it from focusing one.
+   */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -78,6 +85,7 @@ export function StaleStepConfirm({
   open,
   onCancel,
   onConfirm,
+  onCloseAutoFocus,
 }: ConfirmProps) {
   return (
     <AlertDialog
@@ -86,7 +94,10 @@ export function StaleStepConfirm({
         if (!next) onCancel();
       }}
     >
-      <AlertDialogContent data-testid="stale-step-dialog">
+      <AlertDialogContent
+        data-testid="stale-step-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Approve an older capture?</AlertDialogTitle>
           <AlertDialogDescription>

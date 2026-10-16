@@ -4,26 +4,48 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 // A review decision must not redraw the cards beside it: one card changes, the
 // rest of a long batch stays put. Cards are counted through the thumbnail
 // hook, which each card calls once per render.
-const { renders, listCheckpointsMock, hookSpies } = vi.hoisted(() => ({
-  renders: new Map<string, number>(),
-  listCheckpointsMock: vi.fn(),
-  hookSpies: { decide: vi.fn(), undo: vi.fn() },
-}));
+const { renders, steps, hookSpies } = vi.hoisted(() => {
+  // The run's steps as react-query holds them: a change redraws the run
+  // that asked, as a query's own subscription does (the run is memoized, so
+  // its parent redrawing would not).
+  let value: unknown = { data: undefined, isLoading: true };
+  const listeners = new Set<() => void>();
+  return {
+    renders: new Map<string, number>(),
+    steps: {
+      get: () => value,
+      set(next: unknown) {
+        value = next;
+        for (const listener of listeners) listener();
+      },
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+    hookSpies: { decide: vi.fn(), undo: vi.fn() },
+  };
+});
 vi.mock("@/hooks/use-authed-image", () => ({
   useAuthedImage: (key: string | null) => {
     if (key) renders.set(key, (renders.get(key) ?? 0) + 1);
     return null;
   },
 }));
-vi.mock("@/lib/trpc", () => ({
-  trpc: {
-    runs: {
-      listCheckpoints: {
-        useQuery: (...a: unknown[]) => listCheckpointsMock(...a),
+vi.mock("@/lib/trpc", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    trpc: {
+      runs: {
+        listCheckpoints: {
+          useQuery: () => useSyncExternalStore(steps.subscribe, steps.get),
+        },
       },
     },
-  },
-}));
+  };
+});
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 // The real in-flight store and `useIsInFlight`. The hook subscribes to the
 // whole in-flight set, as the real one does, and returns the same functions
@@ -70,7 +92,7 @@ const D = item("d", { os: "windows", browser: "firefox" });
 const CTX = parseReviewContext(new URLSearchParams());
 
 const view = (items: Item[]) => {
-  listCheckpointsMock.mockReturnValue({ data: { items }, isLoading: false });
+  act(() => steps.set({ data: { items }, isLoading: false }));
   return (
     <RunResults
       projectId="p1"

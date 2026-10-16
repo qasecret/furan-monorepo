@@ -308,6 +308,24 @@ export function findBinding(
 }
 
 /**
+ * The bindings a key press runs `resolved` with: those `winners` (a
+ * `resolveKeyMap`) gives it, since another scope may take a key. With the
+ * single-key switch off (`singleKeysOn` false), its character bindings are
+ * left out too, as they do nothing (`liveBindings`); by default they are
+ * kept, for a list that marks them off. The `?` sheet and the palette show
+ * a command's keys from here.
+ */
+export function winningBindings(
+  resolved: ResolvedCommand,
+  winners: Map<string, ResolvedCommand>,
+  singleKeysOn = true,
+): KeyBinding[] {
+  return liveBindings(resolved.command, singleKeysOn).filter(
+    (b) => winners.get(keyIdentity(bindingKey(b))) === resolved,
+  );
+}
+
+/**
  * `resolveCommands()` for rendering. It re-renders on register, unregister
  * and a role change, never on a registrant's re-render. Its `allowed` is a
  * snapshot from that render: use it to render, and resolve afresh

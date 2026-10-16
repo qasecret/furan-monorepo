@@ -5,7 +5,9 @@ export type PageScope = "batches" | "batch" | "viewer";
 
 /**
  * Where a command applies. On a shared key the most specific scope wins:
- * `viewer` > `batch` > `batches` > `global`.
+ * `viewer` > `batch` > `batches` > `global`. A `global` command's keys are
+ * the app's, so they pass a non-modal dialog such as the done card (guard
+ * rule 4, R33); a page's keys stay that dialog's.
  */
 export type CommandScope = "global" | PageScope;
 
@@ -33,6 +35,16 @@ export type KeyBinding =
       repeat?: boolean;
       allowInText?: boolean;
     };
+
+/**
+ * How a command was run: `key` is the binding that matched, as the command
+ * writes it ("Enter", "o", "g i"; a Shift twin runs as its bare key). A run
+ * from the palette has no key. One command bound to several keys can tell
+ * them apart (R22: Enter on a run row toggles it, `o` opens its first step).
+ */
+export interface RunMeta {
+  key?: string;
+}
 
 /** Which key glyphs to show: ⌘ ⇧ on macOS, Ctrl Shift elsewhere. */
 export type Platform = "mac" | "other";
@@ -64,7 +76,7 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   allowed?: (ctx: C) => boolean;
   /** Page state. False: not run; listed in the sheet, hidden in palette actions. */
   enabled?: (ctx: C) => boolean;
-  run: (ctx: C) => void | Promise<void>;
+  run: (ctx: C, meta?: RunMeta) => void | Promise<void>;
   /**
    * CSS selector of the one dialog this key may fire inside, e.g.
    * "[data-command-palette]" (⌘K closes the palette) or "[data-done-card]".
@@ -87,6 +99,10 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   repeat?: boolean;
   /** Shown in the viewer's floating hint bar. */
   primary?: boolean;
-  /** ⌘Z: still fires inside a `[data-passes-undo]` dialog. */
-  passesUndo?: boolean;
+  /**
+   * `false`: never one of the palette's Actions, though its keys and the
+   * sheet keep it. For a command that acts on the focused item, which has no
+   * visible focus while the palette is open (R27).
+   */
+  palette?: false;
 }

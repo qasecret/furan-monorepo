@@ -49,7 +49,8 @@ type FormValues = z.infer<typeof schema>;
  *
  * On 201 we router.push(`/projects/<id>`) so the new project's settings page
  * is the next surface — that's where the user mints a PAT and configures the
- * SDK.
+ * SDK — and router.refresh() so the layout's project list (the palette's
+ * "Jump to project") includes it.
  */
 export function CreateProjectDialog({
   open: openProp,
@@ -108,6 +109,9 @@ export function CreateProjectDialog({
     form.reset();
     setOpen(false);
     router.push(`/projects/${project.id}`);
+    // The protected layout keeps its server data (the projects the palette
+    // offers) across client navigations: fetch it again.
+    router.refresh();
   };
 
   return (

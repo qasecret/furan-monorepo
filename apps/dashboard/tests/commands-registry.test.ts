@@ -523,16 +523,15 @@ describe("command registry", () => {
     });
   });
 
-  it("an object binding keeps the command's allowInDialog and passesUndo", () => {
+  it("an object binding keeps the command's allowInDialog and its scope's non-modal pass", () => {
     const undo = command("global", "review.undo", [{ key: "$mod+z" }], {
       allowInDialog: "[data-done-card]",
-      passesUndo: true,
       focusWithin: "[data-list]",
     });
     expect(bindingOptions(undo, { key: "$mod+z" })).toEqual({
       focusWithin: "[data-list]",
       allowInDialog: "[data-done-card]",
-      passesUndo: true,
+      passesNonModal: true,
     });
     // A per-key option overrides only its own field.
     expect(
@@ -540,7 +539,7 @@ describe("command registry", () => {
     ).toEqual({
       focusWithin: "[data-other]",
       allowInDialog: "[data-done-card]",
-      passesUndo: true,
+      passesNonModal: true,
     });
   });
 

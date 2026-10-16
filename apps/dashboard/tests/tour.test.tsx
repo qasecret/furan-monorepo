@@ -8,14 +8,31 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HelpButton } from "../src/components/tour/help-button";
 import { PageTour } from "../src/components/tour/page-tour";
 import {
   TourProvider,
   __resetTourDismissalsForTests,
+  useTour,
   type TourStep,
 } from "../src/components/tour/tour-context";
 import { TourOverlay } from "../src/components/tour/tour-overlay";
+
+/**
+ * What the top bar's Help menu reads and calls: the page whose tour is
+ * registered, and the replay.
+ */
+function TourControls() {
+  const { state, relaunch } = useTour();
+  return (
+    <>
+      <output data-testid="tour-page">{state.pageId ?? ""}</output>
+      <output data-testid="tour-running">{String(state.active)}</output>
+      <button type="button" data-testid="replay" onClick={relaunch}>
+        Replay
+      </button>
+    </>
+  );
+}
 
 /**
  * Renders the tour primitives inside a host that pins anchor elements
@@ -30,7 +47,7 @@ function renderWithSteps(steps: TourStep[], pageId = "test-page") {
       <div id="anchor-b" style={{ width: 100, height: 40 }}>
         anchor-b
       </div>
-      <HelpButton />
+      <TourControls />
       <PageTour pageId={pageId} steps={steps} />
       <TourOverlay />
     </TourProvider>,
@@ -196,36 +213,41 @@ describe("guided tour", () => {
     expect(scrollSpy).toHaveBeenCalledTimes(2);
   });
 
-  describe("HelpButton + relaunch", () => {
-    it("HelpButton is hidden when no tour is registered for the current page", () => {
+  describe("replay", () => {
+    it("a page registers its tour even when it was dismissed before", () => {
+      window.localStorage.setItem("furan:tour:dismissed:returning-user", "1");
+      renderWithSteps(STEPS, "returning-user");
+
+      // The tour did NOT auto-start (no popover) but the page DID register,
+      // so Replay tour knows where to relaunch from.
+      expect(screen.queryByTestId("tour-popover")).toBeNull();
+      expect(screen.getByTestId("tour-page").textContent).toBe(
+        "returning-user",
+      );
+
+      fireEvent.click(screen.getByTestId("replay"));
+      expect(screen.getByTestId("tour-popover")).toBeTruthy();
+    });
+
+    it("a page with no tour registers nothing", () => {
       render(
         <TourProvider>
-          <HelpButton />
+          <TourControls />
         </TourProvider>,
       );
-      expect(screen.queryByTestId("top-bar-help")).toBeNull();
-    });
-
-    it("HelpButton appears as soon as a page registers steps", () => {
-      renderWithSteps(STEPS);
-      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
-    });
-
-    it("HelpButton stays visible after the user dismisses the tour", () => {
-      renderWithSteps(STEPS, "stays-visible");
-      fireEvent.click(screen.getByTestId("tour-skip-button"));
-      // The popover is gone, but the button remains so the user can
-      // re-launch.
+      expect(screen.getByTestId("tour-page").textContent).toBe("");
+      // Nothing to replay: relaunching is safe and shows nothing.
+      fireEvent.click(screen.getByTestId("replay"));
       expect(screen.queryByTestId("tour-popover")).toBeNull();
-      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
     });
 
-    it("clicking HelpButton re-launches a dismissed tour from step 1", () => {
+    it("replaying a dismissed tour starts from step 1", () => {
       renderWithSteps(STEPS, "relaunch-test");
+      fireEvent.click(screen.getByTestId("tour-next-button"));
       fireEvent.click(screen.getByTestId("tour-skip-button"));
       expect(screen.queryByTestId("tour-popover")).toBeNull();
 
-      fireEvent.click(screen.getByTestId("top-bar-help"));
+      fireEvent.click(screen.getByTestId("replay"));
       expect(screen.getByTestId("tour-popover")).toBeTruthy();
       // Re-launch resets to step 1, not whatever index the user was on
       // when they dismissed.
@@ -240,26 +262,116 @@ describe("guided tour", () => {
         window.localStorage.getItem("furan:tour:dismissed:flag-clear"),
       ).toBe("1");
 
-      fireEvent.click(screen.getByTestId("top-bar-help"));
+      fireEvent.click(screen.getByTestId("replay"));
       // After relaunch, the dismissed flag is removed so the auto-start
       // path runs again on the next session.
       expect(
         window.localStorage.getItem("furan:tour:dismissed:flag-clear"),
       ).toBeNull();
     });
+  });
 
-    it("a previously-dismissed page still registers (HelpButton visible) on a fresh mount", () => {
-      // Simulate the user dismissing the tour in a prior session.
-      window.localStorage.setItem("furan:tour:dismissed:returning-user", "1");
-      renderWithSteps(STEPS, "returning-user");
+  describe("a page's registration follows the page", () => {
+    it("is cleared when the page unmounts", () => {
+      const page = render(
+        <TourProvider>
+          <TourControls />
+          <PageTour pageId="leaving" steps={STEPS} />
+        </TourProvider>,
+      );
+      expect(screen.getByTestId("tour-page").textContent).toBe("leaving");
 
-      // The tour did NOT auto-start (no popover) — but the page DID
-      // register so the Help button knows where to relaunch from.
+      // The page goes; the next one has no tour.
+      page.rerender(
+        <TourProvider>
+          <TourControls />
+        </TourProvider>,
+      );
+      expect(screen.getByTestId("tour-page").textContent).toBe("");
+      // Replay has nothing to start, however it is asked.
+      fireEvent.click(screen.getByTestId("replay"));
       expect(screen.queryByTestId("tour-popover")).toBeNull();
-      expect(screen.getByTestId("top-bar-help")).toBeTruthy();
+    });
 
-      fireEvent.click(screen.getByTestId("top-bar-help"));
+    it("takes a running tour down with its page", () => {
+      const page = render(
+        <TourProvider>
+          <div id="anchor-a" />
+          <TourControls />
+          <PageTour pageId="running" steps={STEPS} />
+          <TourOverlay />
+        </TourProvider>,
+      );
       expect(screen.getByTestId("tour-popover")).toBeTruthy();
+      expect(screen.getByTestId("tour-running").textContent).toBe("true");
+
+      page.rerender(
+        <TourProvider>
+          <div id="anchor-a" />
+          <TourControls />
+          <TourOverlay />
+        </TourProvider>,
+      );
+      expect(screen.queryByTestId("tour-popover")).toBeNull();
+      expect(screen.getByTestId("tour-running").textContent).toBe("false");
+    });
+
+    it("is cleared only if it is still the unmounting page's own", () => {
+      // The next page registered before the last one's cleanup ran.
+      const both = (first: boolean, second: boolean) => (
+        <TourProvider>
+          <TourControls />
+          {first && <PageTour pageId="first" steps={STEPS} />}
+          {second && <PageTour pageId="second" steps={STEPS} />}
+        </TourProvider>
+      );
+      const view = render(both(true, false));
+      expect(screen.getByTestId("tour-page").textContent).toBe("first");
+      view.rerender(both(true, true));
+      expect(screen.getByTestId("tour-page").textContent).toBe("second");
+
+      // The first goes away late: the second is still the page's tour.
+      view.rerender(both(false, true));
+      expect(screen.getByTestId("tour-page").textContent).toBe("second");
+      // And when the second goes, nothing is left.
+      view.rerender(both(false, false));
+      expect(screen.getByTestId("tour-page").textContent).toBe("");
+    });
+
+    it("a page mounted under StrictMode keeps its tour", () => {
+      // StrictMode runs a page's effects, cleans them up and runs them
+      // again: the cleanup must not leave the page without its tour.
+      render(
+        <TourProvider>
+          <div id="anchor-a" />
+          <TourControls />
+          <PageTour pageId="strict" steps={STEPS} />
+          <TourOverlay />
+        </TourProvider>,
+        { reactStrictMode: true },
+      );
+      expect(screen.getByTestId("tour-page").textContent).toBe("strict");
+      expect(screen.getByTestId("tour-popover")).toBeTruthy();
+    });
+
+    it("a new steps array for the same page does not restart its tour", () => {
+      const tree = (steps: TourStep[]) => (
+        <TourProvider>
+          <div id="anchor-a" />
+          <div id="anchor-b" />
+          <TourControls />
+          <PageTour pageId="stable" steps={steps} />
+          <TourOverlay />
+        </TourProvider>
+      );
+      const view = render(tree(STEPS));
+      fireEvent.click(screen.getByTestId("tour-next-button"));
+      expect(screen.getByTestId("tour-progress").textContent).toBe("2 / 2");
+
+      // A parent that builds its steps inline gives a new array each render.
+      view.rerender(tree([...STEPS]));
+      expect(screen.getByTestId("tour-progress").textContent).toBe("2 / 2");
+      expect(screen.getByTestId("tour-page").textContent).toBe("stable");
     });
   });
 });

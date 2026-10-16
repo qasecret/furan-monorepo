@@ -34,7 +34,8 @@ export function BuildListItem({ build, projectId, selected, context }: Props) {
       aria-current={selected ? "page" : undefined}
       data-testid={`build-list-item-${build.id}`}
       className={cn(
-        "group block border-l-2 px-3 py-2.5 transition-colors",
+        // The ring is drawn inside: the panel scrolls, and would clip it.
+        "group block border-l-2 px-3 py-2.5 transition-colors focus-ring focus-visible:-outline-offset-2",
         meta.border,
         selected ? "bg-hover" : "hover:bg-hover/50",
       )}
