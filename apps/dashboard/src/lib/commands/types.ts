@@ -68,6 +68,14 @@ export interface Command<C extends CommandCtx = CommandCtx> {
   id: string;
   /** Verbatim copy (spec §4), e.g. "Approve step". */
   label: string;
+  /**
+   * What the command is called as things stand, for a toggle named after
+   * what it will do: `viewer.rail.toggle` is "Hide details" with the rail
+   * open and "Show details" with it collapsed. The `?` sheet, the palette and
+   * a failure's toast read it (`commandLabel`), each when it shows; `label`
+   * stays the name in the registry, and the one used should this throw.
+   */
+  labelFor?: (ctx: C) => string;
   group: CommandGroup;
   /** tinykeys syntax: "a", "$mod+k", "g i", "Shift+ArrowDown" (see `KeyBinding`). */
   keys?: KeyBinding[];

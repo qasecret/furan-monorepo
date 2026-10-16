@@ -8,6 +8,13 @@ import {
   VIEWER_MODES,
   type ViewerMode,
 } from "./comparison-modes";
+import {
+  focusInRail,
+  railCollapsed,
+  railOverlaid,
+  railPresent,
+  setRailCollapsed,
+} from "./rail-state";
 import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
@@ -151,6 +158,11 @@ function hasTextSelection(): boolean {
 
 function isEditing(): boolean {
   return store().ignoreEditMode !== "off";
+}
+
+/** The viewer's own Esc has something to do: the editor or a selection. */
+function viewerEscapes(): boolean {
+  return isEditing() || view().selectedRegionId !== null;
 }
 
 /** The viewport `step` places from the current one, wrapping round. */
@@ -353,12 +365,34 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     run: () => prefs().set("highlight", !prefs().prefs.highlight),
   },
   {
+    // A request for the comments, as Mark as Bug makes: the rail opens on
+    // its Comments tab, expanding when it is collapsed (spec §5), and takes
+    // the request (`InfoRail`). Named for that (Task 13 M9). Only where the
+    // comments can be shown (Task 13 M2): with a rail on screen to take the
+    // request (not over the done card or an empty run, where it would be
+    // left for the next rail), and out of the ignore-region editor, whose
+    // regions the rail holds instead (spec §5). Elsewhere the key is the
+    // browser's.
     id: "viewer.comments",
-    label: "Toggle comments",
+    label: "Show comments",
     group: "View",
     keys: ["c"],
     scope: "viewer",
-    run: () => store().setCommentPanelOpen(!store().commentPanelOpen),
+    enabled: () => railPresent() && !isEditing(),
+    run: () => store().setCommentPanelOpen(true),
+  },
+  {
+    // Spec §5: named for what it does. Only while a rail is on screen (not
+    // over the done card or an empty run). Below 1024 px the change is the
+    // visit's, never stored (`setRailCollapsed`).
+    id: "viewer.rail.toggle",
+    label: "Hide details",
+    labelFor: () => (railCollapsed() ? "Show details" : "Hide details"),
+    group: "View",
+    keys: ["t"],
+    scope: "viewer",
+    enabled: () => railPresent(),
+    run: () => setRailCollapsed(!railCollapsed()),
   },
   {
     // `=` is the unshifted key labelled "+" on US layouts; `+` is bound for
@@ -409,7 +443,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     run: () => store().deleteSelected(),
   },
   {
-    // F-b: region copy. Plain `c` toggles the comments, hence the modifier.
+    // F-b: region copy. Plain `c` shows the comments, hence the modifier.
     // Outside the editor, or with text selected, ⌘C is the browser's copy.
     id: "editor.copy",
     label: "Copy region",
@@ -445,6 +479,14 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
   {
     // Fires inside the done card (its one dialog), wherever focus is in it:
     // back to the batch. Held, it leaves once (no `repeat`).
+    //
+    // Esc closes the innermost thing that has it, one per press:
+    // 1. the done card, wherever focus is;
+    // 2. the rail laid over the canvas (below 1024 px), while focus is in
+    //    it: the reviewer is in it, as in a popover;
+    // 3. the editor, and the selection;
+    // 4. that rail again, with focus elsewhere, once nothing else is open.
+    // In a wide window the rail is part of the page, and Esc never closes it.
     id: "viewer.escape",
     label: "Leave editor / clear selection / back to batch (on a done card)",
     group: "Navigate",
@@ -452,10 +494,14 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     scope: "viewer",
     allowInDialog: "[data-done-card]",
     enabled: ({ onEscape }) =>
-      given(onEscape) || isEditing() || view().selectedRegionId !== null,
+      given(onEscape) || viewerEscapes() || railOverlaid(),
     run: ({ onEscape }) => {
       if (onEscape) {
         onEscape();
+        return;
+      }
+      if (railOverlaid() && (focusInRail() || !viewerEscapes())) {
+        setRailCollapsed(true);
         return;
       }
       if (isEditing()) store().setIgnoreEditMode("off");

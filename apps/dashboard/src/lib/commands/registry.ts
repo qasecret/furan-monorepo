@@ -254,6 +254,24 @@ export function useCommands<C extends CommandCtx>(
   }, [scope]);
 }
 
+/**
+ * What a registered command is called now: its `labelFor` for its live ctx
+ * (or `live`, a ctx already read) where it has one, else its `label`. A
+ * `labelFor` or ctx that throws gives the `label`. Read it when the name is
+ * shown, never from a list memoised before the state it names changed.
+ */
+export function commandLabel(
+  { command, ctx }: ResolvedCommand,
+  live?: CommandCtx,
+): string {
+  if (!command.labelFor) return command.label;
+  try {
+    return command.labelFor(live ?? ctx());
+  } catch {
+    return command.label;
+  }
+}
+
 function isAllowed({ command, ctx }: ResolvedCommand): boolean {
   return command.allowed?.(ctx()) ?? true;
 }

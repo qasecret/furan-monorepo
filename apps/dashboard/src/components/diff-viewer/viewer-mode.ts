@@ -13,7 +13,11 @@ import {
 } from "react";
 import { create } from "zustand";
 
-import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
+import {
+  parseViewParam,
+  VIEWER_MODES,
+  type ViewerMode,
+} from "./comparison-modes";
 import { useViewerStore } from "./useViewerStore";
 import { modeAvailable, modeOnStep, useViewerPrefs } from "./viewer-prefs";
 
@@ -174,8 +178,31 @@ export function useAvailableModes(
 
 // ---------- the viewer ----------
 
+/**
+ * The URL's `?view` (spec §6.3), as the viewer reads it (R31): from
+ * `useSearchParams`, which Next keeps in step with `history.replaceState`.
+ * So a mode change, a history write, re-renders no server page: the page's
+ * props (`canReview`, `userId`) stay what they were.
+ *
+ * `pageView` is the page's own parse of the URL it was rendered for, kept for
+ * the first render: it holds while the URL names no view and is still the one
+ * the viewer opened on. Once the URL names a view, that view is the one. On
+ * Back or Forward to an entry a mode change rewrote, Next restores the page as
+ * it was rendered, so its parse can predate the rewrite; the URL can't.
+ */
+export function useUrlView(pageView: ViewerMode | null): ViewerMode | null {
+  const params = useSearchParams();
+  const search = params.toString();
+  const [opened] = useState(search);
+  const named = params.getAll("view");
+  if (named.length > 0) {
+    return parseViewParam(named.length === 1 ? named[0] : named);
+  }
+  return search === opened ? pageView : null;
+}
+
 export interface ViewerModeInput {
-  /** The URL's `?view`, as the page parsed it (`parseViewParam`). */
+  /** The URL's `?view` (`useUrlView`). */
   urlView: ViewerMode | null;
   /** The step on screen has a baseline. */
   hasBaseline: boolean;
@@ -188,7 +215,8 @@ export interface ViewerModeInput {
   /**
    * The path of the step on screen, when the viewer knows it. A step change
    * shows its step at once and replaces the URL; until the route commits,
-   * `usePathname` still names the step left, and a mode change written there
+   * `usePathname` still names the step left. A mode change then goes with
+   * the step change, as a replace to that step: written to the history, it
    * would call the step change off. Defaults to the URL's path.
    */
   path?: string;
@@ -207,13 +235,16 @@ export interface ViewerModeState {
   available: Record<ViewerMode, boolean>;
   /**
    * Stores the preference and replaces the URL with `view=‹mode›`, every
-   * other param as it is (no history entry, no scroll), and shows the mode at
-   * once. A mode the step can't show is not chosen on it. Choosing the mode
-   * on screen again, when no `?view` named it, only stores it: nothing changes
-   * on screen, so nothing is written. While a navigation to another step is
-   * on its way, that navigation takes the mode instead (R20). In the
-   * ignore-region editor, Swipe and Flicker wait for it to close, and side by
-   * side shows meanwhile (R3, spec §4.4).
+   * other param and the fragment as they are, and shows the mode at once.
+   * The URL is written with `history.replaceState` (R31): no navigation, so
+   * no history entry, no scroll and no server render. A mode the step can't
+   * show is not chosen on it. Choosing the mode on screen again, when no
+   * `?view` named it, only stores it: nothing changes on screen, so nothing
+   * is written. While a navigation to another step is on its way, that
+   * navigation takes the mode instead (R20); while the step on screen's own
+   * route is (a step change by ←/→), the mode goes with it, as a replace to
+   * that step. In the ignore-region editor, Swipe and Flicker wait for it to
+   * close, and side by side shows meanwhile (R3, spec §4.4).
    */
   setMode(mode: ViewerMode): void;
   /**
@@ -241,11 +272,12 @@ export function useViewerMode({
   const pathname = usePathname();
   const search = useSearchParams().toString();
 
-  // The view `setMode` last wrote, and the URL's view when it did. The router
-  // re-renders the page with the new URL only after a round trip; until the
-  // URL's view changes, what was written is the view. Then it is dropped for
-  // good, and the URL's is (it caught up, or the page was opened on another
-  // view).
+  // The view `setMode` last wrote, and the URL's view when it did. Next
+  // applies a history write to `useSearchParams` in a transition, after the
+  // render that shows the mode (and a write that goes with a step change, or
+  // a retargeted move, lands only with that step's route); until the URL's
+  // view changes, what was written is the view. Then it is dropped for good,
+  // and the URL's is (it caught up, or another URL came).
   const [written, setWritten] = useState<{
     view: ViewerMode;
     over: ViewerMode | null;
@@ -256,7 +288,7 @@ export function useViewerMode({
   const mode = useModeFor(view, hasBaseline);
 
   // The newest query string we know of: the URL's, or the one the last
-  // change wrote before the router re-rendered us with it.
+  // change wrote before Next re-rendered us with it.
   const latest = useRef(search);
   useEffect(() => {
     latest.current = search;
@@ -267,6 +299,7 @@ export function useViewerMode({
     view,
     hasBaseline,
     path: path ?? pathname,
+    route: pathname,
     retarget,
   };
   const live = useRef(inputs);
@@ -298,9 +331,17 @@ export function useViewerMode({
       const params = new URLSearchParams(latest.current);
       params.set("view", next);
       latest.current = params.toString();
-      router.replace(`${now.path}?${latest.current}${window.location.hash}`, {
-        scroll: false,
-      });
+      const url = `${now.path}?${latest.current}${window.location.hash}`;
+      // The step on screen's route is still on its way (←/→): the mode goes
+      // with it. A history write now would call that navigation off, and
+      // leave the step's URL over the route it left.
+      if (now.path !== now.route) {
+        router.replace(url, { scroll: false });
+        return;
+      }
+      // R31: a history write, which Next applies to `useSearchParams`. No
+      // navigation, so the server page isn't rendered again for a mode.
+      window.history.replaceState(null, "", url);
     },
     [router],
   );

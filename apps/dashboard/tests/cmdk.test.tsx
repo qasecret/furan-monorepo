@@ -44,6 +44,7 @@ import {
 } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { useRailState } from "@/components/diff-viewer/rail-state";
 import {
   useDiffViewerShortcuts,
   type ShortcutOptions,
@@ -170,6 +171,7 @@ beforeEach(() => {
   useCommandRegistry.setState({ entries: [], role: "guest" });
   useSingleKeyStore.setState({ on: true });
   useShortcutsSheet.setState({ open: false });
+  useRailState.setState({ mounted: 0 });
   localStorage.clear();
 });
 
@@ -1665,6 +1667,8 @@ describe("CommandPalette", () => {
     // decision keys, the palette opened by its key.
     const onApprove = vi.fn();
     const onReject = vi.fn();
+    // A rail on screen, so the comments' key is on (Task 13 M2).
+    useRailState.setState({ mounted: 1 });
     render(
       <Shell role="editor">
         <Viewer viewports={[]} onApprove={onApprove} onReject={onReject} />
@@ -1676,7 +1680,7 @@ describe("CommandPalette", () => {
     act(() => input.focus());
     const before = within(palette).getAllByRole("option").length;
     expect(
-      within(palette).getByRole("option", { name: "Toggle comments" }),
+      within(palette).getByRole("option", { name: "Show comments" }),
     ).toBeTruthy();
 
     const user = userEvent.setup();
@@ -1686,7 +1690,7 @@ describe("CommandPalette", () => {
     expect(input.value).toBe("a");
     expect(within(palette).getAllByRole("option").length).toBeLessThan(before);
     expect(
-      within(palette).queryByRole("option", { name: "Toggle comments" }),
+      within(palette).queryByRole("option", { name: "Show comments" }),
     ).toBeNull();
     expect(
       within(palette).getByRole("option", { name: "Approve step" }),

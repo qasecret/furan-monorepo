@@ -100,6 +100,23 @@ describe("the canvas layers use the shared hex", () => {
     expect(g!.strokes).toEqual([SEVERITY_CANVAS_HEX.breaking]);
   });
 
+  test("the overlay layer without fill draws the outline in the same hex, and no fill, the halo too (R28)", () => {
+    const parent = new Container() as unknown as FakeContainer;
+    const layer = mountDiffOverlayLayer(
+      parent as never,
+      [region({ id: "b", severity: "breaking" })],
+      "b",
+      { fill: false },
+    ) as unknown as FakeContainer;
+    const drawn = graphicsUnder(layer);
+    // The rectangle and the selected one's halo.
+    expect(drawn).toHaveLength(2);
+    for (const g of drawn) {
+      expect(g.fills).toEqual([]);
+      expect(g.strokes).toEqual([SEVERITY_CANVAS_HEX.breaking]);
+    }
+  });
+
   test("the shading layer dots a breaking region in SEVERITY_CANVAS_HEX.breaking", () => {
     const parent = new Container() as unknown as FakeContainer;
     const { container } = mountDiffShadingLayer(

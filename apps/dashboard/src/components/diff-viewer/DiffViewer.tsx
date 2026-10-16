@@ -6,6 +6,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,8 +20,12 @@ import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
-import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
+import {
+  IgnoreRegionListPanel,
+  useIgnoreRegionsInView,
+} from "./IgnoreRegionListPanel";
 import { useImageSet, type ImageSetRequest } from "./image-set";
+import { InfoRail } from "./InfoRail";
 import type { DiffRegion } from "./layers/regionTypes";
 import { isPixelDiffRegion } from "./region-visibility";
 import { useReviewActions } from "./review-actions";
@@ -35,7 +40,7 @@ import { useElementMap } from "./useElementMap";
 import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
-import { useViewerMode, ViewerModeProvider } from "./viewer-mode";
+import { useUrlView, useViewerMode, ViewerModeProvider } from "./viewer-mode";
 import { useViewerPrefs } from "./viewer-prefs";
 import { ViewerLinkProvider } from "./ViewerLink";
 import { ViewerStage } from "./ViewerStage";
@@ -51,7 +56,11 @@ import {
 } from "@/lib/commands/keys";
 import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
-import { useCommandKeys, useRegisteredCommands } from "@/lib/commands/registry";
+import {
+  commandLabel,
+  useCommandKeys,
+  useRegisteredCommands,
+} from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
@@ -83,7 +92,10 @@ interface Props {
   /**
    * The URL's comparison mode (spec §6.3), parsed by the page; null or
    * absent when the URL names none. It outranks the stored preference, and
-   * every link the viewer makes carries it.
+   * every link the viewer makes carries it. The viewer reads the URL's view
+   * from `useSearchParams` (R31, `useUrlView`); this parse holds only while
+   * the URL names none. A mode change writes the history and renders no
+   * page, so the page never sends it again.
    */
   view?: ViewerMode | null;
   /**
@@ -95,7 +107,9 @@ interface Props {
   canReview: boolean;
   /**
    * Whose viewer preferences to read and store (spec §6.1), from the
-   * server's session. Null: the defaults, held in memory for the visit.
+   * server's session. Null: the defaults, held in memory for the visit. A
+   * user id that goes to null while this viewer is open is ignored (a
+   * session lookup that failed on a later server render).
    */
   userId: string | null;
 }
@@ -126,7 +140,7 @@ export function DiffViewer({
   projectId,
   initialCheckpointId,
   reviewContext,
-  view: urlView = null,
+  view: pageView = null,
   canReview,
   userId,
 }: Props) {
@@ -135,7 +149,13 @@ export function DiffViewer({
   // leaves. `hydrate` reads once per user (the viewer remounts on every step
   // and the store outlives it), so from the second render on it does nothing.
   // With no user it holds the defaults in memory, never an earlier user's.
-  useViewerPrefs.getState().hydrate(userId);
+  // Within this viewer a user doesn't become no user: a later server render
+  // whose session lookup failed would otherwise swap the rail, the opacity
+  // and the rest to the defaults mid-review. A new viewer (a step, a visit)
+  // takes the page's answer as it is.
+  const viewerUser = useRef(userId);
+  if (userId !== null) viewerUser.current = userId;
+  useViewerPrefs.getState().hydrate(viewerUser.current);
   const router = useRouter();
   const utils = trpc.useUtils();
   const context = reviewContext ?? NO_REVIEW_CONTEXT;
@@ -243,13 +263,16 @@ export function DiffViewer({
   // The comparison mode (spec §6.3): the editor's override, the URL's
   // `?view`, then the preference, and side by side where the step has no
   // baseline (R2). Every part of the viewer reads this one mode, and every
-  // link the viewer makes carries the URL's view. A mode change writes the
-  // URL of the step on screen, which a step change shows before its route
-  // commits; while the review loop is on its way to another step, that move
-  // takes the mode instead (R20; the loop is set up below), and so does a
-  // link's navigation (R22). The ignore-region editor's override (R3) is the
-  // step's: a step change clears it.
+  // link the viewer makes carries the URL's view, read from
+  // `useSearchParams` (R31). A mode change writes the URL of the step on
+  // screen to the history, with no navigation, or goes with the step
+  // change's own when ←/→ showed the step before its route committed; while
+  // the review loop is on its way to another step, that move takes the mode
+  // instead (R20; the loop is set up below), and so does a link's navigation
+  // (R22). The ignore-region editor's override (R3) is the step's: a step
+  // change clears it.
   const retargetLoopMove = useRef<(view: ViewerMode) => boolean>(() => false);
+  const urlView = useUrlView(pageView);
   const viewerMode = useViewerMode({
     urlView,
     hasBaseline,
@@ -448,11 +471,12 @@ export function DiffViewer({
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const proposePendingSnap = useViewerStore((s) => s.proposePendingSnap);
-  // Phase 1.4: list panel mount gate + delete wiring. Reads here so they
-  // sit alongside the other ignore-editor selectors (the actual JSX
-  // mount is next to RegionListPanel below).
-  const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
+  // Phase 1.4: the ignore-region list's delete wiring. Reads here so they
+  // sit alongside the other ignore-editor selectors (the list is the info
+  // rail's content while the editor is open, below).
   const activeViewport = useViewerStore((s) => s.viewport);
+  // What the rail's strip counts in the editor: the list's own regions.
+  const ignoreRegionsInView = useIgnoreRegionsInView(activeViewport || null);
   const setViewport = useViewerStore((s) => s.setViewport);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
   const deleteSelected = useViewerStore((s) => s.deleteSelected);
@@ -602,12 +626,15 @@ export function DiffViewer({
   // Each step, and each of its viewports, opens at fit with nothing selected
   // (spec §6.2). The view-state store outlives the viewer's remount, so the
   // reset is explicit. Reduced motion is read when the step opens: the
-  // flicker starts paused under it.
+  // flicker starts paused under it. A layout effect, so the reset lands in
+  // the step's own commit, before the browser can paint it: a cached step
+  // never shows a frame at the previous step's zoom, pan, swipe or flicker
+  // frame (m6).
   const resetView = useViewState((s) => s.resetView);
   const reducedMotion = useReducedMotion();
   const reducedMotionRef = useRef(reducedMotion);
   reducedMotionRef.current = reducedMotion;
-  useEffect(() => {
+  useLayoutEffect(() => {
     resetView({ reducedMotion: reducedMotionRef.current });
   }, [activeCheckpointId, activeViewport, resetView]);
 
@@ -929,10 +956,14 @@ export function DiffViewer({
                 )}
               </div>
             )}
-            {/* Canvas + right INFO sidebar. The left checkpoint rail was
-                removed — navigation is the batch-detail grid (enter) plus the
-                top-bar prev/next stepper (move between checkpoints), matching
-                the reference's two-pane layout. */}
+            {/* Canvas + the info rail on the right (spec §5): resizable,
+                collapsible, and over the canvas below 1024 px, which this
+                row positions. While the ignore-region editor is open the
+                rail holds its regions: one rail, never a second column.
+                The left checkpoint rail was removed —
+                navigation is the batch-detail grid (enter) plus the top-bar
+                prev/next stepper (move between checkpoints), matching the
+                reference's two-pane layout. */}
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex-1 min-w-0">
                 <div
@@ -982,35 +1013,41 @@ export function DiffViewer({
                   </>
                 )}
               </div>
-              <TestInfoSidebar
-                test={data.name ?? "Untitled run"}
-                stepLabel={stepLabel}
-                match={cand?.matchLevel ?? null}
-                app={appName}
-                branch={data.branchName ?? null}
-                os={cand?.os ?? null}
-                browser={cand?.browser ?? null}
-                viewport={cand?.viewport ?? null}
-                startedAt={runMeta.createdAt ?? null}
-                duration={
-                  durationMs != null ? formatDuration(durationMs) : null
-                }
-                runBy={runByName}
-                pixelDiffPercent={runDiffPercent}
-                regions={regions}
-                vlmDescription={data?.vlmDescription ?? null}
-                testVariationId={
-                  selectedCheckpointItem?.testVariationId ?? null
-                }
-                currentBaselineKey={data.baselineName ?? null}
-                runId={runId}
-              />
-              {ignoreEditMode !== "off" && (
-                <IgnoreRegionListPanel
-                  viewport={activeViewport || null}
-                  onDelete={handleDeleteIgnoreRegion}
+              <InfoRail
+                editor={{
+                  content: (
+                    <IgnoreRegionListPanel
+                      viewport={activeViewport || null}
+                      onDelete={handleDeleteIgnoreRegion}
+                    />
+                  ),
+                  count: ignoreRegionsInView.length,
+                }}
+              >
+                <TestInfoSidebar
+                  test={data.name ?? "Untitled run"}
+                  stepLabel={stepLabel}
+                  match={cand?.matchLevel ?? null}
+                  app={appName}
+                  branch={data.branchName ?? null}
+                  os={cand?.os ?? null}
+                  browser={cand?.browser ?? null}
+                  viewport={cand?.viewport ?? null}
+                  startedAt={runMeta.createdAt ?? null}
+                  duration={
+                    durationMs != null ? formatDuration(durationMs) : null
+                  }
+                  runBy={runByName}
+                  pixelDiffPercent={runDiffPercent}
+                  regions={regions}
+                  vlmDescription={data?.vlmDescription ?? null}
+                  testVariationId={
+                    selectedCheckpointItem?.testVariationId ?? null
+                  }
+                  currentBaselineKey={data.baselineName ?? null}
+                  runId={runId}
                 />
-              )}
+              </InfoRail>
               {/* Keyboard hint bar (reference TestStep): floats over the
                   canvas; ←/→ navigate steps, J/K the next / previous pending
                   step while the loop is on, A approve, R reject, and ⌘Z undo
@@ -1092,11 +1129,14 @@ function ShortcutHints({ show }: { show: Partial<Record<string, boolean>> }) {
     .sort(
       (a, b) => Number(a.scope === "global") - Number(b.scope === "global"),
     );
-  for (const { command } of primary) {
+  for (const resolved of primary) {
+    const { command } = resolved;
     const [live] = liveBindings(command, singleKeys);
     if (live === undefined) continue;
     const cap = formatKeyLabel(bindingKey(live), platform);
-    const hint = HINTS[command.id] ?? { text: lowerFirst(command.label) };
+    const hint = HINTS[command.id] ?? {
+      text: lowerFirst(commandLabel(resolved)),
+    };
     const last = groups.at(-1);
     if (last?.text === hint.text) last.keys.push(cap);
     else groups.push({ ...hint, keys: [cap] });

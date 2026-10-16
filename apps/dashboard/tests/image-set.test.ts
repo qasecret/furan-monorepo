@@ -394,8 +394,14 @@ describe("decodeImage and a PNG without its IEND chunk", () => {
 // -- the cache --------------------------------------------------------------
 
 describe("createBitmapCache", () => {
+  // A viewer is open, pinning an image none of these tests sets: an idle
+  // cache keeps nothing (see the pins below).
+  const viewerOpen = (cache: ReturnType<typeof createBitmapCache>) =>
+    cache.retain(["on-screen"]);
+
   it("evicts the oldest past the entry limit and closes only that bitmap", () => {
     const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    viewerOpen(cache);
     const imgs = Array.from({ length: 13 }, (_, i) => loaded(`k${i}`, 10, 10));
     for (const img of imgs) cache.set(img);
 
@@ -410,6 +416,7 @@ describe("createBitmapCache", () => {
 
   it("counts a read as use: the least recently used goes first", () => {
     const cache = createBitmapCache({ maxEntries: 2, maxBytes: 1e9 });
+    viewerOpen(cache);
     const a = loaded("a", 10, 10);
     const b = loaded("b", 10, 10);
     const c = loaded("c", 10, 10);
@@ -426,6 +433,7 @@ describe("createBitmapCache", () => {
 
   it("evicts past the byte limit, estimating w x h x 4", () => {
     const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    viewerOpen(cache);
     const a = loaded("a", 10000, 5000); // 200 MB each
     const b = loaded("b", 10000, 5000);
     const c = loaded("c", 10000, 5000);
@@ -445,6 +453,7 @@ describe("createBitmapCache", () => {
 
   it("drops an unpinned image bigger than the whole budget, closed", () => {
     const cache = createBitmapCache({ maxEntries: 12, maxBytes: 1000 });
+    viewerOpen(cache);
     const small = loaded("small", 2, 2);
     const huge = loaded("huge", 100, 100);
     cache.set(small);
@@ -458,6 +467,7 @@ describe("createBitmapCache", () => {
 
   it("owns what it is given: a second bitmap for a held key is closed, the held one stays", () => {
     const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    viewerOpen(cache);
     const first = loaded("a", 10, 10);
     const second = loaded("a", 10, 10);
     cache.set(first);
@@ -472,6 +482,7 @@ describe("createBitmapCache", () => {
 
   it("tracks bytes down as entries leave", () => {
     const cache = createBitmapCache({ maxEntries: 1, maxBytes: 1e9 });
+    viewerOpen(cache);
     cache.set(loaded("a", 10, 10));
     cache.set(loaded("b", 20, 20));
     expect(cache.bytes()).toBe(1600);
@@ -595,6 +606,32 @@ describe("createBitmapCache: pins", () => {
     await flush();
     // With no pin left at all the cache is emptied (see below).
     expect(a.bitmap.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no pin at all (no viewer open), an image it is given is closed at once and not kept (T5)", () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    const late = loaded("late", 10, 10);
+    cache.set(late);
+
+    expect(late.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(cache.get("late")).toBeUndefined();
+    expect(cache.size()).toBe(0);
+    expect(cache.bytes()).toBe(0);
+  });
+
+  it("after the last pin's release, an image that lands is closed at once, before the emptying and after it (T5)", async () => {
+    const cache = createBitmapCache(BITMAP_CACHE_LIMITS);
+    const release = cache.retain(["a"]);
+    cache.set(loaded("a", 10, 10));
+    release();
+    const before = loaded("before", 10, 10);
+    cache.set(before);
+    expect(before.bitmap.close).toHaveBeenCalledTimes(1);
+    await flush();
+    const after = loaded("after", 10, 10);
+    cache.set(after);
+    expect(after.bitmap.close).toHaveBeenCalledTimes(1);
+    expect(cache.size()).toBe(0);
   });
 
   it("empties the cache when the last pin is released", async () => {
@@ -965,6 +1002,36 @@ describe("useImageSet: stale work", () => {
     // Decoded for its key, so the cache keeps it: nobody else closes it.
     expect(__viewerBitmapCache.get(k("Ac"))?.bitmap).toBe(lateBitmap);
     expect(lateBitmap.close).not.toHaveBeenCalled();
+  });
+
+  it("closes a bitmap that finished decoding after the last viewer went, and keeps nothing (T5)", async () => {
+    let finishDecode!: () => void;
+    const lateBitmap = fakeBitmap(40, 40);
+    createImageBitmapMock.mockImplementationOnce(
+      () =>
+        new Promise<ImageBitmap>((resolve) => {
+          finishDecode = () => resolve(lateBitmap);
+        }),
+    );
+    const { unmount } = mount(req(null, k("Ac"), null));
+    await act(async () => {
+      callsFor(k("Ac"))[0]!.respond();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(createImageBitmapMock).toHaveBeenCalledTimes(1); // decoding A
+
+    unmount();
+    await settle();
+    await act(async () => {
+      finishDecode();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Nobody is left to show it: the cache closes it rather than hold it
+    // for the rest of the session.
+    expect(lateBitmap.close).toHaveBeenCalledTimes(1);
+    expect(__viewerBitmapCache.get(k("Ac"))).toBeUndefined();
+    expect(__viewerBitmapCache.size()).toBe(0);
   });
 
   it("shows no image from the old step while the new one loads", async () => {
