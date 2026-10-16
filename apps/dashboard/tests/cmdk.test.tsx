@@ -854,6 +854,58 @@ describe("CommandPalette", () => {
     expect(document.activeElement).toBe(somewhere);
   });
 
+  test("a pick of the page it is on goes nowhere and gives focus back (R36)", async () => {
+    localStorage.setItem(
+      RECENT_A,
+      JSON.stringify([{ id: "admin.members", label: "Members" }]),
+    );
+    render(
+      <Shell role="admin">
+        <button type="button">Somewhere</button>
+      </Shell>,
+    );
+    const somewhere = screen.getByRole("button", { name: "Somewhere" });
+    const picks: [heading: string, label: string, href: string][] = [
+      ["Go to", "Batches", "/inbox"],
+      ["Go to", "Settings", "/projects/p1/settings"],
+      ["Recent", "Members", "/admin/members"],
+      ["Projects", "Jump to project: Beta", "/projects/p2/builds"],
+      ["Account", "API tokens", "/account/tokens"],
+    ];
+    try {
+      for (const [heading, label, href] of picks) {
+        window.history.replaceState(null, "", href);
+        act(() => somewhere.focus());
+        press("k", { ctrlKey: true });
+        const palette = await screen.findByTestId("command-palette");
+        fireEvent.click(
+          within(group(palette, heading)).getByRole("option", { name: label }),
+        );
+        await settle();
+        expect(usePaletteStore.getState().open, label).toBe(false);
+        // Already there: nothing is pushed, and focus is not left on body.
+        expect(pushMock, label).not.toHaveBeenCalled();
+        expect(document.activeElement, label).toBe(somewhere);
+      }
+
+      // The same path with another query is another page: it goes there.
+      window.history.replaceState(null, "", "/inbox?status=failed");
+      act(() => somewhere.focus());
+      press("k", { ctrlKey: true });
+      const palette = await screen.findByTestId("command-palette");
+      fireEvent.click(
+        within(group(palette, "Go to")).getByRole("option", {
+          name: "Batches",
+        }),
+      );
+      await settle();
+      expect(pushMock).toHaveBeenCalledWith("/inbox");
+      expect(document.activeElement).not.toBe(somewhere);
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   test("focus goes back to the opener without scrolling the page", async () => {
     render(
       <Shell>
