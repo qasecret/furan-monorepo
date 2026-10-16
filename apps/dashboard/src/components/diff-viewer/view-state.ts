@@ -17,6 +17,11 @@ import { clampZoom, zoomAbout, type Size, type View } from "./viewer-geometry";
 
 export type FlickerFrame = "baseline" | "current";
 
+/** The frame a swap shows next. */
+export function otherFrame(frame: FlickerFrame): FlickerFrame {
+  return frame === "baseline" ? "current" : "baseline";
+}
+
 /** Zoom, and the pan in world px (R12): see `View`. */
 interface ViewState extends View {
   /** Set by the diff stepper to ask the canvas to frame a region; the canvas
@@ -26,6 +31,21 @@ interface ViewState extends View {
   swipe: number;
   flickerFrame: FlickerFrame;
   flickerPlaying: boolean;
+  /**
+   * The frame on screen was put there by hand (`f` while paused), so the
+   * flicker's live region names it (spec §4.3). Every other change to the
+   * flicker clears it (`setFlicker`, a reset): an animated swap is never
+   * announced, and the next swap by hand always is.
+   */
+  flickerSwappedByHand: boolean;
+  /**
+   * Moves on with every write to the flicker: a swap (the clock's or by
+   * hand), play or pause, and a reset (every step and viewport change), even
+   * one that leaves the frame as it was. Never comes back. Flicker's clock
+   * times each swap from its latest move, so every frame, a new step's
+   * baseline included, shows for a full interval.
+   */
+  flickerEpoch: number;
   /** The selected diff region (the region list, the stepper, a canvas click). */
   selectedRegionId: string | null;
   /**
@@ -54,11 +74,17 @@ interface ViewState extends View {
   /** Zoom and pan at once (the stepper's focus), the zoom clamped. */
   setView(v: View): void;
   setSwipe(v: number): void;
+  /** The frame and the play state together; forgets a swap by hand. */
   setFlicker(frame: FlickerFrame, playing: boolean): void;
+  /** A swap by hand (`f` while paused): the other frame, paused, announced. */
+  swapFlicker(): void;
   setSelected(id: string | null): void;
   setShowSuppressed(on: boolean): void;
   setFocusBbox(b: Bbox | null): void;
-  /** Every field back to its default; the flicker plays unless motion is reduced. */
+  /**
+   * Every field back to its default; the flicker plays unless motion is
+   * reduced. The flicker's epoch moves on.
+   */
   resetView(opts: { reducedMotion: boolean }): void;
 }
 
@@ -70,12 +96,14 @@ const fresh = (reducedMotion: boolean) => ({
   swipe: 0.5,
   flickerFrame: "baseline" as const,
   flickerPlaying: !reducedMotion,
+  flickerSwappedByHand: false,
   selectedRegionId: null,
   showSuppressed: false,
 });
 
 export const useViewState = create<ViewState>((set) => ({
   ...fresh(false),
+  flickerEpoch: 0,
   zoomBy: (f) => set((s) => ({ zoom: clampZoom(s.zoom * f) })),
   zoomAt: (f, p, world, viewport) =>
     set((s) => {
@@ -97,9 +125,25 @@ export const useViewState = create<ViewState>((set) => ({
       Number.isFinite(v) ? { swipe: Math.min(1, Math.max(0, v)) } : {},
     ),
   setFlicker: (flickerFrame, flickerPlaying) =>
-    set({ flickerFrame, flickerPlaying }),
+    set((s) => ({
+      flickerFrame,
+      flickerPlaying,
+      flickerSwappedByHand: false,
+      flickerEpoch: s.flickerEpoch + 1,
+    })),
+  swapFlicker: () =>
+    set((s) => ({
+      flickerFrame: otherFrame(s.flickerFrame),
+      flickerPlaying: false,
+      flickerSwappedByHand: true,
+      flickerEpoch: s.flickerEpoch + 1,
+    })),
   setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setShowSuppressed: (showSuppressed) => set({ showSuppressed }),
   setFocusBbox: (focusBbox) => set({ focusBbox }),
-  resetView: ({ reducedMotion }) => set(fresh(reducedMotion)),
+  resetView: ({ reducedMotion }) =>
+    set((s) => ({
+      ...fresh(reducedMotion),
+      flickerEpoch: s.flickerEpoch + 1,
+    })),
 }));

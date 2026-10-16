@@ -15,6 +15,7 @@ import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { BatchDoneCard } from "./BatchDoneCard";
 import type { CheckpointSummary } from "./checkpoint-nav";
+import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
@@ -34,7 +35,9 @@ import { useElementMap } from "./useElementMap";
 import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
+import { useViewerMode, ViewerModeProvider } from "./viewer-mode";
 import { useViewerPrefs } from "./viewer-prefs";
+import { ViewerLinkProvider } from "./ViewerLink";
 import { ViewerStage } from "./ViewerStage";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
@@ -78,6 +81,12 @@ interface Props {
    */
   reviewContext?: ReviewContext;
   /**
+   * The URL's comparison mode (spec §6.3), parsed by the page; null or
+   * absent when the URL names none. It outranks the stored preference, and
+   * every link the viewer makes carries it.
+   */
+  view?: ViewerMode | null;
+  /**
    * The viewer may decide: the server's answer for the request's role
    * (R14), so the first paint already has, or has not, the decision
    * buttons. False: the step and its decision read-only, with no Approve,
@@ -117,6 +126,7 @@ export function DiffViewer({
   projectId,
   initialCheckpointId,
   reviewContext,
+  view: urlView = null,
   canReview,
   userId,
 }: Props) {
@@ -137,42 +147,6 @@ export function DiffViewer({
 
   // ADR-038: fetch the checkpoint list for the rail
   const checkpointsQuery = trpc.runs.listCheckpoints.useQuery({ runId });
-
-  // ADR-038: resolve "_first" sentinel to the real first checkpoint id
-  useEffect(() => {
-    if (
-      selectedCheckpointId === "_first" &&
-      checkpointsQuery.data?.items?.length
-    ) {
-      const firstId = checkpointsQuery.data.items[0]?.id;
-      if (firstId) {
-        setSelectedCheckpointId(firstId);
-        if (projectId) {
-          // The review context stays in the URL: a reload keeps the scope.
-          router.replace(diffViewerHref(projectId, runId, firstId, context));
-        }
-      }
-    }
-  }, [
-    selectedCheckpointId,
-    checkpointsQuery.data,
-    projectId,
-    runId,
-    router,
-    context,
-  ]);
-
-  // ADR-038: sync URL when user navigates between checkpoints, keeping the
-  // review context.
-  const handleCheckpointSelect = useCallback(
-    (id: string) => {
-      setSelectedCheckpointId(id);
-      if (projectId) {
-        router.replace(diffViewerHref(projectId, runId, id, context));
-      }
-    },
-    [projectId, runId, router, context],
-  );
 
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
   // `state` is the review state (new / passed / unresolved / approved /
@@ -210,91 +184,6 @@ export function DiffViewer({
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
 
-  // One set of review actions shared by the <ApprovalBar> buttons and the
-  // A / R keyboard shortcuts, so a keypress always takes the button's path:
-  // per-checkpoint decision, the step-state and run gates, unsaved ignore
-  // regions folded in, the older-capture question, and the move to the next
-  // pending step (the loop; Mark as Bug does not move). The loop is set up
-  // below, from the step's view; a decision reaches it when it is made. A
-  // decision says where its step is, in this review context, so its undo can
-  // offer to come back here.
-  const runProjectId = data?.projectId;
-  const review = useReviewActions({
-    runId,
-    checkpointId: activeCheckpointId,
-    status: data?.status,
-    onResolved: () => loop.afterDecision(),
-    ...(runProjectId
-      ? {
-          stepHref: (id: string) =>
-            diffViewerHref(runProjectId, runId, id, context),
-        }
-      : {}),
-  });
-
-  // The review loop (spec §5.4), asked from the step on screen once `_first`
-  // has resolved. Off until the run has loaded, for a run that failed to load
-  // (a deleted run, another project's), and for a run with no batch to walk:
-  // no Next pending, no J / K, and no `review.next` call. A run that may not
-  // take decisions (overridden, not reviewable) still navigates; only
-  // deciding is off.
-  const loopOn = Boolean(data?.buildId) && !error;
-  // The step on screen, for the batch counts (R33): while it needs review it
-  // counts in what is left, and in the filter's count if it is inside it.
-  const stepHere = {
-    pending: review.view === "pending",
-    inFilter: inFacets(
-      checkpointsQuery.data?.items?.find((c) => c.id === activeCheckpointId),
-      context.facets,
-    ),
-  };
-  // A decision on this step still on its way: a read meanwhile that shows the
-  // step pending again predates its commit, and is no undo (R36).
-  const decisionInFlight = useIsDecisionInFlight(activeCheckpointId);
-  const loop = useReviewLoop({
-    projectId: data?.projectId ?? "",
-    buildId: data?.buildId || undefined,
-    runId,
-    checkpointId: activeCheckpointId,
-    context,
-    enabled: loopOn,
-    stepPending: stepHere.pending,
-    stepInFilter: stepHere.inFilter,
-    decisionInFlight,
-  });
-  const undoCount = useUndoStore((s) => s.stack.length);
-  // The done card (spec §5.4) takes the canvas's place once the step on
-  // screen is settled: not while a decision waits for its answer, and not
-  // while the step needs review (the decision's own update lands just after
-  // it; the loop drops the card if the step needs review again, R19).
-  const card =
-    loop.card !== null && !loop.pending && review.view !== "pending"
-      ? loop.card
-      : null;
-
-  // T11: SSE — invalidate runs.getById on terminal worker events so the
-  // viewer picks up freshly written diff regions, baselineSource, etc.
-  const onSseEvent = useCallback(
-    (e: RunEvent) => {
-      if (
-        e.type === "diff.completed" ||
-        e.type === "capture.completed" ||
-        e.type === "run.completed"
-      ) {
-        void utils.runs.getById.invalidate({ runId });
-      }
-    },
-    [utils, runId],
-  );
-  useRunEvents(runId, onSseEvent);
-
-  // ADR-031: hydrate the ignore-region editor's saved slices from the
-  // run + variation payload. The store's hydrateSavedIgnoreAreas
-  // preserves drafts + markedForDeletion when unsaved changes exist
-  // (guards against silent loss on react-query refetch / SSE refresh).
-  const hydrateSavedIgnoreAreas = useViewerStore(
-    (s) => s.hydrateSavedIgnoreAreas,
-  );
   // Select the candidate by selectedCheckpointId, falling back to the
   // first screenshot. Before the fix this was hardcoded to screenshots[0],
   // so the viewer always rendered the first checkpoint's image no matter
@@ -348,6 +237,166 @@ export function DiffViewer({
   }, [data, contextKey]);
 
   const baselineScreenshot = currentContext.baselineScreenshot;
+  // Without a baseline (a new test) only side by side is available (R2).
+  const hasBaseline = (baselineScreenshot?.imageKey ?? null) !== null;
+
+  // The comparison mode (spec §6.3): the editor's override, the URL's
+  // `?view`, then the preference, and side by side where the step has no
+  // baseline (R2). Every part of the viewer reads this one mode, and every
+  // link the viewer makes carries the URL's view. A mode change writes the
+  // URL of the step on screen, which a step change shows before its route
+  // commits; while the review loop is on its way to another step, that move
+  // takes the mode instead (R20; the loop is set up below), and so does a
+  // link's navigation (R22). The ignore-region editor's override (R3) is the
+  // step's: a step change clears it.
+  const retargetLoopMove = useRef<(view: ViewerMode) => boolean>(() => false);
+  const viewerMode = useViewerMode({
+    urlView,
+    hasBaseline,
+    ...(activeCheckpointId ? { step: activeCheckpointId } : {}),
+    ...(projectId && activeCheckpointId
+      ? { path: diffViewerHref(projectId, runId, activeCheckpointId) }
+      : {}),
+    retarget: (view) => retargetLoopMove.current(view),
+  });
+  const viewerModeContext = useMemo(
+    () => ({
+      view: viewerMode.view,
+      setMode: viewerMode.setMode,
+      available: viewerMode.available,
+    }),
+    [viewerMode.view, viewerMode.setMode, viewerMode.available],
+  );
+
+  // ADR-038: resolve "_first" sentinel to the real first checkpoint id
+  useEffect(() => {
+    if (
+      selectedCheckpointId === "_first" &&
+      checkpointsQuery.data?.items?.length
+    ) {
+      const firstId = checkpointsQuery.data.items[0]?.id;
+      if (firstId) {
+        setSelectedCheckpointId(firstId);
+        if (projectId) {
+          // The review context and the mode stay in the URL: a reload keeps
+          // the scope and the mode.
+          router.replace(
+            diffViewerHref(projectId, runId, firstId, context, viewerMode.view),
+          );
+        }
+      }
+    }
+  }, [
+    selectedCheckpointId,
+    checkpointsQuery.data,
+    projectId,
+    runId,
+    router,
+    context,
+    viewerMode.view,
+  ]);
+
+  // ADR-038: sync URL when user navigates between checkpoints, keeping the
+  // review context and the comparison mode.
+  const handleCheckpointSelect = useCallback(
+    (id: string) => {
+      setSelectedCheckpointId(id);
+      if (projectId) {
+        router.replace(
+          diffViewerHref(projectId, runId, id, context, viewerMode.view),
+        );
+      }
+    },
+    [projectId, runId, router, context, viewerMode.view],
+  );
+
+  // One set of review actions shared by the <ApprovalBar> buttons and the
+  // A / R keyboard shortcuts, so a keypress always takes the button's path:
+  // per-checkpoint decision, the step-state and run gates, unsaved ignore
+  // regions folded in, the older-capture question, and the move to the next
+  // pending step (the loop; Mark as Bug does not move). The loop is set up
+  // below, from the step's view; a decision reaches it when it is made. A
+  // decision says where its step is, in this review context, so its undo can
+  // offer to come back here.
+  const runProjectId = data?.projectId;
+  const review = useReviewActions({
+    runId,
+    checkpointId: activeCheckpointId,
+    status: data?.status,
+    onResolved: () => loop.afterDecision(),
+    ...(runProjectId
+      ? {
+          stepHref: (id: string) =>
+            diffViewerHref(runProjectId, runId, id, context),
+        }
+      : {}),
+  });
+
+  // The review loop (spec §5.4), asked from the step on screen once `_first`
+  // has resolved. Off until the run has loaded, for a run that failed to load
+  // (a deleted run, another project's), and for a run with no batch to walk:
+  // no Next pending, no J / K, and no `review.next` call. A run that may not
+  // take decisions (overridden, not reviewable) still navigates; only
+  // deciding is off.
+  const loopOn = Boolean(data?.buildId) && !error;
+  // The step on screen, for the batch counts (R33): while it needs review it
+  // counts in what is left, and in the filter's count if it is inside it.
+  const stepHere = {
+    pending: review.view === "pending",
+    inFilter: inFacets(
+      checkpointsQuery.data?.items?.find((c) => c.id === activeCheckpointId),
+      context.facets,
+    ),
+  };
+  // A decision on this step still on its way: a read meanwhile that shows the
+  // step pending again predates its commit, and is no undo (R36).
+  const decisionInFlight = useIsDecisionInFlight(activeCheckpointId);
+  const loop = useReviewLoop({
+    projectId: data?.projectId ?? "",
+    buildId: data?.buildId || undefined,
+    runId,
+    checkpointId: activeCheckpointId,
+    context,
+    view: viewerMode.view,
+    enabled: loopOn,
+    stepPending: stepHere.pending,
+    stepInFilter: stepHere.inFilter,
+    decisionInFlight,
+  });
+  retargetLoopMove.current = loop.retarget;
+  const undoCount = useUndoStore((s) => s.stack.length);
+  // The done card (spec §5.4) takes the canvas's place once the step on
+  // screen is settled: not while a decision waits for its answer, and not
+  // while the step needs review (the decision's own update lands just after
+  // it; the loop drops the card if the step needs review again, R19).
+  const card =
+    loop.card !== null && !loop.pending && review.view !== "pending"
+      ? loop.card
+      : null;
+
+  // T11: SSE — invalidate runs.getById on terminal worker events so the
+  // viewer picks up freshly written diff regions, baselineSource, etc.
+  const onSseEvent = useCallback(
+    (e: RunEvent) => {
+      if (
+        e.type === "diff.completed" ||
+        e.type === "capture.completed" ||
+        e.type === "run.completed"
+      ) {
+        void utils.runs.getById.invalidate({ runId });
+      }
+    },
+    [utils, runId],
+  );
+  useRunEvents(runId, onSseEvent);
+
+  // ADR-031: hydrate the ignore-region editor's saved slices from the
+  // run + variation payload. The store's hydrateSavedIgnoreAreas
+  // preserves drafts + markedForDeletion when unsaved changes exist
+  // (guards against silent loss on react-query refetch / SSE refresh).
+  const hydrateSavedIgnoreAreas = useViewerStore(
+    (s) => s.hydrateSavedIgnoreAreas,
+  );
 
   useEffect(() => {
     // Server payload may predate the paddingPx column (legacy rows have
@@ -604,6 +653,12 @@ export function DiffViewer({
     onPrevPending: loopOn && keysOn ? loop.goPrev : undefined,
     // Esc is the card's while it is up, wherever focus is: back to the batch.
     onEscape: card && backHref ? () => loop.leave(backHref) : undefined,
+    // A mode's keys apply only where the step can show that mode (R2); they
+    // read the mode on screen, and change it in the URL too.
+    hasBaseline,
+    urlView: viewerMode.view,
+    setMode: viewerMode.setMode,
+    available: viewerMode.available,
   });
 
   if (isLoading)
@@ -709,8 +764,6 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
-  // Without a baseline (a new test) only side by side is available (R2).
-  const hasBaseline = imageRequest.baseline !== null;
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
   // percent above 0. The run's percent is its worst step's, so it is this
@@ -721,7 +774,7 @@ export function DiffViewer({
     regions.some(isPixelDiffRegion) ||
     (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
 
-  return (
+  const viewer = (
     <div
       className="flex flex-col h-full"
       data-diff-id={diffId ?? selectedCheckpointId}
@@ -798,6 +851,7 @@ export function DiffViewer({
                   projectId: data.projectId,
                 }}
                 context={context}
+                view={viewerMode.view}
               />
             </div>
           )}
@@ -823,7 +877,8 @@ export function DiffViewer({
         ) : isEmpty ? (
           <EmptyRunCard {...(backHref ? { buildHref: backHref } : {})} />
         ) : (
-          <>
+          // The toolbar and the stage read the one mode from here.
+          <ViewerModeProvider value={viewerModeContext}>
             <div id="diff-viewer-toolbar">
               <ViewerToolbar
                 runId={runId}
@@ -968,10 +1023,17 @@ export function DiffViewer({
                 }}
               />
             </div>
-          </>
+          </ViewerModeProvider>
         )}
       </div>
     </div>
+  );
+  // The viewer's links tell the loop when their navigation starts, so a
+  // mode change meanwhile takes them along (R22).
+  return (
+    <ViewerLinkProvider value={loop.linkNavigating}>
+      {viewer}
+    </ViewerLinkProvider>
   );
 }
 

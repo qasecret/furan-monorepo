@@ -10,8 +10,8 @@ import type { Rect, World } from "../viewer-geometry";
 import type { HostLayer, ModeHandle, RenderInput } from "./types";
 
 /**
- * The host's layers on a single stage (overlay, diff): one constant, so a
- * mode change between them keeps those layers mounted.
+ * The host's layers on a single stage (swipe, flicker, overlay, diff): one
+ * constant, so a mode change between them keeps those layers mounted.
  */
 export const SINGLE_STAGE_HOST_LAYERS: readonly HostLayer[] = [
   "regions",
@@ -45,7 +45,13 @@ export interface Mount {
     label: string,
     rects: (world: World) => Rect[],
     input: RenderInput,
-  ): void;
+  ): Graphics;
+  /**
+   * A display object of the mode's own (a container, a clip, a line),
+   * labelled, added to `parent`, and destroyed with the mount after its
+   * images and hatching. A clip one carries (`mask`) is let go of first.
+   */
+  own<T extends Container>(parent: Container, child: T, label: string): T;
   /** Redraws the hatching for a new world, scale or colour. */
   update(input: RenderInput): void;
   dispose(): void;
@@ -71,6 +77,7 @@ function destroyQuietly(destroy: () => void): void {
 export function createMount(): Mount {
   const sprites: Sprite[] = [];
   const hatches: Hatch[] = [];
+  const owned: Container[] = [];
   let disposed = false;
 
   return {
@@ -83,11 +90,12 @@ export function createMount(): Mount {
       return sprite;
     },
     hatch(parent, label, rects, input) {
+      const { scale } = input.transform;
       const g = mountHatchLayer(
         parent,
         rects(input.world),
         input.colors.hatch,
-        hatchSpacing(input.scale),
+        hatchSpacing(scale),
       );
       g.label = label;
       hatches.push({
@@ -95,16 +103,18 @@ export function createMount(): Mount {
         rects,
         world: input.world,
         color: input.colors.hatch,
-        scale: input.scale,
+        scale,
       });
+      return g;
     },
     update(input) {
       if (disposed) return;
+      const { scale } = input.transform;
       for (const h of hatches) {
         if (
           h.world === input.world &&
           h.color === input.colors.hatch &&
-          h.scale === input.scale
+          h.scale === scale
         ) {
           continue;
         }
@@ -112,12 +122,18 @@ export function createMount(): Mount {
           h.g,
           h.rects(input.world),
           input.colors.hatch,
-          hatchSpacing(input.scale),
+          hatchSpacing(scale),
         );
         h.world = input.world;
         h.color = input.colors.hatch;
-        h.scale = input.scale;
+        h.scale = scale;
       }
+    },
+    own(parent, child, label) {
+      child.label = label;
+      parent.addChild(child);
+      owned.push(child);
+      return child;
     },
     dispose() {
       if (disposed) return;
@@ -128,6 +144,17 @@ export function createMount(): Mount {
         );
       }
       for (const h of hatches) destroyQuietly(() => h.g.destroy());
+      // pixi lets go of a clip's effect when it is unset, not on a destroy.
+      for (const o of owned) {
+        if (!o.mask) continue;
+        destroyQuietly(() => {
+          o.mask = null;
+        });
+      }
+      // Last made, first gone: a clip before the container that held it.
+      for (const o of owned.slice().reverse()) {
+        destroyQuietly(() => o.destroy());
+      }
     },
   };
 }

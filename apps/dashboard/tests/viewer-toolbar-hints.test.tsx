@@ -22,6 +22,7 @@ vi.mock("@/lib/trpc", () => {
 import type { DiffStepper } from "@/components/diff-viewer/useDiffStepper";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
+import { useViewState } from "@/components/diff-viewer/view-state";
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
@@ -41,11 +42,22 @@ const stepper: DiffStepper = {
 };
 
 /** The toolbar on the viewer's page: the viewer's commands registered. */
-function Viewer({ registered = true }: { registered?: boolean }) {
+function Viewer({
+  registered = true,
+  hasBaseline = true,
+}: {
+  registered?: boolean;
+  hasBaseline?: boolean;
+}) {
   return (
     <CommandRoleProvider role="editor">
       {registered ? <Commands /> : null}
-      <ViewerToolbar runId="r1" checkpointId="c1" stepper={stepper} />
+      <ViewerToolbar
+        runId="r1"
+        checkpointId="c1"
+        stepper={stepper}
+        hasBaseline={hasBaseline}
+      />
     </CommandRoleProvider>
   );
 }
@@ -71,7 +83,11 @@ function hints(): Record<string, [string | null, string | null]> {
     zoomIn: read(screen.getByTestId("zoom-in-button")),
     prevChange: read(screen.getByTestId("diff-prev")),
     nextChange: read(screen.getByTestId("diff-next")),
-    diff: read(screen.getByRole("tab", { name: "Diff" })),
+    sideBySide: read(screen.getByRole("radio", { name: "Side by side" })),
+    swipe: read(screen.getByRole("radio", { name: "Swipe" })),
+    flicker: read(screen.getByRole("radio", { name: "Flicker" })),
+    overlay: read(screen.getByRole("radio", { name: "Overlay" })),
+    diff: read(screen.getByRole("radio", { name: "Diff" })),
     highlight: read(screen.getByTestId("highlight-toggle")),
     editor: read(screen.getByTestId("edit-regions-toggle")),
   };
@@ -94,14 +110,15 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in (=)", "= Plus"],
       prevChange: ["Previous change (P)", "P"],
       nextChange: ["Next change (N)", "N"],
-      diff: ["Diff (D)", "D"],
+      // Each mode's radio names its own key, 1–5.
+      sideBySide: ["Side by side (1)", "1"],
+      swipe: ["Swipe (2)", "2"],
+      flicker: ["Flicker (3)", "3"],
+      overlay: ["Overlay (4)", "4"],
+      diff: ["Diff (5)", "5"],
       highlight: ["Highlight diffs (H)", "H"],
       editor: ["Edit regions (I)", "I"],
     });
-    // Only the diff view's tab is D's.
-    expect(
-      screen.getByRole("tab", { name: "Side by side" }).getAttribute("title"),
-    ).toBeNull();
 
     // The same key ends the editor.
     act(() => useViewerStore.setState({ ignoreEditMode: "variation" }));
@@ -121,6 +138,10 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
+      sideBySide: [null, null],
+      swipe: [null, null],
+      flicker: [null, null],
+      overlay: [null, null],
       diff: [null, null],
       highlight: [null, null],
       editor: [null, null],
@@ -138,9 +159,43 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
+      sideBySide: [null, null],
+      swipe: [null, null],
+      flicker: [null, null],
+      overlay: [null, null],
       diff: [null, null],
       highlight: [null, null],
       editor: [null, null],
     });
+  });
+});
+
+describe("Flicker's Play / Pause in the toolbar", () => {
+  const PLAY_OR_PAUSE = /^(Play|Pause)$/;
+
+  test("it is there while Flicker is on, and Pause's hint is f's", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
+    });
+    useViewState.getState().resetView({ reducedMotion: false });
+    render(<Viewer />);
+    const pause = screen.getByRole("button", { name: "Pause" });
+    expect(pause.getAttribute("title")).toBe("Pause (F)");
+    expect(pause.getAttribute("aria-keyshortcuts")).toBe("F");
+
+    act(() =>
+      useViewerPrefs.setState({
+        prefs: { ...DEFAULT_VIEWER_PREFS, mode: "overlay" },
+      }),
+    );
+    expect(screen.queryByRole("button", { name: PLAY_OR_PAUSE })).toBeNull();
+  });
+
+  test("a stored Flicker on a step with no baseline shows side by side, with no Play / Pause (R2)", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
+    });
+    render(<Viewer hasBaseline={false} />);
+    expect(screen.queryByRole("button", { name: PLAY_OR_PAUSE })).toBeNull();
   });
 });

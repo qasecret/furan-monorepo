@@ -27,6 +27,10 @@ vi.mock("@/lib/trpc", () => {
   };
 });
 
+import {
+  VIEWER_MODES,
+  type ViewerMode,
+} from "@/components/diff-viewer/comparison-modes";
 import type {
   ImageRole,
   ImageSetState,
@@ -46,8 +50,6 @@ import {
   DEFAULT_VIEWER_PREFS,
   modeAvailable,
   useViewerPrefs,
-  VIEWER_MODES,
-  type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
 import { ViewerToolbar } from "@/components/diff-viewer/ViewerToolbar";
 
@@ -320,6 +322,20 @@ describe("stageStates", () => {
       );
       expect(states).toEqual([{ kind: "no-baseline" }]);
     }
+  });
+
+  test("a chosen mode the step can't show is side by side here too: Diff's failed diff image is not its business (N1)", () => {
+    const current = image("current", 100, 200);
+    const states = stageStates(
+      input({
+        mode: "diff",
+        hasBaseline: false,
+        stepHasDiff: false,
+        set: set({ current }, { diff: true }),
+        sizes: { current: current.size },
+      }),
+    );
+    expect(states).toEqual([{ kind: "no-baseline" }]);
   });
 
   test("too large: a drawn screenshot past the texture limit, named by its image (Review Focus 1)", () => {
@@ -722,9 +738,9 @@ describe("the toolbar without a baseline", () => {
   });
 
   const modeButtons = () =>
-    screen
-      .getAllByRole("tab")
-      .filter((t) => t.hasAttribute("data-mode")) as HTMLButtonElement[];
+    within(
+      screen.getByRole("radiogroup", { name: "Comparison mode" }),
+    ).getAllByRole("radio") as HTMLButtonElement[];
 
   test("every mode but side by side is aria-disabled, titled Needs a baseline, and does nothing", () => {
     render(<ViewerToolbar runId="r1" checkpointId="c1" hasBaseline={false} />);
@@ -748,7 +764,7 @@ describe("the toolbar without a baseline", () => {
     useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
     render(<ViewerToolbar runId="r1" checkpointId="c1" hasBaseline={false} />);
     const selected = modeButtons().filter(
-      (b) => b.getAttribute("aria-selected") === "true",
+      (b) => b.getAttribute("aria-checked") === "true",
     );
     expect(selected.map((b) => b.dataset.mode)).toEqual(["side-by-side"]);
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");

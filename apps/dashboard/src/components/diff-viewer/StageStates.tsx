@@ -2,15 +2,18 @@
 
 import { useId, useLayoutEffect, useRef } from "react";
 
+import type { ViewerMode } from "./comparison-modes";
 import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
 import { RENDERERS, type HatchedImage } from "./modes/types";
 import {
+  intersectRect,
   worldToCanvas,
+  type Rect,
   type Size,
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { modeAvailable, type ViewerMode } from "./viewer-prefs";
+import { modeOnStep } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -32,7 +35,11 @@ export type StageState =
   | { kind: "too-large"; role: ImageRole; size: Size; max: number };
 
 export interface StageStatesInput {
-  /** The chosen mode; one the step can't show is side by side (R2). */
+  /**
+   * The mode on screen (`viewer-mode`'s effective mode). One the step can't
+   * show is side by side (R2), here too: a caller passing a chosen mode still
+   * gets the step's.
+   */
   mode: ViewerMode;
   set: ImageSetState;
   hasBaseline: boolean;
@@ -69,9 +76,7 @@ export interface StageStatesInput {
  */
 export function stageStates(input: StageStatesInput): StageState[] {
   const { set, hasBaseline, sizes, maxTextureSize: max } = input;
-  const mode = modeAvailable(input.mode, hasBaseline)
-    ? input.mode
-    : "side-by-side";
+  const mode = modeOnStep(input.mode, hasBaseline);
   const renderer = RENDERERS[mode];
   const needs = renderer.needs({ hasBaseline });
   const { images, failed } = set;
@@ -333,24 +338,31 @@ export function StageStates({
  * Invisible hit areas over the hatching of `images` in one pane, each with
  * its tooltip (spec §3.1), placed by the world's transform. Under the
  * editor's overlay; pointer events reach the stage's pan and zoom through
- * them.
+ * them. With `within`, an image's are cut to the area it shows in (Swipe's
+ * sides, R15), as its hatching is.
  */
 export function HatchTooltips({
   world,
   images,
   transform,
+  within,
 }: {
   world: World;
   images: readonly HatchedImage[];
   transform: Transform;
+  within?: Partial<Record<HatchedImage, Rect>>;
 }) {
   return images.flatMap((image) =>
-    world.missing[image].map((r) => {
+    world.missing[image].flatMap((missing) => {
+      const area = within?.[image];
+      const r = area ? intersectRect(missing, area) : missing;
+      if (!r) return [];
       const from = worldToCanvas(transform, { x: r.x, y: r.y });
       const to = worldToCanvas(transform, { x: r.x + r.w, y: r.y + r.h });
       return (
         <div
-          key={`${image}:${r.x},${r.y}`}
+          // The strip's own key: a swipe resizes it, it stays the same node.
+          key={`${image}:${missing.x},${missing.y}`}
           className="absolute"
           style={{
             left: from.x,

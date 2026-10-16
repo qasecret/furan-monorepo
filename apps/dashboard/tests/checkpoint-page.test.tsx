@@ -127,6 +127,34 @@ describe("checkpoint page", () => {
     expect((await renderPage()).userId).toBeNull();
   });
 
+  test("hands the viewer the URL's comparison mode, parsed (spec §6.3)", async () => {
+    expect((await renderPage({ status: "failed", view: "swipe" })).view).toBe(
+      "swipe",
+    );
+    cleanup();
+    // None, or one that names no mode: no view, and the page still opens.
+    for (const view of [undefined, "bogus", ["swipe", "diff"]]) {
+      expect((await renderPage({ view })).view, String(view)).toBeNull();
+      cleanup();
+    }
+  });
+
+  test("the viewer's tour names the five comparison modes, and no key (spec §8)", async () => {
+    await renderPage();
+    const copy = tour.steps.map((s) => s.content).join("\n");
+    for (const mode of [
+      "Side by side",
+      "Swipe",
+      "Flicker",
+      "Overlay",
+      "Diff",
+    ]) {
+      expect(copy).toContain(mode);
+    }
+    expect(copy).not.toMatch(/\b[A-Z]\b to/);
+    expect(copy).not.toMatch(/candidate-only/i);
+  });
+
   test("the viewer's tour names no keys: a guest has no A, and the switch can turn them off (R35)", async () => {
     await renderPage();
     expect(tour.steps.length).toBeGreaterThan(0);

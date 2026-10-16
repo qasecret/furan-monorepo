@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { compare } from "odiff-bin";
 
 import type { L1Result } from "./l1.js";
+import { ensurePngEnd } from "./png-end.js";
 import type { EngineConfig } from "./types.js";
 
 /** odiff backend. Native support for ignoreRegions and antialiasing flag. */
@@ -12,8 +13,7 @@ export async function runL1Odiff(
   baseline: Buffer,
   candidate: Buffer,
   ignoreAreas:
-    | Array<{ x: number; y: number; width: number; height: number }>
-    | undefined,
+    Array<{ x: number; y: number; width: number; height: number }> | undefined,
   engineConfig: EngineConfig,
 ): Promise<L1Result> {
   const dir = mkdtempSync(join(tmpdir(), "furan-diff-"));
@@ -25,6 +25,11 @@ export async function runL1Odiff(
     writeFileSync(cdPath, candidate);
     const result = await compare(blPath, cdPath, dfPath, {
       antialiasing: engineConfig.ignoreAntialiasing,
+      // Without this odiff compares only the area both images share, so a page
+      // that grew or shrank with a matching top would pass at 0%. With it a
+      // size change returns `layout-diff`, which maps to 100% below, like the
+      // other engines.
+      failOnLayoutDiff: true,
       ignoreRegions:
         ignoreAreas?.map((r) => ({
           x1: r.x,
@@ -49,11 +54,11 @@ export async function runL1Odiff(
         regions: [],
       };
     }
-    const diffBytes = readFileSync(dfPath);
     return {
       diffPercent: result.diffPercentage,
       pixelMismatchCount: result.diffCount,
-      diffImageBytes: diffBytes,
+      // odiff leaves off the closing IEND chunk, which browsers will not decode.
+      diffImageBytes: ensurePngEnd(readFileSync(dfPath)),
       regions: [],
     };
   } finally {

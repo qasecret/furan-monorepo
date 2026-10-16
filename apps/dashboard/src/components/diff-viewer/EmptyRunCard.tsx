@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { ViewerLink } from "./ViewerLink";
+
 interface Props {
   /**
    * The run's batch page, carrying the review context and anchored on the
@@ -52,14 +54,15 @@ furan.snapshot("checkout-modal", mask = listOf("[data-test=timer]"))`}
         >
           View SDK docs →
         </Link>
+        {/* In the viewer: a mode change on its way takes it along (R22). */}
         {buildHref && (
-          <Link
+          <ViewerLink
             href={buildHref}
             className="text-brand-text hover:underline focus-ring"
             data-testid="empty-run-card-timeline"
           >
             View build →
-          </Link>
+          </ViewerLink>
         )}
       </div>
     </div>

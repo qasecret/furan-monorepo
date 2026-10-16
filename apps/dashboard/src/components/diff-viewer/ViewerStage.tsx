@@ -5,7 +5,7 @@
 // this pixi throws "Current environment does not allow unsafe-eval" on init.
 import "pixi.js/unsafe-eval";
 import { useTheme } from "next-themes";
-import { Application, Container } from "pixi.js";
+import { Application, Container, Sprite } from "pixi.js";
 import {
   useCallback,
   useEffect,
@@ -17,11 +17,15 @@ import {
 
 import {
   applyCanvasBackground,
+  FALLBACK_CANVAS_DIVIDER,
   FALLBACK_CANVAS_HATCH,
   readCanvasBackground,
+  readCanvasDivider,
   readCanvasHatch,
 } from "./canvas-theme";
+import { CanvasModeLabel } from "./CanvasModeLabel";
 import { orderDiffRegions } from "./diff-order";
+import { FlickerAnnouncer, useFlickerTimer } from "./FlickerControls";
 import {
   IMAGE_ROLES,
   retainImages,
@@ -48,6 +52,7 @@ import {
   StageStates,
   statesForPane,
 } from "./StageStates";
+import { SwipeHandle } from "./SwipeHandle";
 import { attachCanvasViewControl } from "./useCanvasViewControl";
 import type { ElementMap } from "./useElementMap";
 import { hitTest, useIgnoreRegionEditor } from "./useIgnoreRegionEditor";
@@ -61,7 +66,8 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { drawnMode, modeAvailable, useViewerPrefs } from "./viewer-prefs";
+import { useEffectiveMode } from "./viewer-mode";
+import { useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView } from "./world-fit";
 
 /**
@@ -91,12 +97,24 @@ import { computeFocusView } from "./world-fit";
  * - **Pixi apps**: one per pane, kept across mode changes with the same pane
  *   count; zoom, pan, resizes and the theme update them in place, and a
  *   resize refits before the next paint.
+ * - **Swipe's handle** is DOM over the stage (`SwipeHandle`), in % of it like
+ *   the canvas's divider, which is a fraction of the canvas: a resize keeps
+ *   both at their fraction, and the observer moves the divider at once.
+ * - **Flicker** swaps its frames on its clock (`useFlickerTimer`), which runs
+ *   only once both frames are on the stage, so the first frame drawn is the
+ *   baseline. A swap reaches the renderer as an update, never a remount, and
+ *   both images are on the GPU from the mount. A polite live region, kept
+ *   mounted across layouts, says a swap by hand.
+ * - **A label on each card** (`CanvasModeLabel`, R18) names what it shows,
+ *   in every mode: overlaid on its top-left, out of the layout, so no mode
+ *   moves a card for it. In Flicker it names the frame on screen.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
- *   side is available, so a stored mode that needs one draws as side by side
- *   and is kept (R2). A screenshot larger than the GPU's textures is never
- *   mounted. The hatching's tooltips are DOM hit areas over the strips.
+ *   side is available, so a chosen mode that needs one (stored, or the URL's)
+ *   draws as side by side and is kept (R2). A screenshot larger than the
+ *   GPU's textures is never mounted. The hatching's tooltips are DOM hit
+ *   areas over the strips.
  */
 
 interface Props {
@@ -173,6 +191,25 @@ function restack(world: Container, order: readonly HostLayer[]): void {
   }
 }
 
+/**
+ * Puts every image under `node` on `app`'s GPU now, the hidden ones too
+ * (Flicker's other frame), as pixi's prepare system does: a swap never stalls
+ * on uploading a large screenshot. Best effort: an image not uploaded here is
+ * uploaded when it is first drawn.
+ */
+function uploadImages(app: Application, node: Container): void {
+  for (const child of node.children) {
+    if (child instanceof Sprite) {
+      try {
+        app.renderer.texture.initSource(child.texture.source);
+      } catch {
+        // Uploaded at its first draw instead.
+      }
+    }
+    uploadImages(app, child);
+  }
+}
+
 /** Teardown is best effort: a leaked GPU texture beats a thrown cleanup. */
 function destroyQuietly(what: string, destroy: () => void): void {
   try {
@@ -195,8 +232,8 @@ function destroyApp(app: Application): void {
 }
 
 /**
- * Small inline "≠" badge marking an image that has differences. Lives in the
- * label row above the card (not over the image) so it never obscures content.
+ * Small inline "≠" badge marking an image that has differences, in side by
+ * side's labels on the canvas.
  */
 function DiffBadge() {
   return (
@@ -238,12 +275,9 @@ export function ViewerStage({
   const { resolvedTheme } = useTheme();
 
   const hasBaseline = request.baseline !== null;
-  // A mode the step can't show draws as side by side; the choice is kept.
-  const chosenMode = useViewerPrefs((s) => s.prefs.mode);
-  const mode = modeAvailable(chosenMode, hasBaseline)
-    ? chosenMode
-    : "side-by-side";
-  const shown = drawnMode(mode);
+  // The viewer's one mode (`viewer-mode`): a mode the step can't show draws
+  // as side by side, and the choice is kept.
+  const mode = useEffectiveMode(hasBaseline);
   const renderer = RENDERERS[mode];
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
@@ -255,6 +289,7 @@ export function ViewerStage({
   const panX = useViewState((s) => s.panX);
   const panY = useViewState((s) => s.panY);
   const swipe = useViewState((s) => s.swipe);
+  const setSwipe = useViewState((s) => s.setSwipe);
   const flickerFrame = useViewState((s) => s.flickerFrame);
   const focusBbox = useViewState((s) => s.focusBbox);
   const setView = useViewState((s) => s.setView);
@@ -285,6 +320,11 @@ export function ViewerStage({
   const [hostSizes, setHostSizes] = useState<Size[]>([]);
   const [hatchColor, setHatchColor] = useState(() =>
     typeof document === "undefined" ? FALLBACK_CANVAS_HATCH : readCanvasHatch(),
+  );
+  const [dividerColor, setDividerColor] = useState(() =>
+    typeof document === "undefined"
+      ? FALLBACK_CANVAS_DIVIDER
+      : readCanvasDivider(),
   );
   // The GPU's largest texture side, read from the first stage's renderer and
   // kept across stages. Unknown until then: nothing can be drawn before it.
@@ -415,6 +455,16 @@ export function ViewerStage({
   const hostApp = sceneReady ? (live.apps[renderer.host.pane] ?? null) : null;
   const hostLayers = renderer.host.layers;
 
+  // Flicker's clock, once both its frames are on the stage.
+  useFlickerTimer({
+    active:
+      mode === "flicker" &&
+      sceneReady &&
+      baselineBitmap !== undefined &&
+      currentBitmap !== undefined,
+    reducedMotion,
+  });
+
   useLayoutEffect(() => {
     sceneRef.current = {
       world: world?.size ?? null,
@@ -422,9 +472,10 @@ export function ViewerStage({
     };
   });
 
+  // What the renderer draws with, once the world is placed on a stage.
   const input = useMemo<RenderInput | null>(
     () =>
-      world
+      world && transform && viewportSize
         ? {
             world,
             images: {
@@ -435,8 +486,9 @@ export function ViewerStage({
             opacity,
             swipe,
             flickerFrame,
-            colors: { hatch: hatchColor },
-            scale,
+            colors: { hatch: hatchColor, divider: dividerColor },
+            transform,
+            canvas: viewportSize,
           }
         : null,
     [
@@ -449,10 +501,17 @@ export function ViewerStage({
       swipe,
       flickerFrame,
       hatchColor,
-      scale,
+      dividerColor,
+      transform,
+      viewportSize,
     ],
   );
   const hasInput = input !== null;
+  // The input as last rendered, for the resize observer (see the stage).
+  const inputRef = useRef<RenderInput | null>(null);
+  useLayoutEffect(() => {
+    inputRef.current = input;
+  });
 
   // The pixi apps: one per pane, made when the pane count changes and kept
   // across every other change.
@@ -520,10 +579,18 @@ export function ViewerStage({
           sizes[i] = size;
           const { world, hostPane } = sceneRef.current;
           if (i === hostPane && world) {
-            placeWorlds(
-              worlds,
-              transformFor(world, size, useViewState.getState()),
-            );
+            const t = transformFor(world, size, useViewState.getState());
+            placeWorlds(worlds, t);
+            // What the renderer draws to the canvas's size (Swipe's divider,
+            // the hatch's spacing) follows in the same frame.
+            const last = inputRef.current;
+            if (last) {
+              handleRef.current?.update({
+                ...last,
+                transform: t,
+                canvas: size,
+              });
+            }
           }
           setHostSizes(sizes.slice());
         });
@@ -561,6 +628,10 @@ export function ViewerStage({
     );
     const handle = renderer.mount(stage.worlds, input);
     handleRef.current = handle;
+    stage.worlds.forEach((world, i) => {
+      const app = stage.apps[i];
+      if (app) uploadImages(app, world);
+    });
     const hostPane = stage.worlds[renderer.host.pane];
     if (hostPane) restack(hostPane, renderer.host.layers);
     return () => {
@@ -602,6 +673,7 @@ export function ViewerStage({
       if (cancelled) return;
       applyCanvasBackground(liveAppsRef.current, readCanvasBackground());
       setHatchColor(readCanvasHatch());
+      setDividerColor(readCanvasDivider());
     });
     return () => {
       cancelled = true;
@@ -766,7 +838,7 @@ export function ViewerStage({
   // Gated on primary button (button === 0) to avoid clobbering
   // middle-mouse pan and right-click context menu.
   const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (shown !== "diff") return;
+    if (mode !== "diff") return;
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;
@@ -803,15 +875,26 @@ export function ViewerStage({
     />
   );
 
-  // The hatching's tooltips on pane `pane`, once its images are drawn.
+  // The hatching's tooltips on pane `pane`, once its images are drawn, cut
+  // to where the mode shows each image (Swipe's sides), for the image on
+  // screen (Flicker's frame).
   const hatchTooltips = (pane: number) =>
-    sceneReady && transform ? (
+    sceneReady && transform && viewportSize ? (
       <HatchTooltips
         world={world}
-        images={(renderer.hatched[pane] ?? []).filter(fits)}
+        images={(renderer.hatched({ flickerFrame })[pane] ?? []).filter(fits)}
         transform={transform}
+        within={renderer.shownIn?.({
+          world,
+          transform,
+          canvas: viewportSize,
+          swipe,
+        })}
       />
     ) : null;
+  // Flicker's live region: the first child in either layout, so a layout
+  // change keeps it mounted (and what appears in it announced).
+  const flickerAnnouncer = <FlickerAnnouncer on={mode === "flicker"} />;
   // Where the focus goes when a focused Retry's card goes (M2): its pane.
   const focusPane = (ref: React.RefObject<HTMLDivElement | null>) => () =>
     ref.current?.focus({ preventScroll: true });
@@ -824,103 +907,98 @@ export function ViewerStage({
   // sit over a card, outside it: the card's own listeners (pan) never see a
   // press on a Retry button.
   if (panes === 2) {
-    const baselineLabel = hasBaseline ? "Baseline" : "No baseline";
-    // Reference TestStep layout: a floating, uppercase label above each clean
-    // shadowed card (no bordered box with an inset header bar). The card IS the
-    // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
+    // Reference TestStep layout: two clean shadowed cards. Each card IS the
+    // Pixi canvas host (rounded + overflow-hidden clips the canvas corners),
+    // named by its label on the canvas (R18).
     return (
       <div className="flex min-h-full p-6">
+        {flickerAnnouncer}
         <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
-          <div className="flex flex-col gap-2">
+          <div className="relative">
             <div
-              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
-              title={baselineLabel}
-              aria-label={baselineLabel}
+              ref={paneARef}
+              data-testid="baseline-canvas-host"
+              tabIndex={-1}
+              aria-busy={loading || undefined}
+              style={aspectStyle(world?.size)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"
-                aria-hidden
-              />
-              {baselineLabel}
+              {hatchTooltips(0)}
+            </div>
+            <CanvasModeLabel
+              mode={mode}
+              pane="baseline"
+              hasBaseline={hasBaseline}
+            >
               {hasBaseline && shownRegions.length > 0 && <DiffBadge />}
-            </div>
-            <div className="relative">
-              <div
-                ref={paneARef}
-                data-testid="baseline-canvas-host"
-                tabIndex={-1}
-                aria-busy={loading || undefined}
-                style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
-              >
-                {hatchTooltips(0)}
-              </div>
-              <StageStates
-                states={statesForPane(states, "baseline")}
-                onRetry={onRetry}
-                onFocusLost={focusPane(paneARef)}
-              />
-            </div>
+            </CanvasModeLabel>
+            <StageStates
+              states={statesForPane(states, "baseline")}
+              onRetry={onRetry}
+              onFocusLost={focusPane(paneARef)}
+            />
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="relative">
             <div
-              className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted shrink-0"
-              title="Candidate"
-              aria-label="Candidate"
+              ref={paneBRef}
+              data-testid="candidate-canvas-host"
+              tabIndex={-1}
+              aria-busy={loading || undefined}
+              style={aspectStyle(world?.size)}
+              className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
             >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
-                aria-hidden
-              />
-              Current
+              {request.current === null && (
+                <CanvasEmptyState label="Waiting for capture…">
+                  The SDK upload for this run hasn’t arrived yet. This panel
+                  will fill in automatically when the screenshot lands.
+                </CanvasEmptyState>
+              )}
+              {hatchTooltips(1)}
+              {editorOverlay}
+            </div>
+            <CanvasModeLabel mode={mode} pane="current">
               {shownRegions.length > 0 && <DiffBadge />}
-            </div>
-            <div className="relative">
-              <div
-                ref={paneBRef}
-                data-testid="candidate-canvas-host"
-                tabIndex={-1}
-                aria-busy={loading || undefined}
-                style={aspectStyle(world?.size)}
-                className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
-              >
-                {request.current === null && (
-                  <CanvasEmptyState label="Waiting for capture…">
-                    The SDK upload for this run hasn’t arrived yet. This panel
-                    will fill in automatically when the screenshot lands.
-                  </CanvasEmptyState>
-                )}
-                {hatchTooltips(1)}
-                {editorOverlay}
-              </div>
-              <StageStates
-                states={statesForPane(states, "current")}
-                onRetry={onRetry}
-                onFocusLost={focusPane(paneBRef)}
-              />
-            </div>
+            </CanvasModeLabel>
+            <StageStates
+              states={statesForPane(states, "current")}
+              onRetry={onRetry}
+              onFocusLost={focusPane(paneBRef)}
+            />
           </div>
         </div>
       </div>
     );
   }
 
+  // The single stage clips (`overflow-clip`) rather than hiding its
+  // overflow: a clip is no scroll container, so Swipe's handle can stick to
+  // the viewer's scroll pane and stay on screen on a tall card (M1).
   return (
     <div className="flex min-h-full p-6">
+      {flickerAnnouncer}
       <div className="relative m-auto w-full">
         <div
           style={aspectStyle(world?.size)}
-          className="relative w-full min-h-[200px] overflow-hidden rounded-lg bg-hover shadow-raised focus-ring"
+          className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
           ref={singleRef}
           data-testid="single-stage-host"
-          data-mode={shown}
+          data-mode={mode}
           tabIndex={-1}
           aria-busy={loading || undefined}
           onPointerUp={handleDiffRegionClick}
         >
           {hatchTooltips(0)}
           {editorOverlay}
+          {mode === "swipe" && sceneReady && (
+            <SwipeHandle
+              value={swipe}
+              onChange={setSwipe}
+              stageWidth={viewportSize?.w}
+            />
+          )}
         </div>
+        {/* On the canvas, out of the flow (R18): the states sit over it. */}
+        <CanvasModeLabel mode={mode} />
         <StageStates
           states={states}
           onRetry={onRetry}

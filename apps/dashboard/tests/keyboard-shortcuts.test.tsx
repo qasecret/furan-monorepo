@@ -276,23 +276,52 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewState.getState().zoom).toBeCloseTo(ZOOM_STEP);
   });
 
-  it("O cycles the mode", () => {
+  it("O cycles through the five modes in the keys' order, and round", () => {
     mountViewer({ viewports: [] });
-    press("O");
-    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
-    press("O");
-    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
-    press("O");
-    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+    const seen: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      press("O");
+      seen.push(useViewerPrefs.getState().prefs.mode);
+    }
+    expect(seen).toEqual([
+      "swipe",
+      "flicker",
+      "overlay",
+      "diff",
+      "side-by-side",
+    ]);
   });
 
-  it("O acts on the mode on screen: a swipe preference shows as side by side", () => {
+  it("O from Flicker goes on to Overlay", () => {
     useViewerPrefs.setState({
-      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
     });
     mountViewer({ viewports: [] });
     press("O");
     expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
+  });
+
+  it("1–5 choose the five modes", () => {
+    mountViewer({ viewports: [] });
+    for (const [key, mode] of [
+      ["4", "overlay"],
+      ["2", "swipe"],
+      ["5", "diff"],
+      ["3", "flicker"],
+      ["1", "side-by-side"],
+    ] as const) {
+      expect(press(key).defaultPrevented, key).toBe(true);
+      expect(useViewerPrefs.getState().prefs.mode, key).toBe(mode);
+    }
+  });
+
+  it("with no baseline, 2–5, D and O are the browser's and store nothing (Task 8 M7)", () => {
+    mountViewer({ viewports: [], hasBaseline: false });
+    for (const key of ["2", "3", "4", "5", "d", "o"]) {
+      expect(press(key).defaultPrevented, key).toBe(false);
+    }
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+    expect(press("1").defaultPrevented).toBe(true);
   });
 
   it("D goes to Diff and back to the mode it came from", () => {
@@ -303,7 +332,7 @@ describe("useDiffViewerShortcuts", () => {
     press("D");
     expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
 
-    // From a mode with no renderer yet (R1), back to that same preference.
+    // From Flicker, back to Flicker.
     act(() => useViewerPrefs.getState().set("mode", "flicker"));
     press("D");
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
@@ -928,7 +957,13 @@ describe("the viewer's keys are registry commands", () => {
     row("R", "r", "review.reject", { called: ["onReject"] }),
     row("X", "x", "review.reject", { called: ["onReject"] }),
     // The mode only: a mode change keeps the view (R8).
+    row("1", "1", "viewer.mode.sideBySide", { changed: {} }),
+    row("2", "2", "viewer.mode.swipe", { changed: { mode: "swipe" } }),
+    row("3", "3", "viewer.mode.flicker", { changed: { mode: "flicker" } }),
+    row("4", "4", "viewer.mode.overlay", { changed: { mode: "overlay" } }),
+    row("5", "5", "viewer.mode.diff", { changed: { mode: "diff" } }),
     row("D", "d", "viewer.difference", { changed: { mode: "diff" } }),
+    // Armed, the editor is open: `o` passes Swipe and Flicker by (§4.4).
     row("O", "o", "viewer.cycleMode", { changed: { mode: "overlay" } }),
     row("H", "h", "viewer.highlight", { changed: { highlight: true } }),
     row("C", "c", "viewer.comments", { changed: { commentPanelOpen: true } }),
@@ -1027,8 +1062,14 @@ describe("the viewer's keys are registry commands", () => {
       ["viewer.nextViewport", "Next viewport", ["]"]],
       ["review.approve", "Approve step", ["a"]],
       ["review.reject", "Reject step", ["r", "x"]],
+      ["viewer.mode.sideBySide", "Side by side", ["1"]],
+      ["viewer.mode.swipe", "Swipe", ["2"]],
+      ["viewer.mode.flicker", "Flicker", ["3"]],
+      ["viewer.mode.overlay", "Overlay", ["4"]],
+      ["viewer.mode.diff", "Diff", ["5"]],
       ["viewer.difference", "Toggle difference view", ["d"]],
       ["viewer.cycleMode", "Cycle view mode", ["o"]],
+      ["viewer.flicker.toggle", "Pause or swap flicker", ["f"]],
       ["viewer.highlight", "Toggle highlight", ["h"]],
       ["viewer.comments", "Toggle comments", ["c"]],
       ["viewer.zoomIn", "Zoom in", ["=", "+"]],

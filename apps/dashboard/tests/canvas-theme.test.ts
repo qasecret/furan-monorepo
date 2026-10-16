@@ -4,8 +4,10 @@ import {
   applyCanvasBackground,
   cssHexToPixi,
   FALLBACK_CANVAS_BG,
+  FALLBACK_CANVAS_DIVIDER,
   FALLBACK_CANVAS_HATCH,
   readCanvasBackground,
+  readCanvasDivider,
   readCanvasHatch,
 } from "../src/components/diff-viewer/canvas-theme";
 
@@ -58,6 +60,20 @@ describe("readCanvasHatch", () => {
     const el = document.createElement("div");
     expect(readCanvasHatch(el)).toBe(FALLBACK_CANVAS_HATCH);
     expect(FALLBACK_CANVAS_HATCH).toBe(0x6a6a73);
+  });
+});
+
+describe("readCanvasDivider", () => {
+  test("reads --ring from the given root", () => {
+    const el = document.createElement("div");
+    el.style.setProperty("--ring", "#a8ff53");
+    expect(readCanvasDivider(el)).toBe(0xa8ff53);
+  });
+
+  test("falls back to the light theme's --ring when it is not set", () => {
+    const el = document.createElement("div");
+    expect(readCanvasDivider(el)).toBe(FALLBACK_CANVAS_DIVIDER);
+    expect(FALLBACK_CANVAS_DIVIDER).toBe(0x4d7c0f);
   });
 });
 

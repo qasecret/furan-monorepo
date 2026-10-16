@@ -1,12 +1,14 @@
 import type { Container } from "pixi.js";
 
+import type { ViewerMode } from "../comparison-modes";
 import type { ImageRole } from "../image-set";
-import type { World } from "../viewer-geometry";
-import type { ViewerMode } from "../viewer-prefs";
+import type { Rect, Size, Transform, World } from "../viewer-geometry";
 
 import { diff } from "./diff";
+import { flicker } from "./flicker";
 import { overlay } from "./overlay";
 import { sideBySide } from "./side-by-side";
+import { swipe } from "./swipe";
 
 /**
  * The comparison modes as renderers (spec §3.3). Each builds its own layers
@@ -24,18 +26,27 @@ export interface RenderInput {
   /** Swipe's divider, as a fraction of the canvas width (0..1). */
   swipe: number;
   flickerFrame: "baseline" | "current";
-  /** From the `--fg-muted` token, via `canvas-theme`. */
-  colors: { hatch: number };
-  /** Canvas px per world px (the world transform's scale), for screen-sized marks. */
-  scale: number;
+  /**
+   * From the tokens, via `canvas-theme`: the hatching from `--fg-muted`,
+   * Swipe's divider from `--ring`.
+   */
+  colors: { hatch: number; divider: number };
+  /**
+   * World to canvas px on the host's pane, the transform the host places the
+   * world with. Its scale sizes the marks that keep a screen size (the
+   * hatch's spacing, the divider's width).
+   */
+  transform: Transform;
+  /** That pane's canvas, in canvas px: Swipe's divider is a fraction of it. */
+  canvas: Size;
 }
 
 export interface ModeHandle {
   /**
-   * Applies the inputs a mount can take in place: the world and the scale
-   * (the hatching follows them), the opacity, the swipe, the flicker frame
-   * and the colours. The images are fixed for a mount; the host mounts again
-   * for new ones.
+   * Applies the inputs a mount can take in place: the world, the transform
+   * and the canvas (the hatching and Swipe's divider follow them), the
+   * opacity, the swipe, the flicker frame and the colours. The images are
+   * fixed for a mount; the host mounts again for new ones.
    */
   update(input: RenderInput): void;
   /**
@@ -46,11 +57,20 @@ export interface ModeHandle {
   dispose(): void;
 }
 
+/** What says where Swipe's divider is: the world, placed on a canvas. */
+export type SplitInput = Pick<
+  RenderInput,
+  "world" | "transform" | "canvas" | "swipe"
+>;
+
 /** A layer the host mounts above a renderer's own. */
 export type HostLayer = "shading" | "regions" | "ignore";
 
 /** An image whose missing area (`World.missing`) a renderer hatches. */
 export type HatchedImage = keyof World["missing"];
+
+/** What says which images' hatching shows: Flicker's frame. */
+export type HatchView = Pick<RenderInput, "flickerFrame">;
 
 export interface ModeRenderer {
   /** Side by side has 2; every other mode draws on one stage. */
@@ -71,20 +91,26 @@ export interface ModeRenderer {
   host: { pane: number; layers: readonly HostLayer[] };
   /**
    * Per pane (an index into `worlds`), the images whose missing area it
-   * hatches, when that image is drawn. The host puts the hatching's
-   * tooltips over the same areas.
+   * hatches on screen, when that image is drawn: Flicker hatches only the
+   * frame it shows (R17). The host puts the hatching's tooltips over the
+   * same areas.
    */
-  hatched: readonly (readonly HatchedImage[])[];
+  hatched(view: HatchView): readonly (readonly HatchedImage[])[];
+  /**
+   * Where each image shows, in world px, for a mode that shows an image in
+   * only part of the world (Swipe: the baseline left of the divider, the
+   * current right of it, R15). It clips the image and its hatching there,
+   * and the host clips the hatching's tooltips to the same area. Absent:
+   * each image shows over the whole world.
+   */
+  shownIn?(input: SplitInput): Record<HatchedImage, Rect>;
 }
 
-/**
- * Swipe and flicker draw as side by side until their renderers land (R1):
- * the chosen mode is kept, and drawn as `drawnMode` says.
- */
+/** Each comparison mode's renderer. */
 export const RENDERERS: Record<ViewerMode, ModeRenderer> = {
   "side-by-side": sideBySide,
-  swipe: sideBySide,
-  flicker: sideBySide,
+  swipe,
+  flicker,
   overlay,
   diff,
 };

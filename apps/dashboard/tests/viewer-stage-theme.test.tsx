@@ -39,18 +39,27 @@ const fake = vi.hoisted(() => {
   }
   class Graphics extends Container {
     strokes: Array<{ color?: number }> = [];
+    fills: Array<{ color?: number }> = [];
     moveTo() {
       return this;
     }
     lineTo() {
       return this;
     }
+    rect() {
+      return this;
+    }
     stroke(s: { color?: number }) {
       this.strokes.push(s);
       return this;
     }
+    fill(s: { color?: number }) {
+      this.fills.push(s);
+      return this;
+    }
     clear() {
       this.strokes = [];
+      this.fills = [];
       return this;
     }
   }
@@ -134,8 +143,8 @@ beforeEach(() => {
   // Same shape as tokens.css: light on :root, dark under .dark.
   styleEl = document.createElement("style");
   styleEl.textContent =
-    ":root{--hover:#f4f4f5;--fg-muted:#6a6a73}" +
-    ":root.dark{--hover:#1d1d21;--fg-muted:#8b8b94}";
+    ":root{--hover:#f4f4f5;--fg-muted:#6a6a73;--ring:#4d7c0f}" +
+    ":root.dark{--hover:#1d1d21;--fg-muted:#8b8b94;--ring:#a8ff53}";
   document.head.appendChild(styleEl);
 });
 
@@ -249,6 +258,30 @@ describe("ViewerStage follows the theme", () => {
     );
     // The same layer, redrawn: the mount was kept.
     expect(hatch()).toBe(drawn);
+    expect(fake.registry.destroyed).toBe(0);
+  });
+
+  test("Swipe's divider is drawn in --ring and follows the theme, without a remount", async () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
+    });
+    localStorage.setItem("furan-theme", "light");
+    renderStage(mismatched());
+    await waitFor(() => expect(fake.registry.apps).toHaveLength(1));
+    const divider = () =>
+      fake.registry.apps[0]!.stage.children[0]!.children.find(
+        (c) => c.label === "divider",
+      ) as InstanceType<typeof fake.Graphics> | undefined;
+    await waitFor(() =>
+      expect(divider()?.fills.map((f) => f.color)).toEqual([0x4d7c0f]),
+    );
+    const drawn = divider();
+
+    act(() => setTheme("dark"));
+    await waitFor(() =>
+      expect(divider()?.fills.map((f) => f.color)).toEqual([0xa8ff53]),
+    );
+    expect(divider()).toBe(drawn);
     expect(fake.registry.destroyed).toBe(0);
   });
 });

@@ -3,6 +3,8 @@
 import { z } from "zod";
 import { create } from "zustand";
 
+import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
+
 /**
  * What the diff viewer remembers per user across reloads (spec §6.1): the
  * comparison mode, the overlay opacity, the toggles and the info rail. Kept
@@ -10,16 +12,6 @@ import { create } from "zustand";
  * back to its default, and with no storage the viewer works on in-memory
  * defaults for the visit.
  */
-
-/** The comparison modes, in their order on the keys 1–5. */
-export const VIEWER_MODES = [
-  "side-by-side",
-  "swipe",
-  "flicker",
-  "overlay",
-  "diff",
-] as const;
-export type ViewerMode = (typeof VIEWER_MODES)[number];
 
 export type RailTab = "info" | "history" | "comments";
 
@@ -185,12 +177,9 @@ export function modeAvailable(mode: ViewerMode, hasBaseline: boolean): boolean {
 }
 
 /**
- * The mode the canvas draws for a chosen one. Swipe and flicker have no
- * renderer yet: until theirs land they draw, and are labelled, as side by
- * side, and the chosen mode is kept as it is.
+ * The mode a step shows for a chosen one (R2): that mode where the step can
+ * show it, else side by side. Idempotent.
  */
-export function drawnMode(
-  mode: ViewerMode,
-): Exclude<ViewerMode, "swipe" | "flicker"> {
-  return mode === "swipe" || mode === "flicker" ? "side-by-side" : mode;
+export function modeOnStep(mode: ViewerMode, hasBaseline: boolean): ViewerMode {
+  return modeAvailable(mode, hasBaseline) ? mode : "side-by-side";
 }

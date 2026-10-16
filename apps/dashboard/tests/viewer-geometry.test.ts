@@ -4,6 +4,7 @@ import {
   canvasToWorld,
   clampZoom,
   fitScale,
+  intersectRect,
   transformFor,
   worldFor,
   worldToCanvas,
@@ -232,5 +233,30 @@ describe("coordinate conversion", () => {
       x: 20,
       y: 34,
     });
+  });
+});
+
+describe("intersectRect", () => {
+  test("the area two rects share", () => {
+    expect(
+      intersectRect(
+        { x: 0, y: 200, w: 300, h: 100 },
+        { x: 200, y: 0, w: 200, h: 300 },
+      ),
+    ).toEqual({ x: 200, y: 200, w: 100, h: 100 });
+    // One inside the other is that one.
+    expect(
+      intersectRect(
+        { x: 300, y: 0, w: 100, h: 300 },
+        { x: 0, y: 0, w: 400, h: 300 },
+      ),
+    ).toEqual({ x: 300, y: 0, w: 100, h: 300 });
+  });
+
+  test("none when they only touch or lie apart, or one has no area", () => {
+    const strip = { x: 300, y: 0, w: 100, h: 300 };
+    expect(intersectRect(strip, { x: 0, y: 0, w: 300, h: 300 })).toBeNull();
+    expect(intersectRect(strip, { x: 0, y: 0, w: 200, h: 300 })).toBeNull();
+    expect(intersectRect(strip, { x: 350, y: 0, w: 0, h: 300 })).toBeNull();
   });
 });

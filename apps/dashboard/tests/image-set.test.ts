@@ -285,6 +285,112 @@ describe("decodeImage", () => {
   });
 });
 
+describe("decodeImage and a PNG without its IEND chunk", () => {
+  const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const IEND = [
+    0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  ];
+  // Signature, then stand-in chunk bytes: the decoder is a mock that only
+  // looks at how the bytes end.
+  const BODY = [0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3, 4, 5, 6, 7, 8];
+
+  const endsWithIend = (bytes: Uint8Array): boolean =>
+    bytes.length >= IEND.length &&
+    IEND.every((b, i) => bytes[bytes.length - IEND.length + i] === b);
+
+  const bytesOf = async (b: Blob): Promise<Uint8Array> =>
+    new Uint8Array(await b.arrayBuffer());
+
+  /** A browser's decoder: refuses a PNG that does not end in IEND. */
+  const strictDecoder = (bm: ImageBitmap) => async (src: unknown) => {
+    if (!(src instanceof Blob) || !endsWithIend(await bytesOf(src))) {
+      throw new DOMException("The source image cannot be decoded.");
+    }
+    return bm;
+  };
+
+  let decodedSrcs: string[];
+
+  beforeEach(() => {
+    decodedSrcs = [];
+    stubImageDecode(function (this: HTMLImageElement) {
+      decodedSrcs.push(this.src);
+      return Promise.resolve();
+    });
+  });
+
+  it("appends IEND and decodes the repaired blob, with no fallback", async () => {
+    const bm = fakeBitmap(8, 8);
+    createImageBitmapMock.mockImplementation(strictDecoder(bm));
+    const original = new Blob([new Uint8Array([...SIGNATURE, ...BODY])], {
+      type: "image/png",
+    });
+
+    await expect(decodeImage(original)).resolves.toBe(bm);
+
+    expect(createImageBitmapMock).toHaveBeenCalledTimes(2);
+    expect(createImageBitmapMock.mock.calls[0]![0]).toBe(original);
+    const repaired = createImageBitmapMock.mock.calls[1]![0] as Blob;
+    expect(repaired).not.toBe(original);
+    expect(repaired.type).toBe("image/png");
+    expect(repaired.size).toBe(original.size + IEND.length);
+    expect([...(await bytesOf(repaired))]).toEqual([
+      ...SIGNATURE,
+      ...BODY,
+      ...IEND,
+    ]);
+    // Neither the re-typed blob nor an image element was needed.
+    expect(decodedSrcs).toEqual([]);
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("repairs a PNG that carries no type, as storage can serve it", async () => {
+    const bm = fakeBitmap(2, 2);
+    createImageBitmapMock.mockImplementation(strictDecoder(bm));
+    const untyped = new Blob([new Uint8Array([...SIGNATURE, ...BODY])]);
+
+    await expect(decodeImage(untyped)).resolves.toBe(bm);
+    expect(createImageBitmapMock).toHaveBeenCalledTimes(2);
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("does not repair a PNG that already ends in IEND: it goes on to the fallbacks", async () => {
+    const bm = fakeBitmap(3, 3);
+    createImageBitmapMock
+      .mockRejectedValueOnce(new Error("first"))
+      .mockResolvedValueOnce(bm);
+    const complete = new Blob([
+      new Uint8Array([...SIGNATURE, ...BODY, ...IEND]),
+    ]);
+
+    await expect(decodeImage(complete)).resolves.toBe(bm);
+
+    expect(createImageBitmapMock).toHaveBeenCalledTimes(2);
+    const retyped = createImageBitmapMock.mock.calls[1]![0] as Blob;
+    expect(retyped.type).toBe("image/png");
+    expect(retyped.size).toBe(complete.size);
+  });
+
+  it("goes on to the fallbacks, with the original blob, when IEND does not help", async () => {
+    const bm = fakeBitmap(6, 6);
+    createImageBitmapMock
+      .mockRejectedValueOnce(new Error("first"))
+      .mockRejectedValueOnce(new Error("repaired"))
+      .mockRejectedValueOnce(new Error("retyped"))
+      .mockResolvedValueOnce(bm);
+    const original = new Blob([new Uint8Array([...SIGNATURE, ...BODY])]);
+
+    await expect(decodeImage(original)).resolves.toBe(bm);
+
+    expect(createImageBitmapMock).toHaveBeenCalledTimes(4);
+    const retyped = createImageBitmapMock.mock.calls[2]![0] as Blob;
+    expect(retyped.size).toBe(original.size);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledWith(original);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+});
+
 // -- the cache --------------------------------------------------------------
 
 describe("createBitmapCache", () => {

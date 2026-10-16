@@ -353,6 +353,223 @@ describe("useReviewLoop: the review context travels", () => {
       `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-10?status=failed&browser=chromium&viewport=1280x720`,
     );
   });
+
+  test("the comparison mode travels too, after the context (spec §6.3)", async () => {
+    const context: ReviewContext = { status: "failed", facets: {} };
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    const { result } = setup({ context, view: "swipe" });
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&view=swipe`,
+    );
+    cleanup();
+
+    // K's answer comes later: it carries the view the reviewer has then.
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const k = setup({ context, view: "swipe" });
+    act(() => k.result.current.goPrev());
+    k.rerender(args({ context, view: "diff" }));
+    await act(async () =>
+      prev.resolve(
+        answer({
+          target: { buildId: BUILD, runId: RUN, checkpointId: "step-0" },
+        }),
+      ),
+    );
+    expect(router.replace).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-0?status=failed&view=diff`,
+    );
+  });
+
+  test("with the view, the step on screen is still not opened again", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+    });
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.goNext());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("useReviewLoop.retarget: a mode change while a navigation is on its way (R20)", () => {
+  const url = (runId: string, step: string, query = "") =>
+    `/projects/${PROJECT}/runs/${runId}/checkpoints/${step}${query}`;
+  const intoOtherTest = () =>
+    answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+  /** `retarget`'s answer, made inside act. */
+  function retarget(
+    result: { current: ReturnType<typeof useReviewLoop> },
+    view: Parameters<ReturnType<typeof useReviewLoop>["retarget"]>[0],
+  ): boolean {
+    let made = false;
+    act(() => {
+      made = result.current.retarget(view);
+    });
+    return made;
+  }
+
+  test("with nothing on its way: false, and no navigation", () => {
+    query.data = intoOtherTest();
+    const { result } = setup({ view: "overlay" });
+    expect(retarget(result, "diff")).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("J's push goes again in the new mode, still a push, and is the move the loop waits for", () => {
+    query.data = intoOtherTest();
+    const { result, rerender } = setup({ view: "overlay" });
+    act(() => result.current.goNext());
+    expect(retarget(result, "diff")).toBe(true);
+    expect(router.push.mock.calls).toEqual([
+      [url(OTHER_RUN, "step-9", "?view=overlay")],
+      [url(OTHER_RUN, "step-9", "?view=diff")],
+    ]);
+    expect(router.replace).not.toHaveBeenCalled();
+
+    // The viewer re-renders in Diff. A decision now goes where the move
+    // already goes: it is not made a second time. J is still latched.
+    rerender(args({ view: "diff" }));
+    act(() => result.current.afterDecision());
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenCalledTimes(2);
+
+    // The next test's route commits: the latch is let go, and J moves on.
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-10" },
+    });
+    rerender(args({ view: "diff", runId: OTHER_RUN, checkpointId: "step-9" }));
+    // Nothing of the step left is on its way any more.
+    expect(retarget(result, "swipe")).toBe(false);
+    act(() => result.current.goNext());
+    expect(router.replace).toHaveBeenCalledOnce();
+    expect(router.replace).toHaveBeenCalledWith(
+      url(OTHER_RUN, "step-10", "?view=diff"),
+    );
+  });
+
+  test("a decision's move in this test goes again as a replace", () => {
+    query.data = answer();
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.afterDecision());
+    expect(retarget(result, "swipe")).toBe(true);
+    expect(router.replace.mock.calls).toEqual([
+      [url(RUN, "step-2", "?view=overlay")],
+      [url(RUN, "step-2", "?view=swipe")],
+    ]);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test("while K only asks, nothing is on its way: its answer goes in the mode of then", async () => {
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const { result, rerender } = setup({ view: "overlay" });
+    act(() => result.current.goPrev());
+    // No navigation yet: the viewer writes its own URL, and re-renders.
+    expect(retarget(result, "diff")).toBe(false);
+    expect(router.replace).not.toHaveBeenCalled();
+    rerender(args({ view: "diff" }));
+    await act(async () =>
+      prev.resolve(
+        answer({
+          target: { buildId: BUILD, runId: RUN, checkpointId: "step-0" },
+        }),
+      ),
+    );
+    expect(router.replace).toHaveBeenLastCalledWith(
+      url(RUN, "step-0", "?view=diff"),
+    );
+  });
+
+  test("Continue and Clear filter go again in the new mode, keeping their URL's context", async () => {
+    const FACETED: ReviewContext = {
+      status: "failed",
+      facets: { browser: "chromium" },
+    };
+    query.data = answer({
+      target: { buildId: "b2", runId: "r9", checkpointId: "s9" },
+      scope: "nextBatch",
+      remaining: { run: 0, batch: 0, batchUnfiltered: 2, projectBatches: 2 },
+      nextBatch,
+    });
+    const card = setup({ context: FACETED, view: "overlay" });
+    act(() => card.result.current.afterDecision());
+    act(() => card.result.current.continueToNextBatch());
+    expect(retarget(card.result, "flicker")).toBe(true);
+    expect(router.push).toHaveBeenLastCalledWith(
+      url("r9", "s9", "?status=failed&browser=chromium&view=flicker"),
+    );
+    // The card stays busy until the route commits.
+    expect(card.result.current.cardBusy).toBe(true);
+    cleanup();
+    router.push.mockReset();
+
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+      }),
+    );
+    const cleared = setup({ context: FACETED, view: "overlay" });
+    act(() => cleared.result.current.afterDecision());
+    await act(async () => cleared.result.current.clearFilter());
+    expect(retarget(cleared.result, "flicker")).toBe(true);
+    expect(router.push).toHaveBeenLastCalledWith(
+      url(OTHER_RUN, "step-9", "?status=failed&view=flicker"),
+    );
+  });
+
+  test("leaving the viewer: the departure goes on as it is", () => {
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.leave("/projects/p1/builds/b1"));
+    expect(retarget(result, "diff")).toBe(true);
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test("a move given up on (5 s) is not made again", () => {
+    vi.useFakeTimers();
+    query.data = intoOtherTest();
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.goNext());
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(retarget(result, "diff")).toBe(false);
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  test("R22: a link's navigation to a step goes again in the new mode, a push, until its route commits", () => {
+    const { result, rerender } = setup({ view: "overlay" });
+    const newer = (view: string | null) =>
+      url("r9", "s9", view ? `?view=${view}` : "");
+    // Next makes the link's own navigation; the loop only hears of it.
+    act(() => result.current.linkNavigating(newer("overlay"), newer));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(retarget(result, "swipe")).toBe(true);
+    expect(router.push.mock.calls).toEqual([[newer("swipe")]]);
+    expect(router.replace).not.toHaveBeenCalled();
+    // The same mode again: the navigation already goes there.
+    expect(retarget(result, "swipe")).toBe(true);
+    expect(router.push).toHaveBeenCalledOnce();
+    // Committed: nothing is on its way from here any more.
+    rerender(args({ view: "swipe", runId: "r9", checkpointId: "s9" }));
+    expect(retarget(result, "diff")).toBe(false);
+  });
+
+  test("R22: a link out of the viewer goes on as it is", () => {
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.linkNavigating("/projects/p1/builds/b1"));
+    expect(retarget(result, "diff")).toBe(true);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
 });
 
 describe("useReviewLoop: the cue's test name", () => {
@@ -735,6 +952,34 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     // The card stays up, busy, until the route commits.
     expect(result.current.card).toBe("filtered");
     expect(result.current.cardBusy).toBe(true);
+  });
+
+  test("Continue and Clear filter carry the comparison mode (spec §6.3)", async () => {
+    query.data = intoNextBatch(4);
+    const hook = setup({ context: FACETED, view: "flicker" });
+    act(() => hook.result.current.afterDecision());
+    act(() => hook.result.current.continueToNextBatch());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/r9/checkpoints/s9?status=failed&browser=chromium&view=flicker`,
+    );
+    cleanup();
+    router.push.mockReset();
+
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+        remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+      }),
+    );
+    const cleared = setup({ context: FACETED, view: "flicker" });
+    act(() => cleared.result.current.afterDecision());
+    await act(async () => cleared.result.current.clearFilter());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&view=flicker`,
+    );
   });
 
   test("Clear filter is busy from the press: a second press asks once", async () => {
