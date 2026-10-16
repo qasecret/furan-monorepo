@@ -54,6 +54,18 @@ describe("RegionListPanel", () => {
     cleanup();
   });
 
+  it("fills the rail's width: a section, not a nested aside, with no fixed width (spec §5)", () => {
+    const { container } = render(<RegionListPanel regions={mockRegions} />);
+    expect(container.querySelector("aside")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const panel = screen.getByTestId("region-list-panel");
+    expect(panel.tagName).toBe("SECTION");
+    // No width of its own (it was w-72, at most 30vw): the rail's is its.
+    expect([...panel.classList].filter((c) => /^(max-)?w-/.test(c))).toEqual(
+      [],
+    );
+  });
+
   it("renders regions severity-sorted (breaking > major > minor)", () => {
     render(<RegionListPanel regions={mockRegions} />);
     const items = screen

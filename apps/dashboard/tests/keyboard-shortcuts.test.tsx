@@ -894,9 +894,13 @@ describe("the viewer's keys are registry commands", () => {
     });
   }
 
-  /** A rail on screen, as the viewer mounts one (`InfoRail`). */
-  function railOnScreen() {
+  /**
+   * A rail on screen, as the viewer mounts one (`InfoRail`), showing the
+   * step's details: out of the editor, whose regions it holds instead.
+   */
+  function detailsOnScreen() {
     useRailState.setState({ mounted: 1 });
+    useViewerStore.setState({ ignoreEditMode: "off" });
   }
 
   function state() {
@@ -980,9 +984,10 @@ describe("the viewer's keys are registry commands", () => {
     // Armed, the editor is open: `o` passes Swipe and Flicker by (§4.4).
     row("O", "o", "viewer.cycleMode", { changed: { mode: "overlay" } }),
     row("H", "h", "viewer.highlight", { changed: { highlight: true } }),
-    // A request for the comments, which a rail on screen takes (Task 13 M2).
+    // A request for the comments, which a rail showing the details takes
+    // (Task 13 M2, spec §5).
     row("C", "c", "viewer.comments", {
-      setup: railOnScreen,
+      setup: detailsOnScreen,
       changed: { commentPanelOpen: true },
     }),
     row("=", "=", "viewer.zoomIn", { changed: { zoom: 2 * ZOOM_STEP } }),

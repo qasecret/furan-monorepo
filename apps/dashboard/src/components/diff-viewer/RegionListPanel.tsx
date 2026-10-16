@@ -93,11 +93,10 @@ export function RegionListPanel({
   // group order matches.
   const grouped = useMemo(() => groupRegions(filtered), [filtered]);
 
+  // A section of the rail's Info tab, as wide as the rail (spec §5): no
+  // aside or width of its own.
   return (
-    <aside
-      className="border-l border-edge bg-canvas flex flex-col w-72 max-w-[30vw]"
-      data-testid="region-list-panel"
-    >
+    <section className="flex min-w-0 flex-col" data-testid="region-list-panel">
       <div className="p-2 border-b border-edge flex items-center justify-between gap-2 flex-wrap">
         <span className="text-sm font-medium text-fg">
           Regions ({filtered.length})
@@ -204,6 +203,6 @@ export function RegionListPanel({
           ))
         )}
       </div>
-    </aside>
+    </section>
   );
 }

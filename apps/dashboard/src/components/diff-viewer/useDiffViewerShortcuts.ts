@@ -367,16 +367,18 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
   {
     // A request for the comments, as Mark as Bug makes: the rail opens on
     // its Comments tab, expanding when it is collapsed (spec §5), and takes
-    // the request (`InfoRail`). Named for that (Task 13 M9). Only while a
-    // rail is on screen to take it (Task 13 M2): over the done card or an
-    // empty run the key is the browser's, and leaves no request behind for
-    // the next rail.
+    // the request (`InfoRail`). Named for that (Task 13 M9). Only where the
+    // comments can be shown (Task 13 M2): with a rail on screen to take the
+    // request (not over the done card or an empty run, where it would be
+    // left for the next rail), and out of the ignore-region editor, whose
+    // regions the rail holds instead (spec §5). Elsewhere the key is the
+    // browser's.
     id: "viewer.comments",
     label: "Show comments",
     group: "View",
     keys: ["c"],
     scope: "viewer",
-    enabled: () => railPresent(),
+    enabled: () => railPresent() && !isEditing(),
     run: () => store().setCommentPanelOpen(true),
   },
   {

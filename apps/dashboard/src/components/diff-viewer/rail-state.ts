@@ -174,9 +174,14 @@ export function setRailCollapsed(
   useRailState.setState({ visit: null, focus });
 }
 
-/** Opens the rail on `tab`, which is stored wherever the window is. */
-export function openRailOn(tab: RailTab, opts: RailMoveOptions = {}): void {
+/** Makes `tab` the rail's tab, stored wherever the window is. */
+export function chooseRailTab(tab: RailTab): void {
   const { prefs, set } = useViewerPrefs.getState();
   if (prefs.railTab !== tab) set("railTab", tab);
+}
+
+/** Opens the rail on `tab` (`chooseRailTab`). */
+export function openRailOn(tab: RailTab, opts: RailMoveOptions = {}): void {
+  chooseRailTab(tab);
   setRailCollapsed(false, opts);
 }

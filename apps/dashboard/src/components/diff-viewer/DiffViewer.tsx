@@ -453,10 +453,9 @@ export function DiffViewer({
   const draftIgnoreAreas = useViewerStore((s) => s.draftIgnoreAreas);
   const pendingSnaps = useViewerStore((s) => s.pendingSnaps);
   const proposePendingSnap = useViewerStore((s) => s.proposePendingSnap);
-  // Phase 1.4: list panel mount gate + delete wiring. Reads here so they
-  // sit alongside the other ignore-editor selectors (the actual JSX
-  // mount is next to RegionListPanel below).
-  const ignoreEditMode = useViewerStore((s) => s.ignoreEditMode);
+  // Phase 1.4: the ignore-region list's delete wiring. Reads here so they
+  // sit alongside the other ignore-editor selectors (the list is the info
+  // rail's content while the editor is open, below).
   const activeViewport = useViewerStore((s) => s.viewport);
   const setViewport = useViewerStore((s) => s.setViewport);
   const setSelectedIgnoreId = useViewerStore((s) => s.setSelectedIgnoreId);
@@ -936,7 +935,9 @@ export function DiffViewer({
             )}
             {/* Canvas + the info rail on the right (spec §5): resizable,
                 collapsible, and over the canvas below 1024 px, which this
-                row positions. The left checkpoint rail was removed —
+                row positions. While the ignore-region editor is open the
+                rail holds its regions: one rail, never a second column.
+                The left checkpoint rail was removed —
                 navigation is the batch-detail grid (enter) plus the top-bar
                 prev/next stepper (move between checkpoints), matching the
                 reference's two-pane layout. */}
@@ -989,7 +990,14 @@ export function DiffViewer({
                   </>
                 )}
               </div>
-              <InfoRail>
+              <InfoRail
+                editor={
+                  <IgnoreRegionListPanel
+                    viewport={activeViewport || null}
+                    onDelete={handleDeleteIgnoreRegion}
+                  />
+                }
+              >
                 <TestInfoSidebar
                   test={data.name ?? "Untitled run"}
                   stepLabel={stepLabel}
@@ -1014,12 +1022,6 @@ export function DiffViewer({
                   runId={runId}
                 />
               </InfoRail>
-              {ignoreEditMode !== "off" && (
-                <IgnoreRegionListPanel
-                  viewport={activeViewport || null}
-                  onDelete={handleDeleteIgnoreRegion}
-                />
-              )}
               {/* Keyboard hint bar (reference TestStep): floats over the
                   canvas; ←/→ navigate steps, J/K the next / previous pending
                   step while the loop is on, A approve, R reject, and ⌘Z undo

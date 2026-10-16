@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { RailHideButton } from "./InfoRail";
 import type { DraftIgnoreArea } from "./useViewerStore";
 import { useViewerStore } from "./useViewerStore";
 
@@ -30,6 +31,15 @@ const KIND_LABEL: Record<DraftIgnoreArea["kind"], string> = {
   content: "Content",
 };
 
+/** The copy, verbatim from spec §8. */
+const HEADING = "Ignore regions";
+
+/**
+ * The ignore-region editor's regions for the viewport on screen. While the
+ * editor is open it is the info rail's content (spec §5): the rail holds the
+ * landmark and the width, and its "Hide details" ends the heading's row. It
+ * never sits beside the rail as a second column.
+ */
 export function IgnoreRegionListPanel({
   viewport,
   onDelete,
@@ -44,16 +54,21 @@ export function IgnoreRegionListPanel({
   );
 
   return (
-    <aside
-      className="border-l border-edge bg-canvas flex flex-col w-80 max-w-[40vw]"
+    <section
+      className="flex min-h-0 flex-1 flex-col"
       data-testid="ignore-region-list-panel"
     >
-      <div className="p-2 border-b border-edge flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-sm font-medium text-fg">
-          Ignore regions ({forViewport.length})
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-edge p-2">
+        <h2 className="text-sm font-medium text-fg">{HEADING}</h2>
+        <span
+          className="text-sm tabular-nums text-fg-muted"
+          data-testid="ignore-region-count"
+        >
+          ({forViewport.length})
         </span>
+        <RailHideButton className="ml-auto" />
       </div>
-      <div className="overflow-auto flex-1 p-2 space-y-1">
+      <div className="min-h-0 flex-1 overflow-auto p-2 space-y-1">
         {forViewport.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center gap-1 p-6 text-center"
@@ -132,6 +147,6 @@ export function IgnoreRegionListPanel({
           })
         )}
       </div>
-    </aside>
+    </section>
   );
 }

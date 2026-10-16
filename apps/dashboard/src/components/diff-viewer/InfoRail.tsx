@@ -19,6 +19,8 @@ import {
 } from "react";
 
 import {
+  chooseRailTab,
+  focusInRail,
   isNarrowWindow,
   openRailOn,
   RAIL_STRIP_WIDTH,
@@ -30,7 +32,7 @@ import {
   useWindowWidth,
 } from "./rail-state";
 import { RailResizer } from "./RailResizer";
-import { useViewerStore } from "./useViewerStore";
+import { useViewerStore, type IgnoreEditMode } from "./useViewerStore";
 import { useViewerPrefs, type RailTab } from "./viewer-prefs";
 
 import { cn } from "@/lib/cn";
@@ -50,6 +52,10 @@ const STRIP_TABS: { tab: RailTab; label: string; Icon: typeof Info }[] = [
   { tab: "comments", label: "Comments", Icon: MessageSquare },
 ];
 
+/** The ignore-region editor is open. */
+const editorIsOpen = (s: { ignoreEditMode: IgnoreEditMode }) =>
+  s.ignoreEditMode !== "off";
+
 /**
  * An icon button of the rail's chrome. The ring is inset: the viewer body is
  * overflow-hidden and would clip an outset one.
@@ -67,8 +73,9 @@ const HideButtonRef = createContext<RefObject<HTMLButtonElement | null> | null>(
 
 /**
  * "Hide details" (spec §5), for the open rail's content to place at the end
- * of its own header row (the tab row), so the rail spends no row of its own
- * on one icon (Task 13 M10). Outside a rail it renders nothing.
+ * of its own header row (the details' tab row, the editor's heading), so the
+ * rail spends no row of its own on one icon (Task 13 M10). Outside a rail it
+ * renders nothing.
  */
 export function RailHideButton({ className }: { className?: string }) {
   const ref = useContext(HideButtonRef);
@@ -95,6 +102,12 @@ interface Props {
    * `RailHideButton` at the end of its header row.
    */
   children: ReactNode;
+  /**
+   * What it holds instead while the ignore-region editor is open: the
+   * editor's regions under "Ignore regions" (`IgnoreRegionListPanel`), with
+   * its own `RailHideButton`. Absent: the editor leaves the rail alone.
+   */
+  editor?: ReactNode;
   /** Told the tab the rail opened on, from its strip or a comment request. */
   onTab?: (tab: RailTab) => void;
 }
@@ -118,11 +131,18 @@ interface Props {
  *   closes it.
  * - **Comments.** A request for the comments (`c`, Mark as Bug: the viewer
  *   store's `commentPanelOpen`) opens it on Comments, and is taken.
+ * - **Edit mode.** While the ignore-region editor is open the rail holds
+ *   the editor's regions (`editor`) in place of its content, one rail and
+ *   never two columns; collapsed, its strip has only "Show details", as its
+ *   tabs would open on what the editor hides. The tab is never changed by
+ *   editing, so leaving the editor brings back the one the reviewer was on.
+ *   Focus in what the swap takes away moves to the rail's toggle, which
+ *   stays ("Hide details", or the strip's "Show details").
  *
  * The width, the collapsed state and the tab are the user's preferences
  * (`useViewerPrefs`); the tab is the content's to show (`prefs.railTab`).
  */
-export function InfoRail({ children, onTab }: Props) {
+export function InfoRail({ children, editor, onTab }: Props) {
   // The visit starts with the first rail: collapsed below 1024 px. Read
   // before the state below, so the first paint is already collapsed there.
   startRailVisit();
@@ -132,6 +152,8 @@ export function InfoRail({ children, onTab }: Props) {
   const cap = railMaxWidth(windowWidth);
   const width = Math.min(storedWidth, cap);
   const overlaid = !collapsed && isNarrowWindow(windowWidth);
+  const editorOpen = useViewerStore(editorIsOpen);
+  const editing = editorOpen && editor != null;
   const focusMove = useRailState((s) => s.focus);
   const keys = useCommandKeys(TOGGLE);
   const hideRef = useRef<HTMLButtonElement>(null);
@@ -157,6 +179,28 @@ export function InfoRail({ children, onTab }: Props) {
     useRailState.setState({ focus: null });
   }, [focusMove, collapsed]);
 
+  // Opening or closing the editor swaps what the rail holds, and the strip's
+  // tabs: focus in what went moves to the toggle that stays. Whether focus
+  // was in the rail is read as the editor changes, before the swap, and is
+  // settled in the commit that follows (with no `editor`, nothing went).
+  const focusWasIn = useRef(false);
+  useEffect(
+    () =>
+      useViewerStore.subscribe((now, before) => {
+        if (editorIsOpen(now) !== editorIsOpen(before))
+          focusWasIn.current = focusInRail();
+      }),
+    [],
+  );
+  useLayoutEffect(() => {
+    if (!focusWasIn.current) return;
+    focusWasIn.current = false;
+    // Focus still on something (what stays, the separator): left alone.
+    const focused = document.activeElement;
+    if (focused !== null && focused !== document.body) return;
+    (collapsed ? showRef : hideRef).current?.focus();
+  }, [editorOpen, collapsed]);
+
   const openOn = useCallback(
     (tab: RailTab, moveFocus?: boolean) => {
       openRailOn(tab, moveFocus === undefined ? {} : { moveFocus });
@@ -165,13 +209,17 @@ export function InfoRail({ children, onTab }: Props) {
     [onTab],
   );
 
-  // A request for the comments: open on Comments, and take the request.
+  // A request for the comments: open on Comments, and take the request. In
+  // the editor the rail shows the editor's regions, not the comments: the
+  // request only makes Comments the tab that comes back, and opens nothing
+  // (Mark as Bug; `c` is off there).
   const commentRequested = useViewerStore((s) => s.commentPanelOpen);
   useLayoutEffect(() => {
     if (!commentRequested) return;
     useViewerStore.getState().setCommentPanelOpen(false);
-    openOn("comments");
-  }, [commentRequested, openOn]);
+    if (editing) chooseRailTab("comments");
+    else openOn("comments");
+  }, [commentRequested, editing, openOn]);
 
   // The window's cap: what is stored is kept when the window is what stops
   // it, and it already reaches that cap, so a narrow window never takes the
@@ -206,20 +254,24 @@ export function InfoRail({ children, onTab }: Props) {
         >
           <PanelRightOpen className="h-4 w-4" aria-hidden />
         </button>
-        <span className="my-1 h-px w-6 bg-edge" aria-hidden />
-        {STRIP_TABS.map(({ tab, label, Icon }) => (
-          <button
-            key={tab}
-            type="button"
-            aria-label={label}
-            title={label}
-            onClick={() => openOn(tab, true)}
-            data-testid={`rail-strip-${tab}`}
-            className={ICON_BUTTON}
-          >
-            <Icon className="h-4 w-4" aria-hidden />
-          </button>
-        ))}
+        {!editing && (
+          <>
+            <span className="my-1 h-px w-6 bg-edge" aria-hidden />
+            {STRIP_TABS.map(({ tab, label, Icon }) => (
+              <button
+                key={tab}
+                type="button"
+                aria-label={label}
+                title={label}
+                onClick={() => openOn(tab, true)}
+                data-testid={`rail-strip-${tab}`}
+                className={ICON_BUTTON}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+              </button>
+            ))}
+          </>
+        )}
       </aside>
     );
   }
@@ -255,7 +307,9 @@ export function InfoRail({ children, onTab }: Props) {
       >
         <RailResizer width={width} onResize={onResize} />
         <HideButtonRef.Provider value={hideRef}>
-          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {editing ? editor : children}
+          </div>
         </HideButtonRef.Provider>
       </aside>
     </>

@@ -1453,6 +1453,51 @@ describe("DiffViewer", () => {
     expect(r.queryByTestId("info-stat-cards")).toBeNull();
   });
 
+  test("editing ignore regions, the rail holds their list: one rail, no second column, and the details come back on leaving (spec §5)", () => {
+    const r = render(<DiffViewer runId="r1" diffId="d1" />);
+    press("i");
+    expect(useViewerStore.getState().ignoreEditMode).not.toBe("off");
+    const landmarks = r.getAllByRole("complementary");
+    expect(landmarks).toHaveLength(1);
+    const rail = landmarks[0]!;
+    expect(rail.style.width).toBe("320px");
+    expect(
+      within(rail).getByRole("heading", { name: "Ignore regions" }),
+    ).toBeDefined();
+    // The list is the rail's content, not a column of its own.
+    expect(r.getByTestId("ignore-region-list-panel").closest("aside")).toBe(
+      rail,
+    );
+    expect(r.queryByTestId("info-stat-cards")).toBeNull();
+    // Its rows are the viewport's drafts, and delete as they did.
+    const viewport = useViewerStore.getState().viewport;
+    act(() =>
+      useViewerStore.setState({
+        draftIgnoreAreas: [
+          {
+            id: "d1",
+            x: 1,
+            y: 1,
+            width: 10,
+            height: 10,
+            viewport,
+            paddingPx: 0,
+            kind: "ignore",
+          },
+        ],
+      }),
+    );
+    expect(within(rail).getAllByTestId("ignore-region-item")).toHaveLength(1);
+    fireEvent.click(within(rail).getByTestId("ignore-region-delete"));
+    expect(useViewerStore.getState().draftIgnoreAreas).toEqual([]);
+
+    press("Escape");
+    expect(useViewerStore.getState().ignoreEditMode).toBe("off");
+    expect(r.getAllByRole("complementary")).toHaveLength(1);
+    expect(r.queryByTestId("ignore-region-list-panel")).toBeNull();
+    expect(within(rail).getByTestId("info-stat-cards")).toBeDefined();
+  });
+
   test("diff stepper renders counter and advances on next click", () => {
     mockGetByIdData = {
       ...defaultMockData,

@@ -77,6 +77,7 @@ vi.mock("@/lib/trpc", () => ({
   },
 }));
 
+import { IgnoreRegionListPanel } from "../src/components/diff-viewer/IgnoreRegionListPanel";
 import { useViewerStore } from "../src/components/diff-viewer/useViewerStore";
 import { ViewerToolbar } from "../src/components/diff-viewer/ViewerToolbar";
 
@@ -1020,5 +1021,57 @@ describe("ViewerToolbar — ignore-regions controls", () => {
     render(<ViewerToolbar runId={RUN_ID} checkpointId={CHECKPOINT_ID} />);
     const btn = screen.getByTestId("ignore-save-button") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
+  });
+});
+
+describe("IgnoreRegionListPanel: the rail's content while editing (spec §5)", () => {
+  const region = (id: string, viewport: string) => ({
+    id,
+    x: 10,
+    y: 10,
+    width: 20,
+    height: 20,
+    viewport,
+    paddingPx: 0,
+    kind: "ignore" as const,
+  });
+  beforeEach(() => {
+    useViewerStore.setState({
+      ignoreEditMode: "run",
+      draftIgnoreAreas: [region("d1", VP), region("d2", "375x812")],
+      selectedIgnoreId: null,
+    });
+  });
+  afterEach(() => cleanup());
+
+  test("a section under the heading Ignore regions, with no aside or width of its own: the rail holds it", () => {
+    const { container } = render(<IgnoreRegionListPanel viewport={VP} />);
+    expect(container.querySelector("aside")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const panel = screen.getByTestId("ignore-region-list-panel");
+    expect(panel.tagName).toBe("SECTION");
+    // It was a second column, w-80 and at most 40vw.
+    expect([...panel.classList].filter((c) => /^(max-)?w-/.test(c))).toEqual(
+      [],
+    );
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Ignore regions" }),
+    ).toBeDefined();
+    // The viewport's regions, counted beside the heading.
+    expect(screen.getAllByTestId("ignore-region-item")).toHaveLength(1);
+    expect(screen.getByTestId("ignore-region-count").textContent).toBe("(1)");
+    // Hide details is the rail's: none outside one.
+    expect(screen.queryByRole("button", { name: "Hide details" })).toBeNull();
+  });
+
+  test("its rows still select and delete, as in the second column", () => {
+    const onDelete = vi.fn();
+    render(<IgnoreRegionListPanel viewport={null} onDelete={onDelete} />);
+    expect(screen.getByTestId("ignore-region-count").textContent).toBe("(2)");
+    const [first] = screen.getAllByTestId("ignore-region-item");
+    fireEvent.click(first!);
+    expect(useViewerStore.getState().selectedIgnoreId).toBe("d1");
+    fireEvent.click(screen.getAllByTestId("ignore-region-delete")[1]!);
+    expect(onDelete).toHaveBeenCalledWith("d2");
   });
 });

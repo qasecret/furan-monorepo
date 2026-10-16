@@ -35,6 +35,7 @@ import { createBackend, TrpcBackend } from "./trpc-backend";
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
+import { IgnoreRegionListPanel } from "@/components/diff-viewer/IgnoreRegionListPanel";
 import { InfoRail } from "@/components/diff-viewer/InfoRail";
 import { useRailState } from "@/components/diff-viewer/rail-state";
 import { TestInfoSidebar } from "@/components/diff-viewer/TestInfoSidebar";
@@ -66,8 +67,9 @@ import {
  * 280 to 560 px, never over 45% of the window, without a narrow window
  * overwriting the stored width (Review Focus 5); a 40 px strip when
  * collapsed (`t`, the Hide / Show details buttons, the strip's tabs, `c`);
- * its width, state and tab remembered per user; and below 1024 px it starts
- * collapsed for the visit and, opened, overlays the canvas.
+ * its width, state and tab remembered per user; below 1024 px it starts
+ * collapsed for the visit and, opened, overlays the canvas; and while the
+ * ignore-region editor is open it holds the editor's regions, one rail.
  */
 
 const USER = "u1";
@@ -93,7 +95,10 @@ const INFO = {
   runId: "r1",
 };
 
-/** The viewer's part that matters here: its keys, and the rail with its content. */
+/**
+ * The viewer's part that matters here: its keys, and the rail with its
+ * content, the step's details or, while editing, the editor's regions.
+ */
 function Viewer({
   opts = {},
   onTab,
@@ -107,7 +112,10 @@ function Viewer({
   return (
     <div className="relative flex">
       <button type="button">Outside</button>
-      <InfoRail {...(onTab ? { onTab } : {})}>
+      <InfoRail
+        {...(onTab ? { onTab } : {})}
+        editor={<IgnoreRegionListPanel viewport={null} />}
+      >
         <TestInfoSidebar {...INFO} stepLabel={stepLabel} />
       </InfoRail>
     </div>
@@ -247,6 +255,8 @@ beforeEach(() => {
     commentPanelOpen: false,
     commentPrefill: null,
     ignoreEditMode: "off",
+    draftIgnoreAreas: [],
+    selectedIgnoreId: null,
   });
   useViewState.setState({ selectedRegionId: null });
 });
@@ -799,6 +809,197 @@ describe("below 1024 px", () => {
     expect(button("Hide details")).toBeDefined();
     press("t");
     expect(stored()?.railCollapsed).toBe(true);
+  });
+});
+
+describe("the ignore-region editor: one rail (spec §5)", () => {
+  const DRAFT = {
+    id: "d1",
+    x: 10,
+    y: 10,
+    width: 20,
+    height: 20,
+    viewport: "1280x720",
+    paddingPx: 0,
+    kind: "ignore" as const,
+  };
+  const edit = () =>
+    act(() => useViewerStore.getState().setIgnoreEditMode("run"));
+  const leave = () =>
+    act(() => useViewerStore.getState().setIgnoreEditMode("off"));
+  const ignoreHeading = () =>
+    within(rail()).queryByRole("heading", { name: "Ignore regions" });
+
+  test("editing, the rail holds the editor's regions under Ignore regions: one landmark, no Info, History or Comments", () => {
+    useViewerStore.setState({ draftIgnoreAreas: [DRAFT] });
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+    expect(ignoreHeading()).not.toBeNull();
+    expect(within(rail()).getAllByTestId("ignore-region-item")).toHaveLength(1);
+    for (const name of ["Info", "History", "Comments"]) {
+      expect(screen.queryByRole("button", { name }), name).toBeNull();
+    }
+    expect(screen.queryByText("1/2 Monthly Plans")).toBeNull();
+    // Still the rail: its width, its separator, and Hide details, which
+    // ends the heading's row.
+    expect(rail().style.width).toBe("320px");
+    expect(separator()).toBeDefined();
+    expect(
+      within(ignoreHeading()!.parentElement!).getByRole("button", {
+        name: "Hide details",
+      }),
+    ).toBeDefined();
+    expect(
+      screen.getAllByRole("button", { name: "Hide details" }),
+    ).toHaveLength(1);
+  });
+
+  test("leaving the editor brings back the tab the reviewer was on, which editing never stored over", () => {
+    prefsAre({ railTab: "history" }, { persisted: true });
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    expect(ignoreHeading()).not.toBeNull();
+    expect(prefsWrites(setItem)).toEqual([]);
+
+    leave();
+    expect(ignoreHeading()).toBeNull();
+    expect(pressed("History")).toBe("true");
+    expect(screen.getByText(/History will appear/)).toBeDefined();
+    expect(stored()?.railTab).toBe("history");
+  });
+
+  test("collapsed, it is the strip, with Show details alone; opened, it shows Ignore regions, and t folds it again", () => {
+    prefsAre({ railCollapsed: true });
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    expect(rail().style.width).toBe("40px");
+    // Its tabs would open on what the editor hides.
+    expect(
+      within(rail())
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Show details"]);
+
+    fireEvent.click(button("Show details"));
+    expect(ignoreHeading()).not.toBeNull();
+    expect(document.activeElement).toBe(button("Hide details"));
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+
+    press("t");
+    expect(rail().style.width).toBe("40px");
+    expect(document.activeElement).toBe(button("Show details"));
+    // Out of the editor, the strip has its tabs again.
+    leave();
+    expect(button("Comments")).toBeDefined();
+  });
+
+  test("c is the browser's in the editor, where the comments can't be shown; out of it, c shows them", () => {
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    expect(press("c").defaultPrevented).toBe(false);
+    expect(useViewerStore.getState().commentPanelOpen).toBe(false);
+    expect(ignoreHeading()).not.toBeNull();
+
+    leave();
+    expect(press("c").defaultPrevented).toBe(true);
+    expect(pressed("Comments")).toBe("true");
+  });
+
+  test("Mark as Bug in the editor: the request is taken and the rail stays as it was, and Comments is the tab that comes back", () => {
+    prefsAre({ railCollapsed: true });
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    act(() => useViewerStore.getState().setCommentPanelOpen(true));
+    expect(useViewerStore.getState().commentPanelOpen).toBe(false);
+    // Opening it would show the editor's regions, not the comments.
+    expect(button("Show details")).toBeDefined();
+    expect(useViewerPrefs.getState().prefs.railTab).toBe("comments");
+
+    leave();
+    fireEvent.click(button("Show details"));
+    expect(pressed("Comments")).toBe("true");
+    expect(screen.getByTestId("comment-panel")).toBeDefined();
+  });
+
+  test("opening or closing the editor with focus in what the rail swaps out: focus moves to the toggle, which stays", () => {
+    useViewerStore.setState({ draftIgnoreAreas: [DRAFT] });
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    // In the details' tab row: the editor's regions replace it.
+    act(() => button("History").focus());
+    press("i");
+    expect(ignoreHeading()).not.toBeNull();
+    expect(document.activeElement).toBe(button("Hide details"));
+
+    // On one of the editor's rows: the details replace them.
+    const row = within(rail()).getByTestId("ignore-region-item");
+    act(() => row.focus());
+    press("Escape");
+    expect(ignoreHeading()).toBeNull();
+    expect(document.activeElement).toBe(button("Hide details"));
+
+    // On what stays (the separator), and outside the rail: where it was.
+    act(() => separator().focus());
+    press("i");
+    expect(document.activeElement).toBe(separator());
+    press("i");
+    act(() => button("Outside").focus());
+    press("i");
+    expect(document.activeElement).toBe(button("Outside"));
+    press("i");
+    act(() => button("Outside").blur());
+    press("i");
+    expect(document.activeElement).toBe(document.body);
+    press("i");
+
+    // On the strip's tabs, which the editor's strip doesn't have.
+    fireEvent.click(button("Hide details"));
+    act(() => button("Comments").focus());
+    press("i");
+    expect(document.activeElement).toBe(button("Show details"));
+  });
+
+  test("below 1024 px, the editor's rail overlays the canvas like the details do, and Esc with focus in it closes the rail first", () => {
+    setWindowWidth(900);
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    edit();
+    fireEvent.click(button("Show details"));
+    expect(rail().classList.contains("absolute")).toBe(true);
+    expect(ignoreHeading()).not.toBeNull();
+    expect(railSpace()).toEqual(["40px"]);
+
+    press("Escape");
+    expect(rail().style.width).toBe("40px");
+    expect(useViewerStore.getState().ignoreEditMode).toBe("run");
   });
 });
 
