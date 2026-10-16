@@ -53,14 +53,17 @@ version`); older versions don't support them. Output: `e2e-coverage.md` /
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
 full-page PNG at a 1440×900 viewport, plus the interaction states in
-`STATES` (⌘K open, a menu open, a dialog open, a step card hovered, a decided
-step, the Approve-pending question, a batch's viewport filter open and
-matching nothing, the batch-done card, the Undo toast), and runs axe
-`color-contrast` on each. The dashboard scrolls inside its own containers,
-never the document, so before capturing, `src/visual/unclip.ts` lets those
-containers grow to their content: the PNG and axe cover the whole page, not
-just the first 900px. It fails the route if any part of the page is still clipped
-afterwards, so a dashboard layout change can't quietly shrink the shot.
+`STATES` (the ⌘K palette on the viewer's actions and searching batches, the `?`
+sheet on each page, the Help menu, a menu open, a dialog open, the list cursor
+on a Batches row and on a step card, the top bar at tablet and phone widths, a
+step card hovered, a decided step, the Approve-pending question, a batch's
+viewport filter open and matching nothing, the batch-done card, the Undo
+toast), and runs axe `color-contrast` on each. The dashboard scrolls inside
+its own containers, never the document, so before capturing,
+`src/visual/unclip.ts` lets those containers grow to their content: the PNG
+and axe cover the whole page, not just the first 900px. It fails the route if
+any part of the page is still clipped afterwards, so a dashboard layout change
+can't quietly shrink the shot.
 
 It is the before/after safety net for dashboard UI changes. A contrast
 problem is an axe violation, or a node axe could not measure because it lies
@@ -149,6 +152,18 @@ means every screenshot test passed.
   `state-filtered-empty` a shared link whose filter matches nothing;
   `state-batch-done` the card J raises at a batch's end, here "Done with the
   filtered steps"; `state-undo-toast` the toast with its Undo action.) The
+  keyboard and command surface adds `state-palette-actions` (the viewer's
+  Actions group), `state-palette-search` (typing "visual"), `state-sheet-batches`,
+  `state-sheet-batch` and `state-sheet-viewer` (the `?` sheet), `state-help-menu`,
+  `state-cursor-batches` and `state-cursor-step` (the cursor's focus ring), and
+  five that also assert, not just look: `state-cursor-batches-scrolled` and
+  `state-cursor-batch-scrolled` (End, then K back up: no row or step under the
+  sticky header), `state-cursor-step-sideways` (a card's ring clears the
+  sideways scroller's edges) and `state-topbar-tablet` / `state-topbar-phone`
+  (the project label and the palette button do not overlap, the bar does not
+  scroll sideways). Not covered here: the stale-step Confirm moving the cursor
+  on (it needs a step with a newer capture, which the fixture does not have);
+  it is checked in the dashboard's jsdom tests only. The
   All caught up card is not reachable here: the fixture always has pending
   work. `tests/ui/review-loop.spec.ts` shoots it instead, with the same axe
   `color-contrast` check in both themes (see Coverage matrix).
@@ -167,7 +182,9 @@ then takes the decision back through the API and waits (up to 60s: an undo
 queues a re-diff) until every step has a verdict and `profile` reads `new`
 again, or fails the state. Such states are kept last in `STATES`, and the
 fixture must be left as it was found: every state, and both themes, share it.
-The other states never confirm or change anything.
+The other states never confirm or change anything. The ones that resize the
+viewport (to make a list scroll, or to check the top bar at 768 and 375px) put
+it back in their `cleanup`, so the next state opens at 1440×900.
 
 **Reviewing in Furan:**
 

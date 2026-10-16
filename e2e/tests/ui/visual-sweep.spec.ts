@@ -499,7 +499,9 @@ test.describe.serial("visual sweep @visual", () => {
     expect(status, `GET ${v.path} answered ${status}`).toBeLessThan(400);
     // Park the pointer in a corner: wherever an earlier click left it, it
     // would otherwise hover (and highlight) whatever this page puts there.
-    await p.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1);
+    // The corner of the viewport the page has now: a state may have resized it.
+    const { width, height } = p.viewportSize() ?? VIEWPORT;
+    await p.mouse.move(width - 1, height - 1);
     await settle(p);
     const landedPath = new URL(p.url()).pathname;
     // Compare paths only: a state's path may carry a query (`state-filtered-empty`
