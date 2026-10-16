@@ -1244,6 +1244,60 @@ describe("every region surface follows the list's visibility (R10)", () => {
   });
 });
 
+describe("the severity rectangles keep the image true outside Diff (R28)", () => {
+  /** The regions layer's rectangles, on the pane that hosts it. */
+  const rects = (testId: string): Graphics[] =>
+    layer(worldIn(testId), "regions").children as Graphics[];
+  const host = (mode: ViewerMode) =>
+    mode === "side-by-side" ? "candidate-canvas-host" : "single-stage-host";
+
+  test.each(["side-by-side", "swipe", "flicker", "overlay"] as const)(
+    "%s: outlines only, with no fill, selected or not",
+    async (mode) => {
+      setMode(mode);
+      const { set, request } = fullStep();
+      render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+      await flush();
+      expect(rects(host(mode)).length).toBeGreaterThan(0);
+      for (const g of rects(host(mode))) {
+        expect(g.fills).toEqual([]);
+        expect(g.strokes.length).toBeGreaterThan(0);
+      }
+
+      act(() => useViewState.getState().setSelected("r1"));
+      await flush();
+      for (const g of rects(host(mode))) {
+        expect(g.fills).toEqual([]);
+        expect(g.strokes.length).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  test("diff: the rectangles keep their fill", async () => {
+    setMode("diff");
+    const { set, request } = fullStep();
+    render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+    await flush();
+    const [rect] = rects("single-stage-host");
+    expect(rect!.fills).toHaveLength(1);
+    expect(rect!.strokes).toHaveLength(1);
+  });
+
+  test("overlay → diff fills them, and diff → overlay takes the fill away again", async () => {
+    setMode("overlay");
+    const { set, request } = fullStep();
+    render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+    await flush();
+    expect(rects("single-stage-host")[0]!.fills).toEqual([]);
+    setMode("diff");
+    await flush();
+    expect(rects("single-stage-host")[0]!.fills).toHaveLength(1);
+    setMode("overlay");
+    await flush();
+    expect(rects("single-stage-host")[0]!.fills).toEqual([]);
+  });
+});
+
 describe("what the stage keeps", () => {
   test("it pins what it draws: a cache trim while it is mounted closes nothing it holds (M1)", async () => {
     const baseline = loaded("pin-b", 100, 100);
@@ -1322,18 +1376,37 @@ describe("what the stage keeps", () => {
     expect(labels(worldIn("baseline-canvas-host"))).toContain("baseline");
   });
 
-  test("overlay ↔ diff keeps the regions and the ignore regions mounted (N3)", async () => {
-    setMode("overlay");
+  test("swipe → flicker → overlay keeps the regions and the ignore regions mounted (N3)", async () => {
+    setMode("swipe");
     const { set, request } = fullStep();
     render(<ViewerStage set={set} request={request} regions={REGIONS} />);
     await flush();
     const before = worldIn("single-stage-host");
     const kept = ["regions", "ignore"].map((l) => layer(before, l));
+    for (const mode of ["flicker", "overlay"] as const) {
+      setMode(mode);
+      await flush();
+      const after = worldIn("single-stage-host");
+      expect(["regions", "ignore"].map((l) => layer(after, l))).toEqual(kept);
+    }
+    for (const l of kept) expect(l.destroyed).toBe(false);
+  });
+
+  test("overlay ↔ diff keeps the ignore regions mounted, and redraws only the rectangles, for Diff's fill (N3, R28)", async () => {
+    setMode("overlay");
+    const { set, request } = fullStep();
+    render(<ViewerStage set={set} request={request} regions={REGIONS} />);
+    await flush();
+    const before = worldIn("single-stage-host");
+    const ignore = layer(before, "ignore");
+    const outlines = layer(before, "regions");
     setMode("diff");
     await flush();
     const after = worldIn("single-stage-host");
-    expect(["regions", "ignore"].map((l) => layer(after, l))).toEqual(kept);
-    for (const l of kept) expect(l.destroyed).toBe(false);
+    expect(layer(after, "ignore")).toBe(ignore);
+    expect(ignore.destroyed).toBe(false);
+    expect(layer(after, "regions")).not.toBe(outlines);
+    expect(outlines.destroyed).toBe(true);
   });
 });
 

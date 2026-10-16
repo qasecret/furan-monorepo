@@ -93,7 +93,9 @@ import { computeFocusView } from "./world-fit";
  *   renderer names and always stacked above its layers, in its order. Saved
  *   ignore regions show read-only in every mode that draws the current image
  *   (R9); the editor only makes them interactive. Every region surface uses
- *   the region list's visibility (R10).
+ *   the region list's visibility (R10). The severity rectangles are filled
+ *   only in Diff; elsewhere they are outlines, so the pixels compared stay
+ *   true (R28).
  * - **Pixi apps**: one per pane, kept across mode changes with the same pane
  *   count; zoom, pan, resizes and the theme update them in place, and a
  *   resize refits before the next paint.
@@ -732,24 +734,34 @@ export function ViewerStage({
     reducedMotion,
   ]);
 
-  // The severity rectangles.
+  // The severity rectangles: filled in Diff, over its faded image; outlines
+  // alone in every other mode, so the screenshots' pixels stay true (R28).
   const showRegions =
     hostWorld !== null &&
     hostLayers.includes("regions") &&
     shownRegions.length > 0;
+  const regionFill = mode === "diff";
   useEffect(() => {
     if (!showRegions || !hostWorld) return;
     const layer = mountDiffOverlayLayer(
       hostWorld,
       shownRegions,
       selectedRegionId,
+      { fill: regionFill },
     );
     layer.label = "regions";
     restack(hostWorld, hostLayers);
     return () => {
       destroyQuietly("regions layer", () => layer.destroy({ children: true }));
     };
-  }, [showRegions, hostWorld, hostLayers, shownRegions, selectedRegionId]);
+  }, [
+    showRegions,
+    hostWorld,
+    hostLayers,
+    shownRegions,
+    selectedRegionId,
+    regionFill,
+  ]);
 
   // The current image's pixel under a pointer on the host pane: the editor
   // always draws on the current image.
