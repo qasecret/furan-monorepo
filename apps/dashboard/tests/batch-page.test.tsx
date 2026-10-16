@@ -1801,10 +1801,11 @@ describe("BatchPage keyboard review (spec §4.3)", () => {
     const header = screen.getByText("Execution Cloud").parentElement!;
     expect(header.className).toContain("sticky");
     expect(header.className).toContain("top-0");
-    // The header is py-2 + a 16px line + a 1px rule (33px); 36px clears it.
+    // The header is py-2 + a 16px line + a 1px rule (33px), and a step
+    // card's ring is drawn 4px outside the card: 40px clears both.
     const scroller = header.parentElement!;
     expect(scroller.className).toContain("overflow-y-auto");
-    expect(scroller.className).toContain("scroll-pt-9");
+    expect(scroller.className).toContain("scroll-pt-10");
     expect(scroller.contains(screen.getByTestId("batch-results"))).toBe(true);
   });
 
