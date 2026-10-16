@@ -24,10 +24,11 @@ import type { AuthedUser } from "../plugins/auth.js";
  * Authorization: admins/owners see everything; any other caller may only
  * fetch a key that belongs to a project they're a member of. A key is
  * attributed to a project via the DB rows that reference it —
- * `screenshots.{image,dom,element_map}_key` and `test_runs.{image,diff}_name`
- * (all carry `project_id`). A key the caller can't prove ownership of returns
- * 404 (not 403) so the endpoint never confirms the existence of another
- * tenant's content. (Content-addressed sha256 keys are unguessable, but that
+ * `screenshots.{image,dom,element_map,diff_image}_key` and
+ * `test_runs.{image,diff}_name` (all carry `project_id`; see
+ * {@link KEY_OWNERSHIP_PROBES}). A key the caller can't prove ownership of
+ * returns 404 (not 403) so the endpoint never confirms the existence of
+ * another tenant's content. (Content-addressed sha256 keys are unguessable, but that
  * was defense-by-obscurity — this closes the actual cross-tenant read.)
  */
 export const paramsSchema = z.object({

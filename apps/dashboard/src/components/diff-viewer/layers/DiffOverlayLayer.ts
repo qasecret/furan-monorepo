@@ -29,11 +29,17 @@ function isBBox(v: unknown): v is BBox {
  *      UI testing-style pop.
  *   3. Selection active, this region is NOT selected → dimmed (0.05 fill,
  *      1px stroke alpha 0.4) so the eye lands on the selected one.
+ *
+ * `fill: false` draws the outlines alone, every tier's stroke as above with
+ * no fill (R28): outside Diff the rectangles sit over the screenshots
+ * themselves, and a tint over the changed area would distort the very pixels
+ * Swipe, Flicker and Overlay are there to compare. Diff keeps the fill.
  */
 export function mountDiffOverlayLayer(
   parent: PixiContainer,
   regions: DiffRegion[],
   selectedRegionId: string | null = null,
+  { fill = true }: { fill?: boolean } = {},
 ): Container {
   const container = new Container();
   const hasSelection = selectedRegionId !== null;
@@ -50,9 +56,9 @@ export function mountDiffOverlayLayer(
     const strokeAlpha = !hasSelection ? 0.9 : isSelected ? 1 : 0.4;
 
     const g = new Graphics();
-    g.rect(x, y, width, height)
-      .fill({ color, alpha: fillAlpha })
-      .stroke({ color, width: strokeWidth, alpha: strokeAlpha });
+    g.rect(x, y, width, height);
+    if (fill) g.fill({ color, alpha: fillAlpha });
+    g.stroke({ color, width: strokeWidth, alpha: strokeAlpha });
     container.addChild(g);
 
     // Selected region also gets a translucent outer halo (a second rect

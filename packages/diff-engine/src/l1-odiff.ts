@@ -28,8 +28,9 @@ export async function runL1Odiff(
       // Without this odiff compares only the area both images share, so a page
       // that grew or shrank with a matching top would pass at 0%. With it a
       // size change returns `layout-diff`, which maps to 100% below, like the
-      // other engines.
-      failOnLayoutDiff: true,
+      // other engines. A project that turned on "Allow diff dimensions" opted
+      // out of that: it gets the shared-area comparison (R30).
+      failOnLayoutDiff: !engineConfig.allowDiffDimensions,
       ignoreRegions:
         ignoreAreas?.map((r) => ({
           x1: r.x,

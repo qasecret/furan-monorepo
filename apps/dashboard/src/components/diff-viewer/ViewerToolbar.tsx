@@ -34,6 +34,8 @@ import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
 import {
+  editorOpen,
+  modeInEditor,
   useAvailableModes,
   useEffectiveMode,
   useSetViewerMode,
@@ -139,8 +141,11 @@ const ARROW_STEP: Record<string, 1 | -1> = {
  * the check, and the mode with it, to the previous or next radio, round from
  * the ends, and Home / End to the first or last. A mode the step can't show
  * (no baseline) stays focusable and named, but inert, says why in its
- * tooltip, and the arrows pass it by. The keys are the group's: an arrow
- * here never moves to another step, and a held one moves once.
+ * tooltip, and the arrows pass it by. In the ignore-region editor the arrows
+ * pass Swipe and Flicker by too, as `o` does (spec §4.4): the editor shows
+ * them as side by side, so the check could not go with the focus. The keys
+ * are the group's: an arrow here never moves to another step, and a held one
+ * moves once.
  */
 function ComparisonModes({ hasBaseline }: { hasBaseline: boolean }) {
   // The viewer's one mode, and its way to change it: stored, and in the URL.
@@ -157,7 +162,12 @@ function ComparisonModes({ hasBaseline }: { hasBaseline: boolean }) {
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const choosable = VIEWER_MODES.filter((m) => available[m]);
+    // A mode the arrows can land on: one the step can show, and, in the
+    // editor, one that shows as itself there.
+    const editing = editorOpen();
+    const canLand = (m: ViewerMode) =>
+      available[m] && (!editing || modeInEditor(m) === m);
+    const choosable = VIEWER_MODES.filter(canLand);
     if (choosable.length === 0) return;
     const from = e.currentTarget.dataset.mode as ViewerMode;
     let next: ViewerMode | undefined;
@@ -169,7 +179,7 @@ function ComparisonModes({ hasBaseline }: { hasBaseline: boolean }) {
       let at = VIEWER_MODES.indexOf(from);
       for (let i = 0; i < n; i += 1) {
         at = (at + step + n) % n;
-        if (available[VIEWER_MODES[at]!]) break;
+        if (canLand(VIEWER_MODES[at]!)) break;
       }
       next = VIEWER_MODES[at];
     } else return;
@@ -344,7 +354,8 @@ export function ViewerToolbar({
   });
 
   const showSlider = mode === "overlay";
-  const sliderLabel = "Candidate opacity";
+  // Spec §8 (R29): its name, and its label on screen, so the two agree.
+  const sliderLabel = "Overlay opacity";
 
   const editing = ignoreEditMode !== "off";
   // F-a/3: selectorOverrides counts as "pending" the same way drafts +

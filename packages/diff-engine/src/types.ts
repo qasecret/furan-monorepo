@@ -38,7 +38,9 @@ export interface EngineConfig {
   /** Treat antialiased pixels as equal. Maps to odiff `antialiasing: true`,
    *  pixelmatch `includeAA: false`, looks-same `antialiasingTolerance > 0`. */
   ignoreAntialiasing: boolean;
-  /** Reserved for v1.1+; plumbed but currently a no-op. */
+  /** Don't fail when the two images differ in size. Read by odiff (R30):
+   *  on, it compares only the area both images share; off (the default), a
+   *  size change is a 100% diff. Pixelmatch and looks-same ignore it. */
   allowDiffDimensions: boolean;
 }
 

@@ -6,6 +6,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -39,7 +40,7 @@ import { useElementMap } from "./useElementMap";
 import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
-import { useViewerMode, ViewerModeProvider } from "./viewer-mode";
+import { useUrlView, useViewerMode, ViewerModeProvider } from "./viewer-mode";
 import { useViewerPrefs } from "./viewer-prefs";
 import { ViewerLinkProvider } from "./ViewerLink";
 import { ViewerStage } from "./ViewerStage";
@@ -91,7 +92,10 @@ interface Props {
   /**
    * The URL's comparison mode (spec §6.3), parsed by the page; null or
    * absent when the URL names none. It outranks the stored preference, and
-   * every link the viewer makes carries it.
+   * every link the viewer makes carries it. The viewer reads the URL's view
+   * from `useSearchParams` (R31, `useUrlView`); this parse holds only while
+   * the URL names none. A mode change writes the history and renders no
+   * page, so the page never sends it again.
    */
   view?: ViewerMode | null;
   /**
@@ -103,7 +107,9 @@ interface Props {
   canReview: boolean;
   /**
    * Whose viewer preferences to read and store (spec §6.1), from the
-   * server's session. Null: the defaults, held in memory for the visit.
+   * server's session. Null: the defaults, held in memory for the visit. A
+   * user id that goes to null while this viewer is open is ignored (a
+   * session lookup that failed on a later server render).
    */
   userId: string | null;
 }
@@ -134,7 +140,7 @@ export function DiffViewer({
   projectId,
   initialCheckpointId,
   reviewContext,
-  view: urlView = null,
+  view: pageView = null,
   canReview,
   userId,
 }: Props) {
@@ -143,7 +149,13 @@ export function DiffViewer({
   // leaves. `hydrate` reads once per user (the viewer remounts on every step
   // and the store outlives it), so from the second render on it does nothing.
   // With no user it holds the defaults in memory, never an earlier user's.
-  useViewerPrefs.getState().hydrate(userId);
+  // Within this viewer a user doesn't become no user: a later server render
+  // whose session lookup failed would otherwise swap the rail, the opacity
+  // and the rest to the defaults mid-review. A new viewer (a step, a visit)
+  // takes the page's answer as it is.
+  const viewerUser = useRef(userId);
+  if (userId !== null) viewerUser.current = userId;
+  useViewerPrefs.getState().hydrate(viewerUser.current);
   const router = useRouter();
   const utils = trpc.useUtils();
   const context = reviewContext ?? NO_REVIEW_CONTEXT;
@@ -251,13 +263,16 @@ export function DiffViewer({
   // The comparison mode (spec §6.3): the editor's override, the URL's
   // `?view`, then the preference, and side by side where the step has no
   // baseline (R2). Every part of the viewer reads this one mode, and every
-  // link the viewer makes carries the URL's view. A mode change writes the
-  // URL of the step on screen, which a step change shows before its route
-  // commits; while the review loop is on its way to another step, that move
-  // takes the mode instead (R20; the loop is set up below), and so does a
-  // link's navigation (R22). The ignore-region editor's override (R3) is the
-  // step's: a step change clears it.
+  // link the viewer makes carries the URL's view, read from
+  // `useSearchParams` (R31). A mode change writes the URL of the step on
+  // screen to the history, with no navigation, or goes with the step
+  // change's own when ←/→ showed the step before its route committed; while
+  // the review loop is on its way to another step, that move takes the mode
+  // instead (R20; the loop is set up below), and so does a link's navigation
+  // (R22). The ignore-region editor's override (R3) is the step's: a step
+  // change clears it.
   const retargetLoopMove = useRef<(view: ViewerMode) => boolean>(() => false);
+  const urlView = useUrlView(pageView);
   const viewerMode = useViewerMode({
     urlView,
     hasBaseline,
@@ -611,12 +626,15 @@ export function DiffViewer({
   // Each step, and each of its viewports, opens at fit with nothing selected
   // (spec §6.2). The view-state store outlives the viewer's remount, so the
   // reset is explicit. Reduced motion is read when the step opens: the
-  // flicker starts paused under it.
+  // flicker starts paused under it. A layout effect, so the reset lands in
+  // the step's own commit, before the browser can paint it: a cached step
+  // never shows a frame at the previous step's zoom, pan, swipe or flicker
+  // frame (m6).
   const resetView = useViewState((s) => s.resetView);
   const reducedMotion = useReducedMotion();
   const reducedMotionRef = useRef(reducedMotion);
   reducedMotionRef.current = reducedMotion;
-  useEffect(() => {
+  useLayoutEffect(() => {
     resetView({ reducedMotion: reducedMotionRef.current });
   }, [activeCheckpointId, activeViewport, resetView]);
 

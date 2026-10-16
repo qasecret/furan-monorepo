@@ -1,5 +1,13 @@
 import { act, cleanup, render, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 // The URL the viewer is on, and its router, set per test.
 const nav = vi.hoisted(() => ({
@@ -29,6 +37,7 @@ import {
   parseViewParam,
   setEditorOverride,
   useEffectiveMode,
+  useUrlView,
   useViewerMode,
   ViewerModeProvider,
 } from "@/components/diff-viewer/viewer-mode";
@@ -55,7 +64,22 @@ const stored = () => readViewerPrefs("u1").mode;
 /** Nothing of the user's has been written to storage. */
 const nothingStored = () => localStorage.getItem(prefsKey("u1")) === null;
 
+/**
+ * The URL written with `history.replaceState` (R31), which Next applies to
+ * `useSearchParams` with no navigation. jsdom's own URL is left alone.
+ */
+let historyWrite: MockInstance<History["replaceState"]>;
+/** The URL was written nowhere: no history write, no navigation. */
+function noUrlWrite() {
+  expect(historyWrite).not.toHaveBeenCalled();
+  expect(nav.router.replace).not.toHaveBeenCalled();
+  expect(nav.router.push).not.toHaveBeenCalled();
+}
+
 beforeEach(() => {
+  historyWrite = vi
+    .spyOn(window.history, "replaceState")
+    .mockImplementation(() => {});
   localStorage.clear();
   nav.pathname = STEP;
   nav.search = CONTEXT;
@@ -164,19 +188,21 @@ describe("useViewerMode", () => {
     expect(viewer({ urlView: null }).result.current.mode).toBe("diff");
   });
 
-  test("setMode stores the preference and replaces the URL once, with view and every other param as they were", () => {
+  test("setMode stores the preference and replaces the URL once in the history, with view and every other param as they were: no navigation (R31)", () => {
     const { result } = viewer();
     act(() => result.current.setMode("swipe"));
-    expect(nav.router.replace).toHaveBeenCalledOnce();
-    expect(nav.router.replace).toHaveBeenCalledWith(
+    expect(historyWrite).toHaveBeenCalledOnce();
+    expect(historyWrite).toHaveBeenCalledWith(
+      null,
+      "",
       `${STEP}?${CONTEXT}&view=swipe`,
-      { scroll: false },
     );
-    // No history entry.
+    // No server round trip, and no history entry.
+    expect(nav.router.replace).not.toHaveBeenCalled();
     expect(nav.router.push).not.toHaveBeenCalled();
     expect(stored()).toBe("swipe");
-    // On screen at once: the router re-renders the page with the new URL
-    // only after a round trip.
+    // On screen at once: Next applies the write to `useSearchParams` in a
+    // transition, after this render.
     expect(result.current.mode).toBe("swipe");
     expect(result.current.view).toBe("swipe");
   });
@@ -185,9 +211,23 @@ describe("useViewerMode", () => {
     nav.search = `view=overlay&${CONTEXT}&utm_source=mail`;
     const { result } = viewer({ urlView: "overlay" });
     act(() => result.current.setMode("diff"));
-    expect(nav.router.replace).toHaveBeenCalledWith(
+    expect(historyWrite).toHaveBeenCalledWith(
+      null,
+      "",
       `${STEP}?view=diff&${CONTEXT}&utm_source=mail`,
-      { scroll: false },
+    );
+    expect(nav.router.replace).not.toHaveBeenCalled();
+  });
+
+  test("the URL's fragment stays", () => {
+    window.location.hash = "#notes";
+    const { result } = viewer();
+    act(() => result.current.setMode("diff"));
+    window.location.hash = "";
+    expect(historyWrite).toHaveBeenCalledWith(
+      null,
+      "",
+      `${STEP}?${CONTEXT}&view=diff#notes`,
     );
   });
 
@@ -195,10 +235,11 @@ describe("useViewerMode", () => {
     const { result } = viewer();
     act(() => result.current.setMode("swipe"));
     act(() => result.current.setMode("diff"));
-    expect(nav.router.replace).toHaveBeenCalledTimes(2);
-    expect(nav.router.replace).toHaveBeenLastCalledWith(
+    expect(historyWrite).toHaveBeenCalledTimes(2);
+    expect(historyWrite).toHaveBeenLastCalledWith(
+      null,
+      "",
       `${STEP}?${CONTEXT}&view=diff`,
-      { scroll: false },
     );
     expect(result.current.mode).toBe("diff");
   });
@@ -231,7 +272,7 @@ describe("useViewerMode", () => {
     const retarget = vi.fn(() => true);
     const { result } = viewer({ urlView: null, retarget });
     act(() => result.current.setMode("overlay"));
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(retarget).not.toHaveBeenCalled();
     expect(result.current.view).toBeNull();
     expect(stored()).toBe("overlay");
@@ -242,7 +283,7 @@ describe("useViewerMode", () => {
     prefer("swipe");
     const noBaseline = viewer({ urlView: null, hasBaseline: false });
     act(() => noBaseline.result.current.setMode("side-by-side"));
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(stored()).toBe("side-by-side");
   });
 
@@ -252,8 +293,7 @@ describe("useViewerMode", () => {
     act(() => result.current.setMode("diff"));
     expect(retarget).toHaveBeenCalledOnce();
     expect(retarget).toHaveBeenCalledWith("diff");
-    expect(nav.router.replace).not.toHaveBeenCalled();
-    expect(nav.router.push).not.toHaveBeenCalled();
+    noUrlWrite();
     // Shown, and stored, at once.
     expect(result.current.mode).toBe("diff");
     expect(stored()).toBe("diff");
@@ -264,27 +304,34 @@ describe("useViewerMode", () => {
     const { result } = viewer({ urlView: "overlay", retarget });
     act(() => result.current.setMode("diff"));
     expect(retarget).toHaveBeenCalledWith("diff");
-    expect(nav.router.replace).toHaveBeenCalledWith(
+    expect(historyWrite).toHaveBeenCalledWith(
+      null,
+      "",
       `${STEP}?${CONTEXT}&view=diff`,
-      { scroll: false },
     );
+    expect(nav.router.replace).not.toHaveBeenCalled();
   });
 
   test("selecting the mode the URL already shows stores it, and leaves the URL alone", () => {
     const { result } = viewer({ urlView: "overlay" });
     act(() => result.current.setMode("overlay"));
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(stored()).toBe("overlay");
   });
 
-  test("while a step change is on its way, the URL written is that step's", () => {
+  test("while a step change is on its way, the URL written is that step's, with the step change: a history write would call it off", () => {
+    // ←/→ show the next step at once and replace the URL with its route;
+    // until that commits, the route on screen is still the step left.
     const next = "/projects/p1/runs/r1/checkpoints/c2";
     const { result } = viewer({ path: next });
     act(() => result.current.setMode("diff"));
+    expect(nav.router.replace).toHaveBeenCalledOnce();
     expect(nav.router.replace).toHaveBeenCalledWith(
       `${next}?${CONTEXT}&view=diff`,
       { scroll: false },
     );
+    expect(historyWrite).not.toHaveBeenCalled();
+    expect(nav.router.push).not.toHaveBeenCalled();
   });
 
   test("d's way back from Diff is the mode left on screen, even when ?view chose it", () => {
@@ -311,7 +358,7 @@ describe("useViewerMode", () => {
     expect(result.current.view).toBe("swipe");
     // A mode the step can't show is not chosen on it, by any route.
     act(() => result.current.setMode("overlay"));
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(nothingStored()).toBe(true);
 
     // The next step has a baseline: Swipe again.
@@ -324,7 +371,7 @@ describe("useViewerMode", () => {
       overlay: true,
       diff: true,
     });
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(nothingStored()).toBe(true);
   });
 
@@ -335,10 +382,65 @@ describe("useViewerMode", () => {
     act(() => setEditorOverride("side-by-side"));
     expect(result.current.mode).toBe("side-by-side");
     expect(result.current.view).toBe("swipe");
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     expect(stored()).toBe("overlay");
     act(() => setEditorOverride(null));
     expect(result.current.mode).toBe("swipe");
+  });
+});
+
+describe("useUrlView: the URL's view, as Next keeps it (R31)", () => {
+  function urlView(pageView: ViewerMode | null) {
+    return renderHook((view: ViewerMode | null) => useUrlView(view), {
+      initialProps: pageView,
+    });
+  }
+
+  test("the URL's view, from useSearchParams", () => {
+    nav.search = `${CONTEXT}&view=overlay`;
+    expect(urlView("overlay").result.current).toBe("overlay");
+  });
+
+  test("a URL that names no view, as the viewer opened on it: the page's parse", () => {
+    nav.search = CONTEXT;
+    expect(urlView("diff").result.current).toBe("diff");
+    cleanup();
+    expect(urlView(null).result.current).toBeNull();
+  });
+
+  test("a history write moves it, with no new page render: the page's parse is left behind", () => {
+    nav.search = `${CONTEXT}&view=overlay`;
+    const { result, rerender } = urlView("overlay");
+    // Next applies `history.replaceState` to useSearchParams; the page's
+    // props stay what the server rendered.
+    nav.search = `${CONTEXT}&view=swipe`;
+    rerender("overlay");
+    expect(result.current).toBe("swipe");
+    nav.search = `${CONTEXT}&view=diff`;
+    rerender("overlay");
+    expect(result.current).toBe("diff");
+  });
+
+  test("Back or Forward to an entry a mode change rewrote: the URL's view, over the page's restored parse", () => {
+    // Next restores the page as it rendered it, from before the rewrite.
+    nav.search = `${CONTEXT}&view=swipe`;
+    expect(urlView("overlay").result.current).toBe("swipe");
+  });
+
+  test("an unknown or repeated view in the URL is no view", () => {
+    nav.search = "view=bogus";
+    expect(urlView(null).result.current).toBeNull();
+    cleanup();
+    nav.search = "view=swipe&view=diff";
+    expect(urlView(null).result.current).toBeNull();
+  });
+
+  test("once the URL has moved, one that names no view has none", () => {
+    nav.search = `${CONTEXT}&view=overlay`;
+    const { result, rerender } = urlView("overlay");
+    nav.search = CONTEXT;
+    rerender("overlay");
+    expect(result.current).toBeNull();
   });
 });
 

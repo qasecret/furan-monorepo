@@ -97,3 +97,14 @@ describe("ViewerToolbar's opacity slider", () => {
     expect(readViewerPrefs("u1").opacity).toBe(0.7);
   });
 });
+
+describe("ViewerToolbar's opacity slider is named (R29)", () => {
+  test("the slider, its thumb, is named Overlay opacity, as its label on screen reads", () => {
+    render(<ViewerToolbar runId="r1" checkpointId="c1" />);
+    const slider = screen.getByRole("slider", { name: "Overlay opacity" });
+    expect(slider.getAttribute("aria-valuenow")).toBe("50");
+    expect(screen.getByTestId("opacity-slider-wrap").textContent).toContain(
+      "Overlay opacity",
+    );
+  });
+});
