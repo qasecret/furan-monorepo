@@ -190,6 +190,12 @@ export const fake = (() => {
       resize: (w: number, h: number) => {
         this.screen = { width: w, height: h };
       },
+      // A texture source put on the GPU ahead of its first draw.
+      texture: {
+        initSource: (source: TextureSource) => {
+          registry.uploaded.push(source);
+        },
+      },
       // A WebGL context only when a test names its texture limit.
       gl:
         registry.maxTextureSize === null
@@ -254,6 +260,8 @@ export const fake = (() => {
     holdInit: false,
     textures: [] as Texture[],
     sprites: [] as Sprite[],
+    /** Every texture source uploaded ahead of its first draw, in order. */
+    uploaded: [] as TextureSource[],
     /** The GL context's MAX_TEXTURE_SIZE; null: the renderer has no GL context. */
     maxTextureSize: null as number | null,
   };

@@ -67,6 +67,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { CommandDispatcher } from "@/lib/commands/dispatcher";
 import { GlobalCommands } from "@/lib/commands/global-commands";
 import { useSingleKeyStore } from "@/lib/commands/prefs";
@@ -133,20 +139,34 @@ const REGIONS: DiffRegion[] = [
   },
 ];
 
-/** Let pixi's init, promise chains and React effects run to a standstill. */
+/**
+ * Let pixi's init, promise chains and React effects run to a standstill. A
+ * real macrotask (setImmediate, never faked here), so it works under the
+ * fake clock too.
+ */
 async function flush(): Promise<void> {
   await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setImmediate(r));
   });
 }
 
 /**
- * The flicker's clock. Only intervals and Date are faked: pixi's init, the
- * promise chains and `flush` keep the real setTimeout. With nothing else on
- * an interval, `vi.getTimerCount()` counts the flicker's timer.
+ * The flicker's clock: the timers, Date and `performance` are faked, so the
+ * clock's timeouts and its `performance.now()` floor move together.
+ * setImmediate stays real, for `flush`. Nothing else here sets a timer, so
+ * `vi.getTimerCount()` counts the flicker's.
  */
 function fakeClock(): void {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "Date",
+      "performance",
+    ],
+  });
 }
 
 function tick(ms: number): void {
@@ -320,6 +340,7 @@ beforeEach(() => {
   fake.registry.holdInit = false;
   fake.registry.textures.length = 0;
   fake.registry.sprites.length = 0;
+  fake.registry.uploaded.length = 0;
   fake.registry.maxTextureSize = null;
   useViewerPrefs.setState({
     userId: null,
@@ -457,6 +478,63 @@ describe("the flicker on the stage", () => {
     expect(fake.registry.textures).toHaveLength(2);
   });
 
+  test("both images go onto the GPU as Flicker mounts, the hidden one too: the first swap never waits on an upload", async () => {
+    fakeClock();
+    const { set, request } = flickerStep();
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    const frame = child(stageWorld(), "frame");
+    // The current frame is hidden, and already uploaded, before any swap.
+    expect(visibleIn(frame)).toEqual(["frame:baseline"]);
+    const sources = frame.children.map((s) => (s as Sprite).texture.source);
+    expect(fake.registry.uploaded).toEqual(expect.arrayContaining(sources));
+    expect(view().flickerFrame).toBe("baseline");
+  });
+
+  test("a new step starts on the baseline for a full 500 ms, its images already cached (I1)", async () => {
+    fakeClock();
+    const first = flickerStep();
+    const r = render(
+      <ViewerStage set={first.set} request={first.request} regions={[]} />,
+    );
+    await flush();
+    tick(400);
+    expect(view().flickerFrame).toBe("baseline");
+
+    // The next step, its images already in (no load, so the stage never
+    // drops): the viewer resets the view, the frame stays the baseline.
+    counter += 1;
+    const next = flickerStep();
+    act(() => view().resetView({ reducedMotion: false }));
+    r.rerender(
+      <ViewerStage set={next.set} request={next.request} regions={[]} />,
+    );
+    await flush();
+    tick(100);
+    expect(view().flickerFrame).toBe("baseline");
+    expect(shownBitmap(stageWorld())).toBe(next.set.images.baseline!.bitmap);
+    tick(399);
+    expect(view().flickerFrame).toBe("baseline");
+    tick(1);
+    expect(view().flickerFrame).toBe("current");
+  });
+
+  test("a reset from the current frame (a viewport switch) shows the baseline for a full 500 ms too", async () => {
+    fakeClock();
+    const { set, request } = flickerStep();
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    tick(500);
+    expect(view().flickerFrame).toBe("current");
+    tick(400);
+    act(() => view().resetView({ reducedMotion: false }));
+    expect(view().flickerFrame).toBe("baseline");
+    tick(100);
+    expect(view().flickerFrame).toBe("baseline");
+    tick(400);
+    expect(view().flickerFrame).toBe("current");
+  });
+
   test("the regions and the ignore regions stay on both frames; only the image and its hatching swap (R17)", async () => {
     fakeClock();
     useViewerStore.setState({
@@ -533,6 +611,55 @@ describe("the flicker on the stage", () => {
     expect(label.closest("[aria-live],[role=status]")).toBeNull();
   });
 
+  test("the label sits on the canvas, over the card's top-left: nothing moves the card, in Flicker or out of it (R18)", async () => {
+    const { set, request } = flickerStep();
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    const host = screen.getByTestId("single-stage-host");
+    const card = host.parentElement!;
+    const root = card.parentElement!;
+    const label = screen.getByTestId("canvas-mode-label");
+
+    // Over the card, in the wrapper it shares with the stage's states, out
+    // of the flow, letting the pointer through.
+    expect(label.parentElement).toBe(card);
+    expect(label.className.split(" ")).toEqual(
+      expect.arrayContaining([
+        "absolute",
+        "pointer-events-none",
+        "left-3",
+        "top-3",
+      ]),
+    );
+    // The card is the wrapper's one child in the flow, and the wrapper the
+    // root's: no row above the card, no column wrapper around it.
+    const inFlow = (el: Element) =>
+      [...el.children].filter(
+        (c) => !/\b(absolute|sr-only)\b/.test(c.className),
+      );
+    expect(inFlow(card)).toEqual([host]);
+    expect(inFlow(root)).toEqual([card]);
+    expect(card.className.split(" ")).toEqual(
+      expect.arrayContaining(["relative", "m-auto", "w-full"]),
+    );
+    expect(card.className).not.toMatch(/\b(flex|flex-col|gap-\d)\b/);
+
+    // Out of Flicker the card is where it was: the same nodes, the same
+    // flow, only the label gone.
+    setMode("overlay");
+    await flush();
+    expect(screen.getByTestId("single-stage-host")).toBe(host);
+    expect(host.parentElement).toBe(card);
+    expect(card.parentElement).toBe(root);
+    expect(inFlow(card)).toEqual([host]);
+    expect(inFlow(root)).toEqual([card]);
+    expect(screen.queryByTestId("canvas-mode-label")).toBeNull();
+    setMode("flicker");
+    await flush();
+    expect(screen.getByTestId("single-stage-host")).toBe(host);
+    expect(screen.getByTestId("canvas-mode-label").parentElement).toBe(card);
+  });
+
   test("no swap before the images are in: the first frame drawn is the baseline", async () => {
     fakeClock();
     const images = flickerStep();
@@ -599,6 +726,23 @@ describe("the flicker's timer", () => {
     expect(view().flickerFrame).toBe("current");
     r.rerender(<Timer active={false} />);
     tick(2000);
+    expect(view().flickerFrame).toBe("current");
+  });
+
+  test("each swap is due on the clock: a timeout that fires before 500 ms have passed waits for the rest (the floor)", () => {
+    fakeClock();
+    // A performance clock that falls 100 ms behind the timers from now on:
+    // the timeout fires when only 400 ms have passed on it.
+    const clock = performance.now.bind(performance);
+    let lag = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => clock() - lag);
+    render(<Timer />);
+    lag = 100;
+    tick(500);
+    expect(view().flickerFrame).toBe("baseline");
+    tick(99);
+    expect(view().flickerFrame).toBe("baseline");
+    tick(1);
     expect(view().flickerFrame).toBe("current");
   });
 
@@ -742,6 +886,8 @@ describe("the flicker's timer", () => {
         "the app's dialogs don't mark themselves modal",
       ).toBeNull();
       const before = view().flickerFrame;
+      // Radix's own zero-delay timeouts first; then none is the flicker's.
+      tick(0);
       expect(vi.getTimerCount()).toBe(0);
       tick(3000);
       expect(view().flickerFrame).toBe(before);
@@ -752,6 +898,30 @@ describe("the flicker's timer", () => {
       tick(500);
       expect(view().flickerFrame).not.toBe(before);
     }
+  });
+
+  test("an open dropdown menu (role=menu, data-state=open) does not stop it", async () => {
+    fakeClock();
+    render(
+      <>
+        <Timer />
+        <DropdownMenu open>
+          <DropdownMenuTrigger>Sensitivity</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Strict</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </>,
+    );
+    await flush();
+    // The premise: Radix marks the open menu as the dialogs are, but it is no
+    // dialog.
+    const menu = screen.getByRole("menu");
+    expect(menu.getAttribute("data-state")).toBe("open");
+    tick(500);
+    expect(view().flickerFrame).toBe("current");
+    tick(500);
+    expect(view().flickerFrame).toBe("baseline");
   });
 
   test("an inline dialog that lays nothing over the page (the done card's kind) does not stop it", async () => {
@@ -878,6 +1048,7 @@ describe("f: Pause or swap flicker", () => {
   });
 
   test("leaving Flicker forgets a hand swap: back in Flicker, nothing is said until the next one", async () => {
+    fakeClock();
     const { set, request } = flickerStep();
     render(<Viewer set={set} request={request} />);
     await flush();

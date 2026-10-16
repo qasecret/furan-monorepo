@@ -76,6 +76,27 @@ describe("useViewState setters", () => {
     });
   });
 
+  test("every flicker write moves the epoch on, a reset that leaves the frame as it was included", () => {
+    const epochs = [view().flickerEpoch];
+    const moved = () => {
+      epochs.push(view().flickerEpoch);
+      return epochs.at(-1)! > epochs.at(-2)!;
+    };
+    expect(view().flickerFrame).toBe("baseline");
+    view().resetView({ reducedMotion: false });
+    expect(view().flickerFrame).toBe("baseline");
+    expect(moved()).toBe(true);
+    view().setFlicker("baseline", true);
+    expect(moved()).toBe(true);
+    view().swapFlicker();
+    expect(moved()).toBe(true);
+    // Anything else leaves it.
+    view().zoomBy(2);
+    view().setSwipe(0.3);
+    view().setSelected("r1");
+    expect(moved()).toBe(false);
+  });
+
   test("swapFlicker shows the other frame, paused, swapped by hand", () => {
     expect(view()).toMatchObject({
       flickerFrame: "baseline",

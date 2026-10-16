@@ -5,7 +5,7 @@
 // this pixi throws "Current environment does not allow unsafe-eval" on init.
 import "pixi.js/unsafe-eval";
 import { useTheme } from "next-themes";
-import { Application, Container } from "pixi.js";
+import { Application, Container, Sprite } from "pixi.js";
 import {
   useCallback,
   useEffect,
@@ -104,9 +104,10 @@ import { computeFocusView } from "./world-fit";
  *   both at their fraction, and the observer moves the divider at once.
  * - **Flicker** swaps its frames on its clock (`useFlickerTimer`), which runs
  *   only once both frames are on the stage, so the first frame drawn is the
- *   baseline. A swap reaches the renderer as an update, never a remount. A
- *   label above the stage names the frame on screen, and a polite live
- *   region, kept mounted across layouts, says a swap by hand.
+ *   baseline. A swap reaches the renderer as an update, never a remount, and
+ *   both images are on the GPU from the mount. A label on the canvas names
+ *   the frame on screen, and a polite live region, kept mounted across
+ *   layouts, says a swap by hand.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
@@ -186,6 +187,25 @@ function restack(world: Container, order: readonly HostLayer[]): void {
   for (const label of order) {
     const layer = world.children.find((c) => c.label === label);
     if (layer) world.addChild(layer);
+  }
+}
+
+/**
+ * Puts every image under `node` on `app`'s GPU now, the hidden ones too
+ * (Flicker's other frame), as pixi's prepare system does: a swap never stalls
+ * on uploading a large screenshot. Best effort: an image not uploaded here is
+ * uploaded when it is first drawn.
+ */
+function uploadImages(app: Application, node: Container): void {
+  for (const child of node.children) {
+    if (child instanceof Sprite) {
+      try {
+        app.renderer.texture.initSource(child.texture.source);
+      } catch {
+        // Uploaded at its first draw instead.
+      }
+    }
+    uploadImages(app, child);
   }
 }
 
@@ -609,6 +629,10 @@ export function ViewerStage({
     );
     const handle = renderer.mount(stage.worlds, input);
     handleRef.current = handle;
+    stage.worlds.forEach((world, i) => {
+      const app = stage.apps[i];
+      if (app) uploadImages(app, world);
+    });
     const hostPane = stage.worlds[renderer.host.pane];
     if (hostPane) restack(hostPane, renderer.host.layers);
     return () => {
@@ -972,35 +996,34 @@ export function ViewerStage({
   return (
     <div className="flex min-h-full p-6">
       {flickerAnnouncer}
-      <div className="m-auto flex w-full flex-col gap-2">
-        {mode === "flicker" && <FlickerFrameLabel />}
-        <div className="relative">
-          <div
-            style={aspectStyle(world?.size)}
-            className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
-            ref={singleRef}
-            data-testid="single-stage-host"
-            data-mode={mode}
-            tabIndex={-1}
-            aria-busy={loading || undefined}
-            onPointerUp={handleDiffRegionClick}
-          >
-            {hatchTooltips(0)}
-            {editorOverlay}
-            {mode === "swipe" && sceneReady && (
-              <SwipeHandle
-                value={swipe}
-                onChange={setSwipe}
-                stageWidth={viewportSize?.w}
-              />
-            )}
-          </div>
-          <StageStates
-            states={states}
-            onRetry={onRetry}
-            onFocusLost={focusPane(singleRef)}
-          />
+      <div className="relative m-auto w-full">
+        <div
+          style={aspectStyle(world?.size)}
+          className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
+          ref={singleRef}
+          data-testid="single-stage-host"
+          data-mode={mode}
+          tabIndex={-1}
+          aria-busy={loading || undefined}
+          onPointerUp={handleDiffRegionClick}
+        >
+          {hatchTooltips(0)}
+          {editorOverlay}
+          {mode === "swipe" && sceneReady && (
+            <SwipeHandle
+              value={swipe}
+              onChange={setSwipe}
+              stageWidth={viewportSize?.w}
+            />
+          )}
         </div>
+        {/* On the canvas, out of the flow (R18): the states sit over it. */}
+        {mode === "flicker" && <FlickerFrameLabel />}
+        <StageStates
+          states={states}
+          onRetry={onRetry}
+          onFocusLost={focusPane(singleRef)}
+        />
       </div>
     </div>
   );

@@ -8,7 +8,6 @@ import { useViewerStore } from "./useViewerStore";
 import { otherFrame, useViewState, type FlickerFrame } from "./view-state";
 
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/cn";
 import { useCommandKeys } from "@/lib/commands/registry";
 
 /**
@@ -26,7 +25,13 @@ export const FLICKER_INTERVAL_MS = 500;
  * or an open Radix dialog (the palette, the shortcuts sheet, every
  * confirmation), which says `data-state="open"` and leaves `aria-modal` off.
  * The review loop's done card is a dialog too, but inline and unmarked: it
- * stands in place of the viewer, not over it.
+ * stands in place of the viewer, not over it. Menus, listboxes and tooltips
+ * are not dialogs, so an open dropdown (`role="menu"`) leaves the flicker
+ * running.
+ *
+ * A Radix Popover (`role="dialog"`, `data-state="open"`) or a
+ * `modal={false}` Dialog would match too, and pause the flicker: the app has
+ * neither today.
  */
 export const OPEN_MODAL_DIALOG = [
   '[role="dialog"][aria-modal="true"]',
@@ -81,8 +86,12 @@ function useCovered(watch: boolean): boolean {
  * - the ignore-region editor is off;
  * - no dialog is over the viewer.
  *
- * When they hold again, the next swap is a whole interval away, so no two
- * swaps are ever closer than 500 ms.
+ * Each swap is timed from the latest write to the flicker (its epoch): the
+ * clock's own swap, a reset on a step or viewport change (even one that
+ * leaves the baseline on screen), a swap by hand. So every frame shows for a
+ * full 500 ms, a new step's baseline included, and the timer never swaps
+ * closer than 500 ms apart. A timeout that fires early, against
+ * `performance.now()`, waits for the rest.
  *
  * Under reduced motion it never plays: a live change to reduced motion
  * pauses it on the frame on screen, so `f` swaps from there.
@@ -108,19 +117,42 @@ export function useFlickerTimer({
   const running = wanted && !isCovered;
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // When the frame on screen was put there: now, and at every new epoch.
+    let shownAt = performance.now();
+    const arm = (delay: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(swap, delay);
+    };
+    const swap = () => {
+      const early = shownAt + FLICKER_INTERVAL_MS - performance.now();
+      if (early > 0) {
+        arm(early);
+        return;
+      }
       const s = useViewState.getState();
-      // A change that stops the timer may not have rendered yet: hold.
+      // A change that stops the clock may not have rendered yet: hold.
       if (
         !s.flickerPlaying ||
         useViewerStore.getState().ignoreEditMode !== "off" ||
         covered()
       ) {
+        arm(FLICKER_INTERVAL_MS);
         return;
       }
+      // A new epoch: the subscription below arms the next swap.
       s.setFlicker(otherFrame(s.flickerFrame), true);
-    }, FLICKER_INTERVAL_MS);
-    return () => clearInterval(timer);
+    };
+    const off = useViewState.subscribe((s, prev) => {
+      if (s.flickerEpoch === prev.flickerEpoch) return;
+      shownAt = performance.now();
+      arm(FLICKER_INTERVAL_MS);
+    });
+    arm(FLICKER_INTERVAL_MS);
+    return () => {
+      off();
+      clearTimeout(timer);
+    };
   }, [running]);
 }
 
@@ -165,24 +197,19 @@ const FRAME_LABEL: Record<FlickerFrame, string> = {
 };
 
 /**
- * Names the frame on screen, above the stage, and follows every swap (spec
- * §4.1). In the side-by-side panes' label style. Not a live region: while
- * the flicker plays it changes twice a second.
+ * Names the frame on screen, on the canvas (spec §4.1, R18): overlaid on the
+ * card's top-left, out of the layout, so the card never moves for it. It
+ * lets the pointer through to the canvas, and follows every swap. Not a live
+ * region: while the flicker plays it changes twice a second. Placed in the
+ * card's wrapper, beside the stage's states, which sit over it.
  */
 export function FlickerFrameLabel() {
   const frame = useViewState((s) => s.flickerFrame);
   return (
     <div
-      className="flex shrink-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-fg-muted"
+      className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-edge bg-overlay px-2 py-0.5 text-2xs font-medium uppercase tracking-wider text-fg-secondary shadow-overlay"
       data-testid="canvas-mode-label"
     >
-      <span
-        className={cn(
-          "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-          frame === "baseline" ? "bg-blue-500" : "bg-amber-500",
-        )}
-        aria-hidden
-      />
       {FRAME_LABEL[frame]}
     </div>
   );
