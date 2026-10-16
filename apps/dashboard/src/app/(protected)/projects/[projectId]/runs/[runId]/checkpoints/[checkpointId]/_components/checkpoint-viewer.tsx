@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 
+import type { ViewerMode } from "@/components/diff-viewer/comparison-modes";
 import { PageTour } from "@/components/tour/page-tour";
 import { PageContainer } from "@/components/ui/page-container";
 import type { ReviewContext } from "@/lib/review-context";
@@ -28,7 +29,7 @@ const DIFF_VIEWER_TOUR = [
     target: "#diff-viewer-toolbar",
     title: "Viewer controls",
     content:
-      "Switch between overlay / side-by-side / candidate-only modes, adjust diff sensitivity, and add ignore regions for flaky areas.",
+      "Compare the baseline and the current screenshot in five modes: Side by side, Swipe, Flicker, Overlay and Diff. Adjust diff sensitivity, and add ignore regions for flaky areas.",
     placement: "bottom" as const,
   },
   {
@@ -52,6 +53,8 @@ interface Props {
   runId: string;
   checkpointId: string;
   reviewContext: ReviewContext;
+  /** The URL's comparison mode (spec §6.3); null when it names none. */
+  view: ViewerMode | null;
   /** The server's answer for the request's role (R14). */
   canReview: boolean;
   /** The user whose viewer preferences apply; null with no user. */
@@ -60,14 +63,16 @@ interface Props {
 
 /**
  * The checkpoint page's client part: the viewer (code-split, client-only)
- * and its tour. The page hands it what the server knows: the URL's step and
- * review context, whether this viewer may decide, and who they are.
+ * and its tour. The page hands it what the server knows: the URL's step,
+ * review context and comparison mode, whether this viewer may decide, and
+ * who they are.
  */
 export function CheckpointViewer({
   projectId,
   runId,
   checkpointId,
   reviewContext,
+  view,
   canReview,
   userId,
 }: Props) {
@@ -80,6 +85,7 @@ export function CheckpointViewer({
           runId={runId}
           initialCheckpointId={checkpointId}
           reviewContext={reviewContext}
+          view={view}
           canReview={canReview}
           userId={userId}
         />

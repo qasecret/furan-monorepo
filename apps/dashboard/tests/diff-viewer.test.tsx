@@ -80,8 +80,9 @@ const {
     // One router object for every render, so effects that depend on it don't
     // re-run each time.
     routerSpies: { push: vi.fn(), replace: vi.fn() },
-    // The URL path on screen (`usePathname`), set by a test that needs it.
-    navState: { pathname: "" },
+    // The URL on screen (`usePathname`, `useSearchParams`), set by a test
+    // that needs it.
+    navState: { pathname: "", search: "" },
     // What the live `review.next` query answers (the review loop), set per
     // test, and every call it got.
     nextQuery: {
@@ -226,6 +227,7 @@ vi.mock("pixi.js", () => {
 vi.mock("next/navigation", () => ({
   useRouter: () => routerSpies,
   usePathname: () => navState.pathname,
+  useSearchParams: () => new URLSearchParams(navState.search),
 }));
 
 // ADR-032: tests override fields on this object (e.g., autoApproved)
@@ -510,6 +512,7 @@ function resetLoop() {
   useInFlightStore.setState({ ids: new Set(), decisions: new Set() });
   useReviewAnnouncer.setState({ text: "", seq: 0 });
   navState.pathname = "";
+  navState.search = "";
 }
 
 describe("DiffViewer", () => {
@@ -1837,6 +1840,26 @@ describe("DiffViewer stale-capture guard", () => {
     );
   });
 
+  test("the newer capture's link keeps the comparison mode (spec §6.3)", () => {
+    mockGetByIdData = { ...defaultMockData, projectId: "proj-1" };
+    const r = render(
+      <DiffViewer
+        runId={RUN_ID}
+        diffId="d1"
+        initialCheckpointId="cp-1"
+        reviewContext={{ status: "failed", facets: {} }}
+        view="flicker"
+      />,
+    );
+    expect(
+      r
+        .getByRole("link", { name: "Open the newer capture" })
+        .getAttribute("href"),
+    ).toBe(
+      "/projects/proj-1/runs/run-newer/checkpoints/cp-9?status=failed&view=flicker",
+    );
+  });
+
   test("shows no callout when the step has no newer capture", () => {
     mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
     const r = render(
@@ -2381,6 +2404,51 @@ describe("DiffViewer: the review loop", () => {
     );
   });
 
+  test("J, K, ← / →, the step buttons and _first carry the URL's comparison mode (spec §6.3)", async () => {
+    nextQuery.data = intoOtherRun();
+    utilsMock.review.next.fetch.mockResolvedValue(
+      answer({ target: { buildId: BUILD, runId: RUN_ID, checkpointId: "c0" } }),
+    );
+    renderViewer({ view: "overlay" });
+    press("J");
+    expect(routerSpies.push).toHaveBeenLastCalledWith(
+      stepUrl(OTHER_RUN, "s9", "?view=overlay"),
+    );
+    cleanup();
+
+    renderViewer({ view: "overlay" });
+    await pressAsync("K");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl(RUN_ID, "c0", "?view=overlay"),
+    );
+    cleanup();
+
+    const context = { status: "failed" as const, facets: { os: "macOS" } };
+    const r = renderViewer({ view: "overlay", reviewContext: context });
+    press("ArrowRight");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl(RUN_ID, "c2", "?status=failed&os=macOS&view=overlay"),
+    );
+    fireEvent.click(r.getByTestId("diff-viewer-step-prev"));
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl(RUN_ID, "c1", "?status=failed&os=macOS&view=overlay"),
+    );
+    cleanup();
+
+    renderViewer({ initialCheckpointId: "_first", view: "overlay" });
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl(RUN_ID, "c1", "?view=overlay"),
+    );
+  });
+
+  test("with no view in the URL, the links carry none: the next step opens in the preference", () => {
+    nextQuery.data = intoOtherRun();
+    useViewerPrefs.setState((s) => ({ prefs: { ...s.prefs, mode: "diff" } }));
+    renderViewer();
+    press("J");
+    expect(routerSpies.push).toHaveBeenLastCalledWith(stepUrl(OTHER_RUN, "s9"));
+  });
+
   test("the cue chip shows on the test the loop moved to, for about 3 s", async () => {
     vi.useFakeTimers();
     nextQuery.data = intoOtherRun(4);
@@ -2681,6 +2749,21 @@ describe("DiffViewer: the review loop", () => {
     expect(next.getAttribute("aria-busy")).toBe("true");
     fireEvent.click(next);
     expect(routerSpies.push).toHaveBeenCalledOnce();
+  });
+
+  test("the done card's Continue carries the comparison mode (spec §6.3)", () => {
+    nextQuery.data = intoNextBatch();
+    const { r, again } = lastPendingStep({
+      reviewContext: { status: "needs-review", facets: { os: "macOS" } },
+      view: "swipe",
+    });
+    press("A");
+    c1Decided(again);
+    fireEvent.click(r.getByRole("button", { name: CONTINUE }));
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(
+      stepUrl("run-9", "s1", "?os=macOS&view=swipe"),
+    );
   });
 
   test("undo of the last decision brings the canvas back", () => {
@@ -3792,5 +3875,160 @@ describe("DiffViewer ignore-region save targets the selected step", () => {
     expect(save.disabled).toBe(true);
     fireEvent.click(save);
     expect(setIgnoreAreasSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
+  const PROJECT = "proj-1";
+  const stepUrl = (id: string, query = "") =>
+    `/projects/${PROJECT}/runs/${RUN_ID}/checkpoints/${id}${query}`;
+  /** The mode on screen: the single stage's, or side by side's two panes. */
+  function shownMode(): string | null {
+    const single = document.querySelector<HTMLElement>(
+      "[data-testid=single-stage-host]",
+    );
+    if (single) return single.dataset.mode ?? null;
+    return document.querySelector("[data-testid=candidate-canvas-host]")
+      ? "side-by-side"
+      : null;
+  }
+  const stored = () => localStorage.getItem(prefsKey("u1"));
+
+  beforeEach(() => {
+    resetReviewSpies();
+    localStorage.clear();
+    // The images are never answered: nothing reaches the network.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    // Step 1 is a new test (no baseline); step 2 has one.
+    mockGetByIdData = {
+      ...defaultMockData,
+      projectId: PROJECT,
+      buildId: "build-1",
+      screenshots: [
+        { id: "c1", imageKey: "view-img-1", diffImageKey: null },
+        { id: "c2", imageKey: "view-img-2", diffImageKey: null },
+      ],
+      checkpointContexts: {
+        c1: {
+          baselineScreenshot: null,
+          baselineSource: null,
+          variationIgnoreAreas: [],
+        },
+        c2: {
+          baselineScreenshot: { id: "b2", imageKey: "view-base-2" },
+          baselineSource: null,
+          variationIgnoreAreas: [],
+        },
+      },
+    };
+    mockCheckpoints = {
+      items: [stepFixture("c1", "new"), stepFixture("c2", "unresolved")],
+    };
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  function openStep(
+    id: string,
+    props: Partial<ComponentProps<typeof DiffViewer>> = {},
+  ) {
+    return render(
+      <DiffViewer
+        runId={RUN_ID}
+        projectId={PROJECT}
+        initialCheckpointId={id}
+        userId="u1"
+        {...props}
+      />,
+    );
+  }
+
+  test("?view outranks the stored preference, on the canvas and in the toolbar", () => {
+    useViewerPrefs.getState().hydrate("u1");
+    act(() => useViewerPrefs.getState().set("mode", "diff"));
+    const r = openStep("c2", { view: "overlay" });
+    expect(shownMode()).toBe("overlay");
+    expect(
+      r.getByRole("tab", { name: /^overlay$/i }).getAttribute("aria-selected"),
+    ).toBe("true");
+    cleanup();
+    // With no ?view, the preference.
+    openStep("c2");
+    expect(shownMode()).toBe("diff");
+  });
+
+  test("a tab changes the mode at once, stores it, and replaces the URL with view, keeping the rest", () => {
+    navState.search = "status=failed&os=macOS";
+    const r = openStep("c2", {
+      view: "overlay",
+      reviewContext: { status: "failed", facets: { os: "macOS" } },
+    });
+    fireEvent.click(r.getByRole("tab", { name: /^diff$/i }));
+    expect(routerSpies.replace).toHaveBeenCalledOnce();
+    expect(routerSpies.replace).toHaveBeenCalledWith(
+      stepUrl("c2", "?status=failed&os=macOS&view=diff"),
+      { scroll: false },
+    );
+    expect(routerSpies.push).not.toHaveBeenCalled();
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+    expect(JSON.parse(stored() ?? "{}").mode).toBe("diff");
+    // Before the router has re-rendered the page with the new URL.
+    expect(shownMode()).toBe("diff");
+    // And the next step goes in the mode now chosen.
+    press("ArrowLeft");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl("c1", "?status=failed&os=macOS&view=diff"),
+    );
+  });
+
+  test("d and o change the URL's mode, not only the preference", () => {
+    const r = openStep("c2", { view: "overlay" });
+    press("d");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl("c2", "?view=diff"),
+      { scroll: false },
+    );
+    expect(shownMode()).toBe("diff");
+    // Back to the mode it left: the URL's Overlay, not the stored default.
+    press("d");
+    expect(shownMode()).toBe("overlay");
+    expect(
+      r.getByRole("tab", { name: /^overlay$/i }).getAttribute("aria-selected"),
+    ).toBe("true");
+    press("o");
+    expect(shownMode()).toBe("diff");
+    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+      stepUrl("c2", "?view=diff"),
+      { scroll: false },
+    );
+  });
+
+  test("Review Focus 4: ?view=swipe on a step with no baseline is side by side, nothing changes, and the next step opens in Swipe", () => {
+    openStep("c1", { view: "swipe" });
+    expect(shownMode()).toBe("side-by-side");
+    expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+    expect(stored()).toBeNull();
+
+    press("ArrowRight");
+    expect(routerSpies.replace).toHaveBeenCalledOnce();
+    expect(routerSpies.replace).toHaveBeenCalledWith(
+      stepUrl("c2", "?view=swipe"),
+    );
+    // The step on screen now has a baseline.
+    expect(shownMode()).toBe("swipe");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+    expect(stored()).toBeNull();
+    cleanup();
+
+    // As the route commits: the next step's own page, with the URL's view.
+    openStep("c2", { view: "swipe" });
+    expect(shownMode()).toBe("swipe");
   });
 });

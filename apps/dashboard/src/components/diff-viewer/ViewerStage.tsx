@@ -69,7 +69,8 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
+import { useEffectiveMode } from "./viewer-mode";
+import { useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView } from "./world-fit";
 
 /**
@@ -111,9 +112,10 @@ import { computeFocusView } from "./world-fit";
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
- *   side is available, so a stored mode that needs one draws as side by side
- *   and is kept (R2). A screenshot larger than the GPU's textures is never
- *   mounted. The hatching's tooltips are DOM hit areas over the strips.
+ *   side is available, so a chosen mode that needs one (stored, or the URL's)
+ *   draws as side by side and is kept (R2). A screenshot larger than the
+ *   GPU's textures is never mounted. The hatching's tooltips are DOM hit
+ *   areas over the strips.
  */
 
 interface Props {
@@ -274,11 +276,9 @@ export function ViewerStage({
   const { resolvedTheme } = useTheme();
 
   const hasBaseline = request.baseline !== null;
-  // A mode the step can't show draws as side by side; the choice is kept.
-  const chosenMode = useViewerPrefs((s) => s.prefs.mode);
-  const mode = modeAvailable(chosenMode, hasBaseline)
-    ? chosenMode
-    : "side-by-side";
+  // The viewer's one mode (`viewer-mode`): a mode the step can't show draws
+  // as side by side, and the choice is kept.
+  const mode = useEffectiveMode(hasBaseline);
   const renderer = RENDERERS[mode];
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);

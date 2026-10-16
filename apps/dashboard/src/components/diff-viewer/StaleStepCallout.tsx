@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import type { ViewerMode } from "./comparison-modes";
+
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -29,6 +31,8 @@ interface CalloutProps {
   };
   /** The viewer's review context: the link keeps the reviewer's filters. */
   context?: ReviewContext;
+  /** The URL's comparison mode (spec §6.3): the link keeps it too. */
+  view?: ViewerMode | null;
 }
 
 /**
@@ -37,7 +41,7 @@ interface CalloutProps {
  * capture's own step. The hue is carried by the tint and border; the text
  * stays neutral.
  */
-export function StaleStepCallout({ newer, context }: CalloutProps) {
+export function StaleStepCallout({ newer, context, view }: CalloutProps) {
   return (
     <div
       role="status"
@@ -51,6 +55,7 @@ export function StaleStepCallout({ newer, context }: CalloutProps) {
           newer.runId,
           newer.checkpointId ?? undefined,
           context,
+          view,
         )}
         data-testid="stale-step-link"
         className="rounded-sm font-medium text-fg underline underline-offset-2 hover:text-fg-secondary focus-ring"

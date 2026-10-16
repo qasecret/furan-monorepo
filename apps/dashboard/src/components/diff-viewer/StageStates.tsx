@@ -12,7 +12,7 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { modeAvailable, type ViewerMode } from "./viewer-prefs";
+import type { ViewerMode } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -34,7 +34,10 @@ export type StageState =
   | { kind: "too-large"; role: ImageRole; size: Size; max: number };
 
 export interface StageStatesInput {
-  /** The chosen mode; one the step can't show is side by side (R2). */
+  /**
+   * The mode on screen (`viewer-mode`'s effective mode): one the step can't
+   * show is already side by side (R2).
+   */
   mode: ViewerMode;
   set: ImageSetState;
   hasBaseline: boolean;
@@ -70,10 +73,7 @@ export interface StageStatesInput {
  *   run of one step says nothing.
  */
 export function stageStates(input: StageStatesInput): StageState[] {
-  const { set, hasBaseline, sizes, maxTextureSize: max } = input;
-  const mode = modeAvailable(input.mode, hasBaseline)
-    ? input.mode
-    : "side-by-side";
+  const { mode, set, hasBaseline, sizes, maxTextureSize: max } = input;
   const renderer = RENDERERS[mode];
   const needs = renderer.needs({ hasBaseline });
   const { images, failed } = set;

@@ -6,7 +6,8 @@ import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import { modeAvailable, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import { readEffectiveMode } from "./viewer-mode";
+import { useViewerPrefs, type ViewerMode } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";
@@ -55,10 +56,21 @@ export interface ShortcutOptions {
   onEscape?: () => void;
   /**
    * The step has a baseline. Without one only side by side is on screen
-   * (R2), whatever mode is stored, so a mode's own keys (`f`) are disabled.
+   * (R2), whatever mode is chosen, so a mode's own keys (`f`) are disabled.
    * Defaults to true.
    */
   hasBaseline?: boolean;
+  /**
+   * The viewer's `?view` (`useViewerMode().view`): with the editor's override
+   * and the preference, it decides the mode on screen, which the mode keys
+   * read. Absent: no URL, the preference alone.
+   */
+  urlView?: ViewerMode | null;
+  /**
+   * The viewer's `setMode`: a mode key stores the mode and writes it to the
+   * URL. Absent: the preference alone.
+   */
+  setMode?: (mode: ViewerMode) => void;
 }
 
 interface ViewerCtx extends CommandCtx, ShortcutOptions {}
@@ -66,12 +78,18 @@ interface ViewerCtx extends CommandCtx, ShortcutOptions {}
 const store = () => useViewerStore.getState();
 const view = () => useViewState.getState();
 const prefs = () => useViewerPrefs.getState();
-/** The chosen mode. */
-const chosenMode = () => prefs().prefs.mode;
-
-/** Flicker is on screen: chosen, on a step with the baseline it needs (R2). */
-const flickerShown = ({ hasBaseline = true }: ViewerCtx) =>
-  chosenMode() === "flicker" && modeAvailable("flicker", hasBaseline);
+/**
+ * The mode on screen at the key press: the editor's override, the URL's
+ * view, the preference, and side by side where the step can't show it
+ * (`viewer-mode`, R2, R3).
+ */
+const modeShown = ({ urlView = null, hasBaseline = true }: ViewerCtx) =>
+  readEffectiveMode(urlView, hasBaseline);
+/** Chooses a mode the way the viewer does, or, with no viewer, stores it. */
+const chooseMode = ({ setMode }: ViewerCtx, mode: ViewerMode) => {
+  if (setMode) setMode(mode);
+  else prefs().set("mode", mode);
+};
 
 const given = (callback: (() => void) | undefined) => callback !== undefined;
 
@@ -236,10 +254,10 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["d"],
     scope: "viewer",
     // To Diff, and back to the mode it was left from.
-    run: () =>
-      prefs().set(
-        "mode",
-        chosenMode() === "diff" ? prefs().previousMode : "diff",
+    run: (ctx) =>
+      chooseMode(
+        ctx,
+        modeShown(ctx) === "diff" ? prefs().previousMode : "diff",
       ),
   },
   {
@@ -248,9 +266,9 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "View",
     keys: ["o"],
     scope: "viewer",
-    run: () => {
-      const next = MODES[(MODES.indexOf(chosenMode()) + 1) % MODES.length];
-      if (next) prefs().set("mode", next);
+    run: (ctx) => {
+      const next = MODES[(MODES.indexOf(modeShown(ctx)) + 1) % MODES.length];
+      if (next) chooseMode(ctx, next);
     },
   },
   {
@@ -263,7 +281,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "View",
     keys: ["f"],
     scope: "viewer",
-    enabled: (ctx) => flickerShown(ctx),
+    enabled: (ctx) => modeShown(ctx) === "flicker",
     run: () => {
       const { flickerFrame, flickerPlaying, setFlicker, swapFlicker } = view();
       if (flickerPlaying) setFlicker(flickerFrame, false);

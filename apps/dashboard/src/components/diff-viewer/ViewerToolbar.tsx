@@ -25,6 +25,7 @@ import type { DiffStepper } from "./useDiffStepper";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
+import { useEffectiveMode, useSetViewerMode } from "./viewer-mode";
 import { modeAvailable, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
@@ -99,8 +100,8 @@ interface Props {
   stepper?: DiffStepper;
   /**
    * The step has a baseline. Without one only side by side is available
-   * (R2): the other modes are shown disabled, and a stored one shows as side
-   * by side (it is kept).
+   * (R2): the other modes are shown disabled, and a chosen one (stored, or
+   * the URL's) shows as side by side (it is kept).
    */
   hasBaseline?: boolean;
 }
@@ -119,9 +120,9 @@ export function ViewerToolbar({
   hasBaseline = true,
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
-  const mode = useViewerPrefs((s) =>
-    modeAvailable(s.prefs.mode, hasBaseline) ? s.prefs.mode : "side-by-side",
-  );
+  // The viewer's one mode, and its way to change it: stored, and in the URL.
+  const mode = useEffectiveMode(hasBaseline);
+  const setMode = useSetViewerMode();
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
@@ -276,7 +277,7 @@ export function ViewerToolbar({
                     : undefined
               }
               onClick={() => {
-                if (!disabled) setPref("mode", m.value);
+                if (!disabled) setMode(m.value);
               }}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-ring",

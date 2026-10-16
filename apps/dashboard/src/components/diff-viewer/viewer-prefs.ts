@@ -3,6 +3,8 @@
 import { z } from "zod";
 import { create } from "zustand";
 
+import { VIEWER_MODES, type ViewerMode } from "./comparison-modes";
+
 /**
  * What the diff viewer remembers per user across reloads (spec §6.1): the
  * comparison mode, the overlay opacity, the toggles and the info rail. Kept
@@ -11,15 +13,9 @@ import { create } from "zustand";
  * defaults for the visit.
  */
 
-/** The comparison modes, in their order on the keys 1–5. */
-export const VIEWER_MODES = [
-  "side-by-side",
-  "swipe",
-  "flicker",
-  "overlay",
-  "diff",
-] as const;
-export type ViewerMode = (typeof VIEWER_MODES)[number];
+// The modes live in a server-safe module (the page reads `?view`); the
+// viewer imports them from here, beside the preference that holds one.
+export { VIEWER_MODES, type ViewerMode };
 
 export type RailTab = "info" | "history" | "comments";
 

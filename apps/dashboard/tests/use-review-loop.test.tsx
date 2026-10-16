@@ -353,6 +353,47 @@ describe("useReviewLoop: the review context travels", () => {
       `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-10?status=failed&browser=chromium&viewport=1280x720`,
     );
   });
+
+  test("the comparison mode travels too, after the context (spec §6.3)", async () => {
+    const context: ReviewContext = { status: "failed", facets: {} };
+    query.data = answer({
+      target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+      scope: "batch",
+    });
+    const { result } = setup({ context, view: "swipe" });
+    act(() => result.current.goNext());
+    expect(router.push).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&view=swipe`,
+    );
+    cleanup();
+
+    // K's answer comes later: it carries the view the reviewer has then.
+    const prev = deferred<Answer>();
+    utils.review.next.fetch.mockReturnValue(prev.promise);
+    const k = setup({ context, view: "swipe" });
+    act(() => k.result.current.goPrev());
+    k.rerender(args({ context, view: "diff" }));
+    await act(async () =>
+      prev.resolve(
+        answer({
+          target: { buildId: BUILD, runId: RUN, checkpointId: "step-0" },
+        }),
+      ),
+    );
+    expect(router.replace).toHaveBeenLastCalledWith(
+      `/projects/${PROJECT}/runs/${RUN}/checkpoints/step-0?status=failed&view=diff`,
+    );
+  });
+
+  test("with the view, the step on screen is still not opened again", () => {
+    query.data = answer({
+      target: { buildId: BUILD, runId: RUN, checkpointId: STEP },
+    });
+    const { result } = setup({ view: "overlay" });
+    act(() => result.current.goNext());
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
 });
 
 describe("useReviewLoop: the cue's test name", () => {
@@ -735,6 +776,34 @@ describe("useReviewLoop: the card's moves (R18)", () => {
     // The card stays up, busy, until the route commits.
     expect(result.current.card).toBe("filtered");
     expect(result.current.cardBusy).toBe(true);
+  });
+
+  test("Continue and Clear filter carry the comparison mode (spec §6.3)", async () => {
+    query.data = intoNextBatch(4);
+    const hook = setup({ context: FACETED, view: "flicker" });
+    act(() => hook.result.current.afterDecision());
+    act(() => hook.result.current.continueToNextBatch());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/r9/checkpoints/s9?status=failed&browser=chromium&view=flicker`,
+    );
+    cleanup();
+    router.push.mockReset();
+
+    utils.review.next.fetch.mockResolvedValue(
+      answer({
+        target: { buildId: BUILD, runId: OTHER_RUN, checkpointId: "step-9" },
+        scope: "batch",
+        remaining: { run: 0, batch: 3, batchUnfiltered: 3, projectBatches: 2 },
+      }),
+    );
+    const cleared = setup({ context: FACETED, view: "flicker" });
+    act(() => cleared.result.current.afterDecision());
+    await act(async () => cleared.result.current.clearFilter());
+    calledOnceWith(
+      router.push,
+      `/projects/${PROJECT}/runs/${OTHER_RUN}/checkpoints/step-9?status=failed&view=flicker`,
+    );
   });
 
   test("Clear filter is busy from the press: a second press asks once", async () => {
