@@ -21,6 +21,7 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { expectNamesChosenRow } from "./palette-names";
 import {
   callsTo,
   createBackend,
@@ -1116,14 +1117,10 @@ describe("the palette's choice when the search answers", () => {
     await server.answer("variations.list", [variation("v1", "visual header")]);
     await rows(palette, "Batches", [BATCH]);
     await waitFor(() => expect(selected(palette)).toBe(BATCH));
-    // It is the first row as shown, and what a screen reader is told.
+    // It is the first row as shown, and what a screen reader is told (R30's
+    // check, case iii: the search box and the list name it, the one chosen).
     expect(shown(palette)[0]).toBe(BATCH);
-    const chosen = palette.querySelector(
-      '[role="option"][aria-selected="true"]',
-    );
-    expect(
-      screen.getByTestId("command-input").getAttribute("aria-activedescendant"),
-    ).toBe(chosen?.id);
+    expectNamesChosenRow(palette);
 
     enter();
     expect(pushMock).toHaveBeenCalledOnce();

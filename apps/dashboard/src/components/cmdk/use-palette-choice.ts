@@ -51,7 +51,10 @@ function chosenAndNamed(root: HTMLElement | null) {
   };
 }
 
-/** How many times a name is repaired before the palette gives up on it. */
+/**
+ * How many times one row's name is repaired before the palette gives up on
+ * that row. Another row chosen is another name, with its own repairs.
+ */
 const MAX_REPAIRS = 2;
 
 /**
@@ -60,9 +63,10 @@ const MAX_REPAIRS = 2;
  * cmdk keeps that name only inside its own select, and only when the select
  * changes its value; it reads the chosen row from the page as it is at that
  * moment, which can be before the row has been drawn as chosen. So cmdk's own
- * choice (when the text changes, when the palette opens), a pointer over a
- * row and a value the palette sets can leave the name empty or on the row
- * before.
+ * choice (when the text changes, when the palette opens) and a value the
+ * palette sets can leave the name empty or on the row before. (A reader's
+ * pointer over a row is named by cmdk itself: its select is rendered with the
+ * row, so the name is right before any check runs.)
  *
  * The repair is cmdk's own select, a pointer over the chosen row, from a
  * different value: the controlled value is cleared, the pointer is sent, and
@@ -75,8 +79,10 @@ function nameChosenRow(row: Element, setChosen: (value: string) => void) {
   const value = row.getAttribute("data-value") ?? "";
   flushSync(() => setChosen(""));
   pointAt(row);
-  // Drawn as chosen again before anything is painted (the pointer's own
-  // update comes after).
+  // Drawn as chosen again before anything is painted. The pointer's own
+  // updates (cmdk's select) are rendered in this same flush: React renders
+  // every pending lane it can with a sync one, so the rows redraw, then cmdk
+  // names the chosen row, all before this returns.
   flushSync(() => setChosen(value));
 }
 
@@ -113,10 +119,11 @@ interface Choice {
  * R30: whatever chooses the row (the palette, cmdk, the reader), the search
  * box names it (`nameChosenRow`), checked after every change.
  *
- * The effect depends on `pending` and `rowCount` only. A change of the text
- * that leaves both as they were (a space typed after the answer) needs no
- * choice of its own: cmdk chooses its first row when the text changes, which
- * is this one ("a space typed after the answer chooses the first row again").
+ * The R29 effect (the one that sends the Home) depends on `pending` and
+ * `rowCount` only. A change of the text that leaves both as they were (a
+ * space typed after the answer) needs no choice of its own: cmdk chooses its
+ * first row when the text changes, which is this one ("a space typed after
+ * the answer chooses the first row again").
  */
 export function usePaletteChoice({
   startsOn,
@@ -141,22 +148,30 @@ export function usePaletteChoice({
   // moves it (the chosen row, the text, the rows: each renders the palette),
   // with no list of them to keep. The check is a query or two and repairs
   // nothing that is right. A name that will not take is tried `MAX_REPAIRS`
-  // times, not for ever.
-  const repairs = useRef(0);
+  // times for that row, not for ever; a check that finds another row chosen
+  // starts that row's count afresh.
+  const repairs = useRef<{ row: string | null; count: number }>({
+    row: null,
+    count: 0,
+  });
   useEffect(() => {
     const timer = setTimeout(() => {
       const { row, named } = chosenAndNamed(rootRef.current);
       if (!row || named === row.id) {
-        repairs.current = 0;
+        repairs.current = { row: null, count: 0 };
         return;
       }
-      if (repairs.current >= MAX_REPAIRS) return;
-      repairs.current += 1;
+      if (repairs.current.row !== row.id) {
+        repairs.current = { row: row.id, count: 0 };
+      }
+      if (repairs.current.count >= MAX_REPAIRS) return;
+      repairs.current.count += 1;
       nameChosenRow(row, setChosen);
     }, 0);
     return () => clearTimeout(timer);
   });
 
+  // R29: once the search has answered (and shows rows), choose the first.
   useEffect(() => {
     if (pending || rowCount === 0) return;
     const timer = setTimeout(() => {
