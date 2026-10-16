@@ -54,6 +54,14 @@ export interface CaptureResult {
 }
 
 /**
+ * One checkpoint (step) of a run: its name, and its screenshot, either a
+ * committed fixture or a PNG of the caller's own.
+ */
+export type RunCheckpoint = { name: string } & (
+  { fixture: Fixture } | { png: Buffer }
+);
+
+/**
  * A run of several checkpoints (steps) captured under one build. Takes every
  * `CaptureInput` option except the per-checkpoint ones, which `checkpoints`
  * carries.
@@ -62,7 +70,7 @@ export interface CaptureRunInput extends Omit<
   CaptureInput,
   "checkpointName" | "fixture"
 > {
-  checkpoints: Array<{ name: string; fixture: Fixture }>;
+  checkpoints: RunCheckpoint[];
   /**
    * Append the run to this existing build (the project's, on `branchName`)
    * instead of creating one: how a batch comes to hold several runs. A build
@@ -255,7 +263,10 @@ export async function captureRun(
   const checkpointIds: Record<string, string> = {};
   for (const checkpoint of input.checkpoints) {
     const uploaded = await api.uploadScreenshotBase64(input.pat, run.runId, {
-      pngBase64: pngBase64(checkpoint.fixture),
+      pngBase64:
+        "png" in checkpoint
+          ? checkpoint.png.toString("base64")
+          : pngBase64(checkpoint.fixture),
       name: checkpoint.name,
       viewport,
       browser,

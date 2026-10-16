@@ -194,7 +194,8 @@ means every screenshot test passed.
   bottom 300px of 1100, has a hit area titled "Not in the baseline") and
   `state-size-mismatch-diff` (key 5: the spec's message, verbatim). Each mode
   state checks its radio, the URL's `?view` and the stored preference; none
-  samples the canvas's pixels or counts its image requests. Not covered here:
+  samples the canvas's pixels or counts its image requests
+  (`tests/ui/viewer-compare.spec.ts` does, see Coverage matrix). Not covered here:
   the stale-step Confirm moving the cursor
   on (it needs a step with a newer capture, which the fixture does not have);
   it is checked in the dashboard's jsdom tests only. The
@@ -249,7 +250,9 @@ its own.
   single-origin `qasecret/furan-dashboard:local-proxy`. The orchestrator builds
   any that are missing; present ones are reused as they are, so rebuild (or
   `docker image rm`) after pulling new code.
-- `playwright install chromium` (once) for the UI tests.
+- `playwright install chromium webkit firefox` (once) for the UI tests: every
+  UI spec runs in Chromium, and `tests/ui/viewer-compare.spec.ts` also opens
+  the diff viewer in WebKit and Firefox.
 - Optional: a JDK (real Kotlin-SDK smoke) and a local **ollama** (VLM layer) —
   absent → those capabilities are marked _config-gated_, not failed.
 
@@ -323,18 +326,60 @@ run off the list and the next card has focus; `⌘Z` brings it back. Then
 "Single-key shortcuts" is turned off in the Help menu (Shift+Tab to the Help
 button, Enter, End, Space): `A` in the viewer does nothing and sends no
 decision, while "Approve step" in the palette approves that same step; the
-switch is turned back on the same way. Then axe `color-contrast` runs on the
+switch is turned back on the same way. In the viewer, `1`–`5` check each
+comparison mode's radio, and only it; Tab reaches Swipe's handle, the "Swipe
+position" slider, and → twice moves it from 50 to 54; with reduced motion
+Flicker shows no Play and its canvas label stays "Baseline" for 1.5 s (watched
+with a MutationObserver: three swaps at its rate) until `f` swaps it to
+"Current" and the live region says "Showing current"; `t` folds the details
+rail to its strip ("Show details") and `t` opens it again. Then axe
+`color-contrast` runs on the
 palette (empty and searching) and on the `?` sheet in light and dark
 (problems fail the test, as in the sweep, and only symbol-only text may go
 unmeasured). Last, `A` on the last pending step brings up "All caught up",
 and `G I` goes to Batches from it. It runs in `s3-full`.
 
+`tests/ui/viewer-compare.spec.ts` (capability `review.viewer_compare`, not
+`@visual`) checks that the diff viewer's comparison modes draw the right
+pixels and fetch each image once. It builds its own data in a project created
+fresh for every run (`viewer-compare-ui-<timestamp>`), made the bootstrap
+admin's default for the run as the review-loop spec does: one run of two
+steps, drawn with `sharp` and uploaded through `captureRun` (whose checkpoints
+can carry a PNG of their own). Step `half`'s baseline is all one colour, A,
+and its current is A with a second colour, B, on its right half; step `next`
+is there to step to. All six images differ, as storage keys are content
+hashes.
+
+Pixels are read from an element screenshot of the stage
+(`single-stage-host`), decoded in Node with `sharp`: pixi's WebGL canvas keeps
+no drawing buffer, so `toDataURL` would read blank. The samples sit at 25% and
+75% of the stage's width, at mid-height, within 3 levels per channel. The
+changed right half is one `major` region, and every single-stage mode draws the
+step's regions over the images as a 20% fill of the severity's colour, so a
+right-half sample is the image's colour under that fill; the spec reads the
+region from the api first and fails if it is not that one box.
+
+In Chromium: Swipe at 50% shows A left of the divider and B right of it; → →
+on its handle reads 54, and End takes the divider to 100%, where the baseline
+shows all the way across. Flicker, standing still under reduced motion, shows
+the baseline, and `f` swaps it to the current. Overlay with its opacity slider
+at 100% (End) shows the current image on top. The first view requests each of
+the step's three images (baseline, current, diff) once, and the next step's
+three once (fetched ahead); switching through all five modes requests nothing
+more; → to the next step and ← back requests nothing, after which Swipe still
+draws both images, so no bitmap was closed. Then the same Swipe and Flicker
+checks run in WebKit and Firefox, launched by the spec (`webkit.launch()`,
+`firefox.launch()`) against the project's `baseURL` and opened with the
+Chromium session (its `storageState`), so the spec signs in once. It runs in
+`s3-full`.
+
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 6 times (the seeder,
-  then the login, dashboard, review-flow, review-loop and keyboard-review
-  specs), so repeated Playwright runs against a kept stack trip it after a
+  per-account login brake, ADR-063). A run signs in 7 times (the seeder,
+  then the login, dashboard, review-flow, review-loop, keyboard-review and
+  viewer-compare specs; viewer-compare signs in once, in Chromium, and its
+  WebKit and Firefox pages reuse that session), so repeated Playwright runs against a kept stack trip it after a
   few iterations: the login form then reads "Invalid email or password" and
   the api logs `login_account_rate_limited` (429). Wait out the window, or
   recreate the stack (`e2e:down` / `e2e:up`).
@@ -348,6 +393,7 @@ and `G I` goes to Batches from it. It runs in `s3-full`.
 
 `.github/workflows/e2e.yml` runs this suite on `workflow_dispatch` + a nightly
 schedule — never on push/PR (too heavy, and needs a full compose stack). It
-synthesizes an ephemeral `infra/docker/.env` with runtime-random secrets,
-builds the images (`e2e:images`), runs `e2e:s3`, gates on coverage, and uploads
-the matrix + report.
+installs Playwright's Chromium, WebKit and Firefox, synthesizes an ephemeral
+`infra/docker/.env` with runtime-random secrets, builds the images
+(`e2e:images`), runs `e2e:s3`, gates on coverage, and uploads the matrix +
+report.
