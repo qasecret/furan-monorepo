@@ -104,15 +104,26 @@ re-run with `VISUAL_LABEL=after`. PNGs land in
 `visual-out/<VISUAL_LABEL>/<theme>/<route>.png` (override the root with
 `VISUAL_OUT`); the fixture project's IDs are kept in `.visual-sweep.json` so
 both runs capture the same data. Both are gitignored. A `.visual-sweep.json`
-from before the multi-step run or the loop batch existed is upgraded in
-place: the project and everything it holds stay as they are, and only the
-missing batch is added (the file is written after each addition). The fixture
-holds three batches: the single-step build, the multi-step build, and a
-"loop" batch (two runs, one at a phone viewport, each with one pending changed
-step) that is always the newest. The fixture also makes
-that project the bootstrap admin's default project (keeping its other
+from before the multi-step run, the loop batch or the size-mismatch step
+existed is upgraded in place: the project and everything it holds stay as
+they are, and only the missing part is added (the file is written after each
+addition). The fixture holds three batches: the single-step build, the
+multi-step build, and a "loop" batch (two runs, one at a phone viewport, each
+with one pending changed step) that is always the newest. The fixture also
+makes that project the bootstrap admin's default project (keeping its other
 memberships), so `/inbox` captures the batches table rather than "No project
 assigned".
+
+The fixture's last part, `mismatch`, is a step whose screenshots differ in
+size: a 1280×800 baseline, approved, and a 1280×1100 current screenshot
+compared with it and left undecided (`passed` under odiff, the default
+engine, which compares the baseline's area only; `unresolved` under an engine
+that counts the extra rows). Both are drawn with `sharp` and uploaded through
+`src/visual/upload.ts`. It lives in a project of its own,
+`visual-sweep-mismatch`, so the sweep's project keeps the loop batch as its
+newest batch and its batches table as it is; that project is shown only in
+the admin's project list. It is reused like the rest, and added again when its
+project is gone.
 
 **Or against a dev stack.** Any running api + diff-worker whose bootstrap admin
 is `e2e-admin@furan.test` (see `BOOTSTRAP_EMAIL` / `BOOTSTRAP_PASSWORD` in
@@ -164,7 +175,27 @@ means every screenshot test passed.
   sticky header), `state-cursor-step-sideways` (a narrower window; a card's
   ring clears the sideways scroller's edges) and `state-topbar-tablet` /
   `state-topbar-phone` (768 and 375 wide; the project label and the palette
-  button do not overlap, the bar does not scroll sideways). Not covered here: the stale-step Confirm moving the cursor
+  button do not overlap, the bar does not scroll sideways). The diff viewer's
+  comparison modes and its rail add, on the single-step run's changed step:
+  `state-mode-swipe` (key 2: the "Swipe position" slider reads 50, "50%
+  baseline", and the divider is in the middle of the stage),
+  `state-mode-flicker-baseline` and `state-mode-flicker-current` (key 3, with
+  motion allowed: Flicker plays, `f` pauses it, `f` swaps it by hand to that
+  frame, the canvas label names it and stays; reduced motion is back for the
+  shot), `state-mode-overlay` (key 4: "Current over baseline" at 50% opacity),
+  `state-mode-diff` (key 5: the step's own diff image, so no message),
+  `state-rail-collapsed` (`t` collapses, opens and collapses the rail: the
+  40px strip's "Show details", Info, History and Comments),
+  `state-rail-wide` (End on "Resize details" takes the rail to 560px in the
+  1440px window) and `state-editor-rail` (`i`: one rail, the "Ignore regions"
+  landmark and no "Details"; `t` collapses it to one "Ignore regions (N)"
+  button and opens it again). On the size-mismatch step: `state-size-mismatch`
+  (side by side: the size chip names both sizes, and pane A's hatching, the
+  bottom 300px of 1100, has a hit area titled "Not in the baseline") and
+  `state-size-mismatch-diff` (key 5: the spec's message, verbatim). Each mode
+  state checks its radio, the URL's `?view` and the stored preference; none
+  samples the canvas's pixels or counts its image requests. Not covered here:
+  the stale-step Confirm moving the cursor
   on (it needs a step with a newer capture, which the fixture does not have);
   it is checked in the dashboard's jsdom tests only. The
   All caught up card is not reachable here: the fixture always has pending
@@ -187,7 +218,15 @@ again, or fails the state. Such states are kept last in `STATES`, and the
 fixture must be left as it was found: every state, and both themes, share it.
 The other states never confirm or change anything. The ones that resize the
 viewport (to make a list scroll, or to check the top bar at 768 and 375px) put
-it back in their `cleanup`, so the next state opens at 1440×900.
+it back in their `cleanup`, so the next state opens at 1440×900. The viewer
+states that change a viewer preference (a mode, or the rail's width or
+collapsed state, stored per user in localStorage under
+`furan:viewer:prefs:v1:<userId>`) note the stored preferences first and put
+them back in their `cleanup`, so the next state opens the viewer side by side
+with the rail open at 320px (each viewer state checks that it does). The
+flicker states also put the window's reduced motion back. The `?view` a mode
+writes into the URL needs no cleanup: every state starts with a navigation of
+its own.
 
 **Reviewing in Furan:**
 

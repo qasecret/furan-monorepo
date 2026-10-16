@@ -2,9 +2,20 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import sharp from "sharp";
+
 import { ApiError, type ApiClient } from "../clients/api-client.js";
-import { capture, captureRun, type Fixture } from "../clients/virtual-sdk.js";
+import {
+  capture,
+  captureRun,
+  pollRunStatus,
+  waitForCheckpointVerdicts,
+  type Fixture,
+} from "../clients/virtual-sdk.js";
+import { API_URL } from "../env.js";
 import { loadSeed, principal } from "../seed/load-seed.js";
+
+import { uploadShots } from "./upload.js";
 
 /**
  * The data the visual sweep's project-scoped routes render: one project with
@@ -18,7 +29,10 @@ import { loadSeed, principal } from "../seed/load-seed.js";
  *  - a second pending batch of two runs on its own branch, one at a phone
  *    viewport, each with one pending changed step, so the review loop has a
  *    batch to continue to and the batch filters have more than one value (see
- *    {@link addLoopBatch}).
+ *    {@link addLoopBatch});
+ *
+ * and, in a project of its own, a step whose baseline and current screenshot
+ * differ in size (see {@link addMismatch}).
  */
 export interface VisualFixture {
   projectId: string;
@@ -33,6 +47,12 @@ export interface VisualFixture {
    * pending `changed` step. The newest batch of the project.
    */
   loopBuildId: string;
+  /**
+   * A step whose screenshots differ in size: its approved baseline is
+   * 1280×800 and its current 1280×1100. In a project of its own (see
+   * {@link addMismatch}).
+   */
+  mismatch: { runId: string; checkpointId: string; projectId: string };
 }
 
 type SingleFixture = Pick<
@@ -41,15 +61,18 @@ type SingleFixture = Pick<
 >;
 type MultiFixture = Pick<VisualFixture, "multiRunId" | "multiBuildId">;
 type LoopFixture = Pick<VisualFixture, "loopBuildId">;
+type MismatchFixture = Pick<VisualFixture, "mismatch">;
 
 /**
  * What `.visual-sweep.json` can hold: the single-step ids, then each later
- * addition (the multi-step run, the loop batch) once it exists. A file from
- * before an addition simply lacks it, and {@link completeFixture} adds it.
+ * addition (the multi-step run, the loop batch, the size-mismatch step) once
+ * it exists. A file from before an addition simply lacks it, and
+ * {@link completeFixture} adds it.
  */
 type StoredFixture = SingleFixture &
   Partial<MultiFixture> &
-  Partial<LoopFixture>;
+  Partial<LoopFixture> &
+  Partial<MismatchFixture>;
 
 const FIXTURE_FILE = fileURLToPath(
   new URL("../../.visual-sweep.json", import.meta.url),
@@ -83,14 +106,40 @@ const LOOP_TESTS: ReadonlyArray<{ name: string; viewport?: string }> = [
   { name: "loop-mobile", viewport: "375x812" },
 ];
 
+/**
+ * The size-mismatch step lives in a project of its own, so the sweep's
+ * project keeps the loop batch as its newest batch (the `project`, `builds`
+ * and `runs` routes land on it) and its batches table as it is. One step, its
+ * baseline approved at one size and its current captured at another: 1280 px
+ * wide both, 800 px tall, then 1100.
+ */
+const MISMATCH_PROJECT_NAME = "visual-sweep-mismatch";
+const MISMATCH_BRANCH = "main";
+const MISMATCH_BASELINE_BUILD_NAME = "visual-sweep-mismatch-baseline";
+const MISMATCH_BUILD_NAME = "visual-sweep-mismatch-build";
+const MISMATCH_CHECKPOINT = "size-mismatch";
+const MISMATCH_WIDTH = 1280;
+const MISMATCH_BASELINE_HEIGHT = 800;
+const MISMATCH_CURRENT_HEIGHT = 1100;
+
 const isId = (v: unknown): v is string => typeof v === "string" && v !== "";
+
+/** A stored size-mismatch step, or null when it is not a whole one. */
+function parseMismatch(raw: unknown): VisualFixture["mismatch"] | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const { runId, checkpointId, projectId } = raw as Record<string, unknown>;
+  return isId(runId) && isId(checkpointId) && isId(projectId)
+    ? { runId, checkpointId, projectId }
+    : null;
+}
 
 /**
  * A parsed fixture file, validated field by field. A file from before the
- * multi-step run (or the loop batch) existed lacks its ids: it is returned
- * as such, and {@link completeFixture} adds what is missing. A file that
- * lacks a single-step id, or is no object at all, is no fixture. (Exported so
- * the upgrade rules can be driven without the file.)
+ * multi-step run (or the loop batch, or the size-mismatch step) existed
+ * lacks its ids: it is returned as such, and {@link completeFixture} adds
+ * what is missing. A file that lacks a single-step id, or is no object at
+ * all, is no fixture. (Exported so the upgrade rules can be driven without
+ * the file.)
  */
 export function parseFixture(raw: unknown): StoredFixture | null {
   // `null`, an array or a scalar parses fine but is no fixture either.
@@ -104,10 +153,13 @@ export function parseFixture(raw: unknown): StoredFixture | null {
     multiRunId,
     multiBuildId,
     loopBuildId,
+    mismatch: rawMismatch,
   } = raw as Record<string, unknown>;
   if (!isId(projectId) || !isId(buildId) || !isId(unresolvedRunId)) {
     return null;
   }
+  // All three ids or none: a step is only found by all of them.
+  const mismatch = parseMismatch(rawMismatch);
   return {
     projectId,
     buildId,
@@ -117,6 +169,7 @@ export function parseFixture(raw: unknown): StoredFixture | null {
       ? { multiRunId, multiBuildId }
       : {}),
     ...(isId(loopBuildId) ? { loopBuildId } : {}),
+    ...(mismatch ? { mismatch } : {}),
   };
 }
 
@@ -173,6 +226,25 @@ async function makeAdminDefault(
   });
 }
 
+/**
+ * The id of a new project called `name`, or of the one already called that:
+ * a project can outlive its fixture file (deleted or stale), and is adopted.
+ */
+async function createOrAdoptProject(
+  api: ApiClient,
+  admin: string,
+  name: string,
+): Promise<string> {
+  try {
+    return (await api.createProject(admin, { name })).id;
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 409)) throw e;
+    const found = (await api.listProjects(admin)).find((p) => p.name === name);
+    if (!found) throw e;
+    return found.id;
+  }
+}
+
 async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
   const seed = loadSeed();
   const admin = seed.bootstrapAdminJwt;
@@ -186,18 +258,7 @@ async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
     }
   }
 
-  let projectId: string;
-  try {
-    projectId = (await api.createProject(admin, { name: PROJECT_NAME })).id;
-  } catch (e) {
-    // The project outlived its fixture file (deleted or stale): adopt it.
-    if (!(e instanceof ApiError && e.status === 409)) throw e;
-    const found = (await api.listProjects(admin)).find(
-      (p) => p.name === PROJECT_NAME,
-    );
-    if (!found) throw e;
-    projectId = found.id;
-  }
+  const projectId = await createOrAdoptProject(api, admin, PROJECT_NAME);
 
   const base = await capture(api, {
     pat,
@@ -237,11 +298,13 @@ async function reuseOrCreate(api: ApiClient): Promise<VisualFixture> {
 
 /**
  * `stored` with whatever it lacks added: the multi-step run, then the loop
- * batch. A fixture file from before either: keep the project and everything
- * it already holds exactly as it is, and add only the missing parts, writing
- * the file after each so a failure part-way never adds one twice. The loop
- * batch is added last, so it is always the project's newest batch (the
- * `project`, `builds` and `runs` routes land on the newest batch).
+ * batch, then the size-mismatch step. A fixture file from before any of them:
+ * keep the project and everything it already holds exactly as it is, and add
+ * only the missing parts, writing the file after each so a failure part-way
+ * never adds one twice. The loop batch is the last batch added to the
+ * project, so it is always its newest batch (the `project`, `builds` and
+ * `runs` routes land on the newest batch); the size-mismatch step is in a
+ * project of its own, and is added again if that project is gone.
  */
 async function completeFixture(
   api: ApiClient,
@@ -268,7 +331,34 @@ async function completeFixture(
     writeFixture({ ...stored, ...multi, ...loop });
   }
 
-  return { projectId, buildId, unresolvedRunId, ...multi, ...loop };
+  let mismatch: MismatchFixture;
+  if (
+    stored.mismatch !== undefined &&
+    (await projectExists(api, stored.mismatch.projectId))
+  ) {
+    mismatch = { mismatch: stored.mismatch };
+  } else {
+    mismatch = { mismatch: await addMismatch(api) };
+    writeFixture({ ...stored, ...multi, ...loop, ...mismatch });
+  }
+
+  return {
+    projectId,
+    buildId,
+    unresolvedRunId,
+    ...multi,
+    ...loop,
+    ...mismatch,
+  };
+}
+
+/** Whether the project `projectId` is still on this stack. */
+async function projectExists(
+  api: ApiClient,
+  projectId: string,
+): Promise<boolean> {
+  const projects = await api.listProjects(loadSeed().bootstrapAdminJwt);
+  return projects.some((p) => p.id === projectId);
 }
 
 /** A run's checkpoints as the reviewer reads them: `name → state`, in order. */
@@ -472,4 +562,116 @@ async function addLoopBatch(
   }
 
   return { loopBuildId: candidate.buildId };
+}
+
+/**
+ * A screenshot of the size-mismatch step, `height` px tall and
+ * {@link MISMATCH_WIDTH} wide: a header and three blocks in the top 800 px,
+ * the same at every height, and below them, where the taller one has room, a
+ * fourth block. So the two sizes differ only in what one has and the other
+ * lacks.
+ */
+function mismatchPng(height: number): Promise<Buffer> {
+  const w = MISMATCH_WIDTH;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${height}">` +
+    `<rect width="${w}" height="${height}" fill="#ffffff"/>` +
+    `<rect width="${w}" height="72" fill="#1e40ff"/>` +
+    `<rect x="64" y="136" width="560" height="320" fill="#e5e7eb"/>` +
+    `<rect x="688" y="136" width="528" height="320" fill="#fde68a"/>` +
+    `<rect x="64" y="520" width="1152" height="200" fill="#bbf7d0"/>` +
+    (height >= 1036
+      ? `<rect x="64" y="864" width="1152" height="172" fill="#fecaca"/>`
+      : "") +
+    `</svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+/**
+ * Upload one screenshot of the size-mismatch step, `height` px tall, as the
+ * one run of a new build on {@link MISMATCH_BRANCH} (through `uploadShots`,
+ * as the sweep uploads its own shots), and wait until the diff pipeline has
+ * settled it: its step has a verdict, and the run a status.
+ */
+async function uploadMismatch(
+  api: ApiClient,
+  projectId: string,
+  buildName: string,
+  height: number,
+): Promise<{ runId: string; checkpointId: string; status: string }> {
+  const pat = principal(loadSeed(), "owner").pat;
+  const { runs } = await uploadShots({
+    apiUrl: API_URL,
+    pat,
+    projectId,
+    branch: MISMATCH_BRANCH,
+    buildName,
+    shots: [{ name: MISMATCH_CHECKPOINT, png: await mismatchPng(height) }],
+  });
+  const [run] = runs;
+  if (!run) {
+    throw new Error("visual fixture: the size-mismatch upload made no run");
+  }
+  await waitForCheckpointVerdicts(api, pat, run.runId, [run.checkpointId]);
+  const { status } = await pollRunStatus(api, pat, run.runId);
+  return { runId: run.runId, checkpointId: run.checkpointId, status };
+}
+
+/**
+ * The size-mismatch step, in its own project ({@link MISMATCH_PROJECT_NAME}):
+ * a 1280×800 screenshot approved as the baseline of {@link MISMATCH_BRANCH},
+ * then a 1280×1100 one of the same step in a new build, which nothing in the
+ * sweep decides.
+ *
+ * The step must have been compared with that baseline, so it is `unresolved`
+ * or `passed`, never `new`. Which one is the diff engine's: odiff, the
+ * projects' default, compares the baseline's area only, so a taller current
+ * screenshot whose top matches the baseline is a match (a diff-engine issue
+ * of its own). The viewer shows both the same way: what differs is the size.
+ *
+ * Not atomic, as {@link addLoopBatch} is not: a failure after the second
+ * build exists leaves it in the project, and the next run adds the step
+ * again (adopting the project and its baseline).
+ */
+async function addMismatch(api: ApiClient): Promise<VisualFixture["mismatch"]> {
+  const admin = loadSeed().bootstrapAdminJwt;
+  const projectId = await createOrAdoptProject(
+    api,
+    admin,
+    MISMATCH_PROJECT_NAME,
+  );
+
+  const baseline = await uploadMismatch(
+    api,
+    projectId,
+    MISMATCH_BASELINE_BUILD_NAME,
+    MISMATCH_BASELINE_HEIGHT,
+  );
+  // A leftover baseline on this branch (an adopted project) makes the
+  // capture "passed"; only a new or unresolved run needs (and accepts)
+  // approval.
+  if (baseline.status !== "passed") await api.approveRun(admin, baseline.runId);
+
+  const current = await uploadMismatch(
+    api,
+    projectId,
+    MISMATCH_BUILD_NAME,
+    MISMATCH_CURRENT_HEIGHT,
+  );
+  const steps = await checkpointStates(api, admin, current.runId);
+  const [only] = steps;
+  if (
+    steps.length !== 1 ||
+    only?.[0] !== MISMATCH_CHECKPOINT ||
+    (only[1] !== "unresolved" && only[1] !== "passed")
+  ) {
+    throw new Error(
+      `visual fixture: expected the size-mismatch run's one step, ${JSON.stringify(MISMATCH_CHECKPOINT)}, to be compared with its baseline (unresolved or passed), got ${JSON.stringify(steps)}`,
+    );
+  }
+  return {
+    runId: current.runId,
+    checkpointId: current.checkpointId,
+    projectId,
+  };
 }

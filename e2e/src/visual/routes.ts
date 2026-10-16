@@ -631,6 +631,267 @@ async function restoreProfile(_p: Page, env: VisualStateEnv): Promise<void> {
     .toBe(true);
 }
 
+// ---- the viewer's comparison modes and its rail ---------------------------
+// Helpers for the mode, mismatch and rail states below. None of them changes
+// the fixture. Each one that changes a viewer preference (the mode, the rail's
+// width or whether it is collapsed: stored per user in localStorage) notes the
+// stored preferences first and puts them back in `cleanup`, so the next state
+// opens the viewer as every other does: side by side, the rail open at 320px.
+// A mode also goes into the URL (`?view`), which needs no putting back: every
+// state starts with a navigation of its own.
+
+/** The viewer's stored preferences: one key per user under this prefix. */
+const VIEWER_PREFS = "furan:viewer:prefs:v1:";
+
+/** The page's stored viewer preferences, by key (none: `{}`). */
+async function storedViewerPrefs(p: Page): Promise<Record<string, string>> {
+  // A string: the e2e tsconfig has no DOM lib.
+  return (await p.evaluate(
+    `(() => { const out = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k !== null && k.startsWith(${JSON.stringify(VIEWER_PREFS)})) out[k] = localStorage.getItem(k); } return out; })()`,
+  )) as Record<string, string>;
+}
+
+/**
+ * The signed-in user's stored preference `field`: the one stored object's,
+ * or undefined while none is stored.
+ */
+async function storedViewerPref(p: Page, field: string): Promise<unknown> {
+  const stored = Object.values(await storedViewerPrefs(p));
+  if (stored.length > 1) {
+    throw new Error(
+      `visual: ${stored.length} users' viewer preferences are stored, expected one`,
+    );
+  }
+  const [json] = stored;
+  return json === undefined
+    ? undefined
+    : (JSON.parse(json) as Record<string, unknown>)[field];
+}
+
+/**
+ * The stored viewer preferences as a state found them, for `restorePrefs`.
+ * Set by the state's first `notePrefs` (before it changes any) and cleared by
+ * the cleanup.
+ */
+let prefsBefore: Record<string, string> | null = null;
+
+/** Note the stored viewer preferences, for `restorePrefs` to put back. */
+async function notePrefs(p: Page): Promise<void> {
+  prefsBefore ??= await storedViewerPrefs(p);
+}
+
+/**
+ * The cleanup of every state that changed a viewer preference: the stored
+ * ones go back to what `notePrefs` found (in the sweep, none), and fails if
+ * they are not. The page keeps the changed ones in memory until the next
+ * state's navigation, which reads them again from storage.
+ */
+async function restorePrefs(p: Page): Promise<void> {
+  const before = prefsBefore;
+  prefsBefore = null;
+  if (before === null) return;
+  await p.evaluate(
+    `((before) => { for (const k of Object.keys(localStorage)) if (k.startsWith(${JSON.stringify(VIEWER_PREFS)})) localStorage.removeItem(k); for (const [k, v] of Object.entries(before)) localStorage.setItem(k, v); })(${JSON.stringify(before)})`,
+  );
+  expect(
+    await storedViewerPrefs(p),
+    "the stored viewer preferences should be back as the state found them",
+  ).toEqual(before);
+}
+
+/** A comparison mode: its key, its radio's name and its `?view` value. */
+interface ModeKey {
+  key: string;
+  name: string;
+  view: string;
+}
+
+/** The five modes, on keys 1–5 (spec §4.1). */
+const MODE = {
+  swipe: { key: "2", name: "Swipe", view: "swipe" },
+  flicker: { key: "3", name: "Flicker", view: "flicker" },
+  overlay: { key: "4", name: "Overlay", view: "overlay" },
+  diff: { key: "5", name: "Diff", view: "diff" },
+} as const satisfies Record<string, ModeKey>;
+
+/** One of the "Comparison mode" radio group's radios, by its name. */
+const modeRadio = (p: Page, name: string): Locator =>
+  p
+    .getByRole("radiogroup", { name: "Comparison mode", exact: true })
+    .getByRole("radio", { name, exact: true });
+
+/**
+ * The words on the canvas naming what it shows (in side by side, one per
+ * pane). Read with `textContent`: the label is upper-cased by CSS only.
+ */
+const canvasLabel = (p: Page): Locator => p.getByTestId("canvas-mode-label");
+
+/** The single stage every mode but side by side draws on. */
+const singleStage = (p: Page): Locator => p.getByTestId("single-stage-host");
+
+/**
+ * Switch the viewer, on a real step, to `mode` with its key: from side by
+ * side, which every state must open in (a state that left its mode stored
+ * would fail the next here). The radio is then checked, and the mode is both
+ * in the URL (`?view`, replaced in place) and stored as the user's
+ * preference. Notes the stored preferences first, for `restorePrefs`.
+ */
+async function pressMode(p: Page, mode: ModeKey): Promise<void> {
+  await stepUrlCommitted(p);
+  await expect(modeRadio(p, "Side by side")).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await notePrefs(p);
+  await p.keyboard.press(mode.key);
+  await expect(modeRadio(p, mode.name)).toHaveAttribute("aria-checked", "true");
+  await expect(modeRadio(p, "Side by side")).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await expect
+    .poll(() => new URL(p.url()).searchParams.get("view"), {
+      message: `the URL should name the mode (view=${mode.view})`,
+    })
+    .toBe(mode.view);
+  await expect
+    .poll(() => storedViewerPref(p, "mode"), {
+      message: `the mode should be stored as the user's (${mode.view})`,
+    })
+    .toBe(mode.view);
+}
+
+/**
+ * Fail unless `l`'s text stays `text` for `ms`, read every 100ms: what a
+ * paused animation does, and a playing one (a swap every 500ms) does not.
+ */
+async function expectSteady(
+  p: Page,
+  l: Locator,
+  text: string,
+  ms: number,
+): Promise<void> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    expect(
+      (await l.textContent())?.trim(),
+      `${String(l)} should stay "${text}" for ${ms}ms`,
+    ).toBe(text);
+    await p.waitForTimeout(100);
+  }
+}
+
+/**
+ * Flicker, paused with `f` on `frame`. The sweep's window prefers reduced
+ * motion, under which Flicker never plays, so motion is allowed for this. The
+ * step was opened under reduced motion, so Flicker starts paused on the
+ * baseline (spec §6.2), and allowing motion does not start it: Play does.
+ * Flicker plays (Pause shows, and the label swaps to "Current" on its own),
+ * `f` pauses it (Play shows), and then each `f` swaps the frame by hand, once
+ * or twice, so the last swap ends on `frame` and the live region names it.
+ * The frame then stays. Reduced motion comes back for the shot (the canvas's
+ * region ring pulses otherwise): the frame stays, and Play goes.
+ */
+async function pauseFlickerOn(
+  p: Page,
+  frame: "Baseline" | "Current",
+): Promise<void> {
+  await p.emulateMedia({ reducedMotion: "no-preference" });
+  await pressMode(p, MODE.flicker);
+  const label = canvasLabel(p);
+  const toggle = p.getByTestId("flicker-play-toggle");
+  await expect(label).toHaveText("Baseline");
+  await expect(toggle).toHaveText("Play");
+  await toggle.click();
+  await expect(toggle).toHaveText("Pause");
+  // It plays: from the baseline, it swaps to the current screenshot on its
+  // own. Read every 100ms: a slower read could keep landing on one frame.
+  await expect
+    .poll(async () => (await label.textContent())?.trim(), {
+      message: "Flicker should swap to the current screenshot as it plays",
+      intervals: [100],
+    })
+    .toBe("Current");
+  await p.keyboard.press("f");
+  await expect(toggle).toHaveText("Play");
+  const other = frame === "Baseline" ? "Current" : "Baseline";
+  if ((await label.textContent())?.trim() === frame) {
+    await p.keyboard.press("f");
+    await expect(label).toHaveText(other);
+  }
+  await p.keyboard.press("f");
+  await expect(label).toHaveText(frame);
+  await expect(p.getByTestId("flicker-status")).toHaveText(
+    `Showing ${frame.toLowerCase()}`,
+  );
+  // Longer than two swaps of a playing flicker.
+  await expectSteady(p, label, frame, 1_200);
+  await p.emulateMedia({ reducedMotion: "reduce" });
+  await expect(toggle).toHaveCount(0);
+  await expect(label).toHaveText(frame);
+}
+
+/** The cleanup of a flicker state: reduced motion and the preferences back. */
+async function restoreFlicker(p: Page): Promise<void> {
+  try {
+    await p.emulateMedia({ reducedMotion: "reduce" });
+  } finally {
+    await restorePrefs(p);
+  }
+}
+
+/** The viewer's info rail, open or collapsed, outside the editor. */
+const detailsRail = (p: Page): Locator =>
+  p.getByRole("complementary", { name: "Details", exact: true });
+
+/** The rail's resize handle, along its left edge. */
+const railSeparator = (p: Page): Locator =>
+  p.getByRole("separator", { name: "Resize details", exact: true });
+
+/**
+ * The viewer on a real step with its rail as every state finds it: open, at
+ * the default 320px (a state that left its rail stored would fail the next
+ * here).
+ */
+async function railAtDefault(p: Page): Promise<void> {
+  await stepUrlCommitted(p);
+  await expect(detailsRail(p)).not.toHaveAttribute("data-collapsed");
+  await expect(railSeparator(p)).toHaveAttribute("aria-valuenow", "320");
+}
+
+/**
+ * Fail unless `rail` is the collapsed 40px strip whose buttons are, in order,
+ * `names` (each found by its accessible name: they are icons), with no
+ * resize handle.
+ */
+async function expectStrip(
+  p: Page,
+  rail: Locator,
+  names: ReadonlyArray<string | RegExp>,
+): Promise<void> {
+  await expect(rail).toHaveAttribute("data-collapsed", "");
+  await expect(railSeparator(p)).toHaveCount(0);
+  const buttons = rail.getByRole("button");
+  await expect(buttons).toHaveCount(names.length);
+  for (const [i, name] of names.entries()) {
+    await expect(buttons.nth(i)).toHaveAccessibleName(name);
+  }
+  expect((await boxOf(rail)).width, "the collapsed strip is 40px wide").toBe(
+    40,
+  );
+}
+
+/** The size-mismatch step's screenshots (`VisualFixture.mismatch`). */
+const MISMATCH_BASELINE = "1280×800";
+const MISMATCH_CURRENT = "1280×1100";
+
+/** Diff mode's message for screenshots of different sizes, verbatim (spec §8). */
+const SIZE_MISMATCH_MESSAGE = `The screenshots are different sizes (${MISMATCH_BASELINE} and ${MISMATCH_CURRENT}), so there's no pixel diff. Compare them with Side by side, Swipe or Flicker.`;
+
+/** The viewer on the size-mismatch step. */
+const mismatchStep = (f: VisualFixture): string =>
+  `/projects/${f.mismatch.projectId}/runs/${f.mismatch.runId}/checkpoints/${f.mismatch.checkpointId}`;
+
 export const STATES: ReadonlyArray<VisualState> = [
   {
     // The viewer on the multi-step run, then the palette key: the palette opens
@@ -1039,6 +1300,224 @@ export const STATES: ReadonlyArray<VisualState> = [
       await expectTopBarFits(p);
     },
     cleanup: restoreViewport,
+  },
+  // ---- the viewer's comparison modes and its rail ------------------------
+  // None of these changes the fixture. Each that changes a viewer preference
+  // (a mode, the rail) puts the stored preferences back in `cleanup`.
+  {
+    // The single-step run's changed step in Swipe (key 2): the divider starts
+    // at 50%, in the middle of the stage, its handle a slider saying so.
+    name: "state-mode-swipe",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      await pressMode(p, MODE.swipe);
+      await expect(canvasLabel(p)).toHaveText("Baseline | Current");
+      const handle = p.getByRole("slider", {
+        name: "Swipe position",
+        exact: true,
+      });
+      await expect(handle).toHaveAttribute("aria-valuenow", "50");
+      await expect(handle).toHaveAttribute("aria-valuetext", "50% baseline");
+      const [stage, divider] = await Promise.all([
+        boxOf(singleStage(p)),
+        boxOf(p.getByTestId("swipe-divider")),
+      ]);
+      expect(
+        Math.abs(divider.x + divider.width / 2 - (stage.x + stage.width / 2)),
+        "the divider should be in the middle of the stage (within 1px)",
+      ).toBeLessThanOrEqual(1);
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // Flicker (key 3) paused with `f` on the baseline: see `pauseFlickerOn`.
+    name: "state-mode-flicker-baseline",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: (p) => pauseFlickerOn(p, "Baseline"),
+    cleanup: restoreFlicker,
+  },
+  {
+    // The same, paused on the current screenshot.
+    name: "state-mode-flicker-current",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: (p) => pauseFlickerOn(p, "Current"),
+    cleanup: restoreFlicker,
+  },
+  {
+    // Overlay (key 4): the current screenshot over the baseline, at the
+    // default 50% opacity.
+    name: "state-mode-overlay",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      await pressMode(p, MODE.overlay);
+      await expect(canvasLabel(p)).toHaveText("Current over baseline");
+      await expect(singleStage(p)).toHaveAttribute("data-mode", "overlay");
+      await expect(
+        p.getByTestId("opacity-slider-wrap").getByRole("slider"),
+      ).toHaveAttribute("aria-valuenow", "50");
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // Diff (key 5) on a step with its own diff image (never the run's
+    // stand-in): once the images are in, the stage says nothing, neither
+    // "No pixel changes…" nor "No diff image was kept…".
+    name: "state-mode-diff",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      await pressMode(p, MODE.diff);
+      await expect(canvasLabel(p)).toHaveText("Current");
+      const stage = singleStage(p);
+      await expect(stage).toHaveAttribute("data-mode", "diff");
+      await expect(p.locator("#diff-viewer-canvas")).not.toHaveAttribute(
+        "data-diff-image-legacy-missing",
+      );
+      await expect(stage).not.toHaveAttribute("aria-busy");
+      await expect(p.getByTestId("stage-states")).toHaveText("");
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // The size-mismatch step side by side (the default): the size chip names
+    // both sizes, and pane A hatches the bottom 300px of the 1100 the
+    // baseline lacks, its hit area (over the pane's whole width, down to its
+    // bottom) titled "Not in the baseline". Pane B, the taller current
+    // screenshot, has none. Only looks.
+    name: "state-size-mismatch",
+    path: mismatchStep,
+    open: async (p) => {
+      await stepUrlCommitted(p);
+      await expect(modeRadio(p, "Side by side")).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      await expect(p.getByTestId("diff-viewer-size-chip-mismatch")).toHaveText(
+        `${MISMATCH_BASELINE}→${MISMATCH_CURRENT}`,
+      );
+      const paneA = p.getByTestId("baseline-canvas-host");
+      const hatch = paneA.getByTestId("hatch-tooltip");
+      await expect(hatch).toHaveCount(1);
+      await expect(hatch).toHaveAttribute("title", "Not in the baseline");
+      await expect(
+        p.getByTestId("candidate-canvas-host").getByTestId("hatch-tooltip"),
+      ).toHaveCount(0);
+      const [pane, area] = await Promise.all([boxOf(paneA), boxOf(hatch)]);
+      expect(
+        Math.abs(area.width - pane.width),
+        "the hatching spans the pane's width (within 1px)",
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(area.y + area.height - (pane.y + pane.height)),
+        "the hatching reaches the pane's bottom (within 1px)",
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(area.height / pane.height - 300 / 1100),
+        "the hatching is the 300px of 1100 the baseline lacks",
+      ).toBeLessThanOrEqual(0.01);
+    },
+  },
+  {
+    // The size-mismatch step in Diff (key 5): there is no pixel diff, and the
+    // stage says why, verbatim.
+    name: "state-size-mismatch-diff",
+    path: mismatchStep,
+    open: async (p) => {
+      await pressMode(p, MODE.diff);
+      await expect(canvasLabel(p)).toHaveText("Current");
+      await expect(
+        p
+          .getByTestId("stage-states")
+          .getByText(SIZE_MISMATCH_MESSAGE, { exact: true }),
+      ).toBeVisible();
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // `t` collapses the rail to its strip, opens it again, and collapses it
+    // once more for the shot: "Show details", then Info, History and
+    // Comments. Collapsed is stored.
+    name: "state-rail-collapsed",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      await railAtDefault(p);
+      await notePrefs(p);
+      const rail = detailsRail(p);
+      const strip = ["Show details", "Info", "History", "Comments"];
+      await p.keyboard.press("t");
+      await expectStrip(p, rail, strip);
+      await p.keyboard.press("t");
+      await expect(rail).not.toHaveAttribute("data-collapsed");
+      await expect(railSeparator(p)).toHaveAttribute("aria-valuenow", "320");
+      await p.keyboard.press("t");
+      await expectStrip(p, rail, strip);
+      await expect
+        .poll(() => storedViewerPref(p, "railCollapsed"), {
+          message: "the collapsed rail should be stored",
+        })
+        .toBe(true);
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // The rail at its widest in a 1440px window: End on its resize handle
+    // takes it to 560px (45% of the window would be 648), stored.
+    name: "state-rail-wide",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      expect(viewportOf(p).width, "the state is shot in a 1440px window").toBe(
+        1440,
+      );
+      await railAtDefault(p);
+      const separator = railSeparator(p);
+      await expect(separator).toHaveAttribute("aria-valuemax", "560");
+      await notePrefs(p);
+      await separator.focus();
+      await p.keyboard.press("End");
+      await expect(separator).toHaveAttribute("aria-valuenow", "560");
+      await expect
+        .poll(async () => (await boxOf(detailsRail(p))).width, {
+          message: "the rail should be 560px wide",
+        })
+        .toBe(560);
+      await expect
+        .poll(() => storedViewerPref(p, "railWidth"), {
+          message: "the rail's width should be stored",
+        })
+        .toBe(560);
+    },
+    cleanup: restorePrefs,
+  },
+  {
+    // The ignore-region editor (`i`) in the rail: one rail, named by its
+    // "Ignore regions" heading, and no "Details" beside it. `t` collapses it
+    // to one strip button, "Ignore regions (N)", and opens it again for the
+    // shot. The editor is the page's, and goes with the next navigation.
+    name: "state-editor-rail",
+    path: (f) => `/projects/${f.projectId}/runs/${f.unresolvedRunId}`,
+    open: async (p) => {
+      await railAtDefault(p);
+      await notePrefs(p);
+      await p.keyboard.press("i");
+      const rail = p.getByRole("complementary", {
+        name: "Ignore regions",
+        exact: true,
+      });
+      const heading = rail.getByRole("heading", {
+        name: "Ignore regions",
+        exact: true,
+      });
+      await expect(rail).toHaveCount(1);
+      await expect(heading).toBeVisible();
+      await expect(detailsRail(p)).toHaveCount(0);
+      await p.keyboard.press("t");
+      await expectStrip(p, rail, [/^Ignore regions \(\d+\)$/]);
+      await p.keyboard.press("t");
+      await expect(rail).not.toHaveAttribute("data-collapsed");
+      await expect(heading).toBeVisible();
+      await expect(rail).toHaveCount(1);
+      await expect(detailsRail(p)).toHaveCount(0);
+    },
+    cleanup: restorePrefs,
   },
   {
     // Approve the pending `profile` step and shoot while the toast, with its
