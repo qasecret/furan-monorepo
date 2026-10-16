@@ -814,10 +814,16 @@ export const STATES: ReadonlyArray<VisualState> = [
     },
   },
   {
-    // A step card's ring in the sideways scroller (`scroll-px-4`). At the sweep's
-    // width the multi-step run's three cards fit in their row, so nothing
-    // scrolls; at 900px they do, and the second card, partly out of view, is
-    // brought in: its ring (2px, 2px out) must clear both edges of the row.
+    // A step card's ring in the sideways scroller (`scroll-px-4`). The batch
+    // page has a "Recent batch runs" panel beside the results, so the row of
+    // cards is the window's width less about 600px: at the sweep's 1440px it is
+    // 830px, and only the third card is partly out of view. The window is made
+    // narrower, so that the row is 520px: room for a card (320px) and its
+    // 16px of scroll padding on each side, but the second card (which ends at
+    // 672px of the row's content) is partly out of view. The cursor walks
+    // 1, 2, 3, 2, 1, and at each card its ring (2px, 2px out) must clear both
+    // edges of the row. Without the padding the second card would be flush
+    // with the right edge, and the first, coming back, with the left one.
     name: "state-cursor-step-sideways",
     path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
     open: async (p) => {
@@ -825,32 +831,60 @@ export const STATES: ReadonlyArray<VisualState> = [
       await expect(cards.nth(2)).toBeVisible();
       const size = p.viewportSize();
       if (size === null) throw new Error("visual: the page has no viewport");
-      await resizeViewport(p, { width: 900, height: size.height });
+      // The row's width, as a page-side expression. The row is the cards'
+      // container; it and the window differ by a constant, so one measure
+      // gives the window that makes it 520px.
+      const rowWidth = async (): Promise<number> =>
+        (await p.evaluate(
+          `document.querySelector('[data-testid^="step-card-"]').parentElement.clientWidth`,
+        )) as number;
+      const ROW = 520;
+      await resizeViewport(p, {
+        width: size.width - ((await rowWidth()) - ROW),
+        height: size.height,
+      });
+      await expect
+        .poll(rowWidth, { message: `the row of cards should be ${ROW}px wide` })
+        .toBeLessThanOrEqual(ROW + 2);
       const row = cards.first().locator("xpath=..");
-      const [scrollWidth, clientWidth] = (await p.evaluate(
-        `(() => { const row = document.querySelector('[data-testid^="step-card-"]').parentElement; return [row.scrollWidth, row.clientWidth]; })()`,
-      )) as [number, number];
       expect(
-        scrollWidth,
-        "the step cards should overflow their row at 900px",
-      ).toBeGreaterThan(clientWidth);
+        (await p.evaluate(
+          `document.querySelector('[data-testid^="step-card-"]').parentElement.scrollWidth`,
+        )) as number,
+        "the step cards should overflow their row",
+      ).toBeGreaterThan(await rowWidth());
 
-      await pressUntilFocused(p, "j", cards.nth(1), 6);
-      await expect(cards.nth(1)).toHaveCSS("outline-style", "solid");
-      const [card, bounds] = await Promise.all([
-        boxOf(cards.nth(1)),
-        boxOf(row),
-      ]);
-      // The row has a 1px border; the ring reaches 2px + 2px past the card.
+      /** The ring (2px outline, 2px offset) must be inside the row's edges. */
       const RING = 4;
-      expect(
-        card.x - (bounds.x + 1),
-        "the card's ring should clear the row's left edge",
-      ).toBeGreaterThanOrEqual(RING);
-      expect(
-        bounds.x + bounds.width - 1 - (card.x + card.width),
-        "the card's ring should clear the row's right edge",
-      ).toBeGreaterThanOrEqual(RING);
+      const expectRingClear = async (index: number): Promise<void> => {
+        await expect(cards.nth(index)).toHaveCSS("outline-style", "solid");
+        const [card, bounds] = await Promise.all([
+          boxOf(cards.nth(index)),
+          boxOf(row),
+        ]);
+        // The row has a 1px border, outside the box that scrolls.
+        expect(
+          card.x - (bounds.x + 1),
+          `card ${index + 1}: its ring should clear the row's left edge`,
+        ).toBeGreaterThanOrEqual(RING);
+        expect(
+          bounds.x + bounds.width - 1 - (card.x + card.width),
+          `card ${index + 1}: its ring should clear the row's right edge`,
+        ).toBeGreaterThanOrEqual(RING);
+      };
+
+      await pressUntilFocused(p, "j", cards.nth(0), 6);
+      await expectRingClear(0);
+      for (const [from, to] of [
+        [0, 1],
+        [1, 2],
+        [2, 1],
+        [1, 0],
+      ] as const) {
+        await p.keyboard.press(to > from ? "j" : "k");
+        await expect(cards.nth(to)).toBeFocused();
+        await expectRingClear(to);
+      }
     },
     cleanup: restoreViewport,
   },
