@@ -4,6 +4,7 @@ import { SEVERITY_LABEL } from "@furan/shared-types";
 import { History, Info, MessageSquare } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { RailHideButton } from "./InfoRail";
 import type { DiffRegion, Severity } from "./layers/regionTypes";
 import { RegionListPanel } from "./RegionListPanel";
 import { RunCommentPanel } from "./RunCommentPanel";
@@ -165,7 +166,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /**
  * The diff viewer's step details, modelled on the reference TestStep panel:
  * INFO / HISTORY / COMMENTS tabs. It is the content of the info rail
- * (`InfoRail`), which holds the landmark, the width and the collapse.
+ * (`InfoRail`), which holds the landmark, the width and the collapse; the
+ * rail's "Hide details" ends the tab row.
  *
  * - INFO surfaces Test Details, Environment and Execution metadata plus the
  *   functional detected-changes list (RegionListPanel, which still drives the
@@ -227,6 +229,8 @@ export function TestInfoSidebar({
             </button>
           );
         })}
+        {/* The rail's Hide details ends the tab row (Task 13 M10). */}
+        <RailHideButton className="mx-1" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">

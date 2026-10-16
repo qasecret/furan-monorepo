@@ -214,6 +214,19 @@ function gesture(el: Element, ...points: Array<[string, number]>) {
 }
 
 const rail = () => screen.getByRole("complementary");
+/**
+ * The space the rail takes in its row, as the canvas beside it sees it: the
+ * widths of its in-flow boxes (an overlaid rail is positioned out of flow).
+ */
+const railSpace = () =>
+  [...rail().parentElement!.children]
+    .filter(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement &&
+        el.textContent !== "Outside" &&
+        !el.classList.contains("absolute"),
+    )
+    .map((el) => el.style.width);
 const separator = () =>
   screen.getByRole("separator", { name: "Resize details" });
 const button = (name: string) => screen.getByRole("button", { name });
@@ -261,7 +274,7 @@ describe("the separator", () => {
     expect(rail().style.width).toBe("320px");
   });
 
-  test("→ widens by 16 and Shift+→ by 64, each key stored; End goes to the window's cap (450 in a 1000 px window) and stores the maximum asked for", () => {
+  test("R24: ← / → move the handle on the rail's left edge, so ← widens by 16 and Shift+← by 64, → narrows, each key stored; End goes to the window's cap (450 in a 1000 px window) and stores the maximum asked for", () => {
     render(
       <Page>
         <Viewer />
@@ -272,11 +285,11 @@ describe("the separator", () => {
     expect(sep.getAttribute("aria-valuemax")).toBe("450");
     act(() => sep.focus());
 
-    expect(press("ArrowRight").defaultPrevented).toBe(true);
+    expect(press("ArrowLeft").defaultPrevented).toBe(true);
     expect(valueNow()).toBe("336");
     expect(stored()?.railWidth).toBe(336);
 
-    press("ArrowRight", { shiftKey: true });
+    press("ArrowLeft", { shiftKey: true });
     expect(valueNow()).toBe("400");
     expect(stored()?.railWidth).toBe(400);
 
@@ -286,16 +299,18 @@ describe("the separator", () => {
     // Not the window's cap: a wider window shows the full maximum.
     expect(stored()?.railWidth).toBe(560);
 
-    press("ArrowLeft");
+    expect(press("ArrowRight").defaultPrevented).toBe(true);
     expect(valueNow()).toBe("434");
     expect(stored()?.railWidth).toBe(434);
-    press("ArrowLeft", { shiftKey: true });
+    press("ArrowRight", { shiftKey: true });
     expect(valueNow()).toBe("370");
     press("Home");
     expect(valueNow()).toBe("280");
     expect(stored()?.railWidth).toBe(280);
     // Never under the minimum.
-    press("ArrowLeft");
+    press("ArrowRight");
+    expect(valueNow()).toBe("280");
+    press("ArrowRight", { shiftKey: true });
     expect(valueNow()).toBe("280");
   });
 
@@ -396,7 +411,7 @@ describe("Review Focus 5: a narrower window clamps the rail on screen, never the
     expect(valueNow()).toBe("560");
   });
 
-  test("at the window's cap, → and a drag past it leave the stored width alone; ← narrows it", () => {
+  test("at the window's cap, ← and a drag past it leave the stored width alone; → narrows it", () => {
     prefsAre({ railWidth: 560 }, { persisted: true });
     render(
       <Page>
@@ -406,7 +421,7 @@ describe("Review Focus 5: a narrower window clamps the rail on screen, never the
     resizeWindow(900);
     const sep = separator();
     act(() => sep.focus());
-    press("ArrowRight");
+    press("ArrowLeft");
     expect(valueNow()).toBe("405");
     expect(useViewerPrefs.getState().prefs.railWidth).toBe(560);
     expect(stored()?.railWidth).toBe(560);
@@ -418,7 +433,7 @@ describe("Review Focus 5: a narrower window clamps the rail on screen, never the
     expect(stored()?.railWidth).toBe(560);
 
     // Narrower than the cap is the reviewer's own width: stored.
-    press("ArrowLeft");
+    press("ArrowRight");
     expect(valueNow()).toBe("389");
     expect(stored()?.railWidth).toBe(389);
   });
@@ -439,6 +454,27 @@ describe("collapsing", () => {
     expect(screen.queryByRole("separator")).toBeNull();
     expect(screen.queryByText("1/2 Monthly Plans")).toBeNull();
     expect(stored()?.railCollapsed).toBe(true);
+  });
+
+  test("Task 13 M10: the open rail spends no row on Hide details: it ends the tab row", () => {
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    const row = button("Info").parentElement!;
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label") ?? b.textContent),
+    ).toEqual(["Info", "History", "Comments", "Hide details"]);
+    // The rail itself holds the separator and its content, nothing else.
+    const hide = button("Hide details");
+    expect(hide.getAttribute("title")).toBe("Hide details (T)");
+    expect(hide.getAttribute("aria-keyshortcuts")).toBe("T");
+    expect(
+      screen.getAllByRole("button", { name: "Hide details" }),
+    ).toHaveLength(1);
   });
 
   test("the strip's buttons are named Info, History and Comments, each with a matching title", () => {
@@ -555,6 +591,25 @@ describe("c and the comment request", () => {
     expect(pressed("Comments")).toBe("true");
   });
 
+  test("Task 13 M2: with no rail on screen, c is the browser's and leaves no request for the next rail", () => {
+    const { rerender } = render(
+      <Page>
+        <KeysOnly />
+      </Page>,
+    );
+    expect(press("c").defaultPrevented).toBe(false);
+    expect(useViewerStore.getState().commentPanelOpen).toBe(false);
+
+    // The next rail opens as the reviewer left it, and stores nothing.
+    rerender(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    expect(pressed("Info")).toBe("true");
+    expect(stored()).toBeNull();
+  });
+
   test("Mark as Bug's request (the comment flag) opens a collapsed rail on Comments too", () => {
     prefsAre({ railCollapsed: true, railTab: "history" });
     render(
@@ -623,6 +678,31 @@ describe("below 1024 px", () => {
     expect(rail().style.width).toBe("40px");
     expect(rail().classList.contains("absolute")).toBe(false);
     expect(prefsWrites(setItem)).toEqual([]);
+  });
+
+  test("Task 13 M3: opening it over the canvas doesn't widen the canvas: the strip's 40 px stay taken", () => {
+    setWindowWidth(900);
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    expect(railSpace()).toEqual(["40px"]);
+
+    fireEvent.click(button("Show details"));
+    expect(rail().classList.contains("absolute")).toBe(true);
+    expect(railSpace()).toEqual(["40px"]);
+    // Still one landmark: what holds the place is not one.
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+
+    press("t");
+    expect(railSpace()).toEqual(["40px"]);
+
+    // A wide window's rail is in the row itself, at its width.
+    resizeWindow(1440);
+    press("t");
+    expect(rail().classList.contains("absolute")).toBe(false);
+    expect(railSpace()).toEqual(["320px"]);
   });
 
   test("the visit's choice holds on the next step", () => {
@@ -785,6 +865,34 @@ describe("viewer.rail.toggle in the registry", () => {
 
     expect(await action("Show details")).toBeDefined();
     expect(await action("Hide details")).toBeUndefined();
+  });
+
+  test("Task 13 M9: c is named for what it does, Show comments, in the ? sheet and the palette", async () => {
+    render(
+      <Page>
+        <Viewer />
+      </Page>,
+    );
+    act(() => useShortcutsSheet.getState().setOpen(true));
+    const row = sheetRow("Show comments");
+    expect(row).toBeDefined();
+    expect(within(row!).getByText("C")).toBeDefined();
+    expect(sheetRow("Toggle comments")).toBeUndefined();
+    act(() => useShortcutsSheet.getState().setOpen(false));
+
+    act(() => usePaletteStore.getState().setOpen(true));
+    const palette = await screen.findByTestId("command-palette");
+    const group = within(palette).getByRole("group", { name: "Actions" });
+    const options = within(group).queryAllByRole("option");
+    const show = options.find(
+      (o) => o.firstElementChild?.textContent === "Show comments",
+    );
+    expect(show?.getAttribute("aria-keyshortcuts")).toBe("C");
+    expect(
+      options.find(
+        (o) => o.firstElementChild?.textContent === "Toggle comments",
+      ),
+    ).toBeUndefined();
   });
 
   test("its buttons carry T: aria-keyshortcuts and the title", () => {

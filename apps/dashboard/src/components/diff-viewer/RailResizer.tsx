@@ -13,9 +13,9 @@ import {
   RAIL_MIN_WIDTH,
 } from "./viewer-prefs";
 
-/** ← / → change the rail's width by this many px (spec §5). */
+/** ← / → move the handle, and so change the rail's width, by this many px (spec §5). */
 export const RAIL_KEY_STEP = 16;
-/** Shift+← / → change it by this many. */
+/** Shift+← / → move it by this many. */
 export const RAIL_SHIFT_STEP = 64;
 
 /** The copy, verbatim from spec §8. */
@@ -52,11 +52,13 @@ interface Drag {
  * width in px, from 280 up to the window's cap (560, and never over 45% of
  * the window).
  *
- * - **Keys** are its own, not commands: → / ← widen and narrow by 16 px,
- *   Shift by 64, and Home / End go to the minimum and the maximum. Each is
- *   taken (`preventDefault`), so the viewer's ← / → step commands yield to
- *   it (the command guard's `defaultPrevented`), and each is stored. Chords
- *   are left alone: Alt+← is the browser's back.
+ * - **Keys** are its own, not commands. ← / → move the handle, as a window
+ *   splitter's do (R24): it is the rail's left edge, so ← widens the rail by
+ *   16 px and → narrows it, Shift by 64, the same way as a drag. Home / End
+ *   go to the minimum and the maximum width. Each is taken
+ *   (`preventDefault`), so the viewer's ← / → step commands yield to it (the
+ *   command guard's `defaultPrevented`), and each is stored. Chords are left
+ *   alone: Alt+← is the browser's back.
  * - **Pointer.** Dragging the edge left widens the rail by the pointer's
  *   travel. The pointer is captured, so the drag holds off the handle. Each
  *   move is shown and only the last is stored, at pointerup; a press that
@@ -72,11 +74,12 @@ export function RailResizer({ width, onResize }: Props) {
     const step = e.shiftKey ? RAIL_SHIFT_STEP : RAIL_KEY_STEP;
     let next: number;
     switch (e.key) {
+      // The handle moves left: the rail widens.
       case "ArrowLeft":
-        next = width - step;
+        next = width + step;
         break;
       case "ArrowRight":
-        next = width + step;
+        next = width - step;
         break;
       case "Home":
         next = RAIL_MIN_WIDTH;

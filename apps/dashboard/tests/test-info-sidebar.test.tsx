@@ -133,6 +133,8 @@ describe("TestInfoSidebar", () => {
     expect(container.querySelector("aside")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(container.querySelector(".w-80")).toBeNull();
+    // Hide details is the rail's: outside one, its place in the tab row is empty.
+    expect(screen.queryByRole("button", { name: "Hide details" })).toBeNull();
   });
 
   test("its tab is the stored preference, and choosing one stores it", () => {

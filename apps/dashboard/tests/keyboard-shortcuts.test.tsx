@@ -32,6 +32,7 @@ import { CurrentProjectProvider } from "@/app/(protected)/_components/current-pr
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
 import { BatchDoneCard } from "@/components/diff-viewer/BatchDoneCard";
+import { useRailState } from "@/components/diff-viewer/rail-state";
 import {
   getClipboardRegion,
   setClipboardRegion,
@@ -168,6 +169,12 @@ function resetStores() {
     paddingOverrides: new Map(),
     kindOverrides: new Map(),
     selectedIgnoreId: null,
+  });
+  useRailState.setState({
+    visit: null,
+    started: false,
+    mounted: 0,
+    focus: null,
   });
   pushMock.mockReset();
   undoMock.mockReset();
@@ -887,6 +894,11 @@ describe("the viewer's keys are registry commands", () => {
     });
   }
 
+  /** A rail on screen, as the viewer mounts one (`InfoRail`). */
+  function railOnScreen() {
+    useRailState.setState({ mounted: 1 });
+  }
+
   function state() {
     const s = useViewerStore.getState();
     const { prefs } = useViewerPrefs.getState();
@@ -919,6 +931,8 @@ describe("the viewer's keys are registry commands", () => {
     event: [key: string, init?: KeyboardEventInit];
     /** The viewer hands it an `onEscape` (the done card is up). */
     escape?: boolean;
+    /** What the key needs on the page beyond `arm`'s. */
+    setup?: () => void;
     called?: Called[];
     changed?: Partial<State>;
   }
@@ -937,7 +951,7 @@ describe("the viewer's keys are registry commands", () => {
     key: string,
     binding: string,
     id: string,
-    effect: Pick<Row, "called" | "changed" | "escape">,
+    effect: Pick<Row, "called" | "changed" | "escape" | "setup">,
     event: Row["event"] = [binding],
   ): Row => ({ key, binding, id, event, ...effect });
 
@@ -966,7 +980,11 @@ describe("the viewer's keys are registry commands", () => {
     // Armed, the editor is open: `o` passes Swipe and Flicker by (§4.4).
     row("O", "o", "viewer.cycleMode", { changed: { mode: "overlay" } }),
     row("H", "h", "viewer.highlight", { changed: { highlight: true } }),
-    row("C", "c", "viewer.comments", { changed: { commentPanelOpen: true } }),
+    // A request for the comments, which a rail on screen takes (Task 13 M2).
+    row("C", "c", "viewer.comments", {
+      setup: railOnScreen,
+      changed: { commentPanelOpen: true },
+    }),
     row("=", "=", "viewer.zoomIn", { changed: { zoom: 2 * ZOOM_STEP } }),
     row("+", "+", "viewer.zoomIn", { changed: { zoom: 2 * ZOOM_STEP } }),
     // `+` as a US keyboard sends it: the dispatcher's Shift twin (R11).
@@ -1015,8 +1033,9 @@ describe("the viewer's keys are registry commands", () => {
 
   it.each(ROWS)(
     "every key the old sheet listed does the same thing: $key ($id)",
-    ({ binding, id, event, escape, called = [], changed = {} }) => {
+    ({ binding, id, event, escape, setup, called = [], changed = {} }) => {
       arm();
+      setup?.();
       const watched: Spies = { ...spies(), onEscape: vi.fn() };
       const { onEscape, ...always } = watched;
       mountViewer({
@@ -1071,7 +1090,7 @@ describe("the viewer's keys are registry commands", () => {
       ["viewer.cycleMode", "Cycle view mode", ["o"]],
       ["viewer.flicker.toggle", "Pause or swap flicker", ["f"]],
       ["viewer.highlight", "Toggle highlight", ["h"]],
-      ["viewer.comments", "Toggle comments", ["c"]],
+      ["viewer.comments", "Show comments", ["c"]],
       // Named as things stand ("Hide details" / "Show details", `labelFor`).
       ["viewer.rail.toggle", "Hide details", ["t"]],
       ["viewer.zoomIn", "Zoom in", ["=", "+"]],

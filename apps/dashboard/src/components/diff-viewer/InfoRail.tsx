@@ -8,11 +8,14 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 import {
@@ -54,8 +57,43 @@ const STRIP_TABS: { tab: RailTab; label: string; Icon: typeof Info }[] = [
 const ICON_BUTTON =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-ring focus-visible:-outline-offset-2";
 
+/**
+ * The open rail's "Hide details" button, as its content places it: the rail
+ * hands the button the ref it moves focus to.
+ */
+const HideButtonRef = createContext<RefObject<HTMLButtonElement | null> | null>(
+  null,
+);
+
+/**
+ * "Hide details" (spec §5), for the open rail's content to place at the end
+ * of its own header row (the tab row), so the rail spends no row of its own
+ * on one icon (Task 13 M10). Outside a rail it renders nothing.
+ */
+export function RailHideButton({ className }: { className?: string }) {
+  const ref = useContext(HideButtonRef);
+  const keys = useCommandKeys(TOGGLE);
+  if (ref === null) return null;
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label={HIDE}
+      aria-keyshortcuts={keys.ariaKeyShortcuts}
+      title={`${HIDE}${keys.titleSuffix}`}
+      onClick={() => setRailCollapsed(true, { moveFocus: true })}
+      className={cn(ICON_BUTTON, className)}
+    >
+      <PanelRightClose className="h-4 w-4" aria-hidden />
+    </button>
+  );
+}
+
 interface Props {
-  /** What the open rail holds (the step's details, `TestInfoSidebar`). */
+  /**
+   * What the open rail holds (the step's details, `TestInfoSidebar`), with a
+   * `RailHideButton` at the end of its header row.
+   */
   children: ReactNode;
   /** Told the tab the rail opened on, from its strip or a comment request. */
   onTab?: (tab: RailTab) => void;
@@ -69,13 +107,15 @@ interface Props {
  *   clamps what is shown and never what is stored (Review Focus 5). The
  *   separator on its left edge resizes it (`RailResizer`).
  * - **Collapsed**, it is a 40 px strip: "Show details", then Info, History
- *   and Comments, each opening the rail on its tab. "Hide details" at the
- *   top of the open rail, `t` (`viewer.rail.toggle`) and the strip toggle
- *   it. Focus stays on the button pressed; when that button goes, it moves
- *   to its counterpart ("Show details" / "Hide details").
+ *   and Comments, each opening the rail on its tab. "Hide details" (which
+ *   the content places, `RailHideButton`), `t` (`viewer.rail.toggle`) and
+ *   the strip toggle it. Focus stays on the button pressed; when that button
+ *   goes, it moves to its counterpart ("Show details" / "Hide details").
  * - **Below 1024 px** it starts collapsed for the visit, unstored, and
  *   opened it lies over the canvas's right edge (with the overlay shadow)
- *   instead of narrowing it; Esc (`viewer.escape`) or `t` closes it.
+ *   instead of narrowing it, while the strip's 40 px stay taken, so the
+ *   canvas doesn't widen either (Task 13 M3); Esc (`viewer.escape`) or `t`
+ *   closes it.
  * - **Comments.** A request for the comments (`c`, Mark as Bug: the viewer
  *   store's `commentPanelOpen`) opens it on Comments, and is taken.
  *
@@ -185,35 +225,39 @@ export function InfoRail({ children, onTab }: Props) {
   }
 
   return (
-    <aside
-      data-info-rail=""
-      data-rail-overlay={overlaid ? "" : undefined}
-      data-testid="test-info-sidebar"
-      style={{ width }}
-      className={cn(
-        "flex shrink-0 flex-col border-l border-edge bg-canvas",
-        // Below 1024 px it lies over the canvas's right edge instead of
-        // narrowing it.
-        overlaid
-          ? "absolute inset-y-0 right-0 z-30 shadow-overlay"
-          : "relative",
+    <>
+      {overlaid && (
+        // The strip's place, still taken while the rail lies over the
+        // canvas: opening it there changes the canvas's width not at all,
+        // neither narrowing it nor widening it by the strip's 40 px (Task 13
+        // M3). Before the rail, so the rail itself is not remounted when the
+        // window crosses 1024 px.
+        <div
+          aria-hidden
+          data-rail-spacer=""
+          style={{ width: RAIL_STRIP_WIDTH }}
+          className="shrink-0"
+        />
       )}
-    >
-      <RailResizer width={width} onResize={onResize} />
-      <div className="flex shrink-0 items-center border-b border-edge px-1 py-1">
-        <button
-          ref={hideRef}
-          type="button"
-          aria-label={HIDE}
-          aria-keyshortcuts={keys.ariaKeyShortcuts}
-          title={`${HIDE}${keys.titleSuffix}`}
-          onClick={() => setRailCollapsed(true, { moveFocus: true })}
-          className={ICON_BUTTON}
-        >
-          <PanelRightClose className="h-4 w-4" aria-hidden />
-        </button>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-    </aside>
+      <aside
+        data-info-rail=""
+        data-rail-overlay={overlaid ? "" : undefined}
+        data-testid="test-info-sidebar"
+        style={{ width }}
+        className={cn(
+          "flex shrink-0 flex-col border-l border-edge bg-canvas",
+          // Below 1024 px it lies over the canvas's right edge instead of
+          // narrowing it.
+          overlaid
+            ? "absolute inset-y-0 right-0 z-30 shadow-overlay"
+            : "relative",
+        )}
+      >
+        <RailResizer width={width} onResize={onResize} />
+        <HideButtonRef.Provider value={hideRef}>
+          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+        </HideButtonRef.Provider>
+      </aside>
+    </>
   );
 }

@@ -367,12 +367,16 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
   {
     // A request for the comments, as Mark as Bug makes: the rail opens on
     // its Comments tab, expanding when it is collapsed (spec §5), and takes
-    // the request (`InfoRail`).
+    // the request (`InfoRail`). Named for that (Task 13 M9). Only while a
+    // rail is on screen to take it (Task 13 M2): over the done card or an
+    // empty run the key is the browser's, and leaves no request behind for
+    // the next rail.
     id: "viewer.comments",
-    label: "Toggle comments",
+    label: "Show comments",
     group: "View",
     keys: ["c"],
     scope: "viewer",
+    enabled: () => railPresent(),
     run: () => store().setCommentPanelOpen(true),
   },
   {
@@ -437,7 +441,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     run: () => store().deleteSelected(),
   },
   {
-    // F-b: region copy. Plain `c` toggles the comments, hence the modifier.
+    // F-b: region copy. Plain `c` shows the comments, hence the modifier.
     // Outside the editor, or with text selected, ⌘C is the browser's copy.
     id: "editor.copy",
     label: "Copy region",
