@@ -25,6 +25,11 @@ import {
 } from "./canvas-theme";
 import { orderDiffRegions } from "./diff-order";
 import {
+  FlickerAnnouncer,
+  FlickerFrameLabel,
+  useFlickerTimer,
+} from "./FlickerControls";
+import {
   IMAGE_ROLES,
   retainImages,
   type ImageRole,
@@ -64,7 +69,7 @@ import {
   type Transform,
   type World,
 } from "./viewer-geometry";
-import { drawnMode, modeAvailable, useViewerPrefs } from "./viewer-prefs";
+import { modeAvailable, useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView } from "./world-fit";
 
 /**
@@ -97,6 +102,11 @@ import { computeFocusView } from "./world-fit";
  * - **Swipe's handle** is DOM over the stage (`SwipeHandle`), in % of it like
  *   the canvas's divider, which is a fraction of the canvas: a resize keeps
  *   both at their fraction, and the observer moves the divider at once.
+ * - **Flicker** swaps its frames on its clock (`useFlickerTimer`), which runs
+ *   only once both frames are on the stage, so the first frame drawn is the
+ *   baseline. A swap reaches the renderer as an update, never a remount. A
+ *   label above the stage names the frame on screen, and a polite live
+ *   region, kept mounted across layouts, says a swap by hand.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
  *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
  *   Diff the reasons there is no diff image. Without a baseline only side by
@@ -249,7 +259,6 @@ export function ViewerStage({
   const mode = modeAvailable(chosenMode, hasBaseline)
     ? chosenMode
     : "side-by-side";
-  const shown = drawnMode(mode);
   const renderer = RENDERERS[mode];
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const highlight = useViewerPrefs((s) => s.prefs.highlight);
@@ -426,6 +435,16 @@ export function ViewerStage({
     : null;
   const hostApp = sceneReady ? (live.apps[renderer.host.pane] ?? null) : null;
   const hostLayers = renderer.host.layers;
+
+  // Flicker's clock, once both its frames are on the stage.
+  useFlickerTimer({
+    active:
+      mode === "flicker" &&
+      sceneReady &&
+      baselineBitmap !== undefined &&
+      currentBitmap !== undefined,
+    reducedMotion,
+  });
 
   useLayoutEffect(() => {
     sceneRef.current = {
@@ -796,7 +815,7 @@ export function ViewerStage({
   // Gated on primary button (button === 0) to avoid clobbering
   // middle-mouse pan and right-click context menu.
   const handleDiffRegionClick = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (shown !== "diff") return;
+    if (mode !== "diff") return;
     if (e.button !== 0) return;
     const pt = toImage(e);
     if (!pt) return;
@@ -834,12 +853,13 @@ export function ViewerStage({
   );
 
   // The hatching's tooltips on pane `pane`, once its images are drawn, cut
-  // to where the mode shows each image (Swipe's sides).
+  // to where the mode shows each image (Swipe's sides), for the image on
+  // screen (Flicker's frame).
   const hatchTooltips = (pane: number) =>
     sceneReady && transform && viewportSize ? (
       <HatchTooltips
         world={world}
-        images={(renderer.hatched[pane] ?? []).filter(fits)}
+        images={(renderer.hatched({ flickerFrame })[pane] ?? []).filter(fits)}
         transform={transform}
         within={renderer.shownIn?.({
           world,
@@ -849,6 +869,9 @@ export function ViewerStage({
         })}
       />
     ) : null;
+  // Flicker's live region: the first child in either layout, so a layout
+  // change keeps it mounted (and what appears in it announced).
+  const flickerAnnouncer = <FlickerAnnouncer on={mode === "flicker"} />;
   // Where the focus goes when a focused Retry's card goes (M2): its pane.
   const focusPane = (ref: React.RefObject<HTMLDivElement | null>) => () =>
     ref.current?.focus({ preventScroll: true });
@@ -867,6 +890,7 @@ export function ViewerStage({
     // Pixi canvas host — rounded + overflow-hidden clips the canvas corners.
     return (
       <div className="flex min-h-full p-6">
+        {flickerAnnouncer}
         <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
           <div className="flex flex-col gap-2">
             <div
@@ -947,32 +971,36 @@ export function ViewerStage({
   // the viewer's scroll pane and stay on screen on a tall card (M1).
   return (
     <div className="flex min-h-full p-6">
-      <div className="relative m-auto w-full">
-        <div
-          style={aspectStyle(world?.size)}
-          className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
-          ref={singleRef}
-          data-testid="single-stage-host"
-          data-mode={shown}
-          tabIndex={-1}
-          aria-busy={loading || undefined}
-          onPointerUp={handleDiffRegionClick}
-        >
-          {hatchTooltips(0)}
-          {editorOverlay}
-          {shown === "swipe" && sceneReady && (
-            <SwipeHandle
-              value={swipe}
-              onChange={setSwipe}
-              stageWidth={viewportSize?.w}
-            />
-          )}
+      {flickerAnnouncer}
+      <div className="m-auto flex w-full flex-col gap-2">
+        {mode === "flicker" && <FlickerFrameLabel />}
+        <div className="relative">
+          <div
+            style={aspectStyle(world?.size)}
+            className="relative w-full min-h-[200px] overflow-clip rounded-lg bg-hover shadow-raised focus-ring"
+            ref={singleRef}
+            data-testid="single-stage-host"
+            data-mode={mode}
+            tabIndex={-1}
+            aria-busy={loading || undefined}
+            onPointerUp={handleDiffRegionClick}
+          >
+            {hatchTooltips(0)}
+            {editorOverlay}
+            {mode === "swipe" && sceneReady && (
+              <SwipeHandle
+                value={swipe}
+                onChange={setSwipe}
+                stageWidth={viewportSize?.w}
+              />
+            )}
+          </div>
+          <StageStates
+            states={states}
+            onRetry={onRetry}
+            onFocusLost={focusPane(singleRef)}
+          />
         </div>
-        <StageStates
-          states={states}
-          onRetry={onRetry}
-          onFocusLost={focusPane(singleRef)}
-        />
       </div>
     </div>
   );

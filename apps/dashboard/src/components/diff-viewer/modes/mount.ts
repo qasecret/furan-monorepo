@@ -10,8 +10,8 @@ import type { Rect, World } from "../viewer-geometry";
 import type { HostLayer, ModeHandle, RenderInput } from "./types";
 
 /**
- * The host's layers on a single stage (overlay, diff): one constant, so a
- * mode change between them keeps those layers mounted.
+ * The host's layers on a single stage (swipe, flicker, overlay, diff): one
+ * constant, so a mode change between them keeps those layers mounted.
  */
 export const SINGLE_STAGE_HOST_LAYERS: readonly HostLayer[] = [
   "regions",
@@ -45,7 +45,7 @@ export interface Mount {
     label: string,
     rects: (world: World) => Rect[],
     input: RenderInput,
-  ): void;
+  ): Graphics;
   /**
    * A display object of the mode's own (a container, a clip, a line),
    * labelled, added to `parent`, and destroyed with the mount after its
@@ -105,6 +105,7 @@ export function createMount(): Mount {
         color: input.colors.hatch,
         scale,
       });
+      return g;
     },
     update(input) {
       if (disposed) return;

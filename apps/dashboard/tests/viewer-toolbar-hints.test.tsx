@@ -22,6 +22,7 @@ vi.mock("@/lib/trpc", () => {
 import type { DiffStepper } from "@/components/diff-viewer/useDiffStepper";
 import { useDiffViewerShortcuts } from "@/components/diff-viewer/useDiffViewerShortcuts";
 import { useViewerStore } from "@/components/diff-viewer/useViewerStore";
+import { useViewState } from "@/components/diff-viewer/view-state";
 import {
   DEFAULT_VIEWER_PREFS,
   useViewerPrefs,
@@ -41,11 +42,22 @@ const stepper: DiffStepper = {
 };
 
 /** The toolbar on the viewer's page: the viewer's commands registered. */
-function Viewer({ registered = true }: { registered?: boolean }) {
+function Viewer({
+  registered = true,
+  hasBaseline = true,
+}: {
+  registered?: boolean;
+  hasBaseline?: boolean;
+}) {
   return (
     <CommandRoleProvider role="editor">
       {registered ? <Commands /> : null}
-      <ViewerToolbar runId="r1" checkpointId="c1" stepper={stepper} />
+      <ViewerToolbar
+        runId="r1"
+        checkpointId="c1"
+        stepper={stepper}
+        hasBaseline={hasBaseline}
+      />
     </CommandRoleProvider>
   );
 }
@@ -142,5 +154,35 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       highlight: [null, null],
       editor: [null, null],
     });
+  });
+});
+
+describe("Flicker's Play / Pause in the toolbar", () => {
+  const PLAY_OR_PAUSE = /^(Play|Pause)$/;
+
+  test("it is there while Flicker is on, and Pause's hint is f's", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
+    });
+    useViewState.getState().resetView({ reducedMotion: false });
+    render(<Viewer />);
+    const pause = screen.getByRole("button", { name: "Pause" });
+    expect(pause.getAttribute("title")).toBe("Pause (F)");
+    expect(pause.getAttribute("aria-keyshortcuts")).toBe("F");
+
+    act(() =>
+      useViewerPrefs.setState({
+        prefs: { ...DEFAULT_VIEWER_PREFS, mode: "overlay" },
+      }),
+    );
+    expect(screen.queryByRole("button", { name: PLAY_OR_PAUSE })).toBeNull();
+  });
+
+  test("a stored Flicker on a step with no baseline shows side by side, with no Play / Pause (R2)", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
+    });
+    render(<Viewer hasBaseline={false} />);
+    expect(screen.queryByRole("button", { name: PLAY_OR_PAUSE })).toBeNull();
   });
 });

@@ -60,7 +60,7 @@ export const swipe: ModeRenderer = {
   needs: () => ["baseline", "current"],
   host: { pane: 0, layers: SINGLE_STAGE_HOST_LAYERS },
   draws: ["baseline", "current"],
-  hatched: [["baseline", "current"]],
+  hatched: () => [["baseline", "current"]],
   shownIn: swipeSides,
   mount([world], input) {
     const mount = createMount();

@@ -5,6 +5,7 @@ import type { Rect, Size, Transform, World } from "../viewer-geometry";
 import type { ViewerMode } from "../viewer-prefs";
 
 import { diff } from "./diff";
+import { flicker } from "./flicker";
 import { overlay } from "./overlay";
 import { sideBySide } from "./side-by-side";
 import { swipe } from "./swipe";
@@ -68,6 +69,9 @@ export type HostLayer = "shading" | "regions" | "ignore";
 /** An image whose missing area (`World.missing`) a renderer hatches. */
 export type HatchedImage = keyof World["missing"];
 
+/** What says which images' hatching shows: Flicker's frame. */
+export type HatchView = Pick<RenderInput, "flickerFrame">;
+
 export interface ModeRenderer {
   /** Side by side has 2; every other mode draws on one stage. */
   panes: 1 | 2;
@@ -87,10 +91,11 @@ export interface ModeRenderer {
   host: { pane: number; layers: readonly HostLayer[] };
   /**
    * Per pane (an index into `worlds`), the images whose missing area it
-   * hatches, when that image is drawn. The host puts the hatching's
-   * tooltips over the same areas.
+   * hatches on screen, when that image is drawn: Flicker hatches only the
+   * frame it shows (R17). The host puts the hatching's tooltips over the
+   * same areas.
    */
-  hatched: readonly (readonly HatchedImage[])[];
+  hatched(view: HatchView): readonly (readonly HatchedImage[])[];
   /**
    * Where each image shows, in world px, for a mode that shows an image in
    * only part of the world (Swipe: the baseline left of the divider, the
@@ -101,14 +106,11 @@ export interface ModeRenderer {
   shownIn?(input: SplitInput): Record<HatchedImage, Rect>;
 }
 
-/**
- * Flicker draws as side by side until its renderer lands (R1): the chosen
- * mode is kept, and drawn as `drawnMode` says.
- */
+/** Each comparison mode's renderer. */
 export const RENDERERS: Record<ViewerMode, ModeRenderer> = {
   "side-by-side": sideBySide,
   swipe,
-  flicker: sideBySide,
+  flicker,
   overlay,
   diff,
 };

@@ -604,6 +604,8 @@ export function DiffViewer({
     onPrevPending: loopOn && keysOn ? loop.goPrev : undefined,
     // Esc is the card's while it is up, wherever focus is: back to the batch.
     onEscape: card && backHref ? () => loop.leave(backHref) : undefined,
+    // A mode's own keys apply only where the step can show that mode (R2).
+    hasBaseline: imageRequest.baseline !== null,
   });
 
   if (isLoading)

@@ -183,12 +183,3 @@ export const useViewerPrefs = create<ViewerPrefsState>((set, get) => ({
 export function modeAvailable(mode: ViewerMode, hasBaseline: boolean): boolean {
   return hasBaseline || mode === "side-by-side";
 }
-
-/**
- * The mode the canvas draws for a chosen one. Flicker has no renderer yet:
- * until it lands it draws, and is labelled, as side by side, and the chosen
- * mode is kept as it is (R1).
- */
-export function drawnMode(mode: ViewerMode): Exclude<ViewerMode, "flicker"> {
-  return mode === "flicker" ? "side-by-side" : mode;
-}

@@ -397,9 +397,11 @@ describe("each mode stacks its layers in its declared order", () => {
     ]);
   });
 
-  test("flicker draws as side by side until it has a renderer (R1); swipe has its own", () => {
-    expect(RENDERERS.flicker).toBe(RENDERERS["side-by-side"]);
-    expect(RENDERERS.swipe).not.toBe(RENDERERS["side-by-side"]);
+  test("every mode but side by side has a renderer of its own, on one stage", () => {
+    for (const mode of ["swipe", "flicker", "overlay", "diff"] as const) {
+      expect(RENDERERS[mode]).not.toBe(RENDERERS["side-by-side"]);
+      expect(RENDERERS[mode].panes).toBe(1);
+    }
   });
 });
 

@@ -6,7 +6,7 @@ import { getClipboardRegion, setClipboardRegion } from "./region-clipboard";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import { drawnMode, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
+import { modeAvailable, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
 
 import { useCommands } from "@/lib/commands/registry";
 import type { Command, CommandCtx } from "@/lib/commands/types";
@@ -53,6 +53,12 @@ export interface ShortcutOptions {
    * card, which goes back to the batch wherever focus is.
    */
   onEscape?: () => void;
+  /**
+   * The step has a baseline. Without one only side by side is on screen
+   * (R2), whatever mode is stored, so a mode's own keys (`f`) are disabled.
+   * Defaults to true.
+   */
+  hasBaseline?: boolean;
 }
 
 interface ViewerCtx extends CommandCtx, ShortcutOptions {}
@@ -60,8 +66,12 @@ interface ViewerCtx extends CommandCtx, ShortcutOptions {}
 const store = () => useViewerStore.getState();
 const view = () => useViewState.getState();
 const prefs = () => useViewerPrefs.getState();
-/** The mode on screen. */
-const shownMode = () => drawnMode(prefs().prefs.mode);
+/** The chosen mode. */
+const chosenMode = () => prefs().prefs.mode;
+
+/** Flicker is on screen: chosen, on a step with the baseline it needs (R2). */
+const flickerShown = ({ hasBaseline = true }: ViewerCtx) =>
+  chosenMode() === "flicker" && modeAvailable("flicker", hasBaseline);
 
 const given = (callback: (() => void) | undefined) => callback !== undefined;
 
@@ -229,7 +239,7 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     run: () =>
       prefs().set(
         "mode",
-        shownMode() === "diff" ? prefs().previousMode : "diff",
+        chosenMode() === "diff" ? prefs().previousMode : "diff",
       ),
   },
   {
@@ -239,8 +249,25 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     keys: ["o"],
     scope: "viewer",
     run: () => {
-      const next = MODES[(MODES.indexOf(shownMode()) + 1) % MODES.length];
+      const next = MODES[(MODES.indexOf(chosenMode()) + 1) % MODES.length];
       if (next) prefs().set("mode", next);
+    },
+  },
+  {
+    // Spec §4.3: playing, it pauses on the frame on screen; paused, each
+    // press swaps the frame, and the flicker's live region names it. No
+    // `repeat`: a held key swaps once, so it never flashes at key-repeat
+    // rate.
+    id: "viewer.flicker.toggle",
+    label: "Pause or swap flicker",
+    group: "View",
+    keys: ["f"],
+    scope: "viewer",
+    enabled: (ctx) => flickerShown(ctx),
+    run: () => {
+      const { flickerFrame, flickerPlaying, setFlicker, swapFlicker } = view();
+      if (flickerPlaying) setFlicker(flickerFrame, false);
+      else swapFlicker();
     },
   },
   {

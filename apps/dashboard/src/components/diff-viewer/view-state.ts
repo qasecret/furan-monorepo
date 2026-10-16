@@ -17,6 +17,11 @@ import { clampZoom, zoomAbout, type Size, type View } from "./viewer-geometry";
 
 export type FlickerFrame = "baseline" | "current";
 
+/** The frame a swap shows next. */
+export function otherFrame(frame: FlickerFrame): FlickerFrame {
+  return frame === "baseline" ? "current" : "baseline";
+}
+
 /** Zoom, and the pan in world px (R12): see `View`. */
 interface ViewState extends View {
   /** Set by the diff stepper to ask the canvas to frame a region; the canvas
@@ -26,6 +31,13 @@ interface ViewState extends View {
   swipe: number;
   flickerFrame: FlickerFrame;
   flickerPlaying: boolean;
+  /**
+   * The frame on screen was put there by hand (`f` while paused), so the
+   * flicker's live region names it (spec §4.3). Every other change to the
+   * flicker clears it (`setFlicker`, a reset): an animated swap is never
+   * announced, and the next swap by hand always is.
+   */
+  flickerSwappedByHand: boolean;
   /** The selected diff region (the region list, the stepper, a canvas click). */
   selectedRegionId: string | null;
   /**
@@ -54,7 +66,10 @@ interface ViewState extends View {
   /** Zoom and pan at once (the stepper's focus), the zoom clamped. */
   setView(v: View): void;
   setSwipe(v: number): void;
+  /** The frame and the play state together; forgets a swap by hand. */
   setFlicker(frame: FlickerFrame, playing: boolean): void;
+  /** A swap by hand (`f` while paused): the other frame, paused, announced. */
+  swapFlicker(): void;
   setSelected(id: string | null): void;
   setShowSuppressed(on: boolean): void;
   setFocusBbox(b: Bbox | null): void;
@@ -70,6 +85,7 @@ const fresh = (reducedMotion: boolean) => ({
   swipe: 0.5,
   flickerFrame: "baseline" as const,
   flickerPlaying: !reducedMotion,
+  flickerSwappedByHand: false,
   selectedRegionId: null,
   showSuppressed: false,
 });
@@ -97,7 +113,13 @@ export const useViewState = create<ViewState>((set) => ({
       Number.isFinite(v) ? { swipe: Math.min(1, Math.max(0, v)) } : {},
     ),
   setFlicker: (flickerFrame, flickerPlaying) =>
-    set({ flickerFrame, flickerPlaying }),
+    set({ flickerFrame, flickerPlaying, flickerSwappedByHand: false }),
+  swapFlicker: () =>
+    set((s) => ({
+      flickerFrame: otherFrame(s.flickerFrame),
+      flickerPlaying: false,
+      flickerSwappedByHand: true,
+    })),
   setSelected: (selectedRegionId) => set({ selectedRegionId }),
   setShowSuppressed: (showSuppressed) => set({ showSuppressed }),
   setFocusBbox: (focusBbox) => set({ focusBbox }),

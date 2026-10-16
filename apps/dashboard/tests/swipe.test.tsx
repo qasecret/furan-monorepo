@@ -45,7 +45,6 @@ import {
 } from "@/components/diff-viewer/viewer-geometry";
 import {
   DEFAULT_VIEWER_PREFS,
-  drawnMode,
   useViewerPrefs,
   type ViewerMode,
 } from "@/components/diff-viewer/viewer-prefs";
@@ -316,16 +315,13 @@ afterEach(() => {
 });
 
 describe("Swipe draws as swipe", () => {
-  test("its own renderer, on one stage; flicker still draws as side by side until it has one (R1)", () => {
+  test("its own renderer, on one stage", () => {
     expect(RENDERERS.swipe).not.toBe(RENDERERS["side-by-side"]);
     expect(RENDERERS.swipe.panes).toBe(1);
     expect(RENDERERS.swipe.needs({ hasBaseline: true })).toEqual([
       "baseline",
       "current",
     ]);
-    expect(drawnMode("swipe")).toBe("swipe");
-    expect(RENDERERS.flicker).toBe(RENDERERS["side-by-side"]);
-    expect(drawnMode("flicker")).toBe("side-by-side");
   });
 });
 

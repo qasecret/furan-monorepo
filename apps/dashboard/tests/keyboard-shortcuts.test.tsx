@@ -286,13 +286,13 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
   });
 
-  it("O acts on the mode on screen: a flicker preference shows as side by side (R1)", () => {
+  it("O from Flicker, which its cycle does not hold yet, starts it again at side by side", () => {
     useViewerPrefs.setState({
       prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
     });
     mountViewer({ viewports: [] });
     press("O");
-    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
   });
 
   it("D goes to Diff and back to the mode it came from", () => {
@@ -303,7 +303,7 @@ describe("useDiffViewerShortcuts", () => {
     press("D");
     expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
 
-    // From a mode with no renderer yet (R1), back to that same preference.
+    // From Flicker, back to Flicker.
     act(() => useViewerPrefs.getState().set("mode", "flicker"));
     press("D");
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
@@ -1029,6 +1029,7 @@ describe("the viewer's keys are registry commands", () => {
       ["review.reject", "Reject step", ["r", "x"]],
       ["viewer.difference", "Toggle difference view", ["d"]],
       ["viewer.cycleMode", "Cycle view mode", ["o"]],
+      ["viewer.flicker.toggle", "Pause or swap flicker", ["f"]],
       ["viewer.highlight", "Toggle highlight", ["h"]],
       ["viewer.comments", "Toggle comments", ["c"]],
       ["viewer.zoomIn", "Zoom in", ["=", "+"]],

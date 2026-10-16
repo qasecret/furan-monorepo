@@ -16,6 +16,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { FlickerControls } from "./FlickerControls";
 import { buildIgnoreAreasPayload } from "./ignore-area-payload";
 import { setClipboardRegion, useClipboardRegion } from "./region-clipboard";
 import { RegionSettingsPopover } from "./RegionSettingsPopover";
@@ -24,12 +25,7 @@ import type { DiffStepper } from "./useDiffStepper";
 import { selectEffectiveRegion, useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP } from "./viewer-geometry";
-import {
-  drawnMode,
-  modeAvailable,
-  useViewerPrefs,
-  type ViewerMode,
-} from "./viewer-prefs";
+import { modeAvailable, useViewerPrefs, type ViewerMode } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -124,9 +120,7 @@ export function ViewerToolbar({
 }: Props) {
   const dynamicTextEnabled = project?.dynamicTextEnabled ?? false;
   const mode = useViewerPrefs((s) =>
-    drawnMode(
-      modeAvailable(s.prefs.mode, hasBaseline) ? s.prefs.mode : "side-by-side",
-    ),
+    modeAvailable(s.prefs.mode, hasBaseline) ? s.prefs.mode : "side-by-side",
   );
   const opacity = useViewerPrefs((s) => s.prefs.opacity);
   const hideDisplacement = useViewerPrefs((s) => s.prefs.hideDisplacement);
@@ -299,6 +293,8 @@ export function ViewerToolbar({
           );
         })}
       </div>
+
+      {mode === "flicker" && <FlickerControls />}
 
       <SensitivityControl
         runId={runId}

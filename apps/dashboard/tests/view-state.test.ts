@@ -18,6 +18,7 @@ function dirty() {
     swipe: 0.2,
     flickerFrame: "current",
     flickerPlaying: false,
+    flickerSwappedByHand: true,
     selectedRegionId: "r1",
     showSuppressed: true,
     focusBbox: { x: 1, y: 2, width: 3, height: 4 },
@@ -30,6 +31,7 @@ const DEFAULTS = {
   panY: 0,
   swipe: 0.5,
   flickerFrame: "baseline",
+  flickerSwappedByHand: false,
   selectedRegionId: null,
   showSuppressed: false,
   focusBbox: null,
@@ -64,11 +66,33 @@ describe("useViewState setters", () => {
     expect(view().swipe).toBe(0);
   });
 
-  test("setFlicker sets the frame and the play state together", () => {
+  test("setFlicker sets the frame and the play state together, and forgets a hand swap", () => {
+    view().swapFlicker();
     view().setFlicker("current", false);
     expect(view()).toMatchObject({
       flickerFrame: "current",
       flickerPlaying: false,
+      flickerSwappedByHand: false,
+    });
+  });
+
+  test("swapFlicker shows the other frame, paused, swapped by hand", () => {
+    expect(view()).toMatchObject({
+      flickerFrame: "baseline",
+      flickerPlaying: true,
+      flickerSwappedByHand: false,
+    });
+    view().swapFlicker();
+    expect(view()).toMatchObject({
+      flickerFrame: "current",
+      flickerPlaying: false,
+      flickerSwappedByHand: true,
+    });
+    view().swapFlicker();
+    expect(view()).toMatchObject({
+      flickerFrame: "baseline",
+      flickerPlaying: false,
+      flickerSwappedByHand: true,
     });
   });
 
