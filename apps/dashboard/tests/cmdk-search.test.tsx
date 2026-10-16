@@ -998,3 +998,270 @@ describe("the palette's Batches and Tests", () => {
     );
   });
 });
+
+/**
+ * R29: once the search of batches and tests has answered for the text typed,
+ * the palette chooses the first row as it is shown, unless the reader has
+ * moved the choice since the text last changed. The rows arrive after cmdk
+ * has already chosen among the commands and pages that matched, and cmdk
+ * leaves that choice alone: the project jump stayed chosen under the batches
+ * that are now shown above it, and Enter opened the project.
+ */
+describe("the palette's choice when the search answers", () => {
+  const SWEEP = { id: "p1", name: "visual-sweep" };
+  const TWO = { id: "p2", name: "visual-two" };
+  const JUMP_SWEEP = "Jump to project: visual-sweep";
+  const JUMP_TWO = "Jump to project: visual-two";
+  const BATCH = "visual flow · main · 0 pending";
+
+  /** Every question of the search waits here until the test answers it. */
+  function hold() {
+    const held: Array<{
+      path: string;
+      input: Record<string, unknown>;
+      answer: (items: unknown[]) => void;
+      fail: () => void;
+    }> = [];
+    backend.answer = (call) =>
+      new Promise((resolve, reject) => {
+        held.push({
+          ...call,
+          answer: (items) => resolve(page(items)),
+          fail: () => reject(new Error("down")),
+        });
+      });
+    const asked = (path: string, search?: string) =>
+      waitFor(() =>
+        expect(
+          held.some(
+            (h) =>
+              h.path === path &&
+              (search === undefined || h.input.search === search),
+          ),
+        ).toBe(true),
+      );
+    // Not inside `act`: the rows then reach the screen on React's own
+    // schedule, as they do in the browser, and the test waits for them.
+    const answer = async (path: string, items: unknown[], search?: string) => {
+      for (const h of held) {
+        if (
+          h.path === path &&
+          (search === undefined || h.input.search === search)
+        ) {
+          h.answer(items);
+        }
+      }
+    };
+    const fail = () =>
+      act(async () => {
+        for (const h of held) h.fail();
+      });
+    return { held, asked, answer, fail };
+  }
+
+  /** The label of the row Enter would choose. */
+  function selected(palette: HTMLElement) {
+    return palette.querySelector('[role="option"][aria-selected="true"]')
+      ?.firstElementChild?.textContent;
+  }
+
+  /** The labels of the rows as they are shown, top to bottom. */
+  function shown(palette: HTMLElement) {
+    return [...palette.querySelectorAll('[role="option"]')].map(
+      (o) => o.firstElementChild?.textContent,
+    );
+  }
+
+  const enter = () =>
+    fireEvent.keyDown(screen.getByTestId("command-input"), { key: "Enter" });
+
+  /** Both searches answered: one batch and one test. */
+  async function answerBoth(
+    server: ReturnType<typeof hold>,
+    search = "visual",
+  ) {
+    await server.asked("variations.list", search);
+    await server.answer("builds.list", [build("b1", { name: "visual flow" })]);
+    await server.answer("variations.list", [variation("v1", "visual header")]);
+  }
+
+  test("the first row as shown is chosen once the search answers, and Enter opens it", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    // Until it answers, the project jump is the only match, and is chosen.
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    // The batches alone are not the answer: the tests are still out.
+    await server.asked("variations.list", "visual");
+    await server.answer("builds.list", [build("b1", { name: "visual flow" })]);
+    await rows(palette, "Batches", [BATCH]);
+    await settle();
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    await server.answer("variations.list", [variation("v1", "visual header")]);
+    await rows(palette, "Batches", [BATCH]);
+    await waitFor(() => expect(selected(palette)).toBe(BATCH));
+    // It is the first row as shown, and what a screen reader is told.
+    expect(shown(palette)[0]).toBe(BATCH);
+    const chosen = palette.querySelector(
+      '[role="option"][aria-selected="true"]',
+    );
+    expect(
+      screen.getByTestId("command-input").getAttribute("aria-activedescendant"),
+    ).toBe(chosen?.id);
+
+    enter();
+    expect(pushMock).toHaveBeenCalledOnce();
+    expect(pushMock).toHaveBeenCalledWith("/projects/p1/builds/b1");
+  });
+
+  test("when the first row as shown is a command, that is chosen", async () => {
+    const server = hold();
+    builds = [];
+    render(
+      <Shell role="editor">
+        <Viewer viewports={[]} onApprove={vi.fn()} />
+      </Shell>,
+    );
+    const palette = await openPalette();
+    typeSearch("approve");
+    expect(selected(palette)).toBe("Approve step");
+
+    await server.asked("variations.list", "approve");
+    await server.answer("builds.list", [build("b1", { name: "approve flow" })]);
+    await server.answer("variations.list", []);
+    await rows(palette, "Batches", ["approve flow · main · 0 pending"]);
+    // Actions comes first in the list, so the command stays the choice.
+    expect(shown(palette)[0]).toBe("Approve step");
+    expect(selected(palette)).toBe("Approve step");
+  });
+
+  test.each([
+    ["ArrowDown", JUMP_TWO],
+    ["End", JUMP_TWO],
+    ["ArrowUp", JUMP_SWEEP],
+    ["Home", JUMP_SWEEP],
+    ["PageDown", JUMP_SWEEP],
+    ["PageUp", JUMP_SWEEP],
+  ])("a choice moved with %s before the answer stays", async (key, stays) => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP, TWO]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+    fireEvent.keyDown(screen.getByTestId("command-input"), { key });
+    expect(selected(palette)).toBe(stays);
+
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    // Give the palette its chance to move the choice.
+    await settle();
+    expect(selected(palette)).toBe(stays);
+    enter();
+    expect(pushMock).toHaveBeenCalledWith(
+      `/projects/${stays === JUMP_TWO ? "p2" : "p1"}/builds`,
+    );
+  });
+
+  test("moving the pointer over a row before the answer keeps that choice", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP, TWO]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    fireEvent.pointerMove(
+      within(palette).getByRole("option", { name: JUMP_TWO }),
+    );
+    expect(selected(palette)).toBe(JUMP_TWO);
+
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    await settle();
+    expect(selected(palette)).toBe(JUMP_TWO);
+  });
+
+  test("a move before the text last changed does not count", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP, TWO]} />);
+    const palette = await openPalette();
+    typeSearch("visua");
+    fireEvent.keyDown(screen.getByTestId("command-input"), {
+      key: "ArrowDown",
+    });
+    expect(selected(palette)).toBe(JUMP_TWO);
+
+    // New text, new answer: the choice is the first row as shown again.
+    typeSearch("visual");
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    await waitFor(() => expect(selected(palette)).toBe(BATCH));
+  });
+
+  test("an answer to older text moves nothing", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    await server.asked("variations.list", "visual");
+    // More is typed before the first answer arrives.
+    typeSearch("visuals");
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    // The batch list, which every text shares, and the answer to "visual":
+    // neither is an answer to what is typed now.
+    await server.answer("builds.list", [build("b1", { name: "visuals flow" })]);
+    await server.answer(
+      "variations.list",
+      [variation("v1", "visual header")],
+      "visual",
+    );
+    await settle();
+    expect(headings(palette)).not.toContain("Tests");
+    expect(headings(palette)).not.toContain("Batches");
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    // The answer to "visuals" does.
+    await server.asked("variations.list", "visuals");
+    await server.answer("variations.list", [], "visuals");
+    await waitFor(() =>
+      expect(selected(palette)).toBe("visuals flow · main · 0 pending"),
+    );
+  });
+
+  test("a failed search is never chosen", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    await server.asked("variations.list", "visual");
+    await server.fail();
+    await rows(palette, "Batches", ["Couldn't search batches"]);
+    await rows(palette, "Tests", ["Couldn't search tests"]);
+    await settle();
+    // The error rows come first in the list; the choice is a real row.
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+    for (const option of within(palette).getAllByRole("option")) {
+      if (option.getAttribute("aria-disabled") === "true") {
+        expect(option.getAttribute("aria-selected")).toBe("false");
+      }
+    }
+    enter();
+    expect(pushMock).toHaveBeenCalledWith("/projects/p1/builds");
+    cleanup();
+    act(() => usePaletteStore.setState({ open: false }));
+
+    // With nothing else to choose, nothing is chosen.
+    const again = hold();
+    render(<Shell />);
+    const empty = await openPalette();
+    typeSearch("zzzz");
+    await again.asked("variations.list", "zzzz");
+    await again.fail();
+    await rows(empty, "Batches", ["Couldn't search batches"]);
+    await settle();
+    expect(selected(empty)).toBeUndefined();
+  });
+});

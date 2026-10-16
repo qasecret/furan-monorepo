@@ -55,6 +55,20 @@ const ITEM_CLASS =
   "flex items-center gap-3 px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-overlay-hover data-[selected=true]:bg-overlay-hover";
 
 /**
+ * The keys that move cmdk's choice (it has no PageUp or PageDown of its own,
+ * but a reader who presses one has reached for the list). A reader who has
+ * pressed one has made the choice theirs (R29).
+ */
+const MOVE_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "Home",
+  "End",
+  "PageDown",
+  "PageUp",
+]);
+
+/**
  * The global commands that are also the current page's actions: undo has no
  * other way in than a toast or a chip, so the palette offers it (R16).
  */
@@ -437,6 +451,39 @@ function PaletteBody({
     .filter(Boolean)
     .join(". ");
 
+  // R29: once the search of batches and tests has answered for the text, the
+  // first row as it is shown is the choice, unless the reader has moved it
+  // since the text last changed. cmdk chooses a row when the text changes,
+  // among the commands and pages that match then; the rows that arrive later
+  // may be shown above it, and cmdk leaves its choice where it was.
+  //
+  // The first row as shown is the first in cmdk's sorted list, and cmdk moves
+  // the nodes when it sorts, after it has seen the new rows: so it is read
+  // from the list, in a timeout, once that has run. It is chosen the way
+  // cmdk chooses it for the Home key (a keydown on its root): that also
+  // updates `aria-activedescendant`, which a value set from outside does not.
+  // Home skips a row that is disabled, so a failed search's row is never
+  // chosen. The choice is made once for a text: it is locked then, as it is
+  // when the reader moves it (by key or pointer), until the text changes.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const choiceLocked = useRef(false);
+  const foundRowCount = found.batches.items.length + found.tests.items.length;
+  useEffect(() => {
+    if (found.pending || foundRowCount === 0) return;
+    const timer = setTimeout(() => {
+      if (choiceLocked.current) return;
+      // The Home key locks the choice too (see `onKeyDown`).
+      rootRef.current?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Home",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [found.pending, foundRowCount, search]);
+
   const commandItem = (
     prefix: string,
     { resolved, keys, ariaKeys }: CommandRow,
@@ -498,15 +545,28 @@ function PaletteBody({
   // Mac, and ⌘K / Ctrl+K must close the palette.
   return (
     <Command
+      ref={rootRef}
       label="Command palette"
       className="bg-overlay"
       vimBindings={false}
       filter={byLabel}
       value={chosen}
       onValueChange={setChosen}
+      onKeyDown={(e) => {
+        if (MOVE_KEYS.has(e.key)) choiceLocked.current = true;
+      }}
+      onPointerMove={(e) => {
+        // cmdk chooses the row under the pointer; that is the reader's choice.
+        if (e.target instanceof Element && e.target.closest("[cmdk-item]")) {
+          choiceLocked.current = true;
+        }
+      }}
     >
       <Command.Input
-        onValueChange={setSearch}
+        onValueChange={(text) => {
+          choiceLocked.current = false;
+          setSearch(text);
+        }}
         placeholder="Search batches and tests, or run a command…"
         className="w-full border-b border-edge px-4 py-3 text-sm outline-none bg-transparent"
         data-testid="command-input"
