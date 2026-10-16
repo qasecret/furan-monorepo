@@ -6,6 +6,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -625,12 +626,15 @@ export function DiffViewer({
   // Each step, and each of its viewports, opens at fit with nothing selected
   // (spec §6.2). The view-state store outlives the viewer's remount, so the
   // reset is explicit. Reduced motion is read when the step opens: the
-  // flicker starts paused under it.
+  // flicker starts paused under it. A layout effect, so the reset lands in
+  // the step's own commit, before the browser can paint it: a cached step
+  // never shows a frame at the previous step's zoom, pan, swipe or flicker
+  // frame (m6).
   const resetView = useViewState((s) => s.resetView);
   const reducedMotion = useReducedMotion();
   const reducedMotionRef = useRef(reducedMotion);
   reducedMotionRef.current = reducedMotion;
-  useEffect(() => {
+  useLayoutEffect(() => {
     resetView({ reducedMotion: reducedMotionRef.current });
   }, [activeCheckpointId, activeViewport, resetView]);
 

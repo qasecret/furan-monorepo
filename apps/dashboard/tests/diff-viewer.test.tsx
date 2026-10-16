@@ -15,7 +15,7 @@ import type {
   ReactElement,
   ReactNode,
 } from "react";
-import { useCallback, useRef } from "react";
+import { Profiler, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import {
   afterEach,
@@ -835,6 +835,44 @@ describe("DiffViewer", () => {
       leaveAView();
       fireEvent.click(r.getByTestId("diff-viewer-step-next"));
       expectAFreshView();
+    });
+
+    test("a step change is at fit by its first commit: the reset runs before anything can paint the step (m6)", () => {
+      mockCheckpoints = {
+        items: [
+          { id: "c1", name: "Home", state: "unresolved" },
+          { id: "c2", name: "Search", state: "unresolved" },
+        ],
+      };
+      // Each commit of the viewer, read at the end of its layout phase (a
+      // Profiler's onRender runs after its subtree's layout effects): which
+      // step the DOM shows, and the view then. A passive reset would land
+      // after the step's first commit, which the browser can paint.
+      const commits: Array<{ onSecond: boolean; zoom: number; swipe: number }> =
+        [];
+      const onRender = () => {
+        const next = document.querySelector<HTMLButtonElement>(
+          '[data-testid="diff-viewer-step-next"]',
+        );
+        const { zoom, swipe } = useViewState.getState();
+        commits.push({ onSecond: next?.disabled === true, zoom, swipe });
+      };
+      const r = render(
+        <Profiler id="viewer" onRender={onRender}>
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c1"
+          />
+        </Profiler>,
+      );
+      leaveAView();
+      commits.length = 0;
+      fireEvent.click(r.getByTestId("diff-viewer-step-next"));
+      const onSecond = commits.filter((c) => c.onSecond);
+      expect(onSecond.length).toBeGreaterThan(0);
+      for (const c of onSecond)
+        expect(c).toEqual({ onSecond: true, zoom: 1, swipe: 0.5 });
     });
 
     test("a viewport switch resets the view", () => {

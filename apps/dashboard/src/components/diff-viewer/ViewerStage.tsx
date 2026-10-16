@@ -235,12 +235,15 @@ function destroyApp(app: Application): void {
 
 /**
  * Small inline "≠" badge marking an image that has differences, in side by
- * side's labels on the canvas.
+ * side's labels on the canvas. An image, so its name is spoken (a name on a
+ * generic span is not). The label it sits in lets the pointer through to the
+ * canvas; the badge alone takes it, so its hover text shows (T12 M2).
  */
 function DiffBadge() {
   return (
     <span
-      className="inline-flex h-4 w-4 items-center justify-center rounded border border-edge-strong bg-raised text-2xs font-bold leading-none text-fg-secondary"
+      role="img"
+      className="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded border border-edge-strong bg-raised text-2xs font-bold leading-none text-fg-secondary"
       data-testid="diff-badge"
       aria-label="Has differences"
       title="This image has differences"
@@ -907,7 +910,8 @@ export function ViewerStage({
   // Flicker's live region: the first child in either layout, so a layout
   // change keeps it mounted (and what appears in it announced).
   const flickerAnnouncer = <FlickerAnnouncer on={mode === "flicker"} />;
-  // Where the focus goes when a focused Retry's card goes (M2): its pane.
+  // Where the focus goes when a focused Retry's card goes (M2), or Swipe's
+  // focused handle (m1): its pane.
   const focusPane = (ref: React.RefObject<HTMLDivElement | null>) => () =>
     ref.current?.focus({ preventScroll: true });
 
@@ -1006,6 +1010,7 @@ export function ViewerStage({
               value={swipe}
               onChange={setSwipe}
               stageWidth={viewportSize?.w}
+              onFocusLost={focusPane(singleRef)}
             />
           )}
         </div>

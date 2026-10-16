@@ -37,6 +37,11 @@ interface Props {
   onChange(value: number): void;
   /** The stage's width in px, to keep the handle inside it at the ends. */
   stageWidth?: number;
+  /**
+   * Where the focus goes when the handle goes while it has it: a mode key,
+   * a step change or the editor can take it away under the keyboard (m1).
+   */
+  onFocusLost?: () => void;
 }
 
 /**
@@ -63,15 +68,34 @@ interface Props {
  *   so the viewer's ← / → step commands yield to it (the command guard's
  *   `defaultPrevented`), at the ends too. Chords are left alone: Alt+← is
  *   the browser's back.
+ * - **Focus.** The command guard leaves the viewer's other keys working with
+ *   the handle focused, so `1`, `d` or a step change can take it away: when
+ *   it goes with the focus, the focus goes to `onFocusLost` (the stage), not
+ *   the page, as a failed image's Retry does (m1).
  */
-export function SwipeHandle({ value, onChange, stageWidth }: Props) {
+export function SwipeHandle({
+  value,
+  onChange,
+  stageWidth,
+  onFocusLost,
+}: Props) {
   const stripRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
   // The pointer listeners are bound once and read the latest props.
-  const latest = useRef({ value, onChange });
+  const latest = useRef({ value, onChange, onFocusLost });
   useLayoutEffect(() => {
-    latest.current = { value, onChange };
+    latest.current = { value, onChange, onFocusLost };
   });
+  useLayoutEffect(() => {
+    const el = handleRef.current;
+    // A deleted component's layout cleanup runs before its DOM is removed:
+    // the handle still has the focus here, if it had it.
+    return () => {
+      if (el !== null && el === document.activeElement) {
+        latest.current.onFocusLost?.();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const strip = stripRef.current;

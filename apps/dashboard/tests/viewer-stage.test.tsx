@@ -1244,6 +1244,26 @@ describe("every region surface follows the list's visibility (R10)", () => {
   });
 });
 
+describe("the has-differences badge (T12 M2)", () => {
+  test("an image named Has differences, with its hover text, which takes the pointer inside the label that doesn't", async () => {
+    const { set, request } = fullStep();
+    const r = render(
+      <ViewerStage set={set} request={request} regions={REGIONS} />,
+    );
+    await flush();
+    const badges = r.getAllByRole("img", { name: "Has differences" });
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) {
+      expect(badge.getAttribute("title")).toBe("This image has differences");
+      expect(badge.textContent).toBe("≠");
+      // The canvas label lets the pointer through; the badge alone takes it,
+      // so its title shows on hover.
+      expect(badge.closest(".pointer-events-none")).not.toBeNull();
+      expect(badge.className.split(" ")).toContain("pointer-events-auto");
+    }
+  });
+});
+
 describe("the severity rectangles keep the image true outside Diff (R28)", () => {
   /** The regions layer's rectangles, on the pane that hosts it. */
   const rects = (testId: string): Graphics[] =>

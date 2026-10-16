@@ -881,6 +881,71 @@ describe("the ignore-region editor in Swipe and Flicker (spec §4.4, R3)", () =>
     expect(seen).toEqual(["overlay", "diff", "side-by-side"]);
   });
 
+  test("the radio arrows in the editor skip Swipe and Flicker, as o does: the focus never leaves the check, and nothing is written for them (T12 M1)", async () => {
+    mount();
+    await flush();
+    press("i");
+    expect(editing()).toBe(true);
+    act(() => radio("Side by side").focus());
+    const step = (key: string) => {
+      const e = pressOnFocus(key);
+      expect(e.defaultPrevented, key).toBe(true);
+      return {
+        checked: checked(),
+        focused: (document.activeElement as HTMLElement).dataset.mode,
+        shown: shownMode(),
+      };
+    };
+    const at = (mode: ViewerMode) => ({
+      checked: mode,
+      focused: mode,
+      shown: mode,
+    });
+    expect(step("ArrowRight")).toEqual(at("overlay"));
+    expect(step("ArrowDown")).toEqual(at("diff"));
+    expect(step("ArrowRight")).toEqual(at("side-by-side"));
+    expect(step("ArrowLeft")).toEqual(at("diff"));
+    expect(step("ArrowUp")).toEqual(at("overlay"));
+    expect(step("ArrowLeft")).toEqual(at("side-by-side"));
+    expect(step("End")).toEqual(at("diff"));
+    expect(step("Home")).toEqual(at("side-by-side"));
+    // Swipe and Flicker were never the preference nor in the URL.
+    const written = historyWrite.mock.calls.map(([, , url]) => String(url));
+    expect(written.some((url) => /view=(swipe|flicker)/.test(url))).toBe(false);
+    expect(stored()).toBe("side-by-side");
+  });
+
+  test("the radio arrows in the editor, from Swipe chosen before it: the check stays on side by side, and the arrows go on from there", async () => {
+    prefer("swipe");
+    mount();
+    await flush();
+    press("i");
+    expect(checked()).toBe("side-by-side");
+    act(() => radio("Side by side").focus());
+    pressOnFocus("ArrowRight");
+    expect(checked()).toBe("overlay");
+    expect((document.activeElement as HTMLElement).dataset.mode).toBe(
+      "overlay",
+    );
+    expect(stored()).toBe("overlay");
+  });
+
+  test("with no baseline, the radio arrows in the editor stay on side by side and write nothing", async () => {
+    mount({ hasBaseline: false });
+    await flush();
+    press("i");
+    act(() => radio("Side by side").focus());
+    for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
+      pressOnFocus(key);
+      expect(checked(), key).toBe("side-by-side");
+      expect((document.activeElement as HTMLElement).dataset.mode, key).toBe(
+        "side-by-side",
+      );
+    }
+    noUrlWrite();
+    expect(localStorage.getItem(prefsKey("u1"))).toBeNull();
+  });
+
   test("the override goes with the viewer: unmounted, it pins nothing", async () => {
     prefer("swipe");
     const r = mount();

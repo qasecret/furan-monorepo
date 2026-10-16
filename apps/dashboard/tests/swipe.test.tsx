@@ -752,6 +752,60 @@ describe("Swipe on the stage", () => {
   });
 });
 
+describe("the handle's focus when it goes (m1)", () => {
+  const host = () => screen.getByTestId("single-stage-host");
+
+  test("a mode change with the handle focused: the focus goes to the stage, not the page, and the page doesn't scroll", async () => {
+    const { set, request } = swipeStep();
+    render(<ViewerStage set={set} request={request} regions={[]} />);
+    await flush();
+    act(() => slider().focus());
+    expect(document.activeElement).toBe(slider());
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+
+    setMode("flicker");
+    await flush();
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(document.activeElement).toBe(host());
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  test("a step change with the handle focused (the images are loading): the focus goes to the stage", async () => {
+    const images = swipeStep();
+    const r = render(
+      <ViewerStage set={images.set} request={images.request} regions={[]} />,
+    );
+    await flush();
+    act(() => slider().focus());
+    r.rerender(
+      <ViewerStage
+        set={{ ...images.set, status: "loading", images: {} }}
+        request={images.request}
+        regions={[]}
+      />,
+    );
+    await flush();
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(document.activeElement).toBe(host());
+  });
+
+  test("a handle that goes without the focus takes nobody's focus", async () => {
+    const { set, request } = swipeStep();
+    render(
+      <>
+        <button type="button">elsewhere</button>
+        <ViewerStage set={set} request={request} regions={[]} />
+      </>,
+    );
+    await flush();
+    const elsewhere = screen.getByRole("button", { name: "elsewhere" });
+    act(() => elsewhere.focus());
+    setMode("overlay");
+    await flush();
+    expect(document.activeElement).toBe(elsewhere);
+  });
+});
+
 /** The handle on its own, over a stage `width` px wide at `left`. */
 function Controlled({
   initial = 0.5,
