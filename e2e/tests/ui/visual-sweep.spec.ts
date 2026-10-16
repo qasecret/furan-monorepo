@@ -38,8 +38,12 @@ import { uploadShots } from "../../src/visual/upload.js";
 
 /**
  * Visual sweep (design-foundation spec §7.1): every dashboard route, in light
- * and dark, as a full-page 1440-wide screenshot plus an axe `color-contrast`
- * pass. The page is un-clipped first (src/visual/unclip.ts) so both see the
+ * and dark, as a full-page screenshot plus an axe `color-contrast` pass. The
+ * window is 1440 wide, but for the states that resize it for their shot and
+ * put it back in `cleanup` (`state-cursor-batches-scrolled`,
+ * `state-cursor-batch-scrolled` and `state-cursor-step-sideways` change its
+ * height or width to make a list scroll; `state-topbar-tablet` and
+ * `state-topbar-phone` are 768 and 375 wide). The page is un-clipped first (src/visual/unclip.ts) so both see the
  * whole page, not just the first 900px the app's own scroll containers show.
  * Run once on `main` (`VISUAL_LABEL=before-…`) and once on the branch
  * (`VISUAL_LABEL=after-…`) and compare the two PNG sets — see e2e/README.md.
@@ -58,6 +62,7 @@ const OUT_ROOT = process.env.VISUAL_OUT
   ? resolve(process.env.VISUAL_OUT)
   : fileURLToPath(new URL("../../visual-out/", import.meta.url));
 const OUT = join(OUT_ROOT, LABEL);
+/** The window of every shot, but for the states that resize it (see above). */
 const VIEWPORT = { width: 1440, height: 900 };
 /**
  * Options for every browser context the sweep opens. Reduced motion makes the
@@ -499,7 +504,9 @@ test.describe.serial("visual sweep @visual", () => {
     expect(status, `GET ${v.path} answered ${status}`).toBeLessThan(400);
     // Park the pointer in a corner: wherever an earlier click left it, it
     // would otherwise hover (and highlight) whatever this page puts there.
-    await p.mouse.move(VIEWPORT.width - 1, VIEWPORT.height - 1);
+    // The corner of the viewport the page has now: a state may have resized it.
+    const { width, height } = p.viewportSize() ?? VIEWPORT;
+    await p.mouse.move(width - 1, height - 1);
     await settle(p);
     const landedPath = new URL(p.url()).pathname;
     // Compare paths only: a state's path may carry a query (`state-filtered-empty`

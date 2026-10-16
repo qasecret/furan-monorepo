@@ -1,8 +1,9 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 import type { ApiClient } from "../clients/api-client.js";
 
 import type { VisualFixture } from "./fixture.js";
+import { timeMasks } from "./masks.js";
 
 /**
  * Where a route or state goes: a fixed path, or one built from the fixture
@@ -239,6 +240,312 @@ async function stepUrlCommitted(p: Page): Promise<void> {
 const decisionToast = (p: Page, label: string) =>
   p.locator("[data-sonner-toast]").filter({ hasText: label });
 
+// ---- the keyboard and command surface -------------------------------------
+// Helpers for the palette, `?` sheet, list cursor and top-bar states below.
+// None of those states changes the fixture. The few that resize the viewport
+// put it back in their `cleanup` (`restoreViewport`).
+
+/** `text` as a RegExp source that matches exactly it. */
+const escapeRegExp = (text: string): string =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The palette button's name, in the top bar and at every width (Ruling R19). */
+const PALETTE_BUTTON = "Search or run a command…";
+
+/** The ⌘K palette's dialog, mounted once by the protected layout. */
+const paletteDialog = (p: Page): Locator => p.getByTestId("command-palette");
+
+/**
+ * One of the palette's groups, by its heading ("Actions", "Batches"): cmdk's
+ * own `cmdk-group`, found through its `cmdk-group-heading`, so the "Batches"
+ * row of the Go to group is not mistaken for the Batches group.
+ */
+const paletteGroup = (p: Page, heading: string): Locator =>
+  paletteDialog(p)
+    .locator("[cmdk-group]")
+    .filter({
+      has: p.locator("[cmdk-group-heading]", {
+        hasText: new RegExp(`^${escapeRegExp(heading)}$`),
+      }),
+    });
+
+/** A Batches row: the list cursor's items on that page. */
+const batchRows = (p: Page): Locator =>
+  p.locator("tbody[data-batches-list] tr[data-cursor-id]");
+
+/** The Batches table's scroller: the box that scrolls, under the sticky header. */
+const batchesScroller = (p: Page): Locator =>
+  p.locator("#inbox-batches-table > div");
+
+/** A step card on the batch page. */
+const stepCards = (p: Page): Locator =>
+  p.locator('[data-testid^="step-card-"]');
+
+/** The sideways scroller that holds a run row's step cards. */
+const stepRow = (p: Page): Locator => stepCards(p).first().locator("xpath=..");
+
+/** The cursor's items on the batch page, in walking order: run rows and steps. */
+const batchItems = (p: Page): Locator =>
+  p.getByTestId("batch-results").locator("[data-cursor-id]");
+
+/**
+ * The batch page's list scroller: it holds the sticky column header, then the
+ * results.
+ */
+const batchScroller = (p: Page): Locator =>
+  p.getByTestId("batch-results").locator("xpath=..");
+
+/**
+ * How far a focus ring reaches outside its element: `focus-ring` is a 2px
+ * outline drawn 2px out. (A Batches or run row's ring is inset, `-outline-offset-2`.)
+ */
+const RING_OUT = 4;
+
+/**
+ * Open the palette with its key: ⌘K on macOS, Ctrl+K elsewhere. Lower-case:
+ * the command matches `e.key === "k"`, and "Meta+K" would send key "K".
+ */
+async function openPalette(p: Page): Promise<void> {
+  await p.keyboard.press("ControlOrMeta+k");
+  await expect(paletteDialog(p)).toBeVisible();
+}
+
+/**
+ * Open the `?` sheet with its key and wait for the page's own section, whose
+ * heading ("On this page (Batches)", "(Batch)" or "(Diff viewer)") only shows
+ * once the page has registered its commands. The key is a bare "?", as on a
+ * layout where it needs no Shift.
+ */
+async function openSheet(p: Page, section: string): Promise<void> {
+  await p.keyboard.press("?");
+  const sheet = p.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(sheet).toBeVisible();
+  await expect(
+    sheet.getByRole("heading", { name: section, exact: true }),
+  ).toBeVisible();
+}
+
+/**
+ * Press `key` until `target` has focus, at most `max` times: the list cursor
+ * is real DOM focus, so "the cursor is there" is "focus is there". Fails,
+ * saying so, if it never gets there.
+ */
+async function pressUntilFocused(
+  p: Page,
+  key: string,
+  target: Locator,
+  max: number,
+): Promise<void> {
+  const focused = target.and(p.locator(":focus"));
+  for (let i = 0; i < max; i++) {
+    await p.keyboard.press(key);
+    const there = await focused
+      .waitFor({ state: "attached", timeout: 500 })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (there) return;
+  }
+  throw new Error(
+    `visual: focus did not reach ${String(target)} in ${max} "${key}" presses`,
+  );
+}
+
+/** The page's viewport; a page with none is an error. */
+function viewportOf(p: Page): { width: number; height: number } {
+  const size = p.viewportSize();
+  if (size === null) throw new Error("visual: the page has no viewport");
+  return size;
+}
+
+/** An element's box on the page; an element that is not on screen is an error. */
+async function boxOf(
+  l: Locator,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = await l.boundingBox();
+  if (box === null) throw new Error(`visual: ${String(l)} is not on screen`);
+  return box;
+}
+
+/**
+ * The viewport a state resized the page from, for `restoreViewport`. Set by
+ * the state's first resize and cleared by the cleanup, so a state that resizes
+ * twice still restores the original size.
+ */
+let resizedFrom: { width: number; height: number } | null = null;
+
+/** Resize the viewport for this state; `restoreViewport` puts it back. */
+async function resizeViewport(
+  p: Page,
+  size: { width: number; height: number },
+): Promise<void> {
+  resizedFrom ??= viewportOf(p);
+  await p.setViewportSize(size);
+}
+
+/**
+ * The cleanup of every state that resized the viewport. The sweep runs it
+ * after the shot, whether or not the shot (or `open`) succeeded: the next
+ * state navigates in the same page, and must find it as wide as every other.
+ */
+async function restoreViewport(p: Page): Promise<void> {
+  const from = resizedFrom;
+  resizedFrom = null;
+  if (from !== null) await p.setViewportSize(from);
+}
+
+/**
+ * Make `scroller` scroll: set the viewport's height so that the scroller shows
+ * `overflow` px less than its `content` (so a list the fixture makes short has
+ * somewhere to scroll to; the window grows if the list already overflows by
+ * more). The page is as tall as the viewport and the scroller takes what is
+ * left, so the two move one for one. Fails, saying what it measured, if the
+ * scroller does not end up that much shorter.
+ */
+async function fitHeightToScroll(
+  p: Page,
+  scroller: Locator,
+  content: number,
+  overflow: number,
+): Promise<void> {
+  const size = viewportOf(p);
+  const shown = (await boxOf(scroller)).height;
+  const height = Math.round(size.height - (shown - (content - overflow)));
+  if (height < 200) {
+    throw new Error(
+      `visual: scrolling ${String(scroller)} (content ${content}px, shown ${shown}px) needs a ${height}px viewport`,
+    );
+  }
+  await resizeViewport(p, { width: size.width, height });
+  await expect
+    .poll(async () => content - (await boxOf(scroller)).height, {
+      message: `${String(scroller)} should be ${overflow}px shorter than its ${content}px of content`,
+    })
+    .toBeGreaterThanOrEqual(overflow - 4);
+}
+
+/**
+ * A scroller's `scrollTop`, `scrollWidth` or `clientWidth`. Read in the page,
+ * from the element the locator finds: one way to name a scroller, the locator.
+ */
+async function scrollMetric(
+  scroller: Locator,
+  metric: "scrollTop" | "scrollWidth" | "clientWidth",
+): Promise<number> {
+  return scroller.evaluate((el, key) => el[key], metric);
+}
+
+/**
+ * Fail unless `item`'s top is at or below the bottom of the sticky `header`:
+ * the item is in view, not under the header. What counts is where the focus
+ * ring starts: for a step card (its ring is outside its box, `RING_OUT`) that
+ * is above the box, for a row (an inset ring) it is the box. Within half a
+ * pixel: layout rounds.
+ */
+async function expectBelowHeader(
+  item: Locator,
+  header: Locator,
+  what: string,
+): Promise<void> {
+  const ring = (await item.getAttribute("data-testid"))?.startsWith(
+    "step-card-",
+  )
+    ? RING_OUT
+    : 0;
+  const [at, bar] = await Promise.all([boxOf(item), boxOf(header)]);
+  const top = at.y - ring;
+  expect(
+    top,
+    `${what}: its ${ring > 0 ? "ring" : "top"} starts at ${top}px, the header ends at ${bar.y + bar.height}px`,
+  ).toBeGreaterThanOrEqual(bar.y + bar.height - 0.5);
+}
+
+/**
+ * The list cursor under a sticky header: J to the first item, End to the last
+ * (the list must have scrolled by then), then K back up to the first. Every
+ * item the cursor lands on must be clear of the `header` (`expectBelowHeader`),
+ * so the scroller's `scroll-pt-*` leaves room for it.
+ */
+async function expectCursorClearsHeader(
+  p: Page,
+  {
+    items,
+    scroller,
+    header,
+    what,
+  }: {
+    items: Locator;
+    scroller: Locator;
+    header: Locator;
+    what: string;
+  },
+): Promise<void> {
+  const count = await items.count();
+  await pressUntilFocused(p, "j", items.first(), 6);
+  await p.keyboard.press("End");
+  await expect(items.nth(count - 1)).toBeFocused();
+  expect(
+    await scrollMetric(scroller, "scrollTop"),
+    `${what}: End should have scrolled the list`,
+  ).toBeGreaterThan(0);
+  await expectBelowHeader(items.nth(count - 1), header, `${what} ${count}`);
+  for (let i = count - 2; i >= 0; i--) {
+    await p.keyboard.press("k");
+    await expect(items.nth(i)).toBeFocused();
+    await expectBelowHeader(items.nth(i), header, `${what} ${i + 1}`);
+  }
+}
+
+/**
+ * For a state whose dialog is over text the shared time masks cover: hide that
+ * text. A mask is painted over the page, the dialog included, at the box of
+ * every element it finds, hidden or not; a `display: none` element has no
+ * box, so nothing is painted for it. Only for that state: every other keeps
+ * its masks.
+ */
+async function hideMaskedTimes(p: Page): Promise<void> {
+  for (const mask of timeMasks(p)) {
+    await mask.evaluateAll((els) => {
+      for (const el of els) el.style.display = "none";
+    });
+  }
+}
+
+/**
+ * The top bar's width budget (Ruling R20): the project label gives way
+ * (its name truncates) instead of reaching the palette button, and nothing
+ * pushes the bar wider than the viewport. The button is found by its name, so
+ * this also holds when the words are visually hidden (below `md`) and the name
+ * remains. Polled: the bar lays out again a frame after the viewport resizes.
+ */
+async function expectTopBarFits(p: Page): Promise<void> {
+  const label = p.getByTestId("project-selector-label");
+  const button = p.getByRole("button", { name: PALETTE_BUTTON });
+  await expect(label).toBeVisible();
+  await expect(button).toBeVisible();
+  await expect(button).toHaveAccessibleName(PALETTE_BUTTON);
+  await expect
+    .poll(
+      async () => {
+        const [l, b] = await Promise.all([boxOf(label), boxOf(button)]);
+        return b.x - (l.x + l.width);
+      },
+      {
+        message:
+          "the palette button should start at or after the project label's right edge (a negative number is how far they overlap)",
+      },
+    )
+    .toBeGreaterThanOrEqual(0);
+  const overflow = (await p.evaluate(
+    `(() => { const bar = document.querySelector('[data-testid="app-top-bar"]'); return bar.scrollWidth - bar.clientWidth; })()`,
+  )) as number;
+  expect(
+    overflow,
+    "the top bar should hold its controls without scrolling sideways",
+  ).toBeLessThanOrEqual(0);
+}
+
 /** A multi-step run's steps as the reviewer reads them. */
 async function multiRunSteps({ api, admin, fixture }: VisualStateEnv): Promise<
   Array<{
@@ -326,13 +633,17 @@ async function restoreProfile(_p: Page, env: VisualStateEnv): Promise<void> {
 
 export const STATES: ReadonlyArray<VisualState> = [
   {
-    name: "state-cmdk",
-    path: "/inbox",
+    // The viewer on the multi-step run, then the palette key: the palette opens
+    // on the page's own commands (Actions), ahead of Go to and the rest.
+    name: "state-palette-actions",
+    path: (f) => `/projects/${f.projectId}/runs/${f.multiRunId}`,
     open: async (p) => {
-      // ⌘K on macOS, Ctrl+K elsewhere. Lower-case: the palette matches
-      // `e.key === "k"`, and "Meta+K" would send key "K".
-      await p.keyboard.press("ControlOrMeta+k");
-      await expect(p.getByTestId("command-palette")).toBeVisible();
+      // The viewer's commands are registered once it is on a real step.
+      await stepUrlCommitted(p);
+      await openPalette(p);
+      const actions = paletteGroup(p, "Actions");
+      await expect(actions).toBeVisible();
+      await expect(actions.locator("[cmdk-item]").first()).toBeVisible();
     },
   },
   {
@@ -461,6 +772,273 @@ export const STATES: ReadonlyArray<VisualState> = [
         }),
       ).toBeVisible();
     },
+  },
+  // ---- the keyboard and command surface ----------------------------------
+  // None of these changes the fixture. The few that resize the viewport (to
+  // make a list scroll, or to check the top bar at narrow widths) put it back
+  // in `cleanup`.
+  {
+    // Batches, the palette key, then "visual" typed in the palette: the
+    // project's batches that match, in their own Batches group. The letters
+    // are the search's, though one of them (`s`) is the page's Start
+    // reviewing key. The admin's project is called "visual-sweep", so the
+    // Projects group also has a row for it; once the batches have answered
+    // the selected row must be the first one in the list, a batch, and not
+    // the project's (Ruling R29: cmdk only picks a first row when nothing is
+    // selected, so a row that was selected before the answer came kept it).
+    name: "state-palette-search",
+    path: "/inbox",
+    open: async (p) => {
+      await expect(batchRows(p).first()).toBeVisible();
+      await openPalette(p);
+      const input = p.getByTestId("command-input");
+      await input.pressSequentially("visual");
+      await expect(input).toHaveValue("visual");
+      const batches = paletteGroup(p, "Batches");
+      await expect(batches.locator("[cmdk-item]").first()).toBeVisible();
+
+      const items = paletteDialog(p).locator("[cmdk-item]");
+      const selected = '[cmdk-item][aria-selected="true"]';
+      await expect(
+        paletteDialog(p).locator(selected),
+        "one row should be selected",
+      ).toHaveCount(1);
+      await expect(
+        items.first(),
+        "the selected row should be the first in the list",
+      ).toHaveAttribute("aria-selected", "true");
+      await expect(
+        batches.locator(selected),
+        "the selected row should be in the Batches group",
+      ).toHaveCount(1);
+    },
+  },
+  {
+    name: "state-sheet-batches",
+    path: "/inbox",
+    open: async (p) => {
+      await expect(batchRows(p).first()).toBeVisible();
+      await openSheet(p, "On this page (Batches)");
+    },
+  },
+  {
+    // The batch page's "Recent batch runs" panel has times in it, which the
+    // sweep masks; behind the sheet they would be painted over its rows.
+    name: "state-sheet-batch",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: async (p) => {
+      await expect(
+        p.locator('[data-testid^="result-row-"]').first(),
+      ).toBeVisible();
+      await openSheet(p, "On this page (Batch)");
+    },
+    hold: hideMaskedTimes,
+  },
+  {
+    name: "state-sheet-viewer",
+    path: (f) => `/projects/${f.projectId}/runs/${f.multiRunId}`,
+    open: async (p) => {
+      await stepUrlCommitted(p);
+      await openSheet(p, "On this page (Diff viewer)");
+    },
+  },
+  {
+    // The top bar's Help menu: Keyboard shortcuts, Replay tour (when the page
+    // has a tour) and the single-key switch.
+    name: "state-help-menu",
+    path: "/inbox",
+    open: async (p) => {
+      await p.getByRole("button", { name: "Help", exact: true }).click();
+      const menu = p.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await expect(
+        menu.getByRole("menuitem", { name: "Keyboard shortcuts" }),
+      ).toBeVisible();
+      await expect(
+        menu.getByRole("menuitemcheckbox", { name: "Single-key shortcuts" }),
+      ).toBeVisible();
+    },
+  },
+  {
+    // Batches, then J: the cursor is on the first row. It is real focus, so the
+    // focus ring is what shows it (a 2px outline), and it must draw.
+    name: "state-cursor-batches",
+    path: "/inbox",
+    open: async (p) => {
+      const first = batchRows(p).first();
+      await expect(first).toBeVisible();
+      await pressUntilFocused(p, "j", first, 6);
+      await expect(first).toHaveCSS("outline-style", "solid");
+      await expect(first).toHaveCSS("outline-width", "2px");
+    },
+  },
+  {
+    // The Batches list scrolling under its sticky header (`scroll-pt-11`).
+    // The fixture's few batches fit in the window, so the window is made short
+    // enough to scroll the list. End, then K back up to the first row: no row
+    // the cursor lands on may be under the header.
+    name: "state-cursor-batches-scrolled",
+    path: "/inbox",
+    open: async (p) => {
+      const rows = batchRows(p);
+      await expect(rows.first()).toBeVisible();
+      expect(
+        await rows.count(),
+        "the fixture should hold at least three batches that need review",
+      ).toBeGreaterThanOrEqual(3);
+      const table = await boxOf(p.locator("#inbox-batches-table table"));
+      const scroller = batchesScroller(p);
+      await fitHeightToScroll(p, scroller, table.height, 100);
+      await expectCursorClearsHeader(p, {
+        items: rows,
+        scroller,
+        header: p.locator("#inbox-batches-table thead"),
+        what: "row",
+      });
+    },
+    cleanup: restoreViewport,
+  },
+  {
+    // The multi-step build, J until a step card has the cursor: the card's
+    // focus ring (a 2px outline) is the cursor and must draw.
+    name: "state-cursor-step",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: async (p) => {
+      const cards = stepCards(p);
+      await expect(cards.first()).toBeVisible();
+      await pressUntilFocused(p, "j", cards, 6);
+      const focused = cards.and(p.locator(":focus"));
+      await expect(focused).toHaveCSS("outline-style", "solid");
+      await expect(focused).toHaveCSS("outline-width", "2px");
+    },
+  },
+  {
+    // A step card's ring in the sideways scroller (`scroll-px-4`). The row of
+    // cards is the window's width less a constant (the sidebar, and the batch
+    // page's "Recent batch runs" panel beside the results), so one measure
+    // gives the window that makes it ROW px wide: room for a card and its
+    // scroll padding on both sides, but not for all three cards, so the second
+    // is partly out of view. The cursor walks 1, 2, 3, 2, 1, and at each card
+    // its ring (`RING_OUT`) must clear both edges of the row. Without the
+    // padding the second card would be flush with the right edge, and the
+    // first, coming back, with the left one.
+    name: "state-cursor-step-sideways",
+    path: (f) => `/projects/${f.projectId}/builds/${f.multiBuildId}`,
+    open: async (p) => {
+      const cards = stepCards(p);
+      const row = stepRow(p);
+      await expect(cards.nth(2)).toBeVisible();
+      const size = viewportOf(p);
+      const ROW = 520;
+      const rowWidth = () => scrollMetric(row, "clientWidth");
+      await resizeViewport(p, {
+        width: size.width - ((await rowWidth()) - ROW),
+        height: size.height,
+      });
+      await expect(async () => {
+        const width = await rowWidth();
+        expect(
+          Math.abs(width - ROW),
+          `the row of cards is ${width}px wide, not ${ROW}px (within 2px)`,
+        ).toBeLessThanOrEqual(2);
+      }).toPass({ timeout: 10_000 });
+      expect(
+        await scrollMetric(row, "scrollWidth"),
+        "the step cards should overflow their row",
+      ).toBeGreaterThan(await rowWidth());
+
+      const expectRingClear = async (index: number): Promise<void> => {
+        await expect(cards.nth(index)).toHaveCSS("outline-style", "solid");
+        const [card, bounds] = await Promise.all([
+          boxOf(cards.nth(index)),
+          boxOf(row),
+        ]);
+        // The row has a 1px border, outside the box that scrolls.
+        expect(
+          card.x - (bounds.x + 1),
+          `card ${index + 1}: its ring should clear the row's left edge`,
+        ).toBeGreaterThanOrEqual(RING_OUT);
+        expect(
+          bounds.x + bounds.width - 1 - (card.x + card.width),
+          `card ${index + 1}: its ring should clear the row's right edge`,
+        ).toBeGreaterThanOrEqual(RING_OUT);
+      };
+
+      await pressUntilFocused(p, "j", cards.nth(0), 6);
+      await expectRingClear(0);
+      for (const [from, to] of [
+        [0, 1],
+        [1, 2],
+        [2, 1],
+        [1, 0],
+      ] as const) {
+        await p.keyboard.press(to > from ? "j" : "k");
+        await expect(cards.nth(to)).toBeFocused();
+        await expectRingClear(to);
+      }
+    },
+    cleanup: restoreViewport,
+  },
+  {
+    // The batch page scrolling under its sticky column header (`scroll-pt-10`,
+    // against a 33px header), on the loop batch (two runs, so a run row and a
+    // step card sit above the last item). The window is made short enough to
+    // scroll the list; End, then K back up to the first row: no item the cursor
+    // lands on may be under the header (for a step card, its ring, which is
+    // outside its box, counts).
+    name: "state-cursor-batch-scrolled",
+    path: (f) => `/projects/${f.projectId}/builds/${f.loopBuildId}`,
+    open: async (p) => {
+      const items = batchItems(p);
+      await expect
+        .poll(() => items.count(), {
+          message: "the loop batch should show two run rows and their steps",
+        })
+        .toBeGreaterThanOrEqual(4);
+      const scroller = batchScroller(p);
+      const header = scroller.locator(":scope > div.sticky");
+      const content =
+        (await boxOf(header)).height +
+        (await boxOf(p.getByTestId("batch-results"))).height;
+      await fitHeightToScroll(p, scroller, content, 120);
+      await expectCursorClearsHeader(p, {
+        items,
+        scroller,
+        header,
+        what: "item",
+      });
+    },
+    cleanup: restoreViewport,
+  },
+  {
+    // The top bar on a tablet (Ruling R20), the sidebar open beside the page:
+    // the palette button is 160px wide from `md`, and the project label gives
+    // way before it. Fails if they overlap.
+    name: "state-topbar-tablet",
+    path: "/inbox",
+    open: async (p) => {
+      await resizeViewport(p, { width: 768, height: 1024 });
+      await expect(p.getByTestId("app-sidebar")).toBeVisible();
+      await expect(p.getByTestId("sidebar-collapse-toggle")).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await expectTopBarFits(p);
+    },
+    cleanup: restoreViewport,
+  },
+  {
+    // The top bar on a phone (Ruling R20): the sidebar is a drawer, the palette
+    // button is its icon (its words still its name), and the label gives way.
+    // Fails if they overlap.
+    name: "state-topbar-phone",
+    path: "/inbox",
+    open: async (p) => {
+      await resizeViewport(p, { width: 375, height: 812 });
+      await expect(p.getByTestId("sidebar-toggle")).toBeVisible();
+      await expectTopBarFits(p);
+    },
+    cleanup: restoreViewport,
   },
   {
     // Approve the pending `profile` step and shoot while the toast, with its

@@ -52,15 +52,19 @@ version`); older versions don't support them. Output: `e2e-coverage.md` /
 
 `tests/ui/visual-sweep.spec.ts` (tag `@visual`, project `visual`, never part of
 `s3-full` or CI) captures every dashboard route in **light** and **dark** as a
-full-page PNG at a 1440×900 viewport, plus the interaction states in
-`STATES` (⌘K open, a menu open, a dialog open, a step card hovered, a decided
-step, the Approve-pending question, a batch's viewport filter open and
-matching nothing, the batch-done card, the Undo toast), and runs axe
-`color-contrast` on each. The dashboard scrolls inside its own containers,
-never the document, so before capturing, `src/visual/unclip.ts` lets those
-containers grow to their content: the PNG and axe cover the whole page, not
-just the first 900px. It fails the route if any part of the page is still clipped
-afterwards, so a dashboard layout change can't quietly shrink the shot.
+full-page PNG at a 1440×900 viewport (the states that resize the window are
+named below), plus the interaction states in
+`STATES` (the ⌘K palette on the viewer's actions and searching batches, the `?`
+sheet on each page, the Help menu, a menu open, a dialog open, the list cursor
+on a Batches row and on a step card, the top bar at tablet and phone widths, a
+step card hovered, a decided step, the Approve-pending question, a batch's
+viewport filter open and matching nothing, the batch-done card, the Undo
+toast), and runs axe `color-contrast` on each. The dashboard scrolls inside
+its own containers, never the document, so before capturing,
+`src/visual/unclip.ts` lets those containers grow to their content: the PNG
+and axe cover the whole page, not just the first 900px. It fails the route if
+any part of the page is still clipped afterwards, so a dashboard layout change
+can't quietly shrink the shot.
 
 It is the before/after safety net for dashboard UI changes. A contrast
 problem is an axe violation, or a node axe could not measure because it lies
@@ -149,6 +153,20 @@ means every screenshot test passed.
   `state-filtered-empty` a shared link whose filter matches nothing;
   `state-batch-done` the card J raises at a batch's end, here "Done with the
   filtered steps"; `state-undo-toast` the toast with its Undo action.) The
+  keyboard and command surface adds `state-palette-actions` (the viewer's
+  Actions group), `state-palette-search` (typing "visual"), `state-sheet-batches`,
+  `state-sheet-batch` and `state-sheet-viewer` (the `?` sheet), `state-help-menu`,
+  `state-cursor-batches` and `state-cursor-step` (the cursor's focus ring).
+  Each waits for what it shows (and, for the palette search, that the selected
+  row is the first batch). Five also measure, and resize the window to do it:
+  `state-cursor-batches-scrolled` and `state-cursor-batch-scrolled` (a short
+  window; End, then K back up: no row or step, ring included, is under the
+  sticky header), `state-cursor-step-sideways` (a narrower window; a card's
+  ring clears the sideways scroller's edges) and `state-topbar-tablet` /
+  `state-topbar-phone` (768 and 375 wide; the project label and the palette
+  button do not overlap, the bar does not scroll sideways). Not covered here: the stale-step Confirm moving the cursor
+  on (it needs a step with a newer capture, which the fixture does not have);
+  it is checked in the dashboard's jsdom tests only. The
   All caught up card is not reachable here: the fixture always has pending
   work. `tests/ui/review-loop.spec.ts` shoots it instead, with the same axe
   `color-contrast` check in both themes (see Coverage matrix).
@@ -167,7 +185,9 @@ then takes the decision back through the API and waits (up to 60s: an undo
 queues a re-diff) until every step has a verdict and `profile` reads `new`
 again, or fails the state. Such states are kept last in `STATES`, and the
 fixture must be left as it was found: every state, and both themes, share it.
-The other states never confirm or change anything.
+The other states never confirm or change anything. The ones that resize the
+viewport (to make a list scroll, or to check the top bar at 768 and 375px) put
+it back in their `cleanup`, so the next state opens at 1440×900.
 
 **Reviewing in Furan:**
 
@@ -238,15 +258,47 @@ project, so for its run the spec makes its project the bootstrap admin's
 default (keeping their memberships) and puts the old assignment back in
 `afterAll`. It runs in `s3-full`, like `review-flow.spec.ts`.
 
+`tests/ui/keyboard-review.spec.ts` (capability `review.keyboard`, not
+`@visual`) clears two batches without the mouse: every navigation and every
+decision is a key press (`page.keyboard`); only the data (through the API) and
+the page loads that start the flow are not. It builds its own data in a
+project created fresh for every run (`kbd-review-ui-<timestamp>`) and makes it
+the bootstrap admin's default for the run, as the review-loop spec does. Two
+batches need review, each of two tests with one changed step. On Batches `J`
+focuses the first row and `S` starts reviewing; `A` decides the step and the
+loop moves on with its cue, `A` again shows "Batch done", and Enter continues
+to the older batch. On that "Batch done" card, which is not modal, `⌘K` opens
+the palette and `?` the sheet, and Esc gives the card its focus back each
+time. `G I` goes back to Batches; "Show: All" from the palette
+(a Batches command, so the decided card stays in the list) and `J`, `J`,
+Enter open the older batch. On its page `J` reaches the run's row and then a
+step card; `A` makes the card read Approved and the cursor moves on to the
+next step that needs review, and `⌘Z` / Ctrl+Z takes the approval back (the
+server is checked each time). `⌘K` with a batch's name opens that batch
+(the chosen row is the batch, and the search box names it:
+`aria-activedescendant`). With the "Approve pending" question open, `G I`
+keeps the page and `?` opens no sheet (and Esc then closes only the question);
+with nothing open `?` opens the page's sheet and `G I` goes to Batches. Back
+on the batch at its default view (Needs review), `A` on a step card takes its
+run off the list and the next card has focus; `⌘Z` brings it back. Then
+"Single-key shortcuts" is turned off in the Help menu (Shift+Tab to the Help
+button, Enter, End, Space): `A` in the viewer does nothing and sends no
+decision, while "Approve step" in the palette approves that same step; the
+switch is turned back on the same way. Then axe `color-contrast` runs on the
+palette (empty and searching) and on the `?` sheet in light and dark
+(problems fail the test, as in the sweep, and only symbol-only text may go
+unmeasured). Last, `A` on the last pending step brings up "All caught up",
+and `G I` goes to Batches from it. It runs in `s3-full`.
+
 ## Known constraints
 
 - **The bootstrap admin can sign in 10 times per 15 minutes** (the api's
-  per-account login brake, ADR-063). A run signs in 5 times (the seeder, then
-  the login, dashboard, review-flow and review-loop specs), so repeated
-  Playwright runs against a kept stack trip it after a few iterations: the
-  login form then reads "Invalid email or password" and the api logs
-  `login_account_rate_limited` (429). Wait out the window, or recreate the
-  stack (`e2e:down` / `e2e:up`).
+  per-account login brake, ADR-063). A run signs in 6 times (the seeder,
+  then the login, dashboard, review-flow, review-loop and keyboard-review
+  specs), so repeated Playwright runs against a kept stack trip it after a
+  few iterations: the login form then reads "Invalid email or password" and
+  the api logs `login_account_rate_limited` (429). Wait out the window, or
+  recreate the stack (`e2e:down` / `e2e:up`).
 - **`branch.parent_fallback` is skipped** pending a product-side investigation
   (an identical feature-branch capture returns `new`, not `passed`).
 - **Element-map-dependent** diff capabilities (ignore/layout regions, axe a11y,
