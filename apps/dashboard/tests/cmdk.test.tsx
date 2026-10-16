@@ -169,14 +169,16 @@ function expectNamesChosenRow(palette: HTMLElement) {
   const chosen = palette.querySelectorAll(
     '[role="option"][aria-selected="true"]',
   );
-  expect(chosen).toHaveLength(1);
-  const id = chosen[0]?.id;
-  expect(id).toBeTruthy();
+  // One row is chosen, or none (no results); never more.
+  expect(chosen.length).toBeLessThanOrEqual(1);
+  const id = chosen[0]?.id ?? null;
   expect(
     screen.getByTestId("command-input").getAttribute("aria-activedescendant"),
   ).toBe(id);
   expect(
-    palette.querySelector("[cmdk-list]")?.getAttribute("aria-activedescendant"),
+    palette
+      .querySelector("[cmdk-list]")
+      ?.getAttribute("aria-activedescendant") ?? null,
   ).toBe(id);
 }
 
@@ -928,6 +930,139 @@ describe("CommandPalette", () => {
       });
       expect(chosenLabel(palette)).toBe("Settings");
       expectNamesChosenRow(palette);
+    });
+
+    test.each([
+      ["commands only", "zoom", "Zoom in"],
+      ["a page only", "settings", "Settings"],
+      ["one command", "reject", "Reject step"],
+    ])(
+      "after a change that matches %s (cmdk's own first row)",
+      async (_what, text, first) => {
+        render(
+          <Shell role="editor">
+            <Viewer viewports={[]} onApprove={vi.fn()} onReject={vi.fn()} />
+          </Shell>,
+        );
+        const palette = await openPalette();
+        const input = screen.getByTestId("command-input");
+        fireEvent.change(input, { target: { value: text } });
+        expect(chosenLabel(palette)).toBe(first);
+        await waitFor(() => expectNamesChosenRow(palette));
+      },
+    );
+
+    test("through every step of typing and deleting", async () => {
+      render(
+        <Shell role="editor">
+          <Viewer viewports={[]} onApprove={vi.fn()} onReject={vi.fn()} />
+        </Shell>,
+      );
+      const palette = await openPalette();
+      const input = screen.getByTestId("command-input");
+      // Many rows, a few, one, then fewer again, none, and back to all.
+      for (const text of [
+        "z",
+        "zo",
+        "zoom",
+        "zoom o",
+        "zoo",
+        "z",
+        "",
+        "re",
+        "reject",
+        "rejectx",
+        "",
+        "api",
+      ]) {
+        fireEvent.change(input, { target: { value: text } });
+        await waitFor(() => expectNamesChosenRow(palette));
+      }
+    });
+
+    test("the row is never seen unchosen while it is being named", async () => {
+      // Looked at between every two turns, which is when a screen would be
+      // painted: whenever there are rows, one of them is drawn as chosen.
+      const unchosen: string[] = [];
+      let step = "open";
+      const look = setInterval(() => {
+        const palette = document.querySelector(
+          '[data-testid="command-palette"]',
+        );
+        if (!palette) return;
+        const rows = palette.querySelectorAll('[role="option"]');
+        const chosen = palette.querySelectorAll(
+          '[role="option"][aria-selected="true"]',
+        );
+        if (rows.length > 0 && chosen.length !== 1) unchosen.push(step);
+      }, 0);
+      try {
+        render(
+          <Shell role="editor">
+            <Viewer viewports={[]} onApprove={vi.fn()} onReject={vi.fn()} />
+          </Shell>,
+        );
+        const palette = await openPalette();
+        const input = screen.getByTestId("command-input");
+        const wait = () =>
+          act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 40));
+          });
+        await wait();
+        for (const text of ["zoom", "settings", "", "re", "api", ""]) {
+          step = JSON.stringify(text);
+          fireEvent.change(input, { target: { value: text } });
+          await wait();
+        }
+        step = "pointer";
+        fireEvent.pointerMove(
+          within(palette).getAllByRole("option").at(-1) as HTMLElement,
+        );
+        await wait();
+        expect(unchosen).toEqual([]);
+        await waitFor(() => expectNamesChosenRow(palette));
+      } finally {
+        clearInterval(look);
+      }
+    });
+
+    test("a search with no results names nothing, not the row it had", async () => {
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      const input = screen.getByTestId("command-input");
+      fireEvent.change(input, { target: { value: "settings" } });
+      await waitFor(() => expectNamesChosenRow(palette));
+      expect(chosenLabel(palette)).toBe("Settings");
+
+      fireEvent.change(input, { target: { value: "zzzz" } });
+      expect(
+        palette.querySelectorAll('[role="option"][aria-selected="true"]'),
+      ).toHaveLength(0);
+      await waitFor(() => expectNamesChosenRow(palette));
+      expect(input.getAttribute("aria-activedescendant")).toBeNull();
+      // And a row again once something matches.
+      fireEvent.change(input, { target: { value: "settings" } });
+      await waitFor(() => expectNamesChosenRow(palette));
+      expect(chosenLabel(palette)).toBe("Settings");
+    });
+
+    test("after the pointer moves onto a row", async () => {
+      render(<Shell role="editor" />);
+      const palette = await openPalette();
+      await waitFor(() => expectNamesChosenRow(palette));
+      fireEvent.pointerMove(
+        within(palette).getByRole("option", { name: "API tokens" }),
+      );
+      expect(chosenLabel(palette)).toBe("API tokens");
+      await waitFor(() => expectNamesChosenRow(palette));
+      // And onto another, after a search.
+      fireEvent.change(screen.getByTestId("command-input"), {
+        target: { value: "t" },
+      });
+      await waitFor(() => expectNamesChosenRow(palette));
+      const rows = within(palette).getAllByRole("option");
+      fireEvent.pointerMove(rows[rows.length - 1] as HTMLElement);
+      await waitFor(() => expectNamesChosenRow(palette));
     });
 
     test("a typed search keeps cmdk's own choice", async () => {

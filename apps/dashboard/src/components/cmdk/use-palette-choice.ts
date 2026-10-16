@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
+import { flushSync } from "react-dom";
 
 /**
  * The keys that move cmdk's choice (it has no PageUp or PageDown of its own,
@@ -39,23 +40,44 @@ function pointAt(row: Element) {
   row.dispatchEvent(move);
 }
 
+/** The row cmdk draws as chosen, and the id the search box names. */
+function chosenAndNamed(root: HTMLElement | null) {
+  return {
+    row: root?.querySelector('[cmdk-item=""][aria-selected="true"]') ?? null,
+    named:
+      root
+        ?.querySelector("[cmdk-input]")
+        ?.getAttribute("aria-activedescendant") ?? null,
+  };
+}
+
+/** How many times a name is repaired before the palette gives up on it. */
+const MAX_REPAIRS = 2;
+
 /**
- * R30: makes cmdk name the chosen row `value` (`aria-activedescendant` on the
- * search box and the list), which it does only when its own select runs, and
- * only when that changes the value. The row is already chosen (the palette
- * holds it, and cmdk has been told), so cmdk is moved to another row and
- * back, in the one turn: nothing is painted between, and nothing is run.
+ * R30: whenever a row is chosen, the search box (and the list) name it by its
+ * id, in `aria-activedescendant`; when none is chosen, they name nothing.
+ * cmdk keeps that name only inside its own select, and only when the select
+ * changes its value; it reads the chosen row from the page as it is at that
+ * moment, which can be before the row has been drawn as chosen. So cmdk's own
+ * choice (when the text changes, when the palette opens), a pointer over a
+ * row and a value the palette sets can leave the name empty or on the row
+ * before.
+ *
+ * The repair is cmdk's own select, a pointer over the chosen row, from a
+ * different value: the controlled value is cleared, the pointer is sent, and
+ * the value is set back, all in the one turn, so nothing is painted between
+ * and the row is drawn as chosen when cmdk reads it. The pointer is marked as
+ * the palette's own: it does not lock the choice and goes no further than the
+ * palette. Nothing is run, and `aria-activedescendant` is never set by hand.
  */
-function nameChosenRow(root: HTMLElement | null, value: string) {
-  if (!root) return;
-  const rows = [
-    ...root.querySelectorAll('[cmdk-item=""]:not([aria-disabled="true"])'),
-  ];
-  const target = rows.find((row) => row.getAttribute("data-value") === value);
-  const other = rows.find((row) => row !== target);
-  if (!target || !other) return;
-  pointAt(other);
-  pointAt(target);
+function nameChosenRow(row: Element, setChosen: (value: string) => void) {
+  const value = row.getAttribute("data-value") ?? "";
+  flushSync(() => setChosen(""));
+  pointAt(row);
+  // Drawn as chosen again before anything is painted (the pointer's own
+  // update comes after).
+  flushSync(() => setChosen(value));
 }
 
 interface Choice {
@@ -88,9 +110,8 @@ interface Choice {
  * (arrows, Home, End, PageUp, PageDown, unless an IME is composing) and a
  * pointer moved over a row cmdk can choose do, until the text changes.
  *
- * R30: whenever the palette sets the chosen row itself (it opens on the
- * starting row; a cleared search goes back to it) cmdk is made to name it, by
- * a pointermove over it, which is cmdk's own select (`nameChosenRow`).
+ * R30: whatever chooses the row (the palette, cmdk, the reader), the search
+ * box names it (`nameChosenRow`), checked after every change.
  *
  * The effect depends on `pending` and `rowCount` only. A change of the text
  * that leaves both as they were (a space typed after the answer) needs no
@@ -115,13 +136,26 @@ export function usePaletteChoice({
     if (search === "") setChosen(startsOn);
   }, [search, startsOn]);
 
-  // R30: the starting row is named to a screen reader when the palette opens
-  // and when the search is cleared. In a timeout, once cmdk has the rows.
+  // R30: after any render, once cmdk has settled, check the name and repair
+  // it. One mechanism for every way a row gets chosen, and for any change that
+  // moves it (the chosen row, the text, the rows: each renders the palette),
+  // with no list of them to keep. The check is a query or two and repairs
+  // nothing that is right. A name that will not take is tried `MAX_REPAIRS`
+  // times, not for ever.
+  const repairs = useRef(0);
   useEffect(() => {
-    if (search !== "") return;
-    const timer = setTimeout(() => nameChosenRow(rootRef.current, startsOn), 0);
+    const timer = setTimeout(() => {
+      const { row, named } = chosenAndNamed(rootRef.current);
+      if (!row || named === row.id) {
+        repairs.current = 0;
+        return;
+      }
+      if (repairs.current >= MAX_REPAIRS) return;
+      repairs.current += 1;
+      nameChosenRow(row, setChosen);
+    }, 0);
     return () => clearTimeout(timer);
-  }, [search, startsOn]);
+  });
 
   useEffect(() => {
     if (pending || rowCount === 0) return;
