@@ -116,9 +116,11 @@ assigned".
 
 The fixture's last part, `mismatch`, is a step whose screenshots differ in
 size: a 1280×800 baseline, approved, and a 1280×1100 current screenshot
-compared with it and left undecided (`passed` under odiff, the default
-engine, which compares the baseline's area only; `unresolved` under an engine
-that counts the extra rows). Both are drawn with `sharp` and uploaded through
+compared with it and left undecided. It is `unresolved`, and the fixture
+accepts nothing else: every engine, odiff (the default) included, fails a
+size change as a 100% diff with no diff image or regions, unless the project
+turned on "Allow diff dimensions", which this one has not. Both are drawn
+with `sharp` and uploaded through
 `src/visual/upload.ts`. It lives in a project of its own,
 `visual-sweep-mismatch`, so the sweep's project keeps the loop batch as its
 newest batch and its batches table as it is; that project is shown only in
@@ -354,16 +356,17 @@ Pixels are read from an element screenshot of the stage
 (`single-stage-host`), decoded in Node with `sharp`: pixi's WebGL canvas keeps
 no drawing buffer, so `toDataURL` would read blank. The samples sit at 25% and
 75% of the stage's width, at mid-height, within 3 levels per channel. The
-changed right half is one `major` region, and every single-stage mode draws the
-step's regions over the images as a 20% fill of the severity's colour, so a
-right-half sample is the image's colour under that fill; the spec reads the
-region from the api first and fails if it is not that one box.
+changed right half is one `major` region. Outside Diff, every single-stage
+mode draws the step's regions over the images as outlines with no fill, so a
+sample inside the box is the image's own colour; the spec reads the region
+from the api first and fails if it is not that one box, around the right
+sample and clear of the left one.
 
 In Chromium: Swipe at 50% shows A left of the divider and B right of it; → →
 on its handle reads 54, and End takes the divider to 100%, where the baseline
 shows all the way across. Flicker, standing still under reduced motion, shows
 the baseline, and `f` swaps it to the current. Overlay with its opacity slider
-at 100% (End) shows the current image on top. The first view requests each of
+("Overlay opacity") at 100% (End) shows the current image on top. The first view requests each of
 the step's three images (baseline, current, diff) once, and the next step's
 three once (fetched ahead); switching through all five modes requests nothing
 more; → to the next step and ← back requests nothing, after which Swipe still

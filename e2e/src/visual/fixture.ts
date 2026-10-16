@@ -623,11 +623,12 @@ async function uploadMismatch(
  * then a 1280×1100 one of the same step in a new build, which nothing in the
  * sweep decides.
  *
- * The step must have been compared with that baseline, so it is `unresolved`
- * or `passed`, never `new`. Which one is the diff engine's: odiff, the
- * projects' default, compares the baseline's area only, so a taller current
- * screenshot whose top matches the baseline is a match (a diff-engine issue
- * of its own). The viewer shows both the same way: what differs is the size.
+ * The step must have been compared with that baseline and failed:
+ * `unresolved`, never `new` nor `passed`. A size change fails on every
+ * engine, odiff (the projects' default) included, as a 100% diff with no
+ * diff image or regions (R27, R30); only a project that turned on "Allow
+ * diff dimensions" compares the shared area instead, and this one has not.
+ * A `passed` step would mean the engine let a page that grew go through.
  *
  * Not atomic, as {@link addLoopBatch} is not: a failure after the second
  * build exists leaves it in the project, and the next run adds the step
@@ -663,10 +664,10 @@ async function addMismatch(api: ApiClient): Promise<VisualFixture["mismatch"]> {
   if (
     steps.length !== 1 ||
     only?.[0] !== MISMATCH_CHECKPOINT ||
-    (only[1] !== "unresolved" && only[1] !== "passed")
+    only[1] !== "unresolved"
   ) {
     throw new Error(
-      `visual fixture: expected the size-mismatch run's one step, ${JSON.stringify(MISMATCH_CHECKPOINT)}, to be compared with its baseline (unresolved or passed), got ${JSON.stringify(steps)}`,
+      `visual fixture: expected the size-mismatch run's one step, ${JSON.stringify(MISMATCH_CHECKPOINT)}, to fail against its baseline (unresolved: a size change is a 100% diff), got ${JSON.stringify(steps)}`,
     );
   }
   return {

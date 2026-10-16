@@ -39,21 +39,15 @@ const B: RGB = [22, 163, 74];
 const C: RGB = [120, 120, 120];
 const D: RGB = [200, 60, 160];
 
-/**
+/*
  * Over every single-stage mode the viewer draws the step's regions above the
- * images (`DiffOverlayLayer`): a box per region, filled with its severity's
- * canvas colour at 20% (`SEVERITY_CANVAS_HEX` in the dashboard's
- * lib/severity-style.ts). The first step's right half changed, so it is one
- * `major` region (checked in `beforeAll`), and a right-half sample is the
- * image's colour under that fill. Nothing is drawn over the left half.
+ * images (`DiffOverlayLayer`). Outside Diff (Swipe, Flicker, Overlay) a
+ * region is an outline along its box, with no fill, so the pixels inside it
+ * are the image's own (R28). The first step's right half changed, so it is
+ * one region along that half (checked in `beforeAll`): the right sample is
+ * inside it, clear of its outline, and reads the image's colour exactly, as
+ * the left one does.
  */
-const REGION_FILL_ALPHA = 0.2;
-const MAJOR: RGB = [0xff, 0x88, 0x00];
-const underRegion = (c: RGB): RGB => [
-  Math.round(c[0] * (1 - REGION_FILL_ALPHA) + MAJOR[0] * REGION_FILL_ALPHA),
-  Math.round(c[1] * (1 - REGION_FILL_ALPHA) + MAJOR[1] * REGION_FILL_ALPHA),
-  Math.round(c[2] * (1 - REGION_FILL_ALPHA) + MAJOR[2] * REGION_FILL_ALPHA),
-];
 
 /**
  * Where the stage is sampled, as fractions of its box: 25% and 75% of its
@@ -161,7 +155,7 @@ async function checkSwipeAndFlicker(page: Page): Promise<void> {
   await expect(handle).toHaveAttribute("aria-valuenow", "50");
   await expectStage(
     page,
-    { left: A, right: underRegion(B) },
+    { left: A, right: B },
     "Swipe at 50%: the baseline left of the divider, the current right of it",
   );
 
@@ -173,7 +167,7 @@ async function checkSwipeAndFlicker(page: Page): Promise<void> {
   await expect(handle).toHaveAttribute("aria-valuenow", "100");
   await expectStage(
     page,
-    { right: underRegion(A) },
+    { right: A },
     "Swipe at 100%: the baseline all the way across",
   );
 
@@ -182,16 +176,12 @@ async function checkSwipeAndFlicker(page: Page): Promise<void> {
   // Reduced motion: no Play, and the flicker stands still on the baseline.
   await expect(page.getByTestId("flicker-play-toggle")).toHaveCount(0);
   await expect(label).toHaveText("Baseline");
-  await expectStage(
-    page,
-    { right: underRegion(A) },
-    "Flicker, still, on the baseline",
-  );
+  await expectStage(page, { right: A }, "Flicker, still, on the baseline");
   await page.keyboard.press("f");
   await expect(label).toHaveText("Current");
   await expectStage(
     page,
-    { right: underRegion(B) },
+    { right: B },
     "Flicker after f, on the current image",
   );
 }
@@ -275,7 +265,8 @@ interface RunDetail {
  *
  * Pixels are read from a screenshot of the stage, decoded with sharp. The
  * first step has one region, its changed right half, which every
- * single-stage mode draws over the images (see `underRegion`).
+ * single-stage mode draws over the images: outside Diff as an outline alone
+ * (R28), so the samples inside it read the images' own colours.
  *
  * The flow makes the project the bootstrap admin's default for its run and
  * puts the old assignment back afterwards, as the other UI specs do. The
@@ -384,7 +375,8 @@ test.describe.serial("ui: viewer comparison modes", () => {
     ).toBe(6);
 
     // What the colour checks rely on: the first step's one region is its
-    // right half, `major`, over the right sample point and not the left.
+    // right half, around the right sample point and not the left, so its
+    // outline (R28) runs clear of both.
     const regions = run.diffRegions.filter(
       (r) => r.screenshotId === current.checkpointIds.half,
     );
@@ -476,13 +468,13 @@ test.describe.serial("ui: viewer comparison modes", () => {
     await expect(page.getByTestId("canvas-mode-label")).toHaveText(
       "Current over baseline",
     );
-    const opacity = page.getByTestId("opacity-slider-wrap").getByRole("slider");
+    const opacity = page.getByRole("slider", { name: "Overlay opacity" });
     await opacity.focus();
     await page.keyboard.press("End");
     await expect(opacity).toHaveAttribute("aria-valuenow", "100");
     await expectStage(
       page,
-      { right: underRegion(B) },
+      { right: B },
       "Overlay at 100%: the current image over the baseline",
     );
 
@@ -526,7 +518,7 @@ test.describe.serial("ui: viewer comparison modes", () => {
     await pickMode(page, "2", "Swipe");
     await expectStage(
       page,
-      { left: A, right: underRegion(B) },
+      { left: A, right: B },
       "Swipe at 50% after stepping back",
     );
 

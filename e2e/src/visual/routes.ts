@@ -783,7 +783,9 @@ async function expectSteady(
 
 /**
  * Flicker, paused with `f` on `frame`. The sweep's window prefers reduced
- * motion, under which Flicker never plays, so motion is allowed for this. The
+ * motion, under which Flicker never plays, so motion is allowed for this,
+ * once Flicker is on screen: a view reset before then (the step's route
+ * committing) would read the motion allowed and start Flicker playing. The
  * step was opened under reduced motion, so Flicker starts paused on the
  * baseline (spec §6.2), and allowing motion does not start it: Play does.
  * Flicker plays (Pause shows, and the label swaps to "Current" on its own),
@@ -796,8 +798,8 @@ async function pauseFlickerOn(
   p: Page,
   frame: "Baseline" | "Current",
 ): Promise<void> {
-  await p.emulateMedia({ reducedMotion: "no-preference" });
   await pressMode(p, MODE.flicker);
+  await p.emulateMedia({ reducedMotion: "no-preference" });
   const label = canvasLabel(p);
   const toggle = p.getByTestId("flicker-play-toggle");
   await expect(label).toHaveText("Baseline");
@@ -1353,7 +1355,7 @@ export const STATES: ReadonlyArray<VisualState> = [
       await expect(canvasLabel(p)).toHaveText("Current over baseline");
       await expect(singleStage(p)).toHaveAttribute("data-mode", "overlay");
       await expect(
-        p.getByTestId("opacity-slider-wrap").getByRole("slider"),
+        p.getByRole("slider", { name: "Overlay opacity" }),
       ).toHaveAttribute("aria-valuenow", "50");
     },
     cleanup: restorePrefs,

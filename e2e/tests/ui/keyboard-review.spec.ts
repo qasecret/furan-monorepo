@@ -863,8 +863,17 @@ test.describe.serial("ui: keyboard review", () => {
     await expect(handle).toHaveAttribute("aria-valuetext", "54% baseline");
 
     // Flicker with motion reduced: no Play, and the frame stands still (for
-    // 1.5 s, three swaps at its rate) until F swaps it, saying so.
-    await page.emulateMedia({ reducedMotion: "reduce" });
+    // 1.5 s, three swaps at its rate) until F swaps it, saying so. The flow's
+    // context prefers reduced motion throughout (see beforeAll), so nothing
+    // is emulated here, and nothing is left for the tests after this one.
+    // (`emulateMedia({ reducedMotion: null })` would not put the context's
+    // preference back: it lifts the emulation, motion and all.)
+    expect(
+      await page.evaluate(
+        'matchMedia("(prefers-reduced-motion: reduce)").matches',
+      ),
+      "the flow's context prefers reduced motion",
+    ).toBe(true);
     await page.keyboard.press("3");
     await expect(
       modes.getByRole("radio", { name: "Flicker", exact: true }),
