@@ -1,0 +1,201 @@
+import { describe, expect, test } from "vitest";
+
+import {
+  canvasToWorld,
+  fitScale,
+  transformFor,
+  worldFor,
+  worldToCanvas,
+  zoomAbout,
+  type Rect,
+  type View,
+} from "../src/components/diff-viewer/viewer-geometry";
+import { computeFitScale } from "../src/components/diff-viewer/world-fit";
+
+const area = (rects: Rect[]): number =>
+  rects.reduce((sum, r) => sum + r.w * r.h, 0);
+
+describe("worldFor", () => {
+  test("is the union of the image sizes, anchored top-left", () => {
+    const w = worldFor({ w: 100, h: 200 }, { w: 100, h: 300 }, null);
+    expect(w.size).toEqual({ w: 100, h: 300 });
+    expect(w.rects.baseline).toEqual({ x: 0, y: 0, w: 100, h: 200 });
+    expect(w.rects.current).toEqual({ x: 0, y: 0, w: 100, h: 300 });
+    expect(w.rects.diff).toBeNull();
+    expect(w.missing.baseline).toEqual([{ x: 0, y: 200, w: 100, h: 100 }]);
+    expect(w.missing.current).toEqual([]);
+  });
+
+  test("reports the bottom strip for one image and the right strip for the other", () => {
+    const w = worldFor({ w: 120, h: 100 }, { w: 100, h: 150 }, null);
+    expect(w.size).toEqual({ w: 120, h: 150 });
+    expect(w.missing.baseline).toEqual([{ x: 0, y: 100, w: 120, h: 50 }]);
+    expect(w.missing.current).toEqual([{ x: 100, y: 0, w: 20, h: 150 }]);
+  });
+
+  test("an image short in both directions gets a right strip and a bottom strip that do not overlap", () => {
+    const w = worldFor({ w: 60, h: 40 }, { w: 100, h: 150 }, null);
+    expect(w.size).toEqual({ w: 100, h: 150 });
+    expect(w.missing.baseline).toEqual([
+      { x: 60, y: 0, w: 40, h: 150 },
+      { x: 0, y: 40, w: 60, h: 110 },
+    ]);
+    // Strip areas add up to exactly the uncovered area: no double counting.
+    expect(area(w.missing.baseline)).toBe(100 * 150 - 60 * 40);
+    expect(w.missing.current).toEqual([]);
+  });
+
+  test("with no baseline the world is the current image", () => {
+    const w = worldFor(null, { w: 80, h: 90 }, null);
+    expect(w.size).toEqual({ w: 80, h: 90 });
+    expect(w.rects.baseline).toBeNull();
+    expect(w.rects.current).toEqual({ x: 0, y: 0, w: 80, h: 90 });
+    expect(w.missing.baseline).toEqual([]);
+    expect(w.missing.current).toEqual([]);
+  });
+
+  test("the diff image takes part in the union and is anchored top-left", () => {
+    const w = worldFor(
+      { w: 100, h: 100 },
+      { w: 100, h: 100 },
+      { w: 130, h: 90 },
+    );
+    expect(w.size).toEqual({ w: 130, h: 100 });
+    expect(w.rects.diff).toEqual({ x: 0, y: 0, w: 130, h: 90 });
+    expect(w.missing.baseline).toEqual([{ x: 100, y: 0, w: 30, h: 100 }]);
+    expect(w.missing.current).toEqual([{ x: 100, y: 0, w: 30, h: 100 }]);
+  });
+
+  test("identical sizes leave nothing missing", () => {
+    const w = worldFor({ w: 50, h: 50 }, { w: 50, h: 50 }, null);
+    expect(w.missing).toEqual({ baseline: [], current: [] });
+  });
+});
+
+describe("fitScale", () => {
+  test("caps the upscale at 2", () => {
+    expect(fitScale({ w: 100, h: 100 }, { w: 1000, h: 1000 })).toBe(2);
+  });
+
+  test("floors at 0.05", () => {
+    expect(fitScale({ w: 100000, h: 10 }, { w: 100, h: 100 })).toBe(0.05);
+  });
+
+  test("fits the limiting axis in between", () => {
+    expect(fitScale({ w: 400, h: 100 }, { w: 200, h: 200 })).toBe(0.5);
+  });
+
+  test("agrees with the fit the existing canvas uses", () => {
+    const cases: [number, number, number, number][] = [
+      [100, 100, 1000, 1000],
+      [100000, 10, 100, 100],
+      [400, 100, 200, 200],
+      [1920, 1080, 800, 600],
+      [0, 100, 100, 100],
+    ];
+    for (const [ww, wh, vw, vh] of cases) {
+      expect(fitScale({ w: ww, h: wh }, { w: vw, h: vh })).toBe(
+        computeFitScale(ww, wh, vw, vh),
+      );
+    }
+  });
+
+  test("is 1 for degenerate sizes", () => {
+    expect(fitScale({ w: 0, h: 100 }, { w: 100, h: 100 })).toBe(1);
+    expect(fitScale({ w: 100, h: 100 }, { w: 0, h: 0 })).toBe(1);
+  });
+});
+
+describe("transformFor", () => {
+  const world = { w: 200, h: 100 };
+  const viewport = { w: 400, h: 400 };
+
+  test("centres the world at fit scale for the identity view", () => {
+    const t = transformFor(world, viewport, { zoom: 1, panX: 0, panY: 0 });
+    expect(t.scale).toBe(2);
+    expect(t.x).toBe(0);
+    expect(t.y).toBe(100);
+  });
+
+  test("applies zoom about the centre, then pan", () => {
+    const t = transformFor(world, viewport, { zoom: 2, panX: 10, panY: -5 });
+    expect(t.scale).toBe(4);
+    expect(t.x).toBe((400 - 200 * 4) / 2 + 10);
+    expect(t.y).toBe((400 - 100 * 4) / 2 - 5);
+  });
+});
+
+describe("zoomAbout", () => {
+  const world = { w: 800, h: 600 };
+  const viewport = { w: 500, h: 400 };
+  const start: View = { zoom: 1.5, panX: 30, panY: -12 };
+
+  test("keeps the canvas point fixed over the same world point", () => {
+    const point = { x: 123, y: 321 };
+    const before = transformFor(world, viewport, start);
+    const anchor = canvasToWorld(before, point);
+    const next = zoomAbout(start, 1.25, point, world, viewport);
+    expect(next.zoom).toBeCloseTo(1.5 * 1.25, 12);
+    const after = worldToCanvas(transformFor(world, viewport, next), anchor);
+    expect(after.x).toBeCloseTo(point.x, 6);
+    expect(after.y).toBeCloseTo(point.y, 6);
+  });
+
+  test("keeps the point fixed when zooming out too", () => {
+    const point = { x: 480, y: 20 };
+    const before = transformFor(world, viewport, start);
+    const anchor = canvasToWorld(before, point);
+    const next = zoomAbout(start, 1 / 1.25, point, world, viewport);
+    const after = worldToCanvas(transformFor(world, viewport, next), anchor);
+    expect(after.x).toBeCloseTo(point.x, 6);
+    expect(after.y).toBeCloseTo(point.y, 6);
+  });
+
+  test("clamps the zoom at 8", () => {
+    const point = { x: 250, y: 200 };
+    const near: View = { zoom: 7.5, panX: 0, panY: 0 };
+    const next = zoomAbout(near, 1.25, point, world, viewport);
+    expect(next.zoom).toBe(8);
+    // Still anchored at the clamped zoom.
+    const anchor = canvasToWorld(transformFor(world, viewport, near), point);
+    const after = worldToCanvas(transformFor(world, viewport, next), anchor);
+    expect(after.x).toBeCloseTo(point.x, 6);
+    expect(after.y).toBeCloseTo(point.y, 6);
+  });
+
+  test("clamps the zoom at 0.25", () => {
+    const point = { x: 10, y: 390 };
+    const near: View = { zoom: 0.3, panX: 0, panY: 0 };
+    const next = zoomAbout(near, 0.5, point, world, viewport);
+    expect(next.zoom).toBe(0.25);
+    const anchor = canvasToWorld(transformFor(world, viewport, near), point);
+    const after = worldToCanvas(transformFor(world, viewport, next), anchor);
+    expect(after.x).toBeCloseTo(point.x, 6);
+    expect(after.y).toBeCloseTo(point.y, 6);
+  });
+});
+
+describe("coordinate conversion", () => {
+  test("canvasToWorld inverts worldToCanvas", () => {
+    const t = transformFor(
+      { w: 640, h: 480 },
+      { w: 500, h: 300 },
+      {
+        zoom: 3.2,
+        panX: -41,
+        panY: 17,
+      },
+    );
+    const p = { x: 217.5, y: 88.25 };
+    const back = canvasToWorld(t, worldToCanvas(t, p));
+    expect(back.x).toBeCloseTo(p.x, 9);
+    expect(back.y).toBeCloseTo(p.y, 9);
+  });
+
+  test("worldToCanvas applies scale then offset", () => {
+    expect(worldToCanvas({ scale: 2, x: 10, y: 20 }, { x: 5, y: 7 })).toEqual({
+      x: 20,
+      y: 34,
+    });
+  });
+});

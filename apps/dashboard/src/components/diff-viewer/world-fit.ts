@@ -8,13 +8,13 @@ import { ZOOM_MAX, ZOOM_MIN } from "./useViewerStore";
  * uniform-fit would produce a sub-readable scale, we clamp here and let
  * the user pan to inspect.
  */
-const MIN_FIT_SCALE = 0.05;
+export const MIN_FIT_SCALE = 0.05;
 
 /**
  * Maximum upscale factor — images smaller than the canvas are scaled up
  * to fill it, but capped here to avoid blurry pixel-art blowups.
  */
-const MAX_UPSCALE = 2;
+export const MAX_UPSCALE = 2;
 
 /**
  * Compute the uniform scale that fits an image of `imgW × imgH` into a
