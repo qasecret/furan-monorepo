@@ -1229,6 +1229,35 @@ describe("the palette's choice when the search answers", () => {
     );
   });
 
+  test("the palette's own Home choice does not leave the palette", async () => {
+    // The page's key listeners (the layout's dispatcher is one) must never
+    // see the Home keydown the palette sends cmdk to choose the first row.
+    const seen: string[] = [];
+    const onWindow = (e: KeyboardEvent) => seen.push(`window:${e.key}`);
+    const onDocument = (e: KeyboardEvent) => seen.push(`document:${e.key}`);
+    window.addEventListener("keydown", onWindow);
+    document.addEventListener("keydown", onDocument);
+    try {
+      const server = hold();
+      render(<Shell role="admin" projects={[SWEEP]} />);
+      const palette = await openPalette();
+      typeSearch("visual");
+      await answerBoth(server);
+      await rows(palette, "Batches", [BATCH]);
+      // The palette did choose, by Home...
+      await waitFor(() => expect(selected(palette)).toBe(BATCH));
+      // ...and no one outside it was told.
+      expect(seen).toEqual([]);
+
+      // A Home the reader types is theirs and travels as it always has.
+      fireEvent.keyDown(screen.getByTestId("command-input"), { key: "Home" });
+      expect(seen).toEqual(["document:Home", "window:Home"]);
+    } finally {
+      window.removeEventListener("keydown", onWindow);
+      document.removeEventListener("keydown", onDocument);
+    }
+  });
+
   test("a failed search is never chosen", async () => {
     const server = hold();
     render(<Shell role="admin" projects={[SWEEP]} />);

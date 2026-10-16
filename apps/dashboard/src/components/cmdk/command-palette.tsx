@@ -69,6 +69,13 @@ const MOVE_KEYS = new Set([
 ]);
 
 /**
+ * The Home keydowns the palette sends cmdk itself, to choose the first row
+ * (R29). They stay inside the palette: the page's key listeners must not see
+ * a key nobody pressed.
+ */
+const OWN_KEYDOWNS = new WeakSet<Event>();
+
+/**
  * The global commands that are also the current page's actions: undo has no
  * other way in than a toast or a chip, so the palette offers it (R16).
  */
@@ -473,13 +480,13 @@ function PaletteBody({
     const timer = setTimeout(() => {
       if (choiceLocked.current) return;
       // The Home key locks the choice too (see `onKeyDown`).
-      rootRef.current?.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Home",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      const home = new KeyboardEvent("keydown", {
+        key: "Home",
+        bubbles: true,
+        cancelable: true,
+      });
+      OWN_KEYDOWNS.add(home);
+      rootRef.current?.dispatchEvent(home);
     }, 0);
     return () => clearTimeout(timer);
   }, [found.pending, foundRowCount, search]);
@@ -554,6 +561,9 @@ function PaletteBody({
       onValueChange={setChosen}
       onKeyDown={(e) => {
         if (MOVE_KEYS.has(e.key)) choiceLocked.current = true;
+        // The palette's own Home goes no further than the palette. cmdk
+        // still handles it: it only asks whether the event was prevented.
+        if (OWN_KEYDOWNS.has(e.nativeEvent)) e.stopPropagation();
       }}
       onPointerMove={(e) => {
         // cmdk chooses the row under the pointer; that is the reader's choice.
