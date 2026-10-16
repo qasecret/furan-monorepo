@@ -1059,6 +1059,19 @@ describe("the palette's choice when the search answers", () => {
     return { held, asked, answer, fail };
   }
 
+  /**
+   * A short real wait, for "the choice stays" checks: the palette makes its
+   * own choice in a timeout set when the rows mount, so a check that nothing
+   * moved must wait past it. (Whether that timeout is needed, to let cmdk's
+   * own flush and sort run first, cannot be shown in jsdom: its rows are in
+   * the list by then either way. It is kept as a guard; the one test that
+   * can see it, "a move before the text last changed", is the check.)
+   */
+  const afterTheTimeout = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
   /** The label of the row Enter would choose. */
   function selected(palette: HTMLElement) {
     return palette.querySelector('[role="option"][aria-selected="true"]')
@@ -1097,7 +1110,7 @@ describe("the palette's choice when the search answers", () => {
     await server.asked("variations.list", "visual");
     await server.answer("builds.list", [build("b1", { name: "visual flow" })]);
     await rows(palette, "Batches", [BATCH]);
-    await settle();
+    await afterTheTimeout();
     expect(selected(palette)).toBe(JUMP_SWEEP);
 
     await server.answer("variations.list", [variation("v1", "visual header")]);
@@ -1157,7 +1170,7 @@ describe("the palette's choice when the search answers", () => {
     await answerBoth(server);
     await rows(palette, "Batches", [BATCH]);
     // Give the palette its chance to move the choice.
-    await settle();
+    await afterTheTimeout();
     expect(selected(palette)).toBe(stays);
     enter();
     expect(pushMock).toHaveBeenCalledWith(
@@ -1177,7 +1190,7 @@ describe("the palette's choice when the search answers", () => {
 
     await answerBoth(server);
     await rows(palette, "Batches", [BATCH]);
-    await settle();
+    await afterTheTimeout();
     expect(selected(palette)).toBe(JUMP_TWO);
   });
 
@@ -1216,7 +1229,7 @@ describe("the palette's choice when the search answers", () => {
       [variation("v1", "visual header")],
       "visual",
     );
-    await settle();
+    await afterTheTimeout();
     expect(headings(palette)).not.toContain("Tests");
     expect(headings(palette)).not.toContain("Batches");
     expect(selected(palette)).toBe(JUMP_SWEEP);
@@ -1258,6 +1271,100 @@ describe("the palette's choice when the search answers", () => {
     }
   });
 
+  test("pointer movement over the search box, a heading or empty space does not lock the choice", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    // Nothing here is a row cmdk would choose.
+    fireEvent.pointerMove(screen.getByTestId("command-input"));
+    fireEvent.pointerMove(
+      palette.querySelector("[cmdk-group-heading]") as HTMLElement,
+    );
+    fireEvent.pointerMove(palette.querySelector("[cmdk-list]") as HTMLElement);
+    fireEvent.pointerMove(palette);
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    await waitFor(() => expect(selected(palette)).toBe(BATCH));
+  });
+
+  test("pointer movement over a failed search's row does not lock the choice", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    await server.asked("variations.list", "visual");
+    // The batches have failed and show it; the tests are still out.
+    await act(async () => {
+      server.held.find((h) => h.path === "builds.list")?.fail();
+    });
+    await rows(palette, "Batches", ["Couldn't search batches"]);
+    fireEvent.pointerMove(
+      within(palette).getByRole("option", { name: "Couldn't search batches" }),
+    );
+    expect(selected(palette)).toBe(JUMP_SWEEP);
+
+    await server.answer("variations.list", [variation("v1", "visual header")]);
+    await rows(palette, "Tests", ["visual header"]);
+    await waitFor(() => expect(selected(palette)).toBe("visual header"));
+  });
+
+  test("keys pressed while an IME is composing do not lock the choice", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP, TWO]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    const input = screen.getByTestId("command-input");
+    // A candidate is being picked: the arrow keys are the IME's.
+    fireEvent.keyDown(input, { key: "ArrowDown", isComposing: true });
+    fireEvent.keyDown(input, { key: "ArrowDown", keyCode: 229 });
+
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    await waitFor(() => expect(selected(palette)).toBe(BATCH));
+  });
+
+  test("when the batches fail and the tests answer, the first row that is not an error is chosen", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    await server.asked("variations.list", "visual");
+    await act(async () => {
+      server.held.find((h) => h.path === "builds.list")?.fail();
+    });
+    await server.answer("variations.list", [variation("v1", "visual header")]);
+    await rows(palette, "Batches", ["Couldn't search batches"]);
+    await rows(palette, "Tests", ["visual header"]);
+    // The error row is first in the list; it is not what is chosen.
+    expect(shown(palette)[0]).toBe("Couldn't search batches");
+    await waitFor(() => expect(selected(palette)).toBe("visual header"));
+    enter();
+    expect(pushMock).toHaveBeenCalledWith("/projects/p1/variations/v1");
+  });
+
+  test("a space typed after the answer chooses the first row again", async () => {
+    const server = hold();
+    render(<Shell role="admin" projects={[SWEEP]} />);
+    const palette = await openPalette();
+    typeSearch("visual");
+    await answerBoth(server);
+    await rows(palette, "Batches", [BATCH]);
+    await waitFor(() => expect(selected(palette)).toBe(BATCH));
+    // The reader moves the choice, then types a space: the answer is the
+    // same (the text is trimmed), the text has changed, so the choice is the
+    // first row as shown again.
+    fireEvent.keyDown(screen.getByTestId("command-input"), {
+      key: "ArrowDown",
+    });
+    expect(selected(palette)).not.toBe(BATCH);
+    typeSearch("visual ");
+    await afterTheTimeout();
+    expect(selected(palette)).toBe(BATCH);
+  });
+
   test("a failed search is never chosen", async () => {
     const server = hold();
     render(<Shell role="admin" projects={[SWEEP]} />);
@@ -1269,7 +1376,7 @@ describe("the palette's choice when the search answers", () => {
     await server.fail();
     await rows(palette, "Batches", ["Couldn't search batches"]);
     await rows(palette, "Tests", ["Couldn't search tests"]);
-    await settle();
+    await afterTheTimeout();
     // The error rows come first in the list; the choice is a real row.
     expect(selected(palette)).toBe(JUMP_SWEEP);
     for (const option of within(palette).getAllByRole("option")) {
@@ -1290,7 +1397,7 @@ describe("the palette's choice when the search answers", () => {
     await again.asked("variations.list", "zzzz");
     await again.fail();
     await rows(empty, "Batches", ["Couldn't search batches"]);
-    await settle();
+    await afterTheTimeout();
     expect(selected(empty)).toBeUndefined();
   });
 });
