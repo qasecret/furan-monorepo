@@ -17,7 +17,15 @@ import type {
 } from "react";
 import { useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 // Review-action spies: the keyboard shortcuts and the ApprovalBar buttons
 // must reach the server through the SAME call (see the hotkey parity block at
@@ -525,6 +533,25 @@ function DiffViewer(
     />
   );
 }
+
+/**
+ * The viewer's history writes (R31): a mode change replaces the URL with
+ * `history.replaceState`, which Next applies to `usePathname` and
+ * `useSearchParams` in a transition, with no navigation. Here the write moves
+ * the URL the mocks read, and the render that shows the mode reads it.
+ */
+let historyWrite: MockInstance<History["replaceState"]>;
+beforeEach(() => {
+  historyWrite = vi
+    .spyOn(window.history, "replaceState")
+    .mockImplementation((_data, _unused, url) => {
+      if (url === undefined || url === null) return;
+      const at = new URL(String(url), "http://localhost");
+      navState.pathname = at.pathname;
+      navState.search = at.search.slice(1);
+    });
+});
+afterEach(() => historyWrite.mockRestore());
 
 beforeEach(() => {
   mockGroup = undefined;
@@ -2092,9 +2119,14 @@ describe("DiffViewer: the review loop", () => {
   const stepUrl = (runId: string, id: string, query = "") =>
     `/projects/${PROJECT}/runs/${runId}/checkpoints/${id}${query}`;
 
+  /** The viewer on its step's route, as the checkpoint page renders it. */
   function renderViewer(
     props: Partial<ComponentProps<typeof DiffViewer>> = {},
   ) {
+    navState.pathname = stepUrl(
+      props.runId ?? RUN_ID,
+      props.initialCheckpointId ?? "c1",
+    );
     return render(
       <DiffViewer
         runId={RUN_ID}
@@ -2657,11 +2689,13 @@ describe("DiffViewer: the review loop", () => {
       };
     });
     afterEach(() => vi.unstubAllGlobals());
-    /** No navigation of the step on screen, c1, was ever made. */
+    /** No navigation of the step on screen, c1, nor write of its URL. */
     const neverToC1 = () =>
-      [...routerSpies.replace.mock.calls, ...routerSpies.push.mock.calls].every(
-        ([href]) => !String(href).startsWith(stepUrl(RUN_ID, "c1")),
-      );
+      [
+        ...routerSpies.replace.mock.calls,
+        ...routerSpies.push.mock.calls,
+        ...historyWrite.mock.calls.map(([, , url]) => [url]),
+      ].every(([href]) => !String(href).startsWith(stepUrl(RUN_ID, "c1")));
     const stageMode = () =>
       document
         .querySelector("[data-testid=single-stage-host]")
@@ -2714,14 +2748,17 @@ describe("DiffViewer: the review loop", () => {
       expect(neverToC1()).toBe(true);
     });
 
-    test("with no move on its way, a mode change writes this step's URL", () => {
+    test("with no move on its way, a mode change writes this step's URL, to the history: no navigation (R31)", () => {
       renderViewer({ view: "overlay" });
       press("d");
-      expect(routerSpies.replace).toHaveBeenCalledOnce();
-      expect(routerSpies.replace).toHaveBeenCalledWith(
+      expect(historyWrite).toHaveBeenCalledOnce();
+      expect(historyWrite).toHaveBeenCalledWith(
+        null,
+        "",
         stepUrl(RUN_ID, "c1", "?view=diff"),
-        { scroll: false },
       );
+      expect(routerSpies.replace).not.toHaveBeenCalled();
+      expect(routerSpies.push).not.toHaveBeenCalled();
     });
 
     describe("R22: a mode change while one of the viewer's links is on its way", () => {
@@ -2780,10 +2817,12 @@ describe("DiffViewer: the review loop", () => {
         window.removeEventListener("click", browser);
         expect(routerSpies.push).not.toHaveBeenCalled();
         press("2");
-        expect(routerSpies.replace).toHaveBeenCalledWith(
+        expect(historyWrite).toHaveBeenCalledWith(
+          null,
+          "",
           stepUrl(RUN_ID, "c1", "?view=swipe"),
-          { scroll: false },
         );
+        expect(routerSpies.replace).not.toHaveBeenCalled();
       });
     });
   });
@@ -4281,10 +4320,12 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     localStorage.clear();
   });
 
+  /** The viewer on step `id`'s route, as the checkpoint page renders it. */
   function openStep(
     id: string,
     props: Partial<ComponentProps<typeof DiffViewer>> = {},
   ) {
+    navState.pathname = stepUrl(id);
     return render(
       <DiffViewer
         runId={RUN_ID}
@@ -4379,11 +4420,13 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
       reviewContext: { status: "failed", facets: { os: "macOS" } },
     });
     fireEvent.click(r.getByRole("radio", { name: /^diff$/i }));
-    expect(routerSpies.replace).toHaveBeenCalledOnce();
-    expect(routerSpies.replace).toHaveBeenCalledWith(
+    expect(historyWrite).toHaveBeenCalledOnce();
+    expect(historyWrite).toHaveBeenCalledWith(
+      null,
+      "",
       stepUrl("c2", "?status=failed&os=macOS&view=diff"),
-      { scroll: false },
     );
+    expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
     expect(JSON.parse(stored() ?? "{}").mode).toBe("diff");
@@ -4399,9 +4442,10 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
   test("d and o change the URL's mode, not only the preference", () => {
     const r = openStep("c2", { view: "overlay" });
     press("d");
-    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+    expect(historyWrite).toHaveBeenLastCalledWith(
+      null,
+      "",
       stepUrl("c2", "?view=diff"),
-      { scroll: false },
     );
     expect(shownMode()).toBe("diff");
     // Back to the mode it left: the URL's Overlay, not the stored default.
@@ -4412,10 +4456,12 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     ).toBe("true");
     press("o");
     expect(shownMode()).toBe("diff");
-    expect(routerSpies.replace).toHaveBeenLastCalledWith(
+    expect(historyWrite).toHaveBeenLastCalledWith(
+      null,
+      "",
       stepUrl("c2", "?view=diff"),
-      { scroll: false },
     );
+    expect(routerSpies.replace).not.toHaveBeenCalled();
   });
 
   test("1–5 follow the step on screen: on a new test only 1 is the viewer's; on the next step, with a baseline, 2 is Swipe", () => {
@@ -4437,8 +4483,12 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     }
     expect(shownMode()).toBe("side-by-side");
     expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(historyWrite).not.toHaveBeenCalled();
     expect(stored()).toBeNull();
 
+    // → shows step 2 at once; its route is still on its way, so the mode
+    // goes with it, as a replace to step 2: a history write would call the
+    // step change off.
     pressKey("ArrowRight");
     expect(pressKey("2").defaultPrevented).toBe(true);
     expect(shownMode()).toBe("swipe");
@@ -4446,6 +4496,7 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
       stepUrl("c2", "?view=swipe"),
       { scroll: false },
     );
+    expect(historyWrite).not.toHaveBeenCalled();
   });
 
   test("the editor on Swipe (spec §4.4): side by side while it is open, Swipe again when it closes, the URL and the preference untouched; the override is the step's", () => {
@@ -4463,6 +4514,7 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     expect(shownMode()).toBe("swipe");
     expect(checked()).toBe("swipe");
     expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(historyWrite).not.toHaveBeenCalled();
     expect(stored()).toBeNull();
 
     // Open again, then ← to step 1, which has no baseline: side by side on
@@ -4494,6 +4546,7 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     openStep("c1", { view: "swipe" });
     expect(shownMode()).toBe("side-by-side");
     expect(routerSpies.replace).not.toHaveBeenCalled();
+    expect(historyWrite).not.toHaveBeenCalled();
     expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
     expect(stored()).toBeNull();
 
@@ -4511,5 +4564,121 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
     // As the route commits: the next step's own page, with the URL's view.
     openStep("c2", { view: "swipe" });
     expect(shownMode()).toBe("swipe");
+  });
+
+  describe("R31: a mode change is a history write, and the view is the URL's", () => {
+    test("1–5, o and d write the history only: no router.replace and no router.push, so the page is never rendered again", () => {
+      const r = openStep("c2", { view: "overlay" });
+      for (const [key, mode] of [
+        ["2", "swipe"],
+        ["3", "flicker"],
+        ["5", "diff"],
+        ["1", "side-by-side"],
+        ["o", "swipe"],
+        ["d", "diff"],
+      ] as const) {
+        press(key);
+        expect(shownMode(), key).toBe(mode);
+        expect(historyWrite, key).toHaveBeenLastCalledWith(
+          null,
+          "",
+          stepUrl("c2", `?view=${mode}`),
+        );
+      }
+      fireEvent.click(r.getByRole("radio", { name: /^overlay$/i }));
+      expect(shownMode()).toBe("overlay");
+      expect(historyWrite).toHaveBeenCalledTimes(7);
+      expect(routerSpies.replace).not.toHaveBeenCalled();
+      expect(routerSpies.push).not.toHaveBeenCalled();
+    });
+
+    test("useSearchParams reflects the new view: the viewer reads it there, and its links carry it", () => {
+      const r = openStep("c2", { view: "overlay" });
+      press("2");
+      // Next applied the write: the URL names Swipe, the page's prop still
+      // Overlay.
+      expect(navState.search).toBe("view=swipe");
+      expect(shownMode()).toBe("swipe");
+      // The URL moves again without a page render (a history write of
+      // another part of the viewer, or Next's own): the viewer follows it.
+      navState.search = "view=diff";
+      r.rerender(
+        <DiffViewer
+          runId={RUN_ID}
+          projectId={PROJECT}
+          initialCheckpointId="c2"
+          userId="u1"
+          view="overlay"
+        />,
+      );
+      expect(shownMode()).toBe("diff");
+      expect(
+        r.getByRole("radio", { name: /^diff$/i }).getAttribute("aria-checked"),
+      ).toBe("true");
+      // ← carries the URL's view to the next step.
+      press("ArrowLeft");
+      expect(routerSpies.replace).toHaveBeenLastCalledWith(
+        stepUrl("c1", "?view=diff"),
+      );
+    });
+
+    test("Back and Forward restore the mode: an entry a mode change rewrote opens in its URL's mode, over the page's restored view", () => {
+      // Step 2 opened in Overlay; 2 rewrote its entry to Swipe; → then went
+      // on to step 1 (a new entry, in Swipe).
+      openStep("c2", { view: "overlay" });
+      press("2");
+      expect(navState.search).toBe("view=swipe");
+      cleanup();
+      openStep("c1", { view: "swipe" });
+      press("1");
+      cleanup();
+
+      // Back: Next restores step 2's page as it was rendered (view=overlay),
+      // under the entry's URL, which says Swipe.
+      navState.search = "view=swipe";
+      openStep("c2", { view: "overlay" });
+      expect(shownMode()).toBe("swipe");
+      cleanup();
+
+      // Forward: step 1's entry, which 1 rewrote to side by side.
+      navState.search = "view=side-by-side";
+      openStep("c1", { view: "swipe" });
+      expect(shownMode()).toBe("side-by-side");
+      cleanup();
+
+      // Back again, to step 2: Swipe, still.
+      navState.search = "view=swipe";
+      openStep("c2", { view: "overlay" });
+      expect(shownMode()).toBe("swipe");
+      expect(routerSpies.replace).not.toHaveBeenCalled();
+      expect(routerSpies.push).not.toHaveBeenCalled();
+    });
+
+    test("a user id that goes to null while the viewer is open is ignored: the user's preferences stay, and are still stored for them", () => {
+      localStorage.setItem(
+        prefsKey("u1"),
+        JSON.stringify({
+          ...DEFAULT_VIEWER_PREFS,
+          mode: "overlay",
+          opacity: 0.8,
+        }),
+      );
+      const r = openStep("c2");
+      expect(shownMode()).toBe("overlay");
+      // A later render of the page whose session lookup failed.
+      r.rerender(
+        <DiffViewer
+          runId={RUN_ID}
+          projectId={PROJECT}
+          initialCheckpointId="c2"
+          userId={null}
+        />,
+      );
+      expect(useViewerPrefs.getState().userId).toBe("u1");
+      expect(useViewerPrefs.getState().prefs.opacity).toBe(0.8);
+      expect(shownMode()).toBe("overlay");
+      press("5");
+      expect(JSON.parse(stored() ?? "{}").mode).toBe("diff");
+    });
   });
 });

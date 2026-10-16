@@ -8,7 +8,15 @@ import {
   within,
 } from "@testing-library/react";
 import { useMemo, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 import { fake } from "./pixi-fake";
 import { createBackend, TrpcBackend } from "./trpc-backend";
@@ -290,7 +298,19 @@ function enabled(id: string): boolean {
 
 const editing = () => useViewerStore.getState().ignoreEditMode !== "off";
 
+/** The URL written with `history.replaceState` (R31); jsdom's is left alone. */
+let historyWrite: MockInstance<History["replaceState"]>;
+/** The URL was written nowhere: no history write, no navigation. */
+function noUrlWrite() {
+  expect(historyWrite).not.toHaveBeenCalled();
+  expect(nav.router.replace).not.toHaveBeenCalled();
+  expect(nav.router.push).not.toHaveBeenCalled();
+}
+
 beforeEach(() => {
+  historyWrite = vi
+    .spyOn(window.history, "replaceState")
+    .mockImplementation(() => {});
   counter += 1;
   fake.registry.apps.length = 0;
   fake.registry.created.length = 0;
@@ -371,10 +391,12 @@ describe("the five mode commands on 1–5 (spec §4.1)", () => {
       expect(shownMode()).toBe(mode);
       expect(checked()).toBe(mode);
       expect(stored()).toBe(mode);
-      expect(nav.router.replace).toHaveBeenLastCalledWith(
+      expect(historyWrite).toHaveBeenLastCalledWith(
+        null,
+        "",
         `${STEP}?view=${mode}`,
-        { scroll: false },
       );
+      expect(nav.router.replace).not.toHaveBeenCalled();
     },
   );
 
@@ -387,7 +409,7 @@ describe("the five mode commands on 1–5 (spec §4.1)", () => {
       expect(shownMode(), mode).toBe("side-by-side");
     }
     expect(localStorage.getItem(prefsKey("u1"))).toBeNull();
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
     // Side by side is there: its key is the viewer's.
     expect(enabled("viewer.mode.sideBySide")).toBe(true);
     expect(press("1").defaultPrevented).toBe(true);
@@ -493,7 +515,7 @@ describe("o and d over the five modes", () => {
     expect(shownMode()).toBe("side-by-side");
     expect(stored()).toBe("side-by-side");
     expect(localStorage.getItem(prefsKey("u1"))).toBeNull();
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
   });
 
   test("d goes to Diff, and back to the mode it left", async () => {
@@ -592,7 +614,7 @@ describe("the toolbar's radio group (spec §4.1)", () => {
       expect(e.defaultPrevented).toBe(true);
     }
     expect(checked()).toBe("swipe");
-    expect(nav.router.replace).toHaveBeenCalledOnce();
+    expect(historyWrite).toHaveBeenCalledOnce();
   });
 
   test("the arrows are the group's: they never move to another step", async () => {
@@ -644,7 +666,7 @@ describe("the toolbar's radio group (spec §4.1)", () => {
     }
     expect(radio("Side by side").hasAttribute("aria-disabled")).toBe(false);
     expect(checked()).toBe("side-by-side");
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
 
     act(() => radio("Side by side").focus());
     for (const key of ["ArrowRight", "ArrowLeft", "End", "Home"]) {
@@ -741,7 +763,7 @@ describe("the ignore-region editor in Swipe and Flicker (spec §4.4, R3)", () =>
       expect(shownMode()).toBe(mode);
       expect(checked()).toBe(mode);
       expect(stored()).toBe(mode);
-      expect(nav.router.replace).not.toHaveBeenCalled();
+      noUrlWrite();
     },
   );
 
@@ -762,7 +784,7 @@ describe("the ignore-region editor in Swipe and Flicker (spec §4.4, R3)", () =>
     expect(editing()).toBe(false);
     expect(shownMode()).toBe("swipe");
     expect(stored()).toBe("swipe");
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
   });
 
   test("the editor shows side by side over the URL's Swipe too, and never writes the URL", async () => {
@@ -775,7 +797,7 @@ describe("the ignore-region editor in Swipe and Flicker (spec §4.4, R3)", () =>
     press("Escape");
     expect(shownMode()).toBe("swipe");
     expect(stored()).toBe("overlay");
-    expect(nav.router.replace).not.toHaveBeenCalled();
+    noUrlWrite();
   });
 
   test.each(["side-by-side", "overlay", "diff"] as const)(
