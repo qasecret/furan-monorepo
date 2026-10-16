@@ -64,8 +64,22 @@ if (proto) {
 // jsdom Element does not implement it. Defensive shim so future tests don't
 // break when they mount a <Select> for the first time.
 const elemProto = globalThis.Element?.prototype as
-  | (Element & { scrollIntoView?: () => void })
-  | undefined;
+  (Element & { scrollIntoView?: () => void }) | undefined;
 if (elemProto && typeof elemProto.scrollIntoView !== "function") {
   elemProto.scrollIntoView = () => undefined;
+}
+
+// jsdom's Blob has no `arrayBuffer()`, which every browser does. Read through
+// FileReader, which jsdom has, so code that inspects a blob's bytes can run.
+const blobProto = globalThis.Blob?.prototype as
+  (Blob & { arrayBuffer?: () => Promise<ArrayBuffer> }) | undefined;
+if (blobProto && typeof blobProto.arrayBuffer !== "function") {
+  blobProto.arrayBuffer = function (this: Blob): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(this);
+    });
+  };
 }

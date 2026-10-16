@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { compare } from "odiff-bin";
 
 import type { L1Result } from "./l1.js";
+import { ensurePngEnd } from "./png-end.js";
 import type { EngineConfig } from "./types.js";
 
 /** odiff backend. Native support for ignoreRegions and antialiasing flag. */
@@ -12,8 +13,7 @@ export async function runL1Odiff(
   baseline: Buffer,
   candidate: Buffer,
   ignoreAreas:
-    | Array<{ x: number; y: number; width: number; height: number }>
-    | undefined,
+    Array<{ x: number; y: number; width: number; height: number }> | undefined,
   engineConfig: EngineConfig,
 ): Promise<L1Result> {
   const dir = mkdtempSync(join(tmpdir(), "furan-diff-"));
@@ -49,11 +49,11 @@ export async function runL1Odiff(
         regions: [],
       };
     }
-    const diffBytes = readFileSync(dfPath);
     return {
       diffPercent: result.diffPercentage,
       pixelMismatchCount: result.diffCount,
-      diffImageBytes: diffBytes,
+      // odiff leaves off the closing IEND chunk, which browsers will not decode.
+      diffImageBytes: ensurePngEnd(readFileSync(dfPath)),
       regions: [],
     };
   } finally {

@@ -17,7 +17,7 @@
  * entries, so the limits bite on everything else (prefetched and past steps).
  *
  * No object URL is made on the way to a bitmap unless the browser refuses the
- * blob twice (see `decodeImage`).
+ * blob and its repaired or re-typed copy too (see `decodeImage`).
  */
 
 import {
@@ -196,22 +196,72 @@ export function storageUrl(key: string): string {
   return `${browserEnv.NEXT_PUBLIC_API_URL}/api/v1/storage/${encodeURIComponent(key)}`;
 }
 
+const PNG_SIGNATURE = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+/** The IEND chunk: length 0, type "IEND", then its CRC. A constant. */
+const IEND_CHUNK = new Uint8Array([
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
+
+async function bytesIn(blob: Blob, start: number, end: number) {
+  return new Uint8Array(await blob.slice(start, end).arrayBuffer());
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+/**
+ * `blob` with the closing IEND chunk appended, when it is a PNG that lacks
+ * one; `null` otherwise (not a PNG, already complete, or unreadable). A PNG
+ * with no IEND is what the odiff engine used to store as its diff image:
+ * browsers refuse to decode it. Reads only the first 8 and last 12 bytes, and
+ * the new blob refers to the old one rather than copying it.
+ */
+async function withPngEnd(blob: Blob): Promise<Blob | null> {
+  try {
+    const head = await bytesIn(blob, 0, PNG_SIGNATURE.length);
+    if (!sameBytes(head, PNG_SIGNATURE)) return null;
+    const tail = await bytesIn(
+      blob,
+      Math.max(0, blob.size - IEND_CHUNK.length),
+      blob.size,
+    );
+    if (sameBytes(tail, IEND_CHUNK)) return null;
+    return new Blob([blob, IEND_CHUNK], { type: "image/png" });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Decode an image blob into a bitmap.
  *
  * `createImageBitmap(blob)` can be stricter than an image element about some
- * PNG variants, or refuse a blob whose type is missing or wrong. Two fallbacks,
- * cheapest first:
- *   1. the same bytes re-typed as image/png (a zero-copy view);
- *   2. an `HTMLImageElement` fed by an object URL, revoked as soon as the
+ * PNG variants, or refuse a blob whose type is missing or wrong. When it
+ * refuses, three routes are tried in turn, cheapest first:
+ *   1. a PNG that lacks its closing IEND chunk, completed (this repairs diff
+ *      images stored before the engine wrote them whole);
+ *   2. the same bytes re-typed as image/png (a zero-copy view);
+ *   3. an `HTMLImageElement` fed by an object URL, revoked as soon as the
  *      element has been bitmapped (the bitmap keeps no reference to the URL).
- * Rejects when all three routes fail.
+ * Rejects when every route fails.
  */
 export async function decodeImage(blob: Blob): Promise<ImageBitmap> {
   try {
     return await createImageBitmap(blob);
   } catch {
-    // Fall through to the re-typed blob.
+    // Fall through to the repaired blob.
+  }
+  const completed = await withPngEnd(blob);
+  if (completed !== null) {
+    try {
+      return await createImageBitmap(completed);
+    } catch {
+      // Fall through to the re-typed blob.
+    }
   }
   try {
     return await createImageBitmap(blob.slice(0, blob.size, "image/png"));
