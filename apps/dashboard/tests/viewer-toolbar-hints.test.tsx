@@ -71,7 +71,7 @@ function hints(): Record<string, [string | null, string | null]> {
     zoomIn: read(screen.getByTestId("zoom-in-button")),
     prevChange: read(screen.getByTestId("diff-prev")),
     nextChange: read(screen.getByTestId("diff-next")),
-    diffOnly: read(screen.getByRole("tab", { name: "Diff only" })),
+    diff: read(screen.getByRole("tab", { name: "Diff" })),
     highlight: read(screen.getByTestId("highlight-toggle")),
     editor: read(screen.getByTestId("edit-regions-toggle")),
   };
@@ -94,7 +94,7 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in (=)", "= Plus"],
       prevChange: ["Previous change (P)", "P"],
       nextChange: ["Next change (N)", "N"],
-      diffOnly: ["Diff only (D)", "D"],
+      diff: ["Diff (D)", "D"],
       highlight: ["Highlight diffs (H)", "H"],
       editor: ["Edit regions (I)", "I"],
     });
@@ -121,7 +121,7 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
-      diffOnly: [null, null],
+      diff: [null, null],
       highlight: [null, null],
       editor: [null, null],
     });
@@ -138,7 +138,7 @@ describe("ViewerToolbar's key hints come from the command registry (R35)", () =>
       zoomIn: ["Zoom in", null],
       prevChange: ["Previous change", null],
       nextChange: ["Next change", null],
-      diffOnly: [null, null],
+      diff: [null, null],
       highlight: [null, null],
       editor: [null, null],
     });

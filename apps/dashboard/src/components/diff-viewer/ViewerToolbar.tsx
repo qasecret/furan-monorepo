@@ -37,7 +37,7 @@ import { trpc } from "@/lib/trpc";
 const MODES: { value: ViewerMode; label: string; Icon: typeof Layers }[] = [
   { value: "side-by-side", label: "Side by side", Icon: SplitSquareHorizontal },
   { value: "overlay", label: "Overlay", Icon: SlidersHorizontal },
-  { value: "diff", label: "Diff only", Icon: Layers },
+  { value: "diff", label: "Diff", Icon: Layers },
 ];
 
 /**

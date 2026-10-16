@@ -225,8 +225,12 @@ export const VIEWER_COMMANDS: Command<ViewerCtx>[] = [
     group: "View",
     keys: ["d"],
     scope: "viewer",
+    // To Diff, and back to the mode it was left from.
     run: () =>
-      prefs().set("mode", shownMode() === "diff" ? "side-by-side" : "diff"),
+      prefs().set(
+        "mode",
+        shownMode() === "diff" ? prefs().previousMode : "diff",
+      ),
   },
   {
     id: "viewer.cycleMode",

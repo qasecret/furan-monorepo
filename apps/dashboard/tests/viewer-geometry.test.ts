@@ -11,7 +11,6 @@ import {
   type Rect,
   type View,
 } from "../src/components/diff-viewer/viewer-geometry";
-import { computeFitScale } from "../src/components/diff-viewer/world-fit";
 
 const area = (rects: Rect[]): number =>
   rects.reduce((sum, r) => sum + r.w * r.h, 0);
@@ -71,6 +70,16 @@ describe("worldFor", () => {
     const w = worldFor({ w: 50, h: 50 }, { w: 50, h: 50 }, null);
     expect(w.missing).toEqual({ baseline: [], current: [] });
   });
+
+  test("an image with no area leaves no zero-area strip", () => {
+    // A 0×0 baseline is short on both axes, but its bottom strip would be 0
+    // wide: only the right strip, which is the whole world, is missing.
+    const w = worldFor({ w: 0, h: 0 }, { w: 100, h: 50 }, null);
+    expect(w.missing.baseline).toEqual([{ x: 0, y: 0, w: 100, h: 50 }]);
+    // A world with no height: the narrower image's right strip has no area.
+    const flat = worldFor({ w: 50, h: 0 }, { w: 100, h: 0 }, null);
+    expect(flat.missing).toEqual({ baseline: [], current: [] });
+  });
 });
 
 describe("fitScale", () => {
@@ -84,21 +93,6 @@ describe("fitScale", () => {
 
   test("fits the limiting axis in between", () => {
     expect(fitScale({ w: 400, h: 100 }, { w: 200, h: 200 })).toBe(0.5);
-  });
-
-  test("agrees with the fit the existing canvas uses", () => {
-    const cases: [number, number, number, number][] = [
-      [100, 100, 1000, 1000],
-      [100000, 10, 100, 100],
-      [400, 100, 200, 200],
-      [1920, 1080, 800, 600],
-      [0, 100, 100, 100],
-    ];
-    for (const [ww, wh, vw, vh] of cases) {
-      expect(fitScale({ w: ww, h: wh }, { w: vw, h: vh })).toBe(
-        computeFitScale(ww, wh, vw, vh),
-      );
-    }
   });
 
   test("is 1 for degenerate sizes", () => {

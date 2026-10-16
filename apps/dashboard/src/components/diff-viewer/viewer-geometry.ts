@@ -77,7 +77,8 @@ const rectOf = (s: Size): Rect => ({ x: 0, y: 0, w: s.w, h: s.h });
  * The parts of a `world`-sized area that an image anchored top-left does not
  * cover. Only a right strip and a bottom strip are possible. The right strip
  * takes the full world height; the bottom strip spans only the image's own
- * width, so the two never overlap.
+ * width, so the two never overlap. A strip with no area (an image with no
+ * width, a world with no height) is no strip.
  */
 function uncovered(world: Size, image: Size | null): Rect[] {
   if (!image) return [];
@@ -88,7 +89,7 @@ function uncovered(world: Size, image: Size | null): Rect[] {
   if (image.h < world.h) {
     strips.push({ x: 0, y: image.h, w: image.w, h: world.h - image.h });
   }
-  return strips;
+  return strips.filter((r) => r.w > 0 && r.h > 0);
 }
 
 export function worldFor(
@@ -118,7 +119,6 @@ export function worldFor(
 /**
  * The uniform scale that fits `world` inside `viewport`: never more than
  * `MAX_UPSCALE`, never less than `MIN_FIT_SCALE`; 1 for degenerate sizes.
- * Same rule as `computeFitScale` in `world-fit.ts`.
  */
 export function fitScale(world: Size, viewport: Size): number {
   if (world.w <= 0 || world.h <= 0 || viewport.w <= 0 || viewport.h <= 0) {

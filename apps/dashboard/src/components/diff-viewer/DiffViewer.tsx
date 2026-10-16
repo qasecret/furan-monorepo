@@ -19,6 +19,7 @@ import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
 import { GroupApprovalCallout } from "./GroupApprovalCallout";
 import { IgnoreRegionListPanel } from "./IgnoreRegionListPanel";
+import { useImageSet, type ImageSetRequest } from "./image-set";
 import type { DiffRegion } from "./layers/regionTypes";
 import { useReviewActions } from "./review-actions";
 import { SizeChip } from "./SizeChip";
@@ -33,7 +34,7 @@ import { useReducedMotion } from "./useReducedMotion";
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { useViewerPrefs } from "./viewer-prefs";
-import { ViewerCanvas } from "./ViewerCanvas";
+import { ViewerStage } from "./ViewerStage";
 import { ViewerToolbar } from "./ViewerToolbar";
 import { ViewportSwitcher } from "./ViewportSwitcher";
 
@@ -48,7 +49,6 @@ import { usePlatform } from "@/lib/commands/platform";
 import { useSingleKeyShortcuts } from "@/lib/commands/prefs";
 import { useCommandKeys, useRegisteredCommands } from "@/lib/commands/registry";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
-import { browserEnv } from "@/lib/env";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
 import { useIsDecisionInFlight } from "@/lib/review/use-review-mutations";
@@ -110,86 +110,6 @@ function inFacets(
   );
 }
 
-/**
- * Resolves a storage key to a blob: URL by fetching the authenticated
- * `/api/v1/storage/:key` proxy with `credentials: "include"`. We can't
- * hand the proxy URL straight to pixi's `Assets.load` because pixi's
- * loader doesn't propagate cookies. Pre-fetching → object URL is
- * cookie-aware and works across browsers.
- */
-function useAuthedImage(key: string | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!key) {
-      setUrl(null);
-      return;
-    }
-    let active = true;
-    let createdUrl: string | null = null;
-    (async () => {
-      try {
-        const res = await fetch(
-          `${browserEnv.NEXT_PUBLIC_API_URL}/api/v1/storage/${key}`,
-          { credentials: "include" },
-        );
-        if (!res.ok) {
-          if (active) setUrl(null);
-          return;
-        }
-        const blob = await res.blob();
-        if (!active) return;
-        createdUrl = URL.createObjectURL(blob);
-        setUrl(createdUrl);
-      } catch {
-        if (active) setUrl(null);
-      }
-    })();
-    return () => {
-      active = false;
-      // Defer revoke so downstream consumers — primarily Pixi's async
-      // mountImageLayer — can finish loading from the blob URL before
-      // it's invalidated. Without the delay, switching checkpoints
-      // while Pixi is still fetching produced "Failed to fetch" /
-      // "WebGL: INVALID_VALUE: texImage2D: bad image data" and left
-      // the canvas blank until a hard reload.
-      if (createdUrl) {
-        const toRevoke = createdUrl;
-        setTimeout(() => URL.revokeObjectURL(toRevoke), 10_000);
-      }
-    };
-  }, [key]);
-  return url;
-}
-
-/**
- * Resolves the natural pixel dimensions of an image URL. Creates a
- * temporary Image() object, fires on `load`, then returns the measured
- * width + height. Returns null until the image has loaded or if the URL is
- * absent. The effect re-runs whenever the URL changes (e.g. viewport
- * switch), keeping the chip in sync.
- */
-function useImageDimensions(
-  url: string | null,
-): { width: number; height: number } | null {
-  const [dims, setDims] = useState<{ width: number; height: number } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (!url) {
-      setDims(null);
-      return;
-    }
-    const img = new Image();
-    img.onload = () =>
-      setDims({ width: img.naturalWidth, height: img.naturalHeight });
-    img.src = url;
-    return () => {
-      img.onload = null;
-    };
-  }, [url]);
-  return dims;
-}
-
 export function DiffViewer({
   runId,
   diffId,
@@ -203,7 +123,8 @@ export function DiffViewer({
   // paint is already their mode and the canvas never mounts in a mode it then
   // leaves. `hydrate` reads once per user (the viewer remounts on every step
   // and the store outlives it), so from the second render on it does nothing.
-  if (userId !== null) useViewerPrefs.getState().hydrate(userId);
+  // With no user it holds the defaults in memory, never an earlier user's.
+  useViewerPrefs.getState().hydrate(userId);
   const router = useRouter();
   const utils = trpc.useUtils();
   const context = reviewContext ?? NO_REVIEW_CONTEXT;
@@ -560,12 +481,57 @@ export function DiffViewer({
     if (next) setViewport(next);
   }, [uniqueViewports, activeViewport, candidateScreenshot, setViewport]);
 
-  const baselineUrl = useAuthedImage(baselineScreenshot?.imageKey);
-  const candidateUrl = useAuthedImage(candidateScreenshot?.imageKey);
-  const diffOverlayUrl = useAuthedImage(diffOverlayKey);
-
-  const baselineDims = useImageDimensions(baselineUrl);
-  const candidateDims = useImageDimensions(candidateUrl);
+  // The step's three images, each fetched and decoded once (spec §3.2). The
+  // diff image is asked for in every mode, so switching to Diff is instant.
+  const imageRequest = useMemo<ImageSetRequest>(
+    () => ({
+      baseline: baselineScreenshot?.imageKey ?? null,
+      current: candidateScreenshot?.imageKey ?? null,
+      diff: diffOverlayKey,
+    }),
+    [
+      baselineScreenshot?.imageKey,
+      candidateScreenshot?.imageKey,
+      diffOverlayKey,
+    ],
+  );
+  // The steps either side, fetched ahead once this one is in: the next, then
+  // the previous, each with its own baseline and its own diff image.
+  const prefetch = useMemo<ImageSetRequest[]>(() => {
+    const shots = data?.screenshots ?? [];
+    const contexts =
+      (
+        data as {
+          checkpointContexts?: Record<
+            string,
+            { baselineScreenshot: { imageKey?: string | null } | null }
+          >;
+        } | null
+      )?.checkpointContexts ?? {};
+    const at = checkpointSummaries.findIndex(
+      (c) => c.id === selectedCheckpointId,
+    );
+    if (at < 0) return [];
+    const ahead: ImageSetRequest[] = [];
+    for (const step of [
+      checkpointSummaries[at + 1],
+      checkpointSummaries[at - 1],
+    ]) {
+      if (!step) continue;
+      const shot = shots.find((s) => (s as { id?: string }).id === step.id);
+      if (!shot) continue;
+      ahead.push({
+        baseline: contexts[step.id]?.baselineScreenshot?.imageKey ?? null,
+        current: shot.imageKey ?? null,
+        diff: stepDiffKey(shot, {
+          diffName: data?.diffName ?? null,
+          screenshotCount: shots.length,
+        }).key,
+      });
+    }
+    return ahead;
+  }, [data, checkpointSummaries, selectedCheckpointId]);
+  const imageSet = useImageSet(imageRequest, prefetch);
 
   // v1.1.20+: per-checkpoint region filter. Two checkpoints in one run
   // that share a viewport (e.g. HomePage + searchResult both at
@@ -728,11 +694,12 @@ export function DiffViewer({
   // clean two-pane: a viewport switcher only for multi-viewport runs, the size
   // chip only on a dimension mismatch, and the baseline badge only on a
   // parent-PR / default-branch fallback (not the expected "this branch").
+  const baselineSize = imageSet.images.baseline?.size;
+  const currentSize = imageSet.images.current?.size;
   const sizeMismatch =
-    !!baselineDims &&
-    !!candidateDims &&
-    (baselineDims.width !== candidateDims.width ||
-      baselineDims.height !== candidateDims.height);
+    !!baselineSize &&
+    !!currentSize &&
+    (baselineSize.w !== currentSize.w || baselineSize.h !== currentSize.h);
   const showViewportSwitcher = uniqueViewports.length > 1;
   const baselineFallback =
     baselineSource === "parent_pr" || baselineSource === "default_branch";
@@ -886,8 +853,11 @@ export function DiffViewer({
                 {showViewportSwitcher && (
                   <ViewportSwitcher viewports={uniqueViewports} />
                 )}
-                {sizeMismatch && baselineDims && candidateDims && (
-                  <SizeChip baseline={baselineDims} candidate={candidateDims} />
+                {sizeMismatch && baselineSize && currentSize && (
+                  <SizeChip
+                    baseline={{ width: baselineSize.w, height: baselineSize.h }}
+                    candidate={{ width: currentSize.w, height: currentSize.h }}
+                  />
                 )}
               </div>
             )}
@@ -904,14 +874,11 @@ export function DiffViewer({
                     diffImageLegacyMissing ? "true" : undefined
                   }
                 >
-                  <ViewerCanvas
-                    baselineUrl={baselineUrl}
-                    candidateUrl={candidateUrl}
-                    diffOverlayUrl={diffOverlayUrl}
+                  <ViewerStage
+                    set={imageSet}
+                    request={imageRequest}
                     regions={regions}
                     elementMap={elementMap ?? null}
-                    baselineDims={baselineDims}
-                    candidateDims={candidateDims}
                   />
                 </div>
                 {/* Large side step-arrows: navigate

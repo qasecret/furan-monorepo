@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
 
+import {
+  transformFor,
+  worldToCanvas,
+} from "../src/components/diff-viewer/viewer-geometry";
 import { computeFocusView } from "../src/components/diff-viewer/world-fit";
 
 describe("computeFocusView", () => {
@@ -37,5 +41,16 @@ describe("computeFocusView", () => {
       100,
     );
     expect(v.zoom).toBeLessThanOrEqual(8);
+  });
+
+  test("frames the bbox in the world the stage draws: its centre lands on the canvas centre", () => {
+    // A 100×300 world (side by side with a shorter baseline) in an 800×600
+    // canvas, focused on a region near its bottom.
+    const bbox = { x: 20, y: 250, width: 30, height: 20 };
+    const view = computeFocusView(bbox, 100, 300, 800, 600);
+    const t = transformFor({ w: 100, h: 300 }, { w: 800, h: 600 }, view);
+    const centre = worldToCanvas(t, { x: 35, y: 260 });
+    expect(centre.x).toBeCloseTo(400, 9);
+    expect(centre.y).toBeCloseTo(300, 9);
   });
 });

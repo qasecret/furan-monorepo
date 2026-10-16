@@ -286,22 +286,29 @@ describe("useDiffViewerShortcuts", () => {
     expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
   });
 
-  it("O and D act on the mode on screen: a swipe preference shows as side by side", () => {
+  it("O acts on the mode on screen: a swipe preference shows as side by side", () => {
     useViewerPrefs.setState({
       prefs: { ...DEFAULT_VIEWER_PREFS, mode: "swipe" },
     });
     mountViewer({ viewports: [] });
     press("O");
     expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
-    act(() =>
-      useViewerPrefs.setState({
-        prefs: { ...DEFAULT_VIEWER_PREFS, mode: "flicker" },
-      }),
-    );
+  });
+
+  it("D goes to Diff and back to the mode it came from", () => {
+    mountViewer({ viewports: [] });
+    act(() => useViewerPrefs.getState().set("mode", "overlay"));
     press("D");
     expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
     press("D");
-    expect(useViewerPrefs.getState().prefs.mode).toBe("side-by-side");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("overlay");
+
+    // From a mode with no renderer yet (R1), back to that same preference.
+    act(() => useViewerPrefs.getState().set("mode", "flicker"));
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("diff");
+    press("D");
+    expect(useViewerPrefs.getState().prefs.mode).toBe("flicker");
   });
 
   it("A invokes onApprove", () => {
@@ -920,7 +927,7 @@ describe("the viewer's keys are registry commands", () => {
     row("A", "a", "review.approve", { called: ["onApprove"] }),
     row("R", "r", "review.reject", { called: ["onReject"] }),
     row("X", "x", "review.reject", { called: ["onReject"] }),
-    // The mode only: the canvas starts a new mode at fit itself.
+    // The mode only: a mode change keeps the view (R8).
     row("D", "d", "viewer.difference", { changed: { mode: "diff" } }),
     row("O", "o", "viewer.cycleMode", { changed: { mode: "overlay" } }),
     row("H", "h", "viewer.highlight", { changed: { highlight: true } }),

@@ -1,18 +1,16 @@
 "use client";
 
-import type { Application, Container, Sprite } from "pixi.js";
-
 import { useViewerStore } from "./useViewerStore";
 import { useViewState } from "./view-state";
 import { ZOOM_STEP, type Size } from "./viewer-geometry";
-import { fitWorldToCanvas, type ViewTransform } from "./world-fit";
 
 /**
- * Attach wheel-zoom + middle-mouse-pan listeners to a Pixi canvas. Returns
- * a teardown function. Pulls actions from the view-state store directly
- * (instead of accepting them as args) so the same wiring works for any
- * canvas in the viewer without needing per-pane prop drilling. `world`
- * reads the size of the image the pane fits, at the moment of the wheel.
+ * Attach wheel-zoom + middle-mouse-pan listeners to a pane of the viewer
+ * stage. Returns a teardown function. Pulls actions from the view-state
+ * store directly (instead of accepting them as args) so the same wiring works
+ * for every pane without per-pane prop drilling: the view is the stage's one
+ * world view, so zoom and pan move every pane together. `world` reads the
+ * world's size at the moment of the wheel, for `zoomAbout`'s anchor.
  *
  * Wheel zoom is "trackpad/mouse-pinch" style — no modifier required, since
  * the canvas is a dedicated review surface and hijacking page scroll over
@@ -108,25 +106,4 @@ export function attachCanvasViewControl(
     canvas.removeEventListener("pointercancel", onPointerCancel);
     canvas.removeEventListener("contextmenu", onContextMenu);
   };
-}
-
-/**
- * Re-apply the world transform with the current zoom/pan state. Read
- * from a ref so the call is cheap on every store update — no React
- * reconciliation, just one matrix update per pane.
- */
-export function applyViewToPane(
-  app: Application | null,
-  world: Container | null,
-  sprite: Sprite | null,
-  view: ViewTransform,
-): void {
-  if (!app || !world || !sprite) return;
-  fitWorldToCanvas(
-    app,
-    world,
-    sprite.texture.width,
-    sprite.texture.height,
-    view,
-  );
 }

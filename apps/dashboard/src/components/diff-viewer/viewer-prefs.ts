@@ -128,8 +128,12 @@ interface ViewerPrefsState {
   prefs: ViewerPrefs;
   /** The mode `d` returns to from Diff. Session-only, never stored. */
   previousMode: Exclude<ViewerMode, "diff">;
-  /** Reads the user's stored preferences, once per user. */
-  hydrate(userId: string): void;
+  /**
+   * Reads the user's stored preferences, once per user. With no user the
+   * preferences are in memory only: the defaults, unless this visit has
+   * already changed them (a null after a user drops that user's).
+   */
+  hydrate(userId: string | null): void;
   /**
    * Sets one preference, and stores it unless `persist` is false (a slider
    * mid-drag shows each value live and stores only its last).
@@ -151,7 +155,8 @@ export const useViewerPrefs = create<ViewerPrefsState>((set, get) => ({
     if (get().userId === userId) return;
     set({
       userId,
-      prefs: readViewerPrefs(userId),
+      // No user: never another user's preferences, and no storage read.
+      prefs: userId === null ? DEFAULT_VIEWER_PREFS : readViewerPrefs(userId),
       previousMode: "side-by-side",
     });
   },

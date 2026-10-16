@@ -1,9 +1,10 @@
 /**
  * Theme bridge for the pixi diff canvas. Pixi cannot read CSS variables, so the
- * letterbox colour is resolved from the `--hover` design token at runtime and
- * pushed into each live renderer when the theme changes. It reads `--hover`
- * rather than `--sunken` so the bands outside the image stay distinct from a
- * white screenshot in light mode: #f4f4f5 on #fff is 1.10:1, where `--sunken`
+ * canvas colours are resolved from design tokens at runtime and pushed into
+ * the live canvas when the theme changes: the letterbox from `--hover`, the
+ * hatching from `--fg-muted`. The letterbox reads `--hover` rather than
+ * `--sunken` so the bands outside the image stay distinct from a white
+ * screenshot in light mode: #f4f4f5 on #fff is 1.10:1, where `--sunken`
  * (#fafafa) is 1.04:1.
  */
 
@@ -27,6 +28,20 @@ export function readCanvasBackground(root?: HTMLElement): number {
   const el = root ?? document.documentElement;
   const raw = getComputedStyle(el).getPropertyValue("--hover");
   return cssHexToPixi(raw) ?? FALLBACK_CANVAS_BG;
+}
+
+/** The light theme's `--fg-muted`, for when the token is unset or not a 6-digit hex. */
+export const FALLBACK_CANVAS_HATCH = 0x6a6a73;
+
+/**
+ * Resolve the current `--fg-muted` token to a pixi colour number: the hatching
+ * over the world area an image does not cover. Browser-only, like
+ * `readCanvasBackground`.
+ */
+export function readCanvasHatch(root?: HTMLElement): number {
+  const el = root ?? document.documentElement;
+  const raw = getComputedStyle(el).getPropertyValue("--fg-muted");
+  return cssHexToPixi(raw) ?? FALLBACK_CANVAS_HATCH;
 }
 
 /** Set the background of every initialised app; apps without a renderer yet are skipped. */

@@ -208,6 +208,26 @@ describe("useViewerPrefs", () => {
     expect(setItem).not.toHaveBeenCalled();
   });
 
+  test("no user after a user's visit: the defaults in memory, and nothing written to that user", () => {
+    writeViewerPrefs("u1", { ...DEFAULT_VIEWER_PREFS, mode: "overlay" });
+    useViewerPrefs.getState().hydrate("u1");
+    expect(prefs().mode).toBe("overlay");
+
+    useViewerPrefs.getState().hydrate(null);
+    expect(useViewerPrefs.getState().userId).toBeNull();
+    expect(prefs()).toEqual(DEFAULT_VIEWER_PREFS);
+
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    useViewerPrefs.getState().set("mode", "diff");
+    expect(prefs().mode).toBe("diff");
+    expect(setItem).not.toHaveBeenCalled();
+    expect(readViewerPrefs("u1").mode).toBe("overlay");
+
+    // Still no user: a remount keeps the visit's choice.
+    useViewerPrefs.getState().hydrate(null);
+    expect(prefs().mode).toBe("diff");
+  });
+
   test("a mode left for another becomes the way back from diff", () => {
     useViewerPrefs.getState().set("mode", "overlay");
     useViewerPrefs.getState().set("mode", "diff");
