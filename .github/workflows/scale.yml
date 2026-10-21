@@ -1,0 +1,149 @@
+# Scale harness: seeds a big project, runs the real API and diff worker
+# in-process, measures the budgets in scale/src/budgets.ts and writes
+# scale-report.md / scale-report.json (see scale/README.md). Deliberately NOT
+# on push / pull_request and NOT scheduled — a `large` run takes the better part
+# of an hour and would tax every PR and the Actions quota. Start it by hand
+# (workflow_dispatch); a `smoke` run is the quick check that the harness works.
+#
+# The job fails when the harness exits 1: an enforced budget failed on a `large`
+# run, or a budget in a suite that ran has no measured value. Tracked budgets
+# are reported, never fatal.
+name: scale
+
+on:
+  workflow_dispatch:
+    inputs:
+      shape:
+        description: "Seed shape (smoke never judges thresholds)"
+        type: choice
+        options: [smoke, large]
+        default: smoke
+      suites:
+        description: "Comma-separated suites to run (they always run browser, server, pipeline)"
+        type: string
+        default: pipeline,server,browser
+      storage:
+        description: "Object storage"
+        type: choice
+        options: [s3, hdd]
+        default: s3
+
+# Least privilege: the job only reads the repo (upload-artifact and the pnpm
+# cache authenticate with the runner's own token, not GITHUB_TOKEN).
+permissions:
+  contents: read
+
+# Never run more than one scale job on a ref at a time (one harness run per
+# Postgres server, and the numbers are meaningless if two share a runner).
+concurrency:
+  group: scale-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 22 + pnpm 9.15.0 + install (shared composite action).
+      - uses: ./.github/actions/setup
+
+      # The browser suite drives Chromium. Installed even when `suites` leaves
+      # the browser suite out, so the job does not depend on that input.
+      - name: Install Playwright browsers
+        run: pnpm --filter @furan/scale exec playwright install --with-deps chromium
+
+      # `services:` containers are configured before any step runs, so their
+      # passwords cannot be generated at runtime. The containers are started
+      # by hand below with RUNTIME-RANDOM passwords instead, so nothing
+      # sensitive is committed and gitleaks has nothing to flag. The values are
+      # masked in the log and exist only on this ephemeral runner.
+      - name: Generate ephemeral credentials
+        id: creds
+        run: |
+          pg_password=$(openssl rand -hex 16)
+          minio_password=$(openssl rand -hex 16)
+          echo "::add-mask::${pg_password}"
+          echo "::add-mask::${minio_password}"
+          {
+            echo "pg_password=${pg_password}"
+            echo "minio_password=${minio_password}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Same images as ci.yml. The ports are published on loopback explicitly
+      # (5432 / 6379); the harness's own listeners use free ports it picks.
+      - name: Start Postgres and Redis
+        env:
+          POSTGRES_PASSWORD: ${{ steps.creds.outputs.pg_password }}
+        run: |
+          docker run -d --name scale-postgres \
+            -e POSTGRES_PASSWORD \
+            -p 127.0.0.1:5432:5432 \
+            --health-cmd "pg_isready -h 127.0.0.1 -U postgres" \
+            --health-interval 2s --health-timeout 3s --health-retries 30 \
+            postgres:17-alpine
+          docker run -d --name scale-redis \
+            -p 127.0.0.1:6379:6379 \
+            --health-cmd "redis-cli ping" \
+            --health-interval 2s --health-timeout 3s --health-retries 30 \
+            redis:7-alpine
+          for name in scale-postgres scale-redis; do
+            for i in $(seq 1 60); do
+              status=$(docker inspect --format '{{.State.Health.Status}}' "$name")
+              if [ "$status" = "healthy" ]; then
+                echo "$name healthy"
+                break
+              fi
+              if [ "$i" -eq 60 ]; then
+                echo "::error::$name did not become healthy within 120s"
+                docker logs "$name"
+                exit 1
+              fi
+              echo "waiting for $name... ($i/60)"
+              sleep 2
+            done
+          done
+
+      # The harness creates and removes a bucket of its own (furan-scale-<hex>)
+      # with the root credentials; the action only requires one bucket name.
+      - name: Start MinIO
+        uses: ./.github/actions/minio
+        with:
+          bucket: furan-scale-ci
+          root-password: ${{ steps.creds.outputs.minio_password }}
+
+      # The harness reads only SCALE_* (never DATABASE_URL / REDIS_URL / S3_*).
+      # SCALE_DATABASE_URL names the server's admin database (`postgres`), never
+      # furan_scale: the harness creates that one itself. MinIO's root user is
+      # `furan` (the action's default).
+      - name: Export the SCALE_* settings
+        env:
+          PG_PASSWORD: ${{ steps.creds.outputs.pg_password }}
+          MINIO_PASSWORD: ${{ steps.creds.outputs.minio_password }}
+        run: |
+          {
+            echo "SCALE_DATABASE_URL=postgresql://postgres:${PG_PASSWORD}@127.0.0.1:5432/postgres"
+            echo "SCALE_REDIS_URL=redis://127.0.0.1:6379"
+            echo "SCALE_S3_ENDPOINT=http://127.0.0.1:9000"
+            echo "SCALE_S3_ACCESS_KEY=furan"
+            echo "SCALE_S3_SECRET_KEY=${MINIO_PASSWORD}"
+          } >> "$GITHUB_ENV"
+
+      # Workflow inputs reach the shell through env:, never ${{ }} inside run:.
+      # The `scale` script builds the harness's workspace dependencies first.
+      - name: Run the scale harness
+        env:
+          SHAPE: ${{ inputs.shape }}
+          SUITES: ${{ inputs.suites }}
+          STORAGE: ${{ inputs.storage }}
+        run: pnpm --filter @furan/scale scale -- --shape="$SHAPE" --suite="$SUITES" --storage="$STORAGE"
+
+      - name: Upload the scale report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-report
+          path: scale/out/scale-report.*
+          retention-days: 14
+          if-no-files-found: ignore

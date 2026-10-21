@@ -14,11 +14,11 @@ import type { Stack } from "../stack/api.js";
 import { percentile } from "../stats.js";
 
 /**
- * R1-solo and R2-solo (spec §5.3): the previous perf script's
- * (`apps/api/scripts/perf-review-loop.ts`) measurement, carried over
- * unchanged. One caller, no HTTP: `findNext` straight on the database, and
- * the procedures through `appRouter.createCaller` as a reviewer (`editor`),
- * each timed 50 times after 5 warm-ups, p95 by nearest rank. The cases are the
+ * R1-solo and R2-solo (spec §5.3): the previous perf script's measurement
+ * (this suite replaced it; see `scale/README.md`), carried over unchanged.
+ * One caller, no HTTP: `findNext` straight on the database, and the
+ * procedures through `appRouter.createCaller` as a reviewer (`editor`), each
+ * timed 50 times after 5 warm-ups, p95 by nearest rank. The cases are the
  * script's `timeAll` (the main project) and `timeResolved` (the worst-case
  * project, where every recent batch is resolved), on the owner connection,
  * as the script's default run.
