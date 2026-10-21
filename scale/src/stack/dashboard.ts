@@ -19,7 +19,7 @@ export const DIST_DIR = ".next-scale";
 /** The API base baked into the bundle: root-relative, as behind production's nginx. */
 const API_BASE = "/api";
 
-/** Records which `apps/dashboard` tree the build in DIST_DIR was made from. */
+/** Records what the build in DIST_DIR was made from (see `gitSource`). */
 const STAMP_FILE = "scale-tree";
 
 /**
@@ -149,16 +149,29 @@ function describeExit(exit: Exit): string {
 // ---------------------------------------------------------------------------
 
 /**
- * A build in DIST_DIR is current when it was made from the tree that is
- * committed now and nothing under `apps/dashboard` has changed since: the rule
- * `--no-build` applies. Pure.
+ * What the dashboard bundle is made from, as paths in the repository: the app,
+ * the workspace packages it imports, and the lockfile and root manifest that
+ * pin the versions of everything else. A change to any of them makes a build
+ * stale.
+ */
+export const STAMPED_PATHS: readonly string[] = [
+  "apps/dashboard",
+  "packages",
+  "pnpm-lock.yaml",
+  "package.json",
+];
+
+/**
+ * A build in DIST_DIR is current when it was made from what is committed now
+ * (`stamp` is what `headStamp` gives today) and nothing under STAMPED_PATHS has
+ * changed since: the rule `--no-build` applies. Pure.
  */
 export function canReuseBuild(
   stamp: string | undefined,
-  headTree: string | undefined,
+  head: string | undefined,
   dirty: boolean,
 ): boolean {
-  return stamp !== undefined && stamp !== "" && stamp === headTree && !dirty;
+  return stamp !== undefined && stamp !== "" && stamp === head && !dirty;
 }
 
 /**
@@ -206,11 +219,33 @@ export interface BuildDeps {
     env: NodeJS.ProcessEnv;
     teardown?: Teardown | undefined;
   }): Promise<void>;
-  /** `git rev-parse HEAD:apps/dashboard`. */
-  headTree(): Promise<string>;
-  /** True when `git status --porcelain apps/dashboard` lists anything. */
+  /** The committed state of STAMPED_PATHS, as one string (see `gitSource`). */
+  headStamp(): Promise<string>;
+  /** True when anything under STAMPED_PATHS has uncommitted changes. */
   isDirty(): Promise<boolean>;
   log(message: string): void;
+}
+
+/**
+ * The two questions `--no-build` asks git, about the repository at `root`.
+ * The stamp joins the tree (or blob) ids of STAMPED_PATHS at HEAD, so a commit
+ * that changes any of them changes it; `isDirty` is whether `git status` lists
+ * anything under them (untracked files included, ignored build output not).
+ * Both fail, and so rule out a reuse, when `root` is not a repository.
+ */
+export function gitSource(
+  root: string,
+): Pick<BuildDeps, "headStamp" | "isDirty"> {
+  const git = async (...args: string[]): Promise<string> =>
+    (await execFileAsync("git", args, { cwd: root })).stdout.trim();
+  return {
+    headStamp: async () =>
+      (await git("rev-parse", ...STAMPED_PATHS.map((p) => `HEAD:${p}`)))
+        .split("\n")
+        .join("+"),
+    isDirty: async () =>
+      (await git("status", "--porcelain", "--", ...STAMPED_PATHS)) !== "",
+  };
 }
 
 const repoRoot = (): string =>
@@ -251,15 +286,10 @@ async function runNextBuild(run: {
 
 function defaultBuildDeps(): BuildDeps {
   const root = repoRoot();
-  const dashboardDir = path.join(root, "apps", "dashboard");
-  const git = async (...args: string[]): Promise<string> =>
-    (await execFileAsync("git", args, { cwd: root })).stdout.trim();
   return {
-    dashboardDir,
+    ...gitSource(root),
+    dashboardDir: path.join(root, "apps", "dashboard"),
     runBuild: runNextBuild,
-    headTree: () => git("rev-parse", "HEAD:apps/dashboard"),
-    isDirty: async () =>
-      (await git("status", "--porcelain", "--", "apps/dashboard")) !== "",
     log: (message) => process.stdout.write(`${message}\n`),
   };
 }
@@ -298,7 +328,7 @@ export async function buildDashboard(
   const stampFile = path.join(distDir, STAMP_FILE);
 
   // Unknown (git failed) counts as "not reusable", and is never stamped.
-  const headTree = await deps.headTree().catch(() => undefined);
+  const head = await deps.headStamp().catch(() => undefined);
   const dirty = await deps.isDirty().catch(() => true);
 
   if (opts.noBuild) {
@@ -306,12 +336,12 @@ export async function buildDashboard(
     const complete =
       existsSync(serverJsOf(standaloneDir)) &&
       existsSync(staticOf(standaloneDir));
-    if (canReuseBuild(stamp, headTree, dirty) && complete) {
+    if (canReuseBuild(stamp, head, dirty) && complete) {
       deps.log(`reusing the dashboard build in ${distDir}`);
       return { standaloneDir };
     }
     deps.log(
-      "--no-build: there is no current dashboard build to reuse (none, or the dashboard changed since); building",
+      "--no-build: there is no current dashboard build to reuse (none, or the dashboard, the workspace packages or the lockfile changed since); building",
     );
   }
 
@@ -373,8 +403,8 @@ export async function buildDashboard(
     );
   }
 
-  if (headTree !== undefined && !dirty) {
-    await writeFile(stampFile, headTree);
+  if (head !== undefined && !dirty) {
+    await writeFile(stampFile, head);
   }
   deps.log(
     `built the dashboard in ${((performance.now() - started) / 1000).toFixed(0)}s`,

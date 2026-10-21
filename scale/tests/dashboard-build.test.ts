@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -16,13 +17,14 @@ import {
   buildDashboard,
   buildEnv,
   canReuseBuild,
+  gitSource,
   startDashboard,
   type BuildDeps,
 } from "../src/stack/dashboard.js";
 import { Teardown } from "../src/stack/teardown.js";
 
 describe("canReuseBuild", () => {
-  it("is true only when the stamp is the HEAD tree and nothing is uncommitted", () => {
+  it("is true only when the stamp is what HEAD gives now and nothing is uncommitted", () => {
     expect(canReuseBuild("tree-a", "tree-a", false)).toBe(true);
     expect(canReuseBuild("tree-a", "tree-a", true)).toBe(false);
     expect(canReuseBuild("tree-a", "tree-b", false)).toBe(false);
@@ -82,7 +84,7 @@ describe("buildDashboard", () => {
       builds.push({ env });
       await build(dashboardDir);
     },
-    headTree: async () => tree,
+    headStamp: async () => tree,
     isDirty: async () => dirty,
     log: () => undefined,
   });
@@ -292,7 +294,7 @@ describe("buildDashboard", () => {
   it("treats a git failure as no build to reuse, and stamps nothing", async () => {
     const noGit: BuildDeps = {
       ...deps(),
-      headTree: async () => {
+      headStamp: async () => {
         throw new Error("not a git repository");
       },
     };
@@ -300,6 +302,167 @@ describe("buildDashboard", () => {
     await buildDashboard({ noBuild: true }, noGit);
     expect(builds).toHaveLength(2);
     expect(existsSync(path.join(dir, ".next-scale", "scale-tree"))).toBe(false);
+  });
+});
+
+/**
+ * What makes a build stale: the dashboard, the workspace packages it bundles,
+ * and the lockfile and root manifest that pin the dependencies. Run against a
+ * real throwaway repository, because the rule is what git reports.
+ */
+describe("the stamp and the dirty check (a throwaway git repository)", () => {
+  let root: string;
+  let builds: number;
+
+  const gitEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
+  const git = (...args: string[]): string =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=scale-test",
+        "-c",
+        "user.email=scale-test@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      { cwd: root, env: gitEnv, encoding: "utf8" },
+    );
+
+  const put = async (file: string, content: string) => {
+    const full = path.join(root, file);
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, content);
+  };
+  const edit = put;
+  // Valid for the JSON files too.
+  let edits = 0;
+  const changed = (file: string): string =>
+    file.endsWith(".json") ? `{"edit":${++edits}}\n` : `edit ${++edits}\n`;
+  const commit = (message: string) => {
+    git("add", "-A");
+    git("commit", "-q", "-m", message);
+  };
+
+  const source = () => gitSource(root);
+  const deps = (): BuildDeps => ({
+    ...source(),
+    dashboardDir: path.join(root, "apps", "dashboard"),
+    runBuild: async ({ dashboardDir }) => {
+      builds += 1;
+      const out = path.join(dashboardDir, ".next-scale");
+      await put(
+        path.relative(
+          root,
+          path.join(out, "standalone", "apps", "dashboard", "server.js"),
+        ),
+        "// server\n",
+      );
+      await put(
+        path.relative(root, path.join(out, "static", "a.js")),
+        "// a\n",
+      );
+    },
+    log: () => undefined,
+  });
+
+  // One file under each path the rule watches.
+  const WATCHED: Record<string, string> = {
+    "apps/dashboard": "apps/dashboard/src/page.tsx",
+    packages: "packages/shared-types/src/index.ts",
+    "pnpm-lock.yaml": "pnpm-lock.yaml",
+    "package.json": "package.json",
+  };
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), "scale-repo-"));
+    builds = 0;
+    git("init", "-q");
+    await put(".gitignore", ".next-scale/\n");
+    await put("apps/dashboard/src/page.tsx", "export {};\n");
+    await put("apps/dashboard/tsconfig.json", "{}\n");
+    await put("packages/shared-types/src/index.ts", "export type A = 1;\n");
+    await put("pnpm-lock.yaml", "lockfileVersion: 9\n");
+    await put("package.json", '{"name":"root"}\n');
+    await put("scale/notes.txt", "the harness itself\n");
+    commit("initial");
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("is clean, and stable, on a fresh checkout", async () => {
+    expect(await source().isDirty()).toBe(false);
+    expect(await source().headStamp()).toBe(await source().headStamp());
+  });
+
+  it.each(Object.entries(WATCHED))(
+    "a change under %s is dirty, and once committed it changes the stamp",
+    async (_name, file) => {
+      const before = await source().headStamp();
+      await edit(file, changed(file));
+      expect(await source().isDirty()).toBe(true);
+      commit("change");
+      expect(await source().isDirty()).toBe(false);
+      expect(await source().headStamp()).not.toBe(before);
+    },
+  );
+
+  it("an untracked file under packages is dirty", async () => {
+    await put("packages/shared-types/src/new.ts", "export {};\n");
+    expect(await source().isDirty()).toBe(true);
+  });
+
+  it("what the dashboard does not bundle is neither stamped nor dirty", async () => {
+    const before = await source().headStamp();
+    await edit("scale/notes.txt", "edited\n");
+    // The build's own output is ignored by git.
+    await put("apps/dashboard/.next-scale/BUILD_ID", "id\n");
+    expect(await source().isDirty()).toBe(false);
+    commit("harness only");
+    expect(await source().headStamp()).toBe(before);
+  });
+
+  it("reuses a build while nothing watched has changed", async () => {
+    await buildDashboard({ noBuild: false }, deps());
+    await edit("scale/notes.txt", "edited\n");
+    await buildDashboard({ noBuild: true }, deps());
+    expect(builds).toBe(1);
+  });
+
+  it.each(Object.entries(WATCHED))(
+    "does not reuse a build after a change under %s, committed or not",
+    async (_name, file) => {
+      await buildDashboard({ noBuild: false }, deps());
+
+      // Committed: the stamp no longer matches.
+      await edit(file, changed(file));
+      commit("change");
+      await buildDashboard({ noBuild: true }, deps());
+      expect(builds).toBe(2);
+
+      // That build is current again...
+      await buildDashboard({ noBuild: true }, deps());
+      expect(builds).toBe(2);
+
+      // ...until something under the path changes again, uncommitted.
+      await edit(file, changed(file));
+      await buildDashboard({ noBuild: true }, deps());
+      expect(builds).toBe(3);
+    },
+  );
+
+  it("does not reuse a build made from the same sources once they were edited and reverted", async () => {
+    // Built dirty, so never stamped; the revert does not make it current.
+    await edit(WATCHED.packages!, "changed\n");
+    await buildDashboard({ noBuild: false }, deps());
+    git("checkout", "--", ".");
+    await buildDashboard({ noBuild: true }, deps());
+    expect(builds).toBe(2);
   });
 });
 

@@ -88,8 +88,9 @@ pnpm --filter @furan/scale scale -- [flags]
 
 The browser suite builds the dashboard for production into
 `apps/dashboard/.next-scale`, apart from the `.next` a dev server uses.
-`--no-build` reuses that build only when `apps/dashboard` has no uncommitted
-changes and is the tree the build was made from; otherwise it builds anyway.
+`--no-build` reuses that build only when `apps/dashboard`, `packages/`,
+`pnpm-lock.yaml` and the root `package.json` have no uncommitted changes and are
+what the build was made from; otherwise it builds anyway.
 
 Suites **always run in the same order: browser, then server, then pipeline**,
 whatever order `--suite` names them in. Each suite changes the seeded project
