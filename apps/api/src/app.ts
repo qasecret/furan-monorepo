@@ -24,6 +24,7 @@ import { errorLogLevel } from "./lib/error-log-level.js";
 import { sendError } from "./lib/errors.js";
 import { loadActiveUserByPat } from "./lib/load-active-user.js";
 import type { MemberProjectsCache } from "./lib/member-projects-cache.js";
+import { registerRequestMetrics } from "./lib/request-metrics.js";
 import { resolveAuthUser } from "./lib/resolve-auth-user.js";
 import { isPatFormat } from "./lib/token.js";
 import { touchTokenLastUsed } from "./lib/touch-token.js";
@@ -109,6 +110,9 @@ export async function createApp(deps: AppDeps): Promise<FastifyInstance> {
     // req.ip is the socket peer. env.ts already rejected unparseable values.
     trustProxy: parseTrustProxy(deps.env.TRUST_PROXY),
   });
+
+  // First, so its onResponse hook covers every route registered below.
+  registerRequestMetrics(app, deps.telemetry.metrics);
 
   app.decorate("db", deps.db);
   app.decorate("telemetry", deps.telemetry);
