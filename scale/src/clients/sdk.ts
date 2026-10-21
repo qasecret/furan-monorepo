@@ -38,6 +38,19 @@ async function call<T>(
   return (text === "" ? null : JSON.parse(text)) as T;
 }
 
+/** `POST /projects/:id/builds`: a new batch (no CI build id, so always a new one). */
+export function createBuild(
+  apiUrl: string,
+  pat: string,
+  projectId: string,
+  input: { branchName?: string; name?: string } = {},
+): Promise<{ id: string }> {
+  return call(pat, `${apiUrl}/projects/${projectId}/builds`, {
+    method: "POST",
+    json: input,
+  });
+}
+
 export interface CreateRunInput {
   projectId: string;
   buildId: string;

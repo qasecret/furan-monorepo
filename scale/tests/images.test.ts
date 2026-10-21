@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   IMAGE_SIZE,
+  changeRect,
   generateDiffPng,
   generatePng,
   withTextChunk,
@@ -86,6 +87,45 @@ describe("generatePng", () => {
       expect(large).toBeLessThanOrEqual(0.25);
     });
   }
+});
+
+describe("changeRect", () => {
+  /** The bounding box of the pixels that differ between two same-sized PNGs. */
+  async function changedBox(a: Buffer, b: Buffer) {
+    const pa = await pixels(a);
+    const pb = await pixels(b);
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -1, -1];
+    for (let i = 0; i < pa.data.length; i += 3) {
+      if (
+        pa.data[i] !== pb.data[i] ||
+        pa.data[i + 1] !== pb.data[i + 1] ||
+        pa.data[i + 2] !== pb.data[i + 2]
+      ) {
+        const x = (i / 3) % pa.width;
+        const y = Math.floor(i / 3 / pa.width);
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+    }
+    return { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
+  }
+
+  for (const kind of ["screen", "page"] as ImageKind[]) {
+    it(`${kind}: is exactly the rectangle a change inverts`, async () => {
+      const base = await generatePng(kind, 21, "none");
+      for (const change of ["small", "large"] as const) {
+        expect(
+          await changedBox(base, await generatePng(kind, 21, change)),
+        ).toEqual(changeRect(kind, 21, change));
+      }
+    });
+  }
+
+  it("is null for no change", () => {
+    expect(changeRect("screen", 21, "none")).toBeNull();
+  });
 });
 
 describe("generateDiffPng", () => {

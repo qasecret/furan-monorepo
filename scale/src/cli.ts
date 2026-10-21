@@ -20,6 +20,7 @@ import {
 } from "./seed/index.js";
 import { openDataPlane, startStack, type Stack } from "./stack/api.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
+import { runPipelineSuite } from "./suites/pipeline.js";
 
 /** What a suite runner gets: the running stack, what was seeded, and the flags. */
 export interface SuiteContext {
@@ -36,7 +37,10 @@ export interface SuiteContext {
  */
 const RUNNERS: Partial<
   Record<Suite, (ctx: SuiteContext) => Promise<Measurement[]>>
-> = {};
+> = {
+  pipeline: ({ stack, seeded, shape }) =>
+    runPipelineSuite(stack, seeded, shape),
+};
 
 const say = (message: string): void => {
   process.stdout.write(`${message}\n`);

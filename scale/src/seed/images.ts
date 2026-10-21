@@ -30,8 +30,12 @@ const CHANGE_SHARE: Record<Exclude<ImageChange, "none">, number> = {
 
 type Rgb = readonly [number, number, number];
 
-/** mulberry32: a small, fast PRNG; deterministic for a 32-bit seed. */
-function prng(seed: number): () => number {
+/**
+ * mulberry32: a small, fast PRNG; deterministic for a 32-bit seed. Returns
+ * floats in `[0, 1)`. Also what the pipeline suite shuffles its change mix
+ * with.
+ */
+export function prng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -225,10 +229,27 @@ function draw(kind: ImageKind, seed: number): Canvas {
   return canvas;
 }
 
-/** Inverts the rectangle that `change` covers, placed from the seed. */
-function applyChange(canvas: Canvas, seed: number, change: ImageChange): void {
-  if (change === "none") return;
-  const { width, height } = canvas;
+/** A rectangle in image pixels. */
+export interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The rectangle that `change` inverts in the `(kind, seed)` image, placed
+ * from the seed (null for `none`): every pixel inside it differs from the
+ * `none` image and none outside does. The pipeline suite draws its ignore
+ * region over it.
+ */
+export function changeRect(
+  kind: ImageKind,
+  seed: number,
+  change: ImageChange,
+): PixelRect | null {
+  if (change === "none") return null;
+  const { width, height } = IMAGE_SIZE[kind];
   const area = CHANGE_SHARE[change] * width * height;
   // small: a text-line-like strip; large: half the width, ~20% of the area.
   const h = change === "small" ? 24 : Math.round(area / Math.round(width / 2));
@@ -236,7 +257,7 @@ function applyChange(canvas: Canvas, seed: number, change: ImageChange): void {
   const rand = prng(seed ^ 0x5eed5eed);
   const x = Math.floor(rand() * (width - w + 1));
   const y = Math.floor(rand() * (height - h + 1));
-  canvas.invert(x, y, w, h);
+  return { x, y, width: w, height: h };
 }
 
 /**
@@ -250,7 +271,8 @@ export async function generatePng(
   change: ImageChange,
 ): Promise<Buffer> {
   const canvas = draw(kind, seed);
-  applyChange(canvas, seed, change);
+  const rect = changeRect(kind, seed, change);
+  if (rect !== null) canvas.invert(rect.x, rect.y, rect.width, rect.height);
   return encode(canvas);
 }
 

@@ -62,10 +62,12 @@ export {
   type ShapeName,
 } from "./shape.js";
 export {
+  changeRect,
   generateDiffPng,
   generatePng,
   type ImageChange,
   type ImageKind,
+  type PixelRect,
 } from "./images.js";
 
 export interface Seeded {
