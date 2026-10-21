@@ -1,0 +1,215 @@
+import { randomUUID } from "node:crypto";
+
+import type { DB } from "@furan/db";
+import { createQueue, type DiffJob, type Queue } from "@furan/queue";
+import type { Storage } from "@furan/storage";
+import type { Redis } from "ioredis";
+import { Registry } from "prom-client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { handleDiffJob } from "../src/handler.js";
+import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
+
+const PROJECT = "00000000-0000-0000-0000-000000000002";
+const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
+const OK = "00000000-0000-0000-0000-0000000000bb";
+
+type Sample = {
+  metricName?: string;
+  labels: Record<string, string | number | undefined>;
+  value: number;
+};
+
+async function histogramSeries(
+  registry: Registry,
+  name: string,
+  labels: Record<string, string> = {},
+): Promise<{ count: number; sum: number }> {
+  const metric = (await registry.getMetricsAsJSON()).find(
+    (m) => m.name === name,
+  );
+  if (!metric) return { count: 0, sum: 0 };
+  const samples = metric.values as Sample[];
+  const pick = (suffix: string): number =>
+    samples.find(
+      (s) =>
+        s.metricName === `${name}${suffix}` &&
+        Object.entries(labels).every(([k, v]) => s.labels[k] === v),
+    )?.value ?? 0;
+  return { count: pick("_count"), sum: pick("_sum") };
+}
+
+/** Resolve when `job` leaves the worker, completed or failed. */
+function settled(
+  runtime: DiffWorkerRuntime,
+  event: "completed" | "failed",
+  runId: string,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const listener = (job: { data: DiffJob } | undefined): void => {
+      if (job?.data.runId !== runId) return;
+      runtime.worker.off(event, listener);
+      resolve();
+    };
+    runtime.worker.on(event, listener);
+  });
+}
+
+const noop = {
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+  debug: () => undefined,
+};
+
+describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
+  let prefix: string;
+  let queue: Queue<DiffJob>;
+  let registry: Registry;
+  let runtime: DiffWorkerRuntime | undefined;
+  const calls = new Map<string, number>();
+
+  // Succeeds with 7 checkpoints; the RETRY_ONCE run throws on its first call.
+  const stub: typeof handleDiffJob = async (data) => {
+    const n = (calls.get(data.runId) ?? 0) + 1;
+    calls.set(data.runId, n);
+    if (data.runId === RETRY_ONCE && n === 1) throw new Error("boom");
+    return { checkpoints: 7 };
+  };
+
+  const start = (): DiffWorkerRuntime =>
+    startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      sweeper: false,
+      handler: stub,
+    });
+
+  beforeEach(() => {
+    prefix = `furan-scale-test-${randomUUID().slice(0, 8)}`;
+    queue = createQueue("diff", { prefix });
+    registry = new Registry();
+    calls.clear();
+  });
+
+  afterEach(async () => {
+    await runtime?.close();
+    runtime = undefined;
+    const client = await queue.client;
+    await queue.obliterate({ force: true });
+    await queue.close();
+    // BullMQ leaves a connection it was handed open; the queue was given one.
+    client.disconnect();
+  });
+
+  it("records duration, queue wait and checkpoints for a completed job", async () => {
+    runtime = start();
+    const done = settled(runtime, "completed", OK);
+    await queue.add("diff", { runId: OK, projectId: PROJECT });
+    await done;
+
+    expect(
+      (
+        await histogramSeries(registry, "furan_diff_job_duration_seconds", {
+          outcome: "completed",
+        })
+      ).count,
+    ).toBe(1);
+    const checkpoints = await histogramSeries(
+      registry,
+      "furan_diff_job_checkpoints",
+    );
+    expect(checkpoints).toEqual({ count: 1, sum: 7 });
+    const wait = await histogramSeries(
+      registry,
+      "furan_diff_job_queue_wait_seconds",
+    );
+    expect(wait.count).toBe(1);
+    expect(wait.sum).toBeGreaterThanOrEqual(0);
+  });
+
+  it("counts a retried attempt once as retry and waits only on the first attempt", async () => {
+    runtime = start();
+    const done = settled(runtime, "completed", RETRY_ONCE);
+    await queue.add(
+      "diff",
+      { runId: RETRY_ONCE, projectId: PROJECT },
+      { attempts: 2, backoff: { type: "fixed", delay: 0 } },
+    );
+    await done;
+
+    expect(calls.get(RETRY_ONCE)).toBe(2);
+    expect(
+      (
+        await histogramSeries(registry, "furan_diff_job_duration_seconds", {
+          outcome: "retry",
+        })
+      ).count,
+    ).toBe(1);
+    expect(
+      (
+        await histogramSeries(registry, "furan_diff_job_duration_seconds", {
+          outcome: "completed",
+        })
+      ).count,
+    ).toBe(1);
+    // The failed attempt reports no checkpoints; the second one reports 7.
+    expect(
+      await histogramSeries(registry, "furan_diff_job_checkpoints"),
+    ).toEqual({ count: 1, sum: 7 });
+    // One wait sample: the retry waited on its backoff, not on the queue.
+    expect(
+      (await histogramSeries(registry, "furan_diff_job_queue_wait_seconds"))
+        .count,
+    ).toBe(1);
+  });
+
+  it("records a job that exhausts its attempts as failed and dead-lettered", async () => {
+    const always: typeof handleDiffJob = async () => {
+      throw new Error("always");
+    };
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      sweeper: false,
+      handler: always,
+    });
+    const done = settled(runtime, "failed", OK);
+    await queue.add("diff", { runId: OK, projectId: PROJECT }, { attempts: 1 });
+    await done;
+
+    expect(
+      (
+        await histogramSeries(registry, "furan_diff_job_duration_seconds", {
+          outcome: "failed",
+        })
+      ).count,
+    ).toBe(1);
+    const dead = (await registry.getMetricsAsJSON()).find(
+      (m) => m.name === "furan_diff_jobs_dead_lettered_total",
+    );
+    expect((dead?.values as Sample[])[0]?.value).toBe(1);
+  });
+
+  it("can start twice on one registry and closes cleanly", async () => {
+    const first = start();
+    await first.close();
+    runtime = start();
+    expect(runtime.worker.isRunning()).toBe(true);
+    await runtime.close();
+    // A second close is a no-op that resolves.
+    await runtime.close();
+    // BullMQ flips `isRunning` once its main loop has unwound, a tick after
+    // `close()` resolves.
+    await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
+  });
+});

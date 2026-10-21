@@ -4,26 +4,21 @@ import {
   createRedisConnection,
   createRetentionQueue,
   createWorker,
-  isFinalAttempt,
-  isTerminalFailure,
 } from "@furan/queue";
 import { createStorage } from "@furan/storage";
 import {
   bootstrapTelemetry,
-  Counter,
   installProcessErrorHandlers,
   logStartupFatal,
 } from "@furan/telemetry";
 
-import { createDiffMetrics } from "./diff-metrics.js";
 import { envSchema } from "./env.js";
-import { handleDiffJob } from "./handler.js";
 import { startHealthServer } from "./health.js";
 import {
   createRetentionMetrics,
   handleRetentionJob,
 } from "./retention-handler.js";
-import { sweepStaleRuns } from "./sweeper.js";
+import { startDiffWorker } from "./runtime.js";
 
 /** Cron pattern for the nightly retention sweep. 3am UTC keeps it well
  *  outside business hours for both NA and EU while leaving wide breathing
@@ -57,50 +52,18 @@ async function main(): Promise<void> {
   const storage = createStorage(telemetry.metrics);
   const redis = createRedisConnection();
   const retentionMetrics = createRetentionMetrics(telemetry.metrics);
-  const diffMetrics = createDiffMetrics(telemetry.metrics);
 
-  const worker = createWorker("diff", async (job) => {
-    telemetry.logger.info(
-      { jobId: job.id, projectId: job.data.projectId },
-      "diff_job_received",
-    );
-    // Only the final attempt may mark the run `aborted` (ruling R9); an
-    // earlier failure is retried by BullMQ and the retry derives the status.
-    return handleDiffJob(
-      job.data,
-      telemetry.logger,
-      { db, storage, redis, metrics: diffMetrics },
-      { finalAttempt: isFinalAttempt(job) },
-    );
+  // The diff worker, its job metrics, the dead-letter signal and the 30 s
+  // stale-run sweeper live in `runtime.ts`; the scale harness runs the same
+  // code in-process.
+  const diffRuntime = startDiffWorker({
+    db,
+    storage,
+    redis,
+    logger: telemetry.logger,
+    registry: telemetry.metrics,
   });
-
-  // Dead-letter signal: a diff that exhausts its retries leaves a run stuck
-  // without a verdict. Surface terminal failures as a metric + error log for
-  // alerting; transient (will-retry) failures stay at warn.
-  const deadLettered = new Counter({
-    name: "furan_diff_jobs_dead_lettered_total",
-    help: "Diff jobs that exhausted all retries (permanently failed)",
-    registers: [telemetry.metrics],
-  });
-  worker.on("failed", (job, err) => {
-    if (isTerminalFailure(job)) {
-      deadLettered.inc();
-      telemetry.logger.error(
-        {
-          err,
-          jobId: job?.id,
-          projectId: job?.data?.projectId,
-          attemptsMade: job?.attemptsMade,
-        },
-        "diff_job_dead_lettered",
-      );
-    } else {
-      telemetry.logger.warn(
-        { err, jobId: job?.id, attemptsMade: job?.attemptsMade },
-        "diff_job_failed_will_retry",
-      );
-    }
-  });
+  const worker = diffRuntime.worker;
 
   const retentionWorker = createWorker(
     "retention",
@@ -139,14 +102,6 @@ async function main(): Promise<void> {
     },
   );
 
-  // Every 30 s, finalize any "running" run whose updatedAt is older than
-  // 5 minutes. Covers SDK 1.0.x callers that never send POST /runs/:id/complete.
-  const sweeperInterval = setInterval(() => {
-    sweepStaleRuns({ db, logger: telemetry.logger }).catch((e) =>
-      telemetry.logger.warn({ err: e }, "sweeper_failed"),
-    );
-  }, 30_000);
-
   const health = startHealthServer({
     port: env.PORT,
     telemetry,
@@ -170,8 +125,8 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     telemetry.logger.info({ signal }, "shutting_down");
-    clearInterval(sweeperInterval);
-    await worker.close();
+    // Stops the sweeper, then closes the diff worker.
+    await diffRuntime.close();
     await retentionWorker.close();
     await retentionQueue.close();
     redis.disconnect();
