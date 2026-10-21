@@ -44,6 +44,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # Free runner disk before anything is pulled or installed: the harness
+      # refuses to seed a local server with under 10 GiB free on `/`, and a
+      # hosted runner starts with little more than that. Best-effort (each
+      # command may fail without failing the job). It removes toolchains this
+      # job does not use and the runner's pre-pulled Docker images (the two
+      # images the job needs are pulled again below).
+      - name: Free runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - uses: actions/checkout@v7
 
       # Node 22 + pnpm 9.15.0 + install (shared composite action).

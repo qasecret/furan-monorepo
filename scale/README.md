@@ -253,8 +253,16 @@ fails, and so the job, when the harness exits 1. The report is uploaded as the
 whether or not the job passed. The job times out after 60 minutes, and only one
 runs per ref at a time.
 
-A runner has about 14 GB free, so the large seed fits but not by much; the
-10 GiB check fails early with a clear message if it does not.
+A hosted runner starts with little more than the 10 GiB the harness requires, so
+the job's first step frees disk (it removes the unused .NET, Android, GHC and
+CodeQL toolchains and the pre-pulled Docker images, then prints `df -h /`). It is
+best-effort and gates nothing. The harness's own check is a guard, not a
+measurement: it reads the free space of `/`. On a hosted runner that is the
+filesystem holding Docker's data root (`/var/lib/docker`, where the Postgres
+container's data lives) and the temp dir used by `--storage=hdd`, so it measures
+the right disk there. Run elsewhere (for example Postgres on a separate volume),
+`/` may not be where the data goes. If the check still fails in CI, it stops
+early with a clear message.
 
 ## Development
 
