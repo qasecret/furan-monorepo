@@ -7,7 +7,7 @@ import { BUDGETS, type Measurement } from "../budgets.js";
 import { mintJwt, trpc, type TrpcResult } from "../clients/http.js";
 import { readHistogram } from "../clients/metrics.js";
 import { InterruptedError, describeError } from "../errors.js";
-import { markSeedUsed, pendingSteps, type Seeded } from "../seed/index.js";
+import { pendingSteps, type Seeded } from "../seed/index.js";
 import type { Stack } from "../stack/api.js";
 
 import {
@@ -372,9 +372,6 @@ async function runReviewers(
       if (stack.teardown.closing) throw new InterruptedError();
     },
   };
-  // The approves change the review mix for good: a later --reuse must reseed.
-  await markSeedUsed(stack.db);
-
   const errors: unknown[] = [];
   const loops = reviewers.map((r) =>
     (async () => {

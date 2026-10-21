@@ -5,7 +5,13 @@ import {
   type Measurement,
   type Suite,
 } from "./budgets.js";
-import { USAGE, UsageError, parseCliArgs, type CliArgs } from "./cli-args.js";
+import {
+  USAGE,
+  UsageError,
+  parseCliArgs,
+  runOrder,
+  type CliArgs,
+} from "./cli-args.js";
 import { loginOnce, mintJwt, verifyAuth } from "./clients/http.js";
 import { ScaleEnvError, parseScaleEnv } from "./env.js";
 import { InterruptedError, describeError } from "./errors.js";
@@ -13,6 +19,7 @@ import { runSuiteGuarded } from "./guard.js";
 import { writeReport } from "./report.js";
 import {
   createScratch,
+  markSeedUsed,
   seed,
   shapes,
   type Seeded,
@@ -137,7 +144,16 @@ async function run(
 
   const measurements: Measurement[] = [];
   const ctx: SuiteContext = { stack, seeded, shape, args };
-  for (const suite of args.suites) {
+  // Ruling R25: always browser, then server, then pipeline (see SUITE_ORDER).
+  const suites = runOrder(args.suites);
+  if (suites.length > 0) {
+    // Ruling R26: every suite changes the seeded project (approves, new
+    // batches), so once one starts the seed is no longer the shape it claims.
+    // Cleared here, once, before the first suite: the next --reuse reseeds. A
+    // run that ends before any suite starts leaves the seed reusable.
+    await markSeedUsed(plane.db);
+  }
+  for (const suite of suites) {
     const runner = RUNNERS[suite];
     say(`suite ${suite}`);
     measurements.push(

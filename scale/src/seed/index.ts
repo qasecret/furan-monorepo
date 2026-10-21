@@ -154,9 +154,11 @@ async function writeMeta(db: DB, shape: Shape): Promise<void> {
 
 /**
  * Marks the seed used up, so the next `--reuse` reseeds it instead of
- * measuring it as it is. A suite calls it before it changes the review mix
- * for good: the server suite's approvals (R7) take the newest batch's pending
- * steps, which a reused seed would be missing (and `soloSpots` needs).
+ * measuring it as it is. The CLI calls it once, right before the first suite
+ * starts (Ruling R26): every suite changes the seeded project (the server
+ * suite's approves take the newest batch's pending steps, which `soloSpots`
+ * needs; the pipeline adds newer batches), so a seed that a suite has run
+ * against is never reused.
  */
 export async function markSeedUsed(db: DB): Promise<void> {
   if (await metaTableExists(db)) await db.execute(sql`delete from scale_meta`);
