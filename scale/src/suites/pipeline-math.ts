@@ -1,4 +1,11 @@
 import { prng, type ImageChange } from "../seed/images.js";
+import {
+  PIPELINE_SETS,
+  pipelineStep,
+  type PipelineSet,
+  type Shape,
+  type ShapeName,
+} from "../seed/shape.js";
 
 /**
  * The pipeline suite's arithmetic (spec §5.2), pure so it is unit-tested apart
@@ -199,6 +206,70 @@ export function changeMix(n: number, seed: number): ImageChange[] {
   return mix;
 }
 
+/** The change mix's shuffle seed of a set: a fixed base plus the set's index. */
+export function mixSeed(set: PipelineSet): number {
+  return 0x5ca1e + PIPELINE_SETS.indexOf(set);
+}
+
+/** Screens, pages and changes of a set's first `changes.length` steps. */
+export function mixCounts(
+  set: PipelineSet,
+  changes: readonly ImageChange[],
+): {
+  screen: number;
+  page: number;
+  none: number;
+  small: number;
+  large: number;
+} {
+  const out = { screen: 0, page: 0, none: 0, small: 0, large: 0 };
+  changes.forEach((change, i) => {
+    out[pipelineStep(set, i).kind] += 1;
+    out[change] += 1;
+  });
+  return out;
+}
+
+/**
+ * P4's one-step runs per shape (ruling R19a): the size at which their mix is
+ * exactly `pipeline-200`'s, in screens/pages and none/small/large. Large:
+ * 20 of 200 (14/6, 14/5/1); smoke: 10, all of its `pipeline-200`.
+ */
+export const SINGLE_STEP_RUNS: Record<ShapeName, number> = {
+  large: 20,
+  smoke: 10,
+};
+
+/** The changes of P4's one-step runs: `pipeline-200`'s steps 0.. with its mix. */
+export function singleStepChanges(shape: Shape): ImageChange[] {
+  return changeMix(SINGLE_STEP_RUNS[shape.name], mixSeed("pipeline-200"));
+}
+
+/**
+ * P6 (ruling R24): a run's status sequence from what was observed, merged in
+ * time order (`at`; ties keep their order), starting from `initial`, with
+ * consecutive repeats collapsed. Its length minus 1 is the status changes.
+ */
+export function statusSequence(
+  initial: string,
+  observations: readonly { at: number; status: string }[],
+): string[] {
+  const sequence = [initial];
+  const ordered = observations
+    .map((o, i) => ({ ...o, i }))
+    .sort((a, b) => a.at - b.at || a.i - b.i);
+  for (const { status } of ordered) {
+    if (status !== sequence[sequence.length - 1]) sequence.push(status);
+  }
+  return sequence;
+}
+
+/** A status sequence for a note, at most `max` statuses before the ellipsis. */
+export function formatSequence(sequence: readonly string[], max = 12): string {
+  if (sequence.length <= max) return sequence.join("→");
+  return `${sequence.slice(0, max - 1).join("→")}→…→${sequence[sequence.length - 1]} (${sequence.length} statuses)`;
+}
+
 /**
  * When P5's race acts, as 1-based step numbers: the ignore region goes on
  * step 3 after step 10 is uploaded, and step 5 is approved and undone after
@@ -221,22 +292,25 @@ export function raceSchedule(n: number): {
 }
 
 /**
- * Result latencies (ms): result time minus upload time. A step that got no
- * result counts at `timeoutMs`: a failed sample, never a dropped one.
+ * Result latencies (ms): result time minus upload time, capped at `timeoutMs`
+ * (ruling R22). A step whose result came later than that, or never, counts at
+ * `timeoutMs`: a failed sample, never a dropped one. `capped` counts them.
  */
 export function latencySamples(
   steps: readonly { uploadedAt: number; resultAt?: number }[],
   timeoutMs: number,
-): { samples: number[]; timedOut: number } {
-  let timedOut = 0;
+): { samples: number[]; capped: number } {
+  let capped = 0;
   const samples = steps.map((step) => {
-    if (step.resultAt === undefined) {
-      timedOut += 1;
+    const latency =
+      step.resultAt === undefined ? Infinity : step.resultAt - step.uploadedAt;
+    if (latency > timeoutMs) {
+      capped += 1;
       return timeoutMs;
     }
-    return step.resultAt - step.uploadedAt;
+    return latency;
   });
-  return { samples, timedOut };
+  return { samples, capped };
 }
 
 /**

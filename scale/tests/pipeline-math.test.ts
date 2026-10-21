@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
 
+import { shapes } from "../src/seed/shape.js";
 import {
   amplification,
   changeMix,
   excessEvents,
   findDuplicates,
+  formatSequence,
   formatSteps,
   latencySamples,
   meanJobSeconds,
+  mixCounts,
+  mixSeed,
   overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  singleStepChanges,
+  statusSequence,
   stepDifferences,
   throughputRatio,
 } from "../src/suites/pipeline-math.js";
@@ -202,7 +208,89 @@ describe("latencySamples", () => {
         ],
         120_000,
       ),
-    ).toEqual({ samples: [250, 120_000, 0], timedOut: 1 });
+    ).toEqual({ samples: [250, 120_000, 0], capped: 1 });
+  });
+
+  it("caps a result that came after the timeout too (R22)", () => {
+    expect(
+      latencySamples(
+        [
+          { uploadedAt: 0, resultAt: 130_000 },
+          { uploadedAt: 0, resultAt: 120_000 },
+        ],
+        120_000,
+      ),
+    ).toEqual({ samples: [120_000, 120_000], capped: 1 });
+  });
+});
+
+describe("singleStepChanges (R19a: P4's single-step sample)", () => {
+  for (const shape of Object.values(shapes)) {
+    it(`${shape.name}: has pipeline-200's screen/page and change mix, proportionally`, () => {
+      const n = shape.pipelineSets["pipeline-200"];
+      const full = mixCounts(
+        "pipeline-200",
+        changeMix(n, mixSeed("pipeline-200")),
+      );
+      const changes = singleStepChanges(shape);
+      const sample = mixCounts("pipeline-200", changes);
+      const k = changes.length;
+      for (const field of [
+        "screen",
+        "page",
+        "none",
+        "small",
+        "large",
+      ] as const) {
+        expect(sample[field] * n).toBe(full[field] * k);
+      }
+    });
+  }
+
+  it("is 20 steps on large (14/6 screens/pages, 14/5/1) and 10 on smoke", () => {
+    expect(mixCounts("pipeline-200", singleStepChanges(shapes.large))).toEqual({
+      screen: 14,
+      page: 6,
+      none: 14,
+      small: 5,
+      large: 1,
+    });
+    expect(singleStepChanges(shapes.smoke)).toHaveLength(10);
+  });
+});
+
+describe("statusSequence (R24: transitions from the event stream)", () => {
+  it("merges observations in time order and collapses repeats", () => {
+    expect(
+      statusSequence("running", [
+        { at: 3, status: "unresolved" },
+        { at: 1, status: "running" },
+        { at: 5, status: "running" },
+        { at: 6, status: "running" },
+        { at: 9, status: "unresolved" },
+      ]),
+    ).toEqual(["running", "unresolved", "running", "unresolved"]);
+  });
+
+  it("is the initial status alone when nothing was observed", () => {
+    expect(statusSequence("running", [])).toEqual(["running"]);
+  });
+});
+
+describe("formatSequence", () => {
+  it("joins a short sequence", () => {
+    expect(formatSequence(["running", "unresolved"])).toBe(
+      "running→unresolved",
+    );
+  });
+
+  it("truncates a long one, keeping the last status and the length", () => {
+    const seq = Array.from({ length: 20 }, (_, i) =>
+      i % 2 === 0 ? "running" : "passed",
+    );
+    expect(formatSequence(seq, 4)).toBe(
+      "running→passed→running→…→passed (20 statuses)",
+    );
   });
 });
 

@@ -8,8 +8,9 @@ import { releaseRedis } from "../stack/worker.js";
 
 /**
  * What the pipeline suite watches while it drives the stack: one run's rows
- * (`RunWatcher`), the diff queue (`openQueueProbe`) and the project's live
- * events (`subscribeProjectEvents`). Every wait is bounded.
+ * (`RunWatcher`), the diff queue (`openQueueProbe`), the project's live events
+ * (`subscribeProjectEvents`) and the run's own status events
+ * (`subscribeRunStatuses`). Every wait is bounded.
  */
 
 /** How often the database and the queue are polled (spec §5.2). */
@@ -277,38 +278,19 @@ export function openQueueProbe(
   };
 }
 
-export interface ProjectEvents {
-  /** Events named `event` whose `data.id` is `id`, received so far. */
-  count(event: string, id: string): number;
-  close(): Promise<void>;
-}
-
 /**
- * Subscribes to the project's raw live-event channel
- * (`project:<id>:events:raw`, `apps/api/src/lib/broadcast.ts`) on a dedicated
- * connection (a subscribed connection can run nothing else), and counts the
- * events by name and `data.id`.
+ * Subscribes a dedicated connection (a subscribed connection can run nothing
+ * else) to one channel, handing each message and its arrival time to
+ * `onMessage`. Returns the idempotent close.
  */
-export async function subscribeProjectEvents(
+async function subscribeChannel(
   redis: Redis,
-  projectId: string,
-): Promise<ProjectEvents> {
-  const channel = `project:${projectId}:events:raw`;
-  const counts = new Map<string, number>();
-  const key = (event: string, id: string): string => `${event}\u0000${id}`;
+  channel: string,
+  onMessage: (message: string, at: number) => void,
+): Promise<() => Promise<void>> {
   const sub = redis.duplicate();
   sub.on("message", (from: string, message: string) => {
-    if (from !== channel) return;
-    let parsed: { event?: unknown; data?: { id?: unknown } | null };
-    try {
-      parsed = JSON.parse(message) as typeof parsed;
-    } catch {
-      return;
-    }
-    if (typeof parsed.event !== "string") return;
-    const id = typeof parsed.data?.id === "string" ? parsed.data.id : "";
-    const k = key(parsed.event, id);
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+    if (from === channel) onMessage(message, performance.now());
   });
   const close = once(() => releaseRedis(sub));
   try {
@@ -317,8 +299,80 @@ export async function subscribeProjectEvents(
     await close();
     throw error;
   }
-  return {
-    count: (event, id) => counts.get(key(event, id)) ?? 0,
-    close,
-  };
+  return close;
+}
+
+function parseJson(message: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(message);
+    return parsed !== null && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface ProjectEvents {
+  /** Events named `event` whose `data.id` is `id`, received so far. */
+  count(event: string, id: string): number;
+  close(): Promise<void>;
+}
+
+/**
+ * Counts the project's raw live events (`project:<id>:events:raw`,
+ * `apps/api/src/lib/broadcast.ts`) by name and `data.id`.
+ */
+export async function subscribeProjectEvents(
+  redis: Redis,
+  projectId: string,
+): Promise<ProjectEvents> {
+  const counts = new Map<string, number>();
+  const key = (event: string, id: string): string => `${event}\u0000${id}`;
+  const close = await subscribeChannel(
+    redis,
+    `project:${projectId}:events:raw`,
+    (message) => {
+      const parsed = parseJson(message);
+      if (typeof parsed?.event !== "string") return;
+      const data = parsed.data as { id?: unknown } | null | undefined;
+      const k = key(parsed.event, typeof data?.id === "string" ? data.id : "");
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    },
+  );
+  return { count: (event, id) => counts.get(key(event, id)) ?? 0, close };
+}
+
+export interface RunStatuses {
+  /** Each diff job's post-rollup status, with its arrival time. */
+  seen(): { at: number; status: string }[];
+  close(): Promise<void>;
+}
+
+/**
+ * The run's own channel (`run:<id>:events`), where every diff job publishes
+ * `run.completed` with the status its rollup derived (top-level `status`,
+ * `apps/diff-worker/src/handler.ts`). The api's `/complete` publishes a
+ * `run.completed` too, with the status it read nested in `payload`; that one
+ * is not a diff result and is skipped.
+ */
+export async function subscribeRunStatuses(
+  redis: Redis,
+  runId: string,
+): Promise<RunStatuses> {
+  const seen: { at: number; status: string }[] = [];
+  const close = await subscribeChannel(
+    redis,
+    `run:${runId}:events`,
+    (message, at) => {
+      const parsed = parseJson(message);
+      if (
+        parsed?.type === "run.completed" &&
+        typeof parsed.status === "string"
+      ) {
+        seen.push({ at, status: parsed.status });
+      }
+    },
+  );
+  return { seen: () => seen.map((s) => ({ ...s })), close };
 }

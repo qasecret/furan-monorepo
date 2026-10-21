@@ -33,7 +33,6 @@ import {
   type Seeded,
   type Shape,
 } from "../seed/index.js";
-import { PIPELINE_SETS } from "../seed/shape.js";
 import type { Stack } from "../stack/api.js";
 import { WORKER_CONCURRENCY } from "../stack/constants.js";
 import { percentile } from "../stats.js";
@@ -43,12 +42,17 @@ import {
   changeMix,
   excessEvents,
   latencySamples,
+  formatSequence,
   formatSteps,
   meanJobSeconds,
+  mixCounts,
+  mixSeed,
   overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  singleStepChanges,
+  statusSequence,
   stepDifferences,
   throughputRatio,
   type RegionRow,
@@ -62,6 +66,7 @@ import {
   STEP_TIMEOUT_MS,
   openQueueProbe,
   subscribeProjectEvents,
+  subscribeRunStatuses,
   type QueueProbe,
   type StepTiming,
 } from "./pipeline-probes.js";
@@ -71,13 +76,19 @@ export {
   changeMix,
   excessEvents,
   findDuplicates,
+  formatSequence,
   formatSteps,
   latencySamples,
   meanJobSeconds,
+  mixCounts,
+  mixSeed,
   overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  SINGLE_STEP_RUNS,
+  singleStepChanges,
+  statusSequence,
   stepDifferences,
   throughputRatio,
 } from "./pipeline-math.js";
@@ -102,14 +113,10 @@ const ACTIVE_TIMEOUT_MS = 5 * 60_000;
 const EVENT_GRACE_MS = 250;
 /** P4: uploads in flight at once. */
 const UPLOAD_CONCURRENCY = 8;
-/** The change mix's shuffle seed; each set adds its index. */
-const MIX_SEED = 0x5ca1e;
 /** P5's ignore region reaches this far past the change it covers. */
 const IGNORE_PADDING_PX = 2;
 const CHECKPOINTS_METRIC = "furan_diff_job_checkpoints";
 const DURATION_METRIC = "furan_diff_job_duration_seconds";
-/** P4 (ruling R19): one-step runs timed for the worker's per-step cost. */
-const SINGLE_STEP_RUNS = 10;
 const IDS = ["P1", "P2", "P3", "P4", "P5", "P6"] as const;
 
 interface Driver {
@@ -146,10 +153,17 @@ interface MeasuredRun {
   steps: number;
   /** Change in `furan_diff_job_checkpoints` sum over the run. */
   diffs: number;
-  latency: { samples: number[]; timedOut: number };
+  latency: { samples: number[]; capped: number };
   /** Last upload response to the final status; null if it never came. */
   finalMs: number | null;
-  statusChanges: number;
+  /** Status changes seen by the 100 ms poll. */
+  polledChanges: number;
+  /**
+   * The status sequence inferred from the event stream (only when
+   * subscribed): upload responses (`running`) merged with each diff job's
+   * `run.completed` status (ruling R24).
+   */
+  inferred: string[];
   /** `testRun_updated` events for the run (only when subscribed). */
   updatedEvents: number;
   /** The queue had to be cut short, so `diffs` is a lower bound. */
@@ -291,9 +305,6 @@ async function newRun(
   });
 }
 
-const mixSeed = (set: PipelineSet): number =>
-  MIX_SEED + PIPELINE_SETS.indexOf(set);
-
 /** The images of a run's steps, drawn before the run starts uploading. */
 async function planSteps(
   set: PipelineSet,
@@ -377,15 +388,29 @@ async function measuredRun(
   if (events !== undefined) {
     d.stack.teardown.add("close the pipeline suite's subscriber", events.close);
   }
+  let statuses: Awaited<ReturnType<typeof subscribeRunStatuses>> | undefined;
   try {
     const run = await newRun(d, `scale-${set}`);
+    // Subscribed before the first upload, so no diff job's status is missed.
+    statuses = subscribe
+      ? await subscribeRunStatuses(d.stack.redis, run.runId)
+      : undefined;
+    if (statuses !== undefined) {
+      d.stack.teardown.add(
+        "close the pipeline suite's run subscriber",
+        statuses.close,
+      );
+    }
     const watcher = new RunWatcher(d.stack.db, run.runId, run.status, d.alive);
+    // Each upload answers after its transaction made the run `running`.
+    const uploadsSeen: { at: number; status: string }[] = [];
     try {
       let lastUploadAt = performance.now();
       for (const step of plan) {
         const { screenshotId } = await upload(d, run.runId, step);
         lastUploadAt = performance.now();
         watcher.uploaded(screenshotId, lastUploadAt);
+        uploadsSeen.push({ at: lastUploadAt, status: "running" });
       }
       watcher.armFinal(lastUploadAt);
       // One budget for the final status and the queue to empty after it.
@@ -403,7 +428,11 @@ async function measuredRun(
         diffs: after - before,
         latency: latencySamples(watcher.timings(), STEP_TIMEOUT_MS),
         finalMs: final === null ? null : final.at - lastUploadAt,
-        statusChanges: watcher.changes.length,
+        polledChanges: watcher.changes.length,
+        inferred:
+          statuses === undefined
+            ? []
+            : statusSequence(run.status, [...uploadsSeen, ...statuses.seen()]),
         updatedEvents: events?.count("testRun_updated", run.runId) ?? 0,
         cutShort,
       };
@@ -411,11 +440,19 @@ async function measuredRun(
       await watcher.stop();
     }
   } finally {
+    await statuses?.close();
     await events?.close();
   }
 }
 
 const label = (run: MeasuredRun): string => `${run.set} (${run.steps} steps)`;
+
+/**
+ * P6's status changes (ruling R24): the poll misses a status shorter than
+ * its interval, so the larger of the polled and the event-inferred count.
+ */
+const statusChanges = (run: MeasuredRun): number =>
+  Math.max(run.polledChanges, run.inferred.length - 1);
 const round = (n: number, places = 2): number =>
   Math.round(n * 10 ** places) / 10 ** places;
 
@@ -441,7 +478,7 @@ function fromMeasuredRuns(runs: readonly MeasuredRun[]): Measurement[] {
     });
 
     const samples = runs.flatMap((r) => r.latency.samples);
-    const timedOut = runs.reduce((n, r) => n + r.latency.timedOut, 0);
+    const capped = runs.reduce((n, r) => n + r.latency.capped, 0);
     out.push({
       id: "P2",
       value: percentile(
@@ -450,8 +487,8 @@ function fromMeasuredRuns(runs: readonly MeasuredRun[]): Measurement[] {
       ),
       samples: samples.length,
       note: `p95 over ${samples.length} steps of ${runs.map(label).join(" and ")}${
-        timedOut > 0
-          ? `; ${timedOut} had no result within ${STEP_TIMEOUT_MS / 1000} s (counted at ${STEP_TIMEOUT_MS / 1000} s)`
+        capped > 0
+          ? `; ${capped} had no result within ${STEP_TIMEOUT_MS / 1000} s (counted at ${STEP_TIMEOUT_MS / 1000} s)`
           : ""
       }`,
     });
@@ -470,8 +507,8 @@ function fromMeasuredRuns(runs: readonly MeasuredRun[]): Measurement[] {
   if (small !== undefined) {
     out.push({
       id: "P6",
-      value: excessEvents(small.updatedEvents, small.statusChanges),
-      note: `${label(small)}: ${small.updatedEvents} testRun_updated events, ${small.statusChanges} status changes`,
+      value: excessEvents(small.updatedEvents, statusChanges(small)),
+      note: `${label(small)}: ${small.updatedEvents} testRun_updated events, ${statusChanges(small)} status changes (the larger of ${small.polledChanges} polled every ${POLL_MS} ms and ${small.inferred.length - 1} inferred from the events: ${formatSequence(small.inferred)})`,
     });
   }
   return out;
@@ -481,17 +518,19 @@ function fromMeasuredRuns(runs: readonly MeasuredRun[]): Measurement[] {
 // P4: throughput
 // ---------------------------------------------------------------------------
 
-/** Counts of each image kind and change in a list of steps, for a note. */
-function composition(steps: readonly PlannedStep[]): string {
-  const count = (pick: (s: PlannedStep) => boolean): number =>
-    steps.filter(pick).length;
-  return `${count((s) => s.kind === "screen")} screens / ${count((s) => s.kind === "page")} pages; ${count((s) => s.change === "none")} none / ${count((s) => s.change === "small")} small / ${count((s) => s.change === "large")} large`;
+/** Screens, pages and changes of a set's planned steps, for a note. */
+function composition(set: PipelineSet, steps: readonly PlannedStep[]): string {
+  const c = mixCounts(
+    set,
+    steps.map((s) => s.change),
+  );
+  return `${c.screen} screens / ${c.page} pages; ${c.none} none / ${c.small} small / ${c.large} large`;
 }
 
 /**
- * The worker's ideal (ruling R19): `SINGLE_STEP_RUNS` fresh one-step runs, one
- * at a time on an idle queue (each waits for its job to finish), drawn with
- * `pipeline-200`'s fixed-seed mix. Each job diffs exactly one checkpoint, so
+ * The worker's ideal (rulings R19, R19a): `SINGLE_STEP_RUNS[shape]` fresh
+ * one-step runs (20 on large, 10 on smoke), one at a time on an idle queue
+ * (each waits for its job to finish), whose mix is exactly `pipeline-200`'s. Each job diffs exactly one checkpoint, so
  * the mean of `furan_diff_job_duration_seconds{outcome="completed"}` over
  * them is the time per step, and the ideal is 4 (the concurrency) over it.
  *
@@ -504,10 +543,7 @@ async function measureThroughput(
 ): Promise<Measurement> {
   const set = "pipeline-200";
   const worker = d.stack.registries.worker;
-  const singles = await planSteps(
-    set,
-    changeMix(SINGLE_STEP_RUNS, mixSeed(set)),
-  );
+  const singles = await planSteps(set, singleStepChanges(shape));
   const plan = await planSteps(
     set,
     changeMix(shape.pipelineSets[set], mixSeed(set)),
@@ -571,7 +607,7 @@ async function measureThroughput(
     id: "P4",
     value: throughputRatio(observed, stepSec, WORKER_CONCURRENCY),
     samples: timings.length,
-    note: `ideal ${round(WORKER_CONCURRENCY / stepSec)} steps/s = ${WORKER_CONCURRENCY} / ${round(stepSec * 1000)} ms, the mean completed job of ${singles.length} one-step runs (${composition(singles)}); observed ${round(observed)} results/s first to last result of ${set} (${plan.length} steps, ${composition(plan)}, ${UPLOAD_CONCURRENCY} uploads at once)${
+    note: `ideal ${round(WORKER_CONCURRENCY / stepSec)} steps/s = ${WORKER_CONCURRENCY} / ${round(stepSec * 1000)} ms, the mean completed job of ${singles.length} one-step runs (${composition(set, singles)}); observed ${round(observed)} results/s, (n − 1) results over the first-to-last span, of ${set} (${plan.length} steps, ${composition(set, plan)}, ${UPLOAD_CONCURRENCY} uploads at once)${
       late > 0
         ? `; ${late} had no result within ${STEP_TIMEOUT_MS / 1000} s (counted at ${STEP_TIMEOUT_MS / 1000} s: an upper bound)`
         : ""
@@ -767,53 +803,59 @@ async function measureRace(
     const undoSpan: Span = { start: Infinity, end: Infinity };
     let undone = "";
 
-    for (const [i, step] of plan.entries()) {
-      const start = performance.now();
-      ids.push((await upload(d, run.runId, step)).screenshotId);
-      uploads.push({ start, end: performance.now() });
-      if (i + 1 === at.ignoreAfter) {
-        ignoreSpan.start = performance.now();
-        inBackground(
-          reviewer
-            .mutation("runs.setIgnoreAreas", {
-              runId: run.runId,
-              scope: "variation",
-              checkpointId: ids[at.ignoreStep - 1],
-              ignoreAreas: [ignoreArea],
-            })
-            .then((res) => {
-              if (res.status !== 200) {
-                throw trpcFailure("runs.setIgnoreAreas", res);
-              }
-            })
-            .finally(() => {
-              ignoreSpan.end = performance.now();
-            }),
-        );
+    try {
+      for (const [i, step] of plan.entries()) {
+        const start = performance.now();
+        ids.push((await upload(d, run.runId, step)).screenshotId);
+        uploads.push({ start, end: performance.now() });
+        if (i + 1 === at.ignoreAfter) {
+          ignoreSpan.start = performance.now();
+          inBackground(
+            reviewer
+              .mutation("runs.setIgnoreAreas", {
+                runId: run.runId,
+                scope: "variation",
+                checkpointId: ids[at.ignoreStep - 1],
+                ignoreAreas: [ignoreArea],
+              })
+              .then((res) => {
+                if (res.status !== 200) {
+                  throw trpcFailure("runs.setIgnoreAreas", res);
+                }
+              })
+              .finally(() => {
+                ignoreSpan.end = performance.now();
+              }),
+          );
+        }
+        if (i + 1 === at.approveAfter) {
+          // The uploads wait here for the approve only, never for the undo.
+          const actionId = await approveWhenReviewable(
+            d,
+            run.runId,
+            ids[at.approveStep - 1]!,
+          );
+          undoSpan.start = performance.now();
+          inBackground(
+            reviewer
+              .mutation("review.revert", { actionId })
+              .then((res) => {
+                if (res.status !== 200) throw trpcFailure("review.revert", res);
+                undone = ` (reverted ${(res.data as { reverted?: number }).reverted ?? "?"})`;
+              })
+              .finally(() => {
+                undoSpan.end = performance.now();
+              }),
+          );
+        }
       }
-      if (i + 1 === at.approveAfter) {
-        // The uploads wait here for the approve only, never for the undo.
-        const actionId = await approveWhenReviewable(
-          d,
-          run.runId,
-          ids[at.approveStep - 1]!,
-        );
-        undoSpan.start = performance.now();
-        inBackground(
-          reviewer
-            .mutation("review.revert", { actionId })
-            .then((res) => {
-              if (res.status !== 200) throw trpcFailure("review.revert", res);
-              undone = ` (reverted ${(res.data as { reverted?: number }).reverted ?? "?"})`;
-            })
-            .finally(() => {
-              undoSpan.end = performance.now();
-            }),
-        );
-      }
+      await complete(d.stack.apiUrl, d.pat, run.runId);
+    } finally {
+      // Never leave a branch running behind a failed upload: the restore in
+      // the outer `finally` must come after the ignore save. The branches
+      // never reject (their failures are kept), so this is an allSettled.
+      await Promise.all(side);
     }
-    await complete(d.stack.apiUrl, d.pat, run.runId);
-    await Promise.all(side);
     if (sideErrors.length > 0) throw sideErrors[0];
 
     await drainFully(d);
@@ -821,6 +863,7 @@ async function measureRace(
     const losses = raceLosses(raced.steps, raced.regions);
 
     const threshold = await effectiveThreshold(d.stack.db, run.runId);
+    const diffsBefore = await checkpointDiffs(d);
     const rediff = await reviewer.mutation("runs.setDiffThresholdOverride", {
       runId: run.runId,
       threshold,
@@ -829,6 +872,13 @@ async function measureRace(
       throw trpcFailure("runs.setDiffThresholdOverride", rediff);
     }
     await drainFully(d);
+    // The ground truth must not go vacuous: the re-diff has to have run.
+    const rediffed = (await checkpointDiffs(d)) - diffsBefore;
+    if (rediffed < raced.steps.length) {
+      throw new Error(
+        `the ground-truth re-diff did not run: ${rediffed} checkpoint diffs for ${raced.steps.length} steps`,
+      );
+    }
     const differences = stepDifferences(
       raced,
       await snapshotRun(d.stack.db, run.runId),
