@@ -7,10 +7,12 @@ read, what they mean, and what to do about each cause.
 
 > The worker serves `/livez`, `/readyz` and `/metrics` on port 3200 (`PORT`).
 > Neither compose file maps it to the host and the image is distroless, so
-> probe from a sidecar that shares its network namespace:
+> probe from a sidecar that shares its network namespace. `head -n1` picks one
+> replica, so the command still works once the worker is scaled (Action 4); to
+> probe another one, take its line with `sed -n 2p` instead.
 >
 > ```bash
-> DW=$(docker compose -f infra/docker/compose.yml ps -q diff-worker)
+> DW=$(docker compose -f infra/docker/compose.yml ps -q diff-worker | head -n1)
 > docker run --rm --network container:$DW curlimages/curl -s http://127.0.0.1:3200/metrics | grep '^furan_diff_'
 > ```
 
@@ -37,14 +39,23 @@ for a diff job still in the queue.
 | `furan_diff_job_duration_seconds`   | One attempt, start to finish, labelled `outcome` = `completed`, `retry` or `failed`. |
 | `furan_diff_job_checkpoints`        | Checkpoints (screenshots) one completed job diffed.                                  |
 
+**`furan_diff_queue_jobs` is queue-wide, the other three are per replica.**
+Every replica reads the same Redis queue, so with N replicas each `/metrics`
+reports the same `waiting`, `active`, `delayed` and `failed`. Aggregate it with
+`max by (state) (furan_diff_queue_jobs)`: a `sum` counts every job N times. The
+histograms and `furan_diff_jobs_dead_lettered_total` are counted by the replica
+that ran the job, so those do need a `sum` (for a quantile,
+`histogram_quantile(0.95, sum by (le) (rate(<metric>_bucket[5m])))`).
+
 The `state` label of `furan_diff_queue_jobs`:
 
 - `waiting`: queued, not picked up yet. This is the backlog.
-- `active`: being diffed now. A worker runs at most 4 at a time.
+- `active`: being diffed now, across all replicas. Each replica runs at most 4
+  at a time.
 - `delayed`: an attempt failed and the job is waiting out its retry backoff.
 - `failed`: jobs that used all 3 attempts and that Redis still holds (24 h, at
   most 5000). It is a level that ages out, not a running total. Use
-  `rate(furan_diff_jobs_dead_lettered_total[5m])` for the rate.
+  `sum(rate(furan_diff_jobs_dead_lettered_total[5m]))` for the rate.
 
 If the gauge has no series, or stops changing, the worker cannot read Redis in
 500 ms: it keeps the last values and logs `diff_queue_depth_unavailable` (at
@@ -53,8 +64,9 @@ rather than 0.
 
 ## Reading them together
 
-- `waiting` rising, `active` at its cap (4 per replica), duration flat: not
-  enough workers for the arrival rate. Scale (below).
+- `waiting` rising, `active` at its cap (4 per replica, so 4 times the number
+  of replicas in the queue-wide gauge), duration flat: not enough workers for
+  the arrival rate. Scale (below).
 - `waiting` rising and `active` at 0: nothing is consuming. A stuck or dead
   worker, or Redis. Check `/readyz` first.
 - Duration p95 rising while queue wait is flat so far: jobs are getting
