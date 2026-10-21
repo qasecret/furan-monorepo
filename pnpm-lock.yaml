@@ -810,6 +810,9 @@ importers:
 
   scale:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1146.0
+        version: 3.1146.0
       '@furan/api':
         specifier: workspace:*
         version: link:../apps/api
