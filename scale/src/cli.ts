@@ -21,6 +21,7 @@ import {
 import { openDataPlane, startStack, type Stack } from "./stack/api.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
+import { loadViewerCalls, runServerSuite } from "./suites/server.js";
 
 /** What a suite runner gets: the running stack, what was seeded, and the flags. */
 export interface SuiteContext {
@@ -28,6 +29,12 @@ export interface SuiteContext {
   seeded: Seeded;
   shape: Shape;
   args: CliArgs;
+  /**
+   * The procedures the viewer called on open, when the browser suite recorded
+   * them earlier in this run; the server suite's R4 falls back to the
+   * checked-in list without them.
+   */
+  recordedViewerCalls?: string[];
 }
 
 /**
@@ -40,6 +47,11 @@ const RUNNERS: Partial<
 > = {
   pipeline: ({ stack, seeded, shape }) =>
     runPipelineSuite(stack, seeded, shape),
+  server: ({ stack, seeded, recordedViewerCalls }) => {
+    // A drifted call set fails the suite: R4 must measure the real viewer.
+    const { calls, source } = loadViewerCalls(recordedViewerCalls);
+    return runServerSuite(stack, seeded, calls, { callSetSource: source });
+  },
 };
 
 const say = (message: string): void => {

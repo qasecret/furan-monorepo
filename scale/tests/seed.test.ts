@@ -23,10 +23,11 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { generatePng } from "../src/seed/images.js";
-import { seed, type Seeded } from "../src/seed/index.js";
+import { markSeedUsed, seed, type Seeded } from "../src/seed/index.js";
 import { createScratch } from "../src/seed/scratch.js";
 import {
   PIPELINE_SETS,
+  SEED_NAMES,
   expectedRows,
   pipelineStep,
   shapes,
@@ -269,6 +270,20 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
              where ${probe}::text in (image_name, diff_name)))::int as n`);
       expect(owners!.n).toBe(1);
       expect(await storage.head(seeded.uniqueKeyProbe)).not.toBeNull();
+      // It is long-run step 1's image, where the viewer is opened (R4, D5).
+      const [stepOne] = await db
+        .select({
+          runId: screenshots.runId,
+          name: screenshots.name,
+          key: screenshots.imageKey,
+        })
+        .from(screenshots)
+        .where(eq(screenshots.id, seeded.longRunFirstStepId));
+      expect(stepOne).toEqual({
+        runId: seeded.longRunId,
+        name: SEED_NAMES.longRunStep(1),
+        key: seeded.uniqueKeyProbe,
+      });
 
       // Every step's image is in storage.
       const keys = await db
@@ -360,6 +375,12 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
       expect(reseeded.projectId).not.toBe(seeded.projectId);
       expect(await countIn(db, "builds", reseeded.projectId)).toBe(want.builds);
       expect(await countIn(db, "builds", seeded.projectId)).toBe(0);
+
+      // A seed a suite has used up (the server suite's approvals) is reseeded
+      // even with reuse.
+      await markSeedUsed(db);
+      const afterUse = await seed(db, shape, storage, { reuse: true });
+      expect(afterUse.projectId).not.toBe(reseeded.projectId);
     } finally {
       await close();
       await scratch.drop();

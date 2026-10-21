@@ -84,6 +84,8 @@ export interface Seeded {
   /** The current long run and its own recent one-run batch. */
   longRunId: string;
   longRunBuildId: string;
+  /** Step 1 of the long run (where the viewer is opened for R4 and D5). */
+  longRunFirstStepId: string;
   /** Each set's variations on `main`, in step order (see `pipelineStep`). */
   pipeline: Record<PipelineSet, { variationIds: string[]; branch: "main" }>;
   /** Where the solo review-queue timings start (old perf script's cases). */
@@ -97,7 +99,7 @@ export interface Seeded {
     /** The worst-case project's newest kept pending step. */
     worstNewestKept: QueueAt;
   };
-  /** An image key owned by exactly one screenshots row (a long-run step). */
+  /** An image key owned by exactly one screenshots row: long-run step 1's. */
   uniqueKeyProbe: string;
 }
 
@@ -148,6 +150,16 @@ async function writeMeta(db: DB, shape: Shape): Promise<void> {
   await db.execute(
     sql`insert into scale_meta (shape_version, shape) values (${SHAPE_VERSION}, ${shape.name})`,
   );
+}
+
+/**
+ * Marks the seed used up, so the next `--reuse` reseeds it instead of
+ * measuring it as it is. A suite calls it before it changes the review mix
+ * for good: the server suite's approvals (R7) take the newest batch's pending
+ * steps, which a reused seed would be missing (and `soloSpots` needs).
+ */
+export async function markSeedUsed(db: DB): Promise<void> {
+  if (await metaTableExists(db)) await db.execute(sql`delete from scale_meta`);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +404,7 @@ async function buildByCi(
 }
 
 /** The pending steps of `projectId`, in capture order. */
-async function pendingSteps(db: DB, projectId: string) {
+export async function pendingSteps(db: DB, projectId: string) {
   return db
     .select({
       buildId: testRuns.buildId,
@@ -534,7 +546,7 @@ async function loadSeeded(
   }
 
   const [probe] = await db
-    .select({ key: screenshots.imageKey })
+    .select({ id: screenshots.id, key: screenshots.imageKey })
     .from(screenshots)
     .where(
       and(
@@ -560,6 +572,7 @@ async function loadSeeded(
     newestBuildId,
     longRunId: longRun.id,
     longRunBuildId,
+    longRunFirstStepId: probe.id,
     pipeline,
     soloSpots,
     uniqueKeyProbe: probe.key,
