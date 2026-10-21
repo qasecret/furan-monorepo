@@ -825,6 +825,9 @@ importers:
       '@furan/queue':
         specifier: workspace:*
         version: link:../packages/queue
+      '@furan/shared-types':
+        specifier: workspace:*
+        version: link:../packages/shared-types
       '@furan/storage':
         specifier: workspace:*
         version: link:../packages/storage
@@ -837,6 +840,9 @@ importers:
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
+      postgres:
+        specifier: ^3.4.5
+        version: 3.4.9
       sharp:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@22.19.19)

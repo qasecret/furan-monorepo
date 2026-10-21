@@ -1,0 +1,106 @@
+import sharp from "sharp";
+import { describe, expect, it } from "vitest";
+
+import {
+  IMAGE_SIZE,
+  generatePng,
+  withTextChunk,
+  type ImageKind,
+} from "../src/seed/images.js";
+
+/** Decoded RGB pixels of a PNG. */
+async function pixels(png: Buffer) {
+  const { data, info } = await sharp(png)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { data, width: info.width, height: info.height };
+}
+
+/** Share of pixels whose RGB differs between two same-sized PNGs. */
+async function changedShare(a: Buffer, b: Buffer): Promise<number> {
+  const pa = await pixels(a);
+  const pb = await pixels(b);
+  expect([pb.width, pb.height]).toEqual([pa.width, pa.height]);
+  let changed = 0;
+  for (let i = 0; i < pa.data.length; i += 3) {
+    if (
+      pa.data[i] !== pb.data[i] ||
+      pa.data[i + 1] !== pb.data[i + 1] ||
+      pa.data[i + 2] !== pb.data[i + 2]
+    ) {
+      changed += 1;
+    }
+  }
+  return changed / (pa.width * pa.height);
+}
+
+describe("generatePng", () => {
+  it("draws screens at 1366x768 and pages at 1366x3000", async () => {
+    expect(IMAGE_SIZE).toEqual({
+      screen: { width: 1366, height: 768 },
+      page: { width: 1366, height: 3000 },
+    });
+    for (const kind of ["screen", "page"] as const) {
+      const meta = await sharp(await generatePng(kind, 7, "none")).metadata();
+      expect(meta.format).toBe("png");
+      expect([meta.width, meta.height]).toEqual([
+        IMAGE_SIZE[kind].width,
+        IMAGE_SIZE[kind].height,
+      ]);
+    }
+  });
+
+  it("gives identical bytes for the same seed, and others for another", async () => {
+    const a = await generatePng("screen", 42, "small");
+    const b = await generatePng("screen", 42, "small");
+    expect(a.equals(b)).toBe(true);
+    const c = await generatePng("screen", 43, "small");
+    expect(a.equals(c)).toBe(false);
+  });
+
+  it("draws blocks, strokes and gradients, not a flat fill", async () => {
+    const { data } = await pixels(await generatePng("screen", 3, "none"));
+    const colours = new Set<number>();
+    for (let i = 0; i < data.length; i += 3) {
+      colours.add((data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!);
+    }
+    expect(colours.size).toBeGreaterThan(50);
+  });
+
+  for (const kind of ["screen", "page"] as ImageKind[]) {
+    it(`${kind}: small changes 0.3-0.8% of the pixels, large 15-25%`, async () => {
+      const base = await generatePng(kind, 11, "none");
+      const small = await changedShare(
+        base,
+        await generatePng(kind, 11, "small"),
+      );
+      expect(small).toBeGreaterThanOrEqual(0.003);
+      expect(small).toBeLessThanOrEqual(0.008);
+      const large = await changedShare(
+        base,
+        await generatePng(kind, 11, "large"),
+      );
+      expect(large).toBeGreaterThanOrEqual(0.15);
+      expect(large).toBeLessThanOrEqual(0.25);
+    });
+  }
+});
+
+describe("withTextChunk", () => {
+  it("makes new bytes that decode to the same pixels", async () => {
+    const png = await generatePng("screen", 5, "none");
+    const a = withTextChunk(png, "step 1");
+    const b = withTextChunk(png, "step 2");
+    expect(a.equals(png)).toBe(false);
+    expect(a.equals(b)).toBe(false);
+    expect(await changedShare(png, a)).toBe(0);
+    expect(await changedShare(png, b)).toBe(0);
+  });
+
+  it("refuses bytes that are not a PNG", () => {
+    expect(() => withTextChunk(Buffer.from("not a png"), "x")).toThrow(
+      /not a PNG/,
+    );
+  });
+});
