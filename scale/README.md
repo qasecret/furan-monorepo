@@ -24,7 +24,7 @@ docker compose -f infra/docker/compose.yml -f infra/docker/compose.dev.yml \
   --profile s3 up -d postgres redis minio minio-init
 
 export SCALE_DATABASE_URL='postgresql://<user>:<password>@localhost:5433/postgres'
-export SCALE_REDIS_URL='redis://localhost:6380'
+export SCALE_REDIS_URL='redis://localhost:6379'
 export SCALE_S3_ENDPOINT='http://localhost:9000'
 export SCALE_S3_ACCESS_KEY='<s3 access key>'
 export SCALE_S3_SECRET_KEY='<s3 secret key>'
@@ -68,7 +68,7 @@ password, when:
   free. The large seed needs about 3 to 5 GB.
 
 The harness's own listeners (the API) use a free port chosen at start. They
-never use 3000, 3001, 5433, 6380 or 9000, which belong to a dev stack.
+never use 3000, 3001, 5433, 6380 or 9000, the ports a dev stack may be using.
 
 ## Flags
 
@@ -127,20 +127,23 @@ Both services run with fixed, comparable settings:
   and the sweeper would finalise them and change the shape being measured.
 
 **Interrupts.** Ctrl-C (or SIGTERM) stops the run and tears down everything that
-was opened, newest first: the API and worker are closed, the scratch database,
-bucket and Redis keys are removed (unless `--keep`). A second Ctrl-C exits at
-once, which can leave `furan_scale` or a bucket behind.
+was opened, newest first: the API and worker are closed, the Redis keys are
+removed, and the scratch database and bucket (or directory) are removed unless
+`--keep`. A second Ctrl-C exits at once, which can leave `furan_scale` or a
+bucket behind.
 
-**Exit status.** 0 passed, 1 failed (see [Reading the report](#reading-the-report);
-also a cleanup step that failed), 2 bad flags or settings, 130 or 143 after a signal.
+**Exit status.** 0 passed. 1 failed: the budget outcome (see
+[Reading the report](#reading-the-report)), a run that stopped early with an
+error (seed drift, another run holding the lock, the disk refusal), or a cleanup
+step that failed. 2 bad flags or settings. 130 or 143 after SIGINT or SIGTERM.
 
 ## Suites
 
-| Suite      | Budgets  | What it does                                                                                                                                                                                                                                                         |
-| ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pipeline` | P1 to P6 | Uploads steps through the real SDK upload route with a personal access token and measures the diff pipeline: diff work per run, upload-to-result time, run completion time, sustained throughput, an upload/ignore-region/undo race, and live-update events per run. |
-| `server`   | R1 to R8 | 20 simulated reviewers loop through a review session for 60 s over HTTP. Each procedure is timed on its own call. Also the solo timings (single caller, no HTTP), the viewer's open call set, the storage-proxy access check, `review.approve`, and failed requests. |
-| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer.                                                                                                              |
+| Suite      | Budgets  | What it does                                                                                                                                                                                                                                                                                                                    |
+| ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pipeline` | P1 to P6 | Uploads steps through the real SDK upload route with a personal access token and measures the diff pipeline: diff work per run, upload-to-result time, run completion time, sustained throughput, an upload/ignore-region/undo race, and live-update events per run.                                                            |
+| `server`   | R1 to R8 | The shape's reviewers (20 on `large`, 3 on `smoke`) loop through a review session over HTTP for a 60 s window after a 10 s warm-up. Each procedure is timed on its own call. Also the solo timings (single caller, no HTTP), the viewer's open call set, the storage-proxy access check, `review.approve`, and failed requests. |
+| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer.                                                                                                                                                                         |
 
 The browser suite is added by the next change. Until then, selecting it reports
 its budgets as `error` and the run exits 1, so use `--suite=server,pipeline`.
@@ -173,13 +176,13 @@ errored, or when the seed check fails.
 
 ## What it touches
 
-| Resource | What the harness uses                                                                                                                               | Removed                                                   |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Postgres | The database `furan_scale` on the server, plus one session on the server's `postgres` database that holds the run lock                              | At the end, unless `--keep` (the lock is always released) |
-| Redis    | `furan-scale:*` (diff queue prefix and rate-limit store), and the API's `auth:user:<id>` and `auth:member-projects:<id>` for the scratch users only | At the end; `furan-scale:*` also at the start             |
-| S3       | A bucket `furan-scale-<8 hex>`                                                                                                                      | At the end, unless `--keep`                               |
-| Disk     | With `--storage=hdd`, a directory `furan-scale-*` in the OS temp dir; reports in `scale/out/`                                                       | At the end, unless `--keep` (the report stays)            |
-| Ports    | The API on a free loopback port                                                                                                                     | At the end                                                |
+| Resource | What the harness uses                                                                                                                                                                                                                                                                          | Removed                                                                 |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Postgres | The database `furan_scale` on the server, plus one session on the server's `postgres` database that holds the run lock                                                                                                                                                                         | At the end, unless `--keep` (the lock is always released)               |
+| Redis    | `furan-scale:*` (diff queue prefix and rate-limit store), and the API's `auth:user:<id>` and `auth:member-projects:<id>` for the scratch users only. The API and worker also publish on the `project:<id>:events:raw` and `run:<id>:events` channels (scratch ids only; channels hold no keys) | At the end, with or without `--keep`; `furan-scale:*` also at the start |
+| S3       | A bucket `furan-scale-<8 hex>`                                                                                                                                                                                                                                                                 | At the end, unless `--keep`                                             |
+| Disk     | With `--storage=hdd`, a directory `furan-scale-*` in the OS temp dir; reports in `scale/out/`                                                                                                                                                                                                  | At the end, unless `--keep` (the report stays)                          |
+| Ports    | The API on a free loopback port                                                                                                                                                                                                                                                                | At the end                                                              |
 
 Nothing else on the server, in Redis or in the bucket store is read or deleted;
 a recorded location is removed only if it has the harness's own name.
@@ -205,9 +208,11 @@ Verdicts:
 **Tracked vs enforced.** A `tracked` budget is reported and never fails the run.
 An `enforced` budget fails a `large` run when it misses its threshold.
 
-**The exit code is 1 only when** an enforced budget fails on a `large` run, or a
-budget in a suite that ran is `missing` or `error`, which holds on `smoke` too.
-A tracked failure does not change the exit code.
+**A run's budget outcome exits 1 only when** an enforced budget fails on a
+`large` run, or a budget in a suite that ran is `missing` or `error`, which holds
+on `smoke` too. A tracked failure does not change it. The other ways to exit 1 or
+2 (seed drift, a busy lock, the disk refusal, a failed cleanup, bad settings) are
+listed under "Exit status" above.
 
 ## Budgets and enforcement
 
