@@ -201,6 +201,56 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     expect((dead?.values as Sample[])[0]?.value).toBe(1);
   });
 
+  it("reports the depth of its own queue, and only that queue", async () => {
+    // Hold every job open so the first sits `active` and the rest `waiting`.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held: typeof handleDiffJob = async () => {
+      await gate;
+      return { checkpoints: 1 };
+    };
+    // A job on a queue with a different prefix must not be counted.
+    const otherPrefix = `${prefix}-other`;
+    const other = createQueue("diff", { prefix: otherPrefix });
+    const otherClient = await other.client;
+    try {
+      runtime = startDiffWorker({
+        db: {} as DB,
+        storage: {} as Storage,
+        redis: {} as Redis,
+        logger: noop as never,
+        registry,
+        queuePrefix: prefix,
+        concurrency: 1,
+        sweeper: false,
+        handler: held,
+      });
+      await other.add("diff", { runId: OK, projectId: PROJECT });
+      for (const n of [1, 2, 3]) {
+        await queue.add("diff", {
+          runId: `00000000-0000-0000-0000-00000000010${n}`,
+          projectId: PROJECT,
+        });
+      }
+
+      await vi.waitFor(async () => {
+        const text = await registry.metrics();
+        expect(text).toContain('furan_diff_queue_jobs{state="active"} 1');
+        expect(text).toContain('furan_diff_queue_jobs{state="waiting"} 2');
+      });
+      const text = await registry.metrics();
+      expect(text).toContain('furan_diff_queue_jobs{state="delayed"} 0');
+      expect(text).toContain('furan_diff_queue_jobs{state="failed"} 0');
+    } finally {
+      release();
+      await other.obliterate({ force: true });
+      await other.close();
+      otherClient.disconnect();
+    }
+  });
+
   it("can start twice on one registry and closes cleanly", async () => {
     const first = start();
     await first.close();
@@ -253,6 +303,11 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       // Close only once the worker's connection has reached the socket, so it
       // is stuck waiting on a reply rather than still dialling.
       await accepted;
+      // The depth gauge reads through the same dead connection: `/metrics`
+      // must still answer, within the gauge's cap.
+      const scrapeStarted = performance.now();
+      await registry.metrics();
+      expect(performance.now() - scrapeStarted).toBeLessThan(2_000);
       const started = performance.now();
       const closed = await Promise.race([
         unready.close().then(() => true),

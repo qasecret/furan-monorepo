@@ -1,5 +1,6 @@
 import type { DB } from "@furan/db";
 import {
+  createQueue,
   createWorker,
   isFinalAttempt,
   isTerminalFailure,
@@ -13,6 +14,7 @@ import { Counter, type Registry, type Telemetry } from "@furan/telemetry";
 import { createDiffMetrics, type DiffMetrics } from "./diff-metrics.js";
 import { handleDiffJob } from "./handler.js";
 import { createDiffJobMetrics } from "./job-metrics.js";
+import { registerQueueDepthGauge } from "./queue-depth.js";
 import { sweepStaleRuns } from "./sweeper.js";
 
 type Logger = Telemetry["logger"];
@@ -51,10 +53,11 @@ export interface DiffWorkerRuntimeOptions {
 export interface DiffWorkerRuntime {
   worker: Worker<DiffJob>;
   /**
-   * Stop the sweeper, then close the worker (waits for in-flight jobs) and
-   * release the connection the worker was given. It does not touch `db`,
-   * `storage` or `redis`: the caller owns those. Safe to call more than once,
-   * and it never waits on a worker connection that has not become ready.
+   * Stop the sweeper, then close the worker (waits for in-flight jobs) and the
+   * queue the depth gauge reads, and release the connections both were given.
+   * It does not touch `db`, `storage` or `redis`: the caller owns those. Safe
+   * to call more than once, and it never waits on a connection that has not
+   * become ready.
    */
   close(): Promise<void>;
 }
@@ -85,10 +88,37 @@ function runtimeMetrics(registry: Registry): RuntimeMetrics {
 }
 
 /**
+ * BullMQ leaves open the ioredis connection it was handed, so `close()` has to
+ * release it. This captures it once it is ready and returns the function that
+ * releases it, but `close()` never waits on it: a queue or worker's `client`
+ * settles only once the connection is ready (or ended), so a connection to an
+ * unreachable Redis would otherwise make `close()` hang, where BullMQ's own
+ * `close()` handles that state.
+ */
+function trackClient(owner: {
+  client: Promise<{ disconnect(): void }>;
+}): () => void {
+  let client: { disconnect(): void } | undefined;
+  let released = false;
+  void owner.client.then(
+    (c) => {
+      client = c;
+      // The connection came up after `release()` already ran: drop it now.
+      if (released) c.disconnect();
+    },
+    () => undefined,
+  );
+  return () => {
+    released = true;
+    client?.disconnect();
+  };
+}
+
+/**
  * Start the diff worker: the BullMQ consumer of the `diff` queue, its
- * job metrics, its dead-letter signal and (unless turned off) the stale-run
- * sweeper. `server.ts` runs it as the service; the scale harness runs it
- * in-process.
+ * job metrics, its dead-letter signal, the queue-depth gauge and (unless
+ * turned off) the stale-run sweeper. `server.ts` runs it as the service; the
+ * scale harness runs it in-process.
  */
 export function startDiffWorker(
   opts: DiffWorkerRuntimeOptions,
@@ -97,6 +127,8 @@ export function startDiffWorker(
   const handler = opts.handler ?? handleDiffJob;
   const metrics = runtimeMetrics(registry);
   const jobMetrics = createDiffJobMetrics(registry);
+
+  const prefix = opts.queuePrefix ? { prefix: opts.queuePrefix } : {};
 
   const worker = createWorker(
     "diff",
@@ -137,7 +169,7 @@ export function startDiffWorker(
       ...(opts.concurrency !== undefined
         ? { concurrency: opts.concurrency }
         : {}),
-      ...(opts.queuePrefix ? { prefix: opts.queuePrefix } : {}),
+      ...prefix,
     },
   );
 
@@ -175,32 +207,37 @@ export function startDiffWorker(
           );
         }, SWEEP_INTERVAL_MS);
 
-  // The worker's own connection is a shared ioredis instance, which BullMQ
-  // leaves open on close. Capture it when it becomes ready so `close()` can
-  // release it, but never wait on it there: `worker.client` settles only once
-  // the connection is ready (or ended), so a worker started against an
-  // unreachable Redis would otherwise make `close()` hang, where
-  // `worker.close()` alone handles that state.
-  let client: { disconnect(): void } | undefined;
-  let closed = false;
-  void worker.client.then(
-    (c) => {
-      client = c;
-      // The connection came up after `close()` already ran: release it now.
-      if (closed) c.disconnect();
-    },
-    () => undefined,
+  // The depth gauge reads the queue the worker consumes: same name, same
+  // prefix. It gets its own connection, so a slow or hung read never queues
+  // behind the worker's blocking commands.
+  const queue = createQueue("diff", prefix);
+  // A connection error on this queue surfaces through the gauge instead, as a
+  // rate-limited `diff_queue_depth_unavailable`. Without a listener BullMQ
+  // would print every one to stderr.
+  queue.on("error", () => undefined);
+  registerQueueDepthGauge(
+    registry,
+    () => queue.getJobCounts("waiting", "active", "delayed", "failed"),
+    logger,
   );
+
+  const releaseWorkerClient = trackClient(worker);
+  const releaseQueueClient = trackClient(queue);
 
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closing ??= (async () => {
       if (sweeperInterval) clearInterval(sweeperInterval);
       try {
+        // The worker first, so the gauge still answers while it drains.
         await worker.close();
       } finally {
-        closed = true;
-        client?.disconnect();
+        try {
+          await queue.close();
+        } finally {
+          releaseWorkerClient();
+          releaseQueueClient();
+        }
       }
     })();
     return closing;
