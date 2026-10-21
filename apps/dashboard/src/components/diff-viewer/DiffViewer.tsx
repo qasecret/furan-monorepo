@@ -980,6 +980,7 @@ export function DiffViewer({
                     elementMap={elementMap ?? null}
                     legacyMissing={diffImageLegacyMissing}
                     stepHasDiff={stepHasDiff}
+                    checkpointId={candidateScreenshot?.id}
                   />
                 </div>
                 {/* Large side step-arrows: navigate

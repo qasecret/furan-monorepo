@@ -1478,6 +1478,20 @@ describe("DiffViewer", () => {
         }
       },
     );
+
+    test("the stage root names the step it opened on once its images are drawn (data-stage-drawn)", async () => {
+      loadingStorage();
+      legacyRun([]);
+      const r = openStep("c2");
+      const canvas = r.container.querySelector("#diff-viewer-canvas")!;
+      await vi.waitFor(() =>
+        expect(
+          canvas
+            .querySelector("[data-stage-drawn]")
+            ?.getAttribute("data-stage-drawn"),
+        ).toBe("c2"),
+      );
+    });
   });
 
   test("status='empty' renders EmptyRunCard instead of viewer + region list", () => {
