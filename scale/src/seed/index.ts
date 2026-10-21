@@ -19,7 +19,7 @@ import {
 import { objectKey, type Storage } from "@furan/storage";
 import bcrypt from "bcryptjs";
 
-import { generateDiffPng, generatePng, type ImageKind } from "./images.js";
+import { generateDiffPng, generatePng } from "./images.js";
 import {
   DIFF_POOL,
   PIPELINE_SETS,
@@ -274,16 +274,14 @@ async function uploadPool(
 }
 
 /** The diff images every `unresolved` step shares, under content keys. */
-async function uploadDiffPool(
-  storage: Storage,
-): Promise<{ key: string; kind: ImageKind }[]> {
+async function uploadDiffPool(storage: Storage): Promise<PoolImage[]> {
   const indexes = Array.from({ length: DIFF_POOL }, (_, i) => i);
   return inChunks(indexes, UPLOAD_CHUNK, async (i) => {
     const { kind, seed: imageSeed } = diffImage(i);
     const png = await generateDiffPng(kind, imageSeed);
     const key = objectKey(png);
     await storage.put(key, png, "image/png");
-    return { key, kind };
+    return { key, kind, png };
   });
 }
 

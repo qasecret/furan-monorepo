@@ -148,6 +148,33 @@ export interface PipelineFixture {
   steps: { name: string; kind: ImageKind; key: string }[];
 }
 
+/**
+ * Uploads one object per row of `select` (rows of `key`, the step key, and
+ * `idx`, the pool image to copy), built by `variant`, in chunks of
+ * `UPLOAD_CHUNK`, and records each step's content key in `table`.
+ */
+async function uploadVariants(
+  tx: Tx,
+  storage: Storage,
+  table: "seed_keys" | "seed_diff_keys",
+  select: SQL,
+  variant: (row: { key: string; idx: number }) => Buffer,
+): Promise<number> {
+  const rows = await tx.execute<{ key: string; idx: number }>(select);
+  const values = await inChunks(rows, UPLOAD_CHUNK, async (row) => {
+    const png = variant(row);
+    const key = objectKey(png);
+    await storage.put(key, png, "image/png");
+    return sql`(${row.key}::bigint, ${key}::text)`;
+  });
+  for (let i = 0; i < values.length; i += VALUES_CHUNK) {
+    await tx.execute(sql`
+      insert into ${sql.identifier(table)} (step_key, image_key)
+      values ${sql.join(values.slice(i, i + VALUES_CHUNK), sql`, `)}`);
+  }
+  return values.length;
+}
+
 export interface ProjectPlan {
   projectId: string;
   adminId: string;
@@ -163,7 +190,9 @@ export interface ProjectPlan {
   /**
    * Give each step of the review batch and of the current long run its own
    * object (a pool image with a `tEXt` chunk naming the step), so a key is
-   * owned by exactly one row. Otherwise every step uses a pool image.
+   * owned by exactly one row, and each `unresolved` one its own diff image
+   * the same way, so a viewer stepping through them fetches every image as a
+   * real run would. Otherwise every step uses the pools.
    */
   uniqueImages: boolean;
   /** Days from the oldest batch to the newest. */
@@ -173,9 +202,11 @@ export interface ProjectPlan {
   pool: PoolImage[];
   /**
    * Diff images (screens first, then pages), already uploaded: each
-   * `unresolved` step's `diff_image_key`, by its variation's size.
+   * `unresolved` step's `diff_image_key`, by its variation's size. With
+   * `uniqueImages`, the review batch's and the long run's `unresolved` steps
+   * get their own copy instead (Ruling R10a).
    */
-  diffPool: { key: string; kind: ImageKind }[];
+  diffPool: PoolImage[];
   storage: Storage;
 }
 
@@ -546,26 +577,33 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
     await tx.execute(sql`
       create temp table seed_keys (step_key bigint primary key, image_key text not null)
       on commit drop`);
+    await tx.execute(sql`
+      create temp table seed_diff_keys (step_key bigint primary key, image_key text not null)
+      on commit drop`);
     if (plan.uniqueImages) {
-      const unique = await tx.execute<{ key: string; pool_idx: number }>(sql`
-        select key::text as key, pool_idx from seed_steps where uniq order by key`);
-      const keys = await inChunks(unique, UPLOAD_CHUNK, async (row) => {
-        const pool = plan.pool[row.pool_idx]!;
-        // Named by shape and step position: the same seed writes the same
-        // objects, so reseeding into the same storage overwrites them.
-        const png = withTextChunk(
-          pool.png,
-          `${SEED_NAMES.project(s)}:${row.key}`,
-        );
-        const key = objectKey(png);
-        await plan.storage.put(key, png, "image/png");
-        return sql`(${row.key}::bigint, ${key}::text)`;
-      });
-      for (let i = 0; i < keys.length; i += VALUES_CHUNK) {
-        await tx.execute(sql`
-          insert into seed_keys (step_key, image_key)
-          values ${sql.join(keys.slice(i, i + VALUES_CHUNK), sql`, `)}`);
-      }
+      // Named by shape and step position: the same seed writes the same
+      // objects, so reseeding into the same storage overwrites them.
+      const label = SEED_NAMES.project(s);
+      await uploadVariants(
+        tx,
+        plan.storage,
+        "seed_keys",
+        sql`select key::text as key, pool_idx as idx from seed_steps
+            where uniq order by key`,
+        (row) => withTextChunk(plan.pool[row.idx]!.png, `${label}:${row.key}`),
+      );
+      await uploadVariants(
+        tx,
+        plan.storage,
+        "seed_diff_keys",
+        sql`select key::text as key, diff_idx as idx from seed_steps
+            where uniq and verdict = 'unresolved' order by key`,
+        (row) =>
+          withTextChunk(
+            plan.diffPool[row.idx]!.png,
+            `${label}:diff:${row.key}`,
+          ),
+      );
     }
 
     // -- Rows, in capture order --------------------------------------------------
@@ -587,7 +625,7 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
              case when st.status = 'running' then null
                   else r.created_at + r.nsteps * interval '10 milliseconds'
                          + interval '1 second' end,
-             r.baseline, dp.image_key
+             r.baseline, a.diff_name
       from seed_runs r
       join (
         select run_id, bool_or(verdict is null) as undiffed,
@@ -595,10 +633,13 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
                         when verdict = 'unresolved' then 2
                         when verdict = 'new' then 1 else 0 end) as worst,
                -- One of the run's diff images (the worker keeps its worst).
-               min(case when verdict = 'unresolved' then diff_idx end) as diff_idx
-        from seed_steps group by run_id
+               min(case when verdict = 'unresolved'
+                        then coalesce(dk.image_key, dp.image_key) end) as diff_name
+        from seed_steps
+        join seed_diff_pool dp on dp.idx = diff_idx
+        left join seed_diff_keys dk on dk.step_key = key
+        group by run_id
       ) a on a.run_id = r.id
-      left join seed_diff_pool dp on dp.idx = a.diff_idx
       cross join lateral (select case
         when r.lifecycle = 'aborted' then 'aborted'
         when a.undiffed then 'running'
@@ -621,11 +662,13 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
                          'furan-scale:' || s.build_no || ':'
                            || ${h(sql`s.key`, 40)} % ${int(SIGNATURES_PER_BATCH)},
                          'UTF8')), 'hex') end,
-             case when s.verdict = 'unresolved' then dp.image_key end,
+             case when s.verdict = 'unresolved'
+                  then coalesce(dk.image_key, dp.image_key) end,
              s.created_at
       from seed_steps s
       join seed_pool p on p.idx = s.pool_idx
       join seed_diff_pool dp on dp.idx = s.diff_idx
+      left join seed_diff_keys dk on dk.step_key = s.key
       left join seed_keys k on k.step_key = s.key
       order by s.created_at, s.key`);
 

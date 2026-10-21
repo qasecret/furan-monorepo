@@ -174,6 +174,33 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
       expect(runDiffs!.wrong).toBe(0);
       expect(runDiffs!.named).toBeGreaterThan(0);
 
+      // Ruling R10a: the unresolved steps the viewer budgets step through
+      // (the review batch and the long run) each have a diff image no other
+      // step shares; the older history shares the 8-image pool.
+      const [recentDiffs] = await db.execute<{
+        steps: number;
+        keys: number;
+        shared: number;
+      }>(sql`
+        select count(*)::int as steps,
+               count(distinct s.diff_image_key)::int as keys,
+               count(*) filter (where (
+                 select count(*) from screenshots o
+                 where o.diff_image_key = s.diff_image_key) > 1)::int as shared
+        from screenshots s join test_runs r on r.id = s.run_id
+        where r.build_id in (${seeded.newestBuildId}, ${seeded.longRunBuildId})
+          and s.verdict = 'unresolved'`);
+      expect(recentDiffs!.steps).toBeGreaterThan(0);
+      expect(recentDiffs!.keys).toBe(recentDiffs!.steps);
+      expect(recentDiffs!.shared).toBe(0);
+      const [historyDiffs] = await db.execute<{ keys: number }>(sql`
+        select count(distinct s.diff_image_key)::int as keys
+        from screenshots s join test_runs r on r.id = s.run_id
+        where r.project_id = ${seeded.projectId}
+          and r.build_id not in (${seeded.newestBuildId}, ${seeded.longRunBuildId})`);
+      expect(historyDiffs!.keys).toBeGreaterThan(0);
+      expect(historyDiffs!.keys).toBeLessThanOrEqual(8);
+
       // The worst-case project has the old script's shape: one batch per
       // nightly and PR batch, the newest one full-size.
       expect(await countIn(db, "builds", seeded.resolvedProjectId)).toBe(
