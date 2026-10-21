@@ -43,6 +43,7 @@ import {
   changeMix,
   excessEvents,
   latencySamples,
+  meanJobSeconds,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -68,6 +69,7 @@ export {
   excessEvents,
   findDuplicates,
   latencySamples,
+  meanJobSeconds,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -100,6 +102,9 @@ const MIX_SEED = 0x5ca1e;
 /** P5's ignore region reaches this far past the change it covers. */
 const IGNORE_PADDING_PX = 2;
 const CHECKPOINTS_METRIC = "furan_diff_job_checkpoints";
+const DURATION_METRIC = "furan_diff_job_duration_seconds";
+/** P4 (ruling R19): one-step runs timed for the worker's per-step cost. */
+const SINGLE_STEP_RUNS = 10;
 const IDS = ["P1", "P2", "P3", "P4", "P5", "P6"] as const;
 
 interface Driver {
@@ -263,14 +268,19 @@ async function checkpointDiffs(d: Driver): Promise<number> {
 async function newRun(
   d: Driver,
   name: string,
+  buildId?: string,
 ): Promise<{ runId: string; status: string }> {
-  const build = await createBuild(d.stack.apiUrl, d.pat, d.projectId, {
-    branchName: "main",
-    name,
-  });
+  const batch =
+    buildId ??
+    (
+      await createBuild(d.stack.apiUrl, d.pat, d.projectId, {
+        branchName: "main",
+        name,
+      })
+    ).id;
   return createRun(d.stack.apiUrl, d.pat, {
     projectId: d.projectId,
-    buildId: build.id,
+    buildId: batch,
     name,
     branchName: "main",
   });
@@ -466,47 +476,68 @@ function fromMeasuredRuns(runs: readonly MeasuredRun[]): Measurement[] {
 // P4: throughput
 // ---------------------------------------------------------------------------
 
+/** Counts of each image kind and change in a list of steps, for a note. */
+function composition(steps: readonly PlannedStep[]): string {
+  const count = (pick: (s: PlannedStep) => boolean): number =>
+    steps.filter(pick).length;
+  return `${count((s) => s.kind === "screen")} screens / ${count((s) => s.kind === "page")} pages; ${count((s) => s.change === "none")} none / ${count((s) => s.change === "small")} small / ${count((s) => s.change === "large")} large`;
+}
+
 /**
- * The single-step time (one fresh 1-step run on an idle queue), then
- * `pipeline-200` uploaded eight at a time and the rate at which its results
- * land from the first to the last, as a share of 4 × the single-step rate.
+ * The worker's ideal (ruling R19): `SINGLE_STEP_RUNS` fresh one-step runs, one
+ * at a time on an idle queue (each waits for its job to finish), drawn with
+ * `pipeline-200`'s fixed-seed mix. Each job diffs exactly one checkpoint, so
+ * the mean of `furan_diff_job_duration_seconds{outcome="completed"}` over
+ * them is the time per step, and the ideal is 4 (the concurrency) over it.
+ *
+ * Then `pipeline-200` uploaded eight at a time, and the rate at which its
+ * results land from the first to the last, as a share of that ideal.
  */
 async function measureThroughput(
   d: Driver,
   shape: Shape,
 ): Promise<Measurement> {
   const set = "pipeline-200";
-  // The single step: the set's first step (a screen), unchanged.
-  const [single] = await planSteps(set, ["none"]);
+  const worker = d.stack.registries.worker;
+  const singles = await planSteps(
+    set,
+    changeMix(SINGLE_STEP_RUNS, mixSeed(set)),
+  );
   const plan = await planSteps(
     set,
     changeMix(shape.pipelineSets[set], mixSeed(set)),
   );
 
   await drain(d);
-  const singleRun = await newRun(d, "scale-single-step");
-  const one = new RunWatcher(
-    d.stack.db,
-    singleRun.runId,
-    singleRun.status,
-    d.alive,
-  );
-  let singleMs: number;
-  try {
-    const { screenshotId } = await upload(d, singleRun.runId, single!);
-    one.uploaded(screenshotId, performance.now());
-    await complete(d.stack.apiUrl, d.pat, singleRun.runId);
-    await one.settled();
-    const [timing] = one.timings();
-    if (timing?.resultAt === undefined) {
+  const durationsBefore = await readHistogram(worker, DURATION_METRIC, {
+    outcome: "completed",
+  });
+  const diffsBefore = await checkpointDiffs(d);
+  const batch = await createBuild(d.stack.apiUrl, d.pat, d.projectId, {
+    branchName: "main",
+    name: "scale-single-steps",
+  });
+  for (const [i, step] of singles.entries()) {
+    const run = await newRun(d, `scale-single-step-${i + 1}`, batch.id);
+    await upload(d, run.runId, step);
+    await complete(d.stack.apiUrl, d.pat, run.runId);
+    if (!(await d.queue.waitIdle(STEP_TIMEOUT_MS))) {
       throw new Error(
-        `the single step had no result within ${STEP_TIMEOUT_MS / 1000} s`,
+        `single step ${i + 1} was not diffed within ${STEP_TIMEOUT_MS / 1000} s`,
       );
     }
-    singleMs = timing.resultAt - timing.uploadedAt;
-  } finally {
-    await one.stop();
   }
+  const durationsAfter = await readHistogram(worker, DURATION_METRIC, {
+    outcome: "completed",
+  });
+  const jobs = durationsAfter.count - durationsBefore.count;
+  const diffs = (await checkpointDiffs(d)) - diffsBefore;
+  if (jobs !== singles.length || diffs !== singles.length) {
+    throw new Error(
+      `${singles.length} one-step runs gave ${jobs} completed diff jobs over ${diffs} checkpoints, expected ${singles.length} of each`,
+    );
+  }
+  const stepSec = meanJobSeconds(durationsBefore, durationsAfter);
 
   await drain(d);
   const run = await newRun(d, `scale-${set}`);
@@ -531,12 +562,11 @@ async function measureThroughput(
     timings.map((t) => t.resultAt ?? t.uploadedAt + STEP_TIMEOUT_MS),
     POLL_MS,
   );
-  const singleSec = singleMs / 1000;
   return {
     id: "P4",
-    value: throughputRatio(observed, singleSec, WORKER_CONCURRENCY),
+    value: throughputRatio(observed, stepSec, WORKER_CONCURRENCY),
     samples: timings.length,
-    note: `single step ${round(singleMs)} ms; ${set} (${plan.length} steps, ${UPLOAD_CONCURRENCY} uploads at once): ${round(observed)} results/s against an ideal of ${round(WORKER_CONCURRENCY / singleSec)}/s${
+    note: `ideal ${round(WORKER_CONCURRENCY / stepSec)} steps/s = ${WORKER_CONCURRENCY} / ${round(stepSec * 1000)} ms, the mean completed job of ${singles.length} one-step runs (${composition(singles)}); observed ${round(observed)} results/s first to last result of ${set} (${plan.length} steps, ${composition(plan)}, ${UPLOAD_CONCURRENCY} uploads at once)${
       late > 0
         ? `; ${late} had no result within ${STEP_TIMEOUT_MS / 1000} s (counted at ${STEP_TIMEOUT_MS / 1000} s: an upper bound)`
         : ""
@@ -598,10 +628,23 @@ async function effectiveThreshold(db: DB, runId: string): Promise<number> {
   return Number(row.threshold);
 }
 
+async function verdictOf(
+  db: DB,
+  screenshotId: string,
+): Promise<string | null | undefined> {
+  const [row] = await db
+    .select({ verdict: screenshots.verdict })
+    .from(screenshots)
+    .where(eq(screenshots.id, screenshotId));
+  return row?.verdict;
+}
+
 /**
- * Approves one step as soon as the run is reviewable (a decision is refused
- * while any step is undiffed), retrying until `STEP_TIMEOUT_MS`. Returns the
- * action id, for the undo.
+ * Approves one step: waits for its verdict (only a diffed step can be
+ * approved), then approves as soon as the run is reviewable (a decision is
+ * refused while any step of the run is undiffed, which the uploads still
+ * running keep it), retrying; each wait is up to `STEP_TIMEOUT_MS`. Returns
+ * the action id, for the undo.
  */
 async function approveWhenReviewable(
   d: Driver,
@@ -609,6 +652,16 @@ async function approveWhenReviewable(
   checkpointId: string,
 ): Promise<string> {
   const reviewer = trpc(d.stack.apiUrl, d.reviewerToken);
+  const diffedBy = performance.now() + STEP_TIMEOUT_MS;
+  while ((await verdictOf(d.stack.db, checkpointId)) == null) {
+    d.alive();
+    if (performance.now() >= diffedBy) {
+      throw new Error(
+        `the step to approve had no verdict within ${STEP_TIMEOUT_MS / 1000} s`,
+      );
+    }
+    await sleep(POLL_MS);
+  }
   const deadline = performance.now() + STEP_TIMEOUT_MS;
   let last = "the run stayed running";
   while (performance.now() < deadline) {
@@ -640,12 +693,14 @@ async function approveWhenReviewable(
 }
 
 /**
- * The race of spec §5.2 on a fresh `pipeline-50` run. While it uploads, one
- * step at a time: after `ignoreAfter`, an ignore region is saved on step 3
- * over its change; after `approveAfter`, step 5 is approved (once the run is
- * reviewable) and undone. The save and the undo are not awaited before the
- * next upload, so they overlap the uploads and their diff jobs. Steps 3 and 5
- * carry a small change, so both actions have something to act on.
+ * The race of spec §5.2 on a fresh `pipeline-50` run, uploaded one step at a
+ * time. Two branches start at the brief's points and run concurrently with
+ * the upload loop, which never waits for them (ruling R20): after
+ * `ignoreAfter`, an ignore region is saved on step 3 over its change; after
+ * `approveAfter`, step 5 is approved once it has a verdict and the run is
+ * reviewable, then undone. Both branches are awaited after the last upload.
+ * Steps 3 and 5 carry a small change, so both actions have something to act
+ * on.
  *
  * Once the queue is empty: duplicate regions, steps with no verdict and
  * unresolved steps with no region; then a quiet whole-run re-diff
@@ -699,6 +754,7 @@ async function measureRace(
       side.push(task.catch((error: unknown) => void sideErrors.push(error)));
     };
     let undone = "";
+    let approvedAt = "";
 
     for (const [i, step] of plan.entries()) {
       ids.push((await upload(d, run.runId, step)).screenshotId);
@@ -719,16 +775,19 @@ async function measureRace(
         );
       }
       if (i + 1 === at.approveAfter) {
-        const actionId = await approveWhenReviewable(
-          d,
-          run.runId,
-          ids[at.approveStep - 1]!,
-        );
+        const checkpointId = ids[at.approveStep - 1]!;
         inBackground(
-          reviewer.mutation("review.revert", { actionId }).then((res) => {
+          (async () => {
+            const actionId = await approveWhenReviewable(
+              d,
+              run.runId,
+              checkpointId,
+            );
+            approvedAt = `, approved with ${ids.length} of ${n} steps uploaded`;
+            const res = await reviewer.mutation("review.revert", { actionId });
             if (res.status !== 200) throw trpcFailure("review.revert", res);
-            undone = ` (undo reverted ${(res.data as { reverted?: number }).reverted ?? "?"})`;
-          }),
+            undone = `, undo reverted ${(res.data as { reverted?: number }).reverted ?? "?"} with ${ids.length} uploaded`;
+          })(),
         );
       }
     }
@@ -762,7 +821,7 @@ async function measureRace(
         losses.unresolvedWithoutRegion +
         differences,
       samples: raced.steps.length,
-      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, approve and undo of step ${at.approveStep} after step ${at.approveAfter}${undone}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${differences} steps changed by a quiet re-diff`,
+      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, approve and undo of step ${at.approveStep} from step ${at.approveAfter}${approvedAt}${undone}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${differences} steps changed by a quiet re-diff`,
     };
   } finally {
     await d.stack.db

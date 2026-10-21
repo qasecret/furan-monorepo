@@ -6,6 +6,7 @@ import {
   excessEvents,
   findDuplicates,
   latencySamples,
+  meanJobSeconds,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -43,6 +44,26 @@ describe("throughputRatio", () => {
 
   it("defaults the concurrency to 4", () => {
     expect(throughputRatio(3.2, 1)).toBe(0.8);
+  });
+});
+
+describe("meanJobSeconds (R19: the single-step cost)", () => {
+  it("is the histogram's sum delta over its count delta", () => {
+    expect(
+      meanJobSeconds({ count: 3, sum: 1.5 }, { count: 13, sum: 3.5 }),
+    ).toBeCloseTo(0.2, 12);
+  });
+
+  it("gives the ideal through throughputRatio: concurrency over the mean", () => {
+    const mean = meanJobSeconds({ count: 0, sum: 0 }, { count: 10, sum: 2 });
+    // 4 / 0.2 s = 20 results/s ideal; 16 observed is 80% of it.
+    expect(throughputRatio(16, mean, 4)).toBeCloseTo(0.8, 12);
+  });
+
+  it("refuses a delta with no new jobs", () => {
+    expect(() =>
+      meanJobSeconds({ count: 5, sum: 1 }, { count: 5, sum: 1 }),
+    ).toThrow(RangeError);
   });
 });
 

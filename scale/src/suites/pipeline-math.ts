@@ -24,6 +24,23 @@ export function throughputRatio(
   return observedPerSec / (concurrency / singleStepSec);
 }
 
+/**
+ * P4's single-step cost (ruling R19): the mean of the histogram observations
+ * between two reads of it, `Δsum / Δcount`. Read on
+ * `furan_diff_job_duration_seconds{outcome="completed"}` around one-step jobs,
+ * it is the worker's time per step, free of any polling interval.
+ */
+export function meanJobSeconds(
+  before: { count: number; sum: number },
+  after: { count: number; sum: number },
+): number {
+  const jobs = after.count - before.count;
+  if (!(jobs > 0)) {
+    throw new RangeError(`no job was observed between the two reads`);
+  }
+  return (after.sum - before.sum) / jobs;
+}
+
 /** P6: `testRun_updated` events above the allowance of status changes + 2. */
 export function excessEvents(
   testRunUpdated: number,
