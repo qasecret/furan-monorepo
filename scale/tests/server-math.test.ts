@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   disjointSlices,
   failedRequests,
+  mayApprove,
   measureCalls,
   serverMinusStorage,
+  splitReserve,
   type CallSample,
 } from "../src/suites/server-math.js";
 
@@ -128,5 +130,45 @@ describe("serverMinusStorage", () => {
 
   it("never goes below zero", () => {
     expect(serverMinusStorage([1, 2], [5, 6]).value).toBe(0);
+  });
+});
+
+describe("splitReserve (Ruling R27)", () => {
+  it("lets R7 approve at most half; the rest is never approved", () => {
+    const steps = Array.from({ length: 250 }, (_, i) => i);
+    const { approvable, reserve } = splitReserve(steps);
+    expect(approvable).toEqual(steps.slice(0, 125));
+    expect(reserve).toEqual(steps.slice(125));
+  });
+
+  it("rounds the approvable half down", () => {
+    expect(splitReserve(["a", "b", "c"])).toEqual({
+      approvable: ["a"],
+      reserve: ["b", "c"],
+    });
+    expect(splitReserve(["a"])).toEqual({ approvable: [], reserve: ["a"] });
+    expect(splitReserve([])).toEqual({ approvable: [], reserve: [] });
+  });
+});
+
+describe("mayApprove (Ruling R27)", () => {
+  const WINDOW = 60_000;
+
+  it("spreads a slice evenly over the window", () => {
+    // Six steps: one may go every 10 s.
+    expect(mayApprove(0, 6, 0, WINDOW)).toBe(false);
+    expect(mayApprove(0, 6, 1, WINDOW)).toBe(true);
+    expect(mayApprove(1, 6, 9_999, WINDOW)).toBe(false);
+    expect(mayApprove(1, 6, 10_001, WINDOW)).toBe(true);
+    expect(mayApprove(5, 6, 50_001, WINDOW)).toBe(true);
+  });
+
+  it("never front-loads: at most the share of the slice the elapsed time allows", () => {
+    expect(mayApprove(3, 6, 25_000, WINDOW)).toBe(false);
+  });
+
+  it("stops at the end of the slice, even past the window", () => {
+    expect(mayApprove(6, 6, 120_000, WINDOW)).toBe(false);
+    expect(mayApprove(0, 0, 30_000, WINDOW)).toBe(false);
   });
 });

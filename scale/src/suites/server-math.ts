@@ -52,6 +52,37 @@ export function disjointSlices<T>(items: readonly T[], n: number): T[][] {
   return out;
 }
 
+/**
+ * Ruling R27: R7 may approve at most half of the review batch's pending steps
+ * (rounded down), the first half in capture order. The rest is a reserve that
+ * is never approved, so the batch stays pending for the whole window.
+ */
+export function splitReserve<T>(pending: readonly T[]): {
+  approvable: T[];
+  reserve: T[];
+} {
+  const half = Math.floor(pending.length / 2);
+  return {
+    approvable: pending.slice(0, half),
+    reserve: pending.slice(half),
+  };
+}
+
+/**
+ * Ruling R27: a reviewer that has approved `done` of its `sliceLength` steps
+ * may approve another only while `done < sliceLength × elapsed / window`, so
+ * its slice is spread evenly over the window, never front-loaded, and never
+ * overrun.
+ */
+export function mayApprove(
+  done: number,
+  sliceLength: number,
+  elapsedMs: number,
+  windowMs: number,
+): boolean {
+  return done < sliceLength && done < (sliceLength * elapsedMs) / windowMs;
+}
+
 function statusList(samples: readonly CallSample[]): string {
   const counts = new Map<number, number>();
   for (const s of samples)

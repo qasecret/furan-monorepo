@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { asc, eq, screenshots, testRuns } from "@furan/db";
+import { pendingStepCondition } from "@furan/api/scale";
+import { and, asc, count, eq, screenshots, testRuns } from "@furan/db";
 
 import { BUDGETS, type Measurement } from "../budgets.js";
 import { mintJwt, trpc, type TrpcResult } from "../clients/http.js";
@@ -13,8 +14,10 @@ import type { Stack } from "../stack/api.js";
 import {
   disjointSlices,
   failedRequests,
+  mayApprove,
   measureCalls,
   serverMinusStorage,
+  splitReserve,
   type CallSample,
 } from "./server-math.js";
 import { runSolo } from "./solo.js";
@@ -45,11 +48,16 @@ export { runSolo } from "./solo.js";
  * 4. **R8**, from the api's HTTP histogram once everything is done.
  *
  * Every procedure is called on its own unbatched HTTP call and timed on the
- * client, so a p95 belongs to exactly one procedure. Approves (R7) happen only
- * inside the window, each reviewer from its own slice of the newest batch's
- * pending steps: a warm-up approve would use up steps the window needs (the
- * smoke seed has three). A phase that fails marks only its own budgets
- * `error`.
+ * client, so a p95 belongs to exactly one procedure. A phase that fails marks
+ * only its own budgets `error`.
+ *
+ * Approves (R7, Ruling R27) keep the review batch pending all window: they may
+ * take at most half of its pending steps (the rest is a reserve no one
+ * approves), each reviewer from its own slice, paced evenly over the window,
+ * and only inside it (a warm-up approve would use up steps the window needs).
+ * So the batch's pending reads (R1, R2.runsListPending, R5.checkpointGroup)
+ * are timed on a batch that still has pending steps; their notes say how many
+ * at the window's start and end.
  */
 
 /** The reviewers' warm-up, whose calls are not measured. */
@@ -59,6 +67,8 @@ const WINDOW_MS = 60_000;
 /** The probe's warm-up passes, then its measured ones (spec §2.1). */
 const PROBE_WARMUP = 5;
 const PROBE_CALLS = 50;
+/** Samples a timing budget asks for (spec §2.1). */
+const MIN_SAMPLES = 50;
 const HTTP_METRIC = "furan_http_request_duration_seconds";
 /** The storage proxy's route template, its `route` label. */
 const STORAGE_ROUTE = "/api/v1/storage/:key";
@@ -92,6 +102,13 @@ const IDS = BUDGETS.filter((b) => b.suite === "server").map((b) => b.id);
  * Each loop budget and the sample keys it pools. A key is the procedure path,
  * or the path and a variant where one procedure is called two ways.
  */
+/** The loop budgets read on the review batch's pending steps (R27 notes). */
+const PENDING_READS: readonly string[] = [
+  "R1",
+  "R2.runsListPending",
+  "R5.checkpointGroup",
+];
+
 const LOOP_BUDGETS: Readonly<Record<(typeof LOOP_IDS)[number], string[]>> = {
   // From the batch page ("Start reviewing") and from the viewer's step.
   R1: ["review.next"],
@@ -173,6 +190,8 @@ interface Reviewer {
   client: ReturnType<typeof trpc>;
   /** The newest batch's pending steps this reviewer approves, in order. */
   slice: ViewerTarget[];
+  /** Where its viewer opens once its slice is used up: a reserved step. */
+  idle: ViewerTarget;
   /** The next of them to approve. */
   next: number;
   /** Approves the api accepted. */
@@ -187,6 +206,10 @@ interface Recorder {
   statuses: { status: number }[];
   /** Set once the warm-up is over; calls started earlier are not measured. */
   measuring: boolean;
+  /** When the window opened (`performance.now()`). */
+  openedAt: number;
+  /** Ms into the window when the batch's pending runs page first came back empty. */
+  ranOutAt?: number;
   /** Set when the window closes, or a reviewer fails: the loops end. */
   stopped: boolean;
   alive: () => void;
@@ -218,7 +241,28 @@ async function record(
   return res;
 }
 
-/** The step every viewer opens on when its reviewer has nothing to decide. */
+/** The newest batch's pending steps, counted as the review queue counts them. */
+async function countPending(
+  stack: Stack,
+  projectId: string,
+  buildId: string,
+): Promise<number> {
+  const [row] = await stack.db
+    .select({ n: count() })
+    .from(screenshots)
+    .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
+    .where(
+      and(
+        eq(testRuns.projectId, projectId),
+        eq(screenshots.projectId, projectId),
+        eq(testRuns.buildId, buildId),
+        pendingStepCondition(),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/** The step a viewer opens on when the batch has no reserved step. */
 async function firstStepOf(
   stack: Stack,
   projectId: string,
@@ -258,7 +302,6 @@ async function iteration(
   rec: Recorder,
   seeded: Seeded,
   viewerCalls: ViewerCall[],
-  fallback: ViewerTarget,
 ): Promise<void> {
   const projectId = seeded.projectId;
   const buildId = seeded.newestBuildId;
@@ -290,13 +333,17 @@ async function iteration(
     buildId,
     order: "capture",
   });
-  for (const runId of runIdsOf(page)) {
+  const pendingRuns = runIdsOf(page);
+  if (rec.measuring && page?.status === 200 && pendingRuns.length === 0) {
+    rec.ranOutAt ??= performance.now() - rec.openedAt;
+  }
+  for (const runId of pendingRuns) {
     await query("runs.listCheckpoints", "runs.listCheckpoints", { runId });
   }
 
   // 3. The viewer, on the step this reviewer decides next (or, its slice
-  //    used up, the last one it decided).
-  const target = r.slice[r.next] ?? r.slice[r.slice.length - 1] ?? fallback;
+  //    used up, a reserved pending step).
+  const target = r.slice[r.next] ?? r.idle;
   for (const call of viewerCalls) {
     await query(call.path, call.path, call.inputAt(target));
   }
@@ -304,9 +351,20 @@ async function iteration(
   // 4. Where the review goes next, from the batch ("Start reviewing").
   await query("review.next", "review.next", { projectId, at: { buildId } });
 
-  // 5. Approve that step: measured calls only, and never a step twice.
+  // 5. Approve that step: inside the window only, paced over it (R27), and
+  //    never a step twice.
   const step = r.slice[r.next];
-  if (step !== undefined && rec.measuring && !rec.stopped) {
+  if (
+    step !== undefined &&
+    rec.measuring &&
+    !rec.stopped &&
+    mayApprove(
+      r.next,
+      r.slice.length,
+      performance.now() - rec.openedAt,
+      WINDOW_MS,
+    )
+  ) {
     r.next += 1;
     const res = await record(
       rec,
@@ -344,13 +402,15 @@ async function runReviewers(
   )
     .filter((p) => p.buildId === seeded.newestBuildId)
     .map((p) => ({ projectId: seeded.projectId, ...p }));
-  const fallback = await firstStepOf(
-    stack,
-    seeded.projectId,
-    seeded.newestBuildId,
-  );
+  const { approvable, reserve } = splitReserve(pending);
+  // Where viewers open once their slice is used up: the reserved pending
+  // steps, round robin (the batch's first step if it has none).
+  const idleSteps =
+    reserve.length > 0
+      ? reserve
+      : [await firstStepOf(stack, seeded.projectId, seeded.newestBuildId)];
   const reviewers: Reviewer[] = disjointSlices(
-    pending,
+    approvable,
     seeded.reviewers.length,
   ).map((slice, i) => ({
     client: trpc(
@@ -358,6 +418,7 @@ async function runReviewers(
       mintJwt(stack.app, { id: seeded.reviewers[i]!.id, role: "editor" }),
     ),
     slice,
+    idle: idleSteps[i % idleSteps.length]!,
     next: 0,
     approved: 0,
     passes: 0,
@@ -367,6 +428,7 @@ async function runReviewers(
     samples: [],
     statuses: opts.statuses,
     measuring: false,
+    openedAt: 0,
     stopped: false,
     alive: () => {
       if (stack.teardown.closing) throw new InterruptedError();
@@ -376,7 +438,7 @@ async function runReviewers(
   const loops = reviewers.map((r) =>
     (async () => {
       while (!rec.stopped) {
-        await iteration(r, rec, seeded, viewerCalls, fallback);
+        await iteration(r, rec, seeded, viewerCalls);
       }
     })().catch((error: unknown) => {
       // Never unhandled: kept, and the other loops stop.
@@ -387,34 +449,55 @@ async function runReviewers(
 
   let probed: Measurement[] = [];
   let windowMs = 0;
+  let pendingAtStart = 0;
   try {
     const started = performance.now();
     await waitUntil(started + WARMUP_MS, rec);
     // A reviewer that failed in the warm-up has stopped them all: no window.
     if (!rec.stopped) {
+      rec.openedAt = performance.now();
       rec.measuring = true;
-      const opened = performance.now();
+      pendingAtStart = await countPending(
+        stack,
+        seeded.projectId,
+        seeded.newestBuildId,
+      );
       probed = await runProbe(stack, seeded, viewerCalls, rec, opts.source);
-      await waitUntil(opened + WINDOW_MS, rec);
-      windowMs = performance.now() - opened;
+      await waitUntil(rec.openedAt + WINDOW_MS, rec);
+      windowMs = performance.now() - rec.openedAt;
     }
   } finally {
     rec.stopped = true;
     await Promise.all(loops);
   }
   if (errors.length > 0) throw errors[0];
+  const pendingAtEnd = await countPending(
+    stack,
+    seeded.projectId,
+    seeded.newestBuildId,
+  );
 
   const passes = reviewers.map((r) => r.passes);
   const approved = reviewers.reduce((sum, r) => sum + r.approved, 0);
   const load = `${reviewers.length} reviewers at once, ${(windowMs / 1000).toFixed(1)} s measured after a ${WARMUP_MS / 1000} s warm-up, ${Math.min(...passes)}–${Math.max(...passes)} measured passes each`;
+  const ranOut =
+    rec.ranOutAt === undefined
+      ? "it never ran out"
+      : `it ran out ${(rec.ranOutAt / 1000).toFixed(1)} s into the window`;
+  const batch = `newest batch: ${pendingAtStart} pending steps at the window's start, ${pendingAtEnd} at its end (R7 may approve ${approvable.length}, ${reserve.length} reserved); ${ranOut}`;
   const loop = LOOP_IDS.map((id) => {
     const m = measureCalls(id, rec.samples, LOOP_BUDGETS[id]);
-    return { ...m, note: `${m.note}; ${load}` };
+    const onBatch = PENDING_READS.includes(id) ? `; ${batch}` : "";
+    return { ...m, note: `${m.note}; ${load}${onBatch}` };
   });
   const r7 = loop.find((m) => m.id === "R7")!;
-  r7.note = `${r7.note}; approved ${approved} of the newest batch's ${pending.length} pending steps, each reviewer from its own slice`;
-  if (pending.length === 0) {
-    r7.error = "the newest batch has no pending step to approve";
+  const few =
+    (r7.samples ?? 0) < MIN_SAMPLES
+      ? `; only ${r7.samples ?? 0} approves, fewer than the ${MIN_SAMPLES} samples a timing budget asks for (the batch has too few pending steps)`
+      : "";
+  r7.note = `${r7.note}; approved ${approved} of the ${approvable.length} R7 may take (half of the newest batch's ${pending.length} pending steps; the rest reserved), each reviewer from its own slice, paced evenly over the ${WINDOW_MS / 1000} s window${few}`;
+  if (approvable.length === 0) {
+    r7.error = `the newest batch has ${pending.length} pending steps, too few to approve any and keep half in reserve (Ruling R27)`;
   }
   return [...loop, ...probed];
 }
@@ -536,7 +619,8 @@ async function measureViewerOpen(
   const time: Measurement = {
     id: "R4.time",
     value: slowest,
-    samples: PROBE_CALLS,
+    // The p95 with the least support: each path's successful calls.
+    samples: Math.min(...perPath.map((m) => m.samples ?? 0)),
     note: `slowest p95 of ${setNote}: ${pathTimes}${failures > 0 ? `; ${failures} calls failed (see R8)` : ""}`,
     ...(refused?.error !== undefined ? { error: refused.error } : {}),
   };
