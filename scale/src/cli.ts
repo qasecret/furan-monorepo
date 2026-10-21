@@ -26,6 +26,8 @@ import {
   type Shape,
 } from "./seed/index.js";
 import { openDataPlane, startStack, type Stack } from "./stack/api.js";
+import { buildDashboard, startDashboard } from "./stack/dashboard.js";
+import { startProxy } from "./stack/proxy.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
 import { loadViewerCalls, runServerSuite } from "./suites/server.js";
@@ -36,6 +38,12 @@ export interface SuiteContext {
   seeded: Seeded;
   shape: Shape;
   args: CliArgs;
+  /**
+   * The one origin the browser suite drives: the production dashboard and the
+   * api behind a single proxy, as nginx serves them. Set when the browser
+   * suite is selected.
+   */
+  proxyUrl?: string | undefined;
   /**
    * The procedures the viewer called on open, when the browser suite recorded
    * them earlier in this run; the server suite's R4 falls back to the
@@ -102,6 +110,15 @@ async function run(
   );
   stillRunning();
 
+  // The browser suite drives a production build of the dashboard. It is built
+  // here, after the scratch lock is held (so a second run cannot build into the
+  // same directory) and before the seed, so a failed build fails fast.
+  const needsBrowser = args.suites.includes("browser");
+  const built = needsBrowser
+    ? await buildDashboard({ noBuild: args.noBuild, teardown })
+    : undefined;
+  stillRunning();
+
   const plane = await openDataPlane(
     env,
     scratch.url,
@@ -129,6 +146,18 @@ async function run(
   say(`api and diff worker up on ${stack.apiUrl}`);
   stillRunning();
 
+  let proxyUrl: string | undefined;
+  if (built !== undefined) {
+    const dashboard = await startDashboard(built.standaloneDir, stack.apiUrl, {
+      teardown,
+    });
+    stillRunning();
+    const proxy = await startProxy(stack.apiUrl, dashboard.url, teardown);
+    proxyUrl = proxy.url;
+    say(`dashboard up on ${dashboard.url}; browser origin ${proxy.url}`);
+    stillRunning();
+  }
+
   // The one real login is reviewer 0's (the only seeded user with a password);
   // every other token is minted.
   const loggedIn = await loginOnce(
@@ -143,7 +172,7 @@ async function run(
   stillRunning();
 
   const measurements: Measurement[] = [];
-  const ctx: SuiteContext = { stack, seeded, shape, args };
+  const ctx: SuiteContext = { stack, seeded, shape, args, proxyUrl };
   // Ruling R25: always browser, then server, then pipeline (see SUITE_ORDER).
   const suites = runOrder(args.suites);
   if (suites.length > 0) {

@@ -3,7 +3,7 @@ import config from "@furan/eslint-config/node.js";
 export default [
   ...config,
   {
-    ignores: [".next/**", "next-env.d.ts", "node_modules/**"],
+    ignores: [".next/**", ".next-scale/**", "next-env.d.ts", "node_modules/**"],
   },
   {
     // Design tokens only: no raw neutral palette, no `dark:` colour overrides,
