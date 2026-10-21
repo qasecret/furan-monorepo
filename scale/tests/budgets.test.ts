@@ -144,15 +144,32 @@ describe("evaluate", () => {
     );
   });
 
-  it("marks a measurement error as error and exitCode is 1", () => {
+  it("evaluate marks a measurement error and exitCode is 1", () => {
+    // Every budget measures exactly at its threshold (a pass), so an `error`
+    // row is the only thing that can make the exit code 1: it is not masked by
+    // `missing` rows.
+    const atThreshold: Measurement[] = BUDGETS.map((b) => m(b.id, b.threshold));
+    const clean = evaluate(BUDGETS, atThreshold, ALL);
+    expect(clean.every((r) => r.verdict === "pass")).toBe(true);
+    expect(exitCode(clean, "large")).toBe(0);
+    expect(exitCode(clean, "smoke")).toBe(0);
+
+    // The suite threw midway: R7 carries the error instead of a value.
     const rows = evaluate(
       BUDGETS,
-      [{ id: "R7", value: null, error: "approve threw: boom" }],
+      atThreshold.map((x) =>
+        x.id === "R7"
+          ? { id: "R7", value: null, error: "approve threw: boom" }
+          : x,
+      ),
       ALL,
     );
     const r7 = rows.find((r) => r.id === "R7");
     expect(r7?.verdict).toBe("error");
     expect(r7?.note).toBe("approve threw: boom");
+    expect(rows.filter((r) => r.verdict !== "pass").map((r) => r.id)).toEqual([
+      "R7",
+    ]);
     expect(exitCode(rows, "large")).toBe(1);
     expect(exitCode(rows, "smoke")).toBe(1);
   });
