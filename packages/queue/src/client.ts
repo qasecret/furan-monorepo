@@ -28,10 +28,19 @@ export const DEFAULT_JOB_OPTIONS: JobsOptions = {
   removeOnFail: { age: 24 * 3_600, count: 5_000 },
 };
 
-export function createQueue<N extends JobName>(name: N): Queue<JobMap[N]> {
+/**
+ * `prefix` namespaces the queue's Redis keys (BullMQ's default is `bull`).
+ * Omit it to keep the default. A caller that must not share keys with a
+ * running stack (the scale harness) passes its own prefix.
+ */
+export function createQueue<N extends JobName>(
+  name: N,
+  opts?: { prefix?: string },
+): Queue<JobMap[N]> {
   return new Queue<JobMap[N]>(name, {
     connection: createRedisConnection(),
     defaultJobOptions: DEFAULT_JOB_OPTIONS,
+    ...(opts?.prefix ? { prefix: opts.prefix } : {}),
   });
 }
 
