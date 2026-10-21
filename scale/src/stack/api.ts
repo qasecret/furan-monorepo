@@ -8,12 +8,9 @@ import { bootstrapTelemetry, type Registry } from "@furan/telemetry";
 import type { ScaleEnv } from "../env.js";
 import { pickPort } from "../ports.js";
 
-import {
-  QUEUE_PREFIX,
-  RATE_LIMIT_NAMESPACE,
-  REDIS_KEY_PATTERN,
-} from "./constants.js";
+import { QUEUE_PREFIX, RATE_LIMIT_NAMESPACE } from "./constants.js";
 import { applyStackEnv, type StorageLocation } from "./process-env.js";
+import { clearAuthKeys, clearScaleKeys, scratchUserIds } from "./redis-keys.js";
 import { guardStorage, prepareStorage } from "./storage.js";
 import { Teardown, closeInOrder } from "./teardown.js";
 import { releaseRedis, startWorker } from "./worker.js";
@@ -52,22 +49,6 @@ export interface DataPlaneOptions {
   reuse?: boolean;
 }
 
-/** Deletes every Redis key the harness owns (`furan-scale:*`), and nothing else. */
-async function clearScaleKeys(redis: Redis): Promise<void> {
-  let cursor = "0";
-  do {
-    const [next, keys] = await redis.scan(
-      cursor,
-      "MATCH",
-      REDIS_KEY_PATTERN,
-      "COUNT",
-      500,
-    );
-    if (keys.length > 0) await redis.unlink(...keys);
-    cursor = next;
-  } while (cursor !== "0");
-}
-
 /**
  * The part of the stack the seed needs before the api is up: the run's object
  * storage, the process environment the api and worker read, the owner
@@ -75,8 +56,10 @@ async function clearScaleKeys(redis: Redis): Promise<void> {
  * opens is registered on `teardown`.
  *
  * Writes `process.env` (this process only) before anything reads it, and
- * clears the harness's own Redis keys, so a crashed earlier run's jobs are not
- * picked up by this run's worker.
+ * clears the harness's own Redis keys (`furan-scale:*`), so a crashed earlier
+ * run's jobs are not picked up by this run's worker. The keys it touches at the
+ * end are those two things and the api's per-user auth cache entries for the
+ * scratch database's users; see `redis-keys.ts`.
  */
 export async function openDataPlane(
   env: ScaleEnv,
@@ -95,9 +78,12 @@ export async function openDataPlane(
 
   const { db, close: closeDb } = createDb({ url: scratchUrl });
   const redis = createRedisConnection();
-  // One step: the keys go while the connection is still open.
-  teardown.add("clear furan-scale:* keys, close Redis and the pool", () =>
+  // One step: the keys go while the connection and the pool are still open,
+  // and (being registered after the scratch database's step) before the
+  // database is dropped, which is when the user ids can still be read.
+  teardown.add("clear the harness's Redis keys, close Redis and the pool", () =>
     closeInOrder(
+      async () => clearAuthKeys(redis, await scratchUserIds(db)),
       () => clearScaleKeys(redis),
       () => releaseRedis(redis),
       closeDb,

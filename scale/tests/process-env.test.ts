@@ -1,7 +1,8 @@
+import { envSchema } from "@furan/api/scale";
 import { describe, expect, it } from "vitest";
 
 import { parseScaleEnv } from "../src/env.js";
-import { stackEnv } from "../src/stack/process-env.js";
+import { applyStackEnv, stackEnv } from "../src/stack/process-env.js";
 
 const raw = {
   SCALE_DATABASE_URL: "postgres://admin:pw@localhost:55432/postgres",
@@ -97,5 +98,77 @@ describe("stackEnv", () => {
     expect(stackEnv(env, url, loc).JWT_SECRET).not.toBe(
       stackEnv(env, url, loc).JWT_SECRET,
     );
+  });
+});
+
+describe("the api's configuration does not depend on the caller's shell", () => {
+  const scratch = "postgres://admin:pw@localhost:55432/furan_scale";
+  const loc = { kind: "s3", bucket: "furan-scale-abcd1234" } as const;
+
+  /** A shell that was set up for a dev stack, with every api knob turned. */
+  const devShell = (): NodeJS.ProcessEnv => ({
+    PATH: "/usr/bin",
+    NODE_ENV: "production",
+    PORT: "3000",
+    HOST: "0.0.0.0",
+    TRUST_PROXY: "true",
+    SSE_MAX_CONNECTIONS: "1",
+    JWT_EXPIRY: "1s",
+    FURAN_DASHBOARD_ORIGIN: "https://dashboard.example",
+    FURAN_BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
+    FURAN_BOOTSTRAP_ADMIN_PASSWORD: "not-a-real-password",
+    DATABASE_URL: "postgres://dev:dev@localhost:5433/furan",
+    DATABASE_URL_APP: "postgres://app:dev@localhost:5433/furan",
+    OTLP_ENDPOINT: "http://localhost:4318",
+    LOG_LEVEL: "debug",
+  });
+
+  it("has none of TRUST_PROXY or SSE_MAX_CONNECTIONS in the stack env", () => {
+    const env = parseScaleEnv(raw, { storage: "s3" });
+    const out = stackEnv(env, scratch, loc);
+    // Present as a key with no value: "remove it".
+    for (const key of ["TRUST_PROXY", "SSE_MAX_CONNECTIONS", "NODE_ENV"]) {
+      expect(key in out).toBe(true);
+      expect(out[key]).toBeUndefined();
+    }
+  });
+
+  it("leaves the api on its schema defaults after the env is applied", () => {
+    const env = parseScaleEnv(raw, { storage: "s3" });
+    const shell = devShell();
+    applyStackEnv(env, scratch, loc, shell);
+
+    expect(shell.TRUST_PROXY).toBeUndefined();
+    expect(shell.SSE_MAX_CONNECTIONS).toBeUndefined();
+    const api = envSchema.parse(shell);
+    expect(api).toMatchObject({
+      NODE_ENV: "development",
+      PORT: 3000,
+      HOST: "0.0.0.0",
+      JWT_EXPIRY: "7d",
+      SSE_MAX_CONNECTIONS: 10000,
+      FURAN_DASHBOARD_ORIGIN: "http://localhost:3001",
+      LOG_LEVEL: "warn",
+    });
+    expect(api.TRUST_PROXY).toBeUndefined();
+    expect(api.OTLP_ENDPOINT).toBeUndefined();
+    expect(api.DATABASE_URL_APP).toBeUndefined();
+    expect(api.FURAN_BOOTSTRAP_ADMIN_EMAIL).toBeUndefined();
+    expect(new URL(api.DATABASE_URL).pathname).toBe("/furan_scale");
+  });
+
+  it("covers every variable the api schema reads, so a new one cannot leak in", () => {
+    const env = parseScaleEnv(raw, { storage: "s3" });
+    const out = stackEnv(env, scratch, loc);
+    for (const key of Object.keys(envSchema.shape)) {
+      expect(key in out).toBe(true);
+    }
+  });
+
+  it("touches nothing outside the api and storage variables", () => {
+    const env = parseScaleEnv(raw, { storage: "s3" });
+    const shell = devShell();
+    applyStackEnv(env, scratch, loc, shell);
+    expect(shell.PATH).toBe("/usr/bin");
   });
 });

@@ -8,7 +8,11 @@ export const QUEUE_PREFIX = "furan-scale";
 /** Key namespace of the api's shared rate-limit store. */
 export const RATE_LIMIT_NAMESPACE = "furan-scale:";
 
-/** Every Redis key the harness owns starts with this. */
+/**
+ * The harness's Redis namespace: the diff queue and the rate-limit store. (The
+ * api's auth caches write `auth:*` keys for the scratch users; those are
+ * cleared by user id, see `redis-keys.ts`.)
+ */
 export const REDIS_KEY_PATTERN = "furan-scale:*";
 
 /** Diff jobs run in parallel (the production worker's default; P4's ideal). */
