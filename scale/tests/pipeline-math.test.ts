@@ -5,8 +5,10 @@ import {
   changeMix,
   excessEvents,
   findDuplicates,
+  formatSteps,
   latencySamples,
   meanJobSeconds,
+  overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -155,6 +157,37 @@ describe("raceSchedule", () => {
 
   it("needs five steps", () => {
     expect(() => raceSchedule(4)).toThrow(RangeError);
+  });
+});
+
+describe("overlappingUploads (R20b: which uploads a branch overlapped)", () => {
+  const uploads = [
+    { start: 0, end: 10 },
+    { start: 10, end: 20 },
+    { start: 20, end: 30 },
+    { start: 30, end: 40 },
+  ];
+
+  it("names, 1-based, the uploads in flight while the branch was", () => {
+    expect(overlappingUploads(uploads, { start: 12, end: 31 })).toEqual([
+      2, 3, 4,
+    ]);
+  });
+
+  it("does not count an upload that ended as the branch started", () => {
+    expect(overlappingUploads(uploads, { start: 20, end: 25 })).toEqual([3]);
+  });
+
+  it("is empty for a branch outside every upload", () => {
+    expect(overlappingUploads(uploads, { start: 41, end: 50 })).toEqual([]);
+  });
+});
+
+describe("formatSteps", () => {
+  it("collapses runs of steps into ranges", () => {
+    expect(formatSteps([4, 5, 6, 8, 10, 11])).toBe("4–6, 8, 10–11");
+    expect(formatSteps([7])).toBe("7");
+    expect(formatSteps([])).toBe("none");
   });
 });
 

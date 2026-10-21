@@ -43,7 +43,9 @@ import {
   changeMix,
   excessEvents,
   latencySamples,
+  formatSteps,
   meanJobSeconds,
+  overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -51,6 +53,7 @@ import {
   throughputRatio,
   type RegionRow,
   type RunSnapshot,
+  type Span,
   type StepRow,
 } from "./pipeline-math.js";
 import {
@@ -68,8 +71,10 @@ export {
   changeMix,
   excessEvents,
   findDuplicates,
+  formatSteps,
   latencySamples,
   meanJobSeconds,
+  overlappingUploads,
   raceLosses,
   raceSchedule,
   ratePerSec,
@@ -642,9 +647,9 @@ async function verdictOf(
 /**
  * Approves one step: waits for its verdict (only a diffed step can be
  * approved), then approves as soon as the run is reviewable (a decision is
- * refused while any step of the run is undiffed, which the uploads still
- * running keep it), retrying; each wait is up to `STEP_TIMEOUT_MS`. Returns
- * the action id, for the undo.
+ * refused while the run is `running` or any of its steps is undiffed),
+ * retrying; each wait is up to `STEP_TIMEOUT_MS`. Returns the action id, for
+ * the undo.
  */
 async function approveWhenReviewable(
   d: Driver,
@@ -694,13 +699,16 @@ async function approveWhenReviewable(
 
 /**
  * The race of spec §5.2 on a fresh `pipeline-50` run, uploaded one step at a
- * time. Two branches start at the brief's points and run concurrently with
- * the upload loop, which never waits for them (ruling R20): after
- * `ignoreAfter`, an ignore region is saved on step 3 over its change; after
- * `approveAfter`, step 5 is approved once it has a verdict and the run is
- * reviewable, then undone. Both branches are awaited after the last upload.
- * Steps 3 and 5 carry a small change, so both actions have something to act
- * on.
+ * time (ruling R20b):
+ * - after `ignoreAfter`, an ignore region is saved on step 3 over its change,
+ *   as a branch concurrent with the uploads, which go on at once;
+ * - after `approveAfter`, the uploads pause until step 5 is diffed and its
+ *   approve lands (a decision needs a reviewable run); then the uploads
+ *   resume at once and the undo runs as a branch concurrent with them, so its
+ *   whole-run re-diff overlaps the later uploads' jobs.
+ * Both branches are awaited after the last upload; the note names the
+ * uploads each branch overlapped. Steps 3 and 5 carry a small change, so both
+ * actions have something to act on.
  *
  * Once the queue is empty: duplicate regions, steps with no verdict and
  * unresolved steps with no region; then a quiet whole-run re-diff
@@ -753,12 +761,18 @@ async function measureRace(
     const inBackground = (task: Promise<void>): void => {
       side.push(task.catch((error: unknown) => void sideErrors.push(error)));
     };
+    // When each upload and each branch was in flight, for the note.
+    const uploads: Span[] = [];
+    const ignoreSpan: Span = { start: Infinity, end: Infinity };
+    const undoSpan: Span = { start: Infinity, end: Infinity };
     let undone = "";
-    let approvedAt = "";
 
     for (const [i, step] of plan.entries()) {
+      const start = performance.now();
       ids.push((await upload(d, run.runId, step)).screenshotId);
+      uploads.push({ start, end: performance.now() });
       if (i + 1 === at.ignoreAfter) {
+        ignoreSpan.start = performance.now();
         inBackground(
           reviewer
             .mutation("runs.setIgnoreAreas", {
@@ -771,23 +785,30 @@ async function measureRace(
               if (res.status !== 200) {
                 throw trpcFailure("runs.setIgnoreAreas", res);
               }
+            })
+            .finally(() => {
+              ignoreSpan.end = performance.now();
             }),
         );
       }
       if (i + 1 === at.approveAfter) {
-        const checkpointId = ids[at.approveStep - 1]!;
+        // The uploads wait here for the approve only, never for the undo.
+        const actionId = await approveWhenReviewable(
+          d,
+          run.runId,
+          ids[at.approveStep - 1]!,
+        );
+        undoSpan.start = performance.now();
         inBackground(
-          (async () => {
-            const actionId = await approveWhenReviewable(
-              d,
-              run.runId,
-              checkpointId,
-            );
-            approvedAt = `, approved with ${ids.length} of ${n} steps uploaded`;
-            const res = await reviewer.mutation("review.revert", { actionId });
-            if (res.status !== 200) throw trpcFailure("review.revert", res);
-            undone = `, undo reverted ${(res.data as { reverted?: number }).reverted ?? "?"} with ${ids.length} uploaded`;
-          })(),
+          reviewer
+            .mutation("review.revert", { actionId })
+            .then((res) => {
+              if (res.status !== 200) throw trpcFailure("review.revert", res);
+              undone = ` (reverted ${(res.data as { reverted?: number }).reverted ?? "?"})`;
+            })
+            .finally(() => {
+              undoSpan.end = performance.now();
+            }),
         );
       }
     }
@@ -821,7 +842,7 @@ async function measureRace(
         losses.unresolvedWithoutRegion +
         differences,
       samples: raced.steps.length,
-      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, approve and undo of step ${at.approveStep} from step ${at.approveAfter}${approvedAt}${undone}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${differences} steps changed by a quiet re-diff`,
+      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, uploads paused after step ${at.approveAfter} for the approve of step ${at.approveStep}; ignore save overlapped uploads ${formatSteps(overlappingUploads(uploads, ignoreSpan))}; undo${undone} overlapped uploads ${formatSteps(overlappingUploads(uploads, undoSpan))}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${differences} steps changed by a quiet re-diff`,
     };
   } finally {
     await d.stack.db

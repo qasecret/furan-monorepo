@@ -260,3 +260,44 @@ export function ratePerSec(
   const spanMs = Math.max(last - first, minSpanMs);
   return (timesMs.length - 1) / (spanMs / 1000);
 }
+
+/** A time span (`performance.now()` ms): a request in flight. */
+export interface Span {
+  start: number;
+  end: number;
+}
+
+/**
+ * P5's note (ruling R20b): the uploads (1-based) in flight at some moment
+ * while `branch` was, so the note can say which overlaps actually happened.
+ * Touching ends (one ended as the other started) do not overlap.
+ */
+export function overlappingUploads(
+  uploads: readonly Span[],
+  branch: Span,
+): number[] {
+  const out: number[] = [];
+  uploads.forEach((upload, i) => {
+    if (upload.start < branch.end && upload.end > branch.start) out.push(i + 1);
+  });
+  return out;
+}
+
+/** Step numbers as ranges, for a note: `[4, 5, 6, 8]` → `4–6, 8`. */
+export function formatSteps(steps: readonly number[]): string {
+  if (steps.length === 0) return "none";
+  const sorted = [...steps].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let first = sorted[0]!;
+  let last = first;
+  for (const step of [...sorted.slice(1), Infinity]) {
+    if (step === last + 1) {
+      last = step;
+      continue;
+    }
+    parts.push(first === last ? `${first}` : `${first}–${last}`);
+    first = step;
+    last = step;
+  }
+  return parts.join(", ");
+}
