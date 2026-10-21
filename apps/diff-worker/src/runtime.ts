@@ -52,8 +52,9 @@ export interface DiffWorkerRuntime {
   worker: Worker<DiffJob>;
   /**
    * Stop the sweeper, then close the worker (waits for in-flight jobs) and
-   * the connection the worker was given. It does not touch `db`, `storage`
-   * or `redis`: the caller owns those. Safe to call more than once.
+   * release the connection the worker was given. It does not touch `db`,
+   * `storage` or `redis`: the caller owns those. Safe to call more than once,
+   * and it never waits on a worker connection that has not become ready.
    */
   close(): Promise<void>;
 }
@@ -174,16 +175,33 @@ export function startDiffWorker(
           );
         }, SWEEP_INTERVAL_MS);
 
+  // The worker's own connection is a shared ioredis instance, which BullMQ
+  // leaves open on close. Capture it when it becomes ready so `close()` can
+  // release it, but never wait on it there: `worker.client` settles only once
+  // the connection is ready (or ended), so a worker started against an
+  // unreachable Redis would otherwise make `close()` hang, where
+  // `worker.close()` alone handles that state.
+  let client: { disconnect(): void } | undefined;
+  let closed = false;
+  void worker.client.then(
+    (c) => {
+      client = c;
+      // The connection came up after `close()` already ran: release it now.
+      if (closed) c.disconnect();
+    },
+    () => undefined,
+  );
+
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closing ??= (async () => {
       if (sweeperInterval) clearInterval(sweeperInterval);
-      // The worker's own connection is a shared ioredis instance, which
-      // BullMQ leaves open on close; take it before closing and release it
-      // after, so nothing keeps the process alive.
-      const client = await worker.client;
-      await worker.close();
-      client.disconnect();
+      try {
+        await worker.close();
+      } finally {
+        closed = true;
+        client?.disconnect();
+      }
     })();
     return closing;
   };

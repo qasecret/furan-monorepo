@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:net";
 
 import type { DB } from "@furan/db";
 import { createQueue, type DiffJob, type Queue } from "@furan/queue";
@@ -211,5 +212,58 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     // BullMQ flips `isRunning` once its main loop has unwound, a tick after
     // `close()` resolves.
     await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
+  });
+
+  it("closes promptly when the worker's connection never became ready", async () => {
+    // A server on an ephemeral localhost port that accepts a connection and
+    // never answers: the worker's connection reaches the socket but never
+    // becomes ready, so BullMQ's `worker.client` never settles. (A closed port
+    // would do too, but its reconnect attempts spam stderr for the rest of the
+    // run.) Stopping the listener leaves the accepted sockets as they are, for
+    // the same reason; they go with the test process.
+    let connected!: () => void;
+    const accepted = new Promise<void>((resolve) => {
+      connected = resolve;
+    });
+    const blackHole = createServer((socket) => {
+      socket.on("error", () => undefined);
+      connected();
+    });
+    blackHole.unref();
+    const port = await new Promise<number>((resolve, reject) => {
+      blackHole.once("error", reject);
+      blackHole.listen(0, "127.0.0.1", () =>
+        resolve((blackHole.address() as { port: number }).port),
+      );
+    });
+    // `createWorker` reads REDIS_URL when it builds the worker's connection,
+    // synchronously inside `startDiffWorker`; only that call sees the override.
+    const original = process.env.REDIS_URL;
+    process.env.REDIS_URL = `redis://127.0.0.1:${port}`;
+    let unready: DiffWorkerRuntime;
+    try {
+      unready = start();
+    } finally {
+      if (original === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = original;
+    }
+    unready.worker.on("error", () => undefined);
+
+    try {
+      // Close only once the worker's connection has reached the socket, so it
+      // is stuck waiting on a reply rather than still dialling.
+      await accepted;
+      const started = performance.now();
+      const closed = await Promise.race([
+        unready.close().then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 2_000),
+        ),
+      ]);
+      expect(closed).toBe(true);
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally {
+      blackHole.close();
+    }
   });
 });
