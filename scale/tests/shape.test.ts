@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DIFF_POOL,
   PIPELINE_SETS,
   SHAPE_VERSION,
+  diffImage,
   expectedRows,
   longRunCaptures,
   needsReseed,
@@ -11,8 +13,8 @@ import {
 } from "../src/seed/shape.js";
 
 describe("shapes", () => {
-  it("is version 1", () => {
-    expect(SHAPE_VERSION).toBe(1);
+  it("is version 2 (v2 added diff images)", () => {
+    expect(SHAPE_VERSION).toBe(2);
   });
 
   it("large carries the table's values", () => {
@@ -118,6 +120,24 @@ describe("needsReseed", () => {
     expect(needsReseed(0, 1)).toBe(true);
     expect(needsReseed(2, 1)).toBe(true);
     expect(needsReseed(1, 1)).toBe(false);
+  });
+});
+
+describe("diffImage", () => {
+  it("keeps 8 diff images, 70% screens, on seeds of their own", () => {
+    expect(DIFF_POOL).toBe(8);
+    const all = Array.from({ length: DIFF_POOL }, (_, i) => diffImage(i));
+    expect(all.filter((d) => d.kind === "screen")).toHaveLength(6);
+    expect(all.filter((d) => d.kind === "page")).toHaveLength(2);
+    const pipelineSeeds = new Set(
+      PIPELINE_SETS.flatMap((set) =>
+        Array.from({ length: 500 }, (_, i) => pipelineStep(set, i).seed),
+      ),
+    );
+    for (const d of all) {
+      expect(d.seed).toBeGreaterThan(shapes.large.imagePool);
+      expect(pipelineSeeds.has(d.seed)).toBe(false);
+    }
   });
 });
 

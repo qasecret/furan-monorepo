@@ -171,6 +171,11 @@ export interface ProjectPlan {
   /** The newest batch is a day before this. */
   now: Date;
   pool: PoolImage[];
+  /**
+   * Diff images (screens first, then pages), already uploaded: each
+   * `unresolved` step's `diff_image_key`, by its variation's size.
+   */
+  diffPool: { key: string; kind: ImageKind }[];
   storage: Storage;
 }
 
@@ -194,6 +199,16 @@ function checkPlan(plan: ProjectPlan): void {
   }
   if (plan.pipeline.length > 0 && plan.nightlies < 2) {
     throw new Error("seed: pipeline baselines need an earlier nightly");
+  }
+  for (const images of [plan.pool, plan.diffPool]) {
+    const screens = images.filter((i) => i.kind === "screen").length;
+    if (
+      screens === 0 ||
+      screens === images.length ||
+      images.some((i, n) => (i.kind === "screen") !== n < screens)
+    ) {
+      throw new Error("seed: image pools hold screens first, then pages");
+    }
   }
   if (s.prSteps > s.nightlySteps || s.nightlies < 1) {
     throw new Error("seed: PR runs capture a subset of the nightly steps");
@@ -229,7 +244,11 @@ function checkPlan(plan: ProjectPlan): void {
  * - Pipeline runs: every step `new` with an approval, and its baseline.
  *
  * Every step that did not pass (`new` / `unresolved`) gets 2-5 diff regions
- * and a diff signature shared with other changed steps of its batch.
+ * and a diff signature shared with other changed steps of its batch. Every
+ * `unresolved` step also gets a diff image (`diff_image_key`, from the diff
+ * pool, sized like its screenshot), as the pixel diff writes one where it
+ * found a change; a run holding one names one of them in `diff_name` (Ruling
+ * R10).
  * Every decided step gets an active approval (the trigger keeps
  * `screenshots.has_active_decision`). A baseline is recorded for every step
  * of the suite and long-run captures on every `baselineEvery`-th earlier
@@ -253,6 +272,8 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
   const pinned = int(Math.floor(plan.prBatches / 2));
   const screens = poolScreens(s);
   const pages = plan.pool.length - screens;
+  const diffScreens = plan.diffPool.filter((d) => d.kind === "screen").length;
+  const diffPages = plan.diffPool.length - diffScreens;
   const notReviewable = Math.max(
     1,
     Math.round((s.nightlyRuns * s.notReviewablePct) / 100),
@@ -454,6 +475,10 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
                    then ${h(sql`k0.key`, 6)} % ${int(Math.max(1, screens))}
                    else ${int(screens)} + ${h(sql`k0.key`, 6)} % ${int(Math.max(1, pages))}
               end)::int as pool_idx,
+             (case when v.kind = 'screen'
+                   then ${h(sql`k0.key`, 8)} % ${int(diffScreens)}
+                   else ${int(diffScreens)} + ${h(sql`k0.key`, 8)} % ${int(diffPages)}
+              end)::int as diff_idx,
              (${bool(plan.uniqueImages)} and r.mix = 'recent') as uniq
       from seed_runs r
       cross join lateral generate_series(1, r.nsteps) st
@@ -511,6 +536,14 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
         sql`, `,
       )}`);
     await tx.execute(sql`
+      create temp table seed_diff_pool (idx int primary key, image_key text not null)
+      on commit drop`);
+    await tx.execute(sql`
+      insert into seed_diff_pool (idx, image_key) values ${sql.join(
+        plan.diffPool.map((d, i) => sql`(${int(i)}, ${d.key}::text)`),
+        sql`, `,
+      )}`);
+    await tx.execute(sql`
       create temp table seed_keys (step_key bigint primary key, image_key text not null)
       on commit drop`);
     if (plan.uniqueImages) {
@@ -548,21 +581,24 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
     await tx.execute(sql`
       insert into test_runs (id, build_id, project_id, name, status, branch_name,
                              parent_branch_name, created_at, updated_at,
-                             checkpoint_count, completed_at, merge)
+                             checkpoint_count, completed_at, merge, diff_name)
       select r.id, r.build_id, ${P}, r.name, st.status::run_status, r.branch, r.parent,
              r.created_at, r.created_at, r.nsteps,
              case when st.status = 'running' then null
                   else r.created_at + r.nsteps * interval '10 milliseconds'
                          + interval '1 second' end,
-             r.baseline
+             r.baseline, dp.image_key
       from seed_runs r
       join (
         select run_id, bool_or(verdict is null) as undiffed,
                max(case when klass = 'decided' then 0
                         when verdict = 'unresolved' then 2
-                        when verdict = 'new' then 1 else 0 end) as worst
+                        when verdict = 'new' then 1 else 0 end) as worst,
+               -- One of the run's diff images (the worker keeps its worst).
+               min(case when verdict = 'unresolved' then diff_idx end) as diff_idx
         from seed_steps group by run_id
       ) a on a.run_id = r.id
+      left join seed_diff_pool dp on dp.idx = a.diff_idx
       cross join lateral (select case
         when r.lifecycle = 'aborted' then 'aborted'
         when a.undiffed then 'running'
@@ -574,7 +610,7 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
     await tx.execute(sql`
       insert into screenshots (id, run_id, project_id, test_variation_id, name, viewport,
                                browser, image_key, verdict, verdict_at, diff_signature,
-                               created_at)
+                               diff_image_key, created_at)
       select s.id, s.run_id, ${P}, s.var_id, s.name, ${SEED_VIEWPORT}::text,
              ${SEED_BROWSER}::text, coalesce(k.image_key, s.fixed_key, p.image_key),
              s.verdict::checkpoint_verdict,
@@ -585,9 +621,11 @@ export async function loadProject(db: DB, plan: ProjectPlan): Promise<void> {
                          'furan-scale:' || s.build_no || ':'
                            || ${h(sql`s.key`, 40)} % ${int(SIGNATURES_PER_BATCH)},
                          'UTF8')), 'hex') end,
+             case when s.verdict = 'unresolved' then dp.image_key end,
              s.created_at
       from seed_steps s
       join seed_pool p on p.idx = s.pool_idx
+      join seed_diff_pool dp on dp.idx = s.diff_idx
       left join seed_keys k on k.step_key = s.key
       order by s.created_at, s.key`);
 

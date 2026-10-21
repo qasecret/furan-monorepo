@@ -19,11 +19,13 @@ import {
 import { objectKey, type Storage } from "@furan/storage";
 import bcrypt from "bcryptjs";
 
-import { generatePng } from "./images.js";
+import { generateDiffPng, generatePng, type ImageKind } from "./images.js";
 import {
+  DIFF_POOL,
   PIPELINE_SETS,
   SEED_NAMES,
   SHAPE_VERSION,
+  diffImage,
   needsReseed,
   pipelineStep,
   poolImage,
@@ -59,7 +61,12 @@ export {
   type Shape,
   type ShapeName,
 } from "./shape.js";
-export { generatePng, type ImageChange, type ImageKind } from "./images.js";
+export {
+  generateDiffPng,
+  generatePng,
+  type ImageChange,
+  type ImageKind,
+} from "./images.js";
 
 export interface Seeded {
   projectId: string;
@@ -152,7 +159,8 @@ async function writeMeta(db: DB, shape: Shape): Promise<void> {
  * (only reviewer 0 gets a fresh password); anything else is wiped and
  * reseeded.
  *
- * Order: images, users and projects, the main project, the worst-case
+ * Order: images (the pool, the diff images, the pipeline baselines), users
+ * and projects, the main project, the worst-case
  * project, `vacuum analyze`, the worst case's resolution, `verifyStatuses` on
  * both projects, the spots, `scale_meta` (last, so an interrupted seed never
  * looks complete), and a final `vacuum analyze`.
@@ -175,14 +183,22 @@ export async function seed(
   }
 
   await wipe(db);
-  const [pool, pipeline] = await Promise.all([
+  const [pool, diffPool, pipeline] = await Promise.all([
     uploadPool(shape, storage),
+    uploadDiffPool(storage),
     uploadPipeline(shape, storage),
   ]);
   const password = newPassword();
   const ids = await seedUsersAndProjects(db, shape, password);
   const now = new Date();
-  const common = { adminId: ids.adminId, shape, now, pool, storage };
+  const common = {
+    adminId: ids.adminId,
+    shape,
+    now,
+    pool,
+    diffPool,
+    storage,
+  };
 
   await loadProject(db, {
     ...common,
@@ -254,6 +270,20 @@ async function uploadPool(
     const key = objectKey(png);
     await storage.put(key, png, "image/png");
     return { key, kind, png };
+  });
+}
+
+/** The diff images every `unresolved` step shares, under content keys. */
+async function uploadDiffPool(
+  storage: Storage,
+): Promise<{ key: string; kind: ImageKind }[]> {
+  const indexes = Array.from({ length: DIFF_POOL }, (_, i) => i);
+  return inChunks(indexes, UPLOAD_CHUNK, async (i) => {
+    const { kind, seed: imageSeed } = diffImage(i);
+    const png = await generateDiffPng(kind, imageSeed);
+    const key = objectKey(png);
+    await storage.put(key, png, "image/png");
+    return { key, kind };
   });
 }
 

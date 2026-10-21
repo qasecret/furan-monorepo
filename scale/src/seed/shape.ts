@@ -5,7 +5,7 @@
  * `--reuse` run reseeds a scratch database whose stored version differs, so a
  * stale seed is never measured as it is.
  */
-export const SHAPE_VERSION = 1;
+export const SHAPE_VERSION = 2; // v2: diff images on `unresolved` steps
 
 export const PIPELINE_SETS = [
   "pipeline-50",
@@ -223,6 +223,24 @@ export function poolImage(
   return {
     kind: index < poolScreens(shape) ? "screen" : "page",
     seed: index + 1,
+  };
+}
+
+/**
+ * Diff images (what the pixel diff writes for a changed step), shared by every
+ * `unresolved` step under content-addressed keys: 70% screen-sized (the first
+ * ones), the rest page-sized.
+ */
+export const DIFF_POOL = 8;
+
+/** Diff image `index`: its size and `generateDiffPng` seed (500,000 + index). */
+export function diffImage(index: number): {
+  kind: "screen" | "page";
+  seed: number;
+} {
+  return {
+    kind: index < Math.round(DIFF_POOL * 0.7) ? "screen" : "page",
+    seed: 500_000 + index,
   };
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   IMAGE_SIZE,
+  generateDiffPng,
   generatePng,
   withTextChunk,
   type ImageKind,
@@ -85,6 +86,33 @@ describe("generatePng", () => {
       expect(large).toBeLessThanOrEqual(0.25);
     });
   }
+});
+
+describe("generateDiffPng", () => {
+  it("is screen- or page-sized, deterministic, dark with red changed areas", async () => {
+    for (const kind of ["screen", "page"] as const) {
+      const png = await generateDiffPng(kind, 9);
+      expect(png.equals(await generateDiffPng(kind, 9))).toBe(true);
+      const { data, width, height } = await pixels(png);
+      expect([width, height]).toEqual([
+        IMAGE_SIZE[kind].width,
+        IMAGE_SIZE[kind].height,
+      ]);
+      let red = 0;
+      let dark = 0;
+      for (let i = 0; i < data.length; i += 3) {
+        const [r, g, b] = [data[i]!, data[i + 1]!, data[i + 2]!];
+        if (r > 200 && g < 80 && b < 80) red += 1;
+        else if (r < 100 && g < 100 && b < 100) dark += 1;
+      }
+      const total = width * height;
+      expect(red / total).toBeGreaterThan(0.002);
+      expect(red / total).toBeLessThan(0.1);
+      expect(dark / total).toBeGreaterThan(0.85);
+    }
+    const other = await generateDiffPng("screen", 10);
+    expect(other.equals(await generateDiffPng("screen", 9))).toBe(false);
+  });
 });
 
 describe("withTextChunk", () => {

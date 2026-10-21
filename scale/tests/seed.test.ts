@@ -136,6 +136,44 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
         where r.build_id = ${seeded.newestBuildId} and s.diff_signature is not null`);
       expect(grouping!.sigs).toBeLessThan(grouping!.steps);
 
+      // Diff images (Ruling R10): every `unresolved` step has a diff image in
+      // storage, as the worker writes one where the pixel diff found a change;
+      // `new`, `passed` and undiffed steps have none. A run holding an
+      // unresolved step names one of its steps' diff images in `diff_name`;
+      // the others have none.
+      const diffs = await db.execute<{
+        verdict: string | null;
+        key: string | null;
+      }>(sql`
+        select verdict::text as verdict, diff_image_key as key
+        from screenshots where project_id = ${seeded.projectId}`);
+      const diffKeys = new Set<string>();
+      for (const d of diffs) {
+        if (d.verdict === "unresolved") {
+          expect(d.key).not.toBeNull();
+          diffKeys.add(d.key!);
+        } else {
+          expect(d.key).toBeNull();
+        }
+      }
+      expect(diffKeys.size).toBeGreaterThan(1);
+      for (const key of diffKeys) {
+        expect(await storage.head(key)).not.toBeNull();
+      }
+      const [runDiffs] = await db.execute<{ wrong: number; named: number }>(sql`
+        select
+          count(*) filter (where
+            (r.diff_name is not null) <> exists (
+              select 1 from screenshots s
+              where s.run_id = r.id and s.verdict = 'unresolved')
+            or (r.diff_name is not null and not exists (
+              select 1 from screenshots s
+              where s.run_id = r.id and s.diff_image_key = r.diff_name)))::int as wrong,
+          count(r.diff_name)::int as named
+        from test_runs r where r.project_id = ${seeded.projectId}`);
+      expect(runDiffs!.wrong).toBe(0);
+      expect(runDiffs!.named).toBeGreaterThan(0);
+
       // The worst-case project has the old script's shape: one batch per
       // nightly and PR batch, the newest one full-size.
       expect(await countIn(db, "builds", seeded.resolvedProjectId)).toBe(
@@ -193,12 +231,16 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
         .where(eq(testRuns.id, worstNewestKept.runId!));
       expect(worstRun!.projectId).toBe(seeded.resolvedProjectId);
 
-      // The probe key belongs to exactly one step, and its object exists.
-      const owners = await db
-        .select({ id: screenshots.id })
-        .from(screenshots)
-        .where(eq(screenshots.imageKey, seeded.uniqueKeyProbe));
-      expect(owners).toHaveLength(1);
+      // The probe key belongs to exactly one row across every key column the
+      // storage proxy checks, and its object exists.
+      const probe = seeded.uniqueKeyProbe;
+      const [owners] = await db.execute<{ n: number }>(sql`
+        select (
+          (select count(*) from screenshots
+           where ${probe}::text in (image_key, dom_key, element_map_key, diff_image_key))
+          + (select count(*) from test_runs
+             where ${probe}::text in (image_name, diff_name)))::int as n`);
+      expect(owners!.n).toBe(1);
       expect(await storage.head(seeded.uniqueKeyProbe)).not.toBeNull();
 
       // Every step's image is in storage.
@@ -249,8 +291,9 @@ describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
       const again = await seed(db, shape, storage, { reuse: true });
       expect(again.projectId).toBe(seeded.projectId);
       expect(again.newestBuildId).toBe(seeded.newestBuildId);
-      expect(again.browserLogin.password).not.toBe(
-        seeded.browserLogin.password,
+      // Compared as a boolean: a failing matcher would print both passwords.
+      expect(again.browserLogin.password === seeded.browserLogin.password).toBe(
+        false,
       );
       const [reviewer0After] = await db
         .select({ hash: users.hashedPassword })

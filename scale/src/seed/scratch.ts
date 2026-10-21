@@ -10,8 +10,12 @@ import { SCRATCH_DATABASE, scratchUrl } from "../env.js";
  * The scratch database on the server `SCALE_DATABASE_URL` points at (spec §4).
  *
  * One harness run at a time per server: `createScratch` holds a session-level
- * advisory lock on a dedicated admin connection for the whole run, so a second
- * run refuses instead of clobbering `furan_scale` under the first.
+ * advisory lock for the whole run, so a second run refuses instead of
+ * clobbering `furan_scale` under the first. Advisory locks are scoped to the
+ * database a session is connected to, so the lock is always taken on the
+ * server's `postgres` database (Ruling R9), whichever admin database
+ * `SCALE_DATABASE_URL` names. Not `template1`: a session held there makes
+ * every CREATE DATABASE fail ("source database is being accessed").
  */
 
 /** Minimum free disk before seeding a local server (spec §3.4). */
@@ -52,6 +56,8 @@ export interface Scratch {
 
 /** The lock every harness run takes on the server. */
 const LOCK_KEY = "furan-scale";
+/** The database every run takes `LOCK_KEY` in, so the lock is server-wide. */
+const LOCK_DATABASE = "postgres";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
 function freeGiB(): number {
@@ -92,17 +98,24 @@ async function migrate(url: string): Promise<void> {
  * @throws ScaleDiskError when a local server has less than 10 GiB free.
  */
 export async function createScratch(adminUrl: string): Promise<Scratch> {
-  // One connection, so the session lock lives exactly as long as it does.
-  const admin = postgres(adminUrl, {
+  const single = {
     max: 1,
     connect_timeout: 10,
     idle_timeout: 0,
     max_lifetime: null,
     onnotice: () => {},
-  });
+  } as const;
+  // One connection each, so the session lock lives exactly as long as `lock`
+  // does. `admin` creates and drops furan_scale.
+  const lock = postgres(scratchUrl(adminUrl, LOCK_DATABASE), single);
+  const admin = postgres(adminUrl, single);
+  const unlock = () => lock`select pg_advisory_unlock(hashtext(${LOCK_KEY}))`;
+  const closeAll = async () => {
+    await Promise.allSettled([lock.end(), admin.end()]);
+  };
   let locked = false;
   try {
-    const [row] = await admin<{ locked: boolean }[]>`
+    const [row] = await lock<{ locked: boolean }[]>`
       select pg_try_advisory_lock(hashtext(${LOCK_KEY})) as locked`;
     locked = row?.locked === true;
     if (!locked) throw new ScaleBusyError();
@@ -138,19 +151,15 @@ export async function createScratch(adminUrl: string): Promise<Scratch> {
         if (released) return;
         released = true;
         try {
-          await admin`select pg_advisory_unlock(hashtext(${LOCK_KEY}))`;
+          await unlock();
         } finally {
-          await admin.end();
+          await closeAll();
         }
       },
     };
   } catch (e) {
-    if (locked) {
-      await admin`select pg_advisory_unlock(hashtext(${LOCK_KEY}))`.catch(
-        () => {},
-      );
-    }
-    await admin.end();
+    if (locked) await unlock().catch(() => {});
+    await closeAll();
     throw e;
   }
 }

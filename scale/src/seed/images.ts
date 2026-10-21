@@ -251,11 +251,45 @@ export async function generatePng(
 ): Promise<Buffer> {
   const canvas = draw(kind, seed);
   applyChange(canvas, seed, change);
+  return encode(canvas);
+}
+
+function encode(canvas: Canvas): Promise<Buffer> {
   return sharp(canvas.data, {
     raw: { width: canvas.width, height: canvas.height, channels: 3 },
   })
     .png()
     .toBuffer();
+}
+
+const DIFF_RED: Rgb = [230, 40, 50];
+
+/**
+ * A deterministic diff image like the pixel diff writes for a changed step: the
+ * page dimmed to dark, with the changed areas in red (a few region-sized
+ * blocks per screen height, about 1-8% of the pixels). Sized like the
+ * screenshot it belongs to.
+ */
+export async function generateDiffPng(
+  kind: ImageKind,
+  seed: number,
+): Promise<Buffer> {
+  const canvas = draw(kind, seed);
+  const { data, width, height } = canvas;
+  for (let i = 0; i < data.length; i += 1) {
+    data[i] = (data[i]! * 77) >> 8; // ~30%: dark
+  }
+  const rand = prng(seed ^ 0x0d1ff0d1);
+  const screens = Math.round(height / IMAGE_SIZE.screen.height);
+  const blocks = screens * (3 + Math.floor(rand() * 3));
+  for (let b = 0; b < blocks; b += 1) {
+    const w = 80 + Math.floor(rand() * 161);
+    const h = 24 + Math.floor(rand() * 49);
+    const x = Math.floor(rand() * (width - w + 1));
+    const y = Math.floor(rand() * (height - h + 1));
+    canvas.rect(x, y, w, h, DIFF_RED);
+  }
+  return encode(canvas);
 }
 
 const PNG_SIGNATURE = Buffer.from([
