@@ -536,7 +536,7 @@ export const reviewRouter = t.router({
           .from(testRuns)
           .where(inArray(testRuns.id, rediffRunIds))
           .orderBy(asc(testRuns.id));
-        for (const run of rediffs) enqueueRunDiff(ctx, run);
+        for (const run of rediffs) enqueueRunDiff(ctx, run, "undo");
       }
       return result;
     }),

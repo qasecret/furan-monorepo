@@ -25,7 +25,12 @@ import {
 import { hashPassword } from "../src/lib/password.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
-import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  createTestApp,
+  diffEnqueueFailures,
+  diffJobsEnqueued,
+  type TestApp,
+} from "./helpers.js";
 
 const skip = !process.env.DATABASE_URL;
 const d = skip ? describe.skip : describe;
@@ -218,6 +223,10 @@ d("tRPC projects.mergeBranchBaselines", () => {
     await seedVariationWithBaseline(h, s, "view-1", "hash-1");
     await seedVariationWithBaseline(h, s, "view-2", "hash-2");
     await seedVariationWithBaseline(h, s, "view-3", "hash-3");
+    const enqueuedBefore = await diffJobsEnqueued(
+      h.app.telemetry.metrics,
+      "branch_merge",
+    );
 
     const client = makeClient(baseUrl, s.memberJwt);
     const res = await client.projects.mergeBranchBaselines.mutate({
@@ -269,6 +278,41 @@ d("tRPC projects.mergeBranchBaselines", () => {
       "diff",
       expect.objectContaining({ projectId: s.projectId }),
     );
+    // ...each counted under the branch_merge trigger.
+    expect(
+      await diffJobsEnqueued(h.app.telemetry.metrics, "branch_merge"),
+    ).toBe(enqueuedBefore + 3);
+  });
+
+  test("an enqueue failure stays best-effort and is counted as a branch_merge failure", async () => {
+    await seedVariationWithBaseline(h, s, "view-1", "hash-1");
+    const registry = h.app.telemetry.metrics;
+    const failuresBefore = await diffEnqueueFailures(registry, "branch_merge");
+    const enqueuedBefore = await diffJobsEnqueued(registry, "branch_merge");
+    h.diffQueueAdd.mockRejectedValueOnce(new Error("queue is down"));
+
+    try {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+
+      // The merge succeeds: the synthetic run exists, only its diff was lost.
+      expect(res.runCount).toBe(1);
+      expect(res.skippedCount).toBe(0);
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+      expect(await diffEnqueueFailures(registry, "branch_merge")).toBe(
+        failuresBefore + 1,
+      );
+      expect(await diffJobsEnqueued(registry, "branch_merge")).toBe(
+        enqueuedBefore,
+      );
+    } finally {
+      h.diffQueueAdd.mockReset();
+      h.diffQueueAdd.mockResolvedValue({ id: "test-job-id" });
+    }
   });
 
   test("idempotent: calling merge twice reuses the same synthetic build", async () => {

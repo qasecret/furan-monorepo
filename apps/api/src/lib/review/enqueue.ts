@@ -1,4 +1,7 @@
+import type { Telemetry } from "@furan/telemetry";
+
 import type { DiffQueueProducer } from "../../trpc/context.js";
+import { addDiffJob, type DiffTrigger } from "../diff-enqueue.js";
 
 /**
  * Queues a re-diff of `run` for after the request transaction commits, so the
@@ -13,18 +16,29 @@ import type { DiffQueueProducer } from "../../trpc/context.js";
  *
  * The deferred sink awaits whatever the effect returns, so a failed `add`
  * surfaces after the commit exactly as it did when each caller enqueued inline.
+ * `addDiffJob` counts the failure under `trigger` and rethrows it, so it still
+ * surfaces.
  */
 export function enqueueRunDiff(
-  ctx: { diffQueue: DiffQueueProducer; onCommit: (fn: () => void) => void },
+  ctx: {
+    diffQueue: DiffQueueProducer;
+    telemetry: Pick<Telemetry, "metrics">;
+    onCommit: (fn: () => void) => void;
+  },
   run: { id: string; projectId: string; parentBranchName: string | null },
+  trigger: DiffTrigger,
 ): void {
   ctx.onCommit(() =>
-    ctx.diffQueue.add("diff", {
-      runId: run.id,
-      projectId: run.projectId,
-      ...(run.parentBranchName
-        ? { parentPrBaseBranch: run.parentBranchName }
-        : {}),
-    }),
+    addDiffJob(
+      { diffQueue: ctx.diffQueue, registry: ctx.telemetry.metrics },
+      trigger,
+      {
+        runId: run.id,
+        projectId: run.projectId,
+        ...(run.parentBranchName
+          ? { parentPrBaseBranch: run.parentBranchName }
+          : {}),
+      },
+    ),
   );
 }

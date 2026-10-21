@@ -38,7 +38,7 @@ import {
 import { hashPassword } from "../src/lib/password.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
-import { createTestApp, type TestApp } from "./helpers.js";
+import { createTestApp, diffJobsEnqueued, type TestApp } from "./helpers.js";
 import {
   addReviewRun,
   cleanupReviewSeeds,
@@ -1149,6 +1149,10 @@ d("tRPC runs router", () => {
     });
 
     test("scope=run enqueues a diff job (ADR-038: run-scope stored at variation level via first checkpoint)", async () => {
+      const enqueuedBefore = await diffJobsEnqueued(
+        h.app.telemetry.metrics,
+        "ignore_areas",
+      );
       // ADR-038: test_runs no longer has ignore_areas column. Run-scope ignore
       // areas are written to the first checkpoint's variation's ignore_regions.
       // Seed a screenshot to link the run to the variation.
@@ -1189,6 +1193,9 @@ d("tRPC runs router", () => {
         runId: s.runId,
         projectId: s.projectId,
       });
+      expect(
+        await diffJobsEnqueued(h.app.telemetry.metrics, "ignore_areas"),
+      ).toBe(enqueuedBefore + 1);
     });
 
     test("scope=variation writes to test_variations.ignore_regions and enqueues a diff job (ADR-038)", async () => {
@@ -1733,6 +1740,10 @@ d("tRPC runs router", () => {
     });
 
     test("appends to empty list and enqueues a diff (scope=run)", async () => {
+      const enqueuedBefore = await diffJobsEnqueued(
+        h.app.telemetry.metrics,
+        "ignore_areas",
+      );
       // ADR-038: run-scope ignore areas stored at variation level via first checkpoint.
       await h.db.insert(screenshots).values({
         runId: s.runId,
@@ -1768,6 +1779,9 @@ d("tRPC runs router", () => {
       expect(vRow.ignoreRegions).toEqual([r1]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+      expect(
+        await diffJobsEnqueued(h.app.telemetry.metrics, "ignore_areas"),
+      ).toBe(enqueuedBefore + 1);
     });
 
     test("appends to a populated list without overwriting (scope=run)", async () => {
@@ -3438,6 +3452,14 @@ d("tRPC runs router", () => {
       );
     });
 
+    // Each re-diffing procedure is counted under its own trigger.
+    const REDIFF_TRIGGER = {
+      setIgnoreAreas: "ignore_areas",
+      setTempIgnoreAreas: "temp_ignore_areas",
+      addIgnoreAreas: "ignore_areas",
+      setDiffThresholdOverride: "threshold",
+    } as const;
+
     test.each([
       "setIgnoreAreas",
       "setTempIgnoreAreas",
@@ -3446,6 +3468,11 @@ d("tRPC runs router", () => {
     ] as const)(
       "%s re-diffs with the run's parentPrBaseBranch (ADR-055)",
       async (procedure) => {
+        const trigger = REDIFF_TRIGGER[procedure];
+        const enqueuedBefore = await diffJobsEnqueued(
+          h.app.telemetry.metrics,
+          trigger,
+        );
         const rs = await reviewSeed({
           checkpoints: [{ name: "home", verdict: "unresolved" }],
         });
@@ -3495,6 +3522,9 @@ d("tRPC runs router", () => {
           projectId: rs.projectId,
           parentPrBaseBranch: "main",
         });
+        expect(await diffJobsEnqueued(h.app.telemetry.metrics, trigger)).toBe(
+          enqueuedBefore + 1,
+        );
       },
     );
   });

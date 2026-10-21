@@ -34,7 +34,12 @@ import { lockBuildRuns, lockRuns } from "../src/lib/review/targets.js";
 import { APPROVE_BUILD_CAP } from "../src/trpc/v1/review.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
-import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  createTestApp,
+  diffEnqueueFailures,
+  diffJobsEnqueued,
+  type TestApp,
+} from "./helpers.js";
 import {
   addProjectEditor,
   addReviewRun,
@@ -1877,6 +1882,10 @@ d("review router", () => {
           expectedCount: 1,
         });
         h.diffQueueAdd.mockClear();
+        const enqueuedBefore = await diffJobsEnqueued(
+          h.app.telemetry.metrics,
+          "undo",
+        );
 
         const res = await as(s.editor).review.revert.mutate({ actionId });
 
@@ -1884,6 +1893,10 @@ d("review router", () => {
         expect(h.diffQueueAdd.mock.calls.map(([, p]) => p.runId)).toEqual([
           run2.runId,
         ]);
+        // One re-diff, one count under the undo trigger.
+        expect(await diffJobsEnqueued(h.app.telemetry.metrics, "undo")).toBe(
+          enqueuedBefore + 1,
+        );
       });
 
       test("a re-diff lost to a failing queue is enqueued by the retry, and the project was told either way", async () => {
@@ -1894,6 +1907,9 @@ d("review router", () => {
           .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
           .where(eq(screenshots.id, s.shots.a!.id));
         h.diffQueueAdd.mockRejectedValueOnce(new Error("queue is down"));
+        const registry = h.app.telemetry.metrics;
+        const failuresBefore = await diffEnqueueFailures(registry, "undo");
+        const enqueuedBefore = await diffJobsEnqueued(registry, "undo");
 
         const failed = await failure(
           as(s.editor).review.revert.mutate({ actionId }),
@@ -1910,6 +1926,11 @@ d("review router", () => {
             ([, ev]) => (ev as { event: string }).event,
           ),
         ).toEqual(["testRun_updated", "build_updated"]);
+        // The failure still surfaced, and was counted: as a failure, not a success.
+        expect(await diffEnqueueFailures(registry, "undo")).toBe(
+          failuresBefore + 1,
+        );
+        expect(await diffJobsEnqueued(registry, "undo")).toBe(enqueuedBefore);
         h.diffQueueAdd.mockClear();
 
         // The retry has nothing left to undo, but the run is still waiting
@@ -1926,6 +1947,9 @@ d("review router", () => {
           runId: s.runId,
           projectId: s.projectId,
         });
+        expect(await diffJobsEnqueued(registry, "undo")).toBe(
+          enqueuedBefore + 1,
+        );
       });
 
       test("a retry of an approve undo whose runs all have their verdicts enqueues nothing", async () => {

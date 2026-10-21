@@ -23,7 +23,12 @@ import {
 
 import { hashPassword } from "../src/lib/password.js";
 
-import { createTestApp, type TestApp } from "./helpers.js";
+import {
+  createTestApp,
+  diffEnqueueFailures,
+  diffJobsEnqueued,
+  type TestApp,
+} from "./helpers.js";
 
 const skip =
   !process.env.DATABASE_URL ||
@@ -499,6 +504,10 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
   // ---------------------------------------------------------------------------
 
   test("POST /runs/:id/screenshots (multipart) inserts row + uploads bytes", async () => {
+    const enqueuedBefore = await diffJobsEnqueued(
+      h.app.telemetry.metrics,
+      "upload",
+    );
     // Use native fetch + FormData against the live listener (multipart
     // streams cleanly through Fastify this way; inject() also works, but
     // fetch better mirrors what the Kotlin SDK does over the wire).
@@ -567,6 +576,10 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       runId: s.runId,
       projectId: s.projectId,
     });
+    // ...and counted under the upload trigger.
+    expect(await diffJobsEnqueued(h.app.telemetry.metrics, "upload")).toBe(
+      enqueuedBefore + 1,
+    );
   });
 
   test("POST /runs/:id/screenshots accepts elementMapJson + stores sidecar", async () => {
@@ -873,6 +886,49 @@ d("SDK REST routes (Phase 4 Task 4)", () => {
       projectId: s.projectId,
       parentPrBaseBranch: "develop",
     });
+  });
+
+  test("upload enqueue failure stays best-effort and is counted", async () => {
+    const registry = h.app.telemetry.metrics;
+    const failuresBefore = await diffEnqueueFailures(registry, "upload");
+    const enqueuedBefore = await diffJobsEnqueued(registry, "upload");
+    h.diffQueueAdd.mockClear();
+    h.diffQueueAdd.mockRejectedValueOnce(new Error("queue is down"));
+
+    try {
+      const res = await h.app.inject({
+        method: "POST",
+        url: `/runs/${s.runId}/screenshots/base64`,
+        headers: {
+          Authorization: `Bearer ${s.memberJwt}`,
+          "Content-Type": "application/json",
+        },
+        payload: {
+          pngBase64: TINY_PNG.toString("base64"),
+          name: "enqueue-failure-snap",
+          viewport: "800x600",
+          browser: "chromium",
+        },
+      });
+
+      // The queue blip does not fail the upload: bytes and row are persisted.
+      expect(res.statusCode).toBe(200);
+      const rows = await h.db
+        .select()
+        .from(screenshots)
+        .where(eq(screenshots.runId, s.runId));
+      expect(rows.length).toBe(1);
+
+      // The enqueue was attempted once, counted as a failure and not as a success.
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+      expect(await diffEnqueueFailures(registry, "upload")).toBe(
+        failuresBefore + 1,
+      );
+      expect(await diffJobsEnqueued(registry, "upload")).toBe(enqueuedBefore);
+    } finally {
+      h.diffQueueAdd.mockReset();
+      h.diffQueueAdd.mockResolvedValue({ id: "test-job-id" });
+    }
   });
 
   test("POST /runs/:id/screenshots/base64 rejects empty pngBase64", async () => {
