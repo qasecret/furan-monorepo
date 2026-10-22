@@ -5,6 +5,17 @@ import { join } from "node:path";
 
 import type { Row, Suite } from "./budgets.js";
 
+/** One suite's run, and the quiesce after it (Ruling R48), as the CLI saw them. */
+export interface SuiteRun {
+  suite: Suite;
+  /** ISO 8601. */
+  startedAt: string;
+  endedAt: string;
+  seconds: number;
+  /** The quiesce's line (`describeQuiesce`). */
+  quiesce?: string;
+}
+
 export interface ReportMeta {
   shape: "large" | "smoke";
   suites: readonly Suite[];
@@ -16,6 +27,8 @@ export interface ReportMeta {
    * alone. Defaults to asking git; null when git cannot answer.
    */
   dirty?: boolean | null;
+  /** Each suite's start and end, and the quiesce after it, in run order. */
+  timeline?: readonly SuiteRun[];
 }
 
 interface Machine {
@@ -88,6 +101,7 @@ function renderMarkdown(
     suites: readonly Suite[];
     commit: string;
     dirty: boolean | null;
+    timeline: readonly SuiteRun[];
   },
   env: Machine,
 ): string {
@@ -100,6 +114,15 @@ function renderMarkdown(
     `- Working tree: ${formatTree(meta.dirty)}`,
     `- Shape: ${meta.shape}`,
     `- Suites: ${meta.suites.length > 0 ? meta.suites.join(", ") : "none"}`,
+    ...(meta.timeline.length > 0
+      ? [
+          "- Timeline:",
+          ...meta.timeline.flatMap((run) => [
+            `  - ${run.suite}: ${run.startedAt} to ${run.endedAt} (${run.seconds.toFixed(1)} s)`,
+            ...(run.quiesce !== undefined ? [`  - ${cell(run.quiesce)}`] : []),
+          ]),
+        ]
+      : []),
     "",
     "| Id | Budget | Measured | Unit | Status | Verdict | Owner |",
     "| --- | --- | --- | --- | --- | --- | --- |",
@@ -138,6 +161,7 @@ export function writeReport(
     suites: [...meta.suites],
     commit: meta.commit ?? gitCommit(),
     dirty: meta.dirty !== undefined ? meta.dirty : gitDirty(),
+    timeline: [...(meta.timeline ?? [])],
   };
   const env = machine();
 

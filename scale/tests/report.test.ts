@@ -142,6 +142,43 @@ describe("writeReport", () => {
     }
   });
 
+  it("lists each suite's start and end, and the quiesce after it, in the header", async () => {
+    const timeline = [
+      {
+        suite: "browser" as const,
+        startedAt: "2026-10-22T01:05:00.000Z",
+        endedAt: "2026-10-22T01:13:02.500Z",
+        seconds: 482.5,
+        quiesce: "quiesce after browser: drained in 0.2s",
+      },
+      {
+        suite: "server" as const,
+        startedAt: "2026-10-22T01:13:03.000Z",
+        endedAt: "2026-10-22T01:23:00.000Z",
+        seconds: 597,
+      },
+    ];
+    const out = writeReport(sample(), { ...meta, timeline }, dir);
+    const md = await readFile(out.md, "utf8");
+    const header = md.slice(0, md.indexOf("| Id |"));
+    expect(header).toContain(
+      [
+        "- Timeline:",
+        "  - browser: 2026-10-22T01:05:00.000Z to 2026-10-22T01:13:02.500Z (482.5 s)",
+        "  - quiesce after browser: drained in 0.2s",
+        "  - server: 2026-10-22T01:13:03.000Z to 2026-10-22T01:23:00.000Z (597.0 s)",
+      ].join("\n"),
+    );
+    const parsed = JSON.parse(await readFile(out.json, "utf8")) as {
+      meta: { timeline: unknown };
+    };
+    expect(parsed.meta.timeline).toEqual(timeline);
+
+    // No suite ran: no timeline.
+    const none = await readFile(writeReport(sample(), meta, dir).md, "utf8");
+    expect(none).not.toContain("Timeline");
+  });
+
   it("renders the table columns", async () => {
     const md = await readFile(writeReport(sample(), meta, dir).md, "utf8");
     expect(md).toContain(

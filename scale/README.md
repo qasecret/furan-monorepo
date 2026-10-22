@@ -122,8 +122,18 @@ whatever order `--suite` names them in. Each suite changes the seeded project
    the seed, so a failed build fails fast), and now starts it and the
    single-origin proxy in front of it and the API.
 4. Runs the selected suites, each guarded: if one throws, its budgets are
-   reported as `error` with the message and the others still run.
-5. Writes the report, tears everything down and exits.
+   reported as `error` with the message and the others still run. It prints
+   each suite's start and end (ISO time and duration).
+5. **Quiesces after each suite**, so the next one starts on a quiet system:
+   it waits up to 10 minutes for the harness's diff queue to empty. Past
+   that it removes the jobs still queued (the harness's own queue only, under
+   the `furan-scale` prefix: they are harness data) and waits up to 2 more
+   minutes for the running ones. A backlog would otherwise run through the
+   next suite's measurements: D4's 500-step upload diffs quadratically today,
+   for longer than D4 itself records. The CLI prints
+   `quiesce after <suite>: drained in Xs` or
+   `quiesce after <suite>: N jobs dropped`.
+6. Writes the report, tears everything down and exits.
 
 Both services run with fixed, comparable settings:
 
@@ -258,7 +268,8 @@ a recorded location is removed only if it has the harness's own name.
 two runs) go to the report directory. The header records the machine (CPU and
 memory), the Node version, the commit and whether the working tree was dirty
 (`git status --porcelain` listed anything, untracked files included: then the
-numbers are not the commit's alone), the shape and the suites. Each budget is a
+numbers are not the commit's alone), the shape and the suites, then a
+**timeline**: each suite's start and end, and the quiesce line after it. Each budget is a
 row: id, the budget, the measured value, its unit, its status, the verdict and the
 owning slice. A **Notes** section carries per-budget detail (for example the
 cases behind a solo timing).

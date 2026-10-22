@@ -212,6 +212,8 @@ export class RunWatcher {
 }
 
 export interface QueueProbe {
+  /** Waiting, active and delayed jobs, by state. */
+  counts(): Promise<{ waiting: number; active: number; delayed: number }>;
   /** Waiting, active and delayed jobs (a retry waits in `delayed`). */
   busy(): Promise<number>;
   /**
@@ -245,12 +247,25 @@ export function openQueueProbe(
     () => undefined,
   );
 
+  const counts = async (): Promise<{
+    waiting: number;
+    active: number;
+    delayed: number;
+  }> => {
+    const c = await queue.getJobCounts("waiting", "active", "delayed");
+    return {
+      waiting: c.waiting ?? 0,
+      active: c.active ?? 0,
+      delayed: c.delayed ?? 0,
+    };
+  };
   const busy = async (): Promise<number> => {
-    const counts = await queue.getJobCounts("waiting", "active", "delayed");
-    return (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.delayed ?? 0);
+    const c = await counts();
+    return c.waiting + c.active + c.delayed;
   };
 
   return {
+    counts,
     busy,
     async waitIdle(timeoutMs) {
       const deadline = performance.now() + timeoutMs;

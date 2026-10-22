@@ -16,7 +16,8 @@ import { loginOnce, mintJwt, verifyAuth } from "./clients/http.js";
 import { ScaleEnvError, parseScaleEnv } from "./env.js";
 import { InterruptedError, describeError } from "./errors.js";
 import { runSuiteGuarded } from "./guard.js";
-import { writeReport } from "./report.js";
+import { describeQuiesce, quiesce } from "./quiesce.js";
+import { writeReport, type SuiteRun } from "./report.js";
 import {
   createScratch,
   markSeedUsed,
@@ -30,6 +31,7 @@ import { buildDashboard, startDashboard } from "./stack/dashboard.js";
 import { startProxy } from "./stack/proxy.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
 import { runBrowserSuite, type BrowserFailures } from "./suites/browser.js";
+import { openQueueProbe, type QueueProbe } from "./suites/pipeline-probes.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
 import { loadViewerCalls, runServerSuite } from "./suites/server.js";
 
@@ -213,22 +215,45 @@ async function run(
     // run that ends before any suite starts leaves the seed reusable.
     await markSeedUsed(plane.db);
   }
+  // Ruling R48: each suite leaves the diff queue quiet for the next.
+  const queue = suites.length > 0 ? openQueueProbe(stillRunning) : undefined;
+  if (queue !== undefined) {
+    teardown.add("close the quiesce probe", queue.close);
+  }
+  const timeline: SuiteRun[] = [];
   for (const suite of suites) {
     const runner = RUNNERS[suite];
-    say(`suite ${suite}`);
+    const startedAt = new Date().toISOString();
+    const started = performance.now();
+    say(`suite ${suite}: started ${startedAt}`);
     measurements.push(
       ...(await runSuiteGuarded(
         suite,
         runner === undefined ? undefined : () => runner(ctx),
       )),
     );
+    const seconds = (performance.now() - started) / 1000;
+    const endedAt = new Date().toISOString();
+    say(`suite ${suite}: ended ${endedAt} (${seconds.toFixed(1)} s)`);
+    stillRunning();
+    const quiesced =
+      queue === undefined ? undefined : await quiesceAfter(suite, queue, state);
+    if (quiesced !== undefined) say(quiesced);
+    timeline.push({
+      suite,
+      startedAt,
+      endedAt,
+      seconds,
+      ...(quiesced !== undefined && { quiesce: quiesced }),
+    });
     stillRunning();
   }
+  await queue?.close();
 
   const rows = evaluate(BUDGETS, measurements, args.suites);
   const written = writeReport(
     rows,
-    { shape: shape.name, suites: args.suites },
+    { shape: shape.name, suites: args.suites, timeline },
     args.report,
   );
   const counts = new Map<string, number>();
@@ -248,6 +273,24 @@ async function run(
     say(`kept: the furan_scale database and its storage (see --reuse)`);
   }
   return exitCode(rows, shape.name);
+}
+
+/**
+ * The quiesce after `suite` (Ruling R48), as the line the CLI prints and the
+ * report header lists. A probe that fails says so in that line, and the run
+ * goes on.
+ */
+async function quiesceAfter(
+  suite: Suite,
+  queue: QueueProbe,
+  state: RunState,
+): Promise<string> {
+  try {
+    return describeQuiesce(suite, await quiesce(queue));
+  } catch (error) {
+    if (error instanceof InterruptedError || state.interrupted) throw error;
+    return `quiesce after ${suite}: failed (${describeError(error)}); the queue may not have been idle`;
+  }
 }
 
 /** Exit status of a failed `run`: 2 for bad flags or environment, else 1. */
