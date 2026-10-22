@@ -1,4 +1,4 @@
-import { windowCounts } from "../stats.js";
+import { createHash } from "node:crypto";
 
 /**
  * The browser suite's pure parts (spec §5.4): reading the dashboard's network
@@ -69,28 +69,104 @@ export function unpackTrpcCalls(url: string): TrpcCall[] {
   return paths.map((path, i) => ({ path, input: inputs[i] ?? "" }));
 }
 
+/** A query's calls, told apart by path and input (a query key, as React Query keys them). */
+interface QueryCall {
+  path: string;
+  input?: string;
+  t: number;
+}
+
 /**
- * The most times one query was requested inside one window: the queries are
- * told apart by path and input (a query key, as React Query keys them), and
- * each one's calls are counted in consecutive `windowMs` windows from its
- * first call (`windowCounts`). 0 with no calls.
+ * The most calls of `times` inside any window of `windowMs` (Ruling R41): a
+ * sliding window, half-open (`[t, t + windowMs)`), so two calls exactly a
+ * window apart are in different windows. Two pointers over the sorted times.
  */
-export function refetchesPerQuery(
-  calls: readonly { path: string; input?: string; t: number }[],
-  windowMs: number,
-): number {
-  const byQuery = new Map<string, number[]>();
-  for (const call of calls) {
-    const key = `${call.path}\u0000${call.input ?? ""}`;
-    const times = byQuery.get(key);
-    if (times === undefined) byQuery.set(key, [call.t]);
-    else times.push(call.t);
+function mostInAnyWindow(times: readonly number[], windowMs: number): number {
+  if (!(windowMs > 0)) {
+    throw new RangeError(`windowMs must be positive, got ${windowMs}`);
   }
+  const sorted = [...times].sort((a, b) => a - b);
   let most = 0;
-  for (const times of byQuery.values()) {
-    for (const n of windowCounts(times, windowMs)) if (n > most) most = n;
+  let from = 0;
+  for (let to = 0; to < sorted.length; to += 1) {
+    while ((sorted[to] as number) - (sorted[from] as number) >= windowMs) {
+      from += 1;
+    }
+    most = Math.max(most, to - from + 1);
   }
   return most;
+}
+
+/**
+ * The query requested most often inside one window, and how often; null with
+ * no calls. Ties go to the query first seen.
+ */
+export function busiestQuery(
+  calls: readonly QueryCall[],
+  windowMs: number,
+): { count: number; path: string; input: string } | null {
+  const byQuery = new Map<
+    string,
+    { path: string; input: string; times: number[] }
+  >();
+  for (const call of calls) {
+    const input = call.input ?? "";
+    const key = `${call.path}\u0000${input}`;
+    const query = byQuery.get(key);
+    if (query === undefined) {
+      byQuery.set(key, { path: call.path, input, times: [call.t] });
+    } else {
+      query.times.push(call.t);
+    }
+  }
+  let best: { count: number; path: string; input: string } | null = null;
+  for (const { path, input, times } of byQuery.values()) {
+    const count = mostInAnyWindow(times, windowMs);
+    if (best === null || count > best.count) best = { count, path, input };
+  }
+  return best;
+}
+
+/** The most times one query was requested inside any one window; 0 with no calls. */
+export function refetchesPerQuery(
+  calls: readonly QueryCall[],
+  windowMs: number,
+): number {
+  return busiestQuery(calls, windowMs)?.count ?? 0;
+}
+
+/** The procedures that load a list the batch page shows (Ruling R42). */
+export const LIST_PROCEDURES: readonly string[] = [
+  "runs.list",
+  "runs.listCheckpoints",
+  "builds.list",
+];
+
+/** The calls of `calls` that load a list (D3.refetches, D4). */
+export function listQueries<T extends { path: string }>(
+  calls: readonly T[],
+): T[] {
+  return calls.filter((c) => LIST_PROCEDURES.includes(c.path));
+}
+
+/**
+ * A query for a note: its procedure, its input's field names and a short
+ * digest of the input, so two queries of one procedure read differently
+ * without any id in the text (`runs.listCheckpoints(runId) #3f2a1c`).
+ */
+export function queryLabel(path: string, input: string): string {
+  if (input === "") return `${path}()`;
+  let fields = "";
+  try {
+    const parsed: unknown = JSON.parse(input);
+    if (parsed !== null && typeof parsed === "object") {
+      fields = Object.keys(parsed).join(",");
+    }
+  } catch {
+    // An unreadable input is still told apart by its digest.
+  }
+  const digest = createHash("sha1").update(input).digest("hex").slice(0, 6);
+  return `${path}(${fields}) #${digest}`;
 }
 
 /** The storage-proxy route's last segments: `…/v1/storage/<key>`. */

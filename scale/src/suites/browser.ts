@@ -33,8 +33,12 @@ import { PROXY_ERROR_HEADER } from "../stack/proxy.js";
 import { percentile } from "../stats.js";
 
 import {
+  LIST_PROCEDURES,
+  busiestQuery,
   countBrowserFailures,
+  listQueries,
   offscreenImages,
+  queryLabel,
   refetchesPerQuery,
   storageKeyOf,
   unpackTrpcCalls,
@@ -102,6 +106,8 @@ const D4_TRAILING_MS = 4_000;
 const DRAIN_TIMEOUT_MS = 5 * 60_000;
 /** D5: step moves timed, and how long one may take. */
 const D5_MOVES = 50;
+/** D5: untimed moves first (spec §2.1's warm-ups). */
+const D5_WARMUPS = 5;
 const STEP_TIMEOUT_MS = 30_000;
 /** D3: the most cursor moves to reach the step to approve. */
 const MAX_CURSOR_MOVES = 200;
@@ -131,9 +137,11 @@ const NO_TOURS = `(() => {
 })();`;
 
 /**
- * An init script: records in `window.__scaleMarks[name]` the
- * `performance.now()` at which `selector` first matches, so the time counts
- * from the navigation's start (the document's time origin).
+ * An init script: records the `performance.now()` at which `selector` first
+ * matches (`window.__scaleMarks[name + ":dom"]`), then, two animation frames
+ * later, once the frame holding it has been painted
+ * (`window.__scaleMarks[name]`): the time counts from the navigation's start
+ * (the document's time origin) to the element on screen.
  */
 function markWhenPresent(name: string, selector: string): string {
   return `(() => {
@@ -141,10 +149,15 @@ function markWhenPresent(name: string, selector: string): string {
   const name = ${JSON.stringify(name)};
   const selector = ${JSON.stringify(selector)};
   const check = () => {
-    if (marks[name] === undefined && document.querySelector(selector)) {
-      marks[name] = performance.now();
+    if (marks[name + ":dom"] === undefined && document.querySelector(selector)) {
+      marks[name + ":dom"] = performance.now();
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          marks[name] = performance.now();
+        }),
+      );
     }
-    return marks[name] !== undefined;
+    return marks[name + ":dom"] !== undefined;
   };
   if (check()) return;
   const observer = new MutationObserver(() => {
@@ -310,13 +323,29 @@ export async function runBrowserSuite(
     await measure(["D3.calls", "D3.refetches"], () => measureApprove(s));
     await measure(["D4"], () => measureLiveUpdates(s, opts.shape));
   } finally {
-    await browser.close();
-    opts.onFailures?.(failures.summary());
+    try {
+      // A browser that will not close is the teardown's to retry and report;
+      // it must not lose what was measured.
+      await browser.close().catch(() => undefined);
+    } finally {
+      opts.onFailures?.(failures.summary());
+    }
   }
 
   if (viewerCalls !== undefined) {
-    mkdirSync(opts.outDir, { recursive: true });
-    writeFileSync(callsFile, `${JSON.stringify(viewerCalls, null, 2)}\n`);
+    try {
+      mkdirSync(opts.outDir, { recursive: true });
+      writeFileSync(callsFile, `${JSON.stringify(viewerCalls, null, 2)}\n`);
+    } catch (error) {
+      // The calls still reach the server suite; only the file is missing.
+      const open = out.get("D5.open");
+      if (open !== undefined) {
+        out.set("D5.open", {
+          ...open,
+          note: `${open.note ?? ""}; writing ${VIEWER_CALLS_FILE} failed: ${brief(error)}`,
+        });
+      }
+    }
   }
   return {
     measurements: IDS.map(
@@ -437,7 +466,10 @@ async function logIn(
 interface Logged {
   url: string;
   method: string;
+  /** The harness clock (`performance.now()`) when the page sent it. */
   t: number;
+  /** The wall clock (ms since the epoch) when the harness heard of it. */
+  at: number;
   request: Request;
   /** Set when it ended without an answer (cancelled, or the connection failed). */
   failed?: true;
@@ -473,6 +505,7 @@ class NetworkLog {
         url,
         method: request.method(),
         t: performance.now(),
+        at: Date.now(),
         request,
       });
       if (!EVENT_STREAM.test(new URL(url).pathname)) {
@@ -518,17 +551,25 @@ class NetworkLog {
   }
 
   /** Every procedure call of the tRPC requests sent in `[from, to)`. */
+  /**
+   * Every procedure call of the tRPC requests the browser started in
+   * `[from, to)`, wall clock (ms since the epoch). The time is the browser's
+   * own request start, which Playwright fills in once the response has come
+   * (so read this after the network has settled); a request that got no
+   * response falls back to when the harness heard of it.
+   */
   trpcCalls(from = -Infinity, to = Infinity): LoggedCall[] {
-    return this.entries
-      .filter((e) => e.t >= from && e.t < to)
-      .flatMap((e) =>
-        unpackTrpcCalls(e.url).map((call) => ({
-          ...call,
-          method: e.method,
-          t: e.t,
-          failed: e.failed === true,
-        })),
-      );
+    return this.entries.flatMap((e) => {
+      const started = e.request.timing().startTime;
+      const t = started > 0 ? started : e.at;
+      if (t < from || t >= to) return [];
+      return unpackTrpcCalls(e.url).map((call) => ({
+        ...call,
+        method: e.method,
+        t,
+        failed: e.failed === true,
+      }));
+    });
   }
 
   /** The storage-proxy requests sent before `to`. */
@@ -597,14 +638,30 @@ async function untilInPage(
   }
 }
 
-/** `window.__scaleMarks[name]`: ms from the navigation's start. */
-async function readMark(page: Page, name: string): Promise<number> {
-  const value = await page.evaluate<number | null>(
-    `(window.__scaleMarks || {})[${JSON.stringify(name)}] ?? null`,
+/**
+ * A `markWhenPresent` mark, ms from the navigation's start: `painted` once the
+ * frame holding the element was painted (waited for), `dom` when it matched.
+ */
+async function readMark(
+  page: Page,
+  name: string,
+): Promise<{ painted: number; dom: number }> {
+  const key = (k: string): string =>
+    `(window.__scaleMarks || {})[${JSON.stringify(k)}]`;
+  await untilInPage(
+    page,
+    `${key(name)} !== undefined`,
+    STEP_TIMEOUT_MS,
+    `the frame showing ${name} to be painted`,
   );
-  if (value === null) throw new Error(`the page recorded no time for ${name}`);
-  return value;
+  return page.evaluate<{ painted: number; dom: number }>(
+    `({ painted: ${key(name)}, dom: ${key(`${name}:dom`)} })`,
+  );
 }
+
+/** A mark's note: when the element was painted, and when it was in the DOM. */
+const markNote = (m: { painted: number; dom: number }): string =>
+  `painted at ${round(m.painted)} ms (in the DOM at ${round(m.dom)} ms)`;
 
 /** Calls per path, most first: `runs.list ×2, builds.getById ×1`. */
 function tally(calls: readonly { path: string }[]): string {
@@ -616,6 +673,36 @@ function tally(calls: readonly { path: string }[]): string {
       .map(([p, n]) => `${p} ×${n}`)
       .join(", ") || "none"
   );
+}
+
+/**
+ * Armed before a timed key press: `window.__scaleKeyAt` becomes the wall
+ * clock (ms since the epoch) at which the page saw the next key go down.
+ */
+const ARM_KEY_TIME = `(() => {
+  window.__scaleKeyAt = null;
+  window.addEventListener(
+    "keydown",
+    () => {
+      if (window.__scaleKeyAt === null) {
+        window.__scaleKeyAt = performance.timeOrigin + performance.now();
+      }
+    },
+    { capture: true, once: true },
+  );
+})()`;
+
+/**
+ * The note of a list-refetch count (Ruling R42): the list query requested most
+ * in one window (sliding, Ruling R41), and how many list calls there were.
+ */
+function busiestNote(lists: readonly LoggedCall[], windowMs: number): string {
+  const busiest = busiestQuery(lists, windowMs);
+  const which =
+    busiest === null
+      ? "none"
+      : `${queryLabel(busiest.path, busiest.input)} ×${busiest.count}`;
+  return `${which} (any ${windowMs / 1000} s window; the lists are ${LIST_PROCEDURES.join(", ")}, each query by path and input); ${lists.length} list-query calls in all`;
 }
 
 /** How many of `calls` went out and were cancelled (or failed) without an answer. */
@@ -658,9 +745,9 @@ async function measureBatches(s: Session): Promise<Measurement[]> {
     return [
       {
         id: "D1",
-        value: round(ms),
+        value: round(ms.painted),
         samples: 1,
-        note: `/inbox at its default view, one cold navigation; ${rows} batch rows when the first appeared`,
+        note: `/inbox at its default view, one cold navigation, first batch row ${markNote(ms)}; ${rows} batch rows by then`,
       },
     ];
   });
@@ -730,9 +817,9 @@ async function measureBatch(s: Session): Promise<Measurement[]> {
     return [
       {
         id: "D2.firstRow",
-        value: round(firstRow),
+        value: round(firstRow.painted),
         samples: 1,
-        note: `${where}; one cold navigation`,
+        note: `${where}; one cold navigation, first run row ${markNote(firstRow)}`,
       },
       {
         id: "D2.domMax",
@@ -770,7 +857,12 @@ async function measureBatch(s: Session): Promise<Measurement[]> {
  */
 const armStepWatch = (from: string): string => `(() => {
   const from = ${JSON.stringify(from)};
-  const s = (window.__scaleStep = { keyAt: null, drawnAt: null, id: null });
+  const s = (window.__scaleStep = {
+    keyAt: null,
+    drawnAt: null,
+    paintedAt: null,
+    id: null,
+  });
   window.addEventListener(
     "keydown",
     () => { if (s.keyAt === null) s.keyAt = performance.now(); },
@@ -782,6 +874,12 @@ const armStepWatch = (from: string): string => `(() => {
     if (id && id !== from) {
       s.drawnAt = performance.now();
       s.id = id;
+      // For the note: when the frame showing it had been painted.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          s.paintedAt = performance.now();
+        }),
+      );
       return true;
     }
     return false;
@@ -806,7 +904,7 @@ async function measureViewer(
     .from(screenshots)
     .where(eq(screenshots.runId, longRunId));
   const steps = Number(row?.n ?? 0);
-  const plan = walkPlan(steps, D5_MOVES);
+  const plan = walkPlan(steps, D5_WARMUPS + D5_MOVES);
   const drawn = `[data-stage-drawn="${longRunFirstStepId}"]`;
 
   return withPage(s, [markWhenPresent("drawn", drawn)], async (page, log) => {
@@ -824,21 +922,24 @@ async function measureViewer(
     ];
     const opened: Measurement = {
       id: "D5.open",
-      value: round(open),
+      value: round(open.painted),
       samples: 1,
-      note: `step 1 of the long run (${steps} steps), one cold navigation to data-stage-drawn; meanwhile the viewer requested ${calls.length} procedures (R4's call set)`,
+      note: `step 1 of the long run (${steps} steps), one cold navigation; data-stage-drawn ${markNote(open)}; meanwhile the viewer requested ${calls.length} procedures (R4's call set)`,
     };
 
     // A failed walk loses only D5.next: the open and the call set stand.
     let next: Measurement;
     try {
-      const samples = await walk(s, page, log, plan, longRunFirstStepId);
-      const sorted = [...samples].sort((a, b) => a - b);
+      const timed = (await walk(s, page, log, plan, longRunFirstStepId)).slice(
+        D5_WARMUPS,
+      );
+      const sorted = timed.map((m) => m.drawn).sort((a, b) => a - b);
+      const painted = timed.map((m) => m.painted).sort((a, b) => a - b);
       next = {
         id: "D5.next",
         value: round(percentile(sorted, 95)),
         samples: sorted.length,
-        note: `p95 over ${sorted.length} step moves with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), key press to data-stage-drawn naming the new step${steps <= D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(sorted, 50))} ms`,
+        note: `p95 over ${sorted.length} step moves after ${D5_WARMUPS} untimed ones, with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), from the page seeing the key go down to data-stage-drawn naming the new step; each move waits for the network to settle first (the next step's prefetch included)${steps <= D5_WARMUPS + D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(sorted, 50))} ms; to the frame showing it painted: p95 ${round(percentile(painted, 95))} ms, median ${round(percentile(painted, 50))} ms`,
       };
     } catch (error) {
       if (error instanceof InterruptedError || s.stack.teardown.closing) {
@@ -852,7 +953,8 @@ async function measureViewer(
 
 /**
  * D5's step moves: for each, the time from the key press reaching the page to
- * the stage naming another step as drawn, both on the page's clock.
+ * the stage naming another step as drawn (D5.next), and to the frame showing
+ * it having been painted (for the note), both on the page's clock.
  */
 async function walk(
   s: Session,
@@ -860,8 +962,8 @@ async function walk(
   log: NetworkLog,
   plan: readonly ("next" | "prev")[],
   from: string,
-): Promise<number[]> {
-  const samples: number[] = [];
+): Promise<{ drawn: number; painted: number }[]> {
+  const samples: { drawn: number; painted: number }[] = [];
   let at = from;
   for (const move of plan) {
     s.alive();
@@ -869,19 +971,23 @@ async function walk(
     await page.keyboard.press(move === "next" ? "ArrowRight" : "ArrowLeft");
     await untilInPage(
       page,
-      "window.__scaleStep.drawnAt !== null",
+      "window.__scaleStep.paintedAt !== null",
       STEP_TIMEOUT_MS,
       `the next step drawn after "${move === "next" ? "→" : "←"}"`,
     );
     const step = await page.evaluate<{
       keyAt: number | null;
       drawnAt: number;
+      paintedAt: number;
       id: string;
     }>("window.__scaleStep");
     if (step.keyAt === null) {
       throw new Error("a step move's key press never reached the page");
     }
-    samples.push(step.drawnAt - step.keyAt);
+    samples.push({
+      drawn: step.drawnAt - step.keyAt,
+      painted: step.paintedAt - step.keyAt,
+    });
     // The step drawn is the one the move routed to.
     await untilInPage(
       page,
@@ -936,26 +1042,34 @@ async function measureApprove(s: Session): Promise<Measurement[]> {
     const moves = await pressUntilFocused(page, "j", card, MAX_CURSOR_MOVES);
     await log.quiet();
 
-    const t0 = performance.now();
+    // The window starts at the key press, on the page's wall clock, which is
+    // the clock the browser stamps its requests' start with.
+    await page.evaluate(ARM_KEY_TIME);
+    const pressed = performance.now();
     await page.keyboard.press("a");
-    await sleep(Math.max(0, t0 + D3_WINDOW_MS - performance.now()));
-    const calls = log.trpcCalls(t0, t0 + D3_WINDOW_MS);
+    await sleep(Math.max(0, pressed + D3_WINDOW_MS - performance.now()));
+    // The requests' start times come with their responses.
+    await log.quiet();
+    const keyAt = await page.evaluate<number | null>("window.__scaleKeyAt");
+    if (keyAt === null)
+      throw new Error(`the "a" key press never reached the page`);
+    const calls = log.trpcCalls(keyAt, keyAt + D3_WINDOW_MS);
     if (!calls.some((c) => c.path === "review.approve")) {
       throw new Error(
         `"a" on the step sent no review.approve within ${D3_WINDOW_MS / 1000} s`,
       );
     }
-    const queries = calls.filter((c) => c.method === "GET");
+    const lists = listQueries(calls.filter((c) => c.method === "GET"));
     return [
       {
         id: "D3.calls",
         value: calls.length,
-        note: `procedure calls in the ${D3_WINDOW_MS / 1000} s after "a" on a pending step of the newest batch (reached with ${moves} "j" presses), batches unpacked: ${tally(calls)}${unansweredNote(calls)}`,
+        note: `procedure calls the browser started in the ${D3_WINDOW_MS / 1000} s after "a" on a pending step of the newest batch (reached with ${moves} "j" presses), batches unpacked: ${tally(calls)}${unansweredNote(calls)}`,
       },
       {
         id: "D3.refetches",
-        value: refetchesPerQuery(queries, D3_WINDOW_MS),
-        note: `most requests of one query (path and input) in that window, ${queries.length} query calls in all`,
+        value: refetchesPerQuery(lists, D3_WINDOW_MS),
+        note: `most requests of one list query in that window: ${busiestNote(lists, D3_WINDOW_MS)}`,
       },
     ];
   });
@@ -1036,6 +1150,8 @@ async function measureLiveUpdates(
       // The uploads, from Node, one at a time as the SDK sends them; they
       // stop at the recording's cap.
       const t0 = performance.now();
+      // The same instant on the wall clock the browser stamps requests with.
+      const t0Wall = Date.now();
       const capAt = t0 + D4_RECORD_MS;
       up.loop = (async () => {
         for (const step of steps) {
@@ -1064,13 +1180,18 @@ async function measureLiveUpdates(
       const end = Math.min(capAt, (idleAt ?? capAt) + D4_TRAILING_MS);
       await sleep(Math.max(0, end - performance.now()));
       const uploaded = up.done;
-      const queries = log.trpcCalls(t0, end).filter((c) => c.method === "GET");
+      // The requests' start times come with their responses.
+      await log.quiet();
+      const queries = log
+        .trpcCalls(t0Wall, t0Wall + (end - t0))
+        .filter((c) => c.method === "GET");
+      const lists = listQueries(queries);
       const secs = (ms: number): string => `${round(ms / 1000)} s`;
       return {
         id: "D4",
-        value: refetchesPerQuery(queries, D4_WINDOW_MS),
-        samples: queries.length,
-        note: `most requests of one query (path and input) in a ${D4_WINDOW_MS / 1000} s window, over ${secs(end - t0)} of a batch tab (status All) while a ${total}-step run uploaded (${uploaded} uploads${uploadsEnded === undefined ? `, cut at ${secs(D4_RECORD_MS)}` : ` in ${secs(uploadsEnded - t0)}`}) and diffed${idleAt === undefined ? "" : ` (queue idle after ${secs(idleAt - t0)})`}; ${tally(queries)}${unansweredNote(queries)}`,
+        value: refetchesPerQuery(lists, D4_WINDOW_MS),
+        samples: lists.length,
+        note: `most requests of one list query in a ${D4_WINDOW_MS / 1000} s window: ${busiestNote(lists, D4_WINDOW_MS)}; over ${secs(end - t0)} of a batch tab (status All) while a ${total}-step run uploaded (${uploaded} uploads${uploadsEnded === undefined ? `, cut at ${secs(D4_RECORD_MS)}` : ` in ${secs(uploadsEnded - t0)}`}) and diffed${idleAt === undefined ? "" : ` (queue idle after ${secs(idleAt - t0)})`}; all queries: ${tally(queries)}${unansweredNote(queries)}`,
       };
     });
   } catch (error) {

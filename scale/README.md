@@ -171,14 +171,29 @@ The budget table (ids, thresholds, owners, status) is in
   and D4) go straight to the API, not through the proxy.
 - **The browser suite** logs in once through the form, as reviewer 0, then
   gives every measurement a new browser context with that session: a cold
-  HTTP cache, already signed in, page tours dismissed. Times are taken inside
-  the page, from the navigation's start (or the key press) to the element the
-  budget names. D2 opens the newest batch at its default view (Needs review);
-  D4 keeps a batch tab on All while its run uploads and diffs, and that run's
-  images match their baselines, so it adds nothing to the review queue the
-  server suite measures next. D5 moves through the long run with → and ←, the
-  viewer's Next and Previous step (J is the review loop's next pending step,
-  which leaves the run).
+  HTTP cache, already signed in, page tours dismissed. D1, D2's first row and
+  D5's open are timed inside the page, from the navigation's start to the
+  frame that shows the element having been painted (two animation frames
+  after it entered the DOM; the note gives both times). D2 opens the newest
+  batch at its default view (Needs review). D4 keeps a batch tab on All while
+  its run uploads and diffs, and that run's images match their baselines, so
+  it adds nothing to the review queue the server suite measures next.
+- **Refetch counts** (D3.refetches, D4) count the list queries only
+  (`runs.list`, `runs.listCheckpoints`, `builds.list`), each query told apart
+  by its path and input, and take the most calls of one query inside any
+  sliding 3 s window (half-open, so calls exactly 3 s apart fall in two). The
+  note names that query by its procedure, its input's fields and a short
+  digest. Times are the browser's own request start times; D3's window starts
+  when the page sees the key go down. D3.calls counts every procedure call.
+- **D5.next** walks the long run with → and ←, the viewer's Next and Previous
+  step (J is the review loop's next pending step, which leaves the run): 5
+  untimed moves, then 50 timed ones. Each is timed from the page's key handler
+  seeing the key go down to the stage naming the new step as drawn, and each
+  move first waits for the network to settle, the viewer's prefetch of the
+  next step included, as a reviewer looks at a step before moving on.
+- **WebGL.** Headless Chromium most likely draws the viewer's WebGL stage in
+  software, where a reviewer's browser uses the GPU, so D5 leans upwards. The
+  CI reference runner has the same bias.
 - **R8 includes the browser.** The browser suite records every failing
   response and failed request of the browser contexts it opens. R8 adds, on
   the server suite's own rule, what the API's HTTP histogram cannot see: size

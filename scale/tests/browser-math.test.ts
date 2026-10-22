@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  busiestQuery,
   countBrowserFailures,
+  listQueries,
   offscreenImages,
+  queryLabel,
   refetchesPerQuery,
   routeShape,
   storageKeyOf,
@@ -125,6 +128,82 @@ describe("refetchesPerQuery", () => {
 
   it("is 0 with no calls", () => {
     expect(refetchesPerQuery([], 3000)).toBe(0);
+  });
+
+  it("slides the window: two calls 200 ms apart count 2 wherever they fall", () => {
+    // Ruling R41: windows anchored at the first call would split these.
+    const at = (t: number) => ({ path: "runs.list", t });
+    expect(refetchesPerQuery([at(0), at(5900), at(6100)], 3000)).toBe(2);
+    expect(refetchesPerQuery([at(6100), at(0), at(5900)], 3000)).toBe(2);
+  });
+
+  it("takes a window as half-open: calls exactly a window apart are separate", () => {
+    const at = (t: number) => ({ path: "runs.list", t });
+    expect(refetchesPerQuery([at(0), at(3000)], 3000)).toBe(1);
+    expect(refetchesPerQuery([at(0), at(2999)], 3000)).toBe(2);
+    expect(refetchesPerQuery([at(0), at(1500), at(3000), at(4500)], 3000)).toBe(
+      2,
+    );
+  });
+});
+
+describe("busiestQuery", () => {
+  it("names the query with the most calls in one window", () => {
+    const calls = [
+      { path: "runs.list", input: '{"buildId":"b"}', t: 0 },
+      { path: "runs.listCheckpoints", input: '{"runId":"r1"}', t: 0 },
+      { path: "runs.listCheckpoints", input: '{"runId":"r1"}', t: 100 },
+      { path: "runs.listCheckpoints", input: '{"runId":"r2"}', t: 100 },
+    ];
+    expect(busiestQuery(calls, 3000)).toEqual({
+      count: 2,
+      path: "runs.listCheckpoints",
+      input: '{"runId":"r1"}',
+    });
+  });
+
+  it("is null with no calls", () => {
+    expect(busiestQuery([], 3000)).toBeNull();
+  });
+});
+
+describe("listQueries", () => {
+  it("keeps the list procedures only (Ruling R42)", () => {
+    const calls = [
+      "runs.list",
+      "runs.listCheckpoints",
+      "builds.list",
+      "builds.getById",
+      "builds.pendingCount",
+      "review.next",
+      "runs.facets",
+    ].map((path) => ({ path, t: 0 }));
+    expect(listQueries(calls).map((c) => c.path)).toEqual([
+      "runs.list",
+      "runs.listCheckpoints",
+      "builds.list",
+    ]);
+  });
+});
+
+describe("queryLabel", () => {
+  const id = "0b7a2c1e-3f4d-4e5a-9b6c-7d8e9f0a1b2c";
+
+  it("names the procedure and its input's fields, with a digest instead of ids", () => {
+    const label = queryLabel(
+      "runs.listCheckpoints",
+      JSON.stringify({ runId: id }),
+    );
+    expect(label).toMatch(/^runs\.listCheckpoints\(runId\) #[0-9a-f]{6}$/);
+    expect(label).not.toContain(id);
+  });
+
+  it("gives one query one label and another query another", () => {
+    const a = JSON.stringify({ runId: "a" });
+    const b = JSON.stringify({ runId: "b" });
+    expect(queryLabel("runs.list", a)).toBe(queryLabel("runs.list", a));
+    expect(queryLabel("runs.list", a)).not.toBe(queryLabel("runs.list", b));
+    expect(queryLabel("builds.list", "")).toBe("builds.list()");
   });
 });
 
