@@ -32,8 +32,10 @@ export interface Row extends Budget {
 }
 
 /**
- * Every budget the harness judges, in report order. R1 and R2 start tracked;
- * they become enforced only if they pass on the reference runner.
+ * Every budget the harness judges, in report order. Slice 1 enforces only what
+ * passes today (spec §2.1), so every budget starts tracked: R1, R2 and their
+ * solo variants too (Ruling R49, owner slice 3), until the reference run on
+ * the CI runner decides which of them become enforced.
  */
 export const BUDGETS: readonly Budget[] = [
   {
@@ -115,8 +117,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R1-solo.findNext",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -126,8 +128,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R1-solo.reviewNext",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -137,8 +139,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R1-solo.worst",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -170,8 +172,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R2-solo.pendingCount",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -181,8 +183,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R2-solo.runsListPending",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -192,8 +194,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R2-solo.buildsListNeedsReview",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,
@@ -203,8 +205,8 @@ export const BUDGETS: readonly Budget[] = [
   {
     id: "R2-solo.worst",
     suite: "server",
-    owner: 1,
-    status: "enforced",
+    owner: 3,
+    status: "tracked",
     unit: "ms",
     compare: "<=",
     threshold: 50,

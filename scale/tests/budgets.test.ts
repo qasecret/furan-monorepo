@@ -76,15 +76,15 @@ describe("BUDGETS", () => {
       "P5 | pipeline | 2 | tracked | count | <= 0",
       "P6 | pipeline | 2 | tracked | count | <= 0",
       "R1 | server | 3 | tracked | ms | <= 50",
-      "R1-solo.findNext | server | 1 | enforced | ms | <= 50",
-      "R1-solo.reviewNext | server | 1 | enforced | ms | <= 50",
-      "R1-solo.worst | server | 1 | enforced | ms | <= 50",
+      "R1-solo.findNext | server | 3 | tracked | ms | <= 50",
+      "R1-solo.reviewNext | server | 3 | tracked | ms | <= 50",
+      "R1-solo.worst | server | 3 | tracked | ms | <= 50",
       "R2.pendingCount | server | 3 | tracked | ms | <= 50",
       "R2.runsListPending | server | 3 | tracked | ms | <= 50",
-      "R2-solo.pendingCount | server | 1 | enforced | ms | <= 50",
-      "R2-solo.runsListPending | server | 1 | enforced | ms | <= 50",
-      "R2-solo.buildsListNeedsReview | server | 1 | enforced | ms | <= 50",
-      "R2-solo.worst | server | 1 | enforced | ms | <= 50",
+      "R2-solo.pendingCount | server | 3 | tracked | ms | <= 50",
+      "R2-solo.runsListPending | server | 3 | tracked | ms | <= 50",
+      "R2-solo.buildsListNeedsReview | server | 3 | tracked | ms | <= 50",
+      "R2-solo.worst | server | 3 | tracked | ms | <= 50",
       "R3.buildsList | server | 3 | tracked | ms | <= 100",
       "R3.buildsListNeedsReview | server | 3 | tracked | ms | <= 100",
       "R3.runsList | server | 3 | tracked | ms | <= 100",
@@ -110,6 +110,15 @@ describe("BUDGETS", () => {
 
   it("describes every budget", () => {
     for (const b of BUDGETS) expect(b.description.length).toBeGreaterThan(0);
+  });
+
+  it("enforces none yet: the solo budgets start tracked, owned by slice 3 (Ruling R49)", () => {
+    expect(BUDGETS.filter((b) => b.status === "enforced")).toEqual([]);
+    const solo = BUDGETS.filter((b) => b.id.includes("-solo."));
+    expect(solo.map((b) => b.id)).toHaveLength(7);
+    for (const b of solo) {
+      expect(b).toMatchObject({ status: "tracked", owner: 3 });
+    }
   });
 });
 
@@ -238,7 +247,13 @@ describe("evaluate", () => {
 });
 
 describe("exitCode", () => {
-  // R7 is tracked, R1-solo.worst is enforced; both are `<= ms`.
+  // R7 is tracked. No budget is enforced yet (Ruling R49), so the enforced
+  // case enforces R1-solo.worst the way an owning slice's one-line change
+  // would; both are `<= ms`.
+  const ENFORCED = BUDGETS.map((b): Budget =>
+    b.id === "R1-solo.worst" ? { ...b, status: "enforced" } : b,
+  );
+
   it("a tracked fail does not fail large", () => {
     const rows = evaluate(BUDGETS, [m("R7", 9999)], ["server"]).map((r) =>
       r.verdict === "missing" ? { ...r, verdict: "skipped" as const } : r,
@@ -248,7 +263,7 @@ describe("exitCode", () => {
   });
 
   it("an enforced fail fails large", () => {
-    const rows = evaluate(BUDGETS, [m("R1-solo.worst", 9999)], ["server"]).map(
+    const rows = evaluate(ENFORCED, [m("R1-solo.worst", 9999)], ["server"]).map(
       (r) =>
         r.verdict === "missing" ? { ...r, verdict: "skipped" as const } : r,
     );
@@ -257,7 +272,7 @@ describe("exitCode", () => {
   });
 
   it("smoke ignores thresholds but fails on missing", () => {
-    const failing = evaluate(BUDGETS, [m("R1-solo.worst", 9999)], ["server"]);
+    const failing = evaluate(ENFORCED, [m("R1-solo.worst", 9999)], ["server"]);
     // Every other server budget is missing, so smoke fails on those ...
     expect(exitCode(failing, "smoke")).toBe(1);
     // ... but with only the enforced fail left, smoke passes.
