@@ -9,6 +9,7 @@ import { Registry } from "prom-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { handleDiffJob } from "../src/handler.js";
+import { createDiffJobMetrics } from "../src/job-metrics.js";
 import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
 
 const PROJECT = "00000000-0000-0000-0000-000000000002";
@@ -199,6 +200,46 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       (m) => m.name === "furan_diff_jobs_dead_lettered_total",
     );
     expect((dead?.values as Sample[])[0]?.value).toBe(1);
+  });
+
+  it("completes a job whose completed-attempt metric throws, without a retry", async () => {
+    // The instance the runtime will use: one per registry.
+    const jobMetrics = createDiffJobMetrics(registry);
+    const observed: string[] = [];
+    vi.spyOn(jobMetrics, "observeAttempt").mockImplementation(
+      (_job, outcome) => {
+        observed.push(outcome);
+        if (outcome === "completed") throw new Error("metric boom");
+      },
+    );
+    const warn = vi.fn();
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: { ...noop, warn } as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      sweeper: false,
+      handler: stub,
+    });
+    const done = settled(runtime, "completed", OK);
+    // Two attempts: a throw out of the processor would be retried.
+    const job = await queue.add(
+      "diff",
+      { runId: OK, projectId: PROJECT },
+      { attempts: 2, backoff: { type: "fixed", delay: 0 } },
+    );
+    await done;
+
+    expect(calls.get(OK)).toBe(1);
+    expect(observed).toEqual(["completed"]);
+    expect(await job.getState()).toBe("completed");
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: job.id }),
+      "diff_job_metric_failed",
+    );
   });
 
   it("reports the depth of its own queue, and only that queue", async () => {
