@@ -9,6 +9,10 @@
     "./trpc": {
       "types": "./dist/trpc/v1/router.d.ts",
       "default": "./dist/trpc/v1/router.js"
+    },
+    "./scale": {
+      "types": "./dist/scale-exports.d.ts",
+      "default": "./dist/scale-exports.js"
     }
   },
   "scripts": {

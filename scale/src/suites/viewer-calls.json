@@ -1,0 +1,8 @@
+[
+  "runs.listCheckpoints",
+  "runs.getById",
+  "projects.getById",
+  "builds.getById",
+  "review.next",
+  "runs.getCheckpointGroup"
+]

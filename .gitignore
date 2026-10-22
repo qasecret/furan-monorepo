@@ -70,3 +70,8 @@ infra/docker/compose.main-images.yml
 # e2e visual sweep: reusable fixture IDs + screenshot output (local only).
 e2e/.visual-sweep.json
 e2e/visual-out/
+
+# scale harness: generated reports and the harness's own dashboard build
+# (local only; the build lives apart from a dev server's .next).
+scale/out/
+apps/dashboard/.next-scale/

@@ -127,6 +127,19 @@ jobs:
         # all hit the same compose Postgres. Parallel test runs across packages race on
         # cleanup (api tests truncate `test_runs` / `projects` while worker tests are
         # mid-handler). Serialize the test stage. Lint + typecheck stay parallel above.
+        #
+        # The scale harness's scratch, seed and Redis-key tests run only with
+        # SCALE_* set (so a migration that breaks the seed fails here, not at the
+        # next manual harness run). They point at this job's own services: the
+        # Postgres server's admin database `postgres` (the tests create, migrate
+        # and drop `furan_scale` and `furan_scale_locktest` there, under the
+        # harness's advisory lock), its Redis and its MinIO.
+        env:
+          SCALE_DATABASE_URL: postgresql://furan:cipw@localhost:5432/postgres
+          SCALE_REDIS_URL: ${{ env.REDIS_URL }}
+          SCALE_S3_ENDPOINT: ${{ env.S3_ENDPOINT }}
+          SCALE_S3_ACCESS_KEY: ${{ env.S3_ACCESS_KEY }}
+          SCALE_S3_SECRET_KEY: ${{ env.S3_SECRET_KEY }}
         run: pnpm turbo run test --filter="...[${AFFECTED_BASE}]" --concurrency=1
       - name: API suite under RLS (ADR-058 — app connects as furan_app)
         # Re-run the api suite with the app-under-test on the non-owner
