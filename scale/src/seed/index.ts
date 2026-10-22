@@ -46,6 +46,7 @@ import { verifyStatuses } from "./verify.js";
 
 export { SeedDriftError, verifyStatuses } from "./verify.js";
 export {
+  MIN_FREE_GIB,
   ScaleBusyError,
   ScaleDiskError,
   createScratch,

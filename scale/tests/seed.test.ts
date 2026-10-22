@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 
 import { generatePng } from "../src/seed/images.js";
 import { markSeedUsed, seed, type Seeded } from "../src/seed/index.js";
-import { createScratch } from "../src/seed/scratch.js";
+import { MIN_FREE_GIB, createScratch } from "../src/seed/scratch.js";
 import {
   PIPELINE_SETS,
   SEED_NAMES,
@@ -80,7 +80,9 @@ async function pendingInBuild(db: DB, buildId: string): Promise<string[]> {
 
 describe.skipIf(!adminUrl)("seed (smoke shape, test Postgres)", () => {
   it("seeds the expected rows, consistent statuses and usable spots", async () => {
-    const scratch = await createScratch(adminUrl as string);
+    const scratch = await createScratch(adminUrl as string, {
+      minFreeGiB: MIN_FREE_GIB.smoke,
+    });
     const { db, close } = createDb({ url: scratch.url });
     const root = await mkdtemp(join(tmpdir(), "furan-scale-seed-"));
     const storage = createHddStorage({ root });

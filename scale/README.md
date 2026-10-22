@@ -67,8 +67,10 @@ password, when:
 - another harness run already uses the same Postgres server. One run per server:
   a session-level advisory lock, taken in the server's `postgres` database,
   guards `furan_scale`;
-- the server is local (`localhost` or `127.0.0.1`) and `/` has less than 10 GiB
-  free. The large seed needs about 3 to 5 GB.
+- the server is local (`localhost` or `127.0.0.1`) and `/` has less free space
+  than the shape needs: at least 10 GiB for a `large` run (its seed needs about
+  3 to 5 GB), at least 1 GiB for `smoke` (and for the integration tests, which
+  seed smoke-sized data or less). A remote server's disk is not checked.
 
 The harness's own listeners (the API, and with the browser suite the dashboard
 and its proxy) use free ports chosen at start. They never use 3000, 3001, 5433,
@@ -371,7 +373,7 @@ whether or not the job passed. The job times out after 240 minutes: a `large`
 run takes about 1.5 to 2 hours on a hosted runner, most of it the pipeline
 suite. Only one runs per ref at a time.
 
-A hosted runner starts with little more than the 10 GiB the harness requires, so
+A hosted runner starts with little more than the 10 GiB a `large` run requires, so
 the job's first step frees disk (it removes the unused .NET, Android, GHC and
 CodeQL toolchains and the pre-pulled Docker images, then prints `df -h /`). It is
 best-effort and gates nothing. The harness's own check is a guard, not a

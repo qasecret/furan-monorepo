@@ -19,6 +19,7 @@ import { runSuiteGuarded } from "./guard.js";
 import { describeQuiesce, quiesce } from "./quiesce.js";
 import { writeReport, type SuiteRun } from "./report.js";
 import {
+  MIN_FREE_GIB,
   createScratch,
   markSeedUsed,
   seed,
@@ -129,7 +130,10 @@ async function run(
   };
 
   say(`creating and migrating the scratch database`);
-  const scratch = await createScratch(env.databaseUrl);
+  // Ruling R50: the free disk a local server needs depends on the shape.
+  const scratch = await createScratch(env.databaseUrl, {
+    minFreeGiB: MIN_FREE_GIB[shape.name],
+  });
   // One step, so the database is dropped while the lock is still held.
   teardown.add(
     args.keep ? "release the scratch lock" : "drop the scratch database",
