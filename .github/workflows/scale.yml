@@ -42,7 +42,7 @@ concurrency:
 jobs:
   scale:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       # Free runner disk before anything is pulled or installed: the harness
       # refuses to seed a local server with under 10 GiB free on `/`, and a
