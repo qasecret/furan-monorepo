@@ -29,6 +29,7 @@ import { openDataPlane, startStack, type Stack } from "./stack/api.js";
 import { buildDashboard, startDashboard } from "./stack/dashboard.js";
 import { startProxy } from "./stack/proxy.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
+import { runBrowserSuite } from "./suites/browser.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
 import { loadViewerCalls, runServerSuite } from "./suites/server.js";
 
@@ -60,6 +61,21 @@ export interface SuiteContext {
 const RUNNERS: Partial<
   Record<Suite, (ctx: SuiteContext) => Promise<Measurement[]>>
 > = {
+  // Runs first (Ruling R25), so the server suite's R4 measures the call set
+  // the viewer was just seen to request.
+  browser: async (ctx) => {
+    if (ctx.proxyUrl === undefined) {
+      throw new Error("the browser suite needs the dashboard, which is not up");
+    }
+    const { measurements, viewerCalls } = await runBrowserSuite(
+      ctx.stack,
+      ctx.seeded,
+      ctx.proxyUrl,
+      { shape: ctx.shape, outDir: ctx.args.report },
+    );
+    if (viewerCalls !== undefined) ctx.recordedViewerCalls = viewerCalls;
+    return measurements;
+  },
   pipeline: ({ stack, seeded, shape }) =>
     runPipelineSuite(stack, seeded, shape),
   server: ({ stack, seeded, recordedViewerCalls }) => {

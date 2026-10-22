@@ -67,8 +67,9 @@ password, when:
 - the server is local (`localhost` or `127.0.0.1`) and `/` has less than 10 GiB
   free. The large seed needs about 3 to 5 GB.
 
-The harness's own listeners (the API) use a free port chosen at start. They
-never use 3000, 3001, 5433, 6380 or 9000, the ports a dev stack may be using.
+The harness's own listeners (the API, and with the browser suite the dashboard
+and its proxy) use free ports chosen at start. They never use 3000, 3001, 5433,
+6380 or 9000, the ports a dev stack may be using.
 
 ## Flags
 
@@ -115,7 +116,10 @@ whatever order `--suite` names them in. Each suite changes the seeded project
    (images first, then set-based SQL). The seed then runs the app's real
    `recomputeRunStatus` on a sample of runs and **stops with an error if any
    status would change**, so the seed cannot drift from the app's rules.
-3. Starts the API and the diff worker in this process, and logs in once.
+3. Starts the API and the diff worker in this process, and logs in once. With
+   the browser suite it has built the dashboard for production first (before
+   the seed, so a failed build fails fast), and now starts it and the
+   single-origin proxy in front of it and the API.
 4. Runs the selected suites, each guarded: if one throws, its budgets are
    reported as `error` with the message and the others still run.
 5. Writes the report, tears everything down and exits.
@@ -149,13 +153,40 @@ step that failed. 2 bad flags or settings. 130 or 143 after SIGINT or SIGTERM.
 | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pipeline` | P1 to P6 | Uploads steps through the real SDK upload route with a personal access token and measures the diff pipeline: diff work per run, upload-to-result time, run completion time, sustained throughput, an upload/ignore-region/undo race, and live-update events per run.                                                            |
 | `server`   | R1 to R8 | The shape's reviewers (20 on `large`, 3 on `smoke`) loop through a review session over HTTP for a 60 s window after a 10 s warm-up. Each procedure is timed on its own call. Also the solo timings (single caller, no HTTP), the viewer's open call set, the storage-proxy access check, `review.approve`, and failed requests. |
-| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer.                                                                                                                                                                         |
-
-The browser suite is added by the next change. Until then, selecting it reports
-its budgets as `error` and the run exits 1, so use `--suite=server,pipeline`.
+| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer. It also records the procedures the viewer requests when it opens, which the server suite's R4 measures (see below).                                                     |
 
 The budget table (ids, thresholds, owners, status) is in
 [`src/budgets.ts`](src/budgets.ts); this file does not repeat thresholds.
+
+### Measurement notes
+
+- **The proxy runs in the harness process.** The browser talks to one origin, a
+  small proxy that stands in for production's nginx (`/api/*` to the API,
+  everything else to the dashboard). It shares this process's event loop with
+  the API and the diff worker, where production's nginx is a process of its
+  own. Browser timings therefore lean upwards: a conservative bias.
+- **The proxy streams request bodies** to the API as they arrive, where nginx
+  buffers a whole request body before passing it on. An upload through it
+  overlaps the API's own processing. The harness's uploads (the pipeline suite
+  and D4) go straight to the API, not through the proxy.
+- **The browser suite** logs in once through the form, as reviewer 0, then
+  gives every measurement a new browser context with that session: a cold
+  HTTP cache, already signed in, page tours dismissed. Times are taken inside
+  the page, from the navigation's start (or the key press) to the element the
+  budget names. D2 opens the newest batch at its default view (Needs review);
+  D4 keeps a batch tab on All while its run uploads and diffs, and that run's
+  images match their baselines, so it adds nothing to the review queue the
+  server suite measures next. D5 moves through the long run with → and ←, the
+  viewer's Next and Previous step (J is the review loop's next pending step,
+  which leaves the run).
+- **R4's call set** is what the viewer requests when it opens cold (D5),
+  including the header's needs-review badge. The server suite measures that
+  recorded list, which is also written to `viewer-calls.json` in the report
+  directory. Without the browser suite it measures the checked-in
+  [`src/suites/viewer-calls.json`](src/suites/viewer-calls.json). When the
+  recorded list and the checked-in one name different procedures, the server
+  suite stops with every R budget `error`, so the measured set cannot drift
+  from the real viewer: update the JSON (and its inputs in `viewer-calls.ts`).
 
 ## Shapes
 
@@ -187,8 +218,9 @@ errored, or when the seed check fails.
 | Postgres | The database `furan_scale` on the server, plus one session on the server's `postgres` database that holds the run lock                                                                                                                                                                         | At the end, unless `--keep` (the lock is always released)               |
 | Redis    | `furan-scale:*` (diff queue prefix and rate-limit store), and the API's `auth:user:<id>` and `auth:member-projects:<id>` for the scratch users only. The API and worker also publish on the `project:<id>:events:raw` and `run:<id>:events` channels (scratch ids only; channels hold no keys) | At the end, with or without `--keep`; `furan-scale:*` also at the start |
 | S3       | A bucket `furan-scale-<8 hex>`                                                                                                                                                                                                                                                                 | At the end, unless `--keep`                                             |
-| Disk     | With `--storage=hdd`, a directory `furan-scale-*` in the OS temp dir; reports in `scale/out/`                                                                                                                                                                                                  | At the end, unless `--keep` (the report stays)                          |
-| Ports    | The API on a free loopback port                                                                                                                                                                                                                                                                | At the end                                                              |
+| Disk     | With `--storage=hdd`, a directory `furan-scale-*` in the OS temp dir; reports (and the browser suite's `viewer-calls.json`) in `scale/out/`                                                                                                                                                    | At the end, unless `--keep` (the report stays)                          |
+| Build    | `apps/dashboard/.next-scale`: the browser suite's production build of the dashboard, apart from the `.next` a dev server uses. `next build` rewrites `apps/dashboard/tsconfig.json` and `next-env.d.ts`; both are restored byte for byte afterwards                                            | Kept (gitignored), so `--no-build` can reuse it                         |
+| Ports    | The API on a free loopback port; with the browser suite also the dashboard's server and the single-origin proxy (the origin the browser uses), each on its own free loopback port, and a headless Chromium                                                                                     | At the end                                                              |
 
 Nothing else on the server, in Redis or in the bucket store is read or deleted;
 a recorded location is removed only if it has the harness's own name.
