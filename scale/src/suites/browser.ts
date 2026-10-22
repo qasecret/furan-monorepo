@@ -933,13 +933,14 @@ async function measureViewer(
       const timed = (await walk(s, page, log, plan, longRunFirstStepId)).slice(
         D5_WARMUPS,
       );
-      const sorted = timed.map((m) => m.drawn).sort((a, b) => a - b);
-      const painted = timed.map((m) => m.painted).sort((a, b) => a - b);
+      // Ruling R43: what a reviewer sees is the painted frame.
+      const sorted = timed.map((m) => m.painted).sort((a, b) => a - b);
+      const drawn = timed.map((m) => m.drawn).sort((a, b) => a - b);
       next = {
         id: "D5.next",
         value: round(percentile(sorted, 95)),
         samples: sorted.length,
-        note: `p95 over ${sorted.length} step moves after ${D5_WARMUPS} untimed ones, with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), from the page seeing the key go down to data-stage-drawn naming the new step; each move waits for the network to settle first (the next step's prefetch included)${steps <= D5_WARMUPS + D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(sorted, 50))} ms; to the frame showing it painted: p95 ${round(percentile(painted, 95))} ms, median ${round(percentile(painted, 50))} ms`,
+        note: `p95 over ${sorted.length} step moves after ${D5_WARMUPS} untimed ones, with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), from the page seeing the key go down to the frame showing the new step painted (two animation frames after data-stage-drawn named it); each move waits for the network to settle first (the next step's prefetch included)${steps <= D5_WARMUPS + D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(sorted, 50))} ms; to data-stage-drawn naming it: p95 ${round(percentile(drawn, 95))} ms, median ${round(percentile(drawn, 50))} ms`,
       };
     } catch (error) {
       if (error instanceof InterruptedError || s.stack.teardown.closing) {
@@ -953,8 +954,8 @@ async function measureViewer(
 
 /**
  * D5's step moves: for each, the time from the key press reaching the page to
- * the stage naming another step as drawn (D5.next), and to the frame showing
- * it having been painted (for the note), both on the page's clock.
+ * the frame showing the new step painted (D5.next, Ruling R43), and to the
+ * stage naming it as drawn (for the note), both on the page's clock.
  */
 async function walk(
   s: Session,

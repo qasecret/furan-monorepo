@@ -174,7 +174,8 @@ The budget table (ids, thresholds, owners, status) is in
   HTTP cache, already signed in, page tours dismissed. D1, D2's first row and
   D5's open are timed inside the page, from the navigation's start to the
   frame that shows the element having been painted (two animation frames
-  after it entered the DOM; the note gives both times). D2 opens the newest
+  after it entered the DOM; the note gives both times). D5.next ends at the
+  painted frame too. D2 opens the newest
   batch at its default view (Needs review). D4 keeps a batch tab on All while
   its run uploads and diffs, and that run's images match their baselines, so
   it adds nothing to the review queue the server suite measures next.
@@ -188,8 +189,9 @@ The budget table (ids, thresholds, owners, status) is in
 - **D5.next** walks the long run with → and ←, the viewer's Next and Previous
   step (J is the review loop's next pending step, which leaves the run): 5
   untimed moves, then 50 timed ones. Each is timed from the page's key handler
-  seeing the key go down to the stage naming the new step as drawn, and each
-  move first waits for the network to settle, the viewer's prefetch of the
+  seeing the key go down to the frame showing the new step painted (two
+  animation frames after the stage names it as drawn; the note gives both),
+  and each move first waits for the network to settle, the viewer's prefetch of the
   next step included, as a reviewer looks at a step before moving on.
 - **WebGL.** Headless Chromium most likely draws the viewer's WebGL stage in
   software, where a reviewer's browser uses the GPU, so D5 leans upwards. The
