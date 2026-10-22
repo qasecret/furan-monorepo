@@ -251,6 +251,127 @@ describe("data-stage-drawn", () => {
     expect(frameRequests.cancelled).toBeGreaterThan(0);
   });
 
+  test("never names the next step while the previous one is on the stage", async () => {
+    // What the harness's D5.next rests on: the stage can name step B only
+    // once B's own images are mounted and a frame has gone by, never while
+    // A's are still up and B's are on their way.
+    const a = fullStep("a");
+    const b = {
+      baseline: loaded("b-b", 120, 80),
+      current: loaded("b-c", 120, 80),
+      diff: loaded("b-d", 120, 80),
+    };
+    const bRequest: ImageSetRequest = {
+      baseline: b.baseline.key,
+      current: b.current.key,
+      diff: b.diff.key,
+    };
+    const loading = (
+      images: Partial<Record<ImageRole, LoadedImage>>,
+    ): ImageSetState => ({
+      status: "loading",
+      images,
+      failed: {},
+      retry: () => {},
+    });
+
+    // One ordered log of mounts, disposals and every write to the hook.
+    const events: string[] = [];
+    let mounts = 0;
+    const renderer = RENDERERS["side-by-side"];
+    const real = renderer.mount;
+    vi.spyOn(renderer, "mount").mockImplementation(
+      (...args: Parameters<typeof real>) => {
+        const n = ++mounts;
+        events.push(`mount ${n}`);
+        const handle = real(...args);
+        return {
+          update: (input) => handle.update(input),
+          dispose: () => {
+            events.push(`dispose ${n}`);
+            handle.dispose();
+          },
+        };
+      },
+    );
+
+    const r = render(
+      <ViewerStage
+        set={a.set}
+        request={a.request}
+        regions={[]}
+        checkpointId="cp-a"
+      />,
+    );
+    const root = stageRoot(r.container);
+    const setAttribute = root.setAttribute.bind(root);
+    vi.spyOn(root, "setAttribute").mockImplementation((name, value) => {
+      if (name === ATTR) events.push(`set ${value}`);
+      setAttribute(name, value);
+    });
+    const removeAttribute = root.removeAttribute.bind(root);
+    vi.spyOn(root, "removeAttribute").mockImplementation((name) => {
+      if (name === ATTR) events.push("remove");
+      removeAttribute(name);
+    });
+    await flush();
+    runFrame();
+    expect(drawnOf(root)).toBe("cp-a");
+
+    // The step moves to B while A is mounted; none of B's images is in yet.
+    r.rerender(
+      <ViewerStage
+        set={loading({})}
+        request={bRequest}
+        regions={[]}
+        checkpointId="cp-b"
+      />,
+    );
+    await flush();
+    runFrame();
+    runFrame();
+    expect(drawnOf(root)).toBeNull();
+
+    // One of B's images is in, the others are still on their way.
+    r.rerender(
+      <ViewerStage
+        set={loading({ baseline: b.baseline })}
+        request={bRequest}
+        regions={[]}
+        checkpointId="cp-b"
+      />,
+    );
+    await flush();
+    runFrame();
+    runFrame();
+    expect(drawnOf(root)).toBeNull();
+
+    // All of B's images are in: B mounts, and is named one frame later.
+    r.rerender(
+      <ViewerStage
+        set={{ status: "ready", images: b, failed: {}, retry: () => {} }}
+        request={bRequest}
+        regions={[]}
+        checkpointId="cp-b"
+      />,
+    );
+    await flush();
+    expect(drawnOf(root)).toBeNull();
+    runFrame();
+    expect(drawnOf(root)).toBe("cp-b");
+
+    // B is named once, after its own mount; A's mark went with A, in the
+    // commit that took A off the stage, while B was still loading.
+    expect(events).toEqual([
+      "mount 1",
+      "set cp-a",
+      "dispose 1",
+      "remove",
+      "mount 2",
+      "set cp-b",
+    ]);
+  });
+
   test("a mode change clears it before the new renderer mounts, and sets it again after a frame", async () => {
     setMode("overlay");
     const { set, request } = fullStep("one");
