@@ -21,6 +21,7 @@ import {
   recordBranchMergeOutcome,
 } from "./branch-merge-metrics.js";
 import type { Broadcaster } from "./broadcast.js";
+import { addDiffJob } from "./diff-enqueue.js";
 
 /**
  * Shared backing implementation for the cross-branch baseline merge.
@@ -272,7 +273,11 @@ export async function mergeBranchBaselinesImpl(
     const runId = run.id;
     const enqueueDiff = async (): Promise<void> => {
       try {
-        await deps.diffQueue.add("diff", { runId, projectId });
+        await addDiffJob(
+          { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
+          "branch_merge",
+          { runId, projectId },
+        );
       } catch (err) {
         deps.log.warn({ err, runId, projectId }, "merge_diff_enqueue_failed");
       }

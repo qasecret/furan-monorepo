@@ -16,6 +16,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
+import { addDiffJob } from "../lib/diff-enqueue.js";
 import { sendError } from "../lib/errors.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
@@ -474,16 +475,20 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       // never picks up the job before the screenshot/run rows are visible.
       onCommit(async () => {
         try {
-          await app.diffQueue.add("diff", {
-            runId: run.id,
-            projectId: run.projectId,
-            // ADR-055: forward the run's parent branch (when set) so the
-            // diff-worker's resolveBaseline can fire the parent_pr tier.
-            // Omitted when null to keep the wire minimal.
-            ...(run.parentBranchName
-              ? { parentPrBaseBranch: run.parentBranchName }
-              : {}),
-          });
+          await addDiffJob(
+            { diffQueue: app.diffQueue, registry: app.telemetry.metrics },
+            "upload",
+            {
+              runId: run.id,
+              projectId: run.projectId,
+              // ADR-055: forward the run's parent branch (when set) so the
+              // diff-worker's resolveBaseline can fire the parent_pr tier.
+              // Omitted when null to keep the wire minimal.
+              ...(run.parentBranchName
+                ? { parentPrBaseBranch: run.parentBranchName }
+                : {}),
+            },
+          );
         } catch (err) {
           logger.warn(
             { err, runId: run.id, projectId: run.projectId },

@@ -4,7 +4,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createDb, type DB, sql } from "@furan/db";
-import { bootstrapTelemetry, type Telemetry } from "@furan/telemetry";
+import {
+  bootstrapTelemetry,
+  type Registry,
+  type Telemetry,
+} from "@furan/telemetry";
 import type { FastifyInstance } from "fastify";
 import { vi, type Mock } from "vitest";
 
@@ -287,4 +291,47 @@ export async function createTestApp(
       await telemetry.shutdown();
     },
   };
+}
+
+/**
+ * Current value of one series of counter `name`: the one whose labels match
+ * every entry of `labels`. 0 when the counter, or that series, does not exist
+ * yet. An app's registry is shared by every test in a file, so tests compare a
+ * before and an after reading rather than an absolute value.
+ */
+export async function counterValue(
+  registry: Registry,
+  name: string,
+  labels: Record<string, string>,
+): Promise<number> {
+  const metric = registry.getSingleMetric(name);
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  const hit = (
+    values as Array<{
+      value: number;
+      labels: Partial<Record<string, string | number>>;
+    }>
+  ).find((v) =>
+    Object.entries(labels).every(([k, want]) => v.labels[k] === want),
+  );
+  return hit?.value ?? 0;
+}
+
+/** `furan_diff_jobs_enqueued_total{trigger}` on `registry`. */
+export function diffJobsEnqueued(
+  registry: Registry,
+  trigger: string,
+): Promise<number> {
+  return counterValue(registry, "furan_diff_jobs_enqueued_total", { trigger });
+}
+
+/** `furan_diff_enqueue_failures_total{trigger}` on `registry`. */
+export function diffEnqueueFailures(
+  registry: Registry,
+  trigger: string,
+): Promise<number> {
+  return counterValue(registry, "furan_diff_enqueue_failures_total", {
+    trigger,
+  });
 }

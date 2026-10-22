@@ -28,6 +28,7 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import type { DiffTrigger } from "../../lib/diff-enqueue.js";
 import { emitAudit } from "../../lib/emit-audit.js";
 import {
   cursorTimestamp,
@@ -307,12 +308,16 @@ async function ignoreAreaVariationId(
   return first?.testVariationId ?? null;
 }
 
-/** Re-diffs the run after commit and tells list views it changed. */
+/**
+ * Re-diffs the run after commit and tells list views it changed. `trigger` is
+ * the mutation that asked for the re-diff, counted on the enqueue metrics.
+ */
 function rediffAndAnnounce(
   ctx: Context & { onCommit: (effect: () => unknown) => void },
   run: { id: string; projectId: string; parentBranchName: string | null },
+  trigger: DiffTrigger,
 ): void {
-  enqueueRunDiff(ctx, run);
+  enqueueRunDiff(ctx, run, trigger);
   // No build_updated: the diff-worker fires it when the re-diff lands.
   ctx.onCommit(() =>
     ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -793,7 +798,7 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      rediffAndAnnounce(ctx, run);
+      rediffAndAnnounce(ctx, run, "ignore_areas");
 
       return {
         runId: run.id,
@@ -843,7 +848,7 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      rediffAndAnnounce(ctx, run);
+      rediffAndAnnounce(ctx, run, "temp_ignore_areas");
 
       return {
         runId: run.id,
@@ -935,7 +940,7 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      rediffAndAnnounce(ctx, run);
+      rediffAndAnnounce(ctx, run, "ignore_areas");
 
       return {
         runId: run.id,
@@ -990,7 +995,7 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      rediffAndAnnounce(ctx, run);
+      rediffAndAnnounce(ctx, run, "threshold");
 
       return {
         runId: run.id,

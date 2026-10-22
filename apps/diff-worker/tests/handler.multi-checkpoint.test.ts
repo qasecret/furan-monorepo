@@ -23,7 +23,7 @@ import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createDiffMetrics, type DiffMetrics } from "../src/diff-metrics.js";
-import { handleDiffJob } from "../src/handler.js";
+import { handleDiffJob, type DiffJobOutcome } from "../src/handler.js";
 
 /**
  * Spec §3 (review flow, slice 1): every checkpoint of a run is diffed against
@@ -291,8 +291,11 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
     };
   }
 
-  async function diff(s: Scenario, metrics?: DiffMetrics): Promise<void> {
-    await handleDiffJob(
+  async function diff(
+    s: Scenario,
+    metrics?: DiffMetrics,
+  ): Promise<DiffJobOutcome> {
+    return handleDiffJob(
       { runId: s.candidateRunId, projectId: s.projectId } as DiffJob,
       mockLogger,
       { db, storage, redis, ...(metrics ? { metrics } : {}) },
@@ -340,7 +343,8 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
   it("diffs each checkpoint against its own baseline", async () => {
     const s = await seed({ checkpoints: await threeCheckpoints() });
 
-    await diff(s);
+    // The job reports how many checkpoints it diffed (the worker records it).
+    expect(await diff(s)).toEqual({ checkpoints: 3 });
 
     expect(await verdicts(s, ["home", "cart", "checkout"])).toEqual([
       "unresolved",

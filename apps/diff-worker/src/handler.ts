@@ -358,12 +358,12 @@ export async function handleDiffJob(
   // Callers that don't track retries (CLIs, tests) get the safe default: a
   // failure is terminal and the run is marked `aborted`.
   attempt: DiffAttempt = { finalAttempt: true },
-): Promise<void> {
+): Promise<DiffJobOutcome> {
   // Set by the inner handler the moment its core transaction (verdicts + the
   // recomputed status) has committed.
   const progress: DiffProgress = { coreCommitted: false };
   try {
-    await handleDiffJobInner(data, logger, deps, progress);
+    return await handleDiffJobInner(data, logger, deps, progress);
   } catch (err) {
     // Always log the primary error first. BullMQ stashes it in the job's
     // failedReason but the worker's own structured log was previously
@@ -485,6 +485,15 @@ async function healPipelineAbort(tx: DB, runId: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * What a diff job that ran to the end reports to its caller (the worker
+ * runtime records it as a metric). Callers that don't need it ignore it.
+ */
+export interface DiffJobOutcome {
+  /** Screenshots the job diffed (`candidateShots.length`). A run with none throws instead. */
+  checkpoints: number;
+}
+
 /** What `handleDiffJobInner` has durably done so far; read by the failure path. */
 interface DiffProgress {
   /** True once the core transaction has committed (never set earlier). */
@@ -496,7 +505,7 @@ async function handleDiffJobInner(
   logger: Logger,
   deps: HandlerDeps,
   progress: DiffProgress,
-): Promise<void> {
+): Promise<DiffJobOutcome> {
   const t0 = Date.now();
   await deps.redis.publish(
     `run:${data.runId}:events`,
@@ -1755,6 +1764,7 @@ async function handleDiffJobInner(
     },
     "diff_completed",
   );
+  return { checkpoints: candidateShots.length };
 }
 
 const ignoreAreaParseSchema = z

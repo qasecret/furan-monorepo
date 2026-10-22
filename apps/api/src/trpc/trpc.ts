@@ -2,6 +2,7 @@ import { withUserScope, type DB } from "@furan/db";
 import { initTRPC } from "@trpc/server";
 
 import { createDeferredSink } from "../lib/deferred-sink.js";
+import { procedureOutcome, recordProcedure } from "../lib/request-metrics.js";
 import { ReviewRefusal } from "../lib/review/errors.js";
 
 import type { Context } from "./context.js";
@@ -95,8 +96,38 @@ const scopeToUser = t.middleware(async ({ ctx, next }) => {
 });
 
 /**
- * Base procedure every router builds from. Applies {@link scopeToUser} first so
- * the RLS identity is set before any auth/membership middleware or resolver
- * runs. Compose auth on top as before (`publicProcedure.use(authed)` etc.).
+ * Times each procedure call into `furan_trpc_procedure_duration_seconds`,
+ * labelled by procedure path, type and outcome (ok, client_error or
+ * server_error). Outermost on {@link publicProcedure}, so the sample covers
+ * the user scope's transaction, authorization and the resolver.
+ *
+ * `next()` never throws (a failing procedure comes back as `{ ok: false }`),
+ * so every call is observed exactly once, a rolled-back one included.
+ *
+ * Observing must never change what a procedure returns. A context built by
+ * hand (a `createCaller` test passing only the fields it needs) may carry no
+ * `telemetry`; the observation is skipped then, and the result goes out as it
+ * was.
  */
-export const publicProcedure = t.procedure.use(scopeToUser);
+const timeProcedure = t.middleware(async ({ ctx, path, type, next }) => {
+  const startedAt = performance.now();
+  const result = await next();
+  try {
+    recordProcedure(
+      ctx.telemetry.metrics,
+      { procedure: path, type, outcome: procedureOutcome(result) },
+      (performance.now() - startedAt) / 1000,
+    );
+  } catch {
+    // Metric only: never fail, or alter, the procedure it describes.
+  }
+  return result;
+});
+
+/**
+ * Base procedure every router builds from. Applies {@link timeProcedure}, then
+ * {@link scopeToUser}, so the RLS identity is set before any auth/membership
+ * middleware or resolver runs. Compose auth on top as before
+ * (`publicProcedure.use(authed)` etc.).
+ */
+export const publicProcedure = t.procedure.use(timeProcedure).use(scopeToUser);
