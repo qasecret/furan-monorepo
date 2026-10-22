@@ -30,7 +30,7 @@ export SCALE_S3_ENDPOINT='http://localhost:9000'
 export SCALE_S3_ACCESS_KEY='<s3 access key>'
 export SCALE_S3_SECRET_KEY='<s3 secret key>'
 
-pnpm --filter @furan/scale scale -- --shape=smoke   # about 3 minutes
+pnpm --filter @furan/scale scale -- --shape=smoke   # about 4 minutes
 pnpm --filter @furan/scale scale                    # the large shape
 ```
 
@@ -244,7 +244,7 @@ The budget table (ids, thresholds, owners, status) is in
 
 |                          | `large`                                        | `smoke`                                         |
 | ------------------------ | ---------------------------------------------- | ----------------------------------------------- |
-| Purpose                  | The real measurement                           | Checks that the harness works (about 3 minutes) |
+| Purpose                  | The real measurement                           | Checks that the harness works (about 4 minutes) |
 | Reviewers (`editor`)     | 20                                             | 3                                               |
 | Nightly batches          | 200, each 1,000 runs of 5 steps                | 5, each 10 runs of 3 steps                      |
 | PR batches               | 9,800 over 40 branches, each 3 runs of 3 steps | 15 over 3 branches, each 2 runs of 2 steps      |
