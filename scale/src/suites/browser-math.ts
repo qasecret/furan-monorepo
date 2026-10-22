@@ -146,3 +146,108 @@ export function walkPlan(steps: number, moves: number): ("next" | "prev")[] {
   }
   return plan;
 }
+
+/** A segment that names one row or object: a UUID, a long hex key, a number. */
+const ID_SEGMENT =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)$/i;
+const KEY_SEGMENT = /^[0-9a-f]{32,}$/i;
+
+/**
+ * A URL's path with every id or key replaced by its kind (`:id`, `:key`), and
+ * no origin or query: what a failure sample may say about a request.
+ */
+export function routeShape(url: string): string {
+  return pathnameOf(url)
+    .pathname.split("/")
+    .map((segment) =>
+      KEY_SEGMENT.test(segment)
+        ? ":key"
+        : ID_SEGMENT.test(segment)
+          ? ":id"
+          : segment,
+    )
+    .join("/");
+}
+
+/** Responses R8 counts as refused for their size: body, URL, headers. */
+const SIZE_REFUSALS: readonly number[] = [413, 414, 431];
+/** Chromium's error for a request the browser side cancelled itself. */
+const ABORTED = "net::ERR_ABORTED";
+/** Failure samples kept for the note. */
+const SAMPLE_SIZE = 5;
+
+/** A response the browser got with a failing status. */
+export interface FailedResponse {
+  url: string;
+  status: number;
+  /** The harness proxy answered it itself (its upstream did not). */
+  byProxy: boolean;
+}
+
+/** A request that got no response. */
+export interface FailedRequest {
+  url: string;
+  /** Chromium's error text (`net::ERR_…`). */
+  errorText: string;
+  /** It failed after the suite began closing its browser context. */
+  closing: boolean;
+}
+
+export interface BrowserFailureCount {
+  /** What R8 adds for the browser suite. */
+  count: number;
+  /** 5xx the api answered: its own HTTP histogram already counts them. */
+  inHistogram: number;
+  /** Cancellations, never counted: the suite's (closing a context) and the page's own. */
+  aborted: { suite: number; page: number };
+  /** Up to 5 counted failures, `status route` or `failed error route`. */
+  sample: string[];
+}
+
+/**
+ * The browser suite's share of R8 (Ruling R36), on the rule the server suite
+ * uses for its own clients: what the api's HTTP histogram cannot see.
+ *
+ * - **Counted:** a size refusal (413, 414, 431); a request that got no
+ *   response (a transport failure); a 5xx the api did not answer itself (the
+ *   dashboard's, or the harness proxy's own 502, which it marks).
+ * - **Not counted:** a 5xx the api answered (`/api/…`, not the proxy's), which
+ *   is already in its histogram; and `net::ERR_ABORTED`, a cancellation on
+ *   the browser side, never a server failure: the suite's when it happens
+ *   while the suite closes the context, else the page's own (React Query
+ *   cancelling a refetch, a route change).
+ */
+export function countBrowserFailures(
+  responses: readonly FailedResponse[],
+  failures: readonly FailedRequest[],
+): BrowserFailureCount {
+  const out: BrowserFailureCount = {
+    count: 0,
+    inHistogram: 0,
+    aborted: { suite: 0, page: 0 },
+    sample: [],
+  };
+  const counted = (line: string): void => {
+    out.count += 1;
+    if (out.sample.length < SAMPLE_SIZE) out.sample.push(line);
+  };
+  for (const r of responses) {
+    const route = routeShape(r.url);
+    if (SIZE_REFUSALS.includes(r.status)) {
+      counted(`${r.status} ${route}`);
+    } else if (r.status >= 500) {
+      const byApi = !r.byProxy && route.startsWith("/api/");
+      if (byApi) out.inHistogram += 1;
+      else counted(`${r.status} ${route}`);
+    }
+  }
+  for (const f of failures) {
+    if (f.errorText === ABORTED) {
+      if (f.closing) out.aborted.suite += 1;
+      else out.aborted.page += 1;
+    } else {
+      counted(`failed ${f.errorText} ${routeShape(f.url)}`);
+    }
+  }
+  return out;
+}

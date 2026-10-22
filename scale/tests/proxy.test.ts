@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { startProxy } from "../src/stack/proxy.js";
+import { PROXY_ERROR_HEADER, startProxy } from "../src/stack/proxy.js";
 import { Teardown } from "../src/stack/teardown.js";
 
 const servers: Server[] = [];
@@ -351,6 +351,8 @@ describe("single-origin proxy", () => {
 
     const get = await send(`${proxy.url}/api/runs/1`);
     expect(get.status).toBe(502);
+    // Its own answer says so: the api's histogram never saw this request.
+    expect(get.headers[PROXY_ERROR_HEADER]).toBe("bad-gateway");
 
     // A write whose body is still arriving when the upstream refuses.
     const post = await send(
@@ -362,6 +364,17 @@ describe("single-origin proxy", () => {
 
     const inbox = await send(`${proxy.url}/inbox`);
     expect(inbox.status).toBe(200);
+  });
+
+  it("passes an upstream's own 5xx through without its error marker", async () => {
+    const api = await upstream((_req, res) => {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    const proxy = await proxyFor(api.url, (await upstream(echo("d"))).url);
+    const reply = await send(`${proxy.url}/api/runs/1`);
+    expect(reply.status).toBe(503);
+    expect(reply.headers[PROXY_ERROR_HEADER]).toBeUndefined();
   });
 
   it("survives an upstream that dies mid-response", async () => {

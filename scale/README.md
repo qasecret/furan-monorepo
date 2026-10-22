@@ -179,6 +179,14 @@ The budget table (ids, thresholds, owners, status) is in
   server suite measures next. D5 moves through the long run with → and ←, the
   viewer's Next and Previous step (J is the review loop's next pending step,
   which leaves the run).
+- **R8 includes the browser.** The browser suite records every failing
+  response and failed request of the browser contexts it opens. R8 adds, on
+  the server suite's own rule, what the API's HTTP histogram cannot see: size
+  refusals (413, 414, 431), requests that got no response, and 5xx the API did
+  not answer (the dashboard's, or the proxy's own 502, which it marks). A 5xx
+  the API answered is already in its histogram. A cancellation
+  (`net::ERR_ABORTED`: the suite closing a context, or the page itself
+  cancelling a refetch) is never a failure. The R8 note names the browser part.
 - **R4's call set** is what the viewer requests when it opens cold (D5),
   including the header's needs-review badge. The server suite measures that
   recorded list, which is also written to `viewer-calls.json` in the report

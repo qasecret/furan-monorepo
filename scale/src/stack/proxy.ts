@@ -20,6 +20,13 @@ export interface RunningProxy {
   stop(): Promise<void>;
 }
 
+/**
+ * Set on the 502 the proxy answers itself (an upstream it could not reach),
+ * never on an upstream's answer: R8 tells a 5xx the api's own histogram never
+ * saw from one it already counts.
+ */
+export const PROXY_ERROR_HEADER = "x-scale-proxy-error";
+
 /** The address the proxy tells both upstreams the client has. */
 const CLIENT_ADDRESS = "127.0.0.1";
 
@@ -138,6 +145,7 @@ export async function startProxy(
       "content-type": "text/plain; charset=utf-8",
       "content-length": Buffer.byteLength(body),
       connection: "close",
+      [PROXY_ERROR_HEADER]: "bad-gateway",
     });
     res.end(body);
   };

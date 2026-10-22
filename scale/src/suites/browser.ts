@@ -29,21 +29,28 @@ import {
   type Shape,
 } from "../seed/index.js";
 import type { Stack } from "../stack/api.js";
+import { PROXY_ERROR_HEADER } from "../stack/proxy.js";
 import { percentile } from "../stats.js";
 
 import {
+  countBrowserFailures,
   offscreenImages,
   refetchesPerQuery,
   storageKeyOf,
   unpackTrpcCalls,
   unpackTrpcPaths,
   walkPlan,
+  type BrowserFailureCount,
+  type FailedRequest,
+  type FailedResponse,
 } from "./browser-math.js";
 import { openQueueProbe, type QueueProbe } from "./pipeline-probes.js";
 
 export {
+  countBrowserFailures,
   offscreenImages,
   refetchesPerQuery,
+  routeShape,
   storageKeyOf,
   unpackTrpcCalls,
   unpackTrpcPaths,
@@ -69,6 +76,8 @@ export {
  *
  * The procedures the viewer requests while it opens (D5) are R4's call set:
  * returned for the server suite and written to `<report dir>/viewer-calls.json`.
+ * Every failed request of every context the suite opens is R8's browser share
+ * (Ruling R36, `countBrowserFailures`), handed to `onFailures` at the end.
  */
 
 const VIEWPORT = { width: 1440, height: 900 } as const;
@@ -209,6 +218,17 @@ export interface BrowserSuiteOptions {
   shape: Shape;
   /** Where `viewer-calls.json` goes: the report directory. */
   outDir: string;
+  /**
+   * Gets R8's browser share once the browser has closed, also when the suite
+   * stopped early (a failed login is when a 5xx matters most).
+   */
+  onFailures?: (failures: BrowserFailures) => void;
+}
+
+/** R8's browser share: what to add, and the note's words for it. */
+export interface BrowserFailures {
+  count: number;
+  note: string;
 }
 
 export interface BrowserSuiteResult {
@@ -263,10 +283,19 @@ export async function runBrowserSuite(
     handleSIGHUP: false,
   });
   stack.teardown.add("close the browser", () => browser.close());
+  const failures = new FailureLog();
   let viewerCalls: string[] | undefined;
   try {
-    const session = await logIn(browser, origin, seeded.browserLogin);
-    const s: Session = { browser, session, origin, stack, seeded, alive };
+    const session = await logIn(browser, origin, seeded.browserLogin, failures);
+    const s: Session = {
+      browser,
+      session,
+      origin,
+      stack,
+      seeded,
+      alive,
+      failures,
+    };
 
     await measure(["D1"], () => measureBatches(s));
     await measure(
@@ -282,6 +311,7 @@ export async function runBrowserSuite(
     await measure(["D4"], () => measureLiveUpdates(s, opts.shape));
   } finally {
     await browser.close();
+    opts.onFailures?.(failures.summary());
   }
 
   if (viewerCalls !== undefined) {
@@ -307,6 +337,59 @@ interface Session {
   stack: Stack;
   seeded: Seeded;
   alive: () => void;
+  failures: FailureLog;
+}
+
+/**
+ * Every failing response and failed request of the contexts the suite opens
+ * (Ruling R36). A context is marked as closing before the suite closes it, so
+ * the requests that closing cancels are told apart from the page's own
+ * cancellations; neither is a failure (`countBrowserFailures`).
+ */
+class FailureLog {
+  private readonly responses: FailedResponse[] = [];
+  private readonly failed: FailedRequest[] = [];
+
+  /** Watches `context`; call the result just before closing it. */
+  watch(context: BrowserContext): () => void {
+    let closing = false;
+    context.on("response", (response) => {
+      const status = response.status();
+      if (status >= 500 || status === 413 || status === 414 || status === 431) {
+        this.responses.push({
+          url: response.url(),
+          status,
+          byProxy: response.headers()[PROXY_ERROR_HEADER] !== undefined,
+        });
+      }
+    });
+    context.on("requestfailed", (request) => {
+      this.failed.push({
+        url: request.url(),
+        errorText: request.failure()?.errorText ?? "unknown error",
+        closing,
+      });
+    });
+    return () => {
+      closing = true;
+    };
+  }
+
+  summary(): BrowserFailures {
+    return describeFailures(countBrowserFailures(this.responses, this.failed));
+  }
+}
+
+/** R8's note for the browser share. */
+function describeFailures(c: BrowserFailureCount): BrowserFailures {
+  const parts = [
+    c.count === 0 ? "none" : c.sample.join(", "),
+    ...(c.inHistogram > 0
+      ? [`${c.inHistogram} api 5xx left to its histogram, which counts them`]
+      : []),
+    `cancellations not counted: ${c.aborted.page} by the page, ${c.aborted.suite} by the suite closing its contexts`,
+  ];
+  return { count: c.count, note: parts.join("; ") };
 }
 
 /** A Playwright error's first lines, without its call log. */
@@ -323,11 +406,13 @@ async function logIn(
   browser: Browser,
   origin: string,
   login: Seeded["browserLogin"],
+  failures: FailureLog,
 ): Promise<SessionState> {
   const context = await browser.newContext({
     viewport: VIEWPORT,
     reducedMotion: "reduce",
   });
+  const closing = failures.watch(context);
   try {
     await context.addInitScript({ content: NO_TOURS });
     const page = await context.newPage();
@@ -343,6 +428,7 @@ async function logIn(
   } catch (error) {
     throw new Error(`logging in through the dashboard failed: ${brief(error)}`);
   } finally {
+    closing();
     await context.close();
   }
 }
@@ -379,8 +465,6 @@ class NetworkLog {
   private readonly inFlight = new Set<Request>();
   private lastChange = performance.now();
   private readonly sizes: Promise<number | null>[] = [];
-  /** Responses that failed the way R8 counts (5xx, 414, 431). */
-  readonly failed: string[] = [];
 
   constructor(page: Page) {
     page.on("request", (request) => {
@@ -414,14 +498,6 @@ class NetworkLog {
       done(request);
       const entry = this.entries.find((e) => e.request === request);
       if (entry !== undefined) entry.failed = true;
-    });
-    page.on("response", (response) => {
-      const status = response.status();
-      if (status >= 500 || status === 414 || status === 431) {
-        this.failed.push(
-          `${status} ${new URL(response.url()).pathname.slice(0, 80)}`,
-        );
-      }
     });
   }
 
@@ -483,6 +559,7 @@ async function withPage<T>(
     reducedMotion: "reduce",
     storageState: s.session,
   });
+  const closing = s.failures.watch(context);
   try {
     await context.addInitScript({ content: NO_TOURS });
     for (const script of scripts) {
@@ -492,6 +569,7 @@ async function withPage<T>(
     page.setDefaultTimeout(SELECTOR_TIMEOUT_MS);
     return await fn(page, new NetworkLog(page));
   } finally {
+    closing();
     await context.close().catch(() => undefined);
   }
 }
@@ -548,11 +626,6 @@ const unansweredNote = (calls: readonly LoggedCall[]): string => {
     : "";
 };
 
-const failedNote = (log: NetworkLog): string =>
-  log.failed.length > 0
-    ? `; ${log.failed.length} failed responses (${log.failed.slice(0, 3).join(", ")})`
-    : "";
-
 /**
  * Presses `key` until `target` has focus, at most `max` times (the batch
  * list's cursor moves focus one item per press), and says how many it took.
@@ -577,7 +650,7 @@ async function pressUntilFocused(
 // ---------------------------------------------------------------------------
 
 async function measureBatches(s: Session): Promise<Measurement[]> {
-  return withPage(s, [markWhenPresent("row", BATCH_ROW)], async (page, log) => {
+  return withPage(s, [markWhenPresent("row", BATCH_ROW)], async (page) => {
     await page.goto(`${s.origin}/inbox`, { waitUntil: "commit" });
     await page.waitForSelector(BATCH_ROW, { state: "visible" });
     const ms = await readMark(page, "row");
@@ -587,7 +660,7 @@ async function measureBatches(s: Session): Promise<Measurement[]> {
         id: "D1",
         value: round(ms),
         samples: 1,
-        note: `/inbox at its default view, one cold navigation; ${rows} batch rows when the first appeared${failedNote(log)}`,
+        note: `/inbox at its default view, one cold navigation; ${rows} batch rows when the first appeared`,
       },
     ];
   });
@@ -659,7 +732,7 @@ async function measureBatch(s: Session): Promise<Measurement[]> {
         id: "D2.firstRow",
         value: round(firstRow),
         samples: 1,
-        note: `${where}; one cold navigation${failedNote(log)}`,
+        note: `${where}; one cold navigation`,
       },
       {
         id: "D2.domMax",
@@ -753,7 +826,7 @@ async function measureViewer(
       id: "D5.open",
       value: round(open),
       samples: 1,
-      note: `step 1 of the long run (${steps} steps), one cold navigation to data-stage-drawn; meanwhile the viewer requested ${calls.length} procedures (R4's call set)${failedNote(log)}`,
+      note: `step 1 of the long run (${steps} steps), one cold navigation to data-stage-drawn; meanwhile the viewer requested ${calls.length} procedures (R4's call set)`,
     };
 
     // A failed walk loses only D5.next: the open and the call set stand.
@@ -877,7 +950,7 @@ async function measureApprove(s: Session): Promise<Measurement[]> {
       {
         id: "D3.calls",
         value: calls.length,
-        note: `procedure calls in the ${D3_WINDOW_MS / 1000} s after "a" on a pending step of the newest batch (reached with ${moves} "j" presses), batches unpacked: ${tally(calls)}${unansweredNote(calls)}${failedNote(log)}`,
+        note: `procedure calls in the ${D3_WINDOW_MS / 1000} s after "a" on a pending step of the newest batch (reached with ${moves} "j" presses), batches unpacked: ${tally(calls)}${unansweredNote(calls)}`,
       },
       {
         id: "D3.refetches",
@@ -997,7 +1070,7 @@ async function measureLiveUpdates(
         id: "D4",
         value: refetchesPerQuery(queries, D4_WINDOW_MS),
         samples: queries.length,
-        note: `most requests of one query (path and input) in a ${D4_WINDOW_MS / 1000} s window, over ${secs(end - t0)} of a batch tab (status All) while a ${total}-step run uploaded (${uploaded} uploads${uploadsEnded === undefined ? `, cut at ${secs(D4_RECORD_MS)}` : ` in ${secs(uploadsEnded - t0)}`}) and diffed${idleAt === undefined ? "" : ` (queue idle after ${secs(idleAt - t0)})`}; ${tally(queries)}${unansweredNote(queries)}${failedNote(log)}`,
+        note: `most requests of one query (path and input) in a ${D4_WINDOW_MS / 1000} s window, over ${secs(end - t0)} of a batch tab (status All) while a ${total}-step run uploaded (${uploaded} uploads${uploadsEnded === undefined ? `, cut at ${secs(D4_RECORD_MS)}` : ` in ${secs(uploadsEnded - t0)}`}) and diffed${idleAt === undefined ? "" : ` (queue idle after ${secs(idleAt - t0)})`}; ${tally(queries)}${unansweredNote(queries)}`,
       };
     });
   } catch (error) {

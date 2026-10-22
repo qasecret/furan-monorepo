@@ -45,7 +45,8 @@ export { runSolo } from "./solo.js";
  * 3. **The probe**, a further client started when the window opens: R4 (the
  *    viewer call set, 5 warm-up passes and 50 measured) then R6 (the storage
  *    proxy, 5 warm-ups and 50 measured).
- * 4. **R8**, from the api's HTTP histogram once everything is done.
+ * 4. **R8**, from the api's HTTP histogram once everything is done, plus the
+ *    browser suite's failed requests when it ran first (Ruling R36).
  *
  * Every procedure is called on its own unbatched HTTP call and timed on the
  * client, so a p95 belongs to exactly one procedure. A phase that fails marks
@@ -126,6 +127,8 @@ const LOOP_BUDGETS: Readonly<Record<(typeof LOOP_IDS)[number], string[]>> = {
 export interface ServerSuiteOptions {
   /** Where `viewerCalls` came from, for R4's note. */
   callSetSource?: "recorded" | "fallback";
+  /** The browser suite's failed requests, when it ran first (Ruling R36). */
+  browserFailures?: { count: number; note: string };
 }
 
 export async function runServerSuite(
@@ -166,7 +169,7 @@ export async function runServerSuite(
     const { count } = await readHistogram(stack.registries.api, HTTP_METRIC, {
       status_class: "5xx",
     });
-    const r8 = failedRequests(count, statuses);
+    const r8 = failedRequests(count, statuses, opts.browserFailures);
     out.set("R8", {
       id: "R8",
       value: r8.value,

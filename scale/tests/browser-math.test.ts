@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  countBrowserFailures,
   offscreenImages,
   refetchesPerQuery,
+  routeShape,
   storageKeyOf,
   unpackTrpcCalls,
   unpackTrpcPaths,
@@ -196,5 +198,118 @@ describe("walkPlan", () => {
 
   it("refuses a run with nowhere to go", () => {
     expect(() => walkPlan(1, 5)).toThrow(/at least 2 steps/);
+  });
+});
+
+describe("routeShape", () => {
+  const id = "0b7a2c1e-3f4d-4e5a-9b6c-7d8e9f0a1b2c";
+  const key = "ab".repeat(32);
+
+  it("drops the origin and query, and stands ids and keys in for themselves", () => {
+    expect(
+      routeShape(`${ORIGIN}/projects/${id}/runs/${id}/checkpoints/${id}?x=1`),
+    ).toBe("/projects/:id/runs/:id/checkpoints/:id");
+    expect(routeShape(`${ORIGIN}/api/api/v1/storage/${key}`)).toBe(
+      "/api/api/v1/storage/:key",
+    );
+  });
+
+  it("keeps procedure names and plain words", () => {
+    expect(
+      routeShape(`${ORIGIN}/api/trpc/runs.list,builds.getById?batch=1&input=x`),
+    ).toBe("/api/trpc/runs.list,builds.getById");
+    expect(routeShape(`${ORIGIN}/inbox`)).toBe("/inbox");
+  });
+});
+
+describe("countBrowserFailures", () => {
+  const api = (path: string) => `${ORIGIN}/api${path}`;
+
+  it("counts size refusals, transport failures and 5xx the api did not answer", () => {
+    const out = countBrowserFailures(
+      [
+        { url: `${ORIGIN}/inbox`, status: 500, byProxy: false },
+        { url: api("/trpc/runs.list"), status: 502, byProxy: true },
+        { url: api("/trpc/runs.list"), status: 431, byProxy: false },
+        { url: api("/trpc/a,b"), status: 414, byProxy: false },
+        { url: api("/auth/login"), status: 413, byProxy: false },
+        { url: api("/trpc/runs.list"), status: 404, byProxy: false },
+        { url: api("/trpc/runs.list"), status: 200, byProxy: false },
+      ],
+      [
+        {
+          url: api("/trpc/runs.list"),
+          errorText: "net::ERR_CONNECTION_RESET",
+          closing: false,
+        },
+      ],
+    );
+    expect(out.count).toBe(1 + 1 + 3 + 1);
+    expect(out.inHistogram).toBe(0);
+    expect(out.sample[0]).toBe("500 /inbox");
+    expect(out.sample).toContain("502 /api/trpc/runs.list");
+  });
+
+  it("samples a transport failure with its error", () => {
+    const out = countBrowserFailures(
+      [],
+      [
+        {
+          url: api("/trpc/runs.list?batch=1"),
+          errorText: "net::ERR_CONNECTION_RESET",
+          closing: false,
+        },
+      ],
+    );
+    expect(out.count).toBe(1);
+    expect(out.sample).toEqual([
+      "failed net::ERR_CONNECTION_RESET /api/trpc/runs.list",
+    ]);
+  });
+
+  it("leaves a 5xx the api answered to the api's histogram, which has it", () => {
+    const out = countBrowserFailures(
+      [{ url: api("/trpc/runs.list"), status: 500, byProxy: false }],
+      [],
+    );
+    expect(out.count).toBe(0);
+    expect(out.inHistogram).toBe(1);
+  });
+
+  it("never counts an abort: the suite's (closing a context) or the page's own", () => {
+    const out = countBrowserFailures(
+      [],
+      [
+        { url: api("/trpc/a"), errorText: "net::ERR_ABORTED", closing: true },
+        { url: api("/trpc/a"), errorText: "net::ERR_ABORTED", closing: true },
+        { url: api("/trpc/b"), errorText: "net::ERR_ABORTED", closing: false },
+      ],
+    );
+    expect(out.count).toBe(0);
+    expect(out.aborted).toEqual({ suite: 2, page: 1 });
+  });
+
+  it("strips ids from the sample, and keeps it short", () => {
+    const id = "0b7a2c1e-3f4d-4e5a-9b6c-7d8e9f0a1b2c";
+    const out = countBrowserFailures(
+      Array.from({ length: 9 }, () => ({
+        url: `${ORIGIN}/projects/${id}`,
+        status: 500,
+        byProxy: false,
+      })),
+      [],
+    );
+    expect(out.count).toBe(9);
+    expect(out.sample.length).toBeLessThanOrEqual(5);
+    expect(out.sample.join(" ")).not.toContain(id);
+  });
+
+  it("is all zeros with nothing failing", () => {
+    expect(countBrowserFailures([], [])).toEqual({
+      count: 0,
+      inHistogram: 0,
+      aborted: { suite: 0, page: 0 },
+      sample: [],
+    });
   });
 });

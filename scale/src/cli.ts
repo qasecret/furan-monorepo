@@ -29,7 +29,7 @@ import { openDataPlane, startStack, type Stack } from "./stack/api.js";
 import { buildDashboard, startDashboard } from "./stack/dashboard.js";
 import { startProxy } from "./stack/proxy.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
-import { runBrowserSuite } from "./suites/browser.js";
+import { runBrowserSuite, type BrowserFailures } from "./suites/browser.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
 import { loadViewerCalls, runServerSuite } from "./suites/server.js";
 
@@ -51,6 +51,11 @@ export interface SuiteContext {
    * checked-in list without them.
    */
   recordedViewerCalls?: string[];
+  /**
+   * The browser suite's failed requests (Ruling R36), when it ran earlier in
+   * this run: the server suite's R8 adds them to its own.
+   */
+  browserFailures?: BrowserFailures;
 }
 
 /**
@@ -71,17 +76,27 @@ const RUNNERS: Partial<
       ctx.stack,
       ctx.seeded,
       ctx.proxyUrl,
-      { shape: ctx.shape, outDir: ctx.args.report },
+      {
+        shape: ctx.shape,
+        outDir: ctx.args.report,
+        // Set even when the suite stops early.
+        onFailures: (failures) => {
+          ctx.browserFailures = failures;
+        },
+      },
     );
     if (viewerCalls !== undefined) ctx.recordedViewerCalls = viewerCalls;
     return measurements;
   },
   pipeline: ({ stack, seeded, shape }) =>
     runPipelineSuite(stack, seeded, shape),
-  server: ({ stack, seeded, recordedViewerCalls }) => {
+  server: ({ stack, seeded, recordedViewerCalls, browserFailures }) => {
     // A drifted call set fails the suite: R4 must measure the real viewer.
     const { calls, source } = loadViewerCalls(recordedViewerCalls);
-    return runServerSuite(stack, seeded, calls, { callSetSource: source });
+    return runServerSuite(stack, seeded, calls, {
+      callSetSource: source,
+      ...(browserFailures !== undefined && { browserFailures }),
+    });
   },
 };
 
