@@ -45,8 +45,9 @@ jobs:
     timeout-minutes: 60
     steps:
       # Free runner disk before anything is pulled or installed: the harness
-      # refuses to seed a local server with under 10 GiB free on `/`, and a
-      # hosted runner starts with little more than that. Best-effort (each
+      # refuses a `large` run on a local server with under 10 GiB free on `/`
+      # (1 GiB for `smoke`), and a hosted runner starts with little more than
+      # that. Best-effort (each
       # command may fail without failing the job). It removes toolchains this
       # job does not use and the runner's pre-pulled Docker images (the two
       # images the job needs are pulled again below).

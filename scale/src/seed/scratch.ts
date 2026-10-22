@@ -6,6 +6,8 @@ import postgres from "postgres";
 
 import { SCRATCH_DATABASE, scratchUrl } from "../env.js";
 
+import type { ShapeName } from "./shape.js";
+
 /**
  * The scratch database on the server `SCALE_DATABASE_URL` points at (spec §4).
  *
@@ -18,8 +20,15 @@ import { SCRATCH_DATABASE, scratchUrl } from "../env.js";
  * every CREATE DATABASE fail ("source database is being accessed").
  */
 
-/** Minimum free disk before seeding a local server (spec §3.4). */
-export const MIN_FREE_GIB = 10;
+/**
+ * Minimum free disk on `/` before seeding a local server (spec §3.4), by
+ * shape (Ruling R50): the large seed needs about 3 to 5 GB; the smoke seed,
+ * and the integration tests, which seed smoke-sized data or less, need little.
+ */
+export const MIN_FREE_GIB: Readonly<Record<ShapeName, number>> = {
+  large: 10,
+  smoke: 1,
+};
 
 /** Errors raised here carry fixed text: never a URL, host or password. */
 export class ScaleBusyError extends Error {
@@ -30,9 +39,9 @@ export class ScaleBusyError extends Error {
 }
 
 export class ScaleDiskError extends Error {
-  constructor(freeGiB: number) {
+  constructor(freeGiB: number, minFreeGiB: number) {
     super(
-      `less than ${MIN_FREE_GIB} GiB free on / (${freeGiB.toFixed(1)} GiB); not seeding`,
+      `less than ${minFreeGiB} GiB free on / (${freeGiB.toFixed(1)} GiB); not seeding`,
     );
     this.name = "ScaleDiskError";
   }
@@ -65,6 +74,26 @@ function freeGiB(): number {
   return (s.bavail * s.bsize) / 2 ** 30;
 }
 
+/**
+ * Throws `ScaleDiskError` when the server `adminUrl` names is local and `/`
+ * has less than `minFreeGiB` free. A remote server's disk is not this
+ * machine's, so it is not checked (and `free` is not asked).
+ */
+export function checkFreeDisk(
+  adminUrl: string,
+  minFreeGiB: number,
+  free: () => number = freeGiB,
+): void {
+  if (!LOCAL_HOSTS.has(new URL(adminUrl).hostname)) return;
+  const gib = free();
+  if (gib < minFreeGiB) throw new ScaleDiskError(gib, minFreeGiB);
+}
+
+export interface ScratchOptions {
+  /** Free GiB `/` must have when the server is local: `MIN_FREE_GIB[shape]`. */
+  minFreeGiB: number;
+}
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -95,9 +124,13 @@ async function migrate(url: string): Promise<void> {
  * `furan_scale` if it is missing and migrates it.
  *
  * @throws ScaleBusyError when another run holds the lock.
- * @throws ScaleDiskError when a local server has less than 10 GiB free.
+ * @throws ScaleDiskError when a local server has less than
+ *   `opts.minFreeGiB` free.
  */
-export async function createScratch(adminUrl: string): Promise<Scratch> {
+export async function createScratch(
+  adminUrl: string,
+  opts: ScratchOptions,
+): Promise<Scratch> {
   const single = {
     max: 1,
     connect_timeout: 10,
@@ -120,10 +153,7 @@ export async function createScratch(adminUrl: string): Promise<Scratch> {
     locked = row?.locked === true;
     if (!locked) throw new ScaleBusyError();
 
-    if (LOCAL_HOSTS.has(new URL(adminUrl).hostname)) {
-      const free = freeGiB();
-      if (free < MIN_FREE_GIB) throw new ScaleDiskError(free);
-    }
+    checkFreeDisk(adminUrl, opts.minFreeGiB);
 
     const found = await admin`
       select 1 from pg_database where datname = ${SCRATCH_DATABASE}`;
