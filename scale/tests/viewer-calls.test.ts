@@ -15,6 +15,8 @@ const FALLBACK = [
   "builds.getById",
   "review.next",
   "runs.getCheckpointGroup",
+  // The header's needs-review badge, on every page the viewer opens in.
+  "builds.pendingCount",
 ];
 
 const paths = (calls: { path: string }[]): string[] =>
@@ -29,7 +31,7 @@ const seeded = {
 } as Seeded;
 
 describe("loadViewerCalls", () => {
-  it("checks in the six procedures the viewer calls on open today", () => {
+  it("checks in the seven procedures the viewer calls on open today", () => {
     expect([...FALLBACK_VIEWER_PATHS].sort()).toEqual([...FALLBACK].sort());
   });
 
@@ -93,6 +95,7 @@ describe("loadViewerCalls", () => {
         runId: seeded.longRunId,
         checkpointId: seeded.longRunFirstStepId,
       },
+      "builds.pendingCount": { projectId: seeded.projectId },
     });
   });
 

@@ -139,16 +139,23 @@ export function measureCalls(
  * R8: the api's 5xx responses (from its HTTP histogram) plus what the clients
  * saw that the histogram cannot: size refusals (a 431 never reaches a route)
  * and calls that got no response. A client's 5xx is already in the histogram.
+ * `browser` is the browser suite's share, counted on the same rule from its
+ * network log (Ruling R36), when it ran.
  */
 export function failedRequests(
   serverErrors: number,
   samples: readonly { status: number }[],
+  browser?: { count: number; note: string },
 ): { value: number; note: string } {
   const size = samples.filter((s) => SIZE_STATUSES.includes(s.status)).length;
   const transport = samples.filter((s) => s.status === 0).length;
+  const browserNote =
+    browser === undefined
+      ? ""
+      : `; ${browser.count} from the browser suite's network log (${browser.note})`;
   return {
-    value: serverErrors + size + transport,
-    note: `${serverErrors} 5xx in the api's HTTP histogram, ${size} size refusals (413/414/431) and ${transport} transport failures seen by the clients`,
+    value: serverErrors + size + transport + (browser?.count ?? 0),
+    note: `${serverErrors} 5xx in the api's HTTP histogram, ${size} size refusals (413/414/431) and ${transport} transport failures seen by the clients${browserNote}`,
   };
 }
 

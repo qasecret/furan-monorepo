@@ -1,9 +1,10 @@
 # Scale harness: seeds a big project, runs the real API and diff worker
 # in-process, measures the budgets in scale/src/budgets.ts and writes
 # scale-report.md / scale-report.json (see scale/README.md). Deliberately NOT
-# on push / pull_request and NOT scheduled — a `large` run takes the better part
-# of an hour and would tax every PR and the Actions quota. Start it by hand
-# (workflow_dispatch); a `smoke` run is the quick check that the harness works.
+# on push / pull_request and NOT scheduled — a `large` run takes about 1.5–2
+# hours (hence the 240-minute timeout) and would tax every PR and the Actions
+# quota. Start it by hand (workflow_dispatch); a `smoke` run is the quick check
+# that the harness works.
 #
 # The job fails when the harness exits 1: an enforced budget failed on a `large`
 # run, or a budget in a suite that ran has no measured value. Tracked budgets
@@ -42,7 +43,7 @@ concurrency:
 jobs:
   scale:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       # Free runner disk before anything is pulled or installed: the harness
       # refuses a `large` run on a local server with under 10 GiB free on `/`

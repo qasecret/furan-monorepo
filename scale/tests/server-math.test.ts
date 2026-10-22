@@ -115,6 +115,20 @@ describe("failedRequests", () => {
     expect(out.note).toMatch(/3 size/);
     expect(out.note).toMatch(/1 transport/);
   });
+
+  it("adds the browser suite's failures and names them in the note", () => {
+    const out = failedRequests(1, [sample("a", 1, 431)], {
+      count: 2,
+      note: "500 /inbox, failed net::ERR_CONNECTION_RESET /api/trpc/runs.list",
+    });
+    expect(out.value).toBe(1 + 1 + 2);
+    expect(out.note).toMatch(/2 from the browser suite's network log/);
+    expect(out.note).toMatch(/ERR_CONNECTION_RESET/);
+  });
+
+  it("says nothing of the browser when it gave no count", () => {
+    expect(failedRequests(0, []).note).not.toMatch(/browser/);
+  });
 });
 
 describe("serverMinusStorage", () => {

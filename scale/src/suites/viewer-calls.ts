@@ -11,7 +11,8 @@ import fallbackPaths from "./viewer-calls.json" with { type: "json" };
  *
  * The JSON holds the paths only; the inputs are built here, as the viewer
  * sends them (`DiffViewer.tsx`, `use-review-loop.ts`,
- * `GroupApprovalCallout.tsx`), for one step.
+ * `GroupApprovalCallout.tsx`, and the header's `inbox-badge.tsx`), for one
+ * step.
  */
 
 /** The step a viewer is opened on. */
@@ -54,6 +55,10 @@ const INPUTS: Readonly<Record<string, (t: ViewerTarget) => unknown>> = {
     runId: t.runId,
     checkpointId: t.checkpointId,
   }),
+  // Not the viewer's own: the protected header's needs-review badge
+  // (`inbox-badge.tsx`), which every page asks for when it opens cold, as the
+  // browser suite records it.
+  "builds.pendingCount": (t) => ({ projectId: t.projectId }),
 };
 
 /** The checked-in call set (`viewer-calls.json`). */

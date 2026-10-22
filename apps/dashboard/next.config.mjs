@@ -18,6 +18,10 @@ const sdkVersion = readFileSync(
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Where `next build` writes. The scale harness builds into its own
+  // directory (NEXT_DIST_DIR=.next-scale) so it never touches the `.next`
+  // a dev server may be using; everyone else gets the default.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Phase 4 Task 11: enable standalone output so the Dockerfile can copy
   // a minimal runtime tree (server.js + the trimmed node_modules subset
   // Next traces) instead of the full app + workspace deps. Required for

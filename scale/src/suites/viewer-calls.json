@@ -4,5 +4,6 @@
   "projects.getById",
   "builds.getById",
   "review.next",
-  "runs.getCheckpointGroup"
+  "runs.getCheckpointGroup",
+  "builds.pendingCount"
 ]

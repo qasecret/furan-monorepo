@@ -16,7 +16,8 @@ import { loginOnce, mintJwt, verifyAuth } from "./clients/http.js";
 import { ScaleEnvError, parseScaleEnv } from "./env.js";
 import { InterruptedError, describeError } from "./errors.js";
 import { runSuiteGuarded } from "./guard.js";
-import { writeReport } from "./report.js";
+import { describeQuiesce, quiesce } from "./quiesce.js";
+import { writeReport, type SuiteRun } from "./report.js";
 import {
   MIN_FREE_GIB,
   createScratch,
@@ -27,7 +28,11 @@ import {
   type Shape,
 } from "./seed/index.js";
 import { openDataPlane, startStack, type Stack } from "./stack/api.js";
+import { buildDashboard, startDashboard } from "./stack/dashboard.js";
+import { startProxy } from "./stack/proxy.js";
 import { Teardown, closeInOrder } from "./stack/teardown.js";
+import { runBrowserSuite, type BrowserFailures } from "./suites/browser.js";
+import { openQueueProbe, type QueueProbe } from "./suites/pipeline-probes.js";
 import { runPipelineSuite } from "./suites/pipeline.js";
 import { loadViewerCalls, runServerSuite } from "./suites/server.js";
 
@@ -38,11 +43,22 @@ export interface SuiteContext {
   shape: Shape;
   args: CliArgs;
   /**
+   * The one origin the browser suite drives: the production dashboard and the
+   * api behind a single proxy, as nginx serves them. Set when the browser
+   * suite is selected.
+   */
+  proxyUrl?: string | undefined;
+  /**
    * The procedures the viewer called on open, when the browser suite recorded
    * them earlier in this run; the server suite's R4 falls back to the
    * checked-in list without them.
    */
   recordedViewerCalls?: string[];
+  /**
+   * The browser suite's failed requests (Ruling R36), when it ran earlier in
+   * this run: the server suite's R8 adds them to its own.
+   */
+  browserFailures?: BrowserFailures;
 }
 
 /**
@@ -53,12 +69,37 @@ export interface SuiteContext {
 const RUNNERS: Partial<
   Record<Suite, (ctx: SuiteContext) => Promise<Measurement[]>>
 > = {
+  // Runs first (Ruling R25), so the server suite's R4 measures the call set
+  // the viewer was just seen to request.
+  browser: async (ctx) => {
+    if (ctx.proxyUrl === undefined) {
+      throw new Error("the browser suite needs the dashboard, which is not up");
+    }
+    const { measurements, viewerCalls } = await runBrowserSuite(
+      ctx.stack,
+      ctx.seeded,
+      ctx.proxyUrl,
+      {
+        shape: ctx.shape,
+        outDir: ctx.args.report,
+        // Set even when the suite stops early.
+        onFailures: (failures) => {
+          ctx.browserFailures = failures;
+        },
+      },
+    );
+    if (viewerCalls !== undefined) ctx.recordedViewerCalls = viewerCalls;
+    return measurements;
+  },
   pipeline: ({ stack, seeded, shape }) =>
     runPipelineSuite(stack, seeded, shape),
-  server: ({ stack, seeded, recordedViewerCalls }) => {
+  server: ({ stack, seeded, recordedViewerCalls, browserFailures }) => {
     // A drifted call set fails the suite: R4 must measure the real viewer.
     const { calls, source } = loadViewerCalls(recordedViewerCalls);
-    return runServerSuite(stack, seeded, calls, { callSetSource: source });
+    return runServerSuite(stack, seeded, calls, {
+      callSetSource: source,
+      ...(browserFailures !== undefined && { browserFailures }),
+    });
   },
 };
 
@@ -106,6 +147,15 @@ async function run(
   );
   stillRunning();
 
+  // The browser suite drives a production build of the dashboard. It is built
+  // here, after the scratch lock is held (so a second run cannot build into the
+  // same directory) and before the seed, so a failed build fails fast.
+  const needsBrowser = args.suites.includes("browser");
+  const built = needsBrowser
+    ? await buildDashboard({ noBuild: args.noBuild, teardown })
+    : undefined;
+  stillRunning();
+
   const plane = await openDataPlane(
     env,
     scratch.url,
@@ -133,6 +183,18 @@ async function run(
   say(`api and diff worker up on ${stack.apiUrl}`);
   stillRunning();
 
+  let proxyUrl: string | undefined;
+  if (built !== undefined) {
+    const dashboard = await startDashboard(built.standaloneDir, stack.apiUrl, {
+      teardown,
+    });
+    stillRunning();
+    const proxy = await startProxy(stack.apiUrl, dashboard.url, teardown);
+    proxyUrl = proxy.url;
+    say(`dashboard up on ${dashboard.url}; browser origin ${proxy.url}`);
+    stillRunning();
+  }
+
   // The one real login is reviewer 0's (the only seeded user with a password);
   // every other token is minted.
   const loggedIn = await loginOnce(
@@ -147,7 +209,7 @@ async function run(
   stillRunning();
 
   const measurements: Measurement[] = [];
-  const ctx: SuiteContext = { stack, seeded, shape, args };
+  const ctx: SuiteContext = { stack, seeded, shape, args, proxyUrl };
   // Ruling R25: always browser, then server, then pipeline (see SUITE_ORDER).
   const suites = runOrder(args.suites);
   if (suites.length > 0) {
@@ -157,22 +219,45 @@ async function run(
     // run that ends before any suite starts leaves the seed reusable.
     await markSeedUsed(plane.db);
   }
+  // Ruling R48: each suite leaves the diff queue quiet for the next.
+  const queue = suites.length > 0 ? openQueueProbe(stillRunning) : undefined;
+  if (queue !== undefined) {
+    teardown.add("close the quiesce probe", queue.close);
+  }
+  const timeline: SuiteRun[] = [];
   for (const suite of suites) {
     const runner = RUNNERS[suite];
-    say(`suite ${suite}`);
+    const startedAt = new Date().toISOString();
+    const started = performance.now();
+    say(`suite ${suite}: started ${startedAt}`);
     measurements.push(
       ...(await runSuiteGuarded(
         suite,
         runner === undefined ? undefined : () => runner(ctx),
       )),
     );
+    const seconds = (performance.now() - started) / 1000;
+    const endedAt = new Date().toISOString();
+    say(`suite ${suite}: ended ${endedAt} (${seconds.toFixed(1)} s)`);
+    stillRunning();
+    const quiesced =
+      queue === undefined ? undefined : await quiesceAfter(suite, queue, state);
+    if (quiesced !== undefined) say(quiesced);
+    timeline.push({
+      suite,
+      startedAt,
+      endedAt,
+      seconds,
+      ...(quiesced !== undefined && { quiesce: quiesced }),
+    });
     stillRunning();
   }
+  await queue?.close();
 
   const rows = evaluate(BUDGETS, measurements, args.suites);
   const written = writeReport(
     rows,
-    { shape: shape.name, suites: args.suites },
+    { shape: shape.name, suites: args.suites, timeline },
     args.report,
   );
   const counts = new Map<string, number>();
@@ -192,6 +277,24 @@ async function run(
     say(`kept: the furan_scale database and its storage (see --reuse)`);
   }
   return exitCode(rows, shape.name);
+}
+
+/**
+ * The quiesce after `suite` (Ruling R48), as the line the CLI prints and the
+ * report header lists. A probe that fails says so in that line, and the run
+ * goes on.
+ */
+async function quiesceAfter(
+  suite: Suite,
+  queue: QueueProbe,
+  state: RunState,
+): Promise<string> {
+  try {
+    return describeQuiesce(suite, await quiesce(queue));
+  } catch (error) {
+    if (error instanceof InterruptedError || state.interrupted) throw error;
+    return `quiesce after ${suite}: failed (${describeError(error)}); the queue may not have been idle`;
+  }
 }
 
 /** Exit status of a failed `run`: 2 for bad flags or environment, else 1. */

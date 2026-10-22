@@ -144,6 +144,12 @@ interface Props {
    * above 0). Defaults to whether `regions` has a pixel-diff region.
    */
   stepHasDiff?: boolean;
+  /**
+   * The active step's checkpoint id. Once the step's images are on the stage
+   * and a frame has gone by, the stage root carries it as `data-stage-drawn`
+   * (a test hook, see the effect below). Absent while the step is not known.
+   */
+  checkpointId?: string;
 }
 
 /** The pixi apps for one pane layout, one world container in each. */
@@ -260,7 +266,9 @@ export function ViewerStage({
   elementMap,
   legacyMissing = false,
   stepHasDiff = regions.some(isPixelDiffRegion),
+  checkpointId,
 }: Props) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const paneARef = useRef<HTMLDivElement>(null);
   const paneBRef = useRef<HTMLDivElement>(null);
   const singleRef = useRef<HTMLDivElement>(null);
@@ -438,6 +446,12 @@ export function ViewerStage({
   const baselineBitmap = drawn("baseline");
   const currentBitmap = drawn("current");
   const diffBitmap = drawn("diff");
+  // The step is drawn when every image the mode draws and the step has is on
+  // the stage: not while one is loading, failed, or too large for the GPU.
+  const drawnRoles = renderer.draws.filter((role) => request[role] !== null);
+  const stepDrawn =
+    drawnRoles.length > 0 &&
+    drawnRoles.every((role) => drawn(role) !== undefined);
 
   const panes = renderer.panes;
   // The stage when it fits the renderer; one for another pane count is going.
@@ -654,6 +668,40 @@ export function ViewerStage({
     currentBitmap,
     diffBitmap,
     hasInput,
+  ]);
+
+  // Test hook for the scale harness's browser suite, which times a step
+  // change by waiting for this attribute: the stage root names the step
+  // whose images the renderer has put on the stage, one frame after the
+  // mount. It goes as soon as the step or the mode's input changes (this
+  // cleanup runs before the mount effect's next run), so it never names a
+  // step that is not on the stage. Set on the element, not through state:
+  // no render depends on it. Declared after the mount effect, so it sees the
+  // handle that effect made; `checkpointId` is a dependency here and not
+  // there, as a step id arriving for the images already drawn must not mount
+  // them again.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !checkpointId || !stepDrawn || handleRef.current === null) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      root.setAttribute("data-stage-drawn", checkpointId);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      root.removeAttribute("data-stage-drawn");
+    };
+  }, [
+    stage,
+    renderer,
+    ready,
+    baselineBitmap,
+    currentBitmap,
+    diffBitmap,
+    hasInput,
+    stepDrawn,
+    checkpointId,
   ]);
 
   useEffect(() => {
@@ -927,7 +975,7 @@ export function ViewerStage({
     // Pixi canvas host (rounded + overflow-hidden clips the canvas corners),
     // named by its label on the canvas (R18).
     return (
-      <div className="flex min-h-full p-6">
+      <div ref={rootRef} className="flex min-h-full p-6">
         {flickerAnnouncer}
         <div className="m-auto grid w-full grid-cols-2 items-start gap-6">
           <div className="relative">
@@ -990,7 +1038,7 @@ export function ViewerStage({
   // overflow: a clip is no scroll container, so Swipe's handle can stick to
   // the viewer's scroll pane and stay on screen on a tall card (M1).
   return (
-    <div className="flex min-h-full p-6">
+    <div ref={rootRef} className="flex min-h-full p-6">
       {flickerAnnouncer}
       <div className="relative m-auto w-full">
         <div
