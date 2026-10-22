@@ -133,11 +133,19 @@ rather than 0.
    run concurrently. If the cause is a slow VLM provider, more replicas add
    waiting calls, not speed: fix the provider instead.
 
-5. **Restart a stuck worker.** It waits for in-flight jobs to finish first:
+5. **Restart a stuck worker.**
 
    ```bash
    docker compose -f infra/docker/compose.yml restart diff-worker
    ```
+
+   On SIGTERM the worker stops taking jobs and waits for its in-flight ones,
+   but only for the container's stop grace period: 10 s by default, and the
+   `diff-worker` service sets none. A longer job is then killed mid-run. It is
+   not lost: once its 30 s lock has expired, BullMQ's next stalled-job check
+   (every 30 s) puts it back in the queue and a worker runs it again from the
+   start (a job that stalls a second time is failed instead). To let long jobs
+   finish, raise `stop_grace_period` on the `diff-worker` service.
 
 ## Escalate
 
