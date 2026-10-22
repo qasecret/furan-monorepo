@@ -13,7 +13,10 @@ import { Counter, type Registry, type Telemetry } from "@furan/telemetry";
 
 import { createDiffMetrics, type DiffMetrics } from "./diff-metrics.js";
 import { handleDiffJob } from "./handler.js";
-import { createDiffJobMetrics } from "./job-metrics.js";
+import {
+  createDiffJobMetrics,
+  type DiffJobAttemptOutcome,
+} from "./job-metrics.js";
 import { registerQueueDepthGauge } from "./queue-depth.js";
 import { sweepStaleRuns } from "./sweeper.js";
 
@@ -142,28 +145,32 @@ export function startDiffWorker(
       const finalAttempt = isFinalAttempt(job);
       const started = performance.now();
       const seconds = (): number => (performance.now() - started) / 1000;
+      // A metric only observes: if recording one throws, the job's outcome
+      // (and the handler's own error) stands.
+      const observe = (
+        outcome: DiffJobAttemptOutcome,
+        checkpoints: number | null,
+      ): void => {
+        try {
+          jobMetrics.observeAttempt(job, outcome, seconds(), checkpoints);
+        } catch (err) {
+          logger.warn({ err, jobId: job.id }, "diff_job_metric_failed");
+        }
+      };
+      let result: Awaited<ReturnType<typeof handler>>;
       try {
-        const outcome = await handler(
+        result = await handler(
           job.data,
           logger,
           { db, storage, redis, metrics: metrics.diff },
           { finalAttempt },
         );
-        jobMetrics.observeAttempt(
-          job,
-          "completed",
-          seconds(),
-          outcome.checkpoints,
-        );
       } catch (err) {
-        jobMetrics.observeAttempt(
-          job,
-          finalAttempt ? "failed" : "retry",
-          seconds(),
-          null,
-        );
+        observe(finalAttempt ? "failed" : "retry", null);
         throw err;
       }
+      // Outside the try: only the handler's failure is the job's failure.
+      observe("completed", result.checkpoints);
     },
     {
       ...(opts.concurrency !== undefined
