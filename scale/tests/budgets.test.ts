@@ -82,7 +82,7 @@ describe("BUDGETS", () => {
       "R2.pendingCount | server | 3 | tracked | ms | <= 50",
       "R2.runsListPending | server | 3 | tracked | ms | <= 50",
       "R2-solo.pendingCount | server | 3 | tracked | ms | <= 50",
-      "R2-solo.runsListPending | server | 3 | tracked | ms | <= 50",
+      "R2-solo.runsListPending | server | 1 | enforced | ms | <= 50",
       "R2-solo.buildsListNeedsReview | server | 3 | tracked | ms | <= 50",
       "R2-solo.worst | server | 3 | tracked | ms | <= 50",
       "R3.buildsList | server | 3 | tracked | ms | <= 100",
@@ -94,17 +94,17 @@ describe("BUDGETS", () => {
       "R5.checkpointGroup | server | 3 | tracked | ms | <= 100",
       "R6 | server | 3 | tracked | ms | <= 10",
       "R7 | server | 3 | tracked | ms | <= 150",
-      "R8 | server | 4 | tracked | count | <= 0",
-      "D1 | browser | 4 | tracked | ms | <= 1500",
+      "R8 | server | 1 | enforced | count | <= 0",
+      "D1 | browser | 1 | enforced | ms | <= 1500",
       "D2.firstRow | browser | 4 | tracked | ms | <= 1500",
-      "D2.domMax | browser | 4 | tracked | elements | <= 5000",
+      "D2.domMax | browser | 1 | enforced | elements | <= 5000",
       "D2.offscreenImages | browser | 4 | tracked | count | <= 0",
       "D2.imageKB | browser | 4 | tracked | KB | <= 40",
       "D3.calls | browser | 4 | tracked | count | <= 4",
       "D3.refetches | browser | 4 | tracked | count | <= 1",
       "D4 | browser | 4 | tracked | count | <= 1",
       "D5.open | browser | 4 | tracked | ms | <= 1500",
-      "D5.next | browser | 4 | tracked | ms | <= 300",
+      "D5.next | browser | 1 | enforced | ms | <= 300",
     ]);
   });
 
@@ -112,13 +112,23 @@ describe("BUDGETS", () => {
     for (const b of BUDGETS) expect(b.description.length).toBeGreaterThan(0);
   });
 
-  it("enforces none yet: the solo budgets start tracked, owned by slice 3 (Ruling R49)", () => {
-    expect(BUDGETS.filter((b) => b.status === "enforced")).toEqual([]);
+  it("enforces what passed the first reference run with headroom (Rulings R49, R51)", () => {
+    const enforced = BUDGETS.filter((b) => b.status === "enforced");
+    expect(enforced.map((b) => b.id)).toEqual([
+      "R2-solo.runsListPending",
+      "R8",
+      "D1",
+      "D2.domMax",
+      "D5.next",
+    ]);
+    for (const b of enforced) expect(b.owner).toBe(1);
+    // The other solo budgets stay tracked, owned by slice 3.
     const solo = BUDGETS.filter((b) => b.id.includes("-solo."));
     expect(solo.map((b) => b.id)).toHaveLength(7);
-    for (const b of solo) {
-      expect(b).toMatchObject({ status: "tracked", owner: 3 });
+    for (const b of solo.filter((b) => b.status === "tracked")) {
+      expect(b.owner).toBe(3);
     }
+    expect(solo.filter((b) => b.status === "tracked")).toHaveLength(6);
   });
 });
 
@@ -257,9 +267,8 @@ describe("evaluate", () => {
 });
 
 describe("exitCode", () => {
-  // R7 is tracked. No budget is enforced yet (Ruling R49), so the enforced
-  // case enforces R1-solo.worst the way an owning slice's one-line change
-  // would; both are `<= ms`.
+  // R7 is tracked. The enforced case enforces R1-solo.worst (tracked today)
+  // the way an owning slice's one-line change would; both are `<= ms`.
   const ENFORCED = BUDGETS.map((b): Budget =>
     b.id === "R1-solo.worst" ? { ...b, status: "enforced" } : b,
   );
