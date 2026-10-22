@@ -33,17 +33,20 @@ import { PROXY_ERROR_HEADER } from "../stack/proxy.js";
 import { percentile } from "../stats.js";
 
 import {
+  COLD_NAVIGATIONS,
   LIST_PROCEDURES,
   busiestQuery,
   countBrowserFailures,
   listQueries,
   offscreenImages,
+  p95Of,
   queryLabel,
   refetchesPerQuery,
   storageKeyOf,
   unpackTrpcCalls,
   unpackTrpcPaths,
   walkPlan,
+  warmThenTime,
   type BrowserFailureCount,
   type FailedRequest,
   type FailedResponse,
@@ -74,8 +77,11 @@ export {
  *   lands before a read that it would change, and the diff queue is idle for
  *   everything but D4. D4 leaves the queue idle again for the next suite.
  * - **Timing** is `performance.now()` inside the page, from the navigation's
- *   start (or the key press) to the moment the awaited element is in the DOM,
- *   recorded by a MutationObserver installed before the page's own scripts.
+ *   start (or the key press) to the frame that shows the awaited element
+ *   painted, recorded by a MutationObserver installed before the page's own
+ *   scripts. D1, D2.firstRow and D5.open are each a p95 over cold navigations
+ *   (`COLD_NAVIGATIONS` per shape), each in a new context, after one untimed
+ *   warm-up navigation of the route (Ruling R46).
  * - A measurement that fails marks only its own budgets `error`.
  *
  * The procedures the viewer requests while it opens (D5) are R4's call set:
@@ -308,6 +314,7 @@ export async function runBrowserSuite(
       seeded,
       alive,
       failures,
+      navigations: COLD_NAVIGATIONS[opts.shape.name],
     };
 
     await measure(["D1"], () => measureBatches(s));
@@ -367,6 +374,8 @@ interface Session {
   seeded: Seeded;
   alive: () => void;
   failures: FailureLog;
+  /** Timed cold navigations per first-paint budget (Ruling R46). */
+  navigations: number;
 }
 
 /**
@@ -659,9 +668,26 @@ async function readMark(
   );
 }
 
-/** A mark's note: when the element was painted, and when it was in the DOM. */
-const markNote = (m: { painted: number; dom: number }): string =>
-  `painted at ${round(m.painted)} ms (in the DOM at ${round(m.dom)} ms)`;
+/** A `readMark` reading: ms from the navigation's start. */
+interface Mark {
+  painted: number;
+  dom: number;
+}
+
+/**
+ * The note of a first-paint budget timed over cold navigations (Ruling R46):
+ * how it was sampled, then the spread of the painted times and the p95 to the
+ * element entering the DOM.
+ */
+function coldNote(marks: readonly Mark[], unsettled: number): string {
+  const painted = p95Of(marks.map((m) => m.painted));
+  const dom = p95Of(marks.map((m) => m.dom));
+  const late =
+    unsettled > 0
+      ? `; ${unsettled} navigation${unsettled === 1 ? " was" : "s were"} still loading ${QUIET_CAP_MS / 1000} s on, when the next began`
+      : "";
+  return `p95 over ${painted.samples} cold navigations, each in a new context (cold HTTP cache, signed in), after 1 untimed warm-up navigation of the route; median ${round(painted.median)} ms, slowest ${round(painted.max)} ms; to the element entering the DOM, p95 ${round(dom.p95)} ms${late}`;
+}
 
 /** Calls per path, most first: `runs.list ×2, builds.getById ×1`. */
 function tally(calls: readonly { path: string }[]): string {
@@ -737,20 +763,28 @@ async function pressUntilFocused(
 // ---------------------------------------------------------------------------
 
 async function measureBatches(s: Session): Promise<Measurement[]> {
-  return withPage(s, [markWhenPresent("row", BATCH_ROW)], async (page) => {
-    await page.goto(`${s.origin}/inbox`, { waitUntil: "commit" });
-    await page.waitForSelector(BATCH_ROW, { state: "visible" });
-    const ms = await readMark(page, "row");
-    const rows = await page.locator(BATCH_ROW).count();
-    return [
-      {
-        id: "D1",
-        value: round(ms.painted),
-        samples: 1,
-        note: `/inbox at its default view, one cold navigation, first batch row ${markNote(ms)}; ${rows} batch rows by then`,
-      },
-    ];
-  });
+  let rows = 0;
+  let unsettled = 0;
+  const marks = await warmThenTime(s.navigations, ({ warmUp, index }) =>
+    withPage(s, [markWhenPresent("row", BATCH_ROW)], async (page, log) => {
+      await page.goto(`${s.origin}/inbox`, { waitUntil: "commit" });
+      await page.waitForSelector(BATCH_ROW, { state: "visible" });
+      const mark = await readMark(page, "row");
+      if (!warmUp && index === 0) rows = await page.locator(BATCH_ROW).count();
+      // What this page still loads must not overlap the next navigation.
+      if (!(await log.quiet())) unsettled += 1;
+      return mark;
+    }),
+  );
+  const t = p95Of(marks.map((m) => m.painted));
+  return [
+    {
+      id: "D1",
+      value: round(t.p95),
+      samples: t.samples,
+      note: `/inbox at its default view, to the first batch row painted: ${coldNote(marks, unsettled)}; ${rows} batch rows by then (first timed navigation)`,
+    },
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -776,75 +810,126 @@ async function imageKeysOf(
 
 async function measureBatch(s: Session): Promise<Measurement[]> {
   const { projectId, newestBuildId } = s.seeded;
-  return withPage(s, [markWhenPresent("row", RUN_ROW)], async (page, log) => {
-    await page.goto(
-      `${s.origin}/projects/${projectId}/builds/${newestBuildId}`,
-      {
-        waitUntil: "commit",
-      },
+  const url = `${s.origin}/projects/${projectId}/builds/${newestBuildId}`;
+  const marks: Mark[] = [];
+  let counted: Counted | undefined;
+  let unsettled = 0;
+  try {
+    await warmThenTime(s.navigations, ({ warmUp, index }) =>
+      withPage(s, [markWhenPresent("row", RUN_ROW)], async (page, log) => {
+        await page.goto(url, { waitUntil: "commit" });
+        await page.waitForSelector(RUN_ROW, { state: "visible" });
+        const mark = await readMark(page, "row");
+        if (!warmUp) marks.push(mark);
+        // The counts come from the first timed navigation, which also lets
+        // the page settle; every other one only settles, so what it still
+        // loads does not overlap the next navigation.
+        if (!warmUp && index === 0) counted = await countBatch(s, page, log);
+        else if (!(await log.quiet())) unsettled += 1;
+      }),
     );
-    await page.waitForSelector(RUN_ROW, { state: "visible" });
-    const firstRow = await readMark(page, "row");
-
-    // The top, once the page has loaded what it loads on its own.
-    const settled = await log.quiet();
-    const topAt = performance.now();
-    const counts = [await page.evaluate<number>(DOM_ELEMENTS)];
-    const visible = await page.evaluate<string[]>(VISIBLE_CARDS);
-    const cards = await page
-      .locator(`[data-testid^="${STEP_CARD_PREFIX}"]`)
-      .count();
-    const runs = await page.locator(RUN_ROW).count();
-    const topRequests = log.storage(topAt);
-
-    // The middle and the bottom of the list.
-    const positions: string[] = [];
-    for (const fraction of [0.5, 1]) {
-      const at = await page.evaluate<{ top: number; range: number }>(
-        scrollTo(fraction),
-      );
-      await page.evaluate(TWO_FRAMES);
-      await log.quiet();
-      counts.push(await page.evaluate<number>(DOM_ELEMENTS));
-      positions.push(`${at.top}/${at.range} px`);
+  } catch (error) {
+    if (error instanceof InterruptedError || s.stack.teardown.closing) {
+      throw error;
     }
-
-    const keys = await imageKeysOf(s, visible);
-    const offscreen = offscreenImages(topRequests, keys);
-    const bytes = await log.storageBytes();
-    const sizes = [...bytes].sort((a, b) => a - b);
-    const where = `the newest batch at its default view (Needs review): ${runs} run rows, ${cards} step cards`;
+    // A later navigation failing loses only the first-row timing.
+    if (counted === undefined) throw error;
     return [
+      ...counted.measurements,
       {
         id: "D2.firstRow",
-        value: round(firstRow.painted),
-        samples: 1,
-        note: `${where}; one cold navigation, first run row ${markNote(firstRow)}`,
+        value: null,
+        error: `timed navigation ${marks.length + 1} of ${s.navigations} failed: ${brief(error)}`,
       },
+    ];
+  }
+  if (counted === undefined) throw new Error("D2's counts were not taken");
+  const t = p95Of(marks.map((m) => m.painted));
+  return [
+    {
+      id: "D2.firstRow",
+      value: round(t.p95),
+      samples: t.samples,
+      note: `${counted.where}; to the first run row painted: ${coldNote(marks, unsettled)}`,
+    },
+    ...counted.measurements,
+  ];
+}
+
+/** D2's counts, from one page that has just shown its first run row. */
+interface Counted {
+  /** What the page showed, for the notes. */
+  where: string;
+  /** D2.domMax, D2.offscreenImages and D2.imageKB. */
+  measurements: Measurement[];
+}
+
+/**
+ * D2's counts on a batch page whose first run row is up: the DOM size at the
+ * top (once the page has loaded what it loads on its own), the middle and the
+ * bottom of the list, the step images fetched for cards outside the viewport
+ * at the top, and the largest step image.
+ */
+async function countBatch(
+  s: Session,
+  page: Page,
+  log: NetworkLog,
+): Promise<Counted> {
+  // The top, once the page has loaded what it loads on its own.
+  const settled = await log.quiet();
+  const topAt = performance.now();
+  const counts = [await page.evaluate<number>(DOM_ELEMENTS)];
+  const visible = await page.evaluate<string[]>(VISIBLE_CARDS);
+  const cards = await page
+    .locator(`[data-testid^="${STEP_CARD_PREFIX}"]`)
+    .count();
+  const runs = await page.locator(RUN_ROW).count();
+  const topRequests = log.storage(topAt);
+
+  // The middle and the bottom of the list.
+  const positions: string[] = [];
+  for (const fraction of [0.5, 1]) {
+    const at = await page.evaluate<{ top: number; range: number }>(
+      scrollTo(fraction),
+    );
+    await page.evaluate(TWO_FRAMES);
+    await log.quiet();
+    counts.push(await page.evaluate<number>(DOM_ELEMENTS));
+    positions.push(`${at.top}/${at.range} px`);
+  }
+
+  const keys = await imageKeysOf(s, visible);
+  const offscreen = offscreenImages(topRequests, keys);
+  const bytes = await log.storageBytes();
+  const sizes = [...bytes].sort((a, b) => a - b);
+  const first = "on the first timed navigation";
+  return {
+    where: `the newest batch at its default view (Needs review): ${runs} run rows, ${cards} step cards`,
+    measurements: [
       {
         id: "D2.domMax",
         value: Math.max(...counts),
-        note: `top ${counts[0]}, middle ${counts[1]} (${positions[0]}), bottom ${counts[2]} (${positions[1]}) elements${settled ? "" : `; the page was still loading after ${QUIET_CAP_MS / 1000} s`}`,
+        note: `${first}: top ${counts[0]}, middle ${counts[1]} (${positions[0]}), bottom ${counts[2]} (${positions[1]}) elements${settled ? "" : `; the page was still loading after ${QUIET_CAP_MS / 1000} s`}`,
       },
       {
         id: "D2.offscreenImages",
         value: offscreen,
-        note: `${topRequests.length} step-image requests by the time the top had loaded, ${visible.length} cards in the viewport there (each card's image key read from screenshots.image_key by its step-card id)`,
+        note: `${first}: ${topRequests.length} step-image requests by the time the top had loaded, ${visible.length} cards in the viewport there (each card's image key read from screenshots.image_key by its step-card id)`,
       },
       sizes.length === 0
         ? {
             id: "D2.imageKB",
             value: null,
-            note: "no step image came over the network",
+            note: `${first}: no step image came over the network`,
           }
         : {
             id: "D2.imageKB",
             value: round((sizes[sizes.length - 1] as number) / 1024),
             samples: sizes.length,
-            note: `largest of ${sizes.length} step images fetched (top, middle and bottom), body bytes on the wire; median ${round(percentile(sizes, 50) / 1024)} KB`,
+            note: `${first}: largest of ${sizes.length} step images fetched (top, middle and bottom), body bytes on the wire; median ${round(percentile(sizes, 50) / 1024)} KB`,
           },
-    ];
-  });
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +982,7 @@ const armStepWatch = (from: string): string => `(() => {
 
 async function measureViewer(
   s: Session,
-): Promise<{ measurements: Measurement[]; calls: string[] }> {
+): Promise<{ measurements: Measurement[]; calls?: string[] }> {
   const { projectId, longRunId, longRunFirstStepId } = s.seeded;
   const [row] = await s.stack.db
     .select({ n: count() })
@@ -905,51 +990,95 @@ async function measureViewer(
     .where(eq(screenshots.runId, longRunId));
   const steps = Number(row?.n ?? 0);
   const plan = walkPlan(steps, D5_WARMUPS + D5_MOVES);
-  const drawn = `[data-stage-drawn="${longRunFirstStepId}"]`;
+  const drawnFirst = `[data-stage-drawn="${longRunFirstStepId}"]`;
+  const url = `${s.origin}/projects/${projectId}/runs/${longRunId}/checkpoints/${longRunFirstStepId}`;
 
-  return withPage(s, [markWhenPresent("drawn", drawn)], async (page, log) => {
-    await page.goto(
-      `${s.origin}/projects/${projectId}/runs/${longRunId}/checkpoints/${longRunFirstStepId}`,
-      { waitUntil: "commit" },
+  const marks: Mark[] = [];
+  let calls: string[] | undefined;
+  let next: Measurement | undefined;
+  let unsettled = 0;
+  let failure: unknown;
+  try {
+    await warmThenTime(s.navigations, ({ warmUp, index }) =>
+      withPage(s, [markWhenPresent("drawn", drawnFirst)], async (page, log) => {
+        await page.goto(url, { waitUntil: "commit" });
+        await page.waitForSelector(drawnFirst, { state: "attached" });
+        const mark = await readMark(page, "drawn");
+        // Up to the network settling after the step was drawn: on the first
+        // timed navigation that is the call set; on every one, nothing still
+        // loading overlaps the next navigation.
+        if (!(await log.quiet())) unsettled += 1;
+        if (warmUp) return;
+        marks.push(mark);
+        if (index !== 0) return;
+        calls = [
+          ...new Set(log.entries.flatMap((e) => unpackTrpcPaths(e.url))),
+        ];
+        next = await measureNext(s, page, log, plan, longRunFirstStepId, steps);
+      }),
     );
-    await page.waitForSelector(drawn, { state: "attached" });
-    const open = await readMark(page, "drawn");
-    // The call set: what the viewer requested to open the step, up to the
-    // network settling after it was drawn.
-    await log.quiet();
-    const calls = [
-      ...new Set(log.entries.flatMap((e) => unpackTrpcPaths(e.url))),
-    ];
-    const opened: Measurement = {
-      id: "D5.open",
-      value: round(open.painted),
-      samples: 1,
-      note: `step 1 of the long run (${steps} steps), one cold navigation; data-stage-drawn ${markNote(open)}; meanwhile the viewer requested ${calls.length} procedures (R4's call set)`,
-    };
-
-    // A failed walk loses only D5.next: the open and the call set stand.
-    let next: Measurement;
-    try {
-      const timed = (await walk(s, page, log, plan, longRunFirstStepId)).slice(
-        D5_WARMUPS,
-      );
-      // Ruling R43: what a reviewer sees is the painted frame.
-      const sorted = timed.map((m) => m.painted).sort((a, b) => a - b);
-      const drawn = timed.map((m) => m.drawn).sort((a, b) => a - b);
-      next = {
-        id: "D5.next",
-        value: round(percentile(sorted, 95)),
-        samples: sorted.length,
-        note: `p95 over ${sorted.length} step moves after ${D5_WARMUPS} untimed ones, with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), from the page seeing the key go down to the frame showing the new step painted (two animation frames after data-stage-drawn named it); each move waits for the network to settle first (the next step's prefetch included)${steps <= D5_WARMUPS + D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(sorted, 50))} ms; to data-stage-drawn naming it: p95 ${round(percentile(drawn, 95))} ms, median ${round(percentile(drawn, 50))} ms`,
-      };
-    } catch (error) {
-      if (error instanceof InterruptedError || s.stack.teardown.closing) {
-        throw error;
-      }
-      next = { id: "D5.next", value: null, error: brief(error) };
+  } catch (error) {
+    if (error instanceof InterruptedError || s.stack.teardown.closing) {
+      throw error;
     }
-    return { calls, measurements: [opened, next] };
-  });
+    // A later navigation failing loses only D5.open: the call set and
+    // D5.next stand.
+    if (calls === undefined) throw error;
+    failure = error;
+  }
+
+  const t = p95Of(marks.map((m) => m.painted));
+  const opened: Measurement =
+    failure === undefined
+      ? {
+          id: "D5.open",
+          value: round(t.p95),
+          samples: t.samples,
+          note: `step 1 of the long run (${steps} steps), to the frame showing it painted (two animation frames after data-stage-drawn named it): ${coldNote(marks, unsettled)}; the first timed navigation's viewer requested ${calls?.length ?? 0} procedures while it opened (R4's call set)`,
+        }
+      : {
+          id: "D5.open",
+          value: null,
+          error: `timed navigation ${marks.length + 1} of ${s.navigations} failed: ${brief(failure)}`,
+        };
+  return {
+    measurements: [
+      opened,
+      next ?? { id: "D5.next", value: null, error: "not measured" },
+    ],
+    ...(calls !== undefined && { calls }),
+  };
+}
+
+/**
+ * D5.next on a viewer that has just opened step 1 of the long run: a failed
+ * walk loses only D5.next.
+ */
+async function measureNext(
+  s: Session,
+  page: Page,
+  log: NetworkLog,
+  plan: readonly ("next" | "prev")[],
+  from: string,
+  steps: number,
+): Promise<Measurement> {
+  try {
+    const timed = (await walk(s, page, log, plan, from)).slice(D5_WARMUPS);
+    // Ruling R43: what a reviewer sees is the painted frame.
+    const painted = timed.map((m) => m.painted).sort((a, b) => a - b);
+    const drawn = timed.map((m) => m.drawn).sort((a, b) => a - b);
+    return {
+      id: "D5.next",
+      value: round(percentile(painted, 95)),
+      samples: painted.length,
+      note: `p95 over ${painted.length} step moves after ${D5_WARMUPS} untimed ones, on the first timed navigation's viewer, with → / ← (the viewer's Next / Previous step; J is the review loop's next pending step, which leaves the run), from the page seeing the key go down to the frame showing the new step painted (two animation frames after data-stage-drawn named it); each move waits for the network to settle first (the next step's prefetch included)${steps <= D5_WARMUPS + D5_MOVES ? `; the run has ${steps} steps, so the walk turns back at its ends and revisits steps` : ""}; median ${round(percentile(painted, 50))} ms; to data-stage-drawn naming it: p95 ${round(percentile(drawn, 95))} ms, median ${round(percentile(drawn, 50))} ms`,
+    };
+  } catch (error) {
+    if (error instanceof InterruptedError || s.stack.teardown.closing) {
+      throw error;
+    }
+    return { id: "D5.next", value: null, error: brief(error) };
+  }
 }
 
 /**

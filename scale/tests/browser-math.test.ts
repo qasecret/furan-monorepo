@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { shapes } from "../src/seed/shape.js";
 import {
+  COLD_NAVIGATIONS,
   busiestQuery,
   countBrowserFailures,
   listQueries,
@@ -10,8 +12,11 @@ import {
   routeShape,
   storageKeyOf,
   unpackTrpcCalls,
+  p95Of,
   unpackTrpcPaths,
   walkPlan,
+  warmThenTime,
+  type Navigation,
 } from "../src/suites/browser-math.js";
 
 const ORIGIN = "http://127.0.0.1:41234";
@@ -390,5 +395,71 @@ describe("countBrowserFailures", () => {
       aborted: { suite: 0, page: 0 },
       sample: [],
     });
+  });
+});
+
+describe("cold navigations (Ruling R46)", () => {
+  it("takes 50 timed navigations on large and 10 on smoke", () => {
+    expect(COLD_NAVIGATIONS[shapes.large.name]).toBe(50);
+    expect(COLD_NAVIGATIONS[shapes.smoke.name]).toBe(10);
+  });
+
+  it("navigates once untimed, then n times, and returns only the timed results", async () => {
+    const seen: Navigation[] = [];
+    // The warm-up is by far the slowest (the server's first request for the
+    // route): it must not reach the samples.
+    const timed = await warmThenTime(3, async (nav) => {
+      seen.push(nav);
+      return nav.warmUp ? 9_000 : 100 + nav.index;
+    });
+    expect(seen).toEqual([
+      { warmUp: true, index: -1 },
+      { warmUp: false, index: 0 },
+      { warmUp: false, index: 1 },
+      { warmUp: false, index: 2 },
+    ]);
+    expect(timed).toEqual([100, 101, 102]);
+    expect(p95Of(timed)).toMatchObject({ p95: 102, samples: 3 });
+  });
+
+  it("runs the navigations one at a time, in order", async () => {
+    let running = 0;
+    let most = 0;
+    await warmThenTime(4, async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running -= 1;
+    });
+    expect(most).toBe(1);
+  });
+
+  it("stops at the first navigation that fails, and rejects with its error", async () => {
+    const seen: number[] = [];
+    await expect(
+      warmThenTime(5, async ({ index }) => {
+        seen.push(index);
+        if (index === 1) throw new Error("timed out waiting for the row");
+      }),
+    ).rejects.toThrow("timed out waiting for the row");
+    expect(seen).toEqual([-1, 0, 1]);
+  });
+
+  it("refuses a count that is not a positive integer", async () => {
+    for (const n of [0, -1, 1.5, Number.NaN]) {
+      await expect(warmThenTime(n, async () => 1)).rejects.toThrow(RangeError);
+    }
+  });
+
+  it("p95Of is the nearest-rank p95 of values in any order", () => {
+    const values = Array.from({ length: 50 }, (_, i) => 50 - i);
+    expect(p95Of(values)).toEqual({
+      p95: 48,
+      median: 25,
+      max: 50,
+      samples: 50,
+    });
+    // The input is left as it was.
+    expect(values[0]).toBe(50);
   });
 });

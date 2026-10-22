@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+import type { ShapeName } from "../seed/shape.js";
+import { percentile } from "../stats.js";
+
 /**
  * The browser suite's pure parts (spec §5.4): reading the dashboard's network
  * log (tRPC procedure calls, storage-proxy image fetches) and counting it.
@@ -200,6 +203,64 @@ export function offscreenImages(
     else offscreen += 1;
   }
   return offscreen;
+}
+
+/**
+ * Ruling R46: how many timed cold navigations D1, D2.firstRow and D5.open
+ * each take. Spec §2.1 asks for a p95 over at least 50 samples; `smoke` only
+ * checks that the harness works, so it takes fewer.
+ */
+export const COLD_NAVIGATIONS: Readonly<Record<ShapeName, number>> = {
+  large: 50,
+  smoke: 10,
+};
+
+/** One navigation of a `warmThenTime` series. */
+export interface Navigation {
+  /** The untimed one that comes first; its result is dropped. */
+  warmUp: boolean;
+  /** 0 to n-1 for the timed ones, in order; -1 for the warm-up. */
+  index: number;
+}
+
+/**
+ * Ruling R46: one untimed warm-up navigation of a route, then `n` timed ones,
+ * run one after the other by `navigate` (each a fresh page). Returns the
+ * timed results in order. The warm-up's is dropped: it pays the dashboard
+ * server's first request for the route, a cost a long-running server never
+ * pays. A navigation that throws ends the series and rejects with its error.
+ */
+export async function warmThenTime<T>(
+  n: number,
+  navigate: (nav: Navigation) => Promise<T>,
+): Promise<T[]> {
+  if (!Number.isInteger(n) || n < 1) {
+    throw new RangeError(
+      `timed navigations must be a positive integer, got ${n}`,
+    );
+  }
+  await navigate({ warmUp: true, index: -1 });
+  const timed: T[] = [];
+  for (let index = 0; index < n; index += 1) {
+    timed.push(await navigate({ warmUp: false, index }));
+  }
+  return timed;
+}
+
+/** The nearest-rank p95 of `values` (in any order), with the median, slowest and count. */
+export function p95Of(values: readonly number[]): {
+  p95: number;
+  median: number;
+  max: number;
+  samples: number;
+} {
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    p95: percentile(sorted, 95),
+    median: percentile(sorted, 50),
+    max: percentile(sorted, 100),
+    samples: sorted.length,
+  };
 }
 
 /**

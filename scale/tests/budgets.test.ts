@@ -238,6 +238,16 @@ describe("evaluate", () => {
     expect(rows.find((r) => r.id === "R6")?.note).toBe("key owned by one row");
   });
 
+  it("carries a measurement's sample count through", () => {
+    const rows = evaluate(
+      BUDGETS,
+      [{ id: "D1", value: 480, samples: 50 }, m("D5.open", 900)],
+      ALL,
+    );
+    expect(rows.find((r) => r.id === "D1")?.samples).toBe(50);
+    expect(rows.find((r) => r.id === "D5.open")).not.toHaveProperty("samples");
+  });
+
   it("does not mutate its inputs", () => {
     const measurements = [m("P1", 1)];
     const before = JSON.stringify([BUDGETS, measurements]);

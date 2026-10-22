@@ -186,8 +186,14 @@ The budget table (ids, thresholds, owners, status) is in
   HTTP cache, already signed in, page tours dismissed. D1, D2's first row and
   D5's open are timed inside the page, from the navigation's start to the
   frame that shows the element having been painted (two animation frames
-  after it entered the DOM; the note gives both times). D5.next ends at the
-  painted frame too. D2 opens the newest
+  after it entered the DOM; the note gives both). Each is the **p95 over
+  cold navigations** of its route, 50 on `large` and 10 on `smoke`, each in a
+  new context, after **one untimed warm-up navigation** of the route: the
+  dashboard server's first request for a route loads its code, a cost a
+  long-running server never pays. Each navigation waits for the page to
+  settle before the next starts. D2's counts (DOM size, off-screen images,
+  image size), R4's call set and the D5.next walk come from the first timed
+  navigation. D5.next ends at the painted frame too. D2 opens the newest
   batch at its default view (Needs review). D4 keeps a batch tab on All while
   its run uploads and diffs, and that run's images match their baselines, so
   it adds nothing to the review queue the server suite measures next.
@@ -298,7 +304,8 @@ listed under "Exit status" above.
 
 `src/budgets.ts` is the single source of truth for every id, threshold, owning
 slice and status. Timings are p95 (nearest rank) over at least 50 samples after
-5 warm-ups; counts are exact. The reference machine is GitHub's `ubuntu-latest`
+warm-ups on `large` (`smoke` takes fewer: 10 cold navigations for D1, D2's
+first row and D5's open); counts are exact. The reference machine is GitHub's `ubuntu-latest`
 runner, and local runs use the same thresholds.
 
 **Slice 1 enforces only what passes today, and so far that is nothing.** Every

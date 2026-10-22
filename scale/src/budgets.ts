@@ -28,6 +28,8 @@ export type Verdict = "pass" | "fail" | "missing" | "error" | "skipped";
 export interface Row extends Budget {
   value: number | null;
   verdict: Verdict;
+  /** How many samples the value summarises, when the measurement said. */
+  samples?: number;
   note?: string;
 }
 
@@ -471,6 +473,9 @@ export function evaluate(
       ...base,
       value,
       verdict: ok ? "pass" : "fail",
+      ...(measurement.samples !== undefined && {
+        samples: measurement.samples,
+      }),
       ...(measurement.note !== undefined && { note: measurement.note }),
     };
   });
