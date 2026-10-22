@@ -106,7 +106,16 @@ describe("writeReport", () => {
   });
 
   it("renders an enforced failure as a plain fail", async () => {
-    const md = await readFile(writeReport(sample(), meta, dir).md, "utf8");
+    // No budget is enforced yet (Ruling R49): enforce one as a slice would.
+    const enforced = BUDGETS.map((b) =>
+      b.id === "R1-solo.worst" ? { ...b, status: "enforced" as const } : b,
+    );
+    const rows = evaluate(
+      enforced,
+      [{ id: "R1-solo.worst", value: 61.234 }],
+      meta.suites,
+    );
+    const md = await readFile(writeReport(rows, meta, dir).md, "utf8");
     const row = md.split("\n").find((l) => l.startsWith("| R1-solo.worst "));
     expect(row).toMatch(/\| enforced \| fail \|/);
     expect(row).toContain("61.23");

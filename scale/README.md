@@ -12,7 +12,8 @@ slice that owns the fix (see [Budgets and enforcement](#budgets-and-enforcement)
 It replaces the old `apps/api/scripts/perf-review-loop.ts` script. That script's
 shape, its worst-case project and its method live on in the server suite as the
 `R1-solo` and `R2-solo` budgets (one caller, no HTTP, p95 over 50 calls after
-5 warm-ups).
+5 warm-ups). Unlike the script's check they start **tracked**, like every other
+budget (see [Budgets and enforcement](#budgets-and-enforcement)).
 
 ## Quick start
 
@@ -206,7 +207,9 @@ Verdicts:
 - `skipped`: the budget's suite did not run.
 
 **Tracked vs enforced.** A `tracked` budget is reported and never fails the run.
-An `enforced` budget fails a `large` run when it misses its threshold.
+An `enforced` budget fails a `large` run when it misses its threshold. Today
+every budget is tracked (see [Budgets and enforcement](#budgets-and-enforcement)),
+so only a `missing` or `error` row fails a run's budget outcome.
 
 **A run's budget outcome exits 1 only when** an enforced budget fails on a
 `large` run, or a budget in a suite that ran is `missing` or `error`, which holds
@@ -220,6 +223,13 @@ listed under "Exit status" above.
 slice and status. Timings are p95 (nearest rank) over at least 50 samples after
 5 warm-ups; counts are exact. The reference machine is GitHub's `ubuntu-latest`
 runner, and local runs use the same thresholds.
+
+**Slice 1 enforces only what passes today, and so far that is nothing.** Every
+budget starts `tracked`. That includes R1, R2 and their solo variants
+(`R1-solo.*`, `R2-solo.*`, owned by slice 3), although the old script checked
+the solo cases: its own worst case already took more than 50 ms on its old
+shape. The reference run on the CI runner decides which of them become
+enforced, in a follow-up change.
 
 **An owning slice enforces a budget with a one-line status change** in
 `budgets.ts`, in that slice's PR:
