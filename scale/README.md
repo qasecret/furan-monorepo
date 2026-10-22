@@ -39,7 +39,9 @@ The `scale` script first builds the harness's workspace dependencies
 written to `scale/out/` (gitignored). An unknown flag prints the usage and exits 2.
 
 It is safe next to your own dev stack: it touches only the database, Redis keys,
-bucket and ports listed under [What it touches](#what-it-touches).
+bucket and ports listed under [What it touches](#what-it-touches). Give it a
+Redis of its own if your dev stack runs its integrations service: Redis
+pub/sub is shared (see the same section).
 
 ## Settings
 
@@ -161,22 +163,29 @@ step that failed. 2 bad flags or settings. 130 or 143 after SIGINT or SIGTERM.
 
 ## Suites
 
-| Suite      | Budgets  | What it does                                                                                                                                                                                                                                                                                                                    |
-| ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pipeline` | P1 to P6 | Uploads steps through the real SDK upload route with a personal access token and measures the diff pipeline: diff work per run, upload-to-result time, run completion time, sustained throughput, an upload/ignore-region/undo race, and live-update events per run.                                                            |
-| `server`   | R1 to R8 | The shape's reviewers (20 on `large`, 3 on `smoke`) loop through a review session over HTTP for a 60 s window after a 10 s warm-up. Each procedure is timed on its own call. Also the solo timings (single caller, no HTTP), the viewer's open call set, the storage-proxy access check, `review.approve`, and failed requests. |
-| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer. It also records the procedures the viewer requests when it opens, which the server suite's R4 measures (see below).                                                     |
+| Suite      | Budgets  | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pipeline` | P1 to P6 | Uploads steps through the real SDK upload route with a personal access token and measures the diff pipeline: diff work per run, upload-to-result time, run completion time, sustained throughput, an upload/ignore-region/undo race, and live-update events per run.                                                                                                                                                                                           |
+| `server`   | R1 to R8 | The shape's reviewers (20 on `large`, 3 on `smoke`) loop through a review session over HTTP for a window of 60 s after a 10 s warm-up; the window stays open until the R4/R6 probe running alongside it has finished (about 455 s on the first local `large` run). Each procedure is timed on its own call. Also the solo timings (single caller, no HTTP), the viewer's open call set, the storage-proxy access check, `review.approve`, and failed requests. |
+| `browser`  | D1 to D5 | Chromium against a production build of the dashboard: batches page, a 1,000-run batch, approving a step, live updates during an upload, and the viewer. It also records the procedures the viewer requests when it opens, which the server suite's R4 measures (see below).                                                                                                                                                                                    |
 
 The budget table (ids, thresholds, owners, status) is in
 [`src/budgets.ts`](src/budgets.ts); this file does not repeat thresholds.
 
 ### Measurement notes
 
-- **The proxy runs in the harness process.** The browser talks to one origin, a
-  small proxy that stands in for production's nginx (`/api/*` to the API,
-  everything else to the dashboard). It shares this process's event loop with
-  the API and the diff worker, where production's nginx is a process of its
-  own. Browser timings therefore lean upwards: a conservative bias.
+- **One process, one event loop.** The API, the diff worker, the
+  single-origin proxy, the server suite's reviewer clients and the harness's
+  pollers (every 100 ms) all run in the harness's Node process and share its
+  event loop. In production the API, the worker and nginx are processes of
+  their own, and the clients are reviewers' browsers and CI machines. So the
+  time a client measures (R1 to R7) and what a poller sees (P2, P3) include
+  harness-side work production never adds: they lean upwards, a conservative
+  bias.
+- **The proxy runs in the harness process** too. The browser talks to one
+  origin, a small proxy that stands in for production's nginx (`/api/*` to
+  the API, everything else to the dashboard). Browser timings lean upwards for
+  the same reason.
 - **The proxy streams request bodies** to the API as they arrive, where nginx
   buffers a whole request body before passing it on. An upload through it
   overlaps the API's own processing. The harness's uploads (the pipeline suite
@@ -268,6 +277,15 @@ errored, or when the seed check fails.
 Nothing else on the server, in Redis or in the bucket store is read or deleted;
 a recorded location is removed only if it has the harness's own name.
 
+**Pub/sub reaches whatever else listens on that Redis.** Channels are not
+isolated by key prefix or by database index. A dev integrations service
+connected to the same Redis subscribes to `run:*:events`, so it receives every
+`run.completed` the harness publishes and looks each one up in its own (dev)
+database. No row matches, so it changes nothing, but on `large` that is
+thousands of lookups and log lines. When a dev stack's integrations service is
+running, point `SCALE_REDIS_URL` at a Redis server the dev stack does not
+use.
+
 ## Reading the report
 
 `scale-report.md` (for people) and `scale-report.json` (the same data, to compare
@@ -349,8 +367,9 @@ settings from the container ports, and runs
 `pnpm --filter @furan/scale scale -- --shape=… --suite=… --storage=…`. The step
 fails, and so the job, when the harness exits 1. The report is uploaded as the
 `scale-report` artifact (`scale-report.md` and `scale-report.json`, kept 14 days)
-whether or not the job passed. The job times out after 60 minutes, and only one
-runs per ref at a time.
+whether or not the job passed. The job times out after 240 minutes: a `large`
+run takes about 1.5 to 2 hours on a hosted runner, most of it the pipeline
+suite. Only one runs per ref at a time.
 
 A hosted runner starts with little more than the 10 GiB the harness requires, so
 the job's first step frees disk (it removes the unused .NET, Android, GHC and
