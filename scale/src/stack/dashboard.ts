@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,13 +61,50 @@ interface Managed {
 const live = new Set<ChildProcess>();
 let exitHookInstalled = false;
 
+/** A tracked file as it was before a build rewrote it (undefined: absent). */
+interface Snapshot {
+  file: string;
+  content: Buffer | undefined;
+}
+
+/**
+ * The tracked files of the build in progress, as they were before it. Set
+ * while a build runs and cleared once its own restore is done: a forced exit
+ * in between skips that restore, and the exit hook puts them back instead.
+ */
+let unrestored: readonly Snapshot[] | undefined;
+
+/**
+ * Puts back, synchronously, the tracked files a build in progress has
+ * rewritten (`REWRITTEN_BY_NEXT`); does nothing when no build is in progress.
+ * What the exit hook runs: a forced exit (a second Ctrl-C) must not leave the
+ * engineer's `tsconfig.json` or `next-env.d.ts` modified.
+ */
+export function restoreInterruptedBuild(): void {
+  const snapshots = unrestored;
+  unrestored = undefined;
+  for (const { file, content } of snapshots ?? []) {
+    if (content === undefined) continue;
+    try {
+      const now = existsSync(file) ? readFileSync(file) : undefined;
+      if (now === undefined || !now.equals(content)) {
+        writeFileSync(file, content);
+      }
+    } catch {
+      // The process is exiting: there is no one left to tell.
+    }
+  }
+}
+
 function installExitHook(): void {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
   // `process.exit()` (a second Ctrl-C skips the cleanup) runs 'exit' listeners
-  // synchronously, which is the last chance not to leave a server on its port.
+  // synchronously, which is the last chance not to leave a server on its port,
+  // or a build's rewrites in the working tree.
   process.on("exit", () => {
     for (const child of live) child.kill("SIGKILL");
+    restoreInterruptedBuild();
   });
 }
 
@@ -350,7 +387,7 @@ export async function buildDashboard(
   );
   const started = performance.now();
 
-  const snapshots = await Promise.all(
+  const snapshots: Snapshot[] = await Promise.all(
     REWRITTEN_BY_NEXT.map(async (name) => {
       const file = path.join(deps.dashboardDir, name);
       return {
@@ -360,6 +397,9 @@ export async function buildDashboard(
     }),
   );
   await rm(stampFile, { force: true });
+  // From here until the restore below has run, a forced exit restores them.
+  installExitHook();
+  unrestored = snapshots;
 
   const heartbeat = setInterval(() => {
     deps.log(
@@ -384,6 +424,7 @@ export async function buildDashboard(
             await writeFile(file, content);
           }
         }
+        if (unrestored === snapshots) unrestored = undefined;
       },
     );
   } finally {

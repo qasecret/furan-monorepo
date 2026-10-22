@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -18,6 +18,7 @@ import {
   buildEnv,
   canReuseBuild,
   gitSource,
+  restoreInterruptedBuild,
   startDashboard,
   type BuildDeps,
 } from "../src/stack/dashboard.js";
@@ -203,6 +204,48 @@ describe("buildDashboard", () => {
       NEXT_ENV,
     );
     expect(existsSync(path.join(dir, ".next-scale", "scale-tree"))).toBe(false);
+  });
+
+  it("restores them synchronously, as a forced exit's hook does, while the build still runs", async () => {
+    let rewritten!: () => void;
+    const midBuild = new Promise<void>((resolve) => {
+      rewritten = resolve;
+    });
+    let finish!: () => void;
+    build = async (dashboardDir) => {
+      await write(path.join(dashboardDir, "tsconfig.json"), "{}");
+      await write(path.join(dashboardDir, "next-env.d.ts"), "// changed\n");
+      rewritten();
+      // Still building when the second Ctrl-C arrives.
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      throw new Error("next build failed (killed by SIGKILL)");
+    };
+    const building = buildDashboard({ noBuild: false }, deps());
+    await midBuild;
+
+    // What the 'exit' listener runs: nothing async gets another turn.
+    restoreInterruptedBuild();
+    expect(readFileSync(path.join(dir, "tsconfig.json"), "utf8")).toBe(
+      TSCONFIG,
+    );
+    expect(readFileSync(path.join(dir, "next-env.d.ts"), "utf8")).toBe(
+      NEXT_ENV,
+    );
+
+    finish();
+    await expect(building).rejects.toThrow("killed by SIGKILL");
+  });
+
+  it("leaves the files alone at exit once a build has restored them", async () => {
+    await buildDashboard({ noBuild: false }, deps());
+    // The engineer edits the file after the run's build.
+    await write(path.join(dir, "tsconfig.json"), '{"edited":true}\n');
+    restoreInterruptedBuild();
+    expect(await readFile(path.join(dir, "tsconfig.json"), "utf8")).toBe(
+      '{"edited":true}\n',
+    );
   });
 
   it("does not touch a file the build left alone", async () => {

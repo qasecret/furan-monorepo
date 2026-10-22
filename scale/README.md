@@ -140,7 +140,8 @@ Both services run with fixed, comparable settings:
 was opened, newest first: the API and worker are closed, the Redis keys are
 removed, and the scratch database and bucket (or directory) are removed unless
 `--keep`. A second Ctrl-C exits at once, which can leave `furan_scale` or a
-bucket behind.
+bucket behind; it still puts back `apps/dashboard/tsconfig.json` and
+`next-env.d.ts` if a dashboard build was running.
 
 **Exit status.** 0 passed. 1 failed: the budget outcome (see
 [Reading the report](#reading-the-report)), a run that stopped early with an
