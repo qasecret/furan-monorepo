@@ -10,6 +10,12 @@ export interface ReportMeta {
   suites: readonly Suite[];
   /** Defaults to `git rev-parse HEAD`, or "unknown" when git cannot answer. */
   commit?: string;
+  /**
+   * Whether the working tree had uncommitted changes (`git status
+   * --porcelain` listed anything): then the numbers are not the commit's
+   * alone. Defaults to asking git; null when git cannot answer.
+   */
+  dirty?: boolean | null;
 }
 
 interface Machine {
@@ -40,6 +46,30 @@ function gitCommit(): string {
   }
 }
 
+function gitDirty(): boolean | null {
+  try {
+    const status = execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=normal"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 10_000,
+      },
+    );
+    return status.trim() !== "";
+  } catch {
+    return null;
+  }
+}
+
+const formatTree = (dirty: boolean | null): string =>
+  dirty === null
+    ? "unknown"
+    : dirty
+      ? "dirty (uncommitted changes: the numbers are not the commit's alone)"
+      : "clean";
+
 const formatValue = (value: number | null): string =>
   value === null ? "—" : String(Math.round(value * 100) / 100);
 
@@ -53,7 +83,12 @@ const cell = (text: string): string => text.replace(/\|/g, "\\|");
 
 function renderMarkdown(
   rows: readonly Row[],
-  meta: { shape: string; suites: readonly Suite[]; commit: string },
+  meta: {
+    shape: string;
+    suites: readonly Suite[];
+    commit: string;
+    dirty: boolean | null;
+  },
   env: Machine,
 ): string {
   const lines = [
@@ -62,6 +97,7 @@ function renderMarkdown(
     `- Machine: ${env.cpu}, ${env.cpus} CPUs, ${env.memoryGiB} GiB memory`,
     `- Node: ${process.version}`,
     `- Commit: ${meta.commit}`,
+    `- Working tree: ${formatTree(meta.dirty)}`,
     `- Shape: ${meta.shape}`,
     `- Suites: ${meta.suites.length > 0 ? meta.suites.join(", ") : "none"}`,
     "",
@@ -101,6 +137,7 @@ export function writeReport(
     shape: meta.shape,
     suites: [...meta.suites],
     commit: meta.commit ?? gitCommit(),
+    dirty: meta.dirty !== undefined ? meta.dirty : gitDirty(),
   };
   const env = machine();
 
