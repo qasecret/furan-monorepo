@@ -192,7 +192,9 @@ a recorded location is removed only if it has the harness's own name.
 
 `scale-report.md` (for people) and `scale-report.json` (the same data, to compare
 two runs) go to the report directory. The header records the machine (CPU and
-memory), the Node version, the commit, the shape and the suites. Each budget is a
+memory), the Node version, the commit and whether the working tree was dirty
+(`git status --porcelain` listed anything, untracked files included: then the
+numbers are not the commit's alone), the shape and the suites. Each budget is a
 row: id, the budget, the measured value, its unit, its status, the verdict and the
 owning slice. A **Notes** section carries per-budget detail (for example the
 cases behind a solo timing).

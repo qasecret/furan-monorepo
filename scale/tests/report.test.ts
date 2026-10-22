@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -74,11 +75,68 @@ describe("writeReport", () => {
     vi.stubEnv("GIT_DIR", join(dir, "no-such-git-dir"));
     try {
       const out = writeReport(sample(), { shape: "smoke", suites: [] }, dir);
-      expect(await readFile(out.md, "utf8")).toMatch(/Commit:\s*unknown\n/);
+      const md = await readFile(out.md, "utf8");
+      expect(md).toMatch(/Commit:\s*unknown\n/);
+      expect(md).toMatch(/Working tree:\s*unknown\n/);
       const parsed = JSON.parse(await readFile(out.json, "utf8")) as {
-        meta: { commit: string };
+        meta: { commit: string; dirty: boolean | null };
       };
       expect(parsed.meta.commit).toBe("unknown");
+      expect(parsed.meta.dirty).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("says whether the working tree was dirty, in the markdown and the JSON", async () => {
+    const dirty = writeReport(sample(), { ...meta, dirty: true }, dir);
+    expect(await readFile(dirty.md, "utf8")).toMatch(
+      /- Working tree: dirty \(uncommitted changes/,
+    );
+    expect(
+      (JSON.parse(await readFile(dirty.json, "utf8")) as { meta: object }).meta,
+    ).toMatchObject({ dirty: true });
+
+    const clean = writeReport(sample(), { ...meta, dirty: false }, dir);
+    expect(await readFile(clean.md, "utf8")).toMatch(/- Working tree: clean\n/);
+    expect(
+      (JSON.parse(await readFile(clean.json, "utf8")) as { meta: object }).meta,
+    ).toMatchObject({ dirty: false });
+  });
+
+  it("asks git whether the tree is dirty, untracked files included", async () => {
+    // A throwaway repository, named to git through its environment.
+    const repo = join(dir, "repo");
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+    await mkdir(repo);
+    git("init", "-q");
+    git("config", "user.email", "scale@example.invalid");
+    git("config", "user.name", "scale");
+    git("config", "commit.gpgsign", "false");
+    await writeFile(join(repo, "a.txt"), "a\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "a");
+    vi.stubEnv("GIT_DIR", join(repo, ".git"));
+    vi.stubEnv("GIT_WORK_TREE", repo);
+    const out = join(dir, "out");
+    const tree = async () =>
+      (
+        JSON.parse(
+          await readFile(
+            writeReport(sample(), { shape: "smoke", suites: [] }, out).json,
+            "utf8",
+          ),
+        ) as { meta: { dirty: boolean | null } }
+      ).meta.dirty;
+    try {
+      expect(await tree()).toBe(false);
+      await writeFile(join(repo, "a.txt"), "edited\n");
+      expect(await tree()).toBe(true);
+      git("checkout", "--", "a.txt");
+      expect(await tree()).toBe(false);
+      await writeFile(join(repo, "new.txt"), "untracked\n");
+      expect(await tree()).toBe(true);
     } finally {
       vi.unstubAllEnvs();
     }
