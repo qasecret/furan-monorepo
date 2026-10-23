@@ -35,9 +35,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { classifyDiffError } from "../src/diff-error.js";
 import { handleDiffJob, type StepJob } from "../src/handler.js";
 
+import { counterValue, histogramSeries } from "./helpers/metrics.js";
 import { pgCode } from "./helpers/pg.js";
 import { stepJobsFor } from "./helpers/step-jobs.js";
 import { createStepSeeder, square, type Seeded } from "./helpers/step-seed.js";
+import { withDiffWorker } from "./helpers/worker.js";
 
 // `markStepDiffFailed` runs as itself unless a test makes it fail.
 vi.mock("@furan/db", async (importOriginal) => {
@@ -609,7 +611,10 @@ desc("a step's permanent diff failure (integration)", () => {
     expect(failedLogs("error")).toHaveLength(0);
   }, 60_000);
 
-  it("a final failure on a newer version does nothing", async () => {
+  const DURATION = "furan_diff_job_duration_seconds";
+  const DEAD_LETTERED = "furan_diff_jobs_dead_lettered_total";
+
+  it("a final failure on a newer version does nothing and ends stale", async () => {
     const { s, bKey } = await seedWithTwoDiffed();
     await storage.delete(bKey);
     const job = await jobOf(s, "b");
@@ -637,9 +642,26 @@ desc("a step's permanent diff failure (integration)", () => {
     resetLogs();
 
     const events = await eventsDuring(s, async () => {
-      await expect(
-        handleDiffJob(job, mockLogger, { db, storage: racing, redis }, FINAL),
-      ).rejects.toThrow();
+      // Through the worker runtime, where the outcome is recorded: the job
+      // completes (`run` would reject if it failed).
+      await withDiffWorker(
+        { db, storage: racing, redis, logger: mockLogger },
+        async ({ registry, outcomes, run }) => {
+          await run(job);
+
+          // R27: stale, not failed: not rethrown, so not a dead letter.
+          expect(outcomes).toEqual([{ checkpoints: 0, stale: true }]);
+          expect(
+            (await histogramSeries(registry, DURATION, { outcome: "stale" }))
+              .count,
+          ).toBe(1);
+          expect(
+            (await histogramSeries(registry, DURATION, { outcome: "failed" }))
+              .count,
+          ).toBe(0);
+          expect(await counterValue(registry, DEAD_LETTERED)).toBe(0);
+        },
+      );
     });
 
     expect(bumped).toBe(job.generation + 1);
@@ -665,6 +687,38 @@ desc("a step's permanent diff failure (integration)", () => {
         .mocked(mockLogger.info)
         .mock.calls.filter((c) => c[1] === "diff_step_stale"),
     ).toHaveLength(1);
+    // The failure is still logged, once.
+    expect(failedLogs("error")).toHaveLength(1);
+  }, 60_000);
+
+  it("a final failure that fails the step is a failed job and a dead letter", async () => {
+    const { s, bKey } = await seedWithTwoDiffed();
+    await storage.delete(bKey);
+    const job = await jobOf(s, "b");
+    resetLogs();
+
+    await withDiffWorker(
+      { db, storage, redis, logger: mockLogger },
+      async ({ registry, outcomes, run }) => {
+        await expect(run(job)).rejects.toThrow();
+
+        expect(outcomes).toEqual([]);
+        expect(
+          (await histogramSeries(registry, DURATION, { outcome: "failed" }))
+            .count,
+        ).toBe(1);
+        expect(
+          (await histogramSeries(registry, DURATION, { outcome: "stale" }))
+            .count,
+        ).toBe(0);
+        expect(await counterValue(registry, DEAD_LETTERED)).toBe(1);
+      },
+    );
+
+    expect(await stepRow(s.shotId.b!)).toMatchObject({
+      verdict: "unresolved",
+      diffError: "object_missing",
+    });
   }, 60_000);
 
   it("a successful re-diff clears the failure", async () => {

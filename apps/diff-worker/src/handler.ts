@@ -131,8 +131,10 @@ async function publishProjectRunUpdate(
  * A failure rethrows for BullMQ. A non-final attempt writes nothing, since a
  * retry follows. On the final attempt a step job fails ITS step alone (the step
  * becomes `unresolved` with a reason code, `failStep`; the run is never
- * aborted for it), unless the step's commit already landed. Only an old
- * whole-run job still marks the whole run `aborted`.
+ * aborted for it), unless the step's commit already landed. If a newer version
+ * owns the step by then, the job is stale instead (R27): it reports the stale
+ * outcome and does not rethrow. Only an old whole-run job still marks the
+ * whole run `aborted`.
  */
 export async function handleDiffJob(
   data: DiffJob,
@@ -195,9 +197,12 @@ export async function handleDiffJob(
     if (progress.coreCommitted) throw err;
     // Ruling R22: a step job never aborts its run. The step fails alone; the
     // job still fails (rethrown), so its outcome and the dead-letter signal
-    // are what they were.
+    // are what they were. Ruling R27: unless a newer version owns the step,
+    // whose job decides it: this attempt's error does not matter to the step,
+    // so the job ends stale, not failed (no rethrow, no dead letter). Its
+    // failure was logged above.
     if (stepJob && code) {
-      await failStep(deps, logger, stepJob, code, t0);
+      if (await failStep(deps, logger, stepJob, code, t0)) return STALE_OUTCOME;
       throw err;
     }
     // Final attempt of an old whole-run job: best-effort terminal status write
@@ -268,8 +273,11 @@ export async function handleDiffJob(
  *
  * Best-effort: if the write itself fails (the database is down) it is logged
  * and the step keeps no verdict, for the reconciler to re-queue; the caller
- * rethrows the job's own error either way. When it lands, the same interim
- * events a committed step job publishes follow (`publishInterimStepEvents`).
+ * rethrows the job's own error. When it lands, the same interim events a
+ * committed step job publishes follow (`publishInterimStepEvents`).
+ *
+ * Returns true when a newer version owns the step (or the step or its run is
+ * gone), so the caller ends the job stale; false otherwise.
  */
 async function failStep(
   deps: HandlerDeps,
@@ -277,7 +285,7 @@ async function failStep(
   job: StepJob,
   code: DiffErrorCode,
   t0: number,
-): Promise<void> {
+): Promise<boolean> {
   let marked: Awaited<ReturnType<typeof markStepDiffFailed>>;
   try {
     marked = await withProjectScope(deps.db, job.projectId, (tx) =>
@@ -293,7 +301,7 @@ async function failStep(
       { err: markErr, runId: job.runId, screenshotId: job.screenshotId },
       "failed_to_mark_step_failed",
     );
-    return;
+    return false;
   }
   if (!marked.applied || !marked.rollup) {
     logger.info(
@@ -304,7 +312,7 @@ async function failStep(
       },
       "diff_step_stale",
     );
-    return;
+    return true;
   }
   // Like the aborted run's, best-effort: the original error stays the signal.
   try {
@@ -336,6 +344,7 @@ async function failStep(
       "failed_to_publish_failed_step_events",
     );
   }
+  return false;
 }
 
 /**

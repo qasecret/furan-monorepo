@@ -22,7 +22,6 @@ import {
   users,
   type DB,
 } from "@furan/db";
-import { createQueue, diffJobId, type DiffJob, type Queue } from "@furan/queue";
 import { createStorage, objectKey, type Storage } from "@furan/storage";
 import { Redis } from "ioredis";
 import { Registry } from "prom-client";
@@ -34,10 +33,8 @@ import { diffStep, type StepResult } from "../src/diff-step.js";
 import {
   handleDiffJob,
   loadStepContext,
-  type DiffJobOutcome,
   type StepJob,
 } from "../src/handler.js";
-import { startDiffWorker } from "../src/runtime.js";
 
 import { counterValue, histogramSeries } from "./helpers/metrics.js";
 import { pgCode } from "./helpers/pg.js";
@@ -48,6 +45,7 @@ import {
   type ScenarioSpec,
   type Seeded,
 } from "./helpers/step-seed.js";
+import { withDiffWorker } from "./helpers/worker.js";
 
 // `diffStep` runs as itself unless a test slips a hook in after it, between
 // the diff and the commit.
@@ -224,60 +222,9 @@ desc("step jobs (integration)", () => {
     return realDiffStep(ctx, cs!);
   }
 
-  /**
-   * The worker, in this process, on its own queue: every job it handles runs
-   * the real `handleDiffJob`, and its outcome is recorded.
-   */
-  async function withWorker(
-    fn: (w: {
-      queue: Queue<DiffJob>;
-      registry: Registry;
-      outcomes: DiffJobOutcome[];
-      run: (job: StepJob) => Promise<void>;
-    }) => Promise<void>,
-  ): Promise<void> {
-    const prefix = `furan-step-job-${randomUUID().slice(0, 8)}`;
-    const queue = createQueue("diff", { prefix });
-    const registry = new Registry();
-    const outcomes: DiffJobOutcome[] = [];
-    const runtime = startDiffWorker({
-      db,
-      storage,
-      redis,
-      logger: mockLogger,
-      registry,
-      queuePrefix: prefix,
-      concurrency: 1,
-      sweeper: false,
-      handler: async (...args) => {
-        const outcome = await handleDiffJob(...args);
-        outcomes.push(outcome);
-        return outcome;
-      },
-    });
-    const run = async (job: StepJob): Promise<void> => {
-      const jobId = diffJobId(job.screenshotId, job.generation);
-      const done = new Promise<void>((resolve, reject) => {
-        runtime.worker.on("completed", (j) => {
-          if (j.id === jobId) resolve();
-        });
-        runtime.worker.on("failed", (j, err) => {
-          if (j?.id === jobId) reject(err);
-        });
-      });
-      await queue.add("diff", job, { jobId, attempts: 1 });
-      await done;
-    };
-    try {
-      await fn({ queue, registry, outcomes, run });
-    } finally {
-      await runtime.close();
-      const client = await queue.client;
-      await queue.obliterate({ force: true });
-      await queue.close();
-      client.disconnect();
-    }
-  }
+  /** The worker, in this process, on its own queue (`withDiffWorker`). */
+  const withWorker = (fn: Parameters<typeof withDiffWorker>[1]) =>
+    withDiffWorker({ db, storage, redis, logger: mockLogger }, fn);
 
   it("diffs one step and stores its results", async () => {
     const s = await seed({
