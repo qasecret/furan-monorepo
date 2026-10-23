@@ -166,50 +166,58 @@ export async function handleDiffJob(
     // it is (R50): an SDK or capture abort is final, and re-flagging it as the
     // pipeline's would let a later diff heal it (a CI false pass); a pipeline
     // abort already carries the flag.
+    let aborted = false;
     try {
-      await withProjectScope(deps.db, data.projectId, async (tx) => {
-        await tx
+      const written = await withProjectScope(deps.db, data.projectId, (tx) =>
+        tx
           .update(testRuns)
           .set({ status: "aborted", abortedByDiff: true })
           .where(
             and(eq(testRuns.id, data.runId), ne(testRuns.status, "aborted")),
-          );
-      });
+          )
+          .returning({ id: testRuns.id }),
+      );
+      aborted = written.length > 0;
     } catch (statusErr) {
       logger.error(
         { err: statusErr, runId: data.runId },
         "failed_to_write_aborted_status",
       );
     }
-    // Best-effort `run.completed` publish so the integrations subscriber
-    // (GitHub commit-status, Slack notifier, outbound webhooks) reacts
-    // to the aborted terminal state. Without this, the GitHub check would
-    // stay stuck at `pending` and Slack would never notify. Wrap in its
-    // own try/catch — a publish failure must not mask the worker's
-    // original error, which remains the load-bearing signal.
-    try {
-      await deps.redis.publish(
-        `run:${data.runId}:events`,
-        JSON.stringify({
-          type: "run.completed",
-          runId: data.runId,
-          projectId: data.projectId,
-          status: "aborted",
-        }),
-      );
-    } catch (publishErr) {
-      logger.error(
-        { err: publishErr, runId: data.runId },
-        "failed_to_publish_aborted_run_completed",
-      );
+    // Only a write that moved the run to `aborted` is a status change to
+    // announce: not a run that was already aborted, nor a failed write.
+    if (aborted) {
+      // Best-effort `run.completed` publish so the integrations subscriber
+      // (GitHub commit-status, Slack notifier, outbound webhooks) reacts
+      // to the aborted terminal state. Without this, the GitHub check would
+      // stay stuck at `pending` and Slack would never notify. Wrap in its
+      // own try/catch — a publish failure must not mask the worker's
+      // original error, which remains the load-bearing signal.
+      try {
+        await deps.redis.publish(
+          `run:${data.runId}:events`,
+          JSON.stringify({
+            type: "run.completed",
+            runId: data.runId,
+            projectId: data.projectId,
+            status: "aborted",
+          }),
+        );
+      } catch (publishErr) {
+        logger.error(
+          { err: publishErr, runId: data.runId },
+          "failed_to_publish_aborted_run_completed",
+        );
+      }
+      // Project channel mirror so the dashboard list pages refresh.
+      await publishProjectEvent(deps.redis, logger, {
+        projectId: data.projectId,
+        runId: data.runId,
+        event: "testRun_updated",
+        data: { id: data.runId, status: "aborted" },
+        logKey: "diff_worker_project_publish_failed",
+      });
     }
-    // Project channel mirror so the dashboard list pages refresh.
-    await publishProjectEvent(deps.redis, logger, {
-      projectId: data.projectId,
-      runId: data.runId,
-      event: "testRun_updated",
-      data: { id: data.runId, status: "aborted" },
-    });
     throw err;
   }
 }

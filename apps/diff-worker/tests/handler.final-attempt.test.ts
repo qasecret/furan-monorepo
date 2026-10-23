@@ -269,14 +269,22 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
     return row!;
   }
 
-  /** Collects the run channel's event types published while `fn` runs. */
+  /**
+   * Collects the frames published on the run's channel and its project's
+   * while `fn` runs. Run-channel frames carry a `type`, project-channel
+   * frames an `event`.
+   */
   async function eventsDuring(
-    runId: string,
+    s: { runId: string; projectId: string },
     fn: () => Promise<void>,
-  ): Promise<Array<{ type: string; status?: string }>> {
-    const events: Array<{ type: string; status?: string }> = [];
+  ): Promise<Array<{ type?: string; event?: string; status?: string }>> {
+    const events: Array<{ type?: string; event?: string; status?: string }> =
+      [];
     const sub = new Redis(process.env.REDIS_URL!);
-    await sub.subscribe(`run:${runId}:events`);
+    await sub.subscribe(
+      `run:${s.runId}:events`,
+      `project:${s.projectId}:events:raw`,
+    );
     sub.on("message", (_ch, msg) => events.push(JSON.parse(msg)));
     await new Promise((r) => setTimeout(r, 100));
     try {
@@ -304,7 +312,7 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
     vi.mocked(mockLogger.warn).mockClear();
     vi.mocked(mockLogger.error).mockClear();
 
-    const events = await eventsDuring(s.runId, async () => {
+    const events = await eventsDuring(s, async () => {
       await expect(
         handleDiffJob(
           { runId: s.runId, projectId: s.projectId } as DiffJob,
@@ -327,7 +335,7 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
     vi.mocked(mockLogger.warn).mockClear();
     vi.mocked(mockLogger.error).mockClear();
 
-    const events = await eventsDuring(s.runId, async () => {
+    const events = await eventsDuring(s, async () => {
       await expect(
         handleDiffJob(
           { runId: s.runId, projectId: s.projectId } as DiffJob,
@@ -342,8 +350,76 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
     expect(events.find((e) => e.type === "run.completed")?.status).toBe(
       "aborted",
     );
+    // And the project channel's mirror, so the dashboard lists refresh.
+    expect(events.filter((e) => e.event === "testRun_updated")).toHaveLength(1);
     expect(failedLogs("error")).toHaveLength(1);
     expect(failedLogs("warn")).toHaveLength(0);
+  }, 60_000);
+
+  it("the final failure of an already aborted run publishes nothing", async () => {
+    // An SDK or capture abort got there first: the guarded write changes
+    // nothing (R50), so there is no status change to announce.
+    const s = await seedRun();
+    await db
+      .update(testRuns)
+      .set({ status: "aborted" })
+      .where(eq(testRuns.id, s.runId));
+
+    const events = await eventsDuring(s, async () => {
+      await expect(
+        handleDiffJob(
+          { runId: s.runId, projectId: s.projectId } as DiffJob,
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow(/run_has_no_screenshots/);
+    });
+
+    expect(events).toEqual([]);
+    const [run] = await db
+      .select({
+        status: testRuns.status,
+        abortedByDiff: testRuns.abortedByDiff,
+      })
+      .from(testRuns)
+      .where(eq(testRuns.id, s.runId));
+    expect(run).toEqual({ status: "aborted", abortedByDiff: false });
+  }, 60_000);
+
+  it("a failing project publish on the whole-run abort is logged under its own key", async () => {
+    const s = await seedRun();
+    const down = new Proxy(redis, {
+      get(target, prop) {
+        if (prop === "publish") {
+          return async () => {
+            throw new Error("redis_down");
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    vi.mocked(mockLogger.warn).mockClear();
+
+    // The job's own error is what rejects, not the publish's.
+    await expect(
+      handleDiffJob(
+        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        mockLogger,
+        { db, storage, redis: down },
+        { finalAttempt: true },
+      ),
+    ).rejects.toThrow(/run_has_no_screenshots/);
+
+    expect(await runStatus(s.runId)).toBe("aborted");
+    expect(
+      vi
+        .mocked(mockLogger.warn)
+        .mock.calls.filter(
+          (c) => c[1] === "diff_worker_project_publish_failed",
+        ),
+    ).toHaveLength(1);
   }, 60_000);
 
   it("a failed attempt followed by a successful retry ends with the rollup status", async () => {
@@ -396,23 +472,21 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
 
     const job = await stepJob(s);
 
-    const events = await eventsDuring(s.runId, async () => {
-      await expect(
-        handleDiffJob(
-          job,
-          mockLogger,
-          { db, storage, redis },
-          { finalAttempt: true },
-        ),
-      ).rejects.toThrow(/failed_after_commit/);
-    });
+    await expect(
+      handleDiffJob(
+        job,
+        mockLogger,
+        { db, storage, redis },
+        { finalAttempt: true },
+      ),
+    ).rejects.toThrow(/failed_after_commit/);
 
     // The committed rollup stands: `aborted` would be permanent, since
     // recomputeRunStatus keeps it.
     expect(await runStatus(s.runId)).toBe("unresolved");
-    expect(events.find((e) => e.status === "aborted")).toBeUndefined();
-    // And the committed step is not failed over a later publish: it keeps the
-    // diff it found (numbers, no failure).
+    // And the committed step is not failed over `persistRuleApplications`
+    // throwing after the commit: it keeps the diff it found (numbers, no
+    // failure).
     const committed = await stepFailure(s.runId);
     expect(committed).toMatchObject({
       verdict: "unresolved",

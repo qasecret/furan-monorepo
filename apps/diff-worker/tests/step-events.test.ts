@@ -1,5 +1,6 @@
 import {
   createDb,
+  diffRegions,
   eq,
   projects,
   screenshots,
@@ -451,6 +452,76 @@ desc("step events (integration)", () => {
         screenshotId: s.shotId.a,
       }),
     ]);
+  }, 60_000);
+
+  it("run.completed omits diffPercent when the run has no stored diff %", async () => {
+    const s = await seed({
+      steps: [
+        { name: "home", baseline: await red0(), candidate: await red0() },
+      ],
+    });
+    const [home] = await jobsOf(s);
+    // The run's only step fails for good: it adds nothing to the totals, so
+    // the run's `diff_percent` stays NULL while its status moves.
+    await storage.delete(await imageKeyOf(s.shotId.home!));
+
+    const frames = await framesDuring(s, async () => {
+      await expect(
+        handleDiffJob(home!, mockLogger, deps(), FINAL),
+      ).rejects.toThrow();
+    });
+
+    expect((await runRow(s.candidateRunId)).diffPercent).toBeNull();
+    const completed = frames.run.find((f) => f.type === "run.completed");
+    expect(completed).toMatchObject({ status: "unresolved" });
+    expect(completed).not.toHaveProperty("diffPercent");
+  }, 60_000);
+
+  it("run.completed's numChanges counts engine regions, not dynamic-text audit rows", async () => {
+    const s = await seed({
+      steps: [
+        { name: "home", baseline: await red0(), candidate: await red0() },
+      ],
+    });
+    const home = s.shotId.home!;
+    const region = (source: string) => ({
+      runId: s.candidateRunId,
+      projectId: s.projectId,
+      screenshotId: home,
+      severity: "moderate",
+      category: "visual",
+      bbox: { x: 0, y: 0, width: 10, height: 10 },
+      description: "region",
+      source,
+      viewport: "400x400",
+    });
+    // Two engine regions and a layout-suppressed one (a region the run had)
+    // count; the OCR audit rows of dynamic text (matched or not) do not.
+    await db
+      .insert(diffRegions)
+      .values([
+        region("l1_pixel"),
+        region("l1_pixel"),
+        region("layout_suppressed"),
+        region("dynamic_text"),
+        region("dynamic_text"),
+      ]);
+
+    const frames = await framesDuring(s, async () => {
+      await publishStepEvents(redis, {
+        runId: s.candidateRunId,
+        projectId: s.projectId,
+        screenshotId: home,
+        verdict: "passed",
+        failed: false,
+        rollup: { before: "running", after: "unresolved" },
+        db,
+        logger: mockLogger,
+      });
+    });
+
+    const completed = frames.run.find((f) => f.type === "run.completed");
+    expect(completed).toMatchObject({ numChanges: 3 });
   }, 60_000);
 
   it("an old whole-run job is split and publishes nothing itself", async () => {

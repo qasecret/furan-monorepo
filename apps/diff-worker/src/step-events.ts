@@ -4,6 +4,7 @@ import {
   count,
   diffRegions,
   eq,
+  ne,
   testRuns,
   withProjectScope,
   type DB,
@@ -34,14 +35,12 @@ async function publishFrame(
   event: string,
   frame: unknown,
   context: { runId: string },
+  logKey = "diff_step_event_publish_failed",
 ): Promise<void> {
   try {
     await redis.publish(channel, JSON.stringify(frame));
   } catch (err) {
-    logger.warn(
-      { err, ...context, channel, event },
-      "diff_step_event_publish_failed",
-    );
+    logger.warn({ err, ...context, channel, event }, logKey);
   }
 }
 
@@ -56,7 +55,14 @@ async function publishFrame(
 export async function publishProjectEvent(
   redis: Redis,
   logger: Logger,
-  args: { projectId: string; runId: string; event: string; data: unknown },
+  args: {
+    projectId: string;
+    runId: string;
+    event: string;
+    data: unknown;
+    /** The warning logged when the publish fails. */
+    logKey?: string;
+  },
 ): Promise<void> {
   await publishFrame(
     redis,
@@ -65,6 +71,7 @@ export async function publishProjectEvent(
     args.event,
     { event: args.event, data: args.data, ts: Date.now() },
     { runId: args.runId },
+    args.logKey,
   );
 }
 
@@ -74,7 +81,7 @@ interface RunFacts {
   branchName: string | null;
   diffPercent: number | null;
   resolutionSource: "rule" | null;
-  /** The run's `diff_regions` count. */
+  /** The run's `diff_regions` count, without the dynamic-text audit rows. */
   numChanges: number;
   /** Counts by action of the run's winning rule applications; null when it has none. */
   rulesSummary: Record<Action, number> | null;
@@ -105,7 +112,15 @@ async function readRunFacts(
       .select({ n: count() })
       .from(diffRegions)
       .where(
-        and(eq(diffRegions.runId, runId), eq(diffRegions.projectId, projectId)),
+        and(
+          eq(diffRegions.runId, runId),
+          eq(diffRegions.projectId, projectId),
+          // Ruling R33: the whole-run handler reported the engine's regions.
+          // A dynamic-text step also stores one synthetic OCR audit row per
+          // region (matched or not), which is not a change; a
+          // `layout_suppressed` region was counted and still is.
+          ne(diffRegions.source, "dynamic_text"),
+        ),
       );
     const won = await tx
       .select({ priority: autoRuleApplications.actionPriority, n: count() })
