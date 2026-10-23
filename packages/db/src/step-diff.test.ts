@@ -283,6 +283,92 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect(run).toEqual({ diffPercent: 2.5, pixels: 25, diffName: "k0" });
     });
 
+    it("a step with an earlier result contributes nothing once it fails", async () => {
+      const { runId, steps } = await seedRun(3, { verdict: "passed" });
+      const [kept, other, failing] = steps as [string, string, string];
+      await db
+        .update(screenshots)
+        .set({
+          diffGeneration: 1,
+          diffPercent: 1,
+          pixelMismatchCount: 10,
+          baselineSource: "this_branch",
+          vlmDescription: "kept description",
+          diffImageKey: "k-kept",
+        })
+        .where(eq(screenshots.id, kept));
+      await db
+        .update(screenshots)
+        .set({
+          diffGeneration: 1,
+          diffPercent: 2,
+          pixelMismatchCount: 20,
+          diffImageKey: "k-other",
+        })
+        .where(eq(screenshots.id, other));
+      // The failing step had the WORST earlier result, with every result
+      // column set; it is then queued again (version 2) and its diff fails.
+      await db
+        .update(screenshots)
+        .set({
+          diffGeneration: 2,
+          diffPercent: 7.5,
+          pixelMismatchCount: 750,
+          baselineSource: "parent_pr",
+          vlmDescription: "stale description",
+          diffSignature: "v1:stale",
+          diffImageKey: "k-failing",
+          ruleResolved: true,
+        })
+        .where(eq(screenshots.id, failing));
+      await addRegion(runId, failing);
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(tx, {
+          runId,
+          stepId: failing,
+          generation: 2,
+          code: "engine_error",
+        }),
+      );
+      expect(result.applied).toBe(true);
+
+      // No result column of the failed step describes its image any more.
+      const row = await stepRow(failing);
+      expect(row.verdict).toBe("unresolved");
+      expect(row.diffFailedAt).toBeInstanceOf(Date);
+      expect(row.diffPercent).toBeNull();
+      expect(row.pixelMismatchCount).toBeNull();
+      expect(row.baselineSource).toBeNull();
+      expect(row.vlmDescription).toBeNull();
+      expect(row.diffSignature).toBeNull();
+      expect(row.diffImageKey).toBeNull();
+      expect(row.ruleResolved).toBe(false);
+
+      // The run's totals fall back to the other steps.
+      const [run] = await db
+        .select({
+          diffPercent: testRuns.diffPercent,
+          pixels: testRuns.pixelMisMatchCount,
+          diffName: testRuns.diffName,
+          baselineSource: testRuns.baselineSource,
+          vlm: testRuns.vlmDescription,
+          resolutionSource: testRuns.resolutionSource,
+          primarySignature: testRuns.primarySignature,
+        })
+        .from(testRuns)
+        .where(eq(testRuns.id, runId));
+      expect(run).toEqual({
+        diffPercent: 2,
+        pixels: 30,
+        diffName: "k-other",
+        baselineSource: "this_branch",
+        vlm: "kept description",
+        resolutionSource: null,
+        primarySignature: null,
+      });
+    });
+
     it("is a no-op on a newer version", async () => {
       const { runId, steps } = await seedRun(2, { verdict: "passed" });
       const stepId = steps[0]!;

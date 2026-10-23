@@ -37,6 +37,9 @@ interface StepSeed {
   vlm?: string | null;
   ruleResolved?: boolean;
   signature?: string | null;
+  /** The step's version. Defaults to 1: a step the per-step pipeline diffed.
+   *  0 is a step never diffed by it (a legacy row). */
+  generation?: number;
   /** Capture order: the step's `created_at` is `base + at` seconds. Defaults
    *  to its position in the array. */
   at?: number;
@@ -116,6 +119,7 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunTotals", () => {
           vlmDescription: s.vlm ?? null,
           ruleResolved: s.ruleResolved ?? false,
           diffSignature: s.signature ?? null,
+          diffGeneration: s.generation ?? 1,
           createdAt: new Date(Date.UTC(2026, 9, 23, 12, 0, s.at ?? i)),
         })
         .returning();
@@ -287,9 +291,14 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunTotals", () => {
   });
 
   describe("diff_name", () => {
-    it("keeps the stored diff_name when no step has a diff_image_key (legacy)", async () => {
+    it("keeps the stored diff_name on a legacy run (every diffed step still at version 0)", async () => {
       const runId = await seedRun(
-        [{ diffPercent: 3, pixels: 30, key: null }, { diffPercent: 1 }],
+        [
+          { diffPercent: 3, pixels: 30, key: null, generation: 0 },
+          { diffPercent: 1, generation: 0 },
+          // Not diffed yet: it has no verdict, so its version doesn't count.
+          { verdict: null, generation: 1 },
+        ],
         { diffName: "legacy/worst.png" },
       );
       await recompute(runId);
@@ -298,6 +307,19 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunTotals", () => {
       expect(t.diffName).toBe("legacy/worst.png");
       // Everything else is still recomputed.
       expect(t.diffPercent).toBe(3);
+    });
+
+    it("is NULL once a step was diffed by the per-step pipeline and no step has an image", async () => {
+      const runId = await seedRun(
+        [
+          { diffPercent: 3, key: null, generation: 0 },
+          { diffPercent: 1, key: null, generation: 1 },
+        ],
+        { diffName: "stale.png" },
+      );
+      await recompute(runId);
+
+      expect((await totals(runId)).diffName).toBeNull();
     });
 
     it("is NULL when the max step has no image but another step does", async () => {
@@ -320,6 +342,21 @@ describe.runIf(RUN_INTEGRATION)("recomputeRunTotals", () => {
       await recompute(runId);
 
       expect((await totals(runId)).diffName).toBe("k-new");
+    });
+
+    it("a legacy step next to a re-diffed one: the computed value wins", async () => {
+      const runId = await seedRun(
+        [
+          { diffPercent: 9, key: null, generation: 0 },
+          { diffPercent: 2, key: "k-rediffed", generation: 2 },
+        ],
+        { diffName: "legacy/worst.png" },
+      );
+      await recompute(runId);
+
+      const t = await totals(runId);
+      expect(t.diffName).toBeNull();
+      expect(t.diffPercent).toBe(9);
     });
   });
 

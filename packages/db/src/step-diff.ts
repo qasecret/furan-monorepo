@@ -70,13 +70,12 @@ export async function bumpStepGenerations(
  *  - the step gets `verdict = 'unresolved'` (the existing "needs attention"
  *    verdict, so the rollup, the pending filters and the review queue treat it
  *    as such), `verdict_at`, `diff_failed_at` and the reason `diff_error`;
- *  - its regions are deleted: they no longer describe its image;
+ *  - its regions and its result columns (`diff_percent`,
+ *    `pixel_mismatch_count`, `baseline_source`, `vlm_description`,
+ *    `diff_signature`, `diff_image_key`, `rule_resolved`) are cleared: they no
+ *    longer describe its image, so the step adds nothing to the run totals;
  *  - the run totals and then the run status are recomputed, and the status
  *    change is returned for the caller's events.
- *
- * The step's other result columns (`diff_percent`, `diff_image_key`, ...) are
- * left as they were: a failed re-diff keeps the result it had until a new one
- * replaces it.
  */
 export async function markStepDiffFailed(
   tx: Tx,
@@ -113,6 +112,15 @@ export async function markStepDiffFailed(
       verdictAt: sql`clock_timestamp()`,
       diffFailedAt: sql`now()`,
       diffError: code,
+      // Like its regions, the step's earlier result no longer describes its
+      // image: clear it, so the failed step adds nothing to the run totals.
+      diffPercent: null,
+      pixelMismatchCount: null,
+      baselineSource: null,
+      vlmDescription: null,
+      diffSignature: null,
+      diffImageKey: null,
+      ruleResolved: false,
     })
     .where(eq(screenshots.id, stepId));
   await tx.delete(diffRegions).where(eq(diffRegions.screenshotId, stepId));

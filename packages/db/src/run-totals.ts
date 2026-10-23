@@ -40,6 +40,7 @@ interface StepRow {
   vlmDescription: string | null;
   ruleResolved: boolean;
   diffSignature: string | null;
+  diffGeneration: number;
   severities: string[] | null;
 }
 
@@ -90,10 +91,16 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
     null,
   );
 
-  // Legacy runs (diffed before 0041) have no per-step image; their stored
-  // `diff_name` is the only one the viewer's legacy fallback, the storage
-  // proxy's ownership probe and the orphan reconcile can use.
-  const anyImage = steps.some((s) => s.diffImageKey !== null);
+  // A legacy run, never diffed by the per-step pipeline, has no per-step
+  // image (they date from before 0041): its stored `diff_name` is the only one
+  // the viewer's legacy fallback, the storage proxy's ownership probe and the
+  // orphan reconcile can use. The pipeline bumps a step's version when it
+  // queues it, so every step that has a verdict still at version 0 means no
+  // step of the run was diffed by it. Keyed on the version, not on whether an
+  // image exists: a run re-diffed to "no image anywhere" must clear its name.
+  const legacy = steps.every(
+    (s) => s.verdict === null || s.diffGeneration === 0,
+  );
 
   return {
     diffPercent: worst ? worst.diffPercent : null,
@@ -101,7 +108,7 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
       compared.length > 0
         ? compared.reduce((sum, s) => sum + (s.pixelMismatchCount ?? 0), 0)
         : null,
-    diffName: anyImage ? (worst?.diffImageKey ?? null) : undefined,
+    diffName: legacy ? undefined : (worst?.diffImageKey ?? null),
     baselineSource: worstWithSource?.baselineSource ?? null,
     vlmDescription:
       steps.find((s) => s.vlmDescription !== null && s.vlmDescription !== "")
@@ -130,8 +137,9 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
  * | `diff_percent`         | max over compared steps; NULL if none               |
  * | `pixel_mis_match_count`| sum over the same steps; NULL if none               |
  * | `diff_name`            | `diff_image_key` of the max step (ties: first); NULL|
- * |                        | if it has none. Kept as stored when NO step of the  |
- * |                        | run has an image (legacy runs).                     |
+ * |                        | if it has none. Kept as stored on a legacy run: one |
+ * |                        | where every step with a verdict is still at version |
+ * |                        | 0 (never diffed by the per-step pipeline).          |
  * | `baseline_source`      | source of the max step among steps with a source    |
  * | `vlm_description`      | the first non-empty one                             |
  * | `resolution_source`    | `rule` iff no step is `unresolved` and one step was |
@@ -193,6 +201,7 @@ export async function recomputeRunTotals(tx: Tx, runId: string): Promise<void> {
       vlmDescription: screenshots.vlmDescription,
       ruleResolved: screenshots.ruleResolved,
       diffSignature: screenshots.diffSignature,
+      diffGeneration: screenshots.diffGeneration,
       severities: severities.severities,
     })
     .from(screenshots)
