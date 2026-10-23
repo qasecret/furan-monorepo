@@ -18,6 +18,25 @@ export type { BaselineSource, GitRefs } from "./baseline.js";
 export { loadRollupInputs, recomputeRunStatus } from "./review-status.js";
 export type { Tx } from "./review-status.js";
 
+// Per-step diff pipeline (spec 2026-10-23): queue a step for a diff by bumping
+// its version, fail ONE step without aborting its run, and rebuild the run's
+// totals from its steps' own columns. All three take the caller's transaction
+// and follow the lock order run -> step -> the step's variation.
+export {
+  bumpStepGenerations,
+  markStepDiffFailed,
+  DIFF_ERROR_CODES,
+} from "./step-diff.js";
+export type { DiffErrorCode } from "./step-diff.js";
+export {
+  recomputeRunTotals,
+  PRIMARY_SIGNATURE_EXCLUDED_SOURCES,
+} from "./run-totals.js";
+
+// A run's primary signature (ADR-043 §4.2), folded from its steps' signatures.
+export { computePrimarySignature } from "./primary-signature.js";
+export type { CheckpointSignatureInput } from "./primary-signature.js";
+
 // Canonical branch-agnostic variation identity (ADR-054) — shared by every
 // cross-branch sibling-matcher so they can't drift onto a stale column subset.
 export { variationIdentityWhere } from "./variation-identity.js";

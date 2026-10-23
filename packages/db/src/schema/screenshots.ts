@@ -1,16 +1,20 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
-import { checkpointVerdictEnum } from "./enums.js";
+import { baselineSourceEnum, checkpointVerdictEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testRuns } from "./test_runs.js";
 import { testVariations } from "./test_variations.js";
@@ -87,6 +91,34 @@ export const screenshots = pgTable(
     // (`verdict`, `has_active_decision`), which keeps the planner's estimate of
     // the open steps right. They live only in migration 0040's SQL.
     hasActiveDecision: boolean("has_active_decision").notNull().default(false),
+    // Migration 0042: the per-step diff pipeline (spec 2026-10-23 §2). A diff
+    // job is one step at one version; the version guard in the diff commit
+    // turns a stale job into a no-op. None of these columns holds a storage
+    // key.
+    //
+    // The step's version: bumped every time the step is queued for a diff
+    // (`bumpStepGenerations`). A job whose generation no longer matches is
+    // stale and writes nothing.
+    diffGeneration: integer("diff_generation").notNull().default(0),
+    // When the current version was queued; the reconciler's stuck clock.
+    diffQueuedAt: timestamp("diff_queued_at", { withTimezone: true }),
+    // How many times the reconciler re-queued the current version. Reset to 0
+    // by every new version.
+    diffRequeues: smallint("diff_requeues").notNull().default(0),
+    // The step's own result, written with its verdict. NULL = the step had no
+    // baseline pair (or predates 0042). `recomputeRunTotals` folds them into
+    // the run's totals.
+    diffPercent: doublePrecision("diff_percent"),
+    pixelMismatchCount: integer("pixel_mismatch_count"),
+    baselineSource: baselineSourceEnum("baseline_source"),
+    vlmDescription: text("vlm_description"),
+    // At least one of the step's regions was auto-approved by a rule.
+    ruleResolved: boolean("rule_resolved").notNull().default(false),
+    // Set when the step's diff failed permanently (its verdict is then
+    // `unresolved`). `diff_error` is one of the fixed `DiffErrorCode`s, never a
+    // message or a stack trace.
+    diffFailedAt: timestamp("diff_failed_at", { withTimezone: true }),
+    diffError: varchar("diff_error", { length: 64 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -122,5 +154,11 @@ export const screenshots = pgTable(
     undiffedIdx: index("screenshots_undiffed_idx")
       .on(t.runId)
       .where(sql`${t.verdict} IS NULL`),
+    // Migration 0042: the steps still waiting for a diff result, oldest queue
+    // time first. The reconciler's scan reads only this index, so it stays
+    // proportional to the work in flight, not to the project's history.
+    stuckIdx: index("screenshots_stuck_idx")
+      .on(t.diffQueuedAt)
+      .where(sql`${t.verdict} IS NULL AND ${t.diffFailedAt} IS NULL`),
   }),
 );
