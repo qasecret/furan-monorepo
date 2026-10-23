@@ -33,8 +33,17 @@
 --
 -- Additive and idempotent: every column has no default or a constant one (a
 -- metadata-only change on Postgres 11+, no rewrite of existing rows), and
--- re-applying this file is a no-op. The index build holds SHARE on
--- `screenshots` (writes wait, reads do not) while it runs.
+-- re-applying this file is a no-op.
+--
+-- Locks, by runner:
+-- - drizzle-kit (`drizzle-kit migrate`: every pending file in ONE
+--   transaction): `ADD COLUMN`'s ACCESS EXCLUSIVE lock on `screenshots` is
+--   held until commit, through the index build below (one scan of the table),
+--   so reads and writes of `screenshots` both wait for the whole migration.
+-- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
+--   statement its own transaction): each `ADD COLUMN` is a brief metadata
+--   change; the `CREATE INDEX` holds SHARE on `screenshots` (writes wait,
+--   reads do not) while it builds.
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_generation" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_queued_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_requeues" smallint DEFAULT 0 NOT NULL;--> statement-breakpoint

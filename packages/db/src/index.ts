@@ -21,7 +21,10 @@ export type { Tx } from "./review-status.js";
 // Per-step diff pipeline (spec 2026-10-23): queue a step for a diff by bumping
 // its version, fail ONE step without aborting its run, and rebuild the run's
 // totals from its steps' own columns. All three take the caller's transaction
-// and follow the lock order run -> step -> the step's variation.
+// and lock the run first (`FOR NO KEY UPDATE`, a no-op when already held), so
+// a caller must not have locked or written one of the run's variations or
+// steps before calling: the pipeline's lock order is run -> step -> the
+// step's variation.
 export {
   bumpStepGenerations,
   markStepDiffFailed,

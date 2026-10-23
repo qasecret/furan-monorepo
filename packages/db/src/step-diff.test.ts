@@ -134,6 +134,25 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
     return rows.length;
   }
 
+  /** Polls (capped) until some backend is waiting on a lock held by backend
+   *  `blockerPid`: a positive "B is blocked on A" signal. */
+  async function waitForLockWaiter(
+    blockerPid: number,
+    capMs = 5_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + capMs;
+    while (Date.now() < deadline) {
+      const rows = await db.execute<{ n: number }>(sql`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock'
+          AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+      `);
+      if (rows[0]!.n > 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
+  }
+
   describe("bumpStepGenerations", () => {
     it("bumps only the named steps of the run", async () => {
       const { runId, steps } = await seedRun(3);
@@ -181,6 +200,60 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect(second).toEqual([{ id: steps[0]!, generation: 2 }]);
     });
 
+    it("takes the run lock before it touches a step", async () => {
+      const { runId, steps } = await seedRun(2);
+
+      // Transaction A holds the run row, as a diff commit or a status
+      // recompute does.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: (pid: number) => void;
+      const pidOfA = new Promise<number>((resolve) => (started = resolve));
+      const a = db.transaction(async (tx) => {
+        const rows = await tx.execute<{ pid: number }>(
+          sql`SELECT pg_backend_pid() AS pid`,
+        );
+        await tx.execute(
+          sql`SELECT id FROM test_runs WHERE id = ${runId} FOR NO KEY UPDATE`,
+        );
+        started(rows[0]!.pid);
+        await gate;
+      });
+
+      // Transaction B queues the steps: it must wait for the RUN, not only for
+      // the step rows, so it can never hold a step while wanting the run.
+      const blockerPid = await pidOfA;
+      const b = db.transaction((tx) => bumpStepGenerations(tx, runId, steps));
+      try {
+        expect(await waitForLockWaiter(blockerPid)).toBe(true);
+      } finally {
+        release();
+        await a;
+      }
+
+      expect((await b).map((x) => x.generation)).toEqual([1, 1]);
+    });
+
+    it("works inside a transaction that already holds the run", async () => {
+      const { runId, steps } = await seedRun(1);
+      const bumped = await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT id FROM test_runs WHERE id = ${runId} FOR NO KEY UPDATE`,
+        );
+        return bumpStepGenerations(tx, runId, steps);
+      });
+      expect(bumped).toEqual([{ id: steps[0]!, generation: 1 }]);
+    });
+
+    it("bumps nothing for a run that does not exist", async () => {
+      const { steps } = await seedRun(1);
+      const bumped = await db.transaction((tx) =>
+        bumpStepGenerations(tx, randomUUID(), steps),
+      );
+      expect(bumped).toEqual([]);
+      expect((await stepRow(steps[0]!)).diffGeneration).toBe(0);
+    });
+
     it("returns nothing, and writes nothing, for an empty id list", async () => {
       const { runId, steps } = await seedRun(1);
       const bumped = await db.transaction((tx) =>
@@ -190,25 +263,6 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect((await stepRow(steps[0]!)).diffGeneration).toBe(0);
     });
   });
-
-  /** Polls (capped) until some backend is waiting on a lock held by backend
-   *  `blockerPid`: a positive "B is blocked on A" signal. */
-  async function waitForLockWaiter(
-    blockerPid: number,
-    capMs = 5_000,
-  ): Promise<boolean> {
-    const deadline = Date.now() + capMs;
-    while (Date.now() < deadline) {
-      const rows = await db.execute<{ n: number }>(sql`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event_type = 'Lock'
-          AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
-      `);
-      if (rows[0]!.n > 0) return true;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    return false;
-  }
 
   describe("markStepDiffFailed", () => {
     it("fails the step and the run becomes unresolved", async () => {
@@ -432,9 +486,12 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
           code: "timeout",
         }),
       );
-      expect(await waitForLockWaiter(blockerPid)).toBe(true);
-      release();
-      await a;
+      try {
+        expect(await waitForLockWaiter(blockerPid)).toBe(true);
+      } finally {
+        release();
+        await a;
+      }
 
       expect(await b).toEqual({ applied: false });
       const row = await stepRow(stepId);
@@ -474,6 +531,73 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
         .from(testRuns)
         .where(eq(testRuns.id, runId));
       expect(run!.status).toBe("unresolved");
+    });
+
+    it("with onlyIfUndiffed, is a no-op on a step that already has a verdict", async () => {
+      const { runId, steps } = await seedRun(2, { verdict: "passed" });
+      const stepId = steps[0]!;
+      // A commit landed at the same version between the caller's scan and now.
+      await db
+        .update(screenshots)
+        .set({ diffGeneration: 1, diffPercent: 1.5, diffImageKey: "k-done" })
+        .where(eq(screenshots.id, stepId));
+      await addRegion(runId, stepId);
+      const before = await stepRow(stepId);
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(
+          tx,
+          { runId, stepId, generation: 1, code: "timeout" },
+          { onlyIfUndiffed: true },
+        ),
+      );
+
+      expect(result).toEqual({ applied: false });
+      expect(await stepRow(stepId)).toEqual(before);
+      expect(await regionCount(stepId)).toBe(1);
+    });
+
+    it("with onlyIfUndiffed, still fails a step that has no verdict", async () => {
+      const { runId, steps } = await seedRun(1);
+      const stepId = steps[0]!;
+      await db
+        .update(screenshots)
+        .set({ diffGeneration: 1 })
+        .where(eq(screenshots.id, stepId));
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(
+          tx,
+          { runId, stepId, generation: 1, code: "timeout" },
+          { onlyIfUndiffed: true },
+        ),
+      );
+
+      expect(result.applied).toBe(true);
+      const row = await stepRow(stepId);
+      expect(row.verdict).toBe("unresolved");
+      expect(row.diffError).toBe("timeout");
+    });
+
+    it("without the option, fails a step even when it has a verdict", async () => {
+      const { runId, steps } = await seedRun(1, { verdict: "passed" });
+      const stepId = steps[0]!;
+      await db
+        .update(screenshots)
+        .set({ diffGeneration: 1 })
+        .where(eq(screenshots.id, stepId));
+
+      const result = await db.transaction((tx) =>
+        markStepDiffFailed(tx, {
+          runId,
+          stepId,
+          generation: 1,
+          code: "internal",
+        }),
+      );
+
+      expect(result.applied).toBe(true);
+      expect((await stepRow(stepId)).diffError).toBe("internal");
     });
 
     it("is a no-op when the step is gone or belongs to another run", async () => {

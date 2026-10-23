@@ -36,6 +36,16 @@ export type DiffErrorCode = (typeof DIFF_ERROR_CODES)[number];
  * transaction commits. A version is never reused, so a job queued for an
  * earlier one is stale the moment this commits. Ids that are not steps of
  * `runId` are ignored.
+ *
+ * Locks: the run row first (`FOR NO KEY UPDATE`, a no-op when the caller
+ * already holds it), then the bumped step rows through the UPDATE. That is the
+ * pipeline's order, run -> step -> the step's variation, which a diff commit
+ * and `markStepDiffFailed` also follow. So call it BEFORE locking or writing
+ * any of the run's variations (a caller that wrote a variation first would
+ * hold variation -> wait run -> step while a diff commit holds run -> step ->
+ * wait that variation: a deadlock), and from a transaction that holds no step
+ * of the run (a later `recomputeRunStatus` then finds the run already locked,
+ * instead of locking step -> run). An empty `stepIds` locks nothing.
  */
 export async function bumpStepGenerations(
   tx: Tx,
@@ -43,6 +53,14 @@ export async function bumpStepGenerations(
   stepIds: readonly string[],
 ): Promise<Array<{ id: string; generation: number }>> {
   if (stepIds.length === 0) return [];
+
+  const [run] = await tx
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .for("no key update");
+  if (!run) return [];
+
   return tx
     .update(screenshots)
     .set({
@@ -66,7 +84,10 @@ export async function bumpStepGenerations(
  *
  * If the step's version is no longer `generation`, a newer job owns the step
  * and nothing is written (`applied: false`); so too when the run or the step
- * is gone. Otherwise, in the caller's transaction:
+ * is gone. With `options.onlyIfUndiffed` (default false) it also requires the
+ * step to have no verdict yet, so a caller that decided from an earlier scan
+ * (the reconciler giving up on a step) can never overwrite a result that
+ * committed in between. Otherwise, in the caller's transaction:
  *  - the step gets `verdict = 'unresolved'` (the existing "needs attention"
  *    verdict, so the rollup, the pending filters and the review queue treat it
  *    as such), `verdict_at`, `diff_failed_at` and the reason `diff_error`;
@@ -85,6 +106,7 @@ export async function markStepDiffFailed(
     generation: number;
     code: DiffErrorCode;
   },
+  options: { onlyIfUndiffed?: boolean } = {},
 ): Promise<{
   applied: boolean;
   rollup?: { before: RunStatus; after: RunStatus };
@@ -99,11 +121,17 @@ export async function markStepDiffFailed(
   if (!run) return { applied: false };
 
   const [step] = await tx
-    .select({ generation: screenshots.diffGeneration })
+    .select({
+      generation: screenshots.diffGeneration,
+      verdict: screenshots.verdict,
+    })
     .from(screenshots)
     .where(and(eq(screenshots.id, stepId), eq(screenshots.runId, runId)))
     .for("update");
   if (!step || step.generation !== generation) return { applied: false };
+  if (options.onlyIfUndiffed && step.verdict !== null) {
+    return { applied: false };
+  }
 
   await tx
     .update(screenshots)
