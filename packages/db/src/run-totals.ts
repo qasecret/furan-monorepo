@@ -1,6 +1,7 @@
 import { severityRank, type Severity } from "@furan/shared-types";
 import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 
+import type { DB } from "./client.js";
 import { computePrimarySignature } from "./primary-signature.js";
 import type { Tx } from "./review-status.js";
 import { diffRegions, screenshots, testRuns } from "./schema/index.js";
@@ -171,9 +172,17 @@ function foldRunTotals(steps: readonly StepRow[]): RunTotals {
  * Writes nothing when every total is already right, so a burst of per-step
  * commits does not rewrite the hot run row for no reason.
  *
+ * `tx` is the caller's transaction: a Drizzle transaction, or the scoped
+ * handle `withProjectScope` passes (typed `DB`), as `recomputeRunStatus`
+ * accepts. Called on a bare pool connection it would lock nothing past its
+ * first statement.
+ *
  * @throws `run_not_found:<runId>` when the run does not exist.
  */
-export async function recomputeRunTotals(tx: Tx, runId: string): Promise<void> {
+export async function recomputeRunTotals(
+  tx: DB | Tx,
+  runId: string,
+): Promise<void> {
   const [run] = await tx
     .select({
       diffPercent: testRuns.diffPercent,
