@@ -4,6 +4,7 @@ import {
   eq,
   inArray,
   isNull,
+  markStepDiffFailed,
   ne,
   projects,
   screenshots,
@@ -11,6 +12,8 @@ import {
   testVariations,
   withProjectScope,
   type DB,
+  type DiffErrorCode,
+  type RunStatus,
 } from "@furan/db";
 import type { DiffJob } from "@furan/queue";
 import {
@@ -25,6 +28,7 @@ import type { Redis } from "ioredis";
 import { z } from "zod";
 
 import { commitStep, persistRuleApplications } from "./commit-step.js";
+import { classifyDiffError } from "./diff-error.js";
 import type { DiffMetrics } from "./diff-metrics.js";
 import { diffStep, type StepContext, type StepResult } from "./diff-step.js";
 import { splitLegacyJob, type DiffJobQueue } from "./legacy-split.js";
@@ -56,7 +60,8 @@ export interface HandlerDeps {
 export interface DiffAttempt {
   /**
    * True when no retry follows if this attempt throws (`isFinalAttempt` from
-   * `@furan/queue`). Only the final attempt marks the run `aborted`.
+   * `@furan/queue`). Only the final attempt writes a failure: it fails the
+   * step (a step job) or marks the run `aborted` (an old whole-run job).
    */
   finalAttempt: boolean;
 }
@@ -123,24 +128,31 @@ async function publishProjectRunUpdate(
  *   per-step worker, is split into one step job per step on `deps.queue`
  *   (`splitLegacyJob`). It diffs nothing, so it reports `{ checkpoints: 0 }`.
  *
- * A failure is handled as before: a non-final attempt rethrows for BullMQ to
- * retry; the final attempt marks the run `aborted` unless the step's commit
- * already landed.
+ * A failure rethrows for BullMQ. A non-final attempt writes nothing, since a
+ * retry follows. On the final attempt a step job fails ITS step alone (the step
+ * becomes `unresolved` with a reason code, `failStep`; the run is never
+ * aborted for it), unless the step's commit already landed. Only an old
+ * whole-run job still marks the whole run `aborted`.
  */
 export async function handleDiffJob(
   data: DiffJob,
   logger: Logger,
   deps: HandlerDeps,
   // Callers that don't track retries (CLIs, tests) get the safe default: a
-  // failure is terminal and the run is marked `aborted`.
+  // failure is terminal (the step is failed, or the run is marked `aborted`).
   attempt: DiffAttempt = { finalAttempt: true },
 ): Promise<DiffJobOutcome> {
+  const t0 = Date.now();
+  const { screenshotId, generation } = data;
+  const stepJob: StepJob | undefined =
+    screenshotId !== undefined && generation !== undefined
+      ? { ...data, screenshotId, generation }
+      : undefined;
   // Set by the step job the moment its commit (the step's verdict + the
   // recomputed totals and status) has landed.
   const progress: DiffProgress = { coreCommitted: false };
   try {
-    const { screenshotId, generation } = data;
-    if (screenshotId === undefined || generation === undefined) {
+    if (!stepJob) {
       const jobs = await splitLegacyJob(deps, data, deps.queue);
       logger.info(
         { runId: data.runId, projectId: data.projectId, jobs },
@@ -148,12 +160,7 @@ export async function handleDiffJob(
       );
       return { checkpoints: 0 };
     }
-    return await handleStepJob(
-      { ...data, screenshotId, generation },
-      logger,
-      deps,
-      progress,
-    );
+    return await handleStepJob(stepJob, logger, deps, progress);
   } catch (err) {
     // Always log the primary error first. BullMQ stashes it in the job's
     // failedReason but the worker's own structured log was previously
@@ -161,40 +168,49 @@ export async function handleDiffJob(
     // GLIBC mismatch) would aborted-bucket every run with zero clue in
     // dashboards or stdout. The secondary catches below only log when
     // their own write fails, so this is the only place the actual cause
-    // surfaces in the worker log stream. A failure BullMQ will retry is a
-    // warning; only the failure that ends the job is an error.
+    // surfaces in the worker log stream. The full error is logged here and
+    // never stored: a failed step keeps only the `code`. A failure BullMQ
+    // will retry is a warning; only the failure that ends the job is an error.
+    const code = stepJob ? classifyDiffError(err) : undefined;
     const failure = {
       err,
       runId: data.runId,
       projectId: data.projectId,
       screenshotId: data.screenshotId,
+      code,
       finalAttempt: attempt.finalAttempt,
       coreCommitted: progress.coreCommitted,
     };
     if (attempt.finalAttempt) logger.error(failure, "diff_job_failed");
     else logger.warn(failure, "diff_job_failed");
-    // Ruling R9: BullMQ retries a non-final attempt, so leave the run as it is
-    // (`running`) and let the retry derive its status. `aborted` is a
-    // lifecycle state `recomputeRunStatus` keeps, so writing it here would
-    // stick even after the retry succeeds. Rethrow so BullMQ schedules it.
+    // Ruling R9: BullMQ retries a non-final attempt, so leave the step and the
+    // run as they are and let the retry derive them. A failure written now
+    // would stick even after the retry succeeds (`aborted` is a lifecycle
+    // state `recomputeRunStatus` keeps). Rethrow so BullMQ schedules it.
     if (!attempt.finalAttempt) throw err;
-    // Ruling R11: once the step's commit has landed, the run holds a valid
-    // derived status (and the step's verdict, regions and baseline). A later
-    // failure (a Redis publish, say) must not replace it with `aborted`, which
-    // `recomputeRunStatus` would then keep for good. It is logged above;
-    // rethrow so the job still fails.
+    // Ruling R11: once the step's commit has landed, the step holds its verdict
+    // and the run a valid derived status. A later failure (a Redis publish,
+    // say) must neither fail the step nor replace that status. It is logged
+    // above; rethrow so the job still fails.
     if (progress.coreCommitted) throw err;
-    // Final attempt: best-effort terminal status write so an aborted run does
-    // not hang in `running` indefinitely. Per spec §3.2 worker exceptions land
-    // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
-    // own try/catch so a status-write failure does not mask the original
-    // error — the worker's error visibility is unchanged. `abortedByDiff`
-    // marks it as the pipeline's abort, which a later commit that leaves every
-    // step with a verdict heals (Ruling R46, `healPipelineAbort`). A run that
-    // is already `aborted` is left exactly as it is (R50): an SDK or capture
-    // abort is final, and re-flagging it as the pipeline's would let a later
-    // diff heal it (a CI false pass); a pipeline abort already carries the
-    // flag.
+    // Ruling R22: a step job never aborts its run. The step fails alone; the
+    // job still fails (rethrown), so its outcome and the dead-letter signal
+    // are what they were.
+    if (stepJob && code) {
+      await failStep(deps, logger, stepJob, code, t0);
+      throw err;
+    }
+    // Final attempt of an old whole-run job: best-effort terminal status write
+    // so an aborted run does not hang in `running` indefinitely. Per spec §3.2
+    // worker exceptions land as `aborted` (distinct from reviewer-rejected
+    // `failed`). Wrap in its own try/catch so a status-write failure does not
+    // mask the original error — the worker's error visibility is unchanged.
+    // `abortedByDiff` marks it as the pipeline's abort, which a later commit
+    // that leaves every step with a verdict heals (Ruling R46,
+    // `healPipelineAbort`). A run that is already `aborted` is left exactly as
+    // it is (R50): an SDK or capture abort is final, and re-flagging it as the
+    // pipeline's would let a later diff heal it (a CI false pass); a pipeline
+    // abort already carries the flag.
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
@@ -239,6 +255,86 @@ export async function handleDiffJob(
       logger,
     );
     throw err;
+  }
+}
+
+/**
+ * A step job's final attempt failed before its commit landed (Ruling R22): the
+ * step fails alone, in a fresh transaction (`markStepDiffFailed` takes the run
+ * and step locks itself). With the reason `code`, it becomes `unresolved`, its
+ * result and regions are cleared and the run's totals and status are
+ * recomputed. A newer version of the step (a re-diff queued while this job ran)
+ * owns it: nothing is written or published.
+ *
+ * Best-effort: if the write itself fails (the database is down) it is logged
+ * and the step keeps no verdict, for the reconciler to re-queue; the caller
+ * rethrows the job's own error either way. When it lands, the same interim
+ * events a committed step job publishes follow (`publishInterimStepEvents`).
+ */
+async function failStep(
+  deps: HandlerDeps,
+  logger: Logger,
+  job: StepJob,
+  code: DiffErrorCode,
+  t0: number,
+): Promise<void> {
+  let marked: Awaited<ReturnType<typeof markStepDiffFailed>>;
+  try {
+    marked = await withProjectScope(deps.db, job.projectId, (tx) =>
+      markStepDiffFailed(tx, {
+        runId: job.runId,
+        stepId: job.screenshotId,
+        generation: job.generation,
+        code,
+      }),
+    );
+  } catch (markErr) {
+    logger.error(
+      { err: markErr, runId: job.runId, screenshotId: job.screenshotId },
+      "failed_to_mark_step_failed",
+    );
+    return;
+  }
+  if (!marked.applied || !marked.rollup) {
+    logger.info(
+      {
+        runId: job.runId,
+        screenshotId: job.screenshotId,
+        generation: job.generation,
+      },
+      "diff_step_stale",
+    );
+    return;
+  }
+  // Like the aborted run's, best-effort: the original error stays the signal.
+  try {
+    const run = await deps.db.query.testRuns.findFirst({
+      where: eq(testRuns.id, job.runId),
+      columns: { branchName: true, buildId: true },
+    });
+    await publishInterimStepEvents(
+      deps,
+      logger,
+      job,
+      run ?? { branchName: null, buildId: null },
+      {
+        durationMs: Date.now() - t0,
+        passed: false,
+        diffPercent: 0,
+        ranTiers: [],
+        autoApproved: false,
+        firstBaseline: false,
+        numChanges: 0,
+        resolutionSource: null,
+        rulesSummary: null,
+        status: marked.rollup.after,
+      },
+    );
+  } catch (publishErr) {
+    logger.error(
+      { err: publishErr, runId: job.runId, screenshotId: job.screenshotId },
+      "failed_to_publish_failed_step_events",
+    );
   }
 }
 
@@ -463,7 +559,7 @@ export async function handleStepJob(
     return STALE_OUTCOME;
   }
   // `commitStep` resolves only after its transaction committed. A failure from
-  // here on must not mark the run `aborted` (see `handleDiffJob`).
+  // here on must neither fail the step nor abort the run (see `handleDiffJob`).
   progress.coreCommitted = true;
 
   // 5. After the commit: the rule metrics (a stale job records none), the
@@ -487,53 +583,19 @@ export async function handleStepJob(
   const durationMs = Date.now() - t0;
   const failed = result.verdict === "unresolved";
   const diffPercent = result.diffPercent ?? 0;
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({ type: "diff.started", runId: job.runId }),
-  );
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({
-      type: "diff.completed",
-      runId: job.runId,
-      passed: !failed,
-      diffPercent,
-      ranTiers: result.ranTiers,
-      viewportCount: 1,
-      durationMs,
-      autoApproved: result.autoApprove !== null,
-      firstBaseline: result.firstBaseline,
-    }),
-  );
-  // T9: the `run.completed` event the integrations subscriber fans out to
-  // GitHub (T8) + outbound webhooks (T9). GitHub-side fields (installationId,
-  // repoOwner, repoName, sha, prNumber) are intentionally omitted; both
-  // consumers are defensive about missing fields.
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({
-      type: "run.completed",
-      runId: job.runId,
-      projectId: job.projectId,
-      // The derived status after this commit (the recompute's `after`).
-      status: commit.rollup.after,
-      diffPercent,
-      branchName: run.branchName,
-      numChanges: result.regions.length,
-      resolutionSource: !failed && result.ruleResolved ? "rule" : null,
-      rulesSummary,
-    }),
-  );
-  await publishProjectRunUpdate(
-    deps,
-    {
-      projectId: job.projectId,
-      runId: job.runId,
-      status: commit.rollup.after,
-      buildId: run.buildId,
-    },
-    logger,
-  );
+  await publishInterimStepEvents(deps, logger, job, run, {
+    durationMs,
+    passed: !failed,
+    diffPercent,
+    ranTiers: result.ranTiers,
+    autoApproved: result.autoApprove !== null,
+    firstBaseline: result.firstBaseline,
+    numChanges: result.regions.length,
+    resolutionSource: !failed && result.ruleResolved ? "rule" : null,
+    rulesSummary,
+    // The derived status after this commit (the recompute's `after`).
+    status: commit.rollup.after,
+  });
   logger.info(
     {
       runId: job.runId,
@@ -552,6 +614,84 @@ export async function handleStepJob(
     "diff_completed",
   );
   return { checkpoints: 1 };
+}
+
+/** What the interim run events say about the step a job just settled. */
+interface StepEventFacts {
+  durationMs: number;
+  /** False for a step that needs attention: `unresolved`, or failed. */
+  passed: boolean;
+  diffPercent: number;
+  ranTiers: string[];
+  autoApproved: boolean;
+  firstBaseline: boolean;
+  numChanges: number;
+  resolutionSource: "rule" | null;
+  rulesSummary: ReturnType<typeof summarizeDecisions> | null;
+  /** The run's status after the step settled (the recompute's `after`). */
+  status: RunStatus;
+}
+
+/**
+ * The run events a step job publishes once its step has settled, whether it
+ * committed a result or failed for good: `diff.started` and `diff.completed`
+ * for the diff viewer, `run.completed` for the integrations subscriber (T9),
+ * and the project-channel update that refreshes the dashboard's lists.
+ * Interim: a later change gates them on the run's status moving.
+ */
+async function publishInterimStepEvents(
+  deps: HandlerDeps,
+  logger: Logger,
+  job: StepJob,
+  run: { branchName: string | null; buildId: string | null },
+  facts: StepEventFacts,
+): Promise<void> {
+  await deps.redis.publish(
+    `run:${job.runId}:events`,
+    JSON.stringify({ type: "diff.started", runId: job.runId }),
+  );
+  await deps.redis.publish(
+    `run:${job.runId}:events`,
+    JSON.stringify({
+      type: "diff.completed",
+      runId: job.runId,
+      passed: facts.passed,
+      diffPercent: facts.diffPercent,
+      ranTiers: facts.ranTiers,
+      viewportCount: 1,
+      durationMs: facts.durationMs,
+      autoApproved: facts.autoApproved,
+      firstBaseline: facts.firstBaseline,
+    }),
+  );
+  // T9: the `run.completed` event the integrations subscriber fans out to
+  // GitHub (T8) + outbound webhooks (T9). GitHub-side fields (installationId,
+  // repoOwner, repoName, sha, prNumber) are intentionally omitted; both
+  // consumers are defensive about missing fields.
+  await deps.redis.publish(
+    `run:${job.runId}:events`,
+    JSON.stringify({
+      type: "run.completed",
+      runId: job.runId,
+      projectId: job.projectId,
+      status: facts.status,
+      diffPercent: facts.diffPercent,
+      branchName: run.branchName,
+      numChanges: facts.numChanges,
+      resolutionSource: facts.resolutionSource,
+      rulesSummary: facts.rulesSummary,
+    }),
+  );
+  await publishProjectRunUpdate(
+    deps,
+    {
+      projectId: job.projectId,
+      runId: job.runId,
+      status: facts.status,
+      buildId: run.buildId,
+    },
+    logger,
+  );
 }
 
 /**

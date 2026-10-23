@@ -20,6 +20,7 @@ import {
 import type { Telemetry } from "@furan/telemetry";
 
 import { autoApproveBaselineBlock } from "./auto-approve-guard.js";
+import { pgErrorCode } from "./diff-error.js";
 import type { StepResult } from "./diff-step.js";
 import type { HandlerDeps } from "./handler.js";
 
@@ -47,20 +48,6 @@ export type StepCommit =
     };
 
 const STALE: StepCommit = { kind: "stale" };
-
-/**
- * A Postgres error's SQLSTATE (`code`), on the error or on one of its causes
- * (Drizzle wraps the driver's error).
- */
-function pgErrorCode(err: unknown): string | undefined {
-  let e = err;
-  for (let depth = 0; e && depth < 5; depth++) {
-    const code = (e as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-    e = (e as { cause?: unknown }).cause;
-  }
-  return undefined;
-}
 
 /**
  * Ruling R46: a job that failed its final attempt under the old whole-run

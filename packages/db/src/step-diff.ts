@@ -101,9 +101,12 @@ export async function bumpStepGenerations(
  *    longer describe its image, so the step adds nothing to the run totals;
  *  - the run totals and then the run status are recomputed, and the status
  *    change is returned for the caller's events.
+ *
+ * `tx` is the caller's transaction: a Drizzle transaction, or the scoped
+ * handle `withProjectScope` passes (typed `DB`).
  */
 export async function markStepDiffFailed(
-  tx: Tx,
+  tx: DB | Tx,
   args: {
     runId: string;
     stepId: string;
