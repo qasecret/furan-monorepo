@@ -4,6 +4,7 @@ import {
   eq,
   screenshots,
   testRuns,
+  withProjectScope,
   type DB,
 } from "@furan/db";
 import { diffJobId, type DiffJob } from "@furan/queue";
@@ -13,7 +14,9 @@ import { diffJobId, type DiffJob } from "@furan/queue";
  * prefix). A BullMQ `Queue<DiffJob>` is one.
  */
 export interface DiffJobQueue {
-  add(name: "diff", data: DiffJob, opts: { jobId: string }): Promise<unknown>;
+  addBulk(
+    jobs: Array<{ name: "diff"; data: DiffJob; opts: { jobId: string } }>,
+  ): Promise<unknown>;
 }
 
 /**
@@ -22,7 +25,7 @@ export interface DiffJobQueue {
  *  1. in one transaction, bumps the version of every step of the run
  *     (`bumpStepGenerations`, which locks the run first);
  *  2. after it commits, adds one job per step at its new version, in capture
- *     order, with the job id `diffJobId(step, version)`.
+ *     order, with the job id `diffJobId(step, version)`, in one `addBulk`.
  * Each step then gets exactly one current job; a job of an older version
  * (another split, an upload's job) finds itself stale and writes nothing.
  * Returns the number of jobs added. The whole-run job diffs nothing itself.
@@ -54,7 +57,7 @@ export async function splitLegacyJob(
   }
   if (!queue) throw new Error(`diff_queue_missing:${job.runId}`);
 
-  const bumped = await deps.db.transaction((tx) =>
+  const bumped = await withProjectScope(deps.db, job.projectId, (tx) =>
     bumpStepGenerations(
       tx,
       job.runId,
@@ -65,23 +68,24 @@ export async function splitLegacyJob(
   // Only after the versions committed: a job added earlier could run against
   // a version not yet visible and be discarded as stale.
   const generationOf = new Map(bumped.map((b) => [b.id, b.generation]));
-  let added = 0;
-  for (const { id } of steps) {
+  const jobs = steps.flatMap(({ id }) => {
     const generation = generationOf.get(id);
     // A step deleted since it was listed was not bumped.
-    if (generation === undefined) continue;
-    await queue.add(
-      "diff",
+    if (generation === undefined) return [];
+    return [
       {
-        runId: job.runId,
-        projectId: job.projectId,
-        screenshotId: id,
-        generation,
-        parentPrBaseBranch: job.parentPrBaseBranch ?? null,
+        name: "diff" as const,
+        data: {
+          runId: job.runId,
+          projectId: job.projectId,
+          screenshotId: id,
+          generation,
+          parentPrBaseBranch: job.parentPrBaseBranch ?? null,
+        },
+        opts: { jobId: diffJobId(id, generation) },
       },
-      { jobId: diffJobId(id, generation) },
-    );
-    added++;
-  }
-  return added;
+    ];
+  });
+  if (jobs.length > 0) await queue.addBulk(jobs);
+  return jobs.length;
 }

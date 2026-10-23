@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import {
   and,
   asc,
+  autoRuleApplications,
   baselines,
   baselineWriteTime,
+  bumpStepGenerations,
   checkpointDecisions,
   createDb,
   diffRegions,
@@ -26,7 +28,8 @@ import { Redis } from "ioredis";
 import { Registry } from "prom-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { commitStep } from "../src/commit-step.js";
+import { commitStep, persistRuleApplications } from "../src/commit-step.js";
+import { createDiffMetrics } from "../src/diff-metrics.js";
 import { diffStep, type StepResult } from "../src/diff-step.js";
 import {
   handleDiffJob,
@@ -36,6 +39,8 @@ import {
 } from "../src/handler.js";
 import { startDiffWorker } from "../src/runtime.js";
 
+import { counterValue, histogramSeries } from "./helpers/metrics.js";
+import { pgCode } from "./helpers/pg.js";
 import { stepJobsFor } from "./helpers/step-jobs.js";
 import {
   createStepSeeder,
@@ -60,6 +65,13 @@ const { diffStep: realDiffStep } = await vi.importActual<
  * step's version; the run totals and status are recomputed in that commit.
  */
 
+const RULES_DURATION = "furan_diff_rules_evaluation_duration_seconds";
+
+// The candidate DOM of a step whose change is wrapped by `#box` (at 0,0).
+const BOX_DOM =
+  '<!doctype html><html lang="en"><head><title>t</title></head><body><div id="box">box</div></body></html>';
+const BOX_0 = { x: 0, y: 0, width: 144, height: 144 };
+
 const skip =
   !process.env.DATABASE_URL ||
   !process.env.REDIS_URL ||
@@ -75,40 +87,6 @@ const mockLogger = {
   fatal: vi.fn(),
   child: () => mockLogger,
 } as unknown as Parameters<typeof handleDiffJob>[1];
-
-type Sample = {
-  metricName?: string;
-  labels: Record<string, string | number | undefined>;
-  value: number;
-};
-
-async function histogramSeries(
-  registry: Registry,
-  name: string,
-  labels: Record<string, string> = {},
-): Promise<{ count: number; sum: number }> {
-  const metric = (await registry.getMetricsAsJSON()).find(
-    (m) => m.name === name,
-  );
-  if (!metric) return { count: 0, sum: 0 };
-  const samples = metric.values as Sample[];
-  const pick = (suffix: string): number =>
-    samples.find(
-      (s) =>
-        s.metricName === `${name}${suffix}` &&
-        Object.entries(labels).every(([k, v]) => s.labels[k] === v),
-    )?.value ?? 0;
-  return { count: pick("_count"), sum: pick("_sum") };
-}
-
-/** A Postgres error code, wherever the driver or Drizzle put it. */
-function pgCode(err: unknown): string | undefined {
-  for (let e = err; e; e = (e as { cause?: unknown }).cause) {
-    const code = (e as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 desc("step jobs (integration)", () => {
   let db: DB;
@@ -303,6 +281,8 @@ desc("step jobs (integration)", () => {
 
   it("diffs one step and stores its results", async () => {
     const s = await seed({
+      // A rule the step's change does not match: the job still evaluates it.
+      ruleSelectors: ["#box"],
       steps: [
         { name: "home", baseline: await red0(), candidate: await blue0() },
         { name: "cart", baseline: await blue0(), candidate: await blue0() },
@@ -333,6 +313,8 @@ desc("step jobs (integration)", () => {
           })
         ).count,
       ).toBe(1);
+      // A committed job records its step's rule evaluation.
+      expect((await histogramSeries(registry, RULES_DURATION)).count).toBe(1);
     });
 
     const home = await stepRow(s.shotId.home!);
@@ -364,6 +346,7 @@ desc("step jobs (integration)", () => {
 
   it("a version bumped during the diff leaves no write (stale)", async () => {
     const s = await seed({
+      ruleSelectors: ["#box"],
       steps: [
         { name: "home", baseline: await red0(), candidate: await blue0() },
       ],
@@ -415,6 +398,8 @@ desc("step jobs (integration)", () => {
         expect(
           await histogramSeries(registry, "furan_diff_job_checkpoints"),
         ).toEqual({ count: 1, sum: 0 });
+        // Its rules were evaluated, but a stale job records no rule metrics.
+        expect((await histogramSeries(registry, RULES_DURATION)).count).toBe(0);
       });
       await new Promise((r) => setTimeout(r, 200));
     } finally {
@@ -427,6 +412,178 @@ desc("step jobs (integration)", () => {
     expect(await regionsOf(home)).toEqual(regionsBefore);
     // A stale job publishes nothing.
     expect(events).toEqual([]);
+  }, 60_000);
+
+  it("the cheap check: a job re-queued or deleted before its diff is stale and never diffs", async () => {
+    const s = await seed({
+      ruleSelectors: ["#box"],
+      steps: [
+        { name: "home", baseline: await red0(), candidate: await blue0() },
+        { name: "cart", baseline: await red0(), candidate: await blue0() },
+      ],
+    });
+    // Both steps queued at version 1.
+    const jobs = await stepJobsFor(db, runOf(s));
+    const old = jobs.find((j) => j.screenshotId === s.shotId.home)!;
+    const gone = jobs.find((j) => j.screenshotId === s.shotId.cart)!;
+    // home is queued again (version 2) before its job runs...
+    await db.transaction((tx) =>
+      bumpStepGenerations(tx, s.candidateRunId, [s.shotId.home!]),
+    );
+    // ...and cart is deleted before its job runs.
+    await db.delete(screenshots).where(eq(screenshots.id, s.shotId.cart!));
+    vi.mocked(diffStep).mockClear();
+
+    await withWorker(async ({ registry, outcomes, run }) => {
+      await run(old);
+      await run(gone);
+
+      expect(outcomes).toEqual([
+        { checkpoints: 0, stale: true },
+        { checkpoints: 0, stale: true },
+      ]);
+      expect(
+        (
+          await histogramSeries(registry, "furan_diff_job_duration_seconds", {
+            outcome: "stale",
+          })
+        ).count,
+      ).toBe(2);
+      expect(
+        await histogramSeries(registry, "furan_diff_job_checkpoints"),
+      ).toEqual({ count: 2, sum: 0 });
+      expect((await histogramSeries(registry, RULES_DURATION)).count).toBe(0);
+    });
+
+    // Neither job got as far as the diff, so nothing was written.
+    expect(vi.mocked(diffStep)).not.toHaveBeenCalled();
+    const home = await stepRow(s.shotId.home!);
+    expect(home.verdict).toBeNull();
+    expect(home.diffImageKey).toBeNull();
+    expect(home.diffGeneration).toBe(old.generation + 1);
+    expect(
+      await db
+        .select({ id: diffRegions.id })
+        .from(diffRegions)
+        .where(eq(diffRegions.runId, s.candidateRunId)),
+    ).toEqual([]);
+    expect((await runRow(s.candidateRunId)).status).toBe("running");
+  }, 60_000);
+
+  it("a step or run deleted between the diff and the commit makes the commit stale", async () => {
+    const deps = { db, storage, redis };
+    const changed = async () =>
+      seed({
+        steps: [
+          { name: "home", baseline: await red0(), candidate: await blue0() },
+        ],
+      });
+
+    // The step goes.
+    const s1 = await changed();
+    const job1 = await jobOf(s1, "home");
+    const result1 = await diffNow(s1, "home");
+    await db.delete(screenshots).where(eq(screenshots.id, s1.shotId.home!));
+    expect(await commitStep(deps, job1, result1, mockLogger)).toEqual({
+      kind: "stale",
+    });
+
+    // The whole run goes.
+    const s2 = await changed();
+    const job2 = await jobOf(s2, "home");
+    const result2 = await diffNow(s2, "home");
+    await db.delete(testRuns).where(eq(testRuns.id, s2.candidateRunId));
+    expect(await commitStep(deps, job2, result2, mockLogger)).toEqual({
+      kind: "stale",
+    });
+
+    for (const s of [s1, s2]) {
+      expect(
+        await db
+          .select({ id: diffRegions.id })
+          .from(diffRegions)
+          .where(eq(diffRegions.runId, s.candidateRunId)),
+      ).toEqual([]);
+    }
+  }, 60_000);
+
+  it("the rule applications of a superseded commit are stale, not an error", async () => {
+    // The `#box` rule auto-approves the step's change, so its result carries a
+    // winning decision for its one region.
+    const s = await seed({
+      ruleSelectors: ["#box"],
+      steps: [
+        {
+          name: "home",
+          baseline: await red0(),
+          candidate: await blue0(),
+          candidateDom: BOX_DOM,
+          candidateMap: { "#box": BOX_0 },
+        },
+      ],
+    });
+    const registry = new Registry();
+    const deps = {
+      db,
+      storage,
+      redis,
+      metrics: createDiffMetrics(registry),
+    };
+    const run = { runId: s.candidateRunId, projectId: s.projectId };
+
+    const job1 = await jobOf(s, "home");
+    const result1 = await diffNow(s, "home");
+    expect(result1.ruleDecisions).toHaveLength(1);
+    const first = await commitStep(deps, job1, result1, mockLogger);
+    // A newer version commits before the first one's applications run: its
+    // commit replaced the regions they point at.
+    const job2 = await jobOf(s, "home");
+    const result2 = await diffNow(s, "home");
+    const second = await commitStep(deps, job2, result2, mockLogger);
+    if (first.kind !== "committed" || second.kind !== "committed") {
+      throw new Error("both commits should have landed");
+    }
+    vi.mocked(mockLogger.info).mockClear();
+    vi.mocked(mockLogger.error).mockClear();
+
+    await persistRuleApplications(
+      deps,
+      { ...run, result: result1, regionIds: first.regionIds },
+      mockLogger,
+    );
+
+    expect(vi.mocked(mockLogger.info)).toHaveBeenCalledWith(
+      expect.objectContaining({ screenshotId: s.shotId.home }),
+      "auto_rule_applications_stale",
+    );
+    expect(vi.mocked(mockLogger.error)).not.toHaveBeenCalled();
+    expect(
+      await counterValue(registry, "furan_diff_rules_evaluation_errors_total"),
+    ).toBe(0);
+    const applications = () =>
+      db
+        .select({
+          id: autoRuleApplications.id,
+          region: autoRuleApplications.diffRegionId,
+        })
+        .from(autoRuleApplications)
+        .where(eq(autoRuleApplications.testRunId, s.candidateRunId));
+    expect(await applications()).toEqual([]);
+
+    // The current version's applications land, and link its region.
+    await persistRuleApplications(
+      deps,
+      { ...run, result: result2, regionIds: second.regionIds },
+      mockLogger,
+    );
+    const landed = await applications();
+    expect(landed.map((a) => a.region)).toEqual(second.regionIds);
+    const [region] = await db
+      .select({ resolvedBy: diffRegions.resolvedByApplicationId })
+      .from(diffRegions)
+      .where(eq(diffRegions.id, second.regionIds[0]!));
+    expect(region!.resolvedBy).toBe(landed[0]!.id);
+    expect(vi.mocked(mockLogger.error)).not.toHaveBeenCalled();
   }, 60_000);
 
   it("two versions of one step committing in either order: the newest wins, no duplicate regions", async () => {
@@ -484,16 +641,22 @@ desc("step jobs (integration)", () => {
     expect((await commit(v6.job, v6.result)).kind).toBe("committed");
     await expectStored(v6.result);
 
-    // Both at once: one commits, the other is stale.
-    const v7 = await version(await blue0());
-    const v8 = await version(await red144());
-    const both = await Promise.all([
+    // Two commits of the SAME current version at once, on two connections (a
+    // retry racing its original): they queue on the run lock, both commit,
+    // and the step keeps exactly one set of its regions, the last writer's.
+    const v7 = await version(await red144());
+    const race = await Promise.all([
       commit(v7.job, v7.result),
-      commit(v8.job, v8.result),
+      commit(v7.job, v7.result),
     ]);
-    expect(both.map((c) => c.kind)).toEqual(["stale", "committed"]);
-    await expectStored(v8.result);
-    expect((await stepRow(home)).diffGeneration).toBe(v8.job.generation);
+    expect(race.map((c) => c.kind)).toEqual(["committed", "committed"]);
+    await expectStored(v7.result);
+    const kept = (await regionsOf(home)).map((r) => r.id).sort();
+    const sets = race.map((c) =>
+      c.kind === "committed" ? [...c.regionIds].sort() : [],
+    );
+    expect(sets).toContainEqual(kept);
+    expect((await stepRow(home)).diffGeneration).toBe(v7.job.generation);
   }, 60_000);
 
   it("four steps of one run committing concurrently give consistent totals and status", async () => {

@@ -391,8 +391,9 @@ export async function loadStepContext(
  *  3. the diff, outside any transaction (`diffStep`);
  *  4. the commit under run → step locks with the version re-checked
  *     (`commitStep`); a newer version that landed meanwhile makes it stale;
- *  5. after the commit: the step's rule applications (fail-open), then the
- *     run events and the project-channel update for this committed step.
+ *  5. after the commit: the step's rule metrics, its rule applications
+ *     (fail-open), then the run events and the project-channel update for
+ *     this committed step.
  */
 export async function handleStepJob(
   job: StepJob,
@@ -447,7 +448,6 @@ export async function handleStepJob(
     parentPrBaseBranch: job.parentPrBaseBranch ?? null,
   });
   const result = await diffStep(ctx, step);
-  const rulesSummary = observeStepRules(ctx, result, logger, deps);
 
   // 4. The commit, under the version guard.
   const commit = await commitStep(deps, job, result, logger);
@@ -466,7 +466,9 @@ export async function handleStepJob(
   // here on must not mark the run `aborted` (see `handleDiffJob`).
   progress.coreCommitted = true;
 
-  // 5. After the commit: the rule audit trail, then the events.
+  // 5. After the commit: the rule metrics (a stale job records none), the
+  // rule audit trail, then the events.
+  const rulesSummary = observeStepRules(ctx, result, logger, deps);
   await persistRuleApplications(
     deps,
     {
@@ -555,6 +557,7 @@ export async function handleStepJob(
 /**
  * The job's rule metrics and log line, from the step's own evaluation
  * (`diffStep`): duration, matches by action, and a `rules evaluated` line.
+ * Recorded only for a committed step, so a stale job adds none.
  * Returns the step's decision counts by action (null when the job has no
  * rules), for the `run.completed` event.
  */

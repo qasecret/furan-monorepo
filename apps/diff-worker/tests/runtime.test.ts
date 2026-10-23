@@ -12,6 +12,8 @@ import type { handleDiffJob } from "../src/handler.js";
 import { createDiffJobMetrics } from "../src/job-metrics.js";
 import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
 
+import { histogramSeries, type Sample } from "./helpers/metrics.js";
+
 const PROJECT = "00000000-0000-0000-0000-000000000002";
 const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
 const OK = "00000000-0000-0000-0000-0000000000bb";
@@ -21,31 +23,6 @@ const STEP = {
   screenshotId: "00000000-0000-0000-0000-0000000000cc",
   generation: 1,
 };
-
-type Sample = {
-  metricName?: string;
-  labels: Record<string, string | number | undefined>;
-  value: number;
-};
-
-async function histogramSeries(
-  registry: Registry,
-  name: string,
-  labels: Record<string, string> = {},
-): Promise<{ count: number; sum: number }> {
-  const metric = (await registry.getMetricsAsJSON()).find(
-    (m) => m.name === name,
-  );
-  if (!metric) return { count: 0, sum: 0 };
-  const samples = metric.values as Sample[];
-  const pick = (suffix: string): number =>
-    samples.find(
-      (s) =>
-        s.metricName === `${name}${suffix}` &&
-        Object.entries(labels).every(([k, v]) => s.labels[k] === v),
-    )?.value ?? 0;
-  return { count: pick("_count"), sum: pick("_sum") };
-}
 
 /** Resolve when `job` leaves the worker, completed or failed. */
 function settled(
@@ -203,11 +180,13 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     const splitter: typeof handleDiffJob = async (data, _logger, deps) => {
       seen.push(data);
       if (data.screenshotId === undefined) {
-        await deps.queue!.add(
-          "diff",
-          { ...data, ...STEP },
-          { jobId: `${STEP.screenshotId}-g${STEP.generation}` },
-        );
+        await deps.queue!.addBulk([
+          {
+            name: "diff",
+            data: { ...data, ...STEP },
+            opts: { jobId: `${STEP.screenshotId}-g${STEP.generation}` },
+          },
+        ]);
         return { checkpoints: 0 };
       }
       return { checkpoints: 1 };

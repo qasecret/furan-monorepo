@@ -28,6 +28,7 @@ import { handleDiffJob } from "../src/handler.js";
 import { splitLegacyJob } from "../src/legacy-split.js";
 import { startDiffWorker } from "../src/runtime.js";
 
+import { histogramSeries } from "./helpers/metrics.js";
 import {
   createStepSeeder,
   square,
@@ -56,12 +57,6 @@ const mockLogger = {
   fatal: vi.fn(),
   child: () => mockLogger,
 } as unknown as Parameters<typeof handleDiffJob>[1];
-
-type Sample = {
-  metricName?: string;
-  labels: Record<string, string | number | undefined>;
-  value: number;
-};
 
 desc("splitLegacyJob (integration)", () => {
   let db: DB;
@@ -289,16 +284,9 @@ desc("splitLegacyJob (integration)", () => {
         .where(eq(testRuns.id, s.candidateRunId));
       expect(run!.status).toBe("unresolved");
       // Four jobs: the split (0 checkpoints) and one per step (1 each).
-      const metric = (await registry.getMetricsAsJSON()).find(
-        (m) => m.name === "furan_diff_job_checkpoints",
-      );
-      const samples = (metric?.values ?? []) as Sample[];
-      const value = (suffix: string) =>
-        samples.find(
-          (x) => x.metricName === `furan_diff_job_checkpoints${suffix}`,
-        )?.value;
-      expect(value("_count")).toBe(4);
-      expect(value("_sum")).toBe(3);
+      expect(
+        await histogramSeries(registry, "furan_diff_job_checkpoints"),
+      ).toEqual({ count: 4, sum: 3 });
     } finally {
       await runtime.close();
     }

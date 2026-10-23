@@ -49,6 +49,20 @@ export type StepCommit =
 const STALE: StepCommit = { kind: "stale" };
 
 /**
+ * A Postgres error's SQLSTATE (`code`), on the error or on one of its causes
+ * (Drizzle wraps the driver's error).
+ */
+function pgErrorCode(err: unknown): string | undefined {
+  let e = err;
+  for (let depth = 0; e && depth < 5; depth++) {
+    const code = (e as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
  * Ruling R46: a job that failed its final attempt under the old whole-run
  * behaviour wrote `aborted`, a lifecycle state the rollup keeps. When a later
  * commit leaves EVERY step of the run with a verdict, an abort the pipeline
@@ -264,7 +278,9 @@ export async function commitStep(
  * audit trail (logged, and counted on the rules-errors metric), never the
  * step's verdict or regions. `regionIds` are the ids the commit inserted, in
  * `result.regions` order, so zipping them with `result.engineIds` maps each
- * rule decision to its stored region.
+ * rule decision to its stored region. A foreign-key violation (`23503`) means
+ * a newer version of the step committed in between and replaced those
+ * regions: the trail is stale, not failed, so it is logged at info only.
  *
  * `auto_rules.applied_count` is credited in ascending rule id: the rows are
  * locked in that order first, so two jobs crediting the same rules at once
@@ -365,6 +381,13 @@ export async function persistRuleApplications(
       `);
     });
   } catch (err) {
+    if (pgErrorCode(err) === "23503") {
+      logger.info(
+        { runId, projectId, screenshotId: result.screenshotId },
+        "auto_rule_applications_stale",
+      );
+      return;
+    }
     logger.error(
       { err, runId, projectId, screenshotId: result.screenshotId },
       "auto-rule application persistence failed; run result preserved",

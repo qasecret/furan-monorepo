@@ -24,6 +24,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDiffMetrics, type DiffMetrics } from "../src/diff-metrics.js";
 import { handleDiffJob, type DiffJobOutcome } from "../src/handler.js";
 
+import { counterValue } from "./helpers/metrics.js";
+import { pgCode } from "./helpers/pg.js";
 import { diffRunPerStep, stepJobsFor } from "./helpers/step-jobs.js";
 
 /**
@@ -85,13 +87,6 @@ async function square(color: "red" | "blue", pos: number): Promise<Buffer> {
     ])
     .png()
     .toBuffer();
-}
-
-async function counterValue(reg: Registry, name: string): Promise<number> {
-  const json = await reg.getMetricsAsJSON();
-  const metric = json.find((m) => m.name === name);
-  const series = (metric?.values ?? []) as Array<{ value: number }>;
-  return series.reduce((sum, s) => sum + s.value, 0);
 }
 
 interface CheckpointSpec {
@@ -502,14 +497,6 @@ desc("handleDiffJob — one baseline per checkpoint (integration)", () => {
         .where(eq(screenshots.id, c.shot));
     }
 
-    // A Postgres error code, wherever the driver or Drizzle put it.
-    const pgCode = (err: unknown): string | undefined => {
-      for (let e = err; e; e = (e as { cause?: unknown }).cause) {
-        const code = (e as { code?: unknown }).code;
-        if (typeof code === "string") return code;
-      }
-      return undefined;
-    };
     /** Runs the step jobs all at once; every one must commit. */
     async function allAtOnce(
       runs: Array<{ runId: string; projectId: string }>,

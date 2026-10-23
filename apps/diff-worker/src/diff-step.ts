@@ -52,7 +52,7 @@ import { parseEngineConfig, redactSecret } from "./engine-config.js";
 import type { HandlerDeps, ParsedIgnoreArea } from "./handler.js";
 import { classifyLayoutClusters } from "./layout-suppression.js";
 import { resolveRuleSelectorElementMap } from "./rule-selector-resolver.js";
-import { checkpointFailures, regionEngineId } from "./rules-aggregation.js";
+import { checkpointFails, regionEngineId } from "./rules-aggregation.js";
 import { strictBreaches, type StrictRegionInput } from "./strict-tolerance.js";
 
 function resolveVlmProvider(config: VlmProviderConfig): VlmProvider {
@@ -177,7 +177,7 @@ export interface StepResult {
    */
   firstBaseline: boolean;
   regions: InflatedRegion[];
-  /** `regionEngineId(0, i)` per region: the ids `ruleDecisions` refer to. */
+  /** `regionEngineId(i)` per region: the ids `ruleDecisions` refer to. */
   engineIds: string[];
   ranTiers: Array<"l1">;
   /** ADR-042: the checkpoint's diff signature; null when it was not diffed or
@@ -309,7 +309,7 @@ async function tryAutoApproveByPastBaselines(
 
 /**
  * Auto Rules for ONE step (spec 2026-10-23 §4): its own regions, ids
- * `regionEngineId(0, i)`, against the rules the job compiled. Null when the
+ * `regionEngineId(i)`, against the rules the job compiled. Null when the
  * job has no rules, or when this step's evaluation throws: fail-open, the
  * rules are then absent for this step only.
  */
@@ -490,7 +490,7 @@ export async function diffStep(
       return undiffedStep(cs, {
         firstBaseline: false,
         // The run the paired baseline belongs to, for the auto-approve
-        // baseline guard in the core transaction.
+        // baseline guard in the step's commit (`commitStep`).
         autoApprove: { strategy, pairedBaselineRunId: pairing.baselineRunId },
         baselineSource: pairing.source,
       });
@@ -994,7 +994,7 @@ export async function diffStep(
     // viewer.
     screenshotId: cs.id,
   }));
-  const engineIds = regions.map((_r, i) => regionEngineId(0, i));
+  const engineIds = regions.map((_r, i) => regionEngineId(i));
 
   // Outcome after auto-rules (see rules-aggregation.ts for the exact rules
   // and its unit tests): `unresolved` if the step still fails after rules,
@@ -1008,8 +1008,8 @@ export async function diffStep(
     result.diffPercent,
     ruleElementMap,
   );
-  const [failed] = checkpointFailures(
-    [{ passed: result.passed, regionCount: regions.length }],
+  const failed = checkpointFails(
+    { passed: result.passed, regionCount: regions.length },
     rules,
   );
 

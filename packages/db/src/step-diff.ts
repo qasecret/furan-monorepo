@@ -1,5 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import type { DB } from "./client.js";
 import { recomputeRunStatus, type Tx } from "./review-status.js";
 import { recomputeRunTotals } from "./run-totals.js";
 import type { RunStatus } from "./schema/enums.js";
@@ -46,9 +47,12 @@ export type DiffErrorCode = (typeof DIFF_ERROR_CODES)[number];
  * wait that variation: a deadlock), and from a transaction that holds no step
  * of the run (a later `recomputeRunStatus` then finds the run already locked,
  * instead of locking step -> run). An empty `stepIds` locks nothing.
+ *
+ * `tx` is the caller's transaction: a Drizzle transaction, or the scoped
+ * handle `withProjectScope` passes (typed `DB`).
  */
 export async function bumpStepGenerations(
-  tx: Tx,
+  tx: DB | Tx,
   runId: string,
   stepIds: readonly string[],
 ): Promise<Array<{ id: string; generation: number }>> {

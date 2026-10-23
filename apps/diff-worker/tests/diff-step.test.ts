@@ -25,6 +25,7 @@ import { createDiffMetrics } from "../src/diff-metrics.js";
 import { diffStep, type StepResult } from "../src/diff-step.js";
 import { handleDiffJob, loadStepContext } from "../src/handler.js";
 
+import { counterValue } from "./helpers/metrics.js";
 import { diffRunPerStep } from "./helpers/step-jobs.js";
 import {
   createStepSeeder,
@@ -654,7 +655,8 @@ function oldRunFold(results: StepResult[]): RunOutcome {
         ?.baselineSource ?? null,
     vlmDescription:
       results.find((v) => v.vlmDescription)?.vlmDescription ?? null,
-    // `aggregateRuleStatus`: no step still fails and a rule auto-approved one.
+    // The old `aggregateRuleStatus`: no step still fails and a rule
+    // auto-approved one.
     resolutionSource:
       !results.some((r) => r.verdict === "unresolved") &&
       results.some((r) => r.ruleResolved)
@@ -942,14 +944,8 @@ desc("diffStep (integration)", () => {
     const registry = new Registry();
     const { ctx, shots } = await contextFor(s, registry);
     const [boomShot, ruledShot] = shots;
-    const errorCount = async () =>
-      (
-        (
-          (await registry.getMetricsAsJSON()).find(
-            (m) => m.name === "furan_diff_rules_evaluation_errors_total",
-          )?.values ?? []
-        ).at(0) as { value: number } | undefined
-      )?.value ?? 0;
+    const errorCount = () =>
+      counterValue(registry, "furan_diff_rules_evaluation_errors_total");
 
     // With the rules as compiled, the first step is resolved by its rule.
     const resolved = await diffStep(ctx, boomShot!);
