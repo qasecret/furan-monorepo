@@ -23,6 +23,8 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string): Buffer =>
   readFileSync(join(__dirname, "fixtures", n));
@@ -206,7 +208,8 @@ desc("handleDiffJob (integration)", () => {
     // Let subscription settle before the handler publishes.
     await new Promise((r) => setTimeout(r, 100));
 
-    await handleDiffJob(job, mockLogger, { db, storage, redis });
+    // One step job per step (spec 2026-10-23).
+    await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
     // Verify test_runs was updated.
     const updatedRun = await db.query.testRuns.findFirst({
@@ -488,7 +491,8 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     sub.on("message", (_channel, message) => events.push(message));
     await new Promise((r) => setTimeout(r, 100));
 
-    await handleDiffJob(job, mockLogger, { db, storage, redis });
+    // One step job per step (spec 2026-10-23).
+    await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
     const updatedRun = await db.query.testRuns.findFirst({
       where: eq(testRuns.id, candidateRunId),
@@ -532,9 +536,12 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
       .find((e) => e.type === "diff.completed");
     expect(completed).toBeDefined();
     expect(completed.viewportCount).toBeGreaterThanOrEqual(1);
+    // One run.completed per step job: the last carries the run's rollup once
+    // both steps have their verdicts.
     const runCompleted = events
       .map((e) => JSON.parse(e))
-      .find((e) => e.type === "run.completed");
+      .filter((e) => e.type === "run.completed")
+      .at(-1);
     expect(runCompleted).toBeDefined();
     // Per spec §3.2 diff-worker writes "unresolved" on diff-found.
     expect(runCompleted.status).toBe("unresolved");
@@ -645,7 +652,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       browser: "chromium",
     });
 
-    await handleDiffJob({ runId: run.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: run.id, projectId: p.id }, mockLogger, {
       db,
       storage,
       redis,
@@ -734,7 +741,7 @@ descStatus("handleDiffJob status writes (spec §3.2)", () => {
       browser: "chromium",
     });
 
-    await handleDiffJob({ runId: run.id, projectId: p.id }, mockLogger, {
+    await diffRunPerStep({ runId: run.id, projectId: p.id }, mockLogger, {
       db,
       storage,
       redis,

@@ -19,6 +19,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { handleDiffJob } from "../src/handler.js";
 
+import { stepJobsFor } from "./helpers/step-jobs.js";
+
 // Wraps the real `recomputeRunStatus` in a spy so one test can make it fail
 // INSIDE the core transaction; every other call runs the real thing.
 vi.mock("@furan/db", async (importOriginal) => {
@@ -222,6 +224,12 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     return { candidateKey, candidateImg };
   }
 
+  /** The run's one step job, at a newly queued version (spec 2026-10-23). */
+  async function stepJob(s: { runId: string; projectId: string }) {
+    const [job] = await stepJobsFor(db, s);
+    return job!;
+  }
+
   async function runStatus(runId: string): Promise<string> {
     const [row] = await db
       .select({ status: testRuns.status })
@@ -308,7 +316,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     const s = await seedRun();
     // The candidate's image is not in storage yet: attempt 1 fails reading it.
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-    const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+    const job = await stepJob(s);
 
     await expect(
       handleDiffJob(
@@ -360,10 +368,12 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     });
     vi.mocked(mockLogger.error).mockClear();
 
+    const job = await stepJob(s);
+
     const events = await eventsDuring(s.runId, async () => {
       await expect(
         handleDiffJob(
-          { runId: s.runId, projectId: s.projectId } as DiffJob,
+          job,
           mockLogger,
           { db, storage, redis: flakyRedis },
           { finalAttempt: true },
@@ -390,13 +400,14 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
     const s = await seedRun();
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
     await storage.put(candidateKey, candidateImg, "image/png");
+    const job = await stepJob(s);
     vi.mocked(recomputeRunStatus).mockRejectedValueOnce(
       new Error("recompute_failed_in_tx"),
     );
 
     await expect(
       handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        job,
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
@@ -411,9 +422,9 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       .where(eq(screenshots.runId, s.runId));
     expect(shot!.verdict).toBeNull();
   }, 60_000);
-  // Ruling R46: each upload enqueues a whole-run diff, so a pipeline abort
-  // (job k's final attempt) must not outlive a later job k+1 that diffs every
-  // checkpoint. Only an abort the diff pipeline wrote heals.
+  // Ruling R46: a pipeline abort (job k's final attempt) must not outlive a
+  // later job k+1 that leaves every checkpoint with a verdict. Only an abort
+  // the diff pipeline wrote heals.
   describe("a later successful diff heals a pipeline abort", () => {
     async function runRow(runId: string) {
       const [row] = await db
@@ -430,7 +441,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       const s = await seedRun();
       // Job k: the candidate image is missing, and it is the final attempt.
       const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      const job = await stepJob(s);
       await expect(
         handleDiffJob(
           job,
@@ -444,10 +455,11 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
         abortedByDiff: true,
       });
 
-      // Job k+1 (another upload's whole-run diff) diffs every checkpoint.
+      // Job k+1 (the step queued again, at a new version) diffs it, leaving
+      // every checkpoint with a verdict.
       await storage.put(candidateKey, candidateImg, "image/png");
       await handleDiffJob(
-        job,
+        await stepJob(s),
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
@@ -470,7 +482,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
         .where(eq(testRuns.id, s.runId));
 
       await handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        await stepJob(s),
         mockLogger,
         { db, storage, redis },
         { finalAttempt: true },
@@ -489,7 +501,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       const s = await seedRun();
       // The candidate image is missing: the in-flight job will fail.
       const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
-      const job = { runId: s.runId, projectId: s.projectId } as DiffJob;
+      const job = await stepJob(s);
       await db
         .update(testRuns)
         .set({ status: "aborted", abortedByDiff: false })
@@ -568,7 +580,7 @@ desc("handleDiffJob — aborted only on the final attempt (integration)", () => 
       });
 
       await handleDiffJob(
-        { runId: s.runId, projectId: s.projectId } as DiffJob,
+        await stepJob(s),
         mockLogger,
         { db, storage: lateUpload, redis },
         { finalAttempt: true },

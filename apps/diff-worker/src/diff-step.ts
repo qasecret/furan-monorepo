@@ -5,6 +5,7 @@ import {
   eq,
   screenshots,
   type BaselineSource,
+  type CheckpointVerdict,
   type DB,
   type projects,
   type testRuns,
@@ -72,13 +73,10 @@ type ProjectRow = typeof projects.$inferSelect;
 type RunRow = typeof testRuns.$inferSelect;
 type ScreenshotRow = typeof screenshots.$inferSelect;
 
-/** What the diff found for one checkpoint (`screenshots.verdict`). */
-type CheckpointVerdict = NonNullable<ScreenshotRow["verdict"]>;
-
 /**
  * What one step's diff reads besides the step itself. Loaded once per job
- * (`loadStepContext` in handler.ts) and shared, read-only, by every step the
- * job diffs.
+ * (`loadStepContext` in handler.ts) and shared by every step the job diffs:
+ * read-only except the per-job element-map cache.
  */
 export interface StepContext {
   deps: HandlerDeps;
@@ -168,18 +166,14 @@ export interface AutoApproveDecision {
 export interface StepResult {
   /** The candidate screenshot this result is for. */
   screenshotId: string;
-  viewport: string | null;
   /**
    * Spec §3: no baseline image → `new`; otherwise `unresolved` if it still
    * fails after rules, else `passed`.
    */
   verdict: CheckpointVerdict;
-  /** The diff's own pass/fail, before rules; true when it was not diffed. */
-  passed: boolean;
   /**
    * No baseline image to diff against: none resolved in any tier, or the
-   * resolved baseline's screenshot is missing. Verdict `new`; such a result
-   * keeps `passed: true` and no regions so the rules/status inputs hold.
+   * resolved baseline's screenshot is missing. Verdict `new`, no regions.
    */
   firstBaseline: boolean;
   regions: InflatedRegion[];
@@ -214,7 +208,7 @@ export interface StepResult {
 
 /** A checkpoint that is not diffed: first capture, missing pair, or auto-approved. */
 function undiffedStep(
-  cs: { id: string; viewport: string | null },
+  cs: { id: string },
   outcome: Pick<StepResult, "firstBaseline" | "autoApprove" | "baselineSource">,
 ): StepResult {
   // No baseline image → `new`; an auto-approved step passed without a diff.
@@ -222,9 +216,7 @@ function undiffedStep(
   const compared = outcome.firstBaseline ? null : 0;
   return {
     screenshotId: cs.id,
-    viewport: cs.viewport ?? null,
     verdict: outcome.firstBaseline ? "new" : "passed",
-    passed: true,
     diffPercent: compared,
     pixelMismatchCount: compared,
     diffImageKey: null,
@@ -1023,9 +1015,7 @@ export async function diffStep(
 
   return {
     screenshotId: cs.id,
-    viewport: viewportKey,
     verdict: failed ? "unresolved" : "passed",
-    passed: result.passed,
     firstBaseline: false,
     regions,
     engineIds,

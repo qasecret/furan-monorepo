@@ -1,26 +1,39 @@
 import {
   asc,
-  autoRules,
   baselines,
-  builds,
+  computePrimarySignature,
   createDb,
   diffRegions,
   eq,
   projects,
   screenshots,
   testRuns,
-  testVariations,
   users,
   type DB,
 } from "@furan/db";
-import type { DiffJob } from "@furan/queue";
-import { createStorage, objectKey, type Storage } from "@furan/storage";
+import {
+  EXCLUDED_SOURCES,
+  severityRank,
+  type Severity,
+} from "@furan/diff-engine";
+import { createStorage, type Storage } from "@furan/storage";
 import { Redis } from "ioredis";
-import sharp from "sharp";
+import { Registry } from "prom-client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { createDiffMetrics } from "../src/diff-metrics.js";
 import { diffStep, type StepResult } from "../src/diff-step.js";
 import { handleDiffJob, loadStepContext } from "../src/handler.js";
+
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+import {
+  createStepSeeder,
+  square,
+  SQ,
+  type Bbox,
+  type ScenarioSpec,
+  type Seeded,
+} from "./helpers/step-seed.js";
 
 // Dynamic-text OCR is mocked so a run is reproducible: every crop reads as a
 // date, so a date-pattern region matches and any other pattern does not.
@@ -33,13 +46,20 @@ vi.mock("tesseract.js", () => ({
 
 /**
  * `diffStep` is the old whole-run loop body run for ONE step (spec
- * 2026-10-23 §4.2). Parity: for every step of the existing worker fixtures
- * (multi-checkpoint, auto-approve, ignore areas, layout, rules), `diffStep`
- * returns what the whole-run handler stores for that step.
+ * 2026-10-23 §4.2), and a run diffed one step job at a time ends where the
+ * whole-run handler did. Parity, for every step of the existing worker
+ * fixtures (multi-checkpoint, auto-approve, ignore areas, layout, rules):
+ * - `diffStep` returns what the whole-run handler stored for that step, and
+ *   the old in-memory run fold over those results gives its run totals;
+ * - the per-step jobs (`handleDiffJob` with step payloads, committed one by
+ *   one in reverse capture order) store the same per step, and their run
+ *   totals (`recomputeRunTotals`) are the same.
  *
- * GOLDEN holds the values the whole-run handler stored BEFORE the loop body
- * was moved into `diffStep`, so this test cannot pass just
- * because both sides now run the same code.
+ * GOLDEN holds the values the whole-run handler stored BEFORE its loop body
+ * was moved into `diffStep` (the run's `diffName`, `baselineSource`,
+ * `vlmDescription` and `primarySignature`, and each step's own numbers, were
+ * captured from the whole-run handler at 6c3778d2, whose fold is the old one),
+ * so this test cannot pass just because both sides now run the same code.
  */
 
 const skip =
@@ -58,43 +78,6 @@ const mockLogger = {
   child: () => mockLogger,
 } as unknown as Parameters<typeof handleDiffJob>[1];
 
-// The tile-aligned helper of handler.multi-checkpoint.test.ts and
-// handler.layout.test.ts: a 400x400 white PNG with a 144px (3x3 tiles of 48px)
-// square at (pos, pos), so a change produces real L1 clusters.
-const IMG = 400;
-const SQ = 144;
-const VP = "400x400";
-type Bbox = { x: number; y: number; width: number; height: number };
-
-async function square(color: "red" | "blue", pos: number): Promise<Buffer> {
-  const fg =
-    color === "red"
-      ? { r: 220, g: 30, b: 30, alpha: 1 }
-      : { r: 30, g: 30, b: 220, alpha: 1 };
-  return sharp({
-    create: {
-      width: IMG,
-      height: IMG,
-      channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
-    },
-  })
-    .composite([
-      {
-        input: {
-          create: { width: SQ, height: SQ, channels: 4, background: fg },
-        },
-        left: pos,
-        top: pos,
-      },
-    ])
-    .png()
-    .toBuffer();
-}
-
-const elementMapBytes = (elements: Record<string, Bbox>): Buffer =>
-  Buffer.from(JSON.stringify({ v: 1, elements, capturedAt: 0 }));
-
 // handler.layout.test.ts: div.box A holds the square at 96 (96..240); div.box
 // B holds it at 240 (240..384), a moved element.
 const BOX_A: Bbox = { x: 80, y: 80, width: 180, height: 180 };
@@ -110,44 +93,6 @@ const A11Y_DOM =
 
 const DATE_PATTERN = String.raw`\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*[\s\-\/]+\d{1,2},?\s+\d{2,4}\b`;
 const ORDER_PATTERN = String.raw`^ORDER-\d+$`;
-
-interface StepSpec {
-  name: string;
-  /** Baseline image; `null` = the step has never been baselined. */
-  baseline: Buffer | null;
-  candidate: Buffer;
-  /** Store the candidate under the baseline's object key (ADR-032 hash match). */
-  sameKey?: boolean;
-  /** A baselines row whose run holds no screenshot of the variation. */
-  pairMissing?: boolean;
-  /** An OLDER baseline of the variation holding this image (past-baseline match). */
-  pastBaseline?: Buffer;
-  /** Ignore regions stored on this step's variation. */
-  ignoreRegions?: unknown[];
-  matchLevel?: "Strict" | "Layout";
-  baselineMap?: Record<string, Bbox>;
-  candidateMap?: Record<string, Bbox>;
-  candidateDom?: string;
-  accessibilityLevel?: "AA";
-}
-
-interface ScenarioSpec {
-  steps: StepSpec[];
-  autoApproveFeature?: boolean;
-  dynamicTextEnabled?: boolean;
-  /** The candidate run's temp ignore areas (every step of the run). */
-  tempIgnoreAreas?: unknown[];
-  /** Selectors of enabled `auto_approve` rules. */
-  ruleSelectors?: string[];
-}
-
-interface Seeded {
-  projectId: string;
-  candidateRunId: string;
-  /** Candidate screenshot id by step name. */
-  shotId: Record<string, string>;
-  variationId: Record<string, string>;
-}
 
 /** What one step's diff produced, in the shape both sides are compared in. */
 interface StepOutcome {
@@ -173,12 +118,22 @@ interface StepOutcome {
   }>;
   /** Regions a rule won (its `diff_regions.resolved_by_application_id`). */
   ruleWonRegions: number;
+  /** The step's own numbers: NULL when it was not compared, 0 when it was
+   * auto-approved without a diff. */
+  baselineSource: string | null;
+  diffPercent: number | null;
+  pixelMismatchCount: number | null;
 }
 
+/** The run totals (spec §5). */
 interface RunOutcome {
   diffPercent: number | null;
   pixelMisMatchCount: number | null;
+  diffName: string | null;
+  baselineSource: string | null;
+  vlmDescription: string | null;
   resolutionSource: string | null;
+  primarySignature: string | null;
 }
 
 interface Outcome {
@@ -367,8 +322,8 @@ const SCENARIOS: Record<string, () => Promise<ScenarioSpec>> = {
       },
     ],
   }),
-  // Auto rules: a selector rule auto-approves the second step's change, so
-  // its decisions are re-keyed from the step's `0:i` to the run's `1:i`.
+  // Auto rules: a selector rule auto-approves the second step's change; its
+  // decision, keyed `0:i` by the step, must reach that step's stored region.
   rules: async () => ({
     ruleSelectors: ["#box"],
     steps: [
@@ -409,6 +364,41 @@ const DIFF_RECOLOR_96 =
   "80df4d02a5cdf0232187cc468e07c98c482978c2fc8cbfd594c7fb88e78e283a";
 const SIG_RECOLOR_96 =
   "v1:17875aee0d990933d8caaf10e0179018a81a50e4a2442cb4c4f5fa31e803a9d2";
+// The square moved from 0 to 144: diff image.
+const DIFF_MOVED_0_144 =
+  "dea792f6f0b03904c2ec0c7abdfbbf04a6ab112875b1f22da3eff1e3e90b86a8";
+// The strict step's signature (its breach region plus the recolour cluster).
+const SIG_STRICT_0 =
+  "v1:fb0f1951837b4b8b4a28741bf60d85ce84702c29eaee33f423f8f88db5a15313";
+// The square moved from 96 to 240 under Layout: diff image.
+const DIFF_KEPT_96_240 =
+  "e070367ab7de5022db159fe03b778190d93ba22a4b0c879c61cae14af4c30f71";
+
+// A step's own numbers: the recolour of one 144px square (20521 px of 400²),
+// a move (the square leaves one place and appears in another), and a step
+// compared at 0% (identical, masked, or auto-approved without a diff).
+const RECOLOR_NUMBERS = {
+  baselineSource: "this_branch",
+  diffPercent: 12.825625,
+  pixelMismatchCount: 20521,
+};
+const MOVED_NUMBERS = {
+  baselineSource: "this_branch",
+  diffPercent: 25.785625,
+  pixelMismatchCount: 41257,
+};
+const ZERO = {
+  baselineSource: "this_branch",
+  diffPercent: 0,
+  pixelMismatchCount: 0,
+};
+/** A first capture: no baseline resolved, nothing compared. */
+const NOT_COMPARED = {
+  baselineSource: null,
+  diffPercent: null,
+  pixelMismatchCount: null,
+};
+
 /** A step the diff left no output on: not diffed, masked, or identical. */
 const NO_OUTPUT = {
   regions: [],
@@ -420,6 +410,7 @@ const NO_OUTPUT = {
 };
 const RECOLOR_0 = {
   ...NO_OUTPUT,
+  ...RECOLOR_NUMBERS,
   verdict: "unresolved",
   regions: [l1Cluster(0)],
   diffSignature: SIG_RECOLOR_0,
@@ -430,45 +421,64 @@ const GOLDEN: Record<string, Outcome> = {
   checkpoints: {
     steps: {
       home: RECOLOR_0,
-      cart: { ...NO_OUTPUT, verdict: "passed" },
+      cart: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
       moved: {
         ...NO_OUTPUT,
+        ...MOVED_NUMBERS,
         verdict: "unresolved",
         regions: [l1Cluster(0), l1Cluster(144)],
         diffSignature:
           "v1:699e370af62b3cf010c89e58448c15f7212463e70bc785c99e048110f5d22265",
-        diffImageKey:
-          "dea792f6f0b03904c2ec0c7abdfbbf04a6ab112875b1f22da3eff1e3e90b86a8",
+        diffImageKey: DIFF_MOVED_0_144,
       },
-      search: { ...NO_OUTPUT, verdict: "new" },
-      drift: { ...NO_OUTPUT, verdict: "new" },
-      masked: { ...NO_OUTPUT, verdict: "passed" },
+      search: { ...NO_OUTPUT, ...NOT_COMPARED, verdict: "new" },
+      // A missing pair: its baseline resolved (a source), but nothing compared.
+      drift: {
+        ...NO_OUTPUT,
+        ...NOT_COMPARED,
+        baselineSource: "this_branch",
+        verdict: "new",
+      },
+      masked: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
     },
     run: {
       diffPercent: 25.785625,
       pixelMisMatchCount: 61778,
+      diffName: DIFF_MOVED_0_144,
+      baselineSource: "this_branch",
+      vlmDescription: null,
       resolutionSource: null,
+      primarySignature: SIG_RECOLOR_0,
     },
   },
   "auto-approve": {
     steps: {
-      hash: { ...NO_OUTPUT, verdict: "passed", autoApproved: true },
-      past: { ...NO_OUTPUT, verdict: "passed", autoApproved: true },
-      first: { ...NO_OUTPUT, verdict: "new", autoApproved: true },
+      hash: { ...NO_OUTPUT, ...ZERO, verdict: "passed", autoApproved: true },
+      past: { ...NO_OUTPUT, ...ZERO, verdict: "passed", autoApproved: true },
+      first: {
+        ...NO_OUTPUT,
+        ...NOT_COMPARED,
+        verdict: "new",
+        autoApproved: true,
+      },
       changed: RECOLOR_0,
-      same: { ...NO_OUTPUT, verdict: "passed" },
+      same: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
     },
     run: {
       diffPercent: 12.825625,
       pixelMisMatchCount: 20521,
+      diffName: DIFF_RECOLOR_0,
+      baselineSource: "this_branch",
+      vlmDescription: null,
       resolutionSource: null,
+      primarySignature: SIG_RECOLOR_0,
     },
   },
   regions: {
     steps: {
-      temp: { ...NO_OUTPUT, verdict: "passed" },
-      selector: { ...NO_OUTPUT, verdict: "passed" },
-      padded: { ...NO_OUTPUT, verdict: "passed" },
+      temp: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
+      selector: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
+      padded: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
       strict: {
         ...RECOLOR_0,
         regions: [
@@ -481,11 +491,13 @@ const GOLDEN: Record<string, Outcome> = {
           },
           l1Cluster(0),
         ],
-        diffSignature:
-          "v1:fb0f1951837b4b8b4a28741bf60d85ce84702c29eaee33f423f8f88db5a15313",
+        diffSignature: SIG_STRICT_0,
       },
       ocr: {
         ...RECOLOR_0,
+        // The matched date region (0,0 40×40) masks part of the recolour.
+        diffPercent: 9.2125,
+        pixelMismatchCount: 14740,
         diffImageKey:
           "8e7689fdc35c431648faf3340ef2b0f3980c7490722dfe7be765cc7a68b8cd72",
         ocrAudit: [
@@ -505,6 +517,7 @@ const GOLDEN: Record<string, Outcome> = {
       },
       a11y: {
         ...NO_OUTPUT,
+        ...ZERO,
         verdict: "passed",
         regions: [
           {
@@ -522,13 +535,18 @@ const GOLDEN: Record<string, Outcome> = {
     run: {
       diffPercent: 12.825625,
       pixelMisMatchCount: 35261,
+      diffName: DIFF_RECOLOR_0,
+      baselineSource: "this_branch",
+      vlmDescription: null,
       resolutionSource: null,
+      primarySignature: SIG_STRICT_0,
     },
   },
   layout: {
     steps: {
       suppressed: {
         ...NO_OUTPUT,
+        ...RECOLOR_NUMBERS,
         verdict: "passed",
         regions: [
           {
@@ -544,6 +562,7 @@ const GOLDEN: Record<string, Outcome> = {
       },
       kept: {
         ...NO_OUTPUT,
+        ...MOVED_NUMBERS,
         verdict: "unresolved",
         regions: [
           {
@@ -563,11 +582,11 @@ const GOLDEN: Record<string, Outcome> = {
         ],
         diffSignature:
           "v1:2f564fd9d8069bd84a8434cbd5f3d7c952167886a2fdc73514d9d6478d62cf92",
-        diffImageKey:
-          "e070367ab7de5022db159fe03b778190d93ba22a4b0c879c61cae14af4c30f71",
+        diffImageKey: DIFF_KEPT_96_240,
       },
       degraded: {
         ...NO_OUTPUT,
+        ...RECOLOR_NUMBERS,
         verdict: "unresolved",
         regions: [l1Cluster(96, `[Layout→Strict: no element map] ${CLUSTER}`)],
         diffSignature: SIG_RECOLOR_96,
@@ -575,6 +594,7 @@ const GOLDEN: Record<string, Outcome> = {
       },
       strictLevel: {
         ...NO_OUTPUT,
+        ...RECOLOR_NUMBERS,
         verdict: "unresolved",
         regions: [l1Cluster(96)],
         diffSignature: SIG_RECOLOR_96,
@@ -584,21 +604,78 @@ const GOLDEN: Record<string, Outcome> = {
     run: {
       diffPercent: 25.785625,
       pixelMisMatchCount: 102820,
+      diffName: DIFF_KEPT_96_240,
+      baselineSource: "this_branch",
+      vlmDescription: null,
       resolutionSource: null,
+      primarySignature: SIG_RECOLOR_96,
     },
   },
   rules: {
     steps: {
-      same: { ...NO_OUTPUT, verdict: "passed" },
+      same: { ...NO_OUTPUT, ...ZERO, verdict: "passed" },
       ruled: { ...RECOLOR_0, verdict: "passed", ruleWonRegions: 1 },
     },
     run: {
       diffPercent: 12.825625,
       pixelMisMatchCount: 20521,
+      diffName: DIFF_RECOLOR_0,
+      baselineSource: "this_branch",
+      vlmDescription: null,
       resolutionSource: "rule",
+      primarySignature: SIG_RECOLOR_0,
     },
   },
 };
+
+/**
+ * The diff-worker's old in-memory run fold (the whole-run handler at
+ * aca5016d, with `?? 0` for the numbers a step not compared now leaves NULL),
+ * over the steps' results in capture order.
+ */
+function oldRunFold(results: StepResult[]): RunOutcome {
+  const compared = results.some((r) => !r.firstBaseline);
+  const pct = (r: StepResult) => r.diffPercent ?? 0;
+  const worstOf = (rs: StepResult[]) =>
+    rs.reduce<StepResult | null>(
+      (acc, v) => (acc === null || pct(v) > pct(acc) ? v : acc),
+      null,
+    );
+  return {
+    diffPercent: compared
+      ? results.reduce((m, v) => (pct(v) > m ? pct(v) : m), 0)
+      : null,
+    pixelMisMatchCount: compared
+      ? results.reduce((n, v) => n + (v.pixelMismatchCount ?? 0), 0)
+      : null,
+    diffName: worstOf(results)?.diffImageKey ?? null,
+    baselineSource:
+      worstOf(results.filter((r) => r.baselineSource !== null))
+        ?.baselineSource ?? null,
+    vlmDescription:
+      results.find((v) => v.vlmDescription)?.vlmDescription ?? null,
+    // `aggregateRuleStatus`: no step still fails and a rule auto-approved one.
+    resolutionSource:
+      !results.some((r) => r.verdict === "unresolved") &&
+      results.some((r) => r.ruleResolved)
+        ? "rule"
+        : null,
+    primarySignature: computePrimarySignature(
+      results.map((v) => ({
+        diffSignature: v.diffSignature,
+        worstSeverity: v.regions
+          .filter((r) => !EXCLUDED_SOURCES.has(r.source))
+          .reduce<Severity>(
+            (worst, r) =>
+              severityRank(r.severity as Severity) > severityRank(worst)
+                ? (r.severity as Severity)
+                : worst,
+            "none",
+          ),
+      })),
+    ),
+  };
+}
 
 desc("diffStep (integration)", () => {
   let db: DB;
@@ -607,6 +684,7 @@ desc("diffStep (integration)", () => {
   let redis: Redis;
   let userId: string;
   const projectIds: string[] = [];
+  let seed: (spec: ScenarioSpec) => Promise<Seeded>;
 
   beforeAll(async () => {
     const created = createDb();
@@ -626,6 +704,7 @@ desc("diffStep (integration)", () => {
       })
       .returning();
     userId = u!.id;
+    seed = createStepSeeder({ db, storage, userId, projectIds });
   }, 60_000);
 
   afterAll(async () => {
@@ -640,176 +719,7 @@ desc("diffStep (integration)", () => {
     await closeDb();
   });
 
-  /**
-   * One project per call, so two calls with one spec are independent copies.
-   * Each step gets its own variation and baseline run (as in
-   * handler.multi-checkpoint.test.ts); the candidate run holds one screenshot
-   * per step, in spec order.
-   */
-  async function seed(spec: ScenarioSpec): Promise<Seeded> {
-    const uniq = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
-    const [p] = await db
-      .insert(projects)
-      .values({
-        name: `dw-step-${uniq}`,
-        mainBranchName: "main",
-        diffThreshold: 0.001,
-        autoApproveFeature: spec.autoApproveFeature ?? false,
-        dynamicTextEnabled: spec.dynamicTextEnabled ?? false,
-      })
-      .returning();
-    const projectId = p!.id;
-    projectIds.push(projectId);
-    const [b] = await db
-      .insert(builds)
-      .values({ projectId, userId, isRunning: false })
-      .returning();
-    const buildId = b!.id;
-
-    for (const selector of spec.ruleSelectors ?? []) {
-      await db.insert(autoRules).values({
-        projectId,
-        label: `rule ${selector}`,
-        match: { type: "selector", value: selector },
-        action: "auto_approve",
-        createdBy: userId,
-        updatedBy: userId,
-      });
-    }
-
-    const putMap = async (
-      elements: Record<string, Bbox> | undefined,
-      suffix: string,
-    ): Promise<string | null> => {
-      if (!elements) return null;
-      const bytes = elementMapBytes(elements);
-      const key = `${objectKey(bytes)}-${uniq}-${suffix}`;
-      await storage.put(key, bytes, "application/json");
-      return key;
-    };
-    const newRun = async (name: string, status: "passed" | "running") => {
-      const [r] = await db
-        .insert(testRuns)
-        .values({
-          name,
-          projectId,
-          buildId,
-          branchName: "main",
-          status,
-          ...(status === "running" && spec.tempIgnoreAreas
-            ? { tempIgnoreAreas: JSON.stringify(spec.tempIgnoreAreas) }
-            : {}),
-        })
-        .returning();
-      return r!.id;
-    };
-
-    const variationId: Record<string, string> = {};
-    const baselineKey: Record<string, string> = {};
-    for (const step of spec.steps) {
-      const [v] = await db
-        .insert(testVariations)
-        .values({
-          name: step.name,
-          projectId,
-          branchName: "main",
-          browser: "chromium",
-          viewport: VP,
-          ignoreRegions: step.ignoreRegions ?? null,
-        })
-        .returning();
-      variationId[step.name] = v!.id;
-
-      if (step.pastBaseline) {
-        const runId = await newRun(`past-${step.name}`, "passed");
-        const key = `${objectKey(step.pastBaseline)}-${uniq}-${step.name}-past`;
-        await storage.put(key, step.pastBaseline, "image/png");
-        await db.insert(screenshots).values({
-          runId,
-          projectId,
-          testVariationId: v!.id,
-          name: step.name,
-          imageKey: key,
-          viewport: VP,
-          browser: "chromium",
-        });
-        await db.insert(baselines).values({
-          baselineName: `${step.name}-past`,
-          testVariationId: v!.id,
-          testRunId: runId,
-          branchName: "main",
-          userId,
-          createdAt: new Date(Date.now() - 60 * 60_000),
-        });
-      }
-
-      if (!step.baseline) continue;
-      const runId = await newRun(`baseline-${step.name}`, "passed");
-      const key = `${objectKey(step.baseline)}-${uniq}-${step.name}-bl`;
-      await storage.put(key, step.baseline, "image/png");
-      baselineKey[step.name] = key;
-      if (!step.pairMissing) {
-        await db.insert(screenshots).values({
-          runId,
-          projectId,
-          testVariationId: v!.id,
-          name: step.name,
-          imageKey: key,
-          viewport: VP,
-          browser: "chromium",
-          matchLevel: step.matchLevel ?? "Strict",
-          elementMapKey: await putMap(step.baselineMap, `${step.name}-blmap`),
-        });
-      }
-      await db.insert(baselines).values({
-        baselineName: key,
-        testVariationId: v!.id,
-        testRunId: runId,
-        branchName: "main",
-        userId,
-      });
-    }
-
-    const candidateRunId = await newRun("candidate", "running");
-    const shotId: Record<string, string> = {};
-    // Explicit capture order (the handler reads steps by created_at, id).
-    const t0 = Date.now();
-    for (const [i, step] of spec.steps.entries()) {
-      let imageKey = `${objectKey(step.candidate)}-${uniq}-${step.name}-cd`;
-      if (step.sameKey) {
-        imageKey = baselineKey[step.name]!;
-      } else {
-        await storage.put(imageKey, step.candidate, "image/png");
-      }
-      let domKey: string | null = null;
-      if (step.candidateDom) {
-        domKey = `${uniq}-${step.name}.html`;
-        await storage.put(domKey, Buffer.from(step.candidateDom), "text/html");
-      }
-      const [cs] = await db
-        .insert(screenshots)
-        .values({
-          runId: candidateRunId,
-          projectId,
-          testVariationId: variationId[step.name]!,
-          name: step.name,
-          imageKey,
-          domKey,
-          viewport: VP,
-          browser: "chromium",
-          matchLevel: step.matchLevel ?? "Strict",
-          elementMapKey: await putMap(step.candidateMap, `${step.name}-cdmap`),
-          accessibilityLevel: step.accessibilityLevel ?? null,
-          createdAt: new Date(t0 + i * 1000),
-        })
-        .returning();
-      shotId[step.name] = cs!.id;
-    }
-
-    return { projectId, candidateRunId, shotId, variationId };
-  }
-
-  /** What the whole-run handler stored, per step and on the run. */
+  /** What the per-step jobs stored, per step and on the run. */
   async function storedOutcome(s: Seeded): Promise<Outcome> {
     const steps: Record<string, StepOutcome> = {};
     for (const [name, id] of Object.entries(s.shotId)) {
@@ -855,6 +765,9 @@ desc("diffStep (integration)", () => {
         ruleWonRegions: regions.filter(
           (r) => r.resolvedByApplicationId !== null,
         ).length,
+        baselineSource: shot!.baselineSource,
+        diffPercent: shot!.diffPercent,
+        pixelMismatchCount: shot!.pixelMismatchCount,
       };
     }
     const [run] = await db
@@ -866,17 +779,17 @@ desc("diffStep (integration)", () => {
       run: {
         diffPercent: run!.diffPercent,
         pixelMisMatchCount: run!.pixelMisMatchCount,
+        diffName: run!.diffName,
+        baselineSource: run!.baselineSource,
+        vlmDescription: run!.vlmDescription,
         resolutionSource: run!.resolutionSource,
+        primarySignature: run!.primarySignature,
       },
     };
   }
 
-  /**
-   * What `diffStep` returns for each step of the run, in the shape of
-   * `storedOutcome`, and the run's numbers folded from the steps' own (a step
-   * with no baseline image has no diff % and is not compared).
-   */
-  async function steppedOutcome(s: Seeded): Promise<Outcome> {
+  /** The context `handleDiffJob` builds for one run's steps. */
+  async function contextFor(s: Seeded, metrics?: Registry) {
     const project = await db.query.projects.findFirst({
       where: eq(projects.id, s.projectId),
     });
@@ -888,11 +801,29 @@ desc("diffStep (integration)", () => {
       .from(screenshots)
       .where(eq(screenshots.runId, s.candidateRunId))
       .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
-    const ctx = await loadStepContext({ db, storage, redis }, mockLogger, {
-      project: project!,
-      run: run!,
-      variationIds: shots.map((cs) => cs.testVariationId),
-    });
+    const ctx = await loadStepContext(
+      {
+        db,
+        storage,
+        redis,
+        ...(metrics ? { metrics: createDiffMetrics(metrics) } : {}),
+      },
+      mockLogger,
+      {
+        project: project!,
+        run: run!,
+        variationIds: shots.map((cs) => cs.testVariationId),
+      },
+    );
+    return { ctx, shots };
+  }
+
+  /**
+   * What `diffStep` returns for each step of the run, in the shape of
+   * `storedOutcome`, and the old in-memory fold of those results.
+   */
+  async function steppedOutcome(s: Seeded): Promise<Outcome> {
+    const { ctx, shots } = await contextFor(s);
     const results: StepResult[] = [];
     for (const cs of shots) results.push(await diffStep(ctx, cs));
 
@@ -929,43 +860,32 @@ desc("diffStep (integration)", () => {
           })),
         ),
         ruleWonRegions: r.engineIds.filter((id) => won.has(id)).length,
+        baselineSource: r.baselineSource,
+        diffPercent: r.diffPercent,
+        pixelMismatchCount: r.pixelMismatchCount,
       };
     }
-    const compared = results.filter((r) => r.diffPercent !== null);
-    return {
-      steps,
-      run: {
-        diffPercent:
-          compared.length > 0
-            ? Math.max(...compared.map((r) => r.diffPercent!))
-            : null,
-        pixelMisMatchCount:
-          compared.length > 0
-            ? compared.reduce((n, r) => n + r.pixelMismatchCount!, 0)
-            : null,
-        resolutionSource:
-          !results.some((r) => r.verdict === "unresolved") &&
-          results.some((r) => r.ruleResolved)
-            ? "rule"
-            : null,
-      },
-    };
+    return { steps, run: oldRunFold(results) };
   }
 
   it.each(Object.keys(SCENARIOS))(
-    "diffStep returns, per step, exactly what the whole-run handler stored: %s",
+    "per step and in the run totals, diffStep and the per-step jobs reproduce the whole-run handler: %s",
     async (name) => {
       const spec = await SCENARIOS[name]!();
 
-      const whole = await seed(spec);
-      await handleDiffJob(
-        { runId: whole.candidateRunId, projectId: whole.projectId } as DiffJob,
+      // The per-step jobs, committed one by one in REVERSE capture order: the
+      // totals are rebuilt from the stored steps, whatever order they land in.
+      const perStep = await seed(spec);
+      const outcomes = await diffRunPerStep(
+        { runId: perStep.candidateRunId, projectId: perStep.projectId },
         mockLogger,
         { db, storage, redis },
+        { reverse: true },
       );
-      const stored = await storedOutcome(whole);
+      expect(outcomes).toEqual(spec.steps.map(() => ({ checkpoints: 1 })));
+      const stored = await storedOutcome(perStep);
 
-      // A fresh copy of the same seed, so the handler's writes (auto-approved
+      // A fresh copy of the same seed, so the jobs' writes (auto-approved
       // baselines, say) do not change what the steps resolve.
       const fresh = await seed(spec);
       const stepped = await steppedOutcome(fresh);
@@ -995,4 +915,80 @@ desc("diffStep (integration)", () => {
     },
     120_000,
   );
+
+  it("a step whose rule evaluation throws loses only its own rule decisions", async () => {
+    // Both steps' changes sit inside `#box`, so the auto_approve rule resolves
+    // each of them; the first step's change is at (0, 0), the second's at 240.
+    const BOX_240: Bbox = { x: 240, y: 240, width: SQ, height: SQ };
+    const s = await seed({
+      ruleSelectors: ["#box"],
+      steps: [
+        {
+          name: "boom",
+          baseline: await square("red", 0),
+          candidate: await square("blue", 0),
+          candidateDom: BOX_DOM,
+          candidateMap: { "#box": BOX_0 },
+        },
+        {
+          name: "ruled",
+          baseline: await square("red", 240),
+          candidate: await square("blue", 240),
+          candidateDom: BOX_DOM,
+          candidateMap: { "#box": BOX_240 },
+        },
+      ],
+    });
+    const registry = new Registry();
+    const { ctx, shots } = await contextFor(s, registry);
+    const [boomShot, ruledShot] = shots;
+    const errorCount = async () =>
+      (
+        (
+          (await registry.getMetricsAsJSON()).find(
+            (m) => m.name === "furan_diff_rules_evaluation_errors_total",
+          )?.values ?? []
+        ).at(0) as { value: number } | undefined
+      )?.value ?? 0;
+
+    // With the rules as compiled, the first step is resolved by its rule.
+    const resolved = await diffStep(ctx, boomShot!);
+    expect(resolved.verdict).toBe("passed");
+    expect(resolved.ruleDecisions).toHaveLength(1);
+
+    // The compiled rules, with a matcher that throws on the first step's
+    // region (at 0, 0) only.
+    const compiled = ctx.compiledRules!;
+    ctx.compiledRules = {
+      ...compiled,
+      rules: compiled.rules.map((rule) => ({
+        ...rule,
+        matcher: (region, elementMap) => {
+          if (region.bbox.x === 0) throw new Error("matcher_boom");
+          return rule.matcher(region, elementMap);
+        },
+      })),
+    };
+    const errorsBefore = await errorCount();
+    vi.mocked(mockLogger.error).mockClear();
+
+    const boom = await diffStep(ctx, boomShot!);
+    const ruled = await diffStep(ctx, ruledShot!);
+
+    // That step: no decisions, so its change stays unresolved.
+    expect(boom.verdict).toBe("unresolved");
+    expect(boom.ruleDecisions).toEqual([]);
+    expect(boom.ruleResolved).toBe(false);
+    expect(boom.ruleDiagnostics).toBeNull();
+    expect((await errorCount()) - errorsBefore).toBe(1);
+    expect(vi.mocked(mockLogger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({ screenshotId: boomShot!.id }),
+      "rules-engine evaluation failed; proceeding without rule decisions",
+    );
+    // Its sibling keeps its own decisions.
+    expect(ruled.verdict).toBe("passed");
+    expect(ruled.ruleDecisions).toHaveLength(1);
+    expect(ruled.ruleDecisions[0]!.finalAction).toBe("auto_approve");
+    expect(ruled.ruleResolved).toBe(true);
+  }, 60_000);
 });

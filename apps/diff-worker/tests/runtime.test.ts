@@ -15,6 +15,12 @@ import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
 const PROJECT = "00000000-0000-0000-0000-000000000002";
 const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
 const OK = "00000000-0000-0000-0000-0000000000bb";
+const STALE = "00000000-0000-0000-0000-0000000000dd";
+/** A step job's step and version (spec 2026-10-23); the stub ignores them. */
+const STEP = {
+  screenshotId: "00000000-0000-0000-0000-0000000000cc",
+  generation: 1,
+};
 
 type Sample = {
   metricName?: string;
@@ -71,11 +77,13 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
   let runtime: DiffWorkerRuntime | undefined;
   const calls = new Map<string, number>();
 
-  // Succeeds with 7 checkpoints; the RETRY_ONCE run throws on its first call.
+  // Succeeds with 7 checkpoints; the RETRY_ONCE run throws on its first call;
+  // the STALE run's job finds its version taken by a newer one.
   const stub: typeof handleDiffJob = async (data) => {
     const n = (calls.get(data.runId) ?? 0) + 1;
     calls.set(data.runId, n);
     if (data.runId === RETRY_ONCE && n === 1) throw new Error("boom");
+    if (data.runId === STALE) return { checkpoints: 0, stale: true };
     return { checkpoints: 7 };
   };
 
@@ -112,7 +120,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
   it("records duration, queue wait and checkpoints for a completed job", async () => {
     runtime = start();
     const done = settled(runtime, "completed", OK);
-    await queue.add("diff", { runId: OK, projectId: PROJECT });
+    await queue.add("diff", { runId: OK, projectId: PROJECT, ...STEP });
     await done;
 
     expect(
@@ -140,7 +148,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     const done = settled(runtime, "completed", RETRY_ONCE);
     await queue.add(
       "diff",
-      { runId: RETRY_ONCE, projectId: PROJECT },
+      { runId: RETRY_ONCE, projectId: PROJECT, ...STEP },
       { attempts: 2, backoff: { type: "fixed", delay: 0 } },
     );
     await done;
@@ -171,6 +179,68 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     ).toBe(1);
   });
 
+  it("records a stale job under the stale outcome, with no checkpoints", async () => {
+    runtime = start();
+    const done = settled(runtime, "completed", STALE);
+    await queue.add("diff", { runId: STALE, projectId: PROJECT, ...STEP });
+    await done;
+
+    const duration = (outcome: string) =>
+      histogramSeries(registry, "furan_diff_job_duration_seconds", {
+        outcome,
+      });
+    expect((await duration("stale")).count).toBe(1);
+    expect((await duration("completed")).count).toBe(0);
+    expect(
+      await histogramSeries(registry, "furan_diff_job_checkpoints"),
+    ).toEqual({ count: 1, sum: 0 });
+  });
+
+  it("hands the handler the queue it consumes, so split jobs come back to it", async () => {
+    // A whole-run job: the handler adds a step job to `deps.queue`, which
+    // this same worker must then pick up (same name, same prefix).
+    const seen: DiffJob[] = [];
+    const splitter: typeof handleDiffJob = async (data, _logger, deps) => {
+      seen.push(data);
+      if (data.screenshotId === undefined) {
+        await deps.queue!.add(
+          "diff",
+          { ...data, ...STEP },
+          { jobId: `${STEP.screenshotId}-g${STEP.generation}` },
+        );
+        return { checkpoints: 0 };
+      }
+      return { checkpoints: 1 };
+    };
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      sweeper: false,
+      handler: splitter,
+    });
+    let completed = 0;
+    const both = new Promise<void>((resolve) => {
+      runtime!.worker.on("completed", () => {
+        if (++completed === 2) resolve();
+      });
+    });
+    await queue.add("diff", { runId: OK, projectId: PROJECT });
+    await both;
+
+    expect(seen).toEqual([
+      { runId: OK, projectId: PROJECT },
+      { runId: OK, projectId: PROJECT, ...STEP },
+    ]);
+    expect(
+      await histogramSeries(registry, "furan_diff_job_checkpoints"),
+    ).toEqual({ count: 2, sum: 1 });
+  });
+
   it("records a job that exhausts its attempts as failed and dead-lettered", async () => {
     const always: typeof handleDiffJob = async () => {
       throw new Error("always");
@@ -186,7 +256,11 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       handler: always,
     });
     const done = settled(runtime, "failed", OK);
-    await queue.add("diff", { runId: OK, projectId: PROJECT }, { attempts: 1 });
+    await queue.add(
+      "diff",
+      { runId: OK, projectId: PROJECT, ...STEP },
+      { attempts: 1 },
+    );
     await done;
 
     expect(
@@ -228,7 +302,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     // Two attempts: a throw out of the processor would be retried.
     const job = await queue.add(
       "diff",
-      { runId: OK, projectId: PROJECT },
+      { runId: OK, projectId: PROJECT, ...STEP },
       { attempts: 2, backoff: { type: "fixed", delay: 0 } },
     );
     await done;
@@ -268,11 +342,12 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
         sweeper: false,
         handler: held,
       });
-      await other.add("diff", { runId: OK, projectId: PROJECT });
+      await other.add("diff", { runId: OK, projectId: PROJECT, ...STEP });
       for (const n of [1, 2, 3]) {
         await queue.add("diff", {
           runId: `00000000-0000-0000-0000-00000000010${n}`,
           projectId: PROJECT,
+          ...STEP,
         });
       }
 

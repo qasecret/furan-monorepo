@@ -56,8 +56,9 @@ export interface DiffWorkerRuntimeOptions {
 export interface DiffWorkerRuntime {
   worker: Worker<DiffJob>;
   /**
-   * Stop the sweeper, then close the worker (waits for in-flight jobs) and the
-   * queue the depth gauge reads, and release the connections both were given.
+   * Stop the sweeper, then close the worker (waits for in-flight jobs) and its
+   * queue (the one the depth gauge reads and split jobs are added to), and
+   * release the connections both were given.
    * It does not touch `db`, `storage` or `redis`: the caller owns those. Safe
    * to call more than once, and it never waits on a connection that has not
    * become ready.
@@ -133,11 +134,27 @@ export function startDiffWorker(
 
   const prefix = opts.queuePrefix ? { prefix: opts.queuePrefix } : {};
 
+  // The queue the worker consumes: same name, same prefix. The handler adds
+  // the per-step jobs of an old whole-run job to it, and the depth gauge reads
+  // it. It gets its own connection, so a slow or hung read never queues
+  // behind the worker's blocking commands.
+  const queue = createQueue("diff", prefix);
+  // A connection error on this queue surfaces elsewhere: through the gauge, as
+  // a rate-limited `diff_queue_depth_unavailable`, and through a job that
+  // needed the queue, which fails. Without a listener BullMQ would print
+  // every one to stderr.
+  queue.on("error", () => undefined);
+
   const worker = createWorker(
     "diff",
     async (job) => {
       logger.info(
-        { jobId: job.id, projectId: job.data.projectId },
+        {
+          jobId: job.id,
+          projectId: job.data.projectId,
+          screenshotId: job.data.screenshotId,
+          generation: job.data.generation,
+        },
         "diff_job_received",
       );
       // Only the final attempt may mark the run `aborted` (ruling R9); an
@@ -162,7 +179,7 @@ export function startDiffWorker(
         result = await handler(
           job.data,
           logger,
-          { db, storage, redis, metrics: metrics.diff },
+          { db, storage, redis, metrics: metrics.diff, queue },
           { finalAttempt },
         );
       } catch (err) {
@@ -170,7 +187,7 @@ export function startDiffWorker(
         throw err;
       }
       // Outside the try: only the handler's failure is the job's failure.
-      observe("completed", result.checkpoints);
+      observe(result.stale ? "stale" : "completed", result.checkpoints);
     },
     {
       ...(opts.concurrency !== undefined
@@ -214,14 +231,6 @@ export function startDiffWorker(
           );
         }, SWEEP_INTERVAL_MS);
 
-  // The depth gauge reads the queue the worker consumes: same name, same
-  // prefix. It gets its own connection, so a slow or hung read never queues
-  // behind the worker's blocking commands.
-  const queue = createQueue("diff", prefix);
-  // A connection error on this queue surfaces through the gauge instead, as a
-  // rate-limited `diff_queue_depth_unavailable`. Without a listener BullMQ
-  // would print every one to stderr.
-  queue.on("error", () => undefined);
   registerQueueDepthGauge(
     registry,
     () => queue.getJobCounts("waiting", "active", "delayed", "failed"),

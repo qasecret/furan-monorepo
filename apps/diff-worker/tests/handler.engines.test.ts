@@ -23,6 +23,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { handleDiffJob } from "../src/handler.js";
 
+import { diffRunPerStep } from "./helpers/step-jobs.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = (n: string): Buffer =>
   readFileSync(join(__dirname, "fixtures", n));
@@ -253,7 +255,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
         projectId,
       };
 
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       const updatedRun = await db.query.testRuns.findFirst({
         where: eq(testRuns.id, candidateRun.id),
@@ -313,7 +315,7 @@ desc("handleDiffJob — per-engine wiring (integration)", () => {
       projectId,
     };
 
-    await handleDiffJob(job, mockLogger, { db, storage, redis });
+    await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
     const updatedRun = await db.query.testRuns.findFirst({
       where: eq(testRuns.id, candidateRun.id),
@@ -500,7 +502,7 @@ descLayout(
         runId: candidateRun.id,
         projectId,
       };
-      await handleDiffJob(job, mockLogger, { db, storage, redis });
+      await diffRunPerStep(job, mockLogger, { db, storage, redis });
 
       // Image diff must have fired — pixel mismatch detected even at Layout level.
       const updatedRun = await db.query.testRuns.findFirst({

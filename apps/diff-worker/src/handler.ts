@@ -1,49 +1,33 @@
 import {
   and,
-  asc,
-  autoRuleApplications,
   autoRules,
-  computePrimarySignature,
-  diffRegions,
   eq,
   inArray,
   isNull,
   ne,
   projects,
-  recomputeRunStatus,
-  recordBaseline,
   screenshots,
-  sql,
   testRuns,
   testVariations,
   withProjectScope,
   type DB,
 } from "@furan/db";
-import {
-  severityRank,
-  EXCLUDED_SOURCES,
-  type Severity,
-} from "@furan/diff-engine";
 import type { DiffJob } from "@furan/queue";
 import {
   compileRules,
   createDefaultRegistries,
   summarize as summarizeDecisions,
 } from "@furan/rules-engine";
-import type {
-  AutoRule,
-  CompiledRuleset,
-  EvaluationResult,
-} from "@furan/rules-engine";
+import type { AutoRule, CompiledRuleset } from "@furan/rules-engine";
 import type { Storage } from "@furan/storage";
 import type { Telemetry } from "@furan/telemetry";
 import type { Redis } from "ioredis";
 import { z } from "zod";
 
-import { autoApproveBaselineBlock } from "./auto-approve-guard.js";
+import { commitStep, persistRuleApplications } from "./commit-step.js";
 import type { DiffMetrics } from "./diff-metrics.js";
 import { diffStep, type StepContext, type StepResult } from "./diff-step.js";
-import { aggregateRuleStatus, regionEngineId } from "./rules-aggregation.js";
+import { splitLegacyJob, type DiffJobQueue } from "./legacy-split.js";
 
 // Moved to diff-step.ts with the rest of the per-step diff; re-exported for
 // existing importers.
@@ -59,6 +43,13 @@ export interface HandlerDeps {
    *  bootstrap a prom-client registry continue to work; the production
    *  worker passes a real instance from `createDiffMetrics`. */
   metrics?: DiffMetrics;
+  /**
+   * The queue this worker consumes (same name and prefix). Only an old
+   * whole-run job uses it: `splitLegacyJob` adds that run's per-step jobs to
+   * it. The worker runtime passes its own; a caller that only runs step jobs
+   * (CLIs, tests) may omit it.
+   */
+  queue?: DiffJobQueue;
 }
 
 /** Where this call sits in the job's BullMQ retry budget. */
@@ -122,33 +113,19 @@ async function publishProjectRunUpdate(
 }
 
 /**
- * Diff handler, one baseline per checkpoint (review flow spec §3, ADR-070).
- * Looks up the project + candidate run, then for EACH candidate screenshot
- * (checkpoint) in capture order, `diffStep`:
- *   1. resolves that checkpoint's own baseline via the three-tier
- *      `resolveBaseline` chain on its variation, and pairs it with the
- *      baseline run's screenshot OF THAT VARIATION (`checkpoint-baseline.ts`);
- *   2. no baseline, or a missing pair → verdict `new` (a first capture is
- *      auto-seeded as its variation's baseline under `autoApproveFeature`);
- *   3. hash or past-baseline match under `autoApproveFeature` (ADR-032) →
- *      verdict `passed` and the checkpoint becomes its variation's baseline;
- *   4. otherwise runs the image diff masked by its variation's ignore regions
- *      plus the run's temp regions → `passed` or `unresolved` after auto-rules.
+ * One diff job (spec 2026-10-23 §3, §4).
  *
- * Every path ends in ONE transaction that writes the run aggregates, the
- * regions, each checkpoint's `screenshots.verdict`, and then calls
- * `recomputeRunStatus`, the only writer of `test_runs.status` after a diff (so
- * a reviewer's decision survives any re-diff). Run aggregates:
- *   diffPercent   = MAX(per-checkpoint diffPercent); NULL when no checkpoint
- *                   had a baseline to compare against.
- *   pixelMisMatchCount = SUM(per-checkpoint pixelMismatchCount); NULL likewise.
- *   diffName      = overlay key of the worst (max diffPercent) checkpoint;
- *                   null if no overlay was produced anywhere.
- *   baselineSource = tier of the worst checkpoint that resolved a baseline.
+ * - A step job (`screenshotId` + `generation`) diffs that one step and commits
+ *   it under the version guard (`handleStepJob`). A job whose version is no
+ *   longer the step's is stale: it writes and publishes nothing and reports
+ *   `{ checkpoints: 0, stale: true }`.
+ * - An old whole-run job (no `screenshotId`), still queued from before the
+ *   per-step worker, is split into one step job per step on `deps.queue`
+ *   (`splitLegacyJob`). It diffs nothing, so it reports `{ checkpoints: 0 }`.
  *
- * Preserved from T9: publishes a terminal `run.completed` event (carrying the
- * recomputed status) after `diff.completed` so the integrations subscriber
- * (GitHub flow + webhook flow) can fan out.
+ * A failure is handled as before: a non-final attempt rethrows for BullMQ to
+ * retry; the final attempt marks the run `aborted` unless the step's commit
+ * already landed.
  */
 export async function handleDiffJob(
   data: DiffJob,
@@ -158,11 +135,25 @@ export async function handleDiffJob(
   // failure is terminal and the run is marked `aborted`.
   attempt: DiffAttempt = { finalAttempt: true },
 ): Promise<DiffJobOutcome> {
-  // Set by the inner handler the moment its core transaction (verdicts + the
-  // recomputed status) has committed.
+  // Set by the step job the moment its commit (the step's verdict + the
+  // recomputed totals and status) has landed.
   const progress: DiffProgress = { coreCommitted: false };
   try {
-    return await handleDiffJobInner(data, logger, deps, progress);
+    const { screenshotId, generation } = data;
+    if (screenshotId === undefined || generation === undefined) {
+      const jobs = await splitLegacyJob(deps, data, deps.queue);
+      logger.info(
+        { runId: data.runId, projectId: data.projectId, jobs },
+        "diff_whole_run_job_split",
+      );
+      return { checkpoints: 0 };
+    }
+    return await handleStepJob(
+      { ...data, screenshotId, generation },
+      logger,
+      deps,
+      progress,
+    );
   } catch (err) {
     // Always log the primary error first. BullMQ stashes it in the job's
     // failedReason but the worker's own structured log was previously
@@ -176,6 +167,7 @@ export async function handleDiffJob(
       err,
       runId: data.runId,
       projectId: data.projectId,
+      screenshotId: data.screenshotId,
       finalAttempt: attempt.finalAttempt,
       coreCommitted: progress.coreCommitted,
     };
@@ -186,8 +178,8 @@ export async function handleDiffJob(
     // lifecycle state `recomputeRunStatus` keeps, so writing it here would
     // stick even after the retry succeeds. Rethrow so BullMQ schedules it.
     if (!attempt.finalAttempt) throw err;
-    // Ruling R11: once the core transaction has committed, the run holds a
-    // valid derived status (and its verdicts, regions and baselines). A later
+    // Ruling R11: once the step's commit has landed, the run holds a valid
+    // derived status (and the step's verdict, regions and baseline). A later
     // failure (a Redis publish, say) must not replace it with `aborted`, which
     // `recomputeRunStatus` would then keep for good. It is logged above;
     // rethrow so the job still fails.
@@ -197,11 +189,12 @@ export async function handleDiffJob(
     // as `aborted` (distinct from reviewer-rejected `failed`). Wrap in its
     // own try/catch so a status-write failure does not mask the original
     // error — the worker's error visibility is unchanged. `abortedByDiff`
-    // marks it as the pipeline's abort, which a later successful diff of the
-    // whole run heals (Ruling R46, `healPipelineAbort`). A run that is already
-    // `aborted` is left exactly as it is (R50): an SDK or capture abort is
-    // final, and re-flagging it as the pipeline's would let a later diff heal
-    // it (a CI false pass); a pipeline abort already carries the flag.
+    // marks it as the pipeline's abort, which a later commit that leaves every
+    // step with a verdict heals (Ruling R46, `healPipelineAbort`). A run that
+    // is already `aborted` is left exactly as it is (R50): an SDK or capture
+    // abort is final, and re-flagging it as the pipeline's would let a later
+    // diff heal it (a CI false pass); a pipeline abort already carries the
+    // flag.
     try {
       await withProjectScope(deps.db, data.projectId, async (tx) => {
         await tx
@@ -250,59 +243,37 @@ export async function handleDiffJob(
 }
 
 /**
- * Ruling R46: each upload enqueues a whole-run diff, and a job that fails its
- * final attempt writes `aborted`, a lifecycle state the rollup keeps. When a
- * later job leaves EVERY checkpoint of the run with a verdict, an abort the
- * pipeline wrote (`aborted_by_diff`) is reset to the lifecycle value `running`
- * so the `recomputeRunStatus` that follows yields the real rollup. An SDK
- * `/abort` or a capture-worker abort leaves the flag false and stays.
- *
- * Runs in the core transaction under the run's row lock, `FOR NO KEY UPDATE`
- * (R8; the transaction already holds it from the aggregate UPDATE), so a
- * concurrent abort or upload is either seen here or waits for this commit.
- * Returns true when it healed the run.
- */
-async function healPipelineAbort(tx: DB, runId: string): Promise<boolean> {
-  const [run] = await tx
-    .select({ status: testRuns.status, abortedByDiff: testRuns.abortedByDiff })
-    .from(testRuns)
-    .where(eq(testRuns.id, runId))
-    .for("no key update");
-  if (run?.status !== "aborted" || !run.abortedByDiff) return false;
-
-  const [pending] = await tx
-    .select({ id: screenshots.id })
-    .from(screenshots)
-    .where(and(eq(screenshots.runId, runId), isNull(screenshots.verdict)))
-    .limit(1);
-  if (pending) return false;
-
-  await tx
-    .update(testRuns)
-    .set({ status: "running", abortedByDiff: false })
-    .where(eq(testRuns.id, runId));
-  return true;
-}
-
-/**
  * What a diff job that ran to the end reports to its caller (the worker
- * runtime records it as a metric). Callers that don't need it ignore it.
+ * runtime records it as metrics). Callers that don't need it ignore it.
  */
 export interface DiffJobOutcome {
-  /** Screenshots the job diffed (`candidateShots.length`). A run with none throws instead. */
+  /**
+   * Steps the job diffed and committed: 1 for a step job; 0 for a stale one,
+   * and for a whole-run job (it only queues step jobs, which report their own).
+   */
   checkpoints: number;
+  /**
+   * The job's version was no longer the step's (or the step or its run is
+   * gone): a newer job owns the step, so nothing was written or published.
+   */
+  stale?: boolean;
 }
 
-/** What `handleDiffJobInner` has durably done so far; read by the failure path. */
-interface DiffProgress {
-  /** True once the core transaction has committed (never set earlier). */
+const STALE_OUTCOME: DiffJobOutcome = { checkpoints: 0, stale: true };
+
+/** What a step job has durably done so far; read by the failure path. */
+export interface DiffProgress {
+  /** True once the step's commit has landed (never set earlier). */
   coreCommitted: boolean;
 }
 
+/** A step job: one step at the version it was queued at. */
+export type StepJob = DiffJob & { screenshotId: string; generation: number };
+
 /**
- * The read-only inputs every step of one job shares (`StepContext`), read once
- * per job: the steps' variation ignore regions, the run's temp regions, the
- * threshold, and the project's auto rules, fetched and compiled up front
+ * The inputs a job's step diffs share (`StepContext`), read at the start of
+ * each job: the steps' variation ignore regions, the run's temp regions, the
+ * threshold, and the project's auto rules, fetched and compiled once per job
  * (spec 2026-10-23 §4).
  */
 export async function loadStepContext(
@@ -411,533 +382,216 @@ export async function loadStepContext(
   };
 }
 
-async function handleDiffJobInner(
-  data: DiffJob,
+/**
+ * One step's diff job (spec 2026-10-23 §4):
+ *  1. a cheap stale check: the step or its run is gone, or the step's version
+ *     is no longer the job's → stale, nothing written or published;
+ *  2. the step's `StepContext` (its variation's regions, the run's temp
+ *     regions, the threshold, the project's rules compiled for this job);
+ *  3. the diff, outside any transaction (`diffStep`);
+ *  4. the commit under run → step locks with the version re-checked
+ *     (`commitStep`); a newer version that landed meanwhile makes it stale;
+ *  5. after the commit: the step's rule applications (fail-open), then the
+ *     run events and the project-channel update for this committed step.
+ */
+export async function handleStepJob(
+  job: StepJob,
   logger: Logger,
   deps: HandlerDeps,
-  progress: DiffProgress,
+  progress: DiffProgress = { coreCommitted: false },
 ): Promise<DiffJobOutcome> {
   const t0 = Date.now();
-  await deps.redis.publish(
-    `run:${data.runId}:events`,
-    JSON.stringify({ type: "diff.started", runId: data.runId }),
-  );
 
-  const project = await deps.db.query.projects.findFirst({
-    where: eq(projects.id, data.projectId),
-  });
-  if (!project) throw new Error(`project_not_found:${data.projectId}`);
-
-  const run = await deps.db.query.testRuns.findFirst({
-    where: eq(testRuns.id, data.runId),
-  });
-  if (!run) throw new Error(`run_not_found:${data.runId}`);
-  if (!run.branchName) {
-    throw new Error(`run_missing_branch_name:${data.runId}`);
-  }
-  const branchName = run.branchName;
-
-  // Spec §3 (ADR-070): one baseline per checkpoint. Each candidate screenshot
-  // (one checkpoint = one variation, ADR-038) resolves, pairs, auto-approves
-  // and diffs on its own; nothing below is keyed on "the run's variation".
-  // Capture order, so results (and ties) are stable across re-diffs.
-  const candidateShots = await deps.db
+  // 1. Cheap stale check: a newer job is already queued for this step.
+  const [step] = await deps.db
     .select()
     .from(screenshots)
-    .where(eq(screenshots.runId, data.runId))
-    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
-  if (candidateShots.length === 0) {
-    throw new Error(`run_has_no_screenshots:${data.runId}`);
+    .where(
+      and(
+        eq(screenshots.id, job.screenshotId),
+        eq(screenshots.runId, job.runId),
+      ),
+    )
+    .limit(1);
+  const run = step
+    ? await deps.db.query.testRuns.findFirst({
+        where: eq(testRuns.id, job.runId),
+      })
+    : undefined;
+  if (!step || !run || step.diffGeneration !== job.generation) {
+    logger.info(
+      {
+        runId: job.runId,
+        screenshotId: job.screenshotId,
+        generation: job.generation,
+        currentGeneration: step?.diffGeneration ?? null,
+      },
+      "diff_step_stale",
+    );
+    return STALE_OUTCOME;
   }
 
+  const project = await deps.db.query.projects.findFirst({
+    where: eq(projects.id, job.projectId),
+  });
+  if (!project) throw new Error(`project_not_found:${job.projectId}`);
+  if (!run.branchName) {
+    throw new Error(`run_missing_branch_name:${job.runId}`);
+  }
+
+  // 2–3. The diff, with this job's context and rules.
   const ctx = await loadStepContext(deps, logger, {
     project,
     run,
-    variationIds: candidateShots.map((cs) => cs.testVariationId),
-    parentPrBaseBranch: data.parentPrBaseBranch ?? null,
+    variationIds: [step.testVariationId],
+    parentPrBaseBranch: job.parentPrBaseBranch ?? null,
   });
+  const result = await diffStep(ctx, step);
+  const rulesSummary = observeStepRules(ctx, result, logger, deps);
 
-  // Each checkpoint resolves, pairs, auto-approves, diffs and runs its own
-  // regions through the auto rules on its own (`diffStep`). Results are kept
-  // in CANDIDATE ORDER: the auto-rule application persistence zips
-  // `regionEngineId(index, i)` with the inserted `diff_regions` ids, so the
-  // two traversals must line up.
-  const results: StepResult[] = [];
-  for (const cs of candidateShots) {
-    results.push(await diffStep(ctx, cs));
-  }
-
-  // ── Auto Rules: the run-wide result ─────────────────────────
-  // Each step evaluated its own regions (`diffStep`), keyed `0:i`. Re-key them
-  // to the run-wide `regionEngineId(index, i)` the status aggregation and the
-  // application persistence below use; nothing is evaluated twice. The rule
-  // metrics and log line stay one per job.
-  let rulesResult: EvaluationResult | null = null;
-  if (ctx.compiledRules) {
-    const allDecisions = results.flatMap((r, idx) => {
-      const regionIndex = new Map(r.engineIds.map((id, i) => [id, i]));
-      return r.ruleDecisions.map((d) => ({
-        ...d,
-        regionId: regionEngineId(idx, regionIndex.get(d.regionId)!),
-      }));
-    });
-    const allCounts = summarizeDecisions(allDecisions);
-    const stepDiagnostics = results.flatMap((r) =>
-      r.ruleDiagnostics ? [r.ruleDiagnostics] : [],
-    );
-
-    rulesResult = {
-      decisions: allDecisions,
-      counts: allCounts,
-      diagnostics: {
-        evaluatedRules: ctx.compiledRules.rules.length,
-        matchedRules: allDecisions.reduce(
-          (n, d) => n + d.matchedRules.length,
-          0,
-        ),
-        skippedBecauseNoElementMap: stepDiagnostics.reduce(
-          (n, d) => n + d.skippedBecauseNoElementMap,
-          0,
-        ),
-        selectorMisses: stepDiagnostics.reduce(
-          (n, d) => n + d.selectorMisses,
-          0,
-        ),
-        durationMs: stepDiagnostics.reduce((n, d) => n + d.durationMs, 0),
-      },
-    };
-
-    deps.metrics?.rulesEvaluationDuration.observe(
-      rulesResult.diagnostics.durationMs / 1000,
-    );
-    if (allCounts.auto_approve > 0)
-      deps.metrics?.rulesMatched
-        .labels({ action: "auto_approve" })
-        .inc(allCounts.auto_approve);
-    if (allCounts.flag > 0)
-      deps.metrics?.rulesMatched.labels({ action: "flag" }).inc(allCounts.flag);
-
+  // 4. The commit, under the version guard.
+  const commit = await commitStep(deps, job, result, logger);
+  if (commit.kind === "stale") {
     logger.info(
       {
-        runId: data.runId,
-        rulesCompiled: ctx.compiledRules.rules.length,
-        regionsEvaluated: allDecisions.length,
-        matched: rulesResult.diagnostics.matchedRules,
-        autoApproved: allCounts.auto_approve,
-        flagged: allCounts.flag,
-        durationMs: rulesResult.diagnostics.durationMs,
+        runId: job.runId,
+        screenshotId: job.screenshotId,
+        generation: job.generation,
       },
-      "rules evaluated",
+      "diff_step_stale",
     );
+    return STALE_OUTCOME;
   }
-
-  // Run-level outcome after auto-rules + resolution attribution (see
-  // rules-aggregation.ts for the exact rules and its unit tests). Each
-  // checkpoint's verdict (spec §3) came with its `StepResult`. The diff-worker
-  // never writes `failed` (reviewer-rejected only) and never writes the run
-  // status: `recomputeRunStatus` derives it from these verdicts and any active
-  // decisions, so a reviewer's decision survives every re-diff.
-  const statusInputs = results.map((c) => ({
-    passed: c.passed,
-    regionCount: c.regions.length,
-  }));
-  const { aggregateFailed, resolutionSource } = aggregateRuleStatus(
-    statusInputs,
-    rulesResult,
-  );
-
-  // Run aggregates on the single test_runs row:
-  // - diffPercent: MAX across checkpoints (surfaces the worst one); NULL when
-  //   no checkpoint had a baseline to compare against (nothing was compared).
-  // - pixelMisMatchCount: SUM across checkpoints (NULL likewise).
-  // - diffName: overlay key of the checkpoint with max diffPercent (or null).
-  //   Each checkpoint's own overlay key is `screenshots.diff_image_key`.
-  // - baselineSource: tier of the worst checkpoint that resolved a baseline
-  //   (first such checkpoint on ties); null when none resolved one.
-  // A checkpoint with no baseline image has no diff % or pixel count; it
-  // counts as 0 here, exactly as before (`compared` decides the NULLs).
-  const compared = results.some((r) => !r.firstBaseline);
-  const aggregateDiffPercent = results.reduce(
-    (m, v) => ((v.diffPercent ?? 0) > m ? (v.diffPercent ?? 0) : m),
-    0,
-  );
-  const aggregatePixelMismatch = results.reduce(
-    (s, v) => s + (v.pixelMismatchCount ?? 0),
-    0,
-  );
-  const worstOf = (rs: StepResult[]) =>
-    rs.reduce<StepResult | null>(
-      (acc, v) =>
-        acc === null || (v.diffPercent ?? 0) > (acc.diffPercent ?? 0) ? v : acc,
-      null,
-    );
-  const aggregateDiffName = worstOf(results)?.diffImageKey ?? null;
-  const runBaselineSource =
-    worstOf(results.filter((r) => r.baselineSource !== null))?.baselineSource ??
-    null;
-  const aggregateRegions = results.flatMap((v) => v.regions);
-  const aggregateVlmDescription =
-    results.find((v) => v.vlmDescription)?.vlmDescription ?? null;
-  const allAutoApproved = results.every((r) => r.autoApprove !== null);
-
-  // ADR-043 §4.2: roll up the most-severe unresolved checkpoint's diff_signature
-  // as the run's primary_signature for inbox grouping. Computed from the
-  // checkpoint results so it includes all checkpoints that completed diffing.
-  // sweeper.ts (stale-run finalizer) has no diff data and intentionally leaves
-  // primary_signature NULL.
-  // Computed once per diff job from the diff results, never from decisions.
-  // ADR-070 brought partial approval (a run can hold approved and unresolved
-  // checkpoints at once), and deciding a checkpoint deliberately does NOT
-  // recompute primary_signature: it can still name an approved checkpoint
-  // until the next re-diff. Accepted because it feeds only the cross-build
-  // inbox clustering (review flow spec §11); recompute it on decision changes
-  // if that clustering ever needs to track review state.
-  const primarySignature = computePrimarySignature(
-    results.map((v) => ({
-      diffSignature: v.diffSignature,
-      // Rank by the SAME regions the signature is built from. Image-first
-      // (ADR-047): image (l1_pixel) regions are the primary signal — they feed
-      // both the checkpoint signature and this ranking. EXCLUDED_SOURCES excludes
-      // only dynamic_text audit rows (ADR-047), so this fold includes image
-      // (l1_pixel) regions.
-      worstSeverity: v.regions
-        .filter((r) => !EXCLUDED_SOURCES.has(r.source))
-        .reduce<Severity>(
-          (worst, r) =>
-            severityRank(r.severity as Severity) > severityRank(worst)
-              ? (r.severity as Severity)
-              : worst,
-          "none",
-        ),
-    })),
-  );
-
-  // Captured from the core transaction so the (fail-open) auto-rule
-  // application persistence can run in its OWN transaction afterwards —
-  // an audit-write failure must never roll back the committed run result.
-  let insertedRegionIds: string[] = [];
-  const candidateById = new Map(candidateShots.map((cs) => [cs.id, cs]));
-
-  // The single write of every path (first capture, auto-approve, missing
-  // pair, engine diff). It ends with `recomputeRunStatus`, which locks the run
-  // (FOR NO KEY UPDATE) and derives its status from the verdicts written here.
-  const rollup = await withProjectScope(deps.db, data.projectId, async (tx) => {
-    // Idempotency: clear this run's prior diff artifacts before re-deriving
-    // them, so a BullMQ retry (attempts:3) OR a re-enqueued diff (e.g. after
-    // setIgnoreAreas / addIgnoreAreas / setDiffThresholdOverride) REPLACES the
-    // regions instead of appending — otherwise the diff viewer overlays each
-    // region twice and inbox grouping skews. auto_rule_applications reference
-    // these regions, so delete them first (by run) to avoid a dangling FK.
-    await tx
-      .delete(autoRuleApplications)
-      .where(eq(autoRuleApplications.testRunId, data.runId));
-    await tx.delete(diffRegions).where(eq(diffRegions.runId, data.runId));
-
-    // No `status` here: after a diff only `recomputeRunStatus` writes it.
-    await tx
-      .update(testRuns)
-      .set({
-        diffPercent: compared ? aggregateDiffPercent : null,
-        pixelMisMatchCount: compared ? aggregatePixelMismatch : null,
-        diffName: aggregateDiffName,
-        baselineSource: runBaselineSource,
-        vlmDescription: aggregateVlmDescription,
-        primarySignature,
-        resolutionSource,
-      })
-      .where(eq(testRuns.id, data.runId));
-
-    if (aggregateRegions.length > 0) {
-      const inserted = await tx
-        .insert(diffRegions)
-        .values(
-          aggregateRegions.map((r) => ({
-            runId: data.runId,
-            projectId: data.projectId,
-            screenshotId: r.screenshotId,
-            severity: r.severity,
-            category: r.category,
-            bbox: r.bbox,
-            description: r.description,
-            source: r.source,
-            viewport: r.viewport,
-          })),
-        )
-        .returning({ id: diffRegions.id });
-      insertedRegionIds = inserted.map((r) => r.id);
-    }
-
-    // Per checkpoint: its verdict (spec §3), its ADR-042 signature for
-    // build-scoped grouping (null when it was not diffed or had no meaningful
-    // regions → "ungrouped") and its own diff image (null when the diff
-    // produced none, or it was not diffed). A re-diff rewrites all three, so a
-    // checkpoint that no longer differs loses its image.
-    for (const r of results) {
-      await tx
-        .update(screenshots)
-        .set({
-          diffSignature: r.diffSignature,
-          diffImageKey: r.diffImageKey,
-          verdict: r.verdict,
-          verdictAt: sql`clock_timestamp()`,
-        })
-        .where(eq(screenshots.id, r.screenshotId));
-    }
-
-    // Auto-approved checkpoints become their own variation's baseline;
-    // userId omitted → NULL marks it as auto (the SDK's per-run
-    // `autoApproved` flag reads exactly that). Each call updates its
-    // `test_variations` row, and runs of one project share variations, so two
-    // concurrent jobs would deadlock if they locked those rows in different
-    // (capture) orders. Writing in ascending variation-id order makes the lock
-    // order the same everywhere.
-    //
-    // The verdict is the auto-approve's either way; the baseline is written
-    // only when no reviewer decided the checkpoint, its paired baseline is not
-    // its own row, and no baseline of the variation is newer than this run
-    // (`autoApproveBaselineBlock`), so a re-diff never rewrites a reviewer's
-    // baseline or puts an older image back as the current one.
-    const autoApproved = results
-      .flatMap((r) =>
-        r.autoApprove
-          ? [
-              {
-                cs: candidateById.get(r.screenshotId)!,
-                decision: r.autoApprove,
-              },
-            ]
-          : [],
-      )
-      .sort((a, b) =>
-        a.cs.testVariationId < b.cs.testVariationId
-          ? -1
-          : a.cs.testVariationId > b.cs.testVariationId
-            ? 1
-            : 0,
-      );
-    for (const { cs, decision } of autoApproved) {
-      const blocked = await autoApproveBaselineBlock(tx, {
-        screenshotId: cs.id,
-        testVariationId: cs.testVariationId,
-        runId: run.id,
-        branchName,
-        pairedBaselineRunId: decision.pairedBaselineRunId,
-      });
-      if (blocked) {
-        logger.info(
-          {
-            runId: data.runId,
-            screenshotId: cs.id,
-            variationId: cs.testVariationId,
-            reason: blocked,
-          },
-          "diff_auto_approve_baseline_kept",
-        );
-        continue;
-      }
-      await recordBaseline(tx, {
-        testVariationId: cs.testVariationId,
-        testRunId: run.id,
-        imageKey: cs.imageKey,
-        runName: run.baselineName ?? run.name,
-        branchName: run.branchName,
-      });
-    }
-
-    // Synthetic audit rows for dynamic-text OCR decisions (matched OR
-    // unmatched), one per (checkpoint, region): each step's `ocrAudit`.
-    const auditValues = results.flatMap((r) =>
-      r.ocrAudit.map((row) => ({
-        runId: data.runId,
-        projectId: data.projectId,
-        ...row,
-      })),
-    );
-    if (auditValues.length > 0) {
-      await tx.insert(diffRegions).values(auditValues);
-    }
-
-    // A pipeline abort (an earlier job's final attempt) heals once this job
-    // leaves every checkpoint with a verdict (Ruling R46).
-    if (await healPipelineAbort(tx, data.runId)) {
-      logger.info({ runId: data.runId }, "diff_pipeline_abort_healed");
-    }
-
-    // Last, after every child-row write: derive the run status.
-    return recomputeRunStatus(tx, data.runId);
-  });
-  // `withProjectScope` resolves only after the transaction committed. A failure
-  // from here on must not mark the run `aborted` (see `handleDiffJob`).
+  // `commitStep` resolves only after its transaction committed. A failure from
+  // here on must not mark the run `aborted` (see `handleDiffJob`).
   progress.coreCommitted = true;
 
-  // ── Auto Rules application persistence (fail-open) ───────────
-  // Runs in its OWN transaction AFTER the core run result is committed, wrapped
-  // in try/catch: a failure here loses only the rule audit trail, never the
-  // run's status or diff regions. (Rule evaluation already fails open above.)
-  if (
-    rulesResult &&
-    rulesResult.decisions.length > 0 &&
-    insertedRegionIds.length > 0
-  ) {
-    try {
-      // engineIds enumerate regions in the SAME order as aggregateRegions (and
-      // therefore insertedRegionIds), so zipping the two is a stable mapping
-      // with no positional drift between separate traversals.
-      const engineIds = results.flatMap((vp, vpIdx) =>
-        vp.regions.map((_r, i) => regionEngineId(vpIdx, i)),
-      );
-      const regionIdMap = new Map<string, string>();
-      for (
-        let idx = 0;
-        idx < engineIds.length && idx < insertedRegionIds.length;
-        idx++
-      ) {
-        regionIdMap.set(engineIds[idx]!, insertedRegionIds[idx]!);
-      }
+  // 5. After the commit: the rule audit trail, then the events.
+  await persistRuleApplications(
+    deps,
+    {
+      runId: job.runId,
+      projectId: job.projectId,
+      result,
+      regionIds: commit.regionIds,
+    },
+    logger,
+  );
 
-      const applicationRows = rulesResult.decisions.flatMap((decision) => {
-        const dbRegionId = regionIdMap.get(decision.regionId);
-        if (!dbRegionId) return [];
-        return decision.matchedRules.map((rm) => ({
-          ruleId: rm.ruleId,
-          ruleVersion: rm.ruleVersion,
-          testRunId: data.runId,
-          diffRegionId: dbRegionId,
-          regionDiffPct: rm.regionDiffPct,
-          // Policy rank of the rule's ACTION (1=auto_approve, 2=flag), not the
-          // region's visual severity — see auto_rule_applications schema.
-          actionPriority: rm.severity,
-          won: rm.won,
-        }));
-      });
-
-      if (applicationRows.length > 0) {
-        await withProjectScope(deps.db, data.projectId, async (tx) => {
-          const insertedApps = await tx
-            .insert(autoRuleApplications)
-            .values(applicationRows)
-            .returning({
-              id: autoRuleApplications.id,
-              diffRegionId: autoRuleApplications.diffRegionId,
-              won: autoRuleApplications.won,
-            });
-
-          // Link each region to its WINNING application in one statement
-          // (UPDATE … FROM VALUES) rather than one round-trip per winner.
-          const wonApps = insertedApps.filter((a) => a.won);
-          if (wonApps.length > 0) {
-            await tx.execute(sql`
-              UPDATE diff_regions SET resolved_by_application_id = v.app_id::uuid
-              FROM (VALUES ${sql.join(
-                wonApps.map(
-                  (a) => sql`(${a.diffRegionId}::uuid, ${a.id}::uuid)`,
-                ),
-                sql`, `,
-              )}) AS v(region_id, app_id)
-              WHERE diff_regions.id = v.region_id
-            `);
-          }
-
-          // Credit applied_count ONLY to rules that actually won a region; a
-          // rule that matched but lost the severity tiebreak resolved nothing.
-          const countsByRule = new Map<string, number>();
-          for (const row of applicationRows) {
-            if (!row.won) continue;
-            countsByRule.set(
-              row.ruleId,
-              (countsByRule.get(row.ruleId) ?? 0) + 1,
-            );
-          }
-          if (countsByRule.size > 0) {
-            await tx.execute(sql`
-              UPDATE auto_rules SET applied_count = applied_count + v.cnt
-              FROM (VALUES ${sql.join(
-                [...countsByRule].map(
-                  ([id, cnt]) => sql`(${id}::uuid, ${cnt}::int)`,
-                ),
-                sql`, `,
-              )}) AS v(id, cnt)
-              WHERE auto_rules.id = v.id
-            `);
-          }
-        });
-      }
-    } catch (err) {
-      logger.error(
-        { err, runId: data.runId, projectId: data.projectId },
-        "auto-rule application persistence failed; run result preserved",
-      );
-      deps.metrics?.rulesEvaluationErrors.inc();
-    }
-  }
-
+  // The run's events, as the whole-run job published them, now once per
+  // committed step job; a stale job publishes none. `diffPercent`,
+  // `numChanges`, `resolutionSource` and `rulesSummary` describe this step
+  // (the run's totals are on its row).
   const durationMs = Date.now() - t0;
-  const ranTiersUnion = Array.from(new Set(results.flatMap((v) => v.ranTiers)));
+  const failed = result.verdict === "unresolved";
+  const diffPercent = result.diffPercent ?? 0;
   await deps.redis.publish(
-    `run:${data.runId}:events`,
+    `run:${job.runId}:events`,
+    JSON.stringify({ type: "diff.started", runId: job.runId }),
+  );
+  await deps.redis.publish(
+    `run:${job.runId}:events`,
     JSON.stringify({
       type: "diff.completed",
-      runId: data.runId,
-      passed: !aggregateFailed,
-      diffPercent: aggregateDiffPercent,
-      ranTiers: ranTiersUnion,
-      viewportCount: results.length,
+      runId: job.runId,
+      passed: !failed,
+      diffPercent,
+      ranTiers: result.ranTiers,
+      viewportCount: 1,
       durationMs,
-      // True only when EVERY checkpoint was auto-approved / was a first
-      // capture (the shapes the old whole-run short-circuits published).
-      autoApproved: allAutoApproved,
-      firstBaseline: results.every((r) => r.firstBaseline),
+      autoApproved: result.autoApprove !== null,
+      firstBaseline: result.firstBaseline,
     }),
   );
-  // T9: emit the terminal `run.completed` event so the integrations
-  // subscriber can fan out to GitHub (T8) + outbound webhooks (T9).
-  // GitHub-side fields (installationId, repoOwner, repoName, sha,
-  // prNumber) are intentionally omitted — reaching them from the diff
-  // worker would require joining `installations` to the project AND
-  // sniffing the branch's open PR. Both T8's GitHub consumer and T9's
-  // webhook consumer are defensive about missing fields, so we ship
-  // only the core fields here and revisit when the join becomes cheap.
+  // T9: the `run.completed` event the integrations subscriber fans out to
+  // GitHub (T8) + outbound webhooks (T9). GitHub-side fields (installationId,
+  // repoOwner, repoName, sha, prNumber) are intentionally omitted; both
+  // consumers are defensive about missing fields.
   await deps.redis.publish(
-    `run:${data.runId}:events`,
+    `run:${job.runId}:events`,
     JSON.stringify({
       type: "run.completed",
-      runId: data.runId,
-      projectId: data.projectId,
-      // The derived status after this diff (the recompute's `after`).
-      status: rollup.after,
-      diffPercent: aggregateDiffPercent,
+      runId: job.runId,
+      projectId: job.projectId,
+      // The derived status after this commit (the recompute's `after`).
+      status: commit.rollup.after,
+      diffPercent,
       branchName: run.branchName,
-      numChanges: aggregateRegions.length,
-      resolutionSource,
-      rulesSummary: rulesResult?.counts ?? null,
+      numChanges: result.regions.length,
+      resolutionSource: !failed && result.ruleResolved ? "rule" : null,
+      rulesSummary,
     }),
   );
   await publishProjectRunUpdate(
     deps,
     {
-      projectId: data.projectId,
-      runId: data.runId,
-      status: rollup.after,
+      projectId: job.projectId,
+      runId: job.runId,
+      status: commit.rollup.after,
       buildId: run.buildId,
     },
     logger,
   );
   logger.info(
     {
-      runId: data.runId,
-      projectId: data.projectId,
-      diffPercent: aggregateDiffPercent,
-      pixelMismatchCount: aggregatePixelMismatch,
-      ranTiers: ranTiersUnion,
-      baselineSource: runBaselineSource,
-      viewportCount: results.length,
-      status: rollup.after,
-      autoApproved: allAutoApproved,
+      runId: job.runId,
+      projectId: job.projectId,
+      screenshotId: job.screenshotId,
+      generation: job.generation,
+      verdict: result.verdict,
+      diffPercent: result.diffPercent,
+      pixelMismatchCount: result.pixelMismatchCount,
+      ranTiers: result.ranTiers,
+      baselineSource: result.baselineSource,
+      status: commit.rollup.after,
+      autoApproved: result.autoApprove !== null,
       durationMs,
     },
     "diff_completed",
   );
-  return { checkpoints: candidateShots.length };
+  return { checkpoints: 1 };
+}
+
+/**
+ * The job's rule metrics and log line, from the step's own evaluation
+ * (`diffStep`): duration, matches by action, and a `rules evaluated` line.
+ * Returns the step's decision counts by action (null when the job has no
+ * rules), for the `run.completed` event.
+ */
+function observeStepRules(
+  ctx: StepContext,
+  result: StepResult,
+  logger: Logger,
+  deps: HandlerDeps,
+): ReturnType<typeof summarizeDecisions> | null {
+  if (!ctx.compiledRules) return null;
+  const counts = summarizeDecisions(result.ruleDecisions);
+  const durationMs = result.ruleDiagnostics?.durationMs ?? 0;
+  const matched = result.ruleDecisions.reduce(
+    (n, d) => n + d.matchedRules.length,
+    0,
+  );
+  deps.metrics?.rulesEvaluationDuration.observe(durationMs / 1000);
+  if (counts.auto_approve > 0)
+    deps.metrics?.rulesMatched
+      .labels({ action: "auto_approve" })
+      .inc(counts.auto_approve);
+  if (counts.flag > 0)
+    deps.metrics?.rulesMatched.labels({ action: "flag" }).inc(counts.flag);
+  logger.info(
+    {
+      runId: ctx.run.id,
+      screenshotId: result.screenshotId,
+      rulesCompiled: ctx.compiledRules.rules.length,
+      regionsEvaluated: result.ruleDecisions.length,
+      matched,
+      autoApproved: counts.auto_approve,
+      flagged: counts.flag,
+      durationMs,
+    },
+    "rules evaluated",
+  );
+  return counts;
 }
 
 const ignoreAreaParseSchema = z
