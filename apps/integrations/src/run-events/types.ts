@@ -4,14 +4,13 @@ import type { RunStatus } from "@furan/shared-types";
  * Minimal `run:*:events` payload union — defined locally in the
  * integrations app because there is no canonical shared type yet.
  *
- * Source of truth today (T8 timeframe):
+ * Source of truth today:
  * - `apps/capture-worker/src/handler.ts` publishes `capture.started` /
  *   `capture.completed`
- * - `apps/diff-worker/src/handler.ts` publishes `diff.started` /
- *   `diff.completed`
- * - `run.completed` is REFERENCED by `apps/dashboard/src/hooks/useRunEvents.ts`
- *   but has no publisher today; T8's consumer parses it anyway so the wire
- *   contract is forward-compatible when a publisher is added.
+ * - `apps/diff-worker/src/step-events.ts` publishes, per diffed step,
+ *   `run.checkpoint_diffed`, and `run.completed` only when the diff moves the
+ *   run's status (it no longer publishes `diff.started` / `diff.completed`)
+ * - `run.completed` is what this app's consumers act on
  *
  * Reconcile to a packages/shared-types definition when one is introduced.
  */
@@ -28,15 +27,12 @@ export type RunEvent =
       imageKey?: string;
       durationMs?: number;
     }
-  | { type: "diff.started"; runId: string }
   | {
-      type: "diff.completed";
+      type: "run.checkpoint_diffed";
       runId: string;
-      passed?: boolean;
-      diffPercent?: number;
-      ranTiers?: string[];
-      firstBaseline?: boolean;
-      durationMs?: number;
+      screenshotId: string;
+      verdict: string;
+      failed: boolean;
     }
   | {
       type: "run.completed";

@@ -34,6 +34,15 @@ export type RunEvent =
       firstBaseline?: boolean;
       durationMs?: number;
     }
+  | {
+      // One per step the diff worker settles (a committed result or a final
+      // failure).
+      type: "run.checkpoint_diffed";
+      runId: string;
+      screenshotId: string;
+      verdict: string;
+      failed: boolean;
+    }
   | { type: "run.completed"; runId: string }
   | { type: string; [key: string]: unknown };
 

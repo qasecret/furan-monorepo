@@ -221,8 +221,7 @@ d("GET /api/v1/runs/:id/events", () => {
           (response) => {
             resolve({
               allowOrigin: response.headers["access-control-allow-origin"] as
-                | string
-                | undefined,
+                string | undefined,
             });
             response.destroy();
             req.destroy();
@@ -295,13 +294,19 @@ d("GET /api/v1/runs/:id/events", () => {
 
     await pub.publish(
       `run:${s.runId}:events`,
-      JSON.stringify({ type: "diff.completed", runId: s.runId }),
+      JSON.stringify({
+        type: "run.checkpoint_diffed",
+        runId: s.runId,
+        screenshotId: "00000000-0000-0000-0000-000000000000",
+        verdict: "passed",
+        failed: false,
+      }),
     );
 
     // Wait for SSE frame to land.
     const t0 = Date.now();
     while (
-      chunks.join("").indexOf("diff.completed") < 0 &&
+      chunks.join("").indexOf("run.checkpoint_diffed") < 0 &&
       Date.now() - t0 < 5000
     ) {
       await new Promise((r) => setTimeout(r, 50));
@@ -312,6 +317,6 @@ d("GET /api/v1/runs/:id/events", () => {
 
     const text = chunks.join("");
     expect(text).toContain("event: progress");
-    expect(text).toContain("diff.completed");
+    expect(text).toContain("run.checkpoint_diffed");
   });
 });

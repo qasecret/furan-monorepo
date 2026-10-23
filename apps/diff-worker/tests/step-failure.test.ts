@@ -284,20 +284,23 @@ desc("a step's permanent diff failure (integration)", () => {
     expect((logged[0]![0] as { err: unknown }).err).toBeInstanceOf(Error);
     expect(failedLogs("warn")).toHaveLength(0);
 
-    // The same interim events a committed step publishes, with the new status.
+    // The step's own event, flagged failed; the failure took the run from
+    // `running` to `unresolved`, so the status events follow.
     const runEvents = events.filter(
       (e) => e.channel === `run:${s.candidateRunId}:events`,
     );
     expect(runEvents.map((e) => e.message.type)).toEqual([
-      "diff.started",
-      "diff.completed",
+      "run.checkpoint_diffed",
       "run.completed",
     ]);
-    expect(runEvents[1]!.message).toMatchObject({
-      type: "diff.completed",
-      passed: false,
+    expect(runEvents[0]!.message).toEqual({
+      type: "run.checkpoint_diffed",
+      runId: s.candidateRunId,
+      screenshotId: s.shotId.b,
+      verdict: "unresolved",
+      failed: true,
     });
-    expect(runEvents[2]!.message).toMatchObject({
+    expect(runEvents[1]!.message).toMatchObject({
       type: "run.completed",
       runId: s.candidateRunId,
       status: "unresolved",

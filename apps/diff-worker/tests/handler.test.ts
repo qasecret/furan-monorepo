@@ -265,9 +265,10 @@ desc("handleDiffJob (integration)", () => {
 
     // Give redis pub/sub a moment to deliver the trailing event.
     await new Promise((r) => setTimeout(r, 200));
+    // The step's own event, then `run.completed`: this one step took the run
+    // from `running` to `unresolved`.
     const types = events.map((e) => JSON.parse(e).type as string);
-    expect(types).toContain("diff.started");
-    expect(types).toContain("diff.completed");
+    expect(types).toEqual(["run.checkpoint_diffed", "run.completed"]);
 
     sub.disconnect();
   }, 60_000);
@@ -531,20 +532,21 @@ descMv("handleDiffJob multi-viewport (integration)", () => {
     expect(regions.length).toBe(0);
 
     await new Promise((r) => setTimeout(r, 200));
-    const completed = events
-      .map((e) => JSON.parse(e))
-      .find((e) => e.type === "diff.completed");
-    expect(completed).toBeDefined();
-    expect(completed.viewportCount).toBeGreaterThanOrEqual(1);
-    // One run.completed per step job: the last carries the run's rollup once
-    // both steps have their verdicts.
-    const runCompleted = events
-      .map((e) => JSON.parse(e))
-      .filter((e) => e.type === "run.completed")
-      .at(-1);
-    expect(runCompleted).toBeDefined();
+    const published = events.map((e) => JSON.parse(e));
+    // One `run.checkpoint_diffed` per viewport's step, with its own verdict.
+    const checkpoints = published.filter(
+      (e) => e.type === "run.checkpoint_diffed",
+    );
+    expect(checkpoints.map((e) => e.verdict).sort()).toEqual([
+      "new",
+      "unresolved",
+    ]);
+    // `run.completed` only when the status moves: once, when the second step
+    // gives the run its rollup.
+    const runCompleted = published.filter((e) => e.type === "run.completed");
+    expect(runCompleted).toHaveLength(1);
     // Per spec §3.2 diff-worker writes "unresolved" on diff-found.
-    expect(runCompleted.status).toBe("unresolved");
+    expect(runCompleted[0].status).toBe("unresolved");
 
     sub.disconnect();
   }, 60_000);

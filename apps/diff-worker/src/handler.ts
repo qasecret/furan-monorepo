@@ -13,7 +13,6 @@ import {
   withProjectScope,
   type DB,
   type DiffErrorCode,
-  type RunStatus,
 } from "@furan/db";
 import type { DiffJob } from "@furan/queue";
 import {
@@ -32,6 +31,7 @@ import { classifyDiffError } from "./diff-error.js";
 import type { DiffMetrics } from "./diff-metrics.js";
 import { diffStep, type StepContext, type StepResult } from "./diff-step.js";
 import { splitLegacyJob, type DiffJobQueue } from "./legacy-split.js";
+import { publishProjectEvent, publishStepEvents } from "./step-events.js";
 
 // Moved to diff-step.ts with the rest of the per-step diff; re-exported for
 // existing importers.
@@ -67,57 +67,6 @@ export interface DiffAttempt {
 }
 
 /**
- * Best-effort dual-publish: in addition to the existing per-run channel
- * (`run:{runId}:events`, which the diff viewer subscribes to), also fire
- * a `testRun_updated` + cascading `build_updated` event on the project
- * channel so the dashboard's list pages (Builds / Runs index) refresh
- * without manual reload. Spec
- * furan-design/specs/2026-05-24-list-level-live-updates-design.md §6.5.
- *
- * Payload is minimal (`{id, status}`) — the dashboard invalidates the
- * tRPC query on receipt and refetches the full row. Keeping the wire
- * lean avoids racing with stale data from the worker's snapshot of the
- * row vs whatever's actually in the DB once the listener queries.
- */
-async function publishProjectRunUpdate(
-  deps: Pick<HandlerDeps, "redis">,
-  args: {
-    projectId: string;
-    runId: string;
-    status: string;
-    buildId?: string | null;
-  },
-  logger: Logger,
-): Promise<void> {
-  const channel = `project:${args.projectId}:events:raw`;
-  try {
-    await deps.redis.publish(
-      channel,
-      JSON.stringify({
-        event: "testRun_updated",
-        data: { id: args.runId, status: args.status },
-        ts: Date.now(),
-      }),
-    );
-    if (args.buildId) {
-      await deps.redis.publish(
-        channel,
-        JSON.stringify({
-          event: "build_updated",
-          data: { id: args.buildId },
-          ts: Date.now(),
-        }),
-      );
-    }
-  } catch (err) {
-    logger.warn(
-      { err, runId: args.runId, projectId: args.projectId },
-      "diff_worker_project_publish_failed",
-    );
-  }
-}
-
-/**
  * One diff job (spec 2026-10-23 §3, §4).
  *
  * - A step job (`screenshotId` + `generation`) diffs that one step and commits
@@ -144,7 +93,6 @@ export async function handleDiffJob(
   // failure is terminal (the step is failed, or the run is marked `aborted`).
   attempt: DiffAttempt = { finalAttempt: true },
 ): Promise<DiffJobOutcome> {
-  const t0 = Date.now();
   const { screenshotId, generation } = data;
   const stepJob: StepJob | undefined =
     screenshotId !== undefined && generation !== undefined
@@ -191,9 +139,10 @@ export async function handleDiffJob(
     // state `recomputeRunStatus` keeps). Rethrow so BullMQ schedules it.
     if (!attempt.finalAttempt) throw err;
     // Ruling R11: once the step's commit has landed, the step holds its verdict
-    // and the run a valid derived status. A later failure (a Redis publish,
-    // say) must neither fail the step nor replace that status. It is logged
-    // above; rethrow so the job still fails.
+    // and the run a valid derived status. A later failure must neither fail the
+    // step nor replace that status. (Little after the commit can throw: the
+    // rule audit trail and the events are best-effort.) It is logged above;
+    // rethrow so the job still fails.
     if (progress.coreCommitted) throw err;
     // Ruling R22: a step job never aborts its run. Its final failure fails its
     // own step, and the job still rethrows, so its outcome and the dead-letter
@@ -202,8 +151,8 @@ export async function handleDiffJob(
     // attempt's error no longer matters. The job then ends stale, not failed
     // (no rethrow, so no dead letter). The error was already logged above.
     if (stepJob && code) {
-      const failure = await failStep(deps, logger, stepJob, code, t0);
-      if (failure === "stale") return STALE_OUTCOME;
+      const stepOutcome = await failStep(deps, logger, stepJob, code);
+      if (stepOutcome === "stale") return STALE_OUTCOME;
       throw err;
     }
     // Final attempt of an old whole-run job: best-effort terminal status write
@@ -255,11 +204,12 @@ export async function handleDiffJob(
       );
     }
     // Project channel mirror so the dashboard list pages refresh.
-    await publishProjectRunUpdate(
-      deps,
-      { projectId: data.projectId, runId: data.runId, status: "aborted" },
-      logger,
-    );
+    await publishProjectEvent(deps.redis, logger, {
+      projectId: data.projectId,
+      runId: data.runId,
+      event: "testRun_updated",
+      data: { id: data.runId, status: "aborted" },
+    });
     throw err;
   }
 }
@@ -274,8 +224,8 @@ export async function handleDiffJob(
  *
  * Best-effort: if the write itself fails (the database is down) it is logged
  * and the step keeps no verdict, for the reconciler to re-queue; the caller
- * rethrows the job's own error. When it lands, the same interim events a
- * committed step job publishes follow (`publishInterimStepEvents`).
+ * rethrows the job's own error. When it lands, the step's events follow, as
+ * for a committed step (`publishStepEvents`, with `failed: true`).
  *
  * Returns what became of the step: `"failed"` (it now carries the failure),
  * `"stale"` (a newer version owns it, or it or its run is gone: nothing was
@@ -287,7 +237,6 @@ async function failStep(
   logger: Logger,
   job: StepJob,
   code: DiffErrorCode,
-  t0: number,
 ): Promise<"failed" | "stale" | "unwritten"> {
   let marked: Awaited<ReturnType<typeof markStepDiffFailed>>;
   try {
@@ -310,36 +259,18 @@ async function failStep(
     logStepStale(logger, job);
     return "stale";
   }
-  // Like the aborted run's, best-effort: the original error stays the signal.
-  try {
-    const run = await deps.db.query.testRuns.findFirst({
-      where: eq(testRuns.id, job.runId),
-      columns: { branchName: true, buildId: true },
-    });
-    await publishInterimStepEvents(
-      deps,
-      logger,
-      job,
-      run ?? { branchName: null, buildId: null },
-      {
-        durationMs: Date.now() - t0,
-        passed: false,
-        diffPercent: 0,
-        ranTiers: [],
-        autoApproved: false,
-        firstBaseline: false,
-        numChanges: 0,
-        resolutionSource: null,
-        rulesSummary: null,
-        status: marked.rollup.after,
-      },
-    );
-  } catch (publishErr) {
-    logger.error(
-      { err: publishErr, runId: job.runId, screenshotId: job.screenshotId },
-      "failed_to_publish_failed_step_events",
-    );
-  }
+  // The step's own event, and the run's status events when the failure moved
+  // it. Best-effort (it never throws): the original error stays the signal.
+  await publishStepEvents(deps.redis, {
+    runId: job.runId,
+    projectId: job.projectId,
+    screenshotId: job.screenshotId,
+    verdict: "unresolved",
+    failed: true,
+    rollup: marked.rollup,
+    db: deps.db,
+    logger,
+  });
   return "failed";
 }
 
@@ -514,8 +445,8 @@ export async function loadStepContext(
  *  4. the commit under run → step locks with the version re-checked
  *     (`commitStep`); a newer version that landed meanwhile makes it stale;
  *  5. after the commit: the step's rule metrics, its rule applications
- *     (fail-open), then the run events and the project-channel update for
- *     this committed step.
+ *     (fail-open), then the step's events (`publishStepEvents`: the run's
+ *     status events only if this commit moved its status).
  */
 export async function handleStepJob(
   job: StepJob,
@@ -574,8 +505,9 @@ export async function handleStepJob(
   progress.coreCommitted = true;
 
   // 5. After the commit: the rule metrics (a stale job records none), the
-  // rule audit trail, then the events.
-  const rulesSummary = observeStepRules(ctx, result, logger, deps);
+  // rule audit trail, then the events. The events come last because
+  // `run.completed` reports the run's stored winning applications.
+  observeStepRules(ctx, result, logger, deps);
   await persistRuleApplications(
     deps,
     {
@@ -586,27 +518,18 @@ export async function handleStepJob(
     },
     logger,
   );
-
-  // The run's events, as the whole-run job published them, now once per
-  // committed step job; a stale job publishes none. `diffPercent`,
-  // `numChanges`, `resolutionSource` and `rulesSummary` describe this step
-  // (the run's totals are on its row).
-  const durationMs = Date.now() - t0;
-  const failed = result.verdict === "unresolved";
-  const diffPercent = result.diffPercent ?? 0;
-  await publishInterimStepEvents(deps, logger, job, run, {
-    durationMs,
-    passed: !failed,
-    diffPercent,
-    ranTiers: result.ranTiers,
-    autoApproved: result.autoApprove !== null,
-    firstBaseline: result.firstBaseline,
-    numChanges: result.regions.length,
-    resolutionSource: !failed && result.ruleResolved ? "rule" : null,
-    rulesSummary,
-    // The derived status after this commit (the recompute's `after`).
-    status: commit.rollup.after,
+  await publishStepEvents(deps.redis, {
+    runId: job.runId,
+    projectId: job.projectId,
+    screenshotId: job.screenshotId,
+    verdict: result.verdict,
+    failed: false,
+    // The status before and after this commit (the recompute's).
+    rollup: commit.rollup,
+    db: deps.db,
+    logger,
   });
+  const durationMs = Date.now() - t0;
   logger.info(
     {
       runId: job.runId,
@@ -627,98 +550,18 @@ export async function handleStepJob(
   return { checkpoints: 1 };
 }
 
-/** What the interim run events say about the step a job just settled. */
-interface StepEventFacts {
-  durationMs: number;
-  /** False for a step that needs attention: `unresolved`, or failed. */
-  passed: boolean;
-  diffPercent: number;
-  ranTiers: string[];
-  autoApproved: boolean;
-  firstBaseline: boolean;
-  numChanges: number;
-  resolutionSource: "rule" | null;
-  rulesSummary: ReturnType<typeof summarizeDecisions> | null;
-  /** The run's status after the step settled (the recompute's `after`). */
-  status: RunStatus;
-}
-
-/**
- * The run events a step job publishes once its step has settled, whether it
- * committed a result or failed for good: `diff.started` and `diff.completed`
- * for the diff viewer, `run.completed` for the integrations subscriber (T9),
- * and the project-channel update that refreshes the dashboard's lists.
- * Interim: a later change gates them on the run's status moving.
- */
-async function publishInterimStepEvents(
-  deps: HandlerDeps,
-  logger: Logger,
-  job: StepJob,
-  run: { branchName: string | null; buildId: string | null },
-  facts: StepEventFacts,
-): Promise<void> {
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({ type: "diff.started", runId: job.runId }),
-  );
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({
-      type: "diff.completed",
-      runId: job.runId,
-      passed: facts.passed,
-      diffPercent: facts.diffPercent,
-      ranTiers: facts.ranTiers,
-      viewportCount: 1,
-      durationMs: facts.durationMs,
-      autoApproved: facts.autoApproved,
-      firstBaseline: facts.firstBaseline,
-    }),
-  );
-  // T9: the `run.completed` event the integrations subscriber fans out to
-  // GitHub (T8) + outbound webhooks (T9). GitHub-side fields (installationId,
-  // repoOwner, repoName, sha, prNumber) are intentionally omitted; both
-  // consumers are defensive about missing fields.
-  await deps.redis.publish(
-    `run:${job.runId}:events`,
-    JSON.stringify({
-      type: "run.completed",
-      runId: job.runId,
-      projectId: job.projectId,
-      status: facts.status,
-      diffPercent: facts.diffPercent,
-      branchName: run.branchName,
-      numChanges: facts.numChanges,
-      resolutionSource: facts.resolutionSource,
-      rulesSummary: facts.rulesSummary,
-    }),
-  );
-  await publishProjectRunUpdate(
-    deps,
-    {
-      projectId: job.projectId,
-      runId: job.runId,
-      status: facts.status,
-      buildId: run.buildId,
-    },
-    logger,
-  );
-}
-
 /**
  * The job's rule metrics and log line, from the step's own evaluation
  * (`diffStep`): duration, matches by action, and a `rules evaluated` line.
  * Recorded only for a committed step, so a stale job adds none.
- * Returns the step's decision counts by action (null when the job has no
- * rules), for the `run.completed` event.
  */
 function observeStepRules(
   ctx: StepContext,
   result: StepResult,
   logger: Logger,
   deps: HandlerDeps,
-): ReturnType<typeof summarizeDecisions> | null {
-  if (!ctx.compiledRules) return null;
+): void {
+  if (!ctx.compiledRules) return;
   const counts = summarizeDecisions(result.ruleDecisions);
   const durationMs = result.ruleDiagnostics?.durationMs ?? 0;
   const matched = result.ruleDecisions.reduce(
@@ -745,7 +588,6 @@ function observeStepRules(
     },
     "rules evaluated",
   );
-  return counts;
 }
 
 const ignoreAreaParseSchema = z

@@ -17,6 +17,7 @@ import { Redis } from "ioredis";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { persistRuleApplications } from "../src/commit-step.js";
 import { handleDiffJob } from "../src/handler.js";
 
 import { stepJobsFor } from "./helpers/step-jobs.js";
@@ -28,6 +29,17 @@ vi.mock("@furan/db", async (importOriginal) => {
   return {
     ...actual,
     recomputeRunStatus: vi.fn(actual.recomputeRunStatus),
+  };
+});
+
+// Wraps the real `persistRuleApplications` (the first thing a step job does
+// after its commit) so one test can make it fail AFTER the commit; every other
+// call runs the real thing.
+vi.mock("../src/commit-step.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/commit-step.js")>();
+  return {
+    ...actual,
+    persistRuleApplications: vi.fn(actual.persistRuleApplications),
   };
 });
 
@@ -373,22 +385,13 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
     const s = await seedRun();
     const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
     await storage.put(candidateKey, candidateImg, "image/png");
-    // Redis is down for everything after the commit: the core transaction
-    // (verdicts + recomputed status) has already landed when this throws.
-    const flakyRedis = new Proxy(redis, {
-      get(target, prop) {
-        if (prop === "publish") {
-          return async (channel: string, message: string) => {
-            if (JSON.parse(message).type === "diff.completed") {
-              throw new Error("redis_down_after_commit");
-            }
-            return target.publish(channel, message);
-          };
-        }
-        const value = Reflect.get(target, prop, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+    // Something fails right after the commit: the core transaction (verdicts +
+    // recomputed status) has already landed when this throws. (The events are
+    // best-effort and no longer throw, and the rule audit trail is fail-open,
+    // so the fault is injected.)
+    vi.mocked(persistRuleApplications).mockRejectedValueOnce(
+      new Error("failed_after_commit"),
+    );
     vi.mocked(mockLogger.error).mockClear();
 
     const job = await stepJob(s);
@@ -398,10 +401,10 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
         handleDiffJob(
           job,
           mockLogger,
-          { db, storage, redis: flakyRedis },
+          { db, storage, redis },
           { finalAttempt: true },
         ),
-      ).rejects.toThrow(/redis_down_after_commit/);
+      ).rejects.toThrow(/failed_after_commit/);
     });
 
     // The committed rollup stands: `aborted` would be permanent, since
