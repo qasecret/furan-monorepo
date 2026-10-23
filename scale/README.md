@@ -148,8 +148,9 @@ Both services run with fixed, comparable settings:
   `JWT_EXPIRY`, and so on) are ignored, so a run measures the same
   configuration anywhere.
 - **The diff worker** runs with concurrency 4 (the production default) and the
-  **stale-run sweeper off**: the seed holds `running` runs with old timestamps,
-  and the sweeper would finalise them and change the shape being measured.
+  **reconciler off**: the seed holds `running` runs whose last step was never
+  diffed, uploaded long ago, and the reconciler would re-queue (or fail) those
+  steps and change the shape being measured.
 
 **Interrupts.** Ctrl-C (or SIGTERM) stops the run and tears down everything that
 was opened, newest first: the API and worker are closed, the Redis keys are

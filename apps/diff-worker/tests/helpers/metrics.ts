@@ -27,16 +27,19 @@ export async function histogramSeries(
   return { count: pick("_count"), sum: pick("_sum") };
 }
 
-/** The summed value of a counter, over all its series. */
+/**
+ * The summed value of a counter, over all its series, or only over those that
+ * carry every label in `labels`.
+ */
 export async function counterValue(
   registry: Registry,
   name: string,
+  labels: Record<string, string> = {},
 ): Promise<number> {
   const metric = (await registry.getMetricsAsJSON()).find(
     (m) => m.name === name,
   );
-  return ((metric?.values ?? []) as Sample[]).reduce(
-    (sum, s) => sum + s.value,
-    0,
-  );
+  return ((metric?.values ?? []) as Sample[])
+    .filter((s) => Object.entries(labels).every(([k, v]) => s.labels[k] === v))
+    .reduce((sum, s) => sum + s.value, 0);
 }

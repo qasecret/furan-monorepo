@@ -22,9 +22,10 @@ export async function releaseRedis(redis: Redis): Promise<void> {
  * The real diff worker, in this process, with its own pool, connection,
  * storage and metrics registry (as the service has).
  *
- * The stale-run sweeper is off: the seed has `running` runs whose `updated_at`
- * is old, and the sweeper would finalise them within 30 s and change the shape
- * being measured.
+ * The reconciler is off: the seed has `running` runs whose last step was never
+ * diffed, uploaded long ago, and within 30 s the reconciler would re-queue
+ * those steps (and, after 3 windows, fail them with `timeout`), adding diff
+ * jobs and changing the shape being measured.
  *
  * Reads `DATABASE_URL`, `REDIS_URL` and the storage settings from
  * `process.env`, so `applyStackEnv` must have run.
@@ -60,7 +61,7 @@ export async function startWorker(
     registry: telemetry.metrics,
     queuePrefix: QUEUE_PREFIX,
     concurrency: WORKER_CONCURRENCY,
-    sweeper: false,
+    reconciler: false,
   }));
 
   let timer: NodeJS.Timeout | undefined;

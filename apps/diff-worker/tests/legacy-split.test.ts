@@ -252,7 +252,7 @@ desc("splitLegacyJob (integration)", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 2,
-      sweeper: false,
+      reconciler: false,
     });
     try {
       // The whole-run job, then its three step jobs.

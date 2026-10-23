@@ -73,7 +73,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 1,
-      sweeper: false,
+      reconciler: false,
       handler: stub,
     });
 
@@ -199,7 +199,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 1,
-      sweeper: false,
+      reconciler: false,
       handler: splitter,
     });
     let completed = 0;
@@ -231,7 +231,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       logger: noop as never,
       registry,
       queuePrefix: prefix,
-      sweeper: false,
+      reconciler: false,
       handler: always,
     });
     const done = settled(runtime, "failed", OK);
@@ -274,7 +274,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       registry,
       queuePrefix: prefix,
       concurrency: 1,
-      sweeper: false,
+      reconciler: false,
       handler: stub,
     });
     const done = settled(runtime, "completed", OK);
@@ -318,7 +318,7 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
         registry,
         queuePrefix: prefix,
         concurrency: 1,
-        sweeper: false,
+        reconciler: false,
         handler: held,
       });
       await other.add("diff", { runId: OK, projectId: PROJECT, ...STEP });

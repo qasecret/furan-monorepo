@@ -43,7 +43,7 @@ export async function withDiffWorker(
     registry,
     queuePrefix: prefix,
     concurrency: 1,
-    sweeper: false,
+    reconciler: false,
     handler: async (...args) => {
       const outcome = await handleDiffJob(...args);
       outcomes.push(outcome);
