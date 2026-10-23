@@ -328,12 +328,20 @@ warm-ups on `large` (`smoke` takes fewer: 10 cold navigations for D1, D2's
 first row and D5's open); counts are exact. The reference machine is GitHub's `ubuntu-latest`
 runner, and local runs use the same thresholds.
 
-**Slice 1 enforces only what passes today, and so far that is nothing.** Every
-budget starts `tracked`. That includes R1, R2 and their solo variants
-(`R1-solo.*`, `R2-solo.*`, owned by slice 3), although the old script checked
-the solo cases: its own worst case already took more than 50 ms on its old
-shape. The reference run on the CI runner decides which of them become
-enforced, in a follow-up change.
+**Slice 1 enforces only what passes today.** Every budget started `tracked`. The first reference run on the CI runner (2026-10-22, commit `19dde1e3`) then decided which become enforced. A budget became enforced, owned by slice 1, when it passed that run with at least 20% headroom:
+
+- `R2-solo.runsListPending` (19 ms against 50);
+- `R8` (0 failed requests);
+- `D1` (735 ms against 1,500);
+- `D2.domMax` (4,000 against 5,000);
+- `D5.next` (218 ms against 300).
+
+Three budgets passed but stay `tracked`:
+
+- `P5` read 0 only because the race it detects didn't fire on that run.
+- `R2-solo.pendingCount` (41 ms) and `D2.firstRow` (1,332 ms) have too little headroom to enforce from a single run.
+
+The other solo cases (`R1-solo.*`, `R2-solo.buildsListNeedsReview`, `R2-solo.worst`) stay tracked under slice 3. The old script's own worst case already took more than 50 ms.
 
 **An owning slice enforces a budget with a one-line status change** in
 `budgets.ts`, in that slice's PR:
