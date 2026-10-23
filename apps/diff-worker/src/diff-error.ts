@@ -40,18 +40,21 @@ const field = (e: unknown, key: string): unknown =>
  * What the image decoders say about a PNG they cannot read: sharp (libvips on
  * libpng or libspng), pngjs (under pixelmatch and looks-same) and odiff
  * (libspng). None of them sets a `code`, so the message is all there is to go
- * on; the table test in `step-failure.test.ts` feeds each of them the bytes
- * that provoke these, so a library that rewords one fails it.
+ * on; the table test in `diff-error.test.ts` feeds each of them the bytes that
+ * provoke these, so a library that rewords one fails it.
+ *
+ * Decode-side tokens only: libvips and libspng use the same prefixes
+ * (`vipspng`, `spng_`) when they write a PNG, so those are matched by the
+ * read-side message (`libpng read error`, `spng_get_ihdr`), not by prefix.
  */
 const UNREADABLE_IMAGE = new RegExp(
   [
-    // sharp
+    // sharp (`pngload` is libvips' PNG loader; `pngsave` is its writer)
     "unsupported image format",
     "Input Buffer is empty",
     "Input buffer has corrupt header",
-    "vipspng",
     "pngload",
-    "libpng",
+    "libs?png read error",
     // pngjs
     "unrecognised content at end of stream",
     "read requests waitng on finished stream",
@@ -62,8 +65,9 @@ const UNREADABLE_IMAGE = new RegExp(
     "Unexpected end of input",
     "bad png",
     // odiff
-    "libspng",
-    "spng_\\w+",
+    "spng_get_ihdr",
+    // Accepted edge: odiff does not say which input ended early; an end of
+    // stream is a read failure either way.
     'Failure\\("end of stream"\\)',
   ].join("|"),
   "i",
@@ -115,9 +119,12 @@ function isObjectMissing(e: unknown): boolean {
  *  2. `image_unreadable`: a decoder could not read the PNG, whether sharp in
  *     the worker or pngjs and odiff inside the engine;
  *  3. `engine_error` / `vlm_error`: a `DiffEngineError` from `@furan/diff-engine`
- *     names the stage that threw it. (Today a vision-model provider's failure
- *     never leaves `runVlm`, which folds it into the L1 verdict, so only a
- *     stage-tagged error from a future strict path reaches `vlm_error`);
+ *     names the stage that threw it. `vlm_error` is in the fixed code set but
+ *     has no producer today: `runVlm` folds every provider failure into its L1
+ *     fallback (the intended degradation, logged as `vlm_fallback_to_l1`), and
+ *     a failure of `runVlm`'s own pixel compare is an engine failure, so
+ *     `engine_error`. It would apply to a `vlm`-stage error, should a provider
+ *     failure ever be made to fail the step;
  *  4. `object_missing`: a storage object that is not there. After the engine
  *     rule, so an ENOENT inside the engine (its temp files) stays the engine's;
  *  5. `internal`: anything else.

@@ -195,14 +195,15 @@ export async function handleDiffJob(
     // say) must neither fail the step nor replace that status. It is logged
     // above; rethrow so the job still fails.
     if (progress.coreCommitted) throw err;
-    // Ruling R22: a step job never aborts its run. The step fails alone; the
-    // job still fails (rethrown), so its outcome and the dead-letter signal
-    // are what they were. Ruling R27: unless a newer version owns the step,
-    // whose job decides it: this attempt's error does not matter to the step,
-    // so the job ends stale, not failed (no rethrow, no dead letter). Its
-    // failure was logged above.
+    // Ruling R22: a step job never aborts its run. Its final failure fails its
+    // own step, and the job still rethrows, so its outcome and the dead-letter
+    // signal stay what they were. Ruling R27 is the exception: when a newer
+    // version has taken over the step, that version's job decides it and this
+    // attempt's error no longer matters. The job then ends stale, not failed
+    // (no rethrow, so no dead letter). The error was already logged above.
     if (stepJob && code) {
-      if (await failStep(deps, logger, stepJob, code, t0)) return STALE_OUTCOME;
+      const failure = await failStep(deps, logger, stepJob, code, t0);
+      if (failure === "stale") return STALE_OUTCOME;
       throw err;
     }
     // Final attempt of an old whole-run job: best-effort terminal status write
@@ -276,8 +277,10 @@ export async function handleDiffJob(
  * rethrows the job's own error. When it lands, the same interim events a
  * committed step job publishes follow (`publishInterimStepEvents`).
  *
- * Returns true when a newer version owns the step (or the step or its run is
- * gone), so the caller ends the job stale; false otherwise.
+ * Returns what became of the step: `"failed"` (it now carries the failure),
+ * `"stale"` (a newer version owns it, or it or its run is gone: nothing was
+ * written, and the caller ends the job stale) or `"unwritten"` (the write
+ * itself failed; the step is as it was).
  */
 async function failStep(
   deps: HandlerDeps,
@@ -285,7 +288,7 @@ async function failStep(
   job: StepJob,
   code: DiffErrorCode,
   t0: number,
-): Promise<boolean> {
+): Promise<"failed" | "stale" | "unwritten"> {
   let marked: Awaited<ReturnType<typeof markStepDiffFailed>>;
   try {
     marked = await withProjectScope(deps.db, job.projectId, (tx) =>
@@ -301,18 +304,11 @@ async function failStep(
       { err: markErr, runId: job.runId, screenshotId: job.screenshotId },
       "failed_to_mark_step_failed",
     );
-    return false;
+    return "unwritten";
   }
   if (!marked.applied || !marked.rollup) {
-    logger.info(
-      {
-        runId: job.runId,
-        screenshotId: job.screenshotId,
-        generation: job.generation,
-      },
-      "diff_step_stale",
-    );
-    return true;
+    logStepStale(logger, job);
+    return "stale";
   }
   // Like the aborted run's, best-effort: the original error stays the signal.
   try {
@@ -344,7 +340,7 @@ async function failStep(
       "failed_to_publish_failed_step_events",
     );
   }
-  return false;
+  return "failed";
 }
 
 /**
@@ -365,6 +361,27 @@ export interface DiffJobOutcome {
 }
 
 const STALE_OUTCOME: DiffJobOutcome = { checkpoints: 0, stale: true };
+
+/**
+ * Logs that a step job's version is no longer the step's: a newer job owns it
+ * and this one writes and publishes nothing. `currentGeneration`, when the
+ * caller read it, is the version that does (null: the step or its run is gone).
+ */
+function logStepStale(
+  logger: Logger,
+  job: StepJob,
+  currentGeneration?: number | null,
+): void {
+  logger.info(
+    {
+      runId: job.runId,
+      screenshotId: job.screenshotId,
+      generation: job.generation,
+      ...(currentGeneration !== undefined ? { currentGeneration } : {}),
+    },
+    "diff_step_stale",
+  );
+}
 
 /** What a step job has durably done so far; read by the failure path. */
 export interface DiffProgress {
@@ -525,15 +542,7 @@ export async function handleStepJob(
       })
     : undefined;
   if (!step || !run || step.diffGeneration !== job.generation) {
-    logger.info(
-      {
-        runId: job.runId,
-        screenshotId: job.screenshotId,
-        generation: job.generation,
-        currentGeneration: step?.diffGeneration ?? null,
-      },
-      "diff_step_stale",
-    );
+    logStepStale(logger, job, step?.diffGeneration ?? null);
     return STALE_OUTCOME;
   }
 
@@ -557,14 +566,7 @@ export async function handleStepJob(
   // 4. The commit, under the version guard.
   const commit = await commitStep(deps, job, result, logger);
   if (commit.kind === "stale") {
-    logger.info(
-      {
-        runId: job.runId,
-        screenshotId: job.screenshotId,
-        generation: job.generation,
-      },
-      "diff_step_stale",
-    );
+    logStepStale(logger, job);
     return STALE_OUTCOME;
   }
   // `commitStep` resolves only after its transaction committed. A failure from
