@@ -31,6 +31,8 @@ export {
   DIFF_ERROR_CODES,
 } from "./step-diff.js";
 export type { DiffErrorCode } from "./step-diff.js";
+// `stepAwaitingDiff`, exported with the schema above, is the "still awaiting a
+// diff result" predicate that `screenshots_stuck_idx` is partial on.
 export {
   recomputeRunTotals,
   PRIMARY_SIGNATURE_EXCLUDED_SOURCES,

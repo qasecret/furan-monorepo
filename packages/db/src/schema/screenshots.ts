@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
@@ -18,6 +18,32 @@ import { baselineSourceEnum, checkpointVerdictEnum } from "./enums.js";
 import { projects } from "./projects.js";
 import { testRuns } from "./test_runs.js";
 import { testVariations } from "./test_variations.js";
+
+/**
+ * The steps still awaiting a diff result (ruling R23): not failed for good,
+ * and with no result newer than their queue time. That is either no verdict
+ * at all or one from before the step was last queued: a re-diff keeps the
+ * step's old result until the new one replaces it, so an old verdict alone
+ * does not mean the current version was diffed.
+ *
+ * A diff commit stamps `verdict_at` with `clock_timestamp()` after the
+ * queueing transaction set `diff_queued_at = now()`, so a result that landed
+ * always takes the step out of the set. A comparison with NULL is unknown, so
+ * a step with a verdict but no `verdict_at` or no `diff_queued_at` (rows from
+ * before the per-step pipeline) does not await one.
+ *
+ * `screenshots_stuck_idx` is partial on exactly this predicate: a query that
+ * includes it (pass `screenshots`) can read that index. Parenthesised, so it
+ * composes inside `and()` and `or()` alike.
+ */
+export function stepAwaitingDiff(t: {
+  diffFailedAt: AnyColumn;
+  verdict: AnyColumn;
+  verdictAt: AnyColumn;
+  diffQueuedAt: AnyColumn;
+}): SQL {
+  return sql`(${t.diffFailedAt} IS NULL AND (${t.verdict} IS NULL OR ${t.verdictAt} < ${t.diffQueuedAt}))`;
+}
 
 export const screenshots = pgTable(
   "screenshots",
@@ -154,11 +180,12 @@ export const screenshots = pgTable(
     undiffedIdx: index("screenshots_undiffed_idx")
       .on(t.runId)
       .where(sql`${t.verdict} IS NULL`),
-    // Migration 0042: the steps still waiting for a diff result, oldest queue
-    // time first. The reconciler's scan reads only this index, so it stays
-    // proportional to the work in flight, not to the project's history.
+    // Migration 0042: the steps still awaiting a diff result
+    // (`stepAwaitingDiff`, a lost re-diff included), oldest queue time first.
+    // The reconciler's scan reads only this index, so it stays proportional to
+    // the work in flight, not to the project's history.
     stuckIdx: index("screenshots_stuck_idx")
       .on(t.diffQueuedAt)
-      .where(sql`${t.verdict} IS NULL AND ${t.diffFailedAt} IS NULL`),
+      .where(stepAwaitingDiff(t)),
   }),
 );

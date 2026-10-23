@@ -27,9 +27,13 @@
 -- the first re-diff of a step fills them. The totals of an existing run stay
 -- as stored until one of its steps is diffed again.
 --
--- screenshots_stuck_idx holds only the steps still waiting for a result, so
--- the reconciler's scan is proportional to the work in flight, not to the
--- project's history.
+-- screenshots_stuck_idx holds only the steps still awaiting a result, so the
+-- reconciler's scan is proportional to the work in flight, not to the
+-- project's history. A step awaits one while it has not failed for good and
+-- has no result newer than its queue time: no verdict yet, or one from before
+-- it was last queued (a re-diff keeps the old result until the new one lands,
+-- so a lost re-diff is found too). A comparison with NULL is unknown, so a
+-- step with a verdict but no verdict_at or no diff_queued_at is left out.
 --
 -- Additive and idempotent: every column has no default or a constant one (a
 -- metadata-only change on Postgres 11+, no rewrite of existing rows), and
@@ -54,4 +58,4 @@ ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "vlm_description" text;--> st
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "rule_resolved" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_failed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_error" varchar(64);--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "screenshots_stuck_idx" ON "screenshots" USING btree ("diff_queued_at") WHERE "screenshots"."verdict" IS NULL AND "screenshots"."diff_failed_at" IS NULL;
+CREATE INDEX IF NOT EXISTS "screenshots_stuck_idx" ON "screenshots" USING btree ("diff_queued_at") WHERE ("screenshots"."diff_failed_at" IS NULL AND ("screenshots"."verdict" IS NULL OR "screenshots"."verdict_at" < "screenshots"."diff_queued_at"));

@@ -4,7 +4,12 @@ import type { DB } from "./client.js";
 import { recomputeRunStatus, type Tx } from "./review-status.js";
 import { recomputeRunTotals } from "./run-totals.js";
 import type { RunStatus } from "./schema/enums.js";
-import { diffRegions, screenshots, testRuns } from "./schema/index.js";
+import {
+  diffRegions,
+  screenshots,
+  stepAwaitingDiff,
+  testRuns,
+} from "./schema/index.js";
 
 /**
  * Why a step's diff failed permanently, as stored in `screenshots.diff_error`
@@ -88,10 +93,12 @@ export async function bumpStepGenerations(
  *
  * If the step's version is no longer `generation`, a newer job owns the step
  * and nothing is written (`applied: false`); so too when the run or the step
- * is gone. With `options.onlyIfUndiffed` (default false) it also requires the
- * step to have no verdict yet, so a caller that decided from an earlier scan
- * (the reconciler giving up on a step) can never overwrite a result that
- * committed in between. Otherwise, in the caller's transaction:
+ * is gone. With `options.onlyIfAwaitingDiff` (default false) it also requires
+ * the step, as it stands once locked, to still await a diff
+ * (`stepAwaitingDiff`: not failed, and no result newer than its queue time),
+ * so a caller that decided from an earlier scan (the reconciler giving up on a
+ * step) can never overwrite a result that committed in between, nor fail a
+ * step twice. Otherwise, in the caller's transaction:
  *  - the step gets `verdict = 'unresolved'` (the existing "needs attention"
  *    verdict, so the rollup, the pending filters and the review queue treat it
  *    as such), `verdict_at`, `diff_failed_at` and the reason `diff_error`;
@@ -113,7 +120,7 @@ export async function markStepDiffFailed(
     generation: number;
     code: DiffErrorCode;
   },
-  options: { onlyIfUndiffed?: boolean } = {},
+  options: { onlyIfAwaitingDiff?: boolean } = {},
 ): Promise<{
   applied: boolean;
   rollup?: { before: RunStatus; after: RunStatus };
@@ -127,18 +134,18 @@ export async function markStepDiffFailed(
     .for("no key update");
   if (!run) return { applied: false };
 
+  // Both read from the row as locked: a writer that committed while this
+  // waited for the lock is what they judge.
   const [step] = await tx
     .select({
       generation: screenshots.diffGeneration,
-      verdict: screenshots.verdict,
+      awaiting: sql<boolean>`${stepAwaitingDiff(screenshots)} IS TRUE`,
     })
     .from(screenshots)
     .where(and(eq(screenshots.id, stepId), eq(screenshots.runId, runId)))
     .for("update");
   if (!step || step.generation !== generation) return { applied: false };
-  if (options.onlyIfUndiffed && step.verdict !== null) {
-    return { applied: false };
-  }
+  if (options.onlyIfAwaitingDiff && !step.awaiting) return { applied: false };
 
   await tx
     .update(screenshots)
