@@ -136,7 +136,7 @@ d("tRPC request scope atomicity", () => {
           buildContext(req, {
             db: h.app.db,
             telemetry: h.telemetry,
-            diffQueue: { add: h.diffQueueAdd },
+            diffQueue: { addBulk: h.diffQueueAddBulk },
             broadcaster: {
               publishProjectEvent: h.broadcasterPublish,
             } as unknown as Broadcaster,

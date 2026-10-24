@@ -99,49 +99,40 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
 }
 
 /**
- * The one way the API adds a diff job. Counts a job the queue accepted in
- * `furan_diff_jobs_enqueued_total{trigger}`; one it refused in
- * `furan_diff_enqueue_failures_total{trigger}`, and then rethrows.
+ * The one way the API adds diff jobs: every job of `jobs` in one `addBulk`
+ * (one round trip), each a `diff` job under the job id
+ * `diffJobId(step, version)`. The reconciler looks a step's job up by exactly
+ * that id, and a version added twice is then one job. The payloads are handed
+ * to the queue as given.
  *
- * It decides nothing about what a failure means. A caller that treats the
- * enqueue as best-effort (the SDK upload, a branch merge) catches and logs; one
- * that must surface it (an undo, whose retry re-enqueues) lets it propagate.
- * The payload is handed to the queue as given, under the job id
- * `diffJobId(step, version)`: the reconciler looks a step's job up by exactly
- * that id, and a version added twice is then one job.
- */
-export async function addDiffJob(
-  deps: { diffQueue: DiffQueueProducer; registry: Registry },
-  trigger: DiffTrigger,
-  payload: StepDiffJob,
-): Promise<void> {
-  const m = getOrRegister(deps.registry);
-  try {
-    await deps.diffQueue.add("diff", payload, {
-      jobId: diffJobId(payload.screenshotId, payload.generation),
-    });
-  } catch (err) {
-    m.failures.inc({ trigger });
-    throw err;
-  }
-  m.enqueued.inc({ trigger });
-}
-
-/**
- * Adds every job of `jobs` at once (`addDiffJob`, each counted under
- * `trigger`) and resolves, once all were tried, to the ones the queue refused
- * with their errors, in job order. It never rejects: the caller decides what a
- * refusal means (rethrow the first, or log each).
+ * Counts the jobs the queue accepted in `furan_diff_jobs_enqueued_total
+ * {trigger}`. A bulk the queue refused refuses every job in it: they are
+ * counted in `furan_diff_enqueue_failures_total{trigger}` and returned, in job
+ * order, with the error. It never rejects, and decides nothing about what a
+ * refusal means: a caller that treats the enqueue as best-effort (the SDK
+ * upload, a branch merge) logs each one; one that must surface it (an edit,
+ * an undo, whose retry re-enqueues) rethrows. A step left without its job
+ * keeps its version, and the reconciler re-queues it.
  */
 export async function addStepDiffJobs(
   deps: { diffQueue: DiffQueueProducer; registry: Registry },
   trigger: DiffTrigger,
   jobs: readonly StepDiffJob[],
 ): Promise<Array<{ job: StepDiffJob; err: unknown }>> {
-  const results = await Promise.allSettled(
-    jobs.map((job) => addDiffJob(deps, trigger, job)),
-  );
-  return results.flatMap((r, i) =>
-    r.status === "rejected" ? [{ job: jobs[i]!, err: r.reason }] : [],
-  );
+  if (jobs.length === 0) return [];
+  const m = getOrRegister(deps.registry);
+  try {
+    await deps.diffQueue.addBulk(
+      jobs.map((job) => ({
+        name: "diff" as const,
+        data: job,
+        opts: { jobId: diffJobId(job.screenshotId, job.generation) },
+      })),
+    );
+  } catch (err) {
+    m.failures.inc({ trigger }, jobs.length);
+    return jobs.map((job) => ({ job, err }));
+  }
+  m.enqueued.inc({ trigger }, jobs.length);
+  return [];
 }

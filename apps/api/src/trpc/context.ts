@@ -19,12 +19,15 @@ declare module "fastify" {
 /**
  * Narrow producer interface for the diff queue. Defined here (not pulled
  * from bullmq) so tests can inject a vi.fn() without satisfying the full
- * Queue surface. Production wires a real `createQueue("diff")` in
- * server.ts; tests pass `{ add: vi.fn() }`. `opts.jobId` is the BullMQ job
- * id (`diffJobId`, which `addDiffJob` always passes).
+ * Queue surface. Production wires a real `createQueue("diff")` (a BullMQ
+ * `Queue`, whose `addBulk` adds the jobs in one round trip) in runtime.ts;
+ * tests pass a fake `addBulk`. Each job's `opts.jobId` is its BullMQ job id
+ * (`diffJobId`, which `addStepDiffJobs` always passes).
  */
 export interface DiffQueueProducer {
-  add(name: "diff", data: DiffJob, opts?: { jobId?: string }): Promise<unknown>;
+  addBulk(
+    jobs: Array<{ name: "diff"; data: DiffJob; opts: { jobId: string } }>,
+  ): Promise<unknown>;
 }
 
 export interface BuildContextDeps {

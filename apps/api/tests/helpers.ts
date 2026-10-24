@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createDb, type DB, sql } from "@furan/db";
+import type { DiffJob } from "@furan/queue";
 import {
   bootstrapTelemetry,
   type Registry,
@@ -18,16 +19,40 @@ import type { Broadcaster } from "../src/lib/broadcast.js";
 import type { MemberProjectsCache } from "../src/lib/member-projects-cache.js";
 import type { DiffQueueProducer } from "../src/trpc/context.js";
 
+/** One job of a diff-queue bulk, as a fake producer records it. */
+export type DiffJobAdd = (
+  name: "diff",
+  data: DiffJob,
+  opts: { jobId: string },
+) => Promise<unknown>;
+
+/**
+ * A fake diff-queue producer whose `addBulk` hands each job to `add`, in
+ * order, and rejects as a whole when any of them throws (BullMQ sends a bulk
+ * in one round trip, so the caller learns of it as one failure).
+ */
+export function bulkProducer(add: DiffJobAdd): DiffQueueProducer {
+  return {
+    addBulk: (jobs) =>
+      Promise.all(jobs.map((j) => add(j.name, j.data, j.opts))),
+  };
+}
+
 export interface TestApp {
   app: FastifyInstance;
   db: DB;
   telemetry: Telemetry;
   env: Env;
   /**
-   * Spy on `.add()` calls. Detached/inert when `opts.diffQueue` is
-   * overridden. Reset via `diffQueueAdd.mockReset()` between tests.
+   * Spy on each job the diff queue is handed, as `(name, data, opts)`: the
+   * default producer's `addBulk` calls it once per job of a bulk, in order,
+   * and the bulk fails as a whole when any call throws. Detached/inert when
+   * `opts.diffQueue` is overridden. Reset via `diffQueueAdd.mockReset()`
+   * between tests.
    */
-  diffQueueAdd: Mock;
+  diffQueueAdd: Mock<DiffJobAdd>;
+  /** Spy on the default producer's `addBulk` calls (one per round trip). */
+  diffQueueAddBulk: Mock<DiffQueueProducer["addBulk"]>;
   /**
    * Spy on `broadcaster.publishProjectEvent` calls. Tests that exercise
    * the producer wiring assert against this; tests that don't care about
@@ -251,9 +276,12 @@ export async function createTestApp(
   }
 
   const diffQueueAdd = vi
-    .fn<DiffQueueProducer["add"]>()
+    .fn<DiffJobAdd>()
     .mockResolvedValue({ id: "test-job-id" });
-  const diffQueue: DiffQueueProducer = opts.diffQueue ?? { add: diffQueueAdd };
+  const diffQueueAddBulk = vi.fn(bulkProducer(diffQueueAdd).addBulk);
+  const diffQueue: DiffQueueProducer = opts.diffQueue ?? {
+    addBulk: diffQueueAddBulk,
+  };
 
   // Mock broadcaster — tests that exercise the producer wiring assert
   // against `broadcasterPublish`; the project-events SSE integration
@@ -283,6 +311,7 @@ export async function createTestApp(
     telemetry,
     env,
     diffQueueAdd,
+    diffQueueAddBulk,
     broadcasterPublish,
     close: async () => {
       await app.close();

@@ -4,6 +4,7 @@ import {
   bumpStepGenerations,
   eq,
   screenshots,
+  testRuns,
   type DB,
   type Tx,
 } from "@furan/db";
@@ -36,18 +37,21 @@ type RunRef = {
  * at version 0 (diffed before the per-step pipeline), every version-0 step of
  * the run is queued with `stepIds`. The run totals fold the steps' own result
  * columns, which a legacy step does not have, so re-diffing one step alone
- * would misstate the run's diff % and image. The bump leaves no version-0
- * step behind, so this happens once per run.
+ * would misstate the run's diff % and image. The run is locked before its
+ * version-0 steps are read and the bump leaves none behind, so this happens
+ * once per run, however many callers race, whether or not they already held
+ * the run.
  *
- * Locks: the run row, then the bumped steps (`bumpStepGenerations`). Call it
+ * Locks: the run row (`FOR NO KEY UPDATE`, a no-op when the transaction
+ * already holds it), then the bumped steps (`bumpStepGenerations`). Call it
  * BEFORE locking or writing a variation of the run unless the transaction
  * already holds the run (the diff commit's order is run -> step ->
  * variation).
  *
- * After commit, every step's job is tried. The jobs the queue refused are
- * counted under `trigger` (`addDiffJob`) and the first refusal is rethrown, so
- * it surfaces exactly as a single failed enqueue did; a step left without a
- * job keeps its new version and the reconciler re-queues it.
+ * After commit, every step's job is added in one bulk (`addStepDiffJobs`,
+ * counted under `trigger`). A refused bulk is rethrown, so it surfaces exactly
+ * as a single failed enqueue did; a step left without a job keeps its new
+ * version and the reconciler re-queues it.
  */
 export async function queueStepDiffs(
   ctx: {
@@ -77,8 +81,8 @@ export async function queueStepDiffs(
  * when `run` is a legacy run (a step with a verdict at version 0), bumps every
  * version-0 step of it, as {@link queueStepDiffs} would, and returns their
  * jobs, in capture order, for the caller to add after commit with the new
- * step's own; otherwise bumps nothing and returns none. The caller holds the
- * run's lock already (the bump re-takes it, a no-op).
+ * step's own; otherwise bumps nothing and returns none. It locks the run
+ * first, a no-op for the upload, which holds it already.
  */
 export function bumpLegacySteps(
   db: DB | Tx,
@@ -90,13 +94,24 @@ export function bumpLegacySteps(
 /**
  * Bumps `stepIds` of `run` (with R6's fan-out on a legacy run) and returns
  * their jobs, in order: the version-0 steps in capture order first, then the
- * rest of `stepIds`. Ids that are not steps of the run are dropped.
+ * rest of `stepIds`. Ids that are not steps of the run are dropped; a run that
+ * doesn't exist bumps nothing.
  */
 async function bumpSteps(
   db: DB | Tx,
   run: RunRef,
   stepIds: readonly string[],
 ): Promise<StepDiffJob[]> {
+  // The run lock first, so the read below sees every bump that committed
+  // before it: a second caller that raced the first finds no version-0 step
+  // left and fans nothing out (`bumpStepGenerations` re-takes it, a no-op).
+  const [locked] = await db
+    .select({ id: testRuns.id })
+    .from(testRuns)
+    .where(eq(testRuns.id, run.id))
+    .for("no key update");
+  if (!locked) return [];
+
   // One read of the run's version-0 steps (`screenshots_run_idx`): none, or
   // none with a verdict, on a run the per-step pipeline queued from the start.
   const unversioned = await db

@@ -23,9 +23,10 @@ import {
 } from "./branch-merge-metrics.js";
 import type { Broadcaster } from "./broadcast.js";
 import {
-  addDiffJob,
+  addStepDiffJobs,
   NEW_STEP_GENERATION,
   stepDiffJob,
+  type StepDiffJob,
 } from "./diff-enqueue.js";
 
 /**
@@ -188,6 +189,8 @@ export async function mergeBranchBaselinesImpl(
   //    success response with the skipped list.
   const enqueued: Array<{ variationId: string; runId: string }> = [];
   const skipped: Array<{ variationId: string; reason: string }> = [];
+  // One job per copied step, each queued by its insert at version 1.
+  const jobs: StepDiffJob[] = [];
 
   for (const source of latestPerVariation) {
     const sourceShots = await deps.db
@@ -278,30 +281,9 @@ export async function mergeBranchBaselinesImpl(
       stepIds.push(copy!.id);
     }
 
-    // Best-effort enqueue, one job per copied step — a queue blip should not
-    // fail an otherwise successful synthetic run. Bytes are persisted, and the
-    // reconciler re-queues a step whose job was lost. Deferred to after-commit
-    // when the caller is transaction-scoped (onCommit) so the worker never
-    // sees a job before the run/screenshot rows.
-    const runId = run.id;
-    const enqueueDiff = async (): Promise<void> => {
-      for (const screenshotId of stepIds) {
-        try {
-          await addDiffJob(
-            { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
-            "branch_merge",
-            stepDiffJob(run, screenshotId, NEW_STEP_GENERATION),
-          );
-        } catch (err) {
-          deps.log.warn(
-            { err, runId, projectId, screenshotId },
-            "merge_diff_enqueue_failed",
-          );
-        }
-      }
-    };
-    if (deps.onCommit) deps.onCommit(enqueueDiff);
-    else await enqueueDiff();
+    for (const screenshotId of stepIds) {
+      jobs.push(stepDiffJob(run, screenshotId, NEW_STEP_GENERATION));
+    }
 
     enqueued.push({ variationId: source.variationId, runId: run.id });
     recordBranchMergeOutcome(deps.telemetry.metrics, "enqueued");
@@ -310,6 +292,34 @@ export async function mergeBranchBaselinesImpl(
       event: "testRun_created",
       data: { id: run.id },
     });
+  }
+
+  // Best-effort enqueue of every copied step, in one bulk — a queue blip
+  // should not fail an otherwise successful merge. Bytes are persisted, and
+  // the reconciler re-queues a step whose job was lost. Deferred to
+  // after-commit when the caller is transaction-scoped (onCommit) so the
+  // worker never sees a job before the run/screenshot rows.
+  if (jobs.length > 0) {
+    const enqueueDiffs = async (): Promise<void> => {
+      const refused = await addStepDiffJobs(
+        { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
+        "branch_merge",
+        jobs,
+      );
+      for (const { job, err } of refused) {
+        deps.log.warn(
+          {
+            err,
+            runId: job.runId,
+            projectId,
+            screenshotId: job.screenshotId,
+          },
+          "merge_diff_enqueue_failed",
+        );
+      }
+    };
+    if (deps.onCommit) deps.onCommit(enqueueDiffs);
+    else await enqueueDiffs();
   }
 
   // After all synthetic runs are inserted, signal the build summary to

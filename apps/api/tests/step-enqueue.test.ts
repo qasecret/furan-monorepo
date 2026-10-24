@@ -25,10 +25,15 @@ import {
 import { createDeferredSink } from "../src/lib/deferred-sink.js";
 import type { DiffTrigger } from "../src/lib/diff-enqueue.js";
 import { queueStepDiffs } from "../src/lib/review/enqueue.js";
-import type { DiffQueueProducer } from "../src/trpc/context.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
-import { counterValue, createTestApp, type TestApp } from "./helpers.js";
+import {
+  bulkProducer,
+  counterValue,
+  createTestApp,
+  type DiffJobAdd,
+  type TestApp,
+} from "./helpers.js";
 import {
   addReviewRun,
   cleanupReviewSeeds,
@@ -128,26 +133,29 @@ d("per-step diff enqueue", () => {
 
   /**
    * `queueStepDiffs` in a transaction of its own, then its after-commit
-   * effects, as a request scope runs them. Each `add` records the step's
-   * version as another connection sees it then: committed rows only.
+   * effects, as a request scope runs them. The producer's `addBulk` hands
+   * each job to `add` (`bulkProducer`), which records the step's version as
+   * another connection sees it then: committed rows only.
    */
   async function queueInTx(
     run: { id: string; projectId: string; parentBranchName: string | null },
     stepIds: readonly string[],
     opts: {
       trigger?: DiffTrigger;
-      add?: DiffQueueProducer["add"];
+      add?: DiffJobAdd;
     } = {},
   ) {
     const seen: number[] = [];
-    const add = vi.fn<DiffQueueProducer["add"]>(async (_name, data, o) => {
+    const add = vi.fn<DiffJobAdd>(async (_name, data, o) => {
       const [row] = await h.db
         .select({ generation: screenshots.diffGeneration })
         .from(screenshots)
         .where(eq(screenshots.id, data.screenshotId!));
       seen.push(row!.generation);
-      return opts.add ? opts.add("diff", data, o) : { id: o?.jobId };
+      return opts.add ? opts.add("diff", data, o) : { id: o.jobId };
     });
+    const diffQueue = bulkProducer(add);
+    const addBulk = vi.spyOn(diffQueue, "addBulk");
     const registry = new Registry();
     const sink = createDeferredSink();
     const onCommit = vi.fn(sink.onCommit);
@@ -155,7 +163,7 @@ d("per-step diff enqueue", () => {
       queueStepDiffs(
         {
           db: tx,
-          diffQueue: { add },
+          diffQueue,
           telemetry: { metrics: registry },
           onCommit,
         },
@@ -167,7 +175,7 @@ d("per-step diff enqueue", () => {
     // Nothing is queued before the transaction commits.
     expect(add).not.toHaveBeenCalled();
     const drained = await sqlState(sink.drain());
-    return { add, seen, registry, onCommit, drained };
+    return { add, addBulk, seen, registry, onCommit, drained };
   }
 
   describe("queueStepDiffs", () => {
@@ -191,12 +199,14 @@ d("per-step diff enqueue", () => {
         string,
       ];
 
-      const { add, seen, registry, drained } = await queueInTx(
+      const { add, addBulk, seen, registry, drained } = await queueInTx(
         runOf(s, "main"),
         [a, c],
       );
 
       expect(drained).toBe("ok");
+      // One round trip for the whole call.
+      expect(addBulk).toHaveBeenCalledTimes(1);
       expect(add.mock.calls).toEqual([
         [
           "diff",
@@ -322,6 +332,46 @@ d("per-step diff enqueue", () => {
       expect(after.get(c)!.generation).toBe(2);
     });
 
+    test("two re-diffs of a legacy run at once fan out its gen-0 steps once", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "a", verdict: "unresolved" },
+          { name: "b", verdict: "passed" },
+          { name: "c", verdict: "unresolved" },
+        ],
+      });
+      const [a, b, c] = s.shotsInOrder.map((x) => x.id) as [
+        string,
+        string,
+        string,
+      ];
+
+      // Neither caller holds the run: `queueStepDiffs` locks it before it
+      // reads the run's version-0 steps.
+      const [first, second] = await bothAtOnce(s.runId, () => [
+        queueInTx(runOf(s), [a]),
+        queueInTx(runOf(s), [c]),
+      ]);
+
+      expect([first.drained, second.drained]).toEqual(["ok", "ok"]);
+      const jobIds = [...first.add.mock.calls, ...second.add.mock.calls].map(
+        ([, , o]) => o.jobId,
+      );
+      // Every legacy step at version 1 exactly once, and one more job: the
+      // named step of whichever re-diff went second, at version 2.
+      const g2 = jobIds.filter((id) => id.endsWith("-g2"));
+      expect(g2).toHaveLength(1);
+      expect([`${a}-g2`, `${c}-g2`]).toContain(g2[0]);
+      expect(jobIds.filter((id) => id.endsWith("-g1")).sort()).toEqual(
+        [a, b, c].map((id) => `${id}-g1`).sort(),
+      );
+      const after = await versions(s.runId);
+      expect(after.get(b)!.generation).toBe(1);
+      expect(
+        [after.get(a)!.generation, after.get(c)!.generation].sort(),
+      ).toEqual([1, 2]);
+    });
+
     test("ids that are not steps of the run are ignored", async () => {
       const s = await seed({
         checkpoints: [{ name: "a", verdict: "unresolved" }],
@@ -342,7 +392,7 @@ d("per-step diff enqueue", () => {
       expect((await versions(other.runId)).get(x)!.generation).toBe(1);
     });
 
-    test("a refused add surfaces after commit, once every step was tried, counted per step", async () => {
+    test("a refused bulk surfaces after commit, every job in it counted as refused", async () => {
       const s = await seed({
         checkpoints: [
           { name: "a", verdict: "unresolved" },
@@ -356,21 +406,28 @@ d("per-step diff enqueue", () => {
       const [a, b] = s.shotsInOrder.map((x) => x.id) as [string, string];
       const boom = new Error("queue is down");
 
-      const { add, registry, drained } = await queueInTx(runOf(s), [a, b], {
-        trigger: "undo",
-        add: async (_name, data) => {
-          if (data.screenshotId === a) throw boom;
-          return {};
+      const { add, addBulk, registry, drained } = await queueInTx(
+        runOf(s),
+        [a, b],
+        {
+          trigger: "undo",
+          add: async (_name, data) => {
+            if (data.screenshotId === a) throw boom;
+            return {};
+          },
         },
-      });
+      );
 
       expect(drained).toBe(String(boom));
+      expect(addBulk).toHaveBeenCalledTimes(1);
       expect(add).toHaveBeenCalledTimes(2);
+      // One round trip: the queue refused the bulk, so neither job counts as
+      // added.
       expect(await counterValue(registry, FAILURES, { trigger: "undo" })).toBe(
-        1,
+        2,
       );
       expect(await counterValue(registry, ENQUEUED, { trigger: "undo" })).toBe(
-        1,
+        0,
       );
       // The versions committed: the reconciler re-queues the step left without a job.
       const after = await versions(s.runId);
@@ -436,6 +493,70 @@ d("per-step diff enqueue", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     return false;
+  }
+
+  /**
+   * Waits (up to 10 s) until `n` sessions wait on `holderPid`, directly or
+   * behind another waiter (a second waiter for a row queues on the first's
+   * tuple lock).
+   */
+  async function queuedBehind(holderPid: number, n: number): Promise<boolean> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const r = await h.db.execute<{ n: number }>(sql`
+        with recursive waiting(pid) as (
+          select ${holderPid}::int
+          union
+          select a.pid from pg_stat_activity a, waiting w
+          where w.pid = any(pg_blocking_pids(a.pid))
+        )
+        select count(*)::int - 1 as n from waiting
+      `);
+      if (r[0]!.n >= n) return true;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return false;
+  }
+
+  /**
+   * Holds `runId`'s row lock (`FOR NO KEY UPDATE`) on a connection of its own
+   * while `start()` begins two requests, until both wait on it; then lets
+   * them through, one at a time, and returns what they returned. So the two
+   * really run at once: neither can have read the run before the other.
+   */
+  async function bothAtOnce<A, B>(
+    runId: string,
+    start: () => [Promise<A>, Promise<B>],
+  ): Promise<[A, B]> {
+    const side = createDb();
+    try {
+      let release!: () => void;
+      const released = new Promise<void>((r) => (release = r));
+      let holding!: (pid: number) => void;
+      const held = new Promise<number>((r) => (holding = r));
+      const holder = side.db.transaction(async (tx) => {
+        const [me] = await tx.execute<{ pid: number }>(
+          sql`select pg_backend_pid() as pid`,
+        );
+        await tx
+          .select({ id: testRuns.id })
+          .from(testRuns)
+          .where(eq(testRuns.id, runId))
+          .for("no key update");
+        holding(me!.pid);
+        await released;
+      });
+      const pid = await held;
+      const [a, b] = start();
+      const waited = await queuedBehind(pid, 2);
+      release();
+      await holder;
+      const out = await Promise.all([a, b]);
+      expect(waited).toBe(true);
+      return out;
+    } finally {
+      await side.close();
+    }
   }
 
   /**
@@ -600,6 +721,36 @@ d("per-step diff enqueue", () => {
       ]);
       for (const shot of s.shotsInOrder) {
         expect((await versions(s.runId)).get(shot.id)!.generation).toBe(1);
+      }
+    });
+
+    test("two uploads at once into a legacy run fan out its gen-0 steps once, each queueing its own step", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "passed" },
+          { name: "waiting", verdict: null },
+        ],
+      });
+      const legacy = s.shotsInOrder.map((x) => x.id);
+
+      const [one, two] = await bothAtOnce(s.runId, () => [
+        upload(s.runId, s.editor.jwt, "checkout"),
+        upload(s.runId, s.editor.jwt, "payment"),
+      ]);
+
+      expect([one.statusCode, two.statusCode]).toEqual([200, 200]);
+      const added = [one, two].map(
+        (r) => (r.json() as { screenshotId: string }).screenshotId,
+      );
+      // Each legacy step's job exactly once, at version 1, and each upload's
+      // own step at version 1.
+      expect(
+        h.diffQueueAdd.mock.calls.map(([, , o]) => o.jobId).sort(),
+      ).toEqual([...legacy, ...added].map((id) => `${id}-g1`).sort());
+      const after = await versions(s.runId);
+      for (const id of [...legacy, ...added]) {
+        expect(after.get(id)!.generation).toBe(1);
       }
     });
 
