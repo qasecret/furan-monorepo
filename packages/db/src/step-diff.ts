@@ -37,7 +37,8 @@ export type DiffErrorCode = (typeof DIFF_ERROR_CODES)[number];
  * Queues steps of one run for a diff: gives each a new version.
  *
  * One UPDATE bumps `diff_generation`, stamps `diff_queued_at` (the
- * reconciler's stuck clock) and resets `diff_requeues`. It returns the new
+ * reconciler's stuck clock) with `clock_timestamp()` once the run is locked,
+ * and resets `diff_requeues`. It returns the new
  * version of every step it bumped, for the job ids the caller adds after the
  * transaction commits. A version is never reused, so a job queued for an
  * earlier one is stale the moment this commits. Ids that are not steps of
@@ -74,7 +75,10 @@ export async function bumpStepGenerations(
     .update(screenshots)
     .set({
       diffGeneration: sql`${screenshots.diffGeneration} + 1`,
-      diffQueuedAt: sql`now()`,
+      // The clock, not the transaction's start (`now()`): this runs after the
+      // run lock, so every diff commit that held the run before it has a
+      // `verdict_at` older than this queue time (`stepAwaitingDiff`).
+      diffQueuedAt: sql`clock_timestamp()`,
       diffRequeues: 0,
     })
     .where(

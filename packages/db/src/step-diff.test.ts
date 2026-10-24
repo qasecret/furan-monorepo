@@ -13,6 +13,7 @@ import {
   projects,
   screenshots,
   sql,
+  stepAwaitingDiff,
   testRuns,
   testVariations,
   type DB,
@@ -232,6 +233,55 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       }
 
       expect((await b).map((x) => x.generation)).toEqual([1, 1]);
+    });
+
+    it("stamps the queue time after the run lock: a result that committed while it waited is older", async () => {
+      const { runId, steps } = await seedRun(1);
+      const stepId = steps[0]!;
+
+      // Transaction B is the previous version's diff commit: it holds the run.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: (pid: number) => void;
+      const pidOfB = new Promise<number>((resolve) => (started = resolve));
+      const b = db.transaction(async (tx) => {
+        const rows = await tx.execute<{ pid: number }>(
+          sql`SELECT pg_backend_pid() AS pid`,
+        );
+        await tx.execute(
+          sql`SELECT id FROM test_runs WHERE id = ${runId} FOR NO KEY UPDATE`,
+        );
+        started(rows[0]!.pid);
+        await gate;
+        // Its result, stamped as `commitStep` does, AFTER transaction A began.
+        await tx
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, stepId));
+      });
+
+      // Transaction A queues the step again. It begins now and waits for the
+      // run, so its own start time is older than B's result.
+      const blockerPid = await pidOfB;
+      const a = db.transaction((tx) => bumpStepGenerations(tx, runId, steps));
+      try {
+        expect(await waitForLockWaiter(blockerPid)).toBe(true);
+      } finally {
+        release();
+        await b;
+      }
+      expect(await a).toEqual([{ id: stepId, generation: 1 }]);
+
+      // The new version has no result yet: the step must still await one, or a
+      // lost job of it would never be found.
+      const [row] = await db
+        .select({
+          awaiting: sql<boolean>`${stepAwaitingDiff(screenshots)} IS TRUE`,
+          queuedAfterResult: sql<boolean>`${screenshots.diffQueuedAt} > ${screenshots.verdictAt}`,
+        })
+        .from(screenshots)
+        .where(eq(screenshots.id, stepId));
+      expect(row).toEqual({ awaiting: true, queuedAfterResult: true });
     });
 
     it("works inside a transaction that already holds the run", async () => {

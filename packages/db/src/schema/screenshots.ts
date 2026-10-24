@@ -26,11 +26,18 @@ import { testVariations } from "./test_variations.js";
  * step's old result until the new one replaces it, so an old verdict alone
  * does not mean the current version was diffed.
  *
- * A diff commit stamps `verdict_at` with `clock_timestamp()` after the
- * queueing transaction set `diff_queued_at = now()`, so a result that landed
- * always takes the step out of the set. A comparison with NULL is unknown, so
- * a step with a verdict but no `verdict_at` or no `diff_queued_at` (rows from
- * before the per-step pipeline) does not await one.
+ * Both times are stamped with `clock_timestamp()` while the writer holds the
+ * run's row lock (`FOR NO KEY UPDATE`): the queueing (`bumpStepGenerations`,
+ * the reconciler's re-queue) sets `diff_queued_at`, a diff commit sets
+ * `verdict_at`. The lock orders them, so both directions hold:
+ *  - a result committed after the step was (re-)queued is newer than its
+ *    queue time, and takes the step out of the set;
+ *  - a result committed before it, even while the queueing transaction was
+ *    already open and waiting for the run, is older, so the step still awaits
+ *    its new version's result. (A transaction-start `now()` would not be.)
+ * A comparison with NULL is unknown, so a step with a verdict but no
+ * `verdict_at` or no `diff_queued_at` (rows from before the per-step
+ * pipeline) does not await one.
  *
  * `screenshots_stuck_idx` is partial on exactly this predicate: a query that
  * includes it (pass `screenshots`) can read that index. Parenthesised, so it
