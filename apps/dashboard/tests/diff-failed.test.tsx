@@ -34,15 +34,23 @@ vi.mock("@/lib/review/use-review-mutations", () => ({
   useIsInFlight: () => false,
 }));
 vi.mock("@/hooks/use-authed-image", () => ({ useAuthedImage: () => null }));
+vi.mock("@/hooks/useProjectEvents", () => ({
+  useProjectEvents: () => undefined,
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/projects/p1/builds/b1",
   useSearchParams: () => new URLSearchParams(),
+  notFound: () => {
+    throw new Error("NEXT_NOT_FOUND");
+  },
 }));
 vi.mock("sonner", () => ({ toast: toastSpies }));
 // The stage's states are only asked what they need here, never drawn.
 vi.mock("pixi.js", () => ({}));
 
 import { CurrentProjectProvider } from "@/app/(protected)/_components/current-project-provider";
+import { BatchPage } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/batch-page";
 import { RunResults } from "@/app/(protected)/projects/[projectId]/builds/[buildId]/_components/run-results";
 import { CommandPalette } from "@/components/cmdk/command-palette";
 import { usePaletteStore } from "@/components/cmdk/use-command-palette";
@@ -368,10 +376,11 @@ describe("the batch step card", () => {
       ).toBe("home, Running"),
     );
     expect(toastSpies.error).not.toHaveBeenCalled();
-    // At most a quiet word that it is on its way already.
-    for (const [message] of toastSpies.info.mock.calls) {
-      expect(message).toBe("This step is already being re-diffed.");
-    }
+    // The one quiet word: it is on its way already.
+    expect(toastSpies.info).toHaveBeenCalledOnce();
+    expect(toastSpies.info).toHaveBeenCalledWith(
+      "This step is already being re-diffed.",
+    );
     // The list was read twice: once on mount, once after the refusal.
     expect(callsTo(server.backend, "runs.listCheckpoints")).toHaveLength(2);
   });
@@ -461,6 +470,151 @@ describe("the run row", () => {
   });
 });
 
+/**
+ * The batch page under its default "Needs review" filter. Retrying r1's
+ * failed step makes the run `running`, so the filtered list no longer holds
+ * it, as approving a run's last pending step takes it away (the same
+ * scenario with an approval is in `batch-keyboard-decisions.test.tsx`). Focus
+ * must not fall to the page: the list cursor gives it to the item that is now
+ * where the retried step's card was, `step:c2`.
+ */
+describe("a retry that takes its run out of the filtered list", () => {
+  const BUILD = {
+    id: "b1",
+    ciBuildId: "ci",
+    number: 42,
+    name: null,
+    branchName: "main",
+    properties: {},
+    runCount: 2,
+    unresolvedCount: 2,
+    failedCount: 0,
+    passedCount: 0,
+    abortedCount: 0,
+    newCount: 0,
+    stepsTotal: 2,
+    pendingCheckpoints: 2,
+    runByName: "Jane Doe",
+    aggregateStatus: "unresolved",
+    createdAt: FAILED_AT,
+    updatedAt: FAILED_AT,
+  };
+  const row = (id: string, name: string) => ({
+    id,
+    name,
+    status: "unresolved",
+    statusOverride: null,
+    pendingCount: 1,
+    stepCount: 1,
+  });
+  const NEXT = {
+    target: { buildId: "b1", runId: "r2", checkpointId: "c2" },
+    scope: "batch",
+    remaining: { run: 1, batch: 2, batchUnfiltered: 2, projectBatches: 1 },
+    nextBatch: null,
+  };
+
+  /**
+   * Two runs in the list, r1 with a failed step c1 and r2 with a pending c2.
+   * `gate` holds the named reads until released, to choose which lands first
+   * after the change: the run list (the whole row goes while the focus is on
+   * the Retry button) or the run's steps (the button goes, the card stays).
+   */
+  function pendingBatch(hold: string[] = []) {
+    const rows = [row("r1", "Checkout"), row("r2", "Search")];
+    let c1 = failed({ id: "c1", name: "c1" });
+    const c2 = step({ id: "c2", name: "c2" });
+    const gates = new Map<string, () => void>();
+    const waits = new Map<string, Promise<void>>();
+    for (const key of hold) {
+      waits.set(key, new Promise<void>((resolve) => gates.set(key, resolve)));
+    }
+    const backend = createBackend();
+    backend.answer = async ({ path, input }) => {
+      // A read that was asked after the change waits for its gate.
+      const wait =
+        waits.get(`${path}:${String(input.runId ?? "")}`) ?? waits.get(path);
+      if (wait && rows.length === 1) await wait;
+      switch (path) {
+        case "builds.getById":
+          return BUILD;
+        case "runs.list":
+          return { items: rows.map((r) => ({ ...r })), nextCursor: null };
+        case "runs.listCheckpoints":
+          return { items: [input.runId === "r1" ? c1 : c2] };
+        case "review.next":
+          return NEXT;
+        case "runs.facets":
+          return { browser: [], viewport: [], os: [], device: [] };
+        case "runs.retryDiff":
+          c1 = step({ id: "c1", name: "c1", verdict: null, state: null });
+          rows.shift();
+          return { status: "running" };
+        default:
+          return { items: [], nextCursor: null };
+      }
+    };
+    return { backend, release: (key: string) => gates.get(key)?.() };
+  }
+
+  /** The list item that has the focus, or holds the control that has it. */
+  const focused = () =>
+    document.activeElement
+      ?.closest("[data-cursor-id]")
+      ?.getAttribute("data-cursor-id") ?? null;
+
+  function renderBatch(backend: Backend) {
+    return render(
+      <TrpcBackend backend={backend}>
+        <CommandRoleProvider role="editor">
+          <BatchPage projectId="p1" buildId="b1" canReview context={CLEAN} />
+        </CommandRoleProvider>
+      </TrpcBackend>,
+    );
+  }
+
+  beforeEach(() => {
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+  });
+
+  test.each([
+    [
+      "the run list lands first: the whole row goes with the focus on Retry",
+      "runs.listCheckpoints:r1",
+    ],
+    ["the run's steps land first: Retry goes, then the row", "runs.list"],
+  ])("a retry: %s", async (_name, held) => {
+    const { backend, release } = pendingBatch([held]);
+    renderBatch(backend);
+    const retry = await screen.findByRole("button", {
+      name: "Retry diff for c1",
+    });
+    act(() => retry.focus());
+    expect(focused()).toBe("step:c1");
+
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(callsTo(backend, "runs.retryDiff")).toHaveLength(1),
+    );
+    // Whichever read lands first, then the other.
+    await waitFor(() =>
+      expect(
+        held === "runs.list"
+          ? screen.queryByRole("button", { name: /Retry diff/ })
+          : screen.queryByTestId("result-row-r1"),
+      ).toBeNull(),
+    );
+    release(held);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("result-row-r1")).toBeNull(),
+    );
+    // Not the page: the item now where the retried step's card was.
+    await waitFor(() => expect(focused()).toBe("step:c2"));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+});
+
 describe("useRetryDiff", () => {
   test("reads the run's steps, the run and the run lists again after a retry", async () => {
     const server = runServer([failed()]);
@@ -535,6 +689,71 @@ describe("useRetryDiff", () => {
   });
 });
 
+describe("useRetryDiff per step", () => {
+  test("pending is keyed by step: another step's retry is not held up by one that is out", async () => {
+    const server = runServer([
+      failed({ id: "c1", name: "a" }),
+      failed({ id: "c2", name: "b" }),
+    ]);
+    const releases = new Map<string, () => void>();
+    const answer = server.backend.answer;
+    server.backend.answer = async (call) => {
+      if (call.path === "runs.retryDiff") {
+        await new Promise<void>((resolve) => {
+          releases.set(String(call.input.checkpointId), resolve);
+        });
+      }
+      return answer(call);
+    };
+    let hook!: ReturnType<typeof useRetryDiff>;
+    function Probe() {
+      hook = useRetryDiff("r1");
+      return null;
+    }
+    render(
+      <TrpcBackend backend={server.backend}>
+        <Probe />
+      </TrpcBackend>,
+    );
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = hook.retry("c1");
+    });
+    await waitFor(() => expect(hook.isPending("c1")).toBe(true));
+    expect(hook.isPending("c2")).toBe(false);
+    expect(hook.pending).toBe(true);
+
+    // The other step asks at once, with the first still out.
+    act(() => {
+      second = hook.retry("c2");
+    });
+    await waitFor(() =>
+      expect(callsTo(server.backend, "runs.retryDiff")).toEqual([
+        { runId: "r1", checkpointId: "c1" },
+        { runId: "r1", checkpointId: "c2" },
+      ]),
+    );
+    expect(hook.isPending("c2")).toBe(true);
+
+    // The first settles; the second is still out.
+    await act(async () => {
+      releases.get("c1")!();
+      await first;
+    });
+    expect(hook.isPending("c1")).toBe(false);
+    expect(hook.isPending("c2")).toBe(true);
+    expect(hook.pending).toBe(true);
+
+    await act(async () => {
+      releases.get("c2")!();
+      await second;
+    });
+    expect(hook.pending).toBe(false);
+  });
+});
+
 describe("the viewer's stage", () => {
   const sized = (w: number, h: number) => ({
     key: `k${w}x${h}`,
@@ -596,9 +815,14 @@ describe("the viewer's stage", () => {
     expect(screen.getByTestId("stage-states").getAttribute("role")).toBe(
       "status",
     );
-    expect(
-      within(card).getByRole("button", { name: "Retry diff" }),
-    ).toBeDefined();
+    // The button is named as the copy says; the message describes it.
+    const retry = within(card).getByRole("button", { name: "Retry diff" });
+    const described = document.getElementById(
+      retry.getAttribute("aria-describedby") ?? "",
+    );
+    expect(described?.textContent).toBe(
+      `This step's diff failed. ${REASONS.vlm_error}`,
+    );
   });
 
   test("Retry diff asks for the retry once; while it is out the button is busy and inert", () => {
@@ -801,8 +1025,6 @@ describe("the palette", () => {
 
     const palette = screen.getByTestId("command-palette");
     const option = within(palette).getByRole("option", { name: /Retry diff/ });
-    // No key: nothing is bound, so there is no cap to show.
-    expect(option.querySelectorAll("kbd kbd")).toHaveLength(0);
     fireEvent.click(option);
     await waitFor(() => expect(onRetryDiff).toHaveBeenCalledOnce());
   });

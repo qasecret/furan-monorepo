@@ -205,6 +205,11 @@ export function DiffViewer({
   // `_first` is the placeholder before the checkpoint list resolves.
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
+  // The step on screen in the checkpoint list: its facets, review state and
+  // failed diff.
+  const stepItem = checkpointsQuery.data?.items?.find(
+    (c) => c.id === activeCheckpointId,
+  );
 
   // Select the candidate by selectedCheckpointId, falling back to the
   // first screenshot. Before the fix this was hardcoded to screenshots[0],
@@ -368,10 +373,7 @@ export function DiffViewer({
   // counts in what is left, and in the filter's count if it is inside it.
   const stepHere = {
     pending: review.view === "pending",
-    inFilter: inFacets(
-      checkpointsQuery.data?.items?.find((c) => c.id === activeCheckpointId),
-      context.facets,
-    ),
+    inFilter: inFacets(stepItem, context.facets),
   };
   // A decision on this step still on its way: a read meanwhile that shows the
   // step pending again predates its commit, and is no undo (R36).
@@ -679,12 +681,12 @@ export function DiffViewer({
   const keysOn = card === null;
   // The step on screen has a failed diff (spec 2026-10-23 §10): the stage
   // says why, and a viewer who may review can retry it, from the stage or the
-  // palette. A retry in flight is the one retry; the palette action waits.
-  const stepItem = checkpointsQuery.data?.items?.find(
-    (c) => c.id === activeCheckpointId,
-  );
+  // palette. This step's retry in flight is the one retry, and the palette
+  // action waits for it; another step's retry does not hold this one up.
   const failedDiff =
     stepItem?.diffFailedAt != null ? diffErrorCode(stepItem.diffError) : null;
+  const retryingHere =
+    activeCheckpointId !== undefined && retryDiff.isPending(activeCheckpointId);
   const retryFailedDiff =
     canReview && failedDiff !== null && activeCheckpointId !== undefined
       ? () => {
@@ -696,7 +698,7 @@ export function DiffViewer({
     projectId: data?.projectId ?? "",
     onApprove: keysOn ? review.approve : undefined,
     onReject: keysOn ? review.reject : undefined,
-    onRetryDiff: keysOn && !retryDiff.pending ? retryFailedDiff : undefined,
+    onRetryDiff: keysOn && !retryingHere ? retryFailedDiff : undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
     onPrevStep: keysOn ? onPrevStep : undefined,
@@ -1008,7 +1010,7 @@ export function DiffViewer({
                     checkpointId={candidateScreenshot?.id}
                     diffFailed={failedDiff}
                     onRetryDiff={retryFailedDiff}
-                    retryingDiff={retryDiff.pending}
+                    retryingDiff={retryingHere}
                   />
                 </div>
                 {/* Large side step-arrows: navigate

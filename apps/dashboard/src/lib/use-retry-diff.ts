@@ -43,8 +43,10 @@ export interface RetryDiff {
    * it never rejects.
    */
   retry(checkpointId: string): Promise<void>;
-  /** A retry is out, or its result is still being read. */
+  /** A retry of some step is out, or its result is still being read. */
   pending: boolean;
+  /** The retry of this step is out, or its result is still being read. */
+  isPending(checkpointId: string): boolean;
 }
 
 /**
@@ -53,19 +55,23 @@ export interface RetryDiff {
  * are read again, so the step reads as being diffed. A retry another reviewer
  * made first is already handled: the same reads, and at most a quiet word.
  *
- * One retry at a time per hook: a press while one is out does nothing.
+ * One retry at a time per step: a press while that step's is out does nothing,
+ * and another step's retry is not held up by it (a viewer moves between steps
+ * while one is out).
  */
 export function useRetryDiff(runId: string): RetryDiff {
   const utils = trpc.useUtils();
   const { mutateAsync } = trpc.runs.retryDiff.useMutation();
-  const [pending, setPending] = useState(false);
-  const out = useRef(false);
+  // The steps whose retry is out: the ref for the guard (read between
+  // renders), the state for what the views show.
+  const out = useRef(new Set<string>());
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
 
   const retry = useCallback(
     async (checkpointId: string) => {
-      if (out.current) return;
-      out.current = true;
-      setPending(true);
+      if (out.current.has(checkpointId)) return;
+      out.current.add(checkpointId);
+      setPendingIds(new Set(out.current));
       try {
         try {
           await mutateAsync({ runId, checkpointId });
@@ -82,12 +88,16 @@ export function useRetryDiff(runId: string): RetryDiff {
           utils.runs.list.invalidate(),
         ]);
       } finally {
-        out.current = false;
-        setPending(false);
+        out.current.delete(checkpointId);
+        setPendingIds(new Set(out.current));
       }
     },
     [mutateAsync, runId, utils],
   );
+  const isPending = useCallback(
+    (checkpointId: string) => pendingIds.has(checkpointId),
+    [pendingIds],
+  );
 
-  return { retry, pending };
+  return { retry, pending: pendingIds.size > 0, isPending };
 }

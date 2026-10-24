@@ -287,9 +287,11 @@ function DiffFailed({
   onRetry?: () => void;
   onFocusLost?: () => void;
 }) {
+  const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   useFocusHandoff(button, onFocusLost);
-  // Read as one sentence by the live region: the lead, then the reason.
+  // Read as one sentence by the live region: the lead, then the reason. The
+  // button is named "Retry diff", as the copy says; the message describes it.
   return (
     <div
       className={cn(
@@ -299,7 +301,7 @@ function DiffFailed({
       )}
       data-testid="stage-diff-failed"
     >
-      <p className="min-w-0">
+      <p id={id} className="min-w-0">
         <span className="font-medium text-status-failed-text">
           {DIFF_FAILED}
         </span>{" "}
@@ -311,6 +313,7 @@ function DiffFailed({
           type="button"
           variant="secondary"
           className="h-7 shrink-0 px-2 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"
+          aria-describedby={id}
           aria-disabled={busy || undefined}
           aria-busy={busy || undefined}
           onClick={() => {

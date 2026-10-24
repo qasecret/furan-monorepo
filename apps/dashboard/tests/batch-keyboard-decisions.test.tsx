@@ -1,4 +1,11 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { TRPCClientError } from "@trpc/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -151,7 +158,9 @@ function press(key: string): KeyboardEvent {
 }
 
 const focused = () =>
-  document.activeElement?.getAttribute("data-cursor-id") ?? null;
+  document.activeElement
+    ?.closest("[data-cursor-id]")
+    ?.getAttribute("data-cursor-id") ?? null;
 
 beforeEach(() => {
   useCommandRegistry.setState({ entries: [], role: "guest" });
@@ -210,5 +219,77 @@ describe("BatchPage keyboard decisions, with the real review hook", () => {
     // Nothing was decided, so there is nothing to undo.
     expect(useUndoStore.getState().stack).toEqual([]);
     expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  test("an approval that takes its run out of the filtered list leaves the focus on the item now where its card was", async () => {
+    // The default "Needs review" filter: approving r1's last pending step
+    // takes its row away. Nothing in the page moves focus for that (the card
+    // follows it only to its own Undo or Open, which go with the row): the
+    // list cursor gives it to the item at the index the cursor's item had. A
+    // retry of a failed step that takes its run out of the list ends the
+    // same way (`diff-failed.test.tsx`).
+    const rows = [
+      { ...RUN, id: "r1", name: "Checkout", pendingCount: 1, stepCount: 1 },
+      { ...RUN, id: "r2", name: "Search", pendingCount: 1, stepCount: 1 },
+    ];
+    const backend = createBackend();
+    backend.answer = async ({ path, input }) => {
+      switch (path) {
+        case "builds.getById":
+          return BUILD;
+        case "runs.list":
+          return { items: rows.map((r) => ({ ...r })), nextCursor: null };
+        case "runs.listCheckpoints":
+          return { items: [step(input.runId === "r1" ? "c1" : "c2")] };
+        case "review.next":
+          return {
+            target: { buildId: "b1", runId: "r2", checkpointId: "c2" },
+            scope: "batch",
+            remaining: {
+              run: 1,
+              batch: 2,
+              batchUnfiltered: 2,
+              projectBatches: 1,
+            },
+            nextBatch: null,
+          };
+        case "runs.facets":
+          return { browser: [], viewport: [], os: [], device: [] };
+        case "review.approve":
+          rows.shift();
+          return {
+            actionId: String(input.actionId ?? "a1"),
+            decided: [{ checkpointId: "c1", runId: "r1", state: "approved" }],
+            runs: [{ runId: "r1", status: "passed" }],
+            replayed: false,
+          };
+        default:
+          return { items: [], nextCursor: null };
+      }
+    };
+    render(
+      <TrpcBackend backend={backend}>
+        <CommandRoleProvider role="editor">
+          <GlobalCommands />
+          <CommandDispatcher />
+          <BatchPage
+            projectId="p1"
+            buildId="b1"
+            canReview
+            context={parseReviewContext(new URLSearchParams())}
+          />
+        </CommandRoleProvider>
+      </TrpcBackend>,
+    );
+    const approve = await screen.findByTestId("step-approve-c1");
+    act(() => approve.focus());
+    expect(focused()).toBe("step:c1");
+
+    fireEvent.click(approve);
+    await waitFor(() =>
+      expect(screen.queryByTestId("result-row-r1")).toBeNull(),
+    );
+    await waitFor(() => expect(focused()).toBe("step:c2"));
+    expect(document.activeElement).not.toBe(document.body);
   });
 });

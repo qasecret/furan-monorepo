@@ -331,6 +331,8 @@ export const StepCard = memo(function StepCard({
                 name={name}
                 tabIndex={innerTab}
                 // The retry takes the button away; the card keeps the focus.
+                // If the run's row then leaves the filtered list, the list
+                // cursor carries it on, as after an approval.
                 onFocusLost={() => openButton.current?.focus()}
               />
             )}

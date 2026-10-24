@@ -154,7 +154,7 @@ export const REVIEW_STATE_STYLE = {
  */
 export const DIFF_FAILED_STYLE = {
   label: "Diff failed",
-  tooltip: "The diff failed — retry it to get a result",
+  tooltip: "The diff failed; no result yet",
   icon: TriangleAlert,
   dot: "bg-status-failed",
   fill: "fill-status-failed",

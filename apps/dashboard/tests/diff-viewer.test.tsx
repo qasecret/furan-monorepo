@@ -4911,6 +4911,36 @@ describe("DiffViewer: a step whose diff failed (spec 2026-10-23 §10)", () => {
     expect(utilsMock.runs.list.invalidate).toHaveBeenCalled();
   });
 
+  test("a retry of one step in flight does not hold up another failed step", async () => {
+    mockCheckpoints = { items: [failedStep("cp-1"), failedStep("cp-2")] };
+    // The first retry never settles in this test.
+    retryDiffSpy.mockReturnValueOnce(new Promise<{ status: string }>(() => {}));
+    const r = renderStep("cp-1");
+    const first = r.getByRole("button", { name: "Retry diff" });
+    fireEvent.click(first);
+    await waitFor(() => expect(first.getAttribute("aria-busy")).toBe("true"));
+    expect(retryOffered()).toBe(false);
+
+    // On to the next failed step before the first retry has settled.
+    press("ArrowRight");
+    const second = r.getByRole("button", { name: "Retry diff" });
+    expect(second.getAttribute("aria-busy")).toBeNull();
+    expect(second.getAttribute("aria-disabled")).toBeNull();
+    expect(retryOffered()).toBe(true);
+    fireEvent.click(second);
+    expect(retryDiffSpy).toHaveBeenLastCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-2",
+    });
+    expect(retryDiffSpy).toHaveBeenCalledTimes(2);
+
+    // And back on the first, its retry is still out.
+    press("ArrowLeft");
+    expect(
+      r.getByRole("button", { name: "Retry diff" }).getAttribute("aria-busy"),
+    ).toBe("true");
+  });
+
   test("the step list is read again when a step settles, so a retried step leaves 'being diffed'", () => {
     renderStep();
     const es = StubEventSource.instances.at(-1)!;
