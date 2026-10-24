@@ -1760,7 +1760,7 @@ d("review router", () => {
       (await decisionsOfAction(actionId)).filter((r) => r.revertedAt !== null);
 
     describe("gate", () => {
-      test("the member who decided the action may undo it; the result has no rediffRunIds", async () => {
+      test("the member who decided the action may undo it; the result has no rediffSteps", async () => {
         const { s, actionId } = await approved();
 
         const res = await as(s.editor).review.revert.mutate({ actionId });
@@ -1771,7 +1771,7 @@ d("review router", () => {
           skipped: [],
           runs: [{ runId: s.runId, status: "unresolved" }],
         });
-        expect(res).not.toHaveProperty("rediffRunIds");
+        expect(res).not.toHaveProperty("rediffSteps");
         expect(await revertedRows(actionId)).toHaveLength(2);
         expect(await runStatus(s.runId)).toBe("unresolved");
       });
@@ -1950,7 +1950,8 @@ d("review router", () => {
         h.diffQueueAdd.mockResolvedValue({ id: "test-job-id" });
 
         // The retry has nothing left to undo, but the run is still waiting
-        // for its diff: its steps are queued again now, at a new version.
+        // for its diff: its step without a verdict is queued again now, at a
+        // new version (`b` kept its verdict).
         const retry = await as(s.editor).review.revert.mutate({ actionId });
 
         expect(retry.reverted).toBe(0);
@@ -1958,19 +1959,109 @@ d("review router", () => {
           "already_undone",
           "already_undone",
         ]);
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(2);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith(
-          "diff",
-          {
-            runId: s.runId,
-            projectId: s.projectId,
-            screenshotId: s.shots.a!.id,
-            generation: 2,
-          },
-          { jobId: `${s.shots.a!.id}-g2` },
-        );
+        expect(h.diffQueueAdd.mock.calls).toEqual([
+          [
+            "diff",
+            {
+              runId: s.runId,
+              projectId: s.projectId,
+              screenshotId: s.shots.a!.id,
+              generation: 2,
+            },
+            { jobId: `${s.shots.a!.id}-g2` },
+          ],
+        ]);
         expect(await diffJobsEnqueued(registry, "undo")).toBe(
-          enqueuedBefore + 2,
+          enqueuedBefore + 1,
+        );
+      });
+
+      test("revert queues the undone approves' steps, ascending run id", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+            { name: "b", verdict: "passed" },
+          ],
+        });
+        const run2 = await addReviewRun(h, s, {
+          checkpoints: [
+            { name: "c", verdict: "unresolved" },
+            { name: "d", verdict: "passed" },
+          ],
+        });
+        // Runs the per-step pipeline diffed: no legacy fan-out (R6).
+        await h.db
+          .update(screenshots)
+          .set({ diffGeneration: 1 })
+          .where(inArray(screenshots.runId, [s.runId, run2.runId]));
+        const actionId = newAction();
+        await as(s.editor).review.approveBuild.mutate({
+          buildId: s.buildId,
+          actionId,
+          expectedCount: 2,
+        });
+        h.diffQueueAdd.mockClear();
+        h.diffQueueAddBulk.mockClear();
+
+        await as(s.editor).review.revert.mutate({ actionId });
+
+        // The approved steps only (never the passed ones the action didn't
+        // touch), each at its next version: one bulk per run, ascending id.
+        const expected = [
+          [s.runId, s.shots.a!.id],
+          [run2.runId, run2.shots.c!.id],
+        ].sort(([x], [y]) => (x! < y! ? -1 : 1));
+        expect(
+          h.diffQueueAdd.mock.calls.map(([, p]) => [
+            p.runId,
+            p.screenshotId,
+            p.generation,
+          ]),
+        ).toEqual(expected.map(([runId, id]) => [runId, id, 2]));
+        expect(h.diffQueueAddBulk).toHaveBeenCalledTimes(2);
+      });
+
+      test("R30 retry queues the waiting run's undiffed steps", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved", withBaseline: true },
+            { name: "b", verdict: "passed" },
+            { name: "c", verdict: "passed" },
+          ],
+        });
+        await h.db
+          .update(screenshots)
+          .set({ diffGeneration: 1 })
+          .where(eq(screenshots.runId, s.runId));
+        const actionId = newAction();
+        await as(s.editor).review.approve.mutate({ runId: s.runId, actionId });
+        // `a` was re-diffed after its approve: the undo clears its verdict.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
+          .where(eq(screenshots.id, s.shots.a!.id));
+        await as(s.editor).review.revert.mutate({ actionId });
+        // The undo's job was lost, and `c` is waiting for a diff of its own.
+        await h.db
+          .update(screenshots)
+          .set({ verdict: null, verdictAt: null })
+          .where(eq(screenshots.id, s.shots.c!.id));
+        h.diffQueueAdd.mockClear();
+
+        const retry = await as(s.editor).review.revert.mutate({ actionId });
+
+        expect(retry.reverted).toBe(0);
+        // The run's steps without a verdict, each at its next version; `b`,
+        // which has one, is left alone.
+        expect(
+          h.diffQueueAdd.mock.calls
+            .map(([, p]) => [p.screenshotId, p.generation])
+            .sort(),
+        ).toEqual(
+          [
+            [s.shots.a!.id, 3],
+            [s.shots.c!.id, 2],
+          ].sort(),
         );
       });
 

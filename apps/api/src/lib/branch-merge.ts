@@ -6,6 +6,7 @@ import {
   builds,
   desc,
   eq,
+  recomputeRunStatus,
   screenshots,
   sql,
   testRuns,
@@ -221,15 +222,20 @@ export async function mergeBranchBaselinesImpl(
       continue;
     }
 
-    // Synthetic test_run on toBranch. `merge: true` + threshold override 0
-    // matches legacy diffTollerancePercent: 0. The diff worker takes over
-    // from here — byte-identical → ADR-032 auto-approve, divergent →
-    // unresolved.
+    // Synthetic test_run on toBranch. Threshold override 0 matches legacy
+    // diffTollerancePercent: 0. The diff worker takes over from here —
+    // byte-identical → ADR-032 auto-approve, divergent → unresolved.
+    // `merge` (a baseline row exists for the run) and the status are the
+    // rollup's, recomputed below once the steps exist.
     //
     // ADR-038: test_runs no longer carries testVariationId/browser/viewport/
     // os/device — those live on test_variations and screenshots. We create the
     // run with only project/build/name/branch, then insert screenshot rows
     // that reference the source variation directly.
+    //
+    // Locks: the run is new, so no other transaction can lock it before this
+    // one commits; the copies below take only `KEY SHARE` on their variation
+    // (foreign key), which no diff commit's lock conflicts with.
     const runRows = await deps.db
       .insert(testRuns)
       .values({
@@ -239,7 +245,6 @@ export async function mergeBranchBaselinesImpl(
         name: variation.name,
         customTags: variation.customTags,
         status: "running",
-        merge: true,
         diffThresholdOverride: 0,
       })
       .returning();
@@ -280,6 +285,14 @@ export async function mergeBranchBaselinesImpl(
         .returning({ id: screenshots.id });
       stepIds.push(copy!.id);
     }
+
+    // The run's totals, as an upload keeps them: its step count, and the
+    // status from its steps (`running` until every copy has its verdict).
+    await deps.db
+      .update(testRuns)
+      .set({ checkpointCount: stepIds.length })
+      .where(eq(testRuns.id, run.id));
+    await recomputeRunStatus(deps.db, run.id);
 
     for (const screenshotId of stepIds) {
       jobs.push(stepDiffJob(run, screenshotId, NEW_STEP_GENERATION));

@@ -11,6 +11,8 @@ import {
   ilike,
   inArray,
   isNull,
+  ne,
+  or,
   projects,
   recomputeRunStatus,
   resolveBaseline,
@@ -317,17 +319,128 @@ async function ignoreAreaVariationId(
 }
 
 /**
- * Queues every step of the run for a re-diff (`queueStepDiffs`, in the request
+ * Spec 2026-10-23 §7, ignore regions: the run's steps on the variation whose
+ * regions were written (one, as a run has one step per variation), in capture
+ * order. None when nothing was written (`variationId` null).
+ */
+async function variationStepIds(
+  ctx: Context,
+  run: { id: string; projectId: string },
+  variationId: string | null,
+): Promise<string[]> {
+  if (variationId === null) return [];
+  const rows = await ctx.db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, run.projectId),
+        eq(screenshots.runId, run.id),
+        eq(screenshots.testVariationId, variationId),
+      ),
+    )
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The viewport tags of temp regions as `test_runs.temp_ignore_areas` stores
+ * them (a JSON array), or `"all"` when a region has no tag: the worker masks
+ * every step with an untagged region (ADR-031). A value that isn't a JSON
+ * array masks nothing, as in the worker.
+ */
+function storedRegionViewports(stored: string | null): string[] | "all" {
+  let regions: unknown;
+  try {
+    regions = stored === null ? null : JSON.parse(stored);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(regions)) return [];
+  return regionViewports(regions as Array<{ viewport?: unknown }>);
+}
+
+/** {@link storedRegionViewports} for regions as given. */
+function regionViewports(
+  regions: ReadonlyArray<{ viewport?: unknown }>,
+): string[] | "all" {
+  const tags = new Set<string>();
+  for (const r of regions) {
+    if (typeof r?.viewport !== "string" || r.viewport === "") return "all";
+    tags.add(r.viewport);
+  }
+  return [...tags];
+}
+
+/**
+ * Spec 2026-10-23 §7, temp ignore regions: the run's steps whose viewport is
+ * among the tags of the regions before (`stored`, read before the update) and
+ * after (`next`) the edit, in capture order: those are the steps whose mask
+ * changes. Every step when a region on either side has no tag; none when both
+ * sides have no regions.
+ */
+async function tempRegionStepIds(
+  ctx: Context,
+  run: { id: string; projectId: string },
+  stored: string | null,
+  next: ReadonlyArray<{ viewport?: unknown }> | null,
+): Promise<string[]> {
+  const before = storedRegionViewports(stored);
+  const after = regionViewports(next ?? []);
+  if (before === "all" || after === "all") return runStepIds(ctx.db, run);
+  const viewports = [...new Set([...before, ...after])];
+  if (viewports.length === 0) return [];
+  const rows = await ctx.db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, run.projectId),
+        eq(screenshots.runId, run.id),
+        inArray(screenshots.viewport, viewports),
+      ),
+    )
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Spec 2026-10-23 §7, the threshold: the run's steps whose verdict IS
+ * DISTINCT FROM `new`, in capture order. A failed step (verdict `unresolved`,
+ * `diff_failed_at` set) and one still awaiting its diff (NULL) are included;
+ * a `new` step has no baseline, so no threshold changes its result.
+ */
+async function thresholdStepIds(
+  ctx: Context,
+  run: { id: string; projectId: string },
+): Promise<string[]> {
+  const rows = await ctx.db
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.projectId, run.projectId),
+        eq(screenshots.runId, run.id),
+        or(isNull(screenshots.verdict), ne(screenshots.verdict, "new")),
+      ),
+    )
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Queues `stepIds` of the run for a re-diff (`queueStepDiffs`, in the request
  * transaction; the jobs go out after commit) and tells list views it changed.
  * `trigger` is the mutation that asked for the re-diff, counted on the enqueue
  * metrics.
  */
-async function rediffAndAnnounce(
+async function rediffStepsAndAnnounce(
   ctx: Context & { onCommit: (effect: () => unknown) => void },
   run: { id: string; projectId: string; parentBranchName: string | null },
+  stepIds: readonly string[],
   trigger: DiffTrigger,
 ): Promise<void> {
-  await queueStepDiffs(ctx, run, await runStepIds(ctx.db, run), trigger);
+  await queueStepDiffs(ctx, run, stepIds, trigger);
   // No build_updated: the diff-worker fires it when the re-diff lands.
   ctx.onCommit(() =>
     ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -762,8 +875,9 @@ export const runsRouter = t.router({
 
   /**
    * Per ADR-031: persist ignore regions onto a checkpoint's variation
-   * (`test_variations.ignore_regions`), then enqueue a `diff` job for the same
-   * run so the worker re-evaluates with the new masks.
+   * (`test_variations.ignore_regions`), then queue the run's step on that
+   * variation for a re-diff (spec 2026-10-23 §7) so the worker re-evaluates
+   * it with the new masks.
    *
    * The regions go to `checkpointId`'s variation (the checkpoint the reviewer
    * drew on; it must be in the run), else to the run's first checkpoint for
@@ -808,7 +922,12 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      await rediffAndAnnounce(ctx, run, "ignore_areas");
+      await rediffStepsAndAnnounce(
+        ctx,
+        run,
+        await variationStepIds(ctx, run, variationId),
+        "ignore_areas",
+      );
 
       return {
         runId: run.id,
@@ -824,7 +943,9 @@ export const runsRouter = t.router({
    * only for this run and are cleared when the run is deleted. Callers pass
    * `null` to clear the temp ignore areas.
    *
-   * Re-enqueues a diff job so the worker re-evaluates with the new masks.
+   * Queues the steps whose mask changes for a re-diff (spec 2026-10-23 §7):
+   * those on a viewport the old or the new regions are tagged with, or every
+   * step when a region has no tag.
    */
   setTempIgnoreAreas: publicProcedure
     .input(
@@ -847,6 +968,18 @@ export const runsRouter = t.router({
     )
     .mutation(async ({ input, ctx }) => {
       const run = await loadRunForRediff(ctx, input.runId);
+      // The regions being replaced, read under the run lock taken above: the
+      // steps whose mask changes are those of the old tags and the new.
+      const [stored] = await ctx.db
+        .select({ tempIgnoreAreas: testRuns.tempIgnoreAreas })
+        .from(testRuns)
+        .where(eq(testRuns.id, run.id));
+      const stepIds = await tempRegionStepIds(
+        ctx,
+        run,
+        stored?.tempIgnoreAreas ?? null,
+        input.tempIgnoreAreas,
+      );
 
       await ctx.db
         .update(testRuns)
@@ -858,7 +991,7 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      await rediffAndAnnounce(ctx, run, "temp_ignore_areas");
+      await rediffStepsAndAnnounce(ctx, run, stepIds, "temp_ignore_areas");
 
       return {
         runId: run.id,
@@ -884,9 +1017,10 @@ export const runsRouter = t.router({
    * + `ignoreAreas/update` as two distinct endpoints, so this preserves
    * the same mental model for SDK users porting scripts.
    *
-   * Like `setIgnoreAreas`, this re-enqueues a diff job so the worker
-   * re-runs with the merged ignore set. SSE consumers can watch
-   * `diff.completed` to know the new result has landed.
+   * Like `setIgnoreAreas`, this queues the run's step on that variation for
+   * a re-diff so the worker re-runs it with the merged ignore set. SSE
+   * consumers can watch `run.checkpoint_diffed` to know the new result has
+   * landed.
    */
   addIgnoreAreas: publicProcedure
     .input(
@@ -950,7 +1084,12 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      await rediffAndAnnounce(ctx, run, "ignore_areas");
+      await rediffStepsAndAnnounce(
+        ctx,
+        run,
+        await variationStepIds(ctx, run, variationId),
+        "ignore_areas",
+      );
 
       return {
         runId: run.id,
@@ -965,12 +1104,13 @@ export const runsRouter = t.router({
   /**
    * Per-run override for the project's diff threshold. Pass `null` to clear
    * the override (run reverts to the project default). The mutation also
-   * enqueues a `diff` job so the worker re-runs with the new threshold
-   * without the user having to re-upload screenshots.
+   * queues every step whose verdict isn't `new` (failed steps included) for a
+   * re-diff (spec 2026-10-23 §7), so the worker re-runs them with the new
+   * threshold without the user having to re-upload screenshots.
    *
    * Same shape and semantics as `setIgnoreAreas` — store-then-requeue —
-   * so SSE consumers can watch `run.completed` to know the new result has
-   * landed.
+   * so SSE consumers can watch `run.checkpoint_diffed` to know each new
+   * result has landed.
    */
   setDiffThresholdOverride: publicProcedure
     .input(
@@ -1005,7 +1145,12 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      await rediffAndAnnounce(ctx, run, "threshold");
+      await rediffStepsAndAnnounce(
+        ctx,
+        run,
+        await thresholdStepIds(ctx, run),
+        "threshold",
+      );
 
       return {
         runId: run.id,

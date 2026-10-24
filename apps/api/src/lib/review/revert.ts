@@ -63,25 +63,29 @@ export interface RevertResult {
   /** Decisions left as they were, in the order the action wrote them. */
   skipped: Array<{ checkpointId: string; reason: RevertSkipReason }>;
   /**
-   * Runs (ascending id) with at least one approve undone: the caller must
-   * enqueue a re-diff for each after commit (R28). A checkpoint re-diffed
-   * since its approve had its verdict computed against the baseline just
-   * undone, so it is cleared here and its run is `running` until the re-diff
-   * lands. For every other undone approve the verdict stands, but a diff job
-   * already in flight when the undo committed may still write a verdict
-   * computed against that baseline; the re-diff corrects it.
+   * The steps to re-diff, by run id then step id: the caller queues each run's
+   * steps (`queueStepDiffs`), in that order, in its transaction (R28).
    *
-   * A retry (R30) also names a run whose approve was already undone while any
-   * of its checkpoints still has no verdict: the caller's enqueue after the
-   * first commit may have been lost (queue down), and nothing else would ever
-   * re-queue it.
+   * Each undone approve's step: one re-diffed since its approve had its
+   * verdict computed against the baseline just undone, so it is cleared here
+   * and its run is `running` until the re-diff lands. For every other undone
+   * approve the verdict stands, but a diff job already in flight when the undo
+   * committed may still write a verdict computed against that baseline; the
+   * re-diff corrects it.
+   *
+   * A retry (R30) also names the steps without a verdict of a run whose
+   * approve was already undone: the caller's enqueue after the first commit
+   * may have been lost (queue down), and nothing else would ever re-queue
+   * them.
    */
-  rediffRunIds: string[];
+  rediffSteps: Array<{ runId: string; screenshotId: string }>;
   /** Each of the action's runs and its status afterwards, ascending run id. */
   runs: Array<{ runId: string; status: RunStatus }>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Code-unit order: a uuid's text sorts as Postgres sorts the uuid. */
+const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** Rows per `reverted_at` UPDATE (one bind parameter each). */
 const UPDATE_CHUNK = 1_000;
 
@@ -813,8 +817,8 @@ async function restoreApprove(
  *    committed by then, so a retry finds `already_undone`). Decisions whose run
  *    retention has deleted are simply gone.
  * 3. Assesses every decision (`assessRevert`'s rules), finds the approved
- *    checkpoints re-diffed since their approve and the runs to re-diff (see
- *    `RevertResult.rediffRunIds`), all before the first write.
+ *    checkpoints re-diffed since their approve and the steps to re-diff (see
+ *    `RevertResult.rediffSteps`), all before the first write.
  * 4. In one savepoint (R16), newest decision first: restores each undoable
  *    approve's baseline row (delete an inserted row; rewrite an updated one to
  *    `prev`, timestamps µs-exact) and variation, clears the verdict of a
@@ -823,8 +827,9 @@ async function restoreApprove(
  * 5. Writes one `run.revert_action` audit row (none for a pure no-op: every
  *    decision already undone, R26), counts the outcomes and logs.
  *
- * Skipped decisions are reported, not fatal. Enqueueing `rediffRunIds` and
- * broadcasting are the caller's job, after commit.
+ * Skipped decisions are reported, not fatal. Queueing `rediffSteps` (in the
+ * same transaction; the jobs go out after commit) and broadcasting are the
+ * caller's job.
  *
  * Known limitation (R29): a new capture of the same variation that commits
  * while an undo runs is not seen by the assessment (a capture takes neither
@@ -924,13 +929,13 @@ export async function revertAction(
               )
           ).map((r) => r.id),
         );
-  // Every run with an approve undone is re-diffed after commit (R28): a diff
-  // job already in flight may yet write a verdict against the undone baseline.
+  // Every undone approve's step is re-diffed (R28): a diff job already in
+  // flight may yet write a verdict against the undone baseline.
   //
-  // So is a run whose approve was undone by an earlier call while a checkpoint
-  // of it still has no verdict (R30): that call's enqueue, after its commit,
-  // may have been lost, and without this a retry (all `already_undone`) would
-  // never queue it again. A diff that has since landed leaves no NULL verdict.
+  // So is every step without a verdict of a run whose approve was undone by
+  // an earlier call (R30): that call's enqueue, after its commit, may have
+  // been lost, and without this a retry (all `already_undone`) would never
+  // queue it again. A diff that has since landed leaves no NULL verdict.
   const undoneEarlier = [
     ...new Set(
       decisions
@@ -941,20 +946,30 @@ export async function revertAction(
   const waitingForDiff =
     undoneEarlier.length === 0
       ? []
-      : (
-          await tx
-            .selectDistinct({ runId: screenshots.runId })
-            .from(screenshots)
-            .where(
-              and(
-                inArray(screenshots.runId, undoneEarlier),
-                isNull(screenshots.verdict),
-              ),
-            )
-        ).map((r) => r.runId);
-  const rediffRunIds = [
-    ...new Set([...undoableApproves.map((d) => d.runId), ...waitingForDiff]),
-  ].sort();
+      : await tx
+          .select({ runId: screenshots.runId, screenshotId: screenshots.id })
+          .from(screenshots)
+          .where(
+            and(
+              eq(screenshots.projectId, projectId),
+              inArray(screenshots.runId, undoneEarlier),
+              isNull(screenshots.verdict),
+            ),
+          );
+  const rediffSteps = [
+    ...new Map(
+      [
+        ...undoableApproves.map((d) => ({
+          runId: d.runId,
+          screenshotId: d.screenshotId,
+        })),
+        ...waitingForDiff,
+      ].map((step) => [step.screenshotId, step]),
+    ).values(),
+  ].sort(
+    (a, b) =>
+      byText(a.runId, b.runId) || byText(a.screenshotId, b.screenshotId),
+  );
 
   // 4. The writes, atomic on their own (R16), newest decision first.
   const statuses = await tx.transaction(async (sp) => {
@@ -1036,7 +1051,7 @@ export async function revertAction(
       action_id: actionId,
       reverted: undoable.length,
       skipped: skipped.length,
-      rediff: rediffRunIds.length,
+      rediff: rediffSteps.length,
     },
     "review_reverted",
   );
@@ -1045,7 +1060,7 @@ export async function revertAction(
     actionId,
     reverted: undoable.length,
     skipped,
-    rediffRunIds,
+    rediffSteps,
     runs: statuses,
   };
 }
