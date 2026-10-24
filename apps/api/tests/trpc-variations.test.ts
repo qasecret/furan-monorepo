@@ -559,8 +559,8 @@ d("tRPC variations router", () => {
     expect(res.items.map((i) => i.buildId)).toEqual([s.buildId, s.buildId]);
   });
 
-  test("variations.history shows the variation's own diff %, falling back to the run's when the step has none", async () => {
-    const [perStep, legacy] = await h.db
+  test("variations.history shows the variation's own diff %, falling back to the run's only for a legacy step", async () => {
+    const [perStep, legacy, failed] = await h.db
       .insert(testRuns)
       .values([
         {
@@ -587,6 +587,19 @@ d("tRPC variations router", () => {
           baselineSource: "parent_pr",
           createdAt: new Date(Date.now() - 2000),
         },
+        {
+          // Diffed per step, but this variation's step failed: the worst
+          // step of the run (7%) is another variation's.
+          projectId: s.projectId,
+          buildId: s.buildId,
+          name: "failed",
+          branchName: "main",
+          status: "unresolved",
+          diffPercent: 7,
+          pixelMisMatchCount: 70,
+          baselineSource: "default_branch",
+          createdAt: new Date(Date.now() - 3000),
+        },
       ])
       .returning();
     const step = (
@@ -609,16 +622,31 @@ d("tRPC variations router", () => {
       });
     // The run's worst step belongs to the other variation.
     await step(perStep!.id, s.variationId, {
+      diffGeneration: 1,
       diffPercent: 1.5,
       pixelMismatchCount: 12,
       baselineSource: "this_branch",
     });
     await step(perStep!.id, s.otherVariationId, {
+      diffGeneration: 1,
       diffPercent: 9,
       pixelMismatchCount: 90,
       baselineSource: "default_branch",
     });
     await step(legacy!.id, s.variationId);
+    // A failure leaves no numbers on the step (version >= 1, NULL columns).
+    await step(failed!.id, s.variationId, {
+      diffGeneration: 2,
+      verdict: "unresolved",
+      diffFailedAt: new Date(),
+      diffError: "engine_error",
+    });
+    await step(failed!.id, s.otherVariationId, {
+      diffGeneration: 1,
+      diffPercent: 7,
+      pixelMismatchCount: 70,
+      baselineSource: "default_branch",
+    });
 
     const res = await mkClient(h, s.editorJwt).variations.history.query({
       projectId: s.projectId,
@@ -634,7 +662,11 @@ d("tRPC variations router", () => {
       ]),
     ).toEqual([
       [perStep!.id, 1.5, 12, "this_branch"],
+      // A legacy step (version 0, no numbers of its own) shows the run's.
       [legacy!.id, 4, 33, "parent_pr"],
+      // A failed step shows its own NULLs, never the run's 7% (which belongs
+      // to the other variation).
+      [failed!.id, null, null, null],
     ]);
   });
 

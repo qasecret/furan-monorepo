@@ -53,6 +53,12 @@ export interface LockedRun {
   override: RunStatusOverride | null;
 }
 
+/**
+ * Legality's `diffFailed` (`diff_failed_at IS NOT NULL`) as a select column:
+ * the step's diff failed for good, so it has no result to decide on.
+ */
+const stepDiffFailed = sql<boolean>`${screenshots.diffFailedAt} is not null`;
+
 /** A checkpoint as the core needs it (the promotion's fields + its verdict). */
 export type DecidableCheckpoint = Awaited<
   ReturnType<typeof loadCheckpointsInCaptureOrder>
@@ -155,8 +161,7 @@ async function loadCheckpointsInCaptureOrder(tx: Tx, screenshotIds: string[]) {
       accessibilityRegions: screenshots.accessibilityRegions,
       matchLevel: screenshots.matchLevel,
       verdict: screenshots.verdict,
-      // Legality's `diffFailed`: the step has no result to decide on.
-      diffFailed: sql<boolean>`${screenshots.diffFailedAt} is not null`,
+      diffFailed: stepDiffFailed,
     })
     .from(screenshots)
     .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
@@ -451,7 +456,7 @@ async function collectLegalTargets(
             runId: screenshots.runId,
             verdict: screenshots.verdict,
             diffSignature: screenshots.diffSignature,
-            diffFailed: sql<boolean>`${screenshots.diffFailedAt} is not null`,
+            diffFailed: stepDiffFailed,
           })
           .from(screenshots)
           .where(inArray(screenshots.runId, runIds))

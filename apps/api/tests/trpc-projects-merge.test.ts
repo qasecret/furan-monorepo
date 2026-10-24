@@ -376,23 +376,28 @@ d("tRPC projects.mergeBranchBaselines", () => {
     // step even if a crash leaves it behind.
     const marker = `rollup-marker-${randomUUID()}`;
     await seedVariationWithBaseline(h, s, marker, "hash-rollup");
-    const fn = sql.raw("merge_test_copy_verdict");
-    await h.db.execute(sql`
-      create or replace function ${fn}() returns trigger language plpgsql as $body$
-      begin
-        if new.name = '${sql.raw(marker)}' then
-          new.verdict := 'passed';
-          new.verdict_at := clock_timestamp();
-        end if;
-        return new;
-      end
-      $body$`);
-    await h.db.execute(
-      sql`create trigger ${fn} before insert on screenshots for each row execute function ${fn}()`,
-    );
+    // Named with a random suffix, so two local runs on one database never
+    // drop each other's trigger. Everything that creates it is inside the
+    // `try`, so the `finally` drops whatever got created.
+    const fn = sql.raw(`merge_test_copy_verdict_${randomUUID().slice(0, 8)}`);
     vi.mocked(recomputeRunStatus).mockClear();
 
     try {
+      await h.db.execute(sql`
+        create or replace function ${fn}() returns trigger language plpgsql as $body$
+        begin
+          if new.name = '${sql.raw(marker)}' then
+            new.verdict := 'passed';
+            new.verdict_at := clock_timestamp();
+          end if;
+          return new;
+        end
+        $body$`);
+      await h.db.execute(sql`drop trigger if exists ${fn} on screenshots`);
+      await h.db.execute(
+        sql`create trigger ${fn} before insert on screenshots for each row execute function ${fn}()`,
+      );
+
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.projects.mergeBranchBaselines.mutate({
         projectId: s.projectId,

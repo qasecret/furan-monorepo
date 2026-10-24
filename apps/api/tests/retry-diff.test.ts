@@ -279,6 +279,15 @@ d("retry a failed step's diff", () => {
         "fulfilled",
         "rejected",
       ]);
+      // The loser found the failure already cleared; it didn't fail some
+      // other way (a deadlock, say).
+      const lost = results.find(
+        (r): r is PromiseRejectedResult => r.status === "rejected",
+      )!;
+      expect(await refusal(Promise.reject(lost.reason))).toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "step_not_failed",
+      });
       expect((await stepRow(rs.shots.home!.id)).diffGeneration).toBe(2);
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
     });
@@ -393,42 +402,87 @@ d("retry a failed step's diff", () => {
       expect((await runRow(other.runId)).status).toBe("unresolved");
     });
 
-    test("approveGroup and rejectGroup skip a failed step of the group", async () => {
-      const signature = `sig-${randomUUID()}`;
+    test.each([
+      ["approveGroup", "approved"],
+      ["rejectGroup", "rejected"],
+    ] as const)(
+      "%s skips a failed step of the group",
+      async (action, state) => {
+        const signature = `sig-${randomUUID()}`;
+        const rs = await seed({
+          checkpoints: [{ name: "seed", verdict: "unresolved" }],
+        });
+        const b = await addReviewRun(h, rs, {
+          checkpoints: [{ name: "broken", verdict: "unresolved" }],
+        });
+        const c2 = await addReviewRun(h, rs, {
+          checkpoints: [{ name: "third", verdict: "unresolved" }],
+        });
+        await h.db
+          .update(screenshots)
+          .set({ diffSignature: signature, diffGeneration: 1 })
+          .where(
+            inArray(screenshots.id, [
+              rs.shots.seed!.id,
+              b.shots.broken!.id,
+              c2.shots.third!.id,
+            ]),
+          );
+        await failStep(b.shots.broken!.id);
+        // A failed step carries no signature in practice; keep it in the group
+        // here so the skip is the legality rule's, not an empty selection.
+
+        const out = await as(rs.editor).review[action].mutate({
+          runId: rs.runId,
+          checkpointId: rs.shots.seed!.id,
+          actionId: randomUUID(),
+        });
+
+        expect(
+          out.decided.map((x) => [x.checkpointId, x.state]).sort(),
+        ).toEqual(
+          [
+            [rs.shots.seed!.id, state],
+            [c2.shots.third!.id, state],
+          ].sort(),
+        );
+        expect(await decisionsOf([b.runId])).toHaveLength(0);
+      },
+    );
+
+    test("inbox.approve refuses a run with a failed step (diff_failed)", async () => {
       const rs = await seed({
-        checkpoints: [{ name: "seed", verdict: "unresolved" }],
+        checkpoints: [
+          { name: "broken", verdict: "unresolved" },
+          { name: "home", verdict: "unresolved" },
+        ],
       });
-      const b = await addReviewRun(h, rs, {
-        checkpoints: [{ name: "broken", verdict: "unresolved" }],
+      const broken = rs.shots.broken!.id;
+      await failStep(broken);
+
+      const out = await refusal(
+        as(rs.editor).inbox.approve.mutate({ runId: rs.runId }),
+      );
+
+      // The run-level approve is refused whole: the healthy step is not
+      // approved short, and the failed one is named.
+      expect(out).toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "diff_failed",
       });
-      const c2 = await addReviewRun(h, rs, {
-        checkpoints: [{ name: "third", verdict: "unresolved" }],
-      });
+      expect(out.details?.reasons).toEqual([
+        { checkpointId: broken, reason: "diff_failed" },
+      ]);
+      expect(await decisionsOf([rs.runId])).toHaveLength(0);
+
+      // Once the step is retried and diffed again, the approve goes through.
       await h.db
         .update(screenshots)
-        .set({ diffSignature: signature, diffGeneration: 1 })
-        .where(
-          inArray(screenshots.id, [
-            rs.shots.seed!.id,
-            b.shots.broken!.id,
-            c2.shots.third!.id,
-          ]),
-        );
-      await failStep(b.shots.broken!.id);
-      // A failed step carries no signature in practice; keep it in the group
-      // here so the skip is the legality rule's, not an empty selection.
-      const client = as(rs.editor);
-
-      const out = await client.review.approveGroup.mutate({
-        runId: rs.runId,
-        checkpointId: rs.shots.seed!.id,
-        actionId: randomUUID(),
-      });
-
-      expect(out.decided.map((x) => x.checkpointId).sort()).toEqual(
-        [rs.shots.seed!.id, c2.shots.third!.id].sort(),
-      );
-      expect(await decisionsOf([b.runId])).toHaveLength(0);
+        .set({ verdict: "unresolved", diffFailedAt: null, diffError: null })
+        .where(eq(screenshots.id, broken));
+      const ok = await as(rs.editor).inbox.approve.mutate({ runId: rs.runId });
+      expect(ok).toEqual({ runId: rs.runId, approved: true });
+      expect(await decisionsOf([rs.runId])).toHaveLength(2);
     });
 
     test("listCheckpoints returns diffFailedAt, diffError, diffPercent per step", async () => {
@@ -437,8 +491,14 @@ d("retry a failed step's diff", () => {
           { name: "broken", verdict: "unresolved" },
           { name: "home", verdict: "unresolved" },
           { name: "fresh", verdict: "new" },
+          { name: "legacy", verdict: "passed" },
         ],
       });
+      // A step diffed before the per-step columns is still at version 0.
+      await h.db
+        .update(screenshots)
+        .set({ diffGeneration: 0 })
+        .where(eq(screenshots.id, rs.shots.legacy!.id));
       const failedAt = new Date("2026-10-20T10:00:00.000Z");
       await h.db
         .update(screenshots)
@@ -474,6 +534,15 @@ d("retry a failed step's diff", () => {
         diffPercent: null,
         vlmDescription: null,
       });
+      // The version tells a legacy step (0: the run's numbers stand in for
+      // its own) from one the per-step pipeline queued (>= 1: NULL means no
+      // result), which is what the viewer's fallback keys on (Ruling R46).
+      expect(items.map((i) => [i.name, i.diffGeneration])).toEqual([
+        ["broken", 1],
+        ["home", 1],
+        ["fresh", 1],
+        ["legacy", 0],
+      ]);
     });
   });
 });

@@ -35,6 +35,7 @@ function item(id: string, over: Partial<CheckpointItem> = {}): CheckpointItem {
     diffError: null,
     diffPercent: null,
     vlmDescription: null,
+    diffGeneration: 1,
     verdict: "unresolved",
     state: "unresolved",
     decision: null,

@@ -162,9 +162,11 @@ export const variationsRouter = t.router({
    *
    * The row's diff numbers (`diffPercent`, `pixelMisMatchCount`,
    * `baselineSource`) are the variation's own step's (spec 2026-10-23 §9), not
-   * the run's worst-of-its-steps totals. A step with none of its own (a run
-   * diffed before the per-step columns) falls back to the run's, column by
-   * column.
+   * the run's worst-of-its-steps totals. Only a legacy step (`diff_generation`
+   * 0: diffed before the per-step columns, so it has none) falls back to the
+   * run's, column by column (Ruling R46). A step the per-step pipeline queued
+   * shows its own numbers even when they are NULL (failed, new, or still being
+   * diffed): the run's worst percent usually belongs to another variation.
    *
    * Cross-tenant safety: WHERE already filters on projectId AND
    * testVariationId (on the steps as well as the runs); even if a caller
@@ -193,6 +195,7 @@ export const variationsRouter = t.router({
           diffPercent: screenshots.diffPercent,
           pixelMismatchCount: screenshots.pixelMismatchCount,
           baselineSource: screenshots.baselineSource,
+          diffGeneration: screenshots.diffGeneration,
         })
         .from(screenshots)
         .where(
@@ -259,11 +262,18 @@ export const variationsRouter = t.router({
         // Every listed run has a step of the variation (the list is built from
         // them), so the lookup always hits.
         const step = stepByRun.get(r.id)!;
+        const legacy = step.diffGeneration === 0;
         return {
           ...r,
-          diffPercent: step.diffPercent ?? r.diffPercent,
-          pixelMisMatchCount: step.pixelMismatchCount ?? r.pixelMisMatchCount,
-          baselineSource: step.baselineSource ?? r.baselineSource,
+          diffPercent: legacy
+            ? (step.diffPercent ?? r.diffPercent)
+            : step.diffPercent,
+          pixelMisMatchCount: legacy
+            ? (step.pixelMismatchCount ?? r.pixelMisMatchCount)
+            : step.pixelMismatchCount,
+          baselineSource: legacy
+            ? (step.baselineSource ?? r.baselineSource)
+            : step.baselineSource,
           checkpointId: step.stepId,
         };
       });

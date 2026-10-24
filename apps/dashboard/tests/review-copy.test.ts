@@ -21,7 +21,7 @@ describe("review copy", () => {
       nothing_to_approve: "Nothing pending to approve",
       not_in_run: "This step is not part of the run",
       already_decided: "Already decided — undo it first",
-      diff_failed: "Retry the diff first.",
+      diff_failed: "Retry the diff first",
     } as const;
 
     for (const reason of reviewRefusalReasonSchema.options) {
@@ -151,7 +151,7 @@ describe("describeReviewError", () => {
         { message: "diff_failed", data: { code: "PRECONDITION_FAILED" } },
         name,
       ),
-    ).toBe("Retry the diff first.");
+    ).toBe("Retry the diff first");
   });
 
   it("falls back to the refusal text when the winner is missing or malformed", () => {

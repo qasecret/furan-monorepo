@@ -1350,6 +1350,9 @@ export const runsRouter = t.router({
           diffError: screenshots.diffError,
           diffPercent: screenshots.diffPercent,
           vlmDescription: screenshots.vlmDescription,
+          // 0 = a legacy step, diffed before the per-step columns: its own
+          // numbers are NULL and the run's stand in for them (Ruling R46).
+          diffGeneration: screenshots.diffGeneration,
         })
         .from(screenshots)
         .where(eq(screenshots.runId, input.runId))
@@ -1378,6 +1381,7 @@ export const runsRouter = t.router({
           diffError: r.diffError,
           diffPercent: r.diffPercent,
           vlmDescription: r.vlmDescription,
+          diffGeneration: r.diffGeneration,
           ...view,
         };
       });
