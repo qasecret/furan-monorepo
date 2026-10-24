@@ -530,10 +530,9 @@ export const reviewRouter = t.router({
       if (rediffSteps.length > 0) {
         const stepsByRun = new Map<string, string[]>();
         for (const { runId, screenshotId } of rediffSteps) {
-          stepsByRun.set(runId, [
-            ...(stepsByRun.get(runId) ?? []),
-            screenshotId,
-          ]);
+          const ids = stepsByRun.get(runId);
+          if (ids) ids.push(screenshotId);
+          else stepsByRun.set(runId, [screenshotId]);
         }
         const rediffs = await actx.tx
           .select({

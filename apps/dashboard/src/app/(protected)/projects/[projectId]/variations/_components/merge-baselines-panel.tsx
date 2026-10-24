@@ -81,13 +81,10 @@ export function MergeBaselinesPanel({ projectId, userRole }: Props) {
       <CardContent className="space-y-4">
         <p className="text-sm text-fg-secondary">
           Promote approved baselines from one branch to another. Each variation
-          with a baseline on the source branch becomes a synthetic{" "}
-          <code className="rounded bg-hover px-1 py-0.5 text-xs text-fg-secondary">
-            merge=true
-          </code>{" "}
-          test run on the destination branch for reviewer approval. Byte-
-          identical sources auto-approve into the new destination baseline;
-          divergent sources land as <em>unresolved</em> for explicit review.
+          with a baseline on the source branch becomes a new test run on the
+          destination branch, for reviewer approval. Byte-identical sources
+          auto-approve into the new destination baseline; divergent sources land
+          as <em>unresolved</em> for explicit review.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <BranchSelect

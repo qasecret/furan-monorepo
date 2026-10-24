@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -9,6 +10,7 @@ import {
   projects,
   recomputeRunStatus,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   users,
@@ -361,6 +363,60 @@ d("tRPC projects.mergeBranchBaselines", () => {
       expect.arrayContaining(queued.map((sh) => [sh.id, `${sh.id}-g1`])),
     );
     expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
+  });
+
+  test("the merged run's status is the rollup of its copied steps, not the one it is inserted with", async () => {
+    // A merged run is inserted `running`, and a copy that has no verdict
+    // yet rolls up to `running` as well, so a normal merge can't tell a
+    // recompute from the insert. A trigger gives the steps inserted under a
+    // marker name no other test uses (the variation's source step was inserted
+    // before it existed, so only the copy) a verdict as they are inserted: the
+    // rollup is then `passed`, which only a recompute over the steps can
+    // write. The trigger is dropped afterwards, and does nothing to any other
+    // step even if a crash leaves it behind.
+    const marker = `rollup-marker-${randomUUID()}`;
+    await seedVariationWithBaseline(h, s, marker, "hash-rollup");
+    const fn = sql.raw("merge_test_copy_verdict");
+    await h.db.execute(sql`
+      create or replace function ${fn}() returns trigger language plpgsql as $body$
+      begin
+        if new.name = '${sql.raw(marker)}' then
+          new.verdict := 'passed';
+          new.verdict_at := clock_timestamp();
+        end if;
+        return new;
+      end
+      $body$`);
+    await h.db.execute(
+      sql`create trigger ${fn} before insert on screenshots for each row execute function ${fn}()`,
+    );
+    vi.mocked(recomputeRunStatus).mockClear();
+
+    try {
+      const client = makeClient(baseUrl, s.memberJwt);
+      const res = await client.projects.mergeBranchBaselines.mutate({
+        projectId: s.projectId,
+        fromBranch: "feature/x",
+        toBranch: "main",
+      });
+      expect(res.runCount).toBe(1);
+
+      const [run] = await h.db
+        .select()
+        .from(testRuns)
+        .where(eq(testRuns.branchName, "main"));
+      // Not the `running` the insert wrote; no baseline row exists for it, so
+      // the rollup's `merge` is false as well.
+      expect(run!.status).toBe("passed");
+      expect(run!.merge).toBe(false);
+      expect(recomputeRunStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        run!.id,
+      );
+    } finally {
+      await h.db.execute(sql`drop trigger if exists ${fn} on screenshots`);
+      await h.db.execute(sql`drop function if exists ${fn}()`);
+    }
   });
 
   test("an enqueue failure stays best-effort and is counted as a branch_merge failure", async () => {

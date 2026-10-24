@@ -1977,13 +1977,21 @@ d("review router", () => {
       });
 
       test("revert queues the undone approves' steps, ascending run id", async () => {
+        // Pinned ids that sort AGAINST capture order (the first run, captured
+        // first, has the highest id), so a revert that queued in insertion or
+        // capture order instead of by id would fail this test.
+        const suffix = randomUUID().slice(-12);
+        const highId = `ffffffff-ffff-4fff-8fff-${suffix}`;
+        const lowId = `00000000-0000-4000-8000-${suffix}`;
         const s = await seed({
+          runId: highId,
           checkpoints: [
             { name: "a", verdict: "unresolved", withBaseline: true },
             { name: "b", verdict: "passed" },
           ],
         });
         const run2 = await addReviewRun(h, s, {
+          runId: lowId,
           checkpoints: [
             { name: "c", verdict: "unresolved" },
             { name: "d", verdict: "passed" },
@@ -2011,6 +2019,8 @@ d("review router", () => {
           [s.runId, s.shots.a!.id],
           [run2.runId, run2.shots.c!.id],
         ].sort(([x], [y]) => (x! < y! ? -1 : 1));
+        // Ascending id is the reverse of capture order here.
+        expect(expected.map(([runId]) => runId)).toEqual([lowId, highId]);
         expect(
           h.diffQueueAdd.mock.calls.map(([, p]) => [
             p.runId,
