@@ -156,7 +156,7 @@ export const StepCard = memo(function StepCard({
     statusOverride: run.statusOverride,
     step: { state, hasDecision: decision !== null, diffFailed },
     // Only whether some step has no verdict reaches the derivation.
-    stepStates: run.undiffed ? [null] : [],
+    runSteps: run.undiffed ? [{ state: null }] : [],
     stepInFlight: inFlight,
     runInFlight: false,
   });

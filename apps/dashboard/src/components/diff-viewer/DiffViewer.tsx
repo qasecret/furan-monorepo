@@ -817,11 +817,11 @@ export function DiffViewer({
     Boolean(data.autoApproved);
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
-  // percent above 0. The run's percent is its worst step's, so it is this
-  // step's only on a run of one.
+  // percent above 0. That percent is the step's own (R50): the run's is its
+  // worst step's, another step's, and stands in only for a legacy step.
   const stepHasDiff =
     regions.some(isPixelDiffRegion) ||
-    (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
+    (stepNumber(stepItem, "diffPercent", runDiffPercent) ?? 0) > 0;
 
   const viewer = (
     <div

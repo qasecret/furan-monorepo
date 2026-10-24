@@ -905,7 +905,7 @@ describe("approve and reject on a failed step", () => {
       status: "unresolved",
       statusOverride: null,
       step: { state: "unresolved", hasDecision: false, diffFailed: true },
-      stepStates: ["unresolved"],
+      runSteps: [{ state: "unresolved", diffFailed: true }],
       stepInFlight: false,
       runInFlight: false,
       ...over,
@@ -919,7 +919,8 @@ describe("approve and reject on a failed step", () => {
     expect(header.disabledReason).toBe(describeRefusal("diff_failed"));
     // Pending: the review loop stops on it, and `j` moves on from it.
     expect(header.view).toBe("pending");
-    expect(header.pendingSteps).toBe(1);
+    // Approve pending steps skips it, so it is not in that count.
+    expect(header.pendingSteps).toBe(0);
   });
 
   test("a step whose diff did not fail is unchanged", () => {
@@ -934,7 +935,7 @@ describe("approve and reject on a failed step", () => {
   test("a new step whose diff failed is held back too", () => {
     const header = base({
       step: { state: "new", hasDecision: false, diffFailed: true },
-      stepStates: ["new"],
+      runSteps: [{ state: "new", diffFailed: true }],
     });
     expect(header.canApprove).toBe(false);
     expect(header.canReject).toBe(false);
@@ -949,7 +950,7 @@ describe("approve and reject on a failed step", () => {
   test("a decided step keeps its decision", () => {
     const header = base({
       step: { state: "approved", hasDecision: true, diffFailed: true },
-      stepStates: ["approved"],
+      runSteps: [{ state: "approved", diffFailed: true }],
     });
     expect(header.view).toBe("decided");
   });

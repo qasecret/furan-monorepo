@@ -1495,37 +1495,61 @@ describe("DiffViewer", () => {
       ).toBeDefined();
     });
 
+    const NO_CHANGES =
+      "No pixel changes between the baseline and the current screenshot.";
+
+    /**
+     * Diff mode on step `at` of a run with no diff image kept for any step,
+     * once both screenshots are in. `items` are the steps as the server lists
+     * them (a step is diffed once unless it says); `runPercent` is the run's
+     * own, its worst step's.
+     */
+    async function openDiffStep(
+      at: string,
+      runPercent: number | null,
+      items: Array<Record<string, unknown>>,
+    ) {
+      loadingStorage();
+      inDiff();
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: null,
+        diffPercent: runPercent,
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
+        screenshots: items.map((it) => ({
+          id: it.id,
+          imageKey: fresh(`img-${String(it.id)}`),
+          diffImageKey: null,
+        })),
+      };
+      mockCheckpoints = {
+        items: items.map((it) => ({
+          name: "Step",
+          state: "unresolved",
+          diffGeneration: 1,
+          ...it,
+        })),
+      };
+      const r = openStep(at);
+      // Both screenshots are in.
+      await vi.waitFor(() =>
+        expect(
+          r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+        ).toBe(false),
+      );
+      await act(async () => {});
+      return r;
+    }
+
     test.each([
       { diffPercent: 2.5, says: null },
-      {
-        diffPercent: 0,
-        says: "No pixel changes between the baseline and the current screenshot.",
-      },
+      { diffPercent: 0, says: NO_CHANGES },
     ])(
       "Diff on a one-step run with no diff image and a diff percent of $diffPercent (R4)",
       async ({ diffPercent, says }) => {
-        loadingStorage();
-        inDiff();
-        mockGetByIdData = {
-          ...defaultMockData,
-          diffName: null,
-          diffPercent,
-          baselineScreenshot: { id: "base", imageKey: fresh("base") },
-          screenshots: [
-            { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
-          ],
-        };
-        mockCheckpoints = {
-          items: [{ id: "c1", name: "Home", state: "unresolved" }],
-        };
-        const r = openStep("c1");
-        // Both screenshots are in.
-        await vi.waitFor(() =>
-          expect(
-            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
-          ).toBe(false),
-        );
-        await act(async () => {});
+        const r = await openDiffStep("c1", diffPercent, [
+          { id: "c1", diffPercent },
+        ]);
         if (says) {
           expect(r.getByText(says)).toBeDefined();
         } else {
@@ -1534,6 +1558,49 @@ describe("DiffViewer", () => {
         }
       },
     );
+
+    // R50: on a run of several steps, whether a step has a diff is decided by
+    // its own percent. The run's is its worst step's, another step's.
+    describe("Diff on a multi-step run with no diff image (R50)", () => {
+      const steps = (
+        a: Record<string, unknown>,
+        b: Record<string, unknown>,
+      ) => [
+        { id: "c1", name: "Home", ...a },
+        { id: "c2", name: "Search", ...b },
+      ];
+
+      test("a 0% step says no pixel changes, though a sibling differs", async () => {
+        const r = await openDiffStep(
+          "c1",
+          3,
+          steps({ diffPercent: 0 }, { diffPercent: 3 }),
+        );
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+
+      test("a step that differs does not", async () => {
+        const r = await openDiffStep(
+          "c2",
+          3,
+          steps({ diffPercent: 0 }, { diffPercent: 3 }),
+        );
+        expect(r.queryByText(/No pixel changes/)).toBeNull();
+      });
+
+      test.each([
+        { runPercent: 0, says: true },
+        { runPercent: 5, says: false },
+      ])(
+        "a legacy step (generation 0, no number) decides from the run's $runPercent%",
+        async ({ runPercent, says }) => {
+          const legacy = { diffPercent: null, diffGeneration: 0 };
+          const r = await openDiffStep("c1", runPercent, steps(legacy, legacy));
+          if (says) expect(r.getByText(NO_CHANGES)).toBeDefined();
+          else expect(r.queryByText(/No pixel changes/)).toBeNull();
+        },
+      );
+    });
 
     test("the stage root names the step it opened on once its images are drawn (data-stage-drawn)", async () => {
       loadingStorage();

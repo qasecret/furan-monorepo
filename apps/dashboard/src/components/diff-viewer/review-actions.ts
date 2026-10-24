@@ -197,8 +197,10 @@ export function useReviewActions({
       hasDecision: decision !== null,
       diffFailed: current.diffFailedAt != null,
     },
-    stepStates: items?.map((i) => i.state),
-    stepDiffFailed: items?.map((i) => i.diffFailedAt != null),
+    runSteps: items?.map((i) => ({
+      state: i.state,
+      diffFailed: i.diffFailedAt != null,
+    })),
     stepInFlight,
     runInFlight: (items ?? []).some((i) => isInFlight(i.id)),
   });

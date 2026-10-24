@@ -15,6 +15,10 @@ const LOCKED = "Clear the run override to change decisions";
 
 const DECIDED: ReadonlyArray<CheckpointReviewState> = ["approved", "rejected"];
 
+/** The run's steps, by review state, none with a failed diff. */
+const states = (...s: Array<CheckpointReviewState | null>) =>
+  s.map((state) => ({ state }));
+
 /** A reviewable run with one step in `state`. */
 function input(
   state: CheckpointReviewState | null = "unresolved",
@@ -27,7 +31,7 @@ function input(
       state,
       hasDecision: state === "approved" || state === "rejected",
     },
-    stepStates: [state],
+    runSteps: [{ state }],
     stepInFlight: false,
     runInFlight: false,
     ...over,
@@ -166,7 +170,7 @@ describe("deriveReviewHeader: a run that cannot be reviewed", () => {
 
   it("a step still waiting on its diff makes the run 'still processing'", () => {
     const header = deriveReviewHeader(
-      input("unresolved", { stepStates: ["unresolved", null] }),
+      input("unresolved", { runSteps: states("unresolved", null) }),
     );
     expect(header.view).toBe("not-reviewable");
     expect(header.disabledReason).toBe(STILL_PROCESSING);
@@ -175,7 +179,7 @@ describe("deriveReviewHeader: a run that cannot be reviewed", () => {
 
   it("a decided step on such a run keeps its decision", () => {
     const header = deriveReviewHeader(
-      input("approved", { stepStates: ["approved", null] }),
+      input("approved", { runSteps: states("approved", null) }),
     );
     expect(header.view).toBe("decided");
     expect(header.decisionLockedReason).toBe(STILL_PROCESSING);
@@ -183,7 +187,7 @@ describe("deriveReviewHeader: a run that cannot be reviewed", () => {
 
   it("an aborted run's reason beats a step's missing verdict", () => {
     const header = deriveReviewHeader(
-      input(null, { status: "aborted", stepStates: [null] }),
+      input(null, { status: "aborted", runSteps: states(null) }),
     );
     expect(header.disabledReason).toBe(ABORTED);
   });
@@ -209,7 +213,7 @@ describe("deriveReviewHeader: the step is not known yet", () => {
 
   it("works before the step list has loaded", () => {
     const header = deriveReviewHeader(
-      input("unresolved", { step: undefined, stepStates: undefined }),
+      input("unresolved", { step: undefined, runSteps: undefined }),
     );
     expect(header.view).toBe("not-reviewable");
     expect(header.pendingSteps).toBe(0);
@@ -217,18 +221,10 @@ describe("deriveReviewHeader: the step is not known yet", () => {
 });
 
 describe("deriveReviewHeader: approve pending steps", () => {
-  const states = (...s: Array<CheckpointReviewState | null>) => s;
-
   it("counts the steps that need a reviewer: new and unresolved", () => {
     const header = deriveReviewHeader(
       input("unresolved", {
-        stepStates: states(
-          "new",
-          "unresolved",
-          "passed",
-          "approved",
-          "rejected",
-        ),
+        runSteps: states("new", "unresolved", "passed", "approved", "rejected"),
       }),
     );
     expect(header.pendingSteps).toBe(2);
@@ -238,8 +234,12 @@ describe("deriveReviewHeader: approve pending steps", () => {
   it("leaves out the pending steps whose diff failed (the server skips them)", () => {
     const header = deriveReviewHeader(
       input("unresolved", {
-        stepStates: states("new", "unresolved", "unresolved", "approved"),
-        stepDiffFailed: [false, false, true, false],
+        runSteps: [
+          { state: "new" },
+          { state: "unresolved", diffFailed: false },
+          { state: "unresolved", diffFailed: true },
+          { state: "approved" },
+        ],
       }),
     );
     expect(header.pendingSteps).toBe(2);
@@ -249,8 +249,10 @@ describe("deriveReviewHeader: approve pending steps", () => {
   it("is off when every pending step failed its diff", () => {
     const header = deriveReviewHeader(
       input("unresolved", {
-        stepStates: states("unresolved", "approved"),
-        stepDiffFailed: [true, false],
+        runSteps: [
+          { state: "unresolved", diffFailed: true },
+          { state: "approved" },
+        ],
       }),
     );
     expect(header.pendingSteps).toBe(0);
@@ -259,14 +261,14 @@ describe("deriveReviewHeader: approve pending steps", () => {
 
   it("counts every pending step when none is said to have failed", () => {
     const header = deriveReviewHeader(
-      input("unresolved", { stepStates: states("new", "unresolved") }),
+      input("unresolved", { runSteps: states("new", "unresolved") }),
     );
     expect(header.pendingSteps).toBe(2);
   });
 
   it("is off at zero pending", () => {
     const header = deriveReviewHeader(
-      input("approved", { stepStates: states("approved", "passed") }),
+      input("approved", { runSteps: states("approved", "passed") }),
     );
     expect(header.pendingSteps).toBe(0);
     expect(header.canApprovePendingSteps).toBe(false);

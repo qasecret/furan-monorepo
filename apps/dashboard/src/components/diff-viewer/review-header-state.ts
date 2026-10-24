@@ -44,15 +44,18 @@ export interface ReviewHeaderInput {
         diffFailed?: boolean;
       }
     | undefined;
-  /** The review state of every step loaded for the run; undefined until loaded. */
-  stepStates: ReadonlyArray<CheckpointReviewState | null> | undefined;
   /**
-   * Whether each of those steps has a failed diff (`diffFailedAt`), by
-   * index. Approve pending steps does not count them: the server skips them
-   * (a step with no result has nothing to approve), though they stay pending
-   * for the review loop. Absent: none failed.
+   * Every step loaded for the run; undefined until loaded. A step with no
+   * state has no verdict yet. One whose diff failed (`diffFailed`) is still
+   * pending for the review loop, but Approve pending steps does not count it:
+   * the server skips it, as it has nothing to approve.
    */
-  stepDiffFailed?: ReadonlyArray<boolean>;
+  runSteps:
+    | ReadonlyArray<{
+        state: CheckpointReviewState | null;
+        diffFailed?: boolean;
+      }>
+    | undefined;
   /** The selected step has a decision on its way to the server. */
   stepInFlight: boolean;
   /** Some step of the run has a decision on its way to the server. */
@@ -118,7 +121,7 @@ const isPendingState = (state: CheckpointReviewState | null): boolean =>
  * either only while the run is reviewable and not overridden.
  */
 export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
-  const { status, statusOverride, step, stepStates } = input;
+  const { status, statusOverride, step, runSteps } = input;
   const state = step?.state ?? null;
 
   const overridden = statusOverride !== null;
@@ -126,7 +129,7 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
   // nothing, or some step of it has no verdict yet.
   const blocked =
     NOT_REVIEWABLE.has(status) ||
-    (stepStates?.some((s) => s === null) ?? false);
+    (runSteps?.some((s) => s.state === null) ?? false);
   // The selected step is not known, or has no verdict yet: nothing to act on,
   // and it reads as still processing.
   const loading = step === undefined || state === null;
@@ -165,8 +168,8 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
   const reviewable = !overridden && !blocked;
   const actionable =
     reviewable && step !== undefined && !input.stepInFlight && !diffFailed;
-  const pendingSteps = (stepStates ?? []).filter(
-    (s, i) => isPendingState(s) && input.stepDiffFailed?.[i] !== true,
+  const pendingSteps = (runSteps ?? []).filter(
+    (s) => isPendingState(s.state) && s.diffFailed !== true,
   ).length;
 
   return {
