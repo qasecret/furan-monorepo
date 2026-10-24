@@ -10,7 +10,18 @@ import {
 import type { Telemetry } from "@furan/telemetry";
 
 import type { DiffQueueProducer } from "../../trpc/context.js";
-import { addDiffJob, stepDiffJob, type DiffTrigger } from "../diff-enqueue.js";
+import {
+  addStepDiffJobs,
+  stepDiffJob,
+  type DiffTrigger,
+  type StepDiffJob,
+} from "../diff-enqueue.js";
+
+type RunRef = {
+  id: string;
+  projectId: string;
+  parentBranchName: string | null;
+};
 
 /**
  * Queues steps of `run` for a re-diff (spec 2026-10-23 §7): gives each a new
@@ -45,13 +56,50 @@ export async function queueStepDiffs(
     telemetry: Pick<Telemetry, "metrics">;
     onCommit: (fn: () => unknown) => void;
   },
-  run: { id: string; projectId: string; parentBranchName: string | null },
+  run: RunRef,
   stepIds: readonly string[],
   trigger: DiffTrigger,
 ): Promise<void> {
   if (stepIds.length === 0) return;
 
-  const unversioned = await ctx.db
+  const jobs = await bumpSteps(ctx.db, run, stepIds);
+  if (jobs.length === 0) return;
+
+  const deps = { diffQueue: ctx.diffQueue, registry: ctx.telemetry.metrics };
+  ctx.onCommit(async () => {
+    const [refused] = await addStepDiffJobs(deps, trigger, jobs);
+    if (refused) throw refused.err;
+  });
+}
+
+/**
+ * Ruling R6 for a step that its insert queues (an SDK upload, Ruling R40):
+ * when `run` is a legacy run (a step with a verdict at version 0), bumps every
+ * version-0 step of it, as {@link queueStepDiffs} would, and returns their
+ * jobs, in capture order, for the caller to add after commit with the new
+ * step's own; otherwise bumps nothing and returns none. The caller holds the
+ * run's lock already (the bump re-takes it, a no-op).
+ */
+export function bumpLegacySteps(
+  db: DB | Tx,
+  run: RunRef,
+): Promise<StepDiffJob[]> {
+  return bumpSteps(db, run, []);
+}
+
+/**
+ * Bumps `stepIds` of `run` (with R6's fan-out on a legacy run) and returns
+ * their jobs, in order: the version-0 steps in capture order first, then the
+ * rest of `stepIds`. Ids that are not steps of the run are dropped.
+ */
+async function bumpSteps(
+  db: DB | Tx,
+  run: RunRef,
+  stepIds: readonly string[],
+): Promise<StepDiffJob[]> {
+  // One read of the run's version-0 steps (`screenshots_run_idx`): none, or
+  // none with a verdict, on a run the per-step pipeline queued from the start.
+  const unversioned = await db
     .select({ id: screenshots.id, verdict: screenshots.verdict })
     .from(screenshots)
     .where(
@@ -69,25 +117,14 @@ export async function queueStepDiffs(
         : stepIds,
     ),
   ];
+  if (ids.length === 0) return [];
 
-  const bumped = await bumpStepGenerations(ctx.db, run.id, ids);
+  const bumped = await bumpStepGenerations(db, run.id, ids);
   const generationOf = new Map(bumped.map((b) => [b.id, b.generation]));
-  const jobs = ids.flatMap((id) => {
+  return ids.flatMap((id) => {
     const generation = generationOf.get(id);
     // Not a step of the run: nothing was bumped, nothing is queued.
     return generation === undefined ? [] : [stepDiffJob(run, id, generation)];
-  });
-  if (jobs.length === 0) return;
-
-  const deps = { diffQueue: ctx.diffQueue, registry: ctx.telemetry.metrics };
-  ctx.onCommit(async () => {
-    const results = await Promise.allSettled(
-      jobs.map((job) => addDiffJob(deps, trigger, job)),
-    );
-    const refused = results.find(
-      (r): r is PromiseRejectedResult => r.status === "rejected",
-    );
-    if (refused) throw refused.reason;
   });
 }
 

@@ -126,3 +126,22 @@ export async function addDiffJob(
   }
   m.enqueued.inc({ trigger });
 }
+
+/**
+ * Adds every job of `jobs` at once (`addDiffJob`, each counted under
+ * `trigger`) and resolves, once all were tried, to the ones the queue refused
+ * with their errors, in job order. It never rejects: the caller decides what a
+ * refusal means (rethrow the first, or log each).
+ */
+export async function addStepDiffJobs(
+  deps: { diffQueue: DiffQueueProducer; registry: Registry },
+  trigger: DiffTrigger,
+  jobs: readonly StepDiffJob[],
+): Promise<Array<{ job: StepDiffJob; err: unknown }>> {
+  const results = await Promise.allSettled(
+    jobs.map((job) => addDiffJob(deps, trigger, job)),
+  );
+  return results.flatMap((r, i) =>
+    r.status === "rejected" ? [{ job: jobs[i]!, err: r.reason }] : [],
+  );
+}

@@ -1,7 +1,11 @@
 import { Registry } from "@furan/telemetry";
 import { describe, expect, test, vi } from "vitest";
 
-import { addDiffJob, type DiffTrigger } from "../src/lib/diff-enqueue.js";
+import {
+  addDiffJob,
+  addStepDiffJobs,
+  type DiffTrigger,
+} from "../src/lib/diff-enqueue.js";
 import type { DiffQueueProducer } from "../src/trpc/context.js";
 
 import { counterValue } from "./helpers.js";
@@ -159,5 +163,35 @@ describe("addDiffJob", () => {
         Object.keys(v.labels),
       ),
     ).toEqual([["trigger"]]);
+  });
+
+  test("addStepDiffJobs tries every job and resolves to the refused ones, counted", async () => {
+    const registry = new Registry();
+    const boom = new Error("queue is down");
+    const add = vi.fn(
+      async (_name: "diff", data: { screenshotId?: string }) => {
+        if (data.screenshotId === "step-2") throw boom;
+        return { id: "job" };
+      },
+    );
+    const jobs = ["step-1", "step-2", "step-3"].map((screenshotId) => ({
+      ...PAYLOAD,
+      screenshotId,
+    }));
+
+    const refused = await addStepDiffJobs(
+      { diffQueue: producer(add), registry },
+      "upload",
+      jobs,
+    );
+
+    expect(add).toHaveBeenCalledTimes(3);
+    expect(refused).toEqual([{ job: jobs[1], err: boom }]);
+    expect(await counterValue(registry, ENQUEUED, { trigger: "upload" })).toBe(
+      2,
+    );
+    expect(await counterValue(registry, FAILURES, { trigger: "upload" })).toBe(
+      1,
+    );
   });
 });

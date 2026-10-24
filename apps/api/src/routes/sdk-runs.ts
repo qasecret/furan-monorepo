@@ -17,11 +17,12 @@ import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
 import {
-  addDiffJob,
+  addStepDiffJobs,
   NEW_STEP_GENERATION,
   stepDiffJob,
 } from "../lib/diff-enqueue.js";
 import { sendError } from "../lib/errors.js";
+import { bumpLegacySteps } from "../lib/review/enqueue.js";
 import { recordElementMapOutcome } from "../lib/screenshot-metrics.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
@@ -487,24 +488,29 @@ export async function registerSdkRoutes(app: FastifyInstance): Promise<void> {
       // through the rollup unchanged.
       await recomputeRunStatus(db, run.id);
 
-      // Best-effort diff enqueue of the new step alone — deferred to
-      // post-commit so the worker never picks up the job before the
-      // screenshot/run rows are visible. A lost job is re-queued by the
-      // reconciler. A duplicate upload (above) queues nothing.
+      // A legacy run (its earlier steps diffed before the per-step pipeline,
+      // still at version 0) has them all re-diffed with this one, once
+      // (Ruling R40): the run totals fold the steps' own columns, which they
+      // lack. Under the run lock taken above.
+      const legacyJobs = await bumpLegacySteps(db, run);
+
+      // Best-effort diff enqueue of the new step (after a legacy run's
+      // version-0 steps) — deferred to post-commit so the worker never picks
+      // up a job before the screenshot/run rows are visible. A lost job is
+      // re-queued by the reconciler. A duplicate upload (above) queues nothing.
       onCommit(async () => {
-        try {
-          await addDiffJob(
-            { diffQueue: app.diffQueue, registry: app.telemetry.metrics },
-            "upload",
-            stepDiffJob(run, screenshot.id, NEW_STEP_GENERATION),
-          );
-        } catch (err) {
+        const refused = await addStepDiffJobs(
+          { diffQueue: app.diffQueue, registry: app.telemetry.metrics },
+          "upload",
+          [...legacyJobs, stepDiffJob(run, screenshot.id, NEW_STEP_GENERATION)],
+        );
+        for (const { job, err } of refused) {
           logger.warn(
             {
               err,
               runId: run.id,
               projectId: run.projectId,
-              screenshotId: screenshot.id,
+              screenshotId: job.screenshotId,
             },
             "sdk_upload_diff_enqueue_failed",
           );

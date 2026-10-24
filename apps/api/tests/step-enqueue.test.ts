@@ -484,6 +484,11 @@ d("per-step diff enqueue", () => {
       const s = await seed({
         checkpoints: [{ name: "home", verdict: "unresolved" }],
       });
+      // A run the per-step pipeline already diffed: no legacy fan-out.
+      await h.db
+        .update(screenshots)
+        .set({ diffGeneration: 1 })
+        .where(eq(screenshots.runId, s.runId));
       const before = await counterValue(h.app.telemetry.metrics, ENQUEUED, {
         trigger: "upload",
       });
@@ -515,9 +520,108 @@ d("per-step diff enqueue", () => {
       expect(step.queuedAt).toBeInstanceOf(Date);
       // The step already in the run is not re-diffed.
       expect((await versions(s.runId)).get(s.shots.home!.id)).toMatchObject({
-        generation: 0,
+        generation: 1,
         queuedAt: null,
       });
+    });
+
+    test("an upload into a run whose earlier steps have verdicts at gen 0 queues them at g1 with its own step", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "passed" },
+          { name: "waiting", verdict: null },
+        ],
+      });
+      const legacy = s.shotsInOrder.map((x) => x.id);
+      const before = await counterValue(h.app.telemetry.metrics, ENQUEUED, {
+        trigger: "upload",
+      });
+
+      const res = await upload(s.runId, s.editor.jwt, "checkout");
+
+      expect(res.statusCode).toBe(200);
+      const { screenshotId } = res.json() as { screenshotId: string };
+      // Ruling R40: every version-0 step once, in capture order, then the new
+      // step, each at version 1 under its job id.
+      expect(h.diffQueueAdd.mock.calls).toEqual(
+        [...legacy, screenshotId].map((id) => [
+          "diff",
+          {
+            runId: s.runId,
+            projectId: s.projectId,
+            screenshotId: id,
+            generation: 1,
+          },
+          { jobId: `${id}-g1` },
+        ]),
+      );
+      expect(
+        await counterValue(h.app.telemetry.metrics, ENQUEUED, {
+          trigger: "upload",
+        }),
+      ).toBe(before + 4);
+      const after = await versions(s.runId);
+      for (const id of [...legacy, screenshotId]) {
+        expect(after.get(id)!.generation).toBe(1);
+        expect(after.get(id)!.queuedAt).toBeInstanceOf(Date);
+      }
+      // The re-diff keeps the legacy steps' results until the new ones land.
+      expect(after.get(legacy[0]!)!.verdict).toBe("unresolved");
+    });
+
+    test("a second upload into the same run queues only its own step", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "passed" },
+        ],
+      });
+      const first = await upload(s.runId, s.editor.jwt, "checkout");
+      expect(first.statusCode).toBe(200);
+      expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
+      h.diffQueueAdd.mockClear();
+
+      const res = await upload(s.runId, s.editor.jwt, "payment");
+
+      expect(res.statusCode).toBe(200);
+      const { screenshotId } = res.json() as { screenshotId: string };
+      expect(h.diffQueueAdd.mock.calls).toEqual([
+        [
+          "diff",
+          {
+            runId: s.runId,
+            projectId: s.projectId,
+            screenshotId,
+            generation: 1,
+          },
+          { jobId: `${screenshotId}-g1` },
+        ],
+      ]);
+      for (const shot of s.shotsInOrder) {
+        expect((await versions(s.runId)).get(shot.id)!.generation).toBe(1);
+      }
+    });
+
+    test("a duplicate upload into a legacy run fans out nothing", async () => {
+      const s = await seed({
+        checkpoints: [
+          { name: "home", verdict: "unresolved" },
+          { name: "cart", verdict: "passed" },
+        ],
+      });
+
+      // `home` at the seed's viewport and browser: the step already there.
+      const res = await upload(s.runId, s.editor.jwt, "home");
+
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { screenshotId: string }).screenshotId).toBe(
+        s.shots.home!.id,
+      );
+      expect(h.diffQueueAdd).not.toHaveBeenCalled();
+      for (const row of (await versions(s.runId)).values()) {
+        expect(row).toMatchObject({ generation: 0, queuedAt: null });
+      }
     });
 
     test("a duplicate upload queues nothing", async () => {
