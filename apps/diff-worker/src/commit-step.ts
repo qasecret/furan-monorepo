@@ -5,8 +5,8 @@ import {
   autoRules,
   diffRegions,
   eq,
+  healPipelineAbort,
   inArray,
-  isNull,
   recomputeRunStatus,
   recomputeRunTotals,
   recordBaseline,
@@ -14,7 +14,6 @@ import {
   sql,
   testRuns,
   withProjectScope,
-  type DB,
   type RunStatus,
 } from "@furan/db";
 import type { Telemetry } from "@furan/telemetry";
@@ -48,40 +47,6 @@ export type StepCommit =
     };
 
 const STALE: StepCommit = { kind: "stale" };
-
-/**
- * Ruling R46: a job that failed its final attempt under the old whole-run
- * behaviour wrote `aborted`, a lifecycle state the rollup keeps. When a later
- * commit leaves EVERY step of the run with a verdict, an abort the pipeline
- * wrote (`aborted_by_diff`) is reset to the lifecycle value `running` so the
- * `recomputeRunStatus` that follows yields the real rollup. An SDK `/abort` or
- * a capture-worker abort leaves the flag false and stays.
- *
- * Runs in the step's commit, under the run's row lock (`FOR NO KEY UPDATE`,
- * R8; the commit already holds it), so a concurrent abort or upload is either
- * seen here or waits for this commit. Returns true when it healed the run.
- */
-async function healPipelineAbort(tx: DB, runId: string): Promise<boolean> {
-  const [run] = await tx
-    .select({ status: testRuns.status, abortedByDiff: testRuns.abortedByDiff })
-    .from(testRuns)
-    .where(eq(testRuns.id, runId))
-    .for("no key update");
-  if (run?.status !== "aborted" || !run.abortedByDiff) return false;
-
-  const [pending] = await tx
-    .select({ id: screenshots.id })
-    .from(screenshots)
-    .where(and(eq(screenshots.runId, runId), isNull(screenshots.verdict)))
-    .limit(1);
-  if (pending) return false;
-
-  await tx
-    .update(testRuns)
-    .set({ status: "running", abortedByDiff: false })
-    .where(eq(testRuns.id, runId));
-  return true;
-}
 
 /**
  * Commits one step's diff result (spec 2026-10-23 §4.3), in ONE transaction
@@ -246,7 +211,7 @@ export async function commitStep(
     await recomputeRunTotals(tx, job.runId);
 
     // 8. An abort the old whole-run pipeline wrote heals once every step of
-    // the run has a verdict (Ruling R46).
+    // the run has a verdict (`healPipelineAbort`, under the run lock held).
     if (await healPipelineAbort(tx, job.runId)) {
       logger.info({ runId: job.runId }, "diff_pipeline_abort_healed");
     }
