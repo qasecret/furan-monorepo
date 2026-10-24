@@ -1,4 +1,4 @@
-import { severityRank, type Severity } from "@furan/diff-engine";
+import { severityRank, type Severity } from "@furan/shared-types";
 
 export interface CheckpointSignatureInput {
   diffSignature: string | null;

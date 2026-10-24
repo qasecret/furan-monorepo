@@ -27,6 +27,15 @@ export interface CaptureJob {
 export interface DiffJob {
   runId: string;
   projectId: string;
+  /**
+   * Per-step diff pipeline: the one step (screenshot) this job diffs, and the
+   * step's version (`screenshots.diff_generation`) it was queued at. A job
+   * whose version no longer matches the step's is stale and writes nothing.
+   * Both are absent on an old whole-run job, which the worker splits into
+   * per-step jobs. The job's id is `diffJobId(screenshotId, generation)`.
+   */
+  screenshotId?: string;
+  generation?: number;
   // Phase 2: the worker derives baseline + candidate storage keys from the
   // screenshots table via `resolveBaseline`; these legacy fields remain
   // optional for callers that already populate them (handler ignores them).
@@ -35,6 +44,18 @@ export interface DiffJob {
   // Optional PR parent base branch used as the second tier in baseline
   // resolution (see `resolveBaseline` in @furan/db).
   parentPrBaseBranch?: string | null;
+}
+
+/**
+ * The BullMQ job id of one step at one version. A version is never reused, so
+ * queueing the same one twice (a reconciler re-add while the job is still
+ * queued) is a no-op, and BullMQ's retention of completed jobs can never swallow
+ * a real re-diff.
+ *
+ * It joins with `-g`, not `:`: BullMQ throws on a `:` in a custom job id.
+ */
+export function diffJobId(screenshotId: string, generation: number): string {
+  return `${screenshotId}-g${generation}`;
 }
 
 export interface WebhookJob {
