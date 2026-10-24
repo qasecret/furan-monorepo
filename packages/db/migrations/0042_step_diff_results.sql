@@ -35,9 +35,15 @@
 -- so a lost re-diff is found too). A comparison with NULL is unknown, so a
 -- step with a verdict but no verdict_at or no diff_queued_at is left out.
 --
+-- The index is dropped (IF EXISTS) before it is created: an unreleased draft
+-- of this file built it with a narrower predicate, and `IF NOT EXISTS` would
+-- keep that one on a database that re-applies the file. On a fresh install
+-- the DROP finds nothing and does nothing.
+--
 -- Additive and idempotent: every column has no default or a constant one (a
 -- metadata-only change on Postgres 11+, no rewrite of existing rows), and
--- re-applying this file is a no-op.
+-- re-applying this file leaves the same schema (the columns are skipped and
+-- the index is rebuilt as it was).
 --
 -- Locks, by runner:
 -- - drizzle-kit (`drizzle-kit migrate`: every pending file in ONE
@@ -47,7 +53,8 @@
 -- - the compose runner (`infra/docker/scripts/migrate.sh`, `psql -f`, each
 --   statement its own transaction): each `ADD COLUMN` is a brief metadata
 --   change; the `CREATE INDEX` holds SHARE on `screenshots` (writes wait,
---   reads do not) while it builds.
+--   reads do not) while it builds. A re-apply's `DROP INDEX` of an existing
+--   index takes ACCESS EXCLUSIVE on `screenshots` for a moment.
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_generation" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_queued_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_requeues" smallint DEFAULT 0 NOT NULL;--> statement-breakpoint
@@ -58,4 +65,5 @@ ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "vlm_description" text;--> st
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "rule_resolved" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_failed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "screenshots" ADD COLUMN IF NOT EXISTS "diff_error" varchar(64);--> statement-breakpoint
+DROP INDEX IF EXISTS "screenshots_stuck_idx";--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "screenshots_stuck_idx" ON "screenshots" USING btree ("diff_queued_at") WHERE ("screenshots"."diff_failed_at" IS NULL AND ("screenshots"."verdict" IS NULL OR "screenshots"."verdict_at" < "screenshots"."diff_queued_at"));

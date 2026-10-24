@@ -454,6 +454,46 @@ desc("step events (integration)", () => {
     ]);
   }, 60_000);
 
+  it("the status announced is the run's as stored when the events are read, not this commit's", async () => {
+    const s = await seed({
+      steps: [
+        { name: "home", baseline: await red0(), candidate: await red0() },
+      ],
+    });
+    // This step's commit moved the run from running to passed. Before its
+    // events are read, a later commit of another step moved the run on to
+    // unresolved (and published that): this job must not re-announce passed.
+    await db
+      .update(testRuns)
+      .set({ status: "unresolved" })
+      .where(eq(testRuns.id, s.candidateRunId));
+
+    const frames = await framesDuring(s, async () => {
+      await publishStepEvents(redis, {
+        runId: s.candidateRunId,
+        projectId: s.projectId,
+        screenshotId: s.shotId.home!,
+        verdict: "passed",
+        failed: false,
+        rollup: { before: "running", after: "passed" },
+        db,
+        logger: mockLogger,
+      });
+    });
+
+    expect(frames.run.find((f) => f.type === "run.completed")).toMatchObject({
+      status: "unresolved",
+    });
+    expect(frames.project.filter((f) => f.event === "testRun_updated")).toEqual(
+      [
+        projectFrame("testRun_updated", {
+          id: s.candidateRunId,
+          status: "unresolved",
+        }),
+      ],
+    );
+  }, 60_000);
+
   it("run.completed omits diffPercent when the run has no stored diff %", async () => {
     const s = await seed({
       steps: [

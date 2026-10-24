@@ -77,6 +77,11 @@ export async function publishProjectEvent(
 
 /** What `run.completed` reports of the run, as stored once the step committed. */
 interface RunFacts {
+  /**
+   * The run's status as stored now: a later commit of another step may have
+   * moved it again since this step's commit.
+   */
+  status: RunStatus;
   buildId: string | null;
   branchName: string | null;
   diffPercent: number | null;
@@ -99,6 +104,7 @@ async function readRunFacts(
   return withProjectScope(db, projectId, async (tx) => {
     const [run] = await tx
       .select({
+        status: testRuns.status,
         buildId: testRuns.buildId,
         branchName: testRuns.branchName,
         diffPercent: testRuns.diffPercent,
@@ -115,8 +121,8 @@ async function readRunFacts(
         and(
           eq(diffRegions.runId, runId),
           eq(diffRegions.projectId, projectId),
-          // Ruling R33: the whole-run handler reported the engine's regions.
-          // A dynamic-text step also stores one synthetic OCR audit row per
+          // The whole-run handler reported the engine's regions. A
+          // dynamic-text step also stores one synthetic OCR audit row per
           // region (matched or not), which is not a change; a
           // `layout_suppressed` region was counted and still is.
           ne(diffRegions.source, "dynamic_text"),
@@ -156,12 +162,21 @@ async function readRunFacts(
  *  - project channel: `run.checkpoint_diffed { runId, screenshotId }`.
  *
  * Only when the commit moved the run's status (`rollup.before !== rollup.after`):
- *  - run channel: `run.completed` with the new status and the run's stored
- *    totals, which the integrations subscriber fans out (GitHub status, Slack,
- *    outbound webhooks). GitHub-side fields (installationId, repoOwner,
- *    repoName, sha, prNumber) are omitted; both consumers cope without them;
- *  - project channel: `testRun_updated { id, status }` and `build_updated { id }`.
+ *  - run channel: `run.completed` with the run's status and totals as stored
+ *    when the events are read, which the integrations subscriber fans out
+ *    (GitHub status, Slack, outbound webhooks). GitHub-side fields
+ *    (installationId, repoOwner, repoName, sha, prNumber) are omitted; both
+ *    consumers cope without them;
+ *  - project channel: `testRun_updated { id, status }` (that same stored
+ *    status) and `build_updated { id }`.
  * The common per-step commit leaves the status alone and so reads nothing.
+ *
+ * The stored status, not `rollup.after`: this publishes after its commit and
+ * the step's rule applications, so another status-changing commit of the run
+ * may land in between and publish first. Announcing what the run holds when
+ * the events are read keeps this job from re-announcing a status that commit
+ * already replaced; only the short gap between the read and the publish is
+ * left open.
  *
  * Best-effort: it logs and never throws, and one failing event does not stop
  * the others. If the stored totals cannot be read, the status events are
@@ -234,7 +249,7 @@ export async function publishStepEvents(
       type: "run.completed",
       runId,
       projectId,
-      status: rollup.after,
+      status: facts.status,
       // Omitted (not null) when no step was compared, as the optional field of
       // the consumers' event type.
       diffPercent: facts.diffPercent ?? undefined,
@@ -249,7 +264,7 @@ export async function publishStepEvents(
     projectId,
     runId,
     event: "testRun_updated",
-    data: { id: runId, status: rollup.after },
+    data: { id: runId, status: facts.status },
   });
   if (facts.buildId) {
     await publishProjectEvent(redis, logger, {
