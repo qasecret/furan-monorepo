@@ -70,6 +70,8 @@ import { useEffectiveMode } from "./viewer-mode";
 import { useViewerPrefs } from "./viewer-prefs";
 import { computeFocusView } from "./world-fit";
 
+import type { DiffErrorCode } from "@/lib/diff-error-copy";
+
 /**
  * The diff viewer's canvas: one compositor for every comparison mode (spec
  * §3.3).
@@ -111,12 +113,12 @@ import { computeFocusView } from "./world-fit";
  *   in every mode: overlaid on its top-left, out of the layout, so no mode
  *   moves a card for it. In Flicker it names the frame on screen.
  * - **What it can't show** it says, in DOM over the canvas (`StageStates`,
- *   spec §3.4): an image loading or failed (with Retry), no baseline, and in
- *   Diff the reasons there is no diff image. Without a baseline only side by
- *   side is available, so a chosen mode that needs one (stored, or the URL's)
- *   draws as side by side and is kept (R2). A screenshot larger than the
- *   GPU's textures is never mounted. The hatching's tooltips are DOM hit
- *   areas over the strips.
+ *   spec §3.4): an image loading or failed (with Retry), no baseline, a diff
+ *   that failed for good (with Retry diff), and in Diff the reasons there is
+ *   no diff image. Without a baseline only side by side is available, so a
+ *   chosen mode that needs one (stored, or the URL's) draws as side by side
+ *   and is kept (R2). A screenshot larger than the GPU's textures is never
+ *   mounted. The hatching's tooltips are DOM hit areas over the strips.
  */
 
 interface Props {
@@ -150,6 +152,15 @@ interface Props {
    * (a test hook, see the effect below). Absent while the step is not known.
    */
   checkpointId?: string;
+  /**
+   * The step's diff failed for good, and why (`diffFailedAt`, `diffError`).
+   * The stage says so, in place of the messages about a missing diff.
+   */
+  diffFailed?: DiffErrorCode | null;
+  /** Retry the failed diff; absent for a viewer who may not. */
+  onRetryDiff?: () => void;
+  /** The retry of the failed diff is out. */
+  retryingDiff?: boolean;
 }
 
 /** The pixi apps for one pane layout, one world container in each. */
@@ -267,6 +278,9 @@ export function ViewerStage({
   legacyMissing = false,
   stepHasDiff = regions.some(isPixelDiffRegion),
   checkpointId,
+  diffFailed = null,
+  onRetryDiff,
+  retryingDiff = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const paneARef = useRef<HTMLDivElement>(null);
@@ -426,6 +440,7 @@ export function ViewerStage({
     },
     maxTextureSize: maxTextureSize ?? Number.POSITIVE_INFINITY,
     retrying,
+    diffFailed,
   });
   const loading = states.some((s) => s.kind === "loading");
   // An image the GPU can't hold would draw as nothing, or as garbage: it is
@@ -1026,6 +1041,8 @@ export function ViewerStage({
             <StageStates
               states={statesForPane(states, "current")}
               onRetry={onRetry}
+              onRetryDiff={onRetryDiff}
+              retryingDiff={retryingDiff}
               onFocusLost={focusPane(paneBRef)}
             />
           </div>
@@ -1067,6 +1084,8 @@ export function ViewerStage({
         <StageStates
           states={states}
           onRetry={onRetry}
+          onRetryDiff={onRetryDiff}
+          retryingDiff={retryingDiff}
           onFocusLost={focusPane(singleRef)}
         />
       </div>

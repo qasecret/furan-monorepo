@@ -170,9 +170,12 @@ export function useReviewActions({
     ? items?.find((i) => i.id === checkpointId)
     : undefined;
   // The run detail carries the same review fields; use them until the list
-  // has loaded.
+  // has loaded. It does not say whether the step's diff failed (a failed diff
+  // is shown from the list alone).
   const current:
-    Pick<CheckpointItem, "state" | "decision" | "newerCapture"> | undefined =
+    | (Pick<CheckpointItem, "state" | "decision" | "newerCapture"> &
+        Partial<Pick<CheckpointItem, "diffFailedAt">>)
+    | undefined =
     listed ??
     (checkpointId ? run?.checkpointContexts?.[checkpointId] : undefined);
 
@@ -186,7 +189,11 @@ export function useReviewActions({
   const header = deriveReviewHeader({
     status: effectiveStatus,
     statusOverride,
-    step: current && { state, hasDecision: decision !== null },
+    step: current && {
+      state,
+      hasDecision: decision !== null,
+      diffFailed: current.diffFailedAt != null,
+    },
     stepStates: items?.map((i) => i.state),
     stepInFlight,
     runInFlight: (items ?? []).some((i) => isInFlight(i.id)),

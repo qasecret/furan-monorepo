@@ -61,6 +61,7 @@ import {
   useCommandKeys,
   useRegisteredCommands,
 } from "@/lib/commands/registry";
+import { diffErrorCode } from "@/lib/diff-error-copy";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
@@ -74,6 +75,7 @@ import {
   type StepFacets,
 } from "@/lib/review-context";
 import { trpc } from "@/lib/trpc";
+import { useRetryDiff } from "@/lib/use-retry-diff";
 
 interface Props {
   runId: string;
@@ -374,6 +376,7 @@ export function DiffViewer({
   // A decision on this step still on its way: a read meanwhile that shows the
   // step pending again predates its commit, and is no undo (R36).
   const decisionInFlight = useIsDecisionInFlight(activeCheckpointId);
+  const retryDiff = useRetryDiff(runId);
   const loop = useReviewLoop({
     projectId: data?.projectId ?? "",
     buildId: data?.buildId || undefined,
@@ -398,7 +401,10 @@ export function DiffViewer({
       : null;
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
-  // viewer picks up freshly written diff regions, baselineSource, etc.
+  // viewer picks up freshly written diff regions, baselineSource, etc. A step
+  // settling (its result, or its diff failing for good) also moves the step
+  // list, which holds each step's review state and failure: a retried step
+  // leaves "being diffed" only through it.
   const onSseEvent = useCallback(
     (e: RunEvent) => {
       if (
@@ -408,6 +414,9 @@ export function DiffViewer({
         e.type === "run.completed"
       ) {
         void utils.runs.getById.invalidate({ runId });
+      }
+      if (e.type === "run.checkpoint_diffed") {
+        void utils.runs.listCheckpoints.invalidate({ runId });
       }
     },
     [utils, runId],
@@ -668,11 +677,26 @@ export function DiffViewer({
   // own wherever focus is. ⌘Z (the global review undo) still undoes. A
   // callback left out disables its command (`enabled`).
   const keysOn = card === null;
+  // The step on screen has a failed diff (spec 2026-10-23 §10): the stage
+  // says why, and a viewer who may review can retry it, from the stage or the
+  // palette. A retry in flight is the one retry; the palette action waits.
+  const stepItem = checkpointsQuery.data?.items?.find(
+    (c) => c.id === activeCheckpointId,
+  );
+  const failedDiff =
+    stepItem?.diffFailedAt != null ? diffErrorCode(stepItem.diffError) : null;
+  const retryFailedDiff =
+    canReview && failedDiff !== null && activeCheckpointId !== undefined
+      ? () => {
+          void retryDiff.retry(activeCheckpointId);
+        }
+      : undefined;
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
     onApprove: keysOn ? review.approve : undefined,
     onReject: keysOn ? review.reject : undefined,
+    onRetryDiff: keysOn && !retryDiff.pending ? retryFailedDiff : undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
     onPrevStep: keysOn ? onPrevStep : undefined,
@@ -982,6 +1006,9 @@ export function DiffViewer({
                     legacyMissing={diffImageLegacyMissing}
                     stepHasDiff={stepHasDiff}
                     checkpointId={candidateScreenshot?.id}
+                    diffFailed={failedDiff}
+                    onRetryDiff={retryFailedDiff}
+                    retryingDiff={retryDiff.pending}
                   />
                 </div>
                 {/* Large side step-arrows: navigate

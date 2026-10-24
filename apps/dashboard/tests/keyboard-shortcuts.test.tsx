@@ -1086,6 +1086,8 @@ describe("the viewer's keys are registry commands", () => {
       ["viewer.nextViewport", "Next viewport", ["]"]],
       ["review.approve", "Approve step", ["a"]],
       ["review.reject", "Reject step", ["r", "x"]],
+      // A palette action alone: no key (spec 2026-10-23 §10).
+      ["viewer.retryDiff", "Retry diff", []],
       ["viewer.mode.sideBySide", "Side by side", ["1"]],
       ["viewer.mode.swipe", "Swipe", ["2"]],
       ["viewer.mode.flicker", "Flicker", ["3"]],

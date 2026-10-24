@@ -15,9 +15,12 @@ import { useRegisterStepActions, useStepKeys } from "./step-actions-context";
 
 import { deriveReviewHeader } from "@/components/diff-viewer/review-header-state";
 import { StaleStepConfirm } from "@/components/diff-viewer/StaleStepCallout";
+import { Button } from "@/components/ui/button";
 import { DisabledAwareButton } from "@/components/ui/disabled-aware-button";
 import { useAuthedImage } from "@/hooks/use-authed-image";
+import { useFocusHandoff } from "@/hooks/use-focus-handoff";
 import { cn } from "@/lib/cn";
+import { diffErrorCopy } from "@/lib/diff-error-copy";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import type { CheckpointItem } from "@/lib/review/optimistic";
 import {
@@ -26,10 +29,12 @@ import {
 } from "@/lib/review/use-review-mutations";
 import type { ReviewContext } from "@/lib/review-context";
 import {
+  DIFF_FAILED_STYLE,
   reviewStateStyle,
   statusStyle,
   type StatusStyle,
 } from "@/lib/status-style";
+import { useRetryDiff } from "@/lib/use-retry-diff";
 
 export interface StepCheckpoint {
   id: string;
@@ -44,6 +49,12 @@ export interface StepCheckpoint {
    * older image the baseline, so Approve asks first. Absent or null: none.
    */
   newerCapture?: CheckpointItem["newerCapture"];
+  /**
+   * The step's diff failed for good (`diffFailedAt` set) and why
+   * (`diffError`). Absent or null: it did not.
+   */
+  diffFailedAt?: CheckpointItem["diffFailedAt"];
+  diffError?: CheckpointItem["diffError"];
 }
 
 /**
@@ -87,14 +98,17 @@ interface Props {
 }
 
 /**
- * How a step reads. One with a review state takes that state's style. One
- * without has not been diffed: it reads as running, unless the run ended
- * without ever diffing it (aborted, empty), and then as that.
+ * How a step reads. A step whose diff failed for good reads as that, whatever
+ * its review state says: it has no result. One with a review state takes that
+ * state's style. One without has not been diffed: it reads as running, unless
+ * the run ended without ever diffing it (aborted, empty), and then as that.
  */
 function lookOf(
   state: CheckpointReviewState | null,
   runStatus: RunStatus,
+  diffFailed: boolean,
 ): { style: StatusStyle; running: boolean } {
+  if (diffFailed) return { style: DIFF_FAILED_STYLE, running: false };
   if (state !== null) return { style: reviewStateStyle(state), running: false };
   const ended = runStatus === "aborted" || runStatus === "empty";
   return {
@@ -133,13 +147,14 @@ export const StepCard = memo(function StepCard({
   const inFlight = useIsInFlight(checkpoint.id);
   const thumb = useAuthedImage(checkpoint.imageKey);
   const { id, name, state, decision } = checkpoint;
-  const { style, running } = lookOf(state, run.status);
+  const diffFailed = checkpoint.diffFailedAt != null;
+  const { style, running } = lookOf(state, run.status, diffFailed);
   const StatusIcon = style.icon;
 
   const header = deriveReviewHeader({
     status: run.status,
     statusOverride: run.statusOverride,
-    step: { state, hasDecision: decision !== null },
+    step: { state, hasDecision: decision !== null, diffFailed },
     // Only whether some step has no verdict reaches the derivation.
     stepStates: run.undiffed ? [null] : [],
     stepInFlight: inFlight,
@@ -298,6 +313,29 @@ export const StepCard = memo(function StepCard({
             <div className="h-full w-full bg-[repeating-linear-gradient(45deg,var(--edge),var(--edge)_4px,transparent_4px,transparent_8px)]" />
           )}
         </button>
+        {diffFailed && (
+          <div
+            data-testid={`step-diff-failed-${id}`}
+            className="flex items-start gap-2 border-t border-status-failed/25 bg-status-failed/10 px-2 py-1.5"
+          >
+            <p className="min-w-0 flex-1 text-xs text-fg-secondary">
+              <span className="block font-medium text-status-failed-text">
+                {DIFF_FAILED_STYLE.label}
+              </span>
+              {diffErrorCopy(checkpoint.diffError ?? "")}
+            </p>
+            {canReview && (
+              <RetryDiffButton
+                runId={runId}
+                checkpointId={id}
+                name={name}
+                tabIndex={innerTab}
+                // The retry takes the button away; the card keeps the focus.
+                onFocusLost={() => openButton.current?.focus()}
+              />
+            )}
+          </div>
+        )}
         <div
           ref={toolbar}
           data-testid={`step-toolbar-${id}`}
@@ -455,3 +493,48 @@ export const StepCard = memo(function StepCard({
     </div>
   );
 });
+
+/**
+ * Retry diff on a failed step's card (spec 2026-10-23 §10). Its own component,
+ * so the call it makes (one `useRetryDiff` per button, which subscribes to no
+ * other card) exists only on a card that has a failure to retry. While the
+ * retry is out the button stays, busy and inert; the list is then read again
+ * and the card reads as being diffed.
+ */
+function RetryDiffButton({
+  runId,
+  checkpointId,
+  name,
+  tabIndex,
+  onFocusLost,
+}: {
+  runId: string;
+  checkpointId: string;
+  name: string;
+  tabIndex: number | undefined;
+  /** Where the focus goes when the button goes with the focus on it. */
+  onFocusLost: () => void;
+}) {
+  const { retry, pending } = useRetryDiff(runId);
+  const button = useRef<HTMLButtonElement>(null);
+  useFocusHandoff(button, onFocusLost);
+  return (
+    <Button
+      ref={button}
+      type="button"
+      variant="secondary"
+      aria-label={`Retry diff for ${name}`}
+      aria-disabled={pending || undefined}
+      aria-busy={pending || undefined}
+      tabIndex={tabIndex}
+      data-testid={`step-retry-diff-${checkpointId}`}
+      className="h-7 shrink-0 px-2 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!pending) void retry(checkpointId);
+      }}
+    >
+      Retry diff
+    </Button>
+  );
+}

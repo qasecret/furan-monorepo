@@ -4,6 +4,7 @@ import {
   cleanup,
   fireEvent,
   render as renderInDom,
+  waitFor,
   within,
   type RenderOptions,
 } from "@testing-library/react";
@@ -41,6 +42,7 @@ const {
   realReview,
   server,
   mutationFor,
+  retryDiffSpy,
 } = vi.hoisted(() => {
   /** A procedure's utils, as the viewer, the loop and the review hook use them. */
   const procedure = () => ({
@@ -86,6 +88,8 @@ const {
     // The ignore-region Save's wire input, so a test can see which step's
     // variation it targets.
     setIgnoreAreasSpy: vi.fn(),
+    // `runs.retryDiff`, as the viewer's Retry diff calls it.
+    retryDiffSpy: vi.fn(async (_input: unknown) => ({ status: "running" })),
     reviewSpies: {
       decide: vi.fn(),
       undo: vi.fn(),
@@ -376,6 +380,12 @@ vi.mock("../src/lib/trpc", () => {
         // The review hook's cache patch reads the runs lists by key.
         list: { _def: () => ({ path: ["runs", "list"] }) },
         overrideStatus: { useMutation: noopMutation },
+        retryDiff: {
+          useMutation: () => ({
+            mutateAsync: retryDiffSpy,
+            isPending: false,
+          }),
+        },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: {
           useMutation: () => ({ mutate: setIgnoreAreasSpy, isPending: false }),
@@ -2285,6 +2295,27 @@ describe("DiffViewer: the review loop", () => {
     );
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("a step whose diff failed is pending for the loop: no done card, and J moves on from it", () => {
+    mockCheckpoints = {
+      items: [
+        {
+          ...stepFixture("c1", "unresolved"),
+          diffFailedAt: "2026-10-24T08:00:00.000Z",
+          diffError: "engine_error",
+        },
+        stepFixture("c2", "unresolved"),
+      ],
+    };
+    nextQuery.data = intoOtherRun();
+    const r = renderViewer();
+    // The step needs a reviewer (once it is retried): the loop stops on it.
+    expect(r.queryByTestId("batch-done-card")).toBeNull();
+    expect(r.getByTestId("stage-diff-failed")).toBeDefined();
+    press("J");
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
   });
 
   test("R25: Mark as Bug in the editor puts its note in this run's draft and says so; another run's comment box stays empty", () => {
@@ -4766,5 +4797,147 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
       press("5");
       expect(JSON.parse(stored() ?? "{}").mode).toBe("diff");
     });
+  });
+});
+
+describe("DiffViewer: a step whose diff failed (spec 2026-10-23 §10)", () => {
+  const REASON = "The diff didn't finish in time.";
+  /** A step whose diff failed for good, as `runs.listCheckpoints` says it. */
+  const failedStep = (id: string, over: Partial<StepFixture> = {}) => ({
+    ...stepFixture(id, "unresolved", over),
+    diffFailedAt: "2026-10-24T08:00:00.000Z",
+    diffError: "timeout",
+  });
+  const retryCommand = () =>
+    resolveCommands().find(({ command }) => command.id === "viewer.retryDiff");
+  /** Whether the palette would offer Retry diff now. */
+  const retryOffered = () => {
+    const resolved = retryCommand();
+    return resolved?.command.enabled?.(resolved.ctx()) ?? false;
+  };
+  const renderStep = (id = "cp-1") =>
+    render(<DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId={id} />);
+
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [failedStep("cp-1")] };
+    resetReviewSpies();
+    retryDiffSpy.mockReset();
+    retryDiffSpy.mockResolvedValue({ status: "running" });
+  });
+  afterEach(() => cleanup());
+
+  test("the stage says why, and an editor can retry from it", () => {
+    const r = renderStep();
+    const card = r.getByTestId("stage-diff-failed");
+    expect(card.textContent).toContain(`This step's diff failed. ${REASON}`);
+    fireEvent.click(within(card).getByRole("button", { name: "Retry diff" }));
+    expect(retryDiffSpy).toHaveBeenCalledOnce();
+    expect(retryDiffSpy).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
+    });
+  });
+
+  test("a guest sees the state, with no way to retry", () => {
+    keyboard.role = "guest";
+    const r = renderStep();
+    expect(r.getByTestId("stage-diff-failed").textContent).toContain(REASON);
+    expect(r.queryByRole("button", { name: "Retry diff" })).toBeNull();
+    expect(retryCommand()).toBeUndefined();
+  });
+
+  test("Approve, Reject and Mark as Bug are disabled with Retry the diff first, keys included", () => {
+    const r = renderStep();
+    for (const id of [
+      "approve-checkpoint-button",
+      "reject-button",
+      "mark-as-bug-button",
+    ]) {
+      const button = r.getByTestId(id);
+      expect(button.getAttribute("aria-disabled"), id).toBe("true");
+      const reason = document.getElementById(
+        button.getAttribute("aria-describedby")!,
+      );
+      expect(reason?.textContent, id).toBe("Retry the diff first");
+      fireEvent.click(button);
+    }
+    press("A");
+    press("R");
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
+  test("the palette offers Retry diff on the failed step only, and it retries that step", () => {
+    renderStep();
+    expect(retryOffered()).toBe(true);
+    // No key is bound to it.
+    expect(retryCommand()?.command.keys ?? []).toEqual([]);
+    act(() => {
+      void retryCommand()?.command.run(retryCommand()!.ctx());
+    });
+    expect(retryDiffSpy).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
+    });
+    cleanup();
+
+    // A step whose diff did not fail has nothing to retry.
+    mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+    renderStep();
+    expect(retryOffered()).toBe(false);
+  });
+
+  test("while the retry is out the stage's button is busy and the palette action waits", async () => {
+    let settle!: () => void;
+    retryDiffSpy.mockReturnValue(
+      new Promise<{ status: string }>((resolve) => {
+        settle = () => resolve({ status: "running" });
+      }),
+    );
+    const r = renderStep();
+    const button = r.getByRole("button", { name: "Retry diff" });
+    fireEvent.click(button);
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+    expect(retryOffered()).toBe(false);
+    // The step list, the run and the run lists are read again once it lands.
+    await act(async () => settle());
+    expect(utilsMock.runs.listCheckpoints.invalidate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+    });
+    expect(utilsMock.runs.getById.invalidate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+    });
+    expect(utilsMock.runs.list.invalidate).toHaveBeenCalled();
+  });
+
+  test("the step list is read again when a step settles, so a retried step leaves 'being diffed'", () => {
+    renderStep();
+    const es = StubEventSource.instances.at(-1)!;
+    const list = utilsMock.runs.listCheckpoints.invalidate;
+
+    act(() => es.emit({ type: "capture.started", runId: RUN_ID }));
+    expect(list).not.toHaveBeenCalled();
+
+    act(() =>
+      es.emit({
+        type: "run.checkpoint_diffed",
+        runId: RUN_ID,
+        screenshotId: "cp-1",
+        verdict: "unresolved",
+        failed: true,
+      }),
+    );
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(list).toHaveBeenLastCalledWith({ runId: RUN_ID });
+  });
+
+  test("a failed step shows no 'no changes' message in Diff", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "diff" },
+    });
+    const r = renderStep();
+    expect(r.getByTestId("stage-diff-failed")).toBeDefined();
+    expect(r.queryByText(/No pixel changes/)).toBeNull();
   });
 });
