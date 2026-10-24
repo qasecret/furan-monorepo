@@ -8,11 +8,13 @@ read, what they mean, and what to do about each cause.
 **One job diffs one step.** Each checkpoint (step) a run uploads queues one
 job for that step alone, and a re-diff (an ignore-region or threshold edit, an
 undo, a branch merge, a retry) queues one job per step it affects. A job
-carries the step's version, which is bumped each time the step is queued, and
-its id is `<step id>-g<version>`. When the job commits, it re-checks the
-version under the run's and the step's locks: if the step has been queued
-again since, the job is **stale** and writes nothing (`diff_step_stale`), and
-the newer job sets the result. A run of N steps is N jobs, and it stays
+carries the step's version, which is bumped each time the step needs a new
+diff (an upload, an edit, an undo, a merge or a retry), and its id is
+`<step id>-g<version>`. The reconciler (below) re-adds a lost job at the same
+version, under the same id. When the job commits, it re-checks the version
+under the run's and the step's locks: if the step has a newer version by
+then, the job is **stale** and writes nothing (`diff_step_stale`), and the
+newer version's job sets the result. A run of N steps is N jobs, and it stays
 `running` until each of its steps has a result.
 
 > The worker serves `/livez`, `/readyz` and `/metrics` on port 3200 (`PORT`).

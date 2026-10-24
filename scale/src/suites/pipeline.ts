@@ -52,6 +52,7 @@ import {
   raceLosses,
   raceSchedule,
   ratePerSec,
+  rediffShortfall,
   singleStepChanges,
   statusSequence,
   stepDifferences,
@@ -88,6 +89,7 @@ export {
   raceLosses,
   raceSchedule,
   ratePerSec,
+  rediffShortfall,
   runCompletedStatus,
   SINGLE_STEP_RUNS,
   singleStepChanges,
@@ -892,19 +894,19 @@ async function measureRace(
       throw trpcFailure("runs.setDiffThresholdOverride", rediff);
     }
     await drainFully(d);
+    const quiet = await snapshotRun(d.stack.db, run.runId);
     // The ground truth must not go vacuous: the re-diff has to have run, one
     // committed job per paired step.
     const paired = pairedSteps(raced.steps);
     const rediffed = (await checkpointDiffs(d)) - diffsBefore;
-    if (paired === 0 || rediffed < paired) {
-      throw new Error(
-        `the ground-truth re-diff did not run: ${rediffed} checkpoint diffs for ${paired} paired steps (of ${raced.steps.length})`,
-      );
-    }
-    const differences = stepDifferences(
-      raced,
-      await snapshotRun(d.stack.db, run.runId),
-    );
+    const shortfall = rediffShortfall({
+      steps: raced.steps.length,
+      paired,
+      rediffed,
+      failedAfter: quiet.steps.filter((s) => s.failed === true).length,
+    });
+    if (shortfall !== undefined) throw new Error(shortfall);
+    const differences = stepDifferences(raced, quiet);
 
     return {
       id: "P5",

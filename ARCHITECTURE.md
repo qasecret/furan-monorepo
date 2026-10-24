@@ -45,11 +45,11 @@ interface), `telemetry` (logging, tracing, metrics), `diff-engine`,
    Postgres.
 3. Each upload queues a **diff job** on Redis for its own checkpoint (a
    **step**), so a run of N steps is diffed N times, once per step. A job
-   names the step and the step's **version**, which is bumped every time the
-   step is queued (its id is `<step id>-g<version>`). Anything that needs a
-   diff again (an ignore-region or threshold edit, an undo, a branch merge, a
-   retry) queues only the steps it affects. The run stays `running` until
-   every step has a result.
+   names the step and the step's **version** (its id is
+   `<step id>-g<version>`). The version is bumped each time the step needs a
+   new diff: its upload, an ignore-region or threshold edit, an undo, a branch
+   merge or a retry, each of which queues only the steps it affects. The run
+   stays `running` until every step has a result.
 4. The **diff-worker** runs one job per step. It finds the baseline for the
    step's **variation** — the test name plus its environment (browser,
    viewport, OS, device) — on the run's branch, falling back to the pull
@@ -58,10 +58,10 @@ interface), `telemetry` (logging, tracing, metrics), `diff-engine`,
    changed regions, the step's verdict (`passed`, `unresolved`, or `new` when
    no baseline exists yet), its diff % and an optional Visual-AI explanation.
    The commit locks the run, then the step, and **re-checks the version**: a
-   job whose step was queued again in the meantime is stale and writes
-   nothing, so overlapping jobs never duplicate or lose a step's regions. In
-   the same transaction the run's totals (diff %, changed pixels, baseline
-   source) and its status are recomputed from its steps.
+   job whose step has been given a newer version in the meantime is stale and
+   writes nothing, so overlapping jobs never duplicate or lose a step's
+   regions. In the same transaction the run's totals (diff %, changed pixels,
+   baseline source) and its status are recomputed from its steps.
    - **A failed diff fails only its step.** When a step's job fails its last
      attempt, the step is marked `unresolved` with a reason code (such as
      `image_unreadable`) and shows "Diff failed" in the dashboard, where an
@@ -69,16 +69,20 @@ interface), `telemetry` (logging, tracing, metrics), `diff-engine`,
      reports a failure, never a pass.
    - **A reconciler** in each diff-worker looks every 30 s for steps that
      have waited more than 10 minutes for a result. A step whose job is gone
-     is queued again; after 3 such re-queues it fails with `timeout`. A step
-     is never marked passed for waiting too long. See
+     is queued again at the same version, under the same job id; after 3
+     such re-queues it fails with `timeout`. A step is never marked passed
+     for waiting too long. See
      [`docs/runbooks/diff-queue-backlog.md`](docs/runbooks/diff-queue-backlog.md).
 6. Updates are published over Redis. After every step the worker publishes
    `run.checkpoint_diffed`; only when that step changed the run's status does
    it also publish `run.completed`, with the run's totals, and the project's
    `testRun_updated` and `build_updated`. Open dashboards receive them as
-   server-sent events. The integrations service acts on `run.completed`: the
-   GitHub App updates the commit status, Slack posts once the status is
-   final, and outbound webhooks subscribed to `run.completed` receive it.
+   server-sent events. The integrations service acts on `run.completed`:
+   Slack posts once the status is final, and outbound webhooks subscribed to
+   `run.completed` receive it. The GitHub App's commit status and PR comment
+   need the event to carry the repository fields (installation, owner,
+   repository, commit and pull request); the diff-worker's `run.completed`
+   does not carry them today, so the GitHub App skips it.
 7. A reviewer approves (the candidate becomes the new baseline) or rejects.
    The first baseline for a new variation is approved by a person by default.
 

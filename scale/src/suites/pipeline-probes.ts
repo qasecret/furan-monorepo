@@ -6,7 +6,7 @@ import { createQueue, type Redis } from "@furan/queue";
 import { QUEUE_PREFIX } from "../stack/constants.js";
 import { releaseRedis } from "../stack/worker.js";
 
-import { runCompletedStatus } from "./pipeline-math.js";
+import { parseJsonObject, runCompletedStatus } from "./pipeline-math.js";
 
 /**
  * What the pipeline suite watches while it drives the stack: one run's rows
@@ -319,17 +319,6 @@ async function subscribeChannel(
   return close;
 }
 
-function parseJson(message: string): Record<string, unknown> | undefined {
-  try {
-    const parsed: unknown = JSON.parse(message);
-    return parsed !== null && typeof parsed === "object"
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export interface ProjectEvents {
   /** Events named `event` whose `data.id` is `id`, received so far. */
   count(event: string, id: string): number;
@@ -350,7 +339,7 @@ export async function subscribeProjectEvents(
     redis,
     `project:${projectId}:events:raw`,
     (message) => {
-      const parsed = parseJson(message);
+      const parsed = parseJsonObject(message);
       if (typeof parsed?.event !== "string") return;
       const data = parsed.data as { id?: unknown } | null | undefined;
       const k = key(parsed.event, typeof data?.id === "string" ? data.id : "");

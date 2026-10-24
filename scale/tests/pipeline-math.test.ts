@@ -14,9 +14,11 @@ import {
   mixSeed,
   overlappingUploads,
   pairedSteps,
+  parseJsonObject,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  rediffShortfall,
   runCompletedStatus,
   singleStepChanges,
   statusSequence,
@@ -320,6 +322,12 @@ describe("runCompletedStatus (R24: the statuses the run channel announces)", () 
     ).toBeUndefined();
   });
 
+  it("ignores a run.completed whose status is not a string", () => {
+    expect(
+      runCompletedStatus(JSON.stringify({ type: "run.completed", status: 3 })),
+    ).toBeUndefined();
+  });
+
   it("ignores anything that is not a JSON object", () => {
     expect(runCompletedStatus("not json")).toBeUndefined();
     expect(runCompletedStatus("null")).toBeUndefined();
@@ -412,6 +420,38 @@ describe("pairedSteps", () => {
   });
 });
 
+describe("rediffShortfall", () => {
+  it("is undefined once every paired step added a checkpoint diff", () => {
+    expect(
+      rediffShortfall({ steps: 10, paired: 9, rediffed: 9, failedAfter: 0 }),
+    ).toBeUndefined();
+  });
+
+  it("says the re-diff did not run in full when diffs are missing", () => {
+    expect(
+      rediffShortfall({ steps: 10, paired: 10, rediffed: 7, failedAfter: 0 }),
+    ).toBe(
+      "the ground-truth re-diff did not run in full: 7 checkpoint diffs for 10 paired steps (of 10)",
+    );
+  });
+
+  it("stays strict when a step's diff failed again, and names the failed steps", () => {
+    expect(
+      rediffShortfall({ steps: 10, paired: 10, rediffed: 9, failedAfter: 1 }),
+    ).toBe(
+      "the ground-truth re-diff did not run in full: 9 checkpoint diffs for 10 paired steps (of 10); 1 steps read as failed after it, and a failed diff observes no checkpoint",
+    );
+  });
+
+  it("refuses a run with no paired step: the ground truth would be vacuous", () => {
+    expect(
+      rediffShortfall({ steps: 3, paired: 0, rediffed: 0, failedAfter: 0 }),
+    ).toBe(
+      "the ground-truth re-diff did not run in full: 0 checkpoint diffs for 0 paired steps (of 3)",
+    );
+  });
+});
+
 describe("stepDifferences", () => {
   const steps = [
     { id: "s1", verdict: "unresolved" },
@@ -471,5 +511,22 @@ describe("stepDifferences", () => {
         { steps, regions },
       ),
     ).toBe(0);
+  });
+});
+
+describe("parseJsonObject", () => {
+  it("returns a JSON object as it is", () => {
+    expect(
+      parseJsonObject('{"event":"testRun_updated","data":{"id":"r1"}}'),
+    ).toEqual({
+      event: "testRun_updated",
+      data: { id: "r1" },
+    });
+  });
+
+  it("is undefined for anything that is not JSON or not an object", () => {
+    expect(parseJsonObject("not json")).toBeUndefined();
+    expect(parseJsonObject("null")).toBeUndefined();
+    expect(parseJsonObject("42")).toBeUndefined();
   });
 });

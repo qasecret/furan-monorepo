@@ -14,9 +14,9 @@ import {
 
 /**
  * P1: checkpoint diffs per step uploaded. Linear diff work is exactly 1: each
- * upload queues one job for its own step, a committed job observes 1 in
- * `furan_diff_job_checkpoints` and a stale one (a newer version of its step
- * was queued) observes 0, so a re-diff never counts twice.
+ * upload queues one job for its own step, and a committed job observes 1 in
+ * `furan_diff_job_checkpoints`. A superseded (stale) job, whose step got a
+ * newer version, observes 0.
  */
 export function amplification(diffs: number, steps: number): number {
   if (!(steps > 0))
@@ -154,6 +154,32 @@ export function raceLosses(
     ).length,
     failedSteps: steps.filter((s) => s.failed === true).length,
   };
+}
+
+/**
+ * P5's check that its quiet re-diff ran in full: undefined when it did, else
+ * why not. The run must have paired steps to re-diff (`pairedSteps`), and the
+ * re-diff must add at least one checkpoint diff per paired step. A step whose
+ * diff fails again adds none (a failed attempt observes no checkpoint): the
+ * check stays strict, and the message names the steps that read as failed
+ * afterwards.
+ */
+export function rediffShortfall(r: {
+  /** The run's steps. */
+  steps: number;
+  /** Its paired steps, which the re-diff queued. */
+  paired: number;
+  /** Checkpoint diffs the re-diff added. */
+  rediffed: number;
+  /** Steps whose diff reads as failed after the re-diff. */
+  failedAfter: number;
+}): string | undefined {
+  if (r.paired > 0 && r.rediffed >= r.paired) return undefined;
+  const failed =
+    r.failedAfter > 0
+      ? `; ${r.failedAfter} steps read as failed after it, and a failed diff observes no checkpoint`
+      : "";
+  return `the ground-truth re-diff did not run in full: ${r.rediffed} checkpoint diffs for ${r.paired} paired steps (of ${r.steps})${failed}`;
 }
 
 /**
@@ -311,17 +337,27 @@ export function statusSequence(
  * - anything else, or a message that is not a JSON object.
  */
 export function runCompletedStatus(message: string): string | undefined {
-  let parsed: unknown;
+  const parsed = parseJsonObject(message);
+  return parsed?.type === "run.completed" && typeof parsed.status === "string"
+    ? parsed.status
+    : undefined;
+}
+
+/**
+ * A pub/sub message as a JSON object, or undefined when it is not JSON or not
+ * an object (the project and run channels carry JSON objects only).
+ */
+export function parseJsonObject(
+  message: string,
+): Record<string, unknown> | undefined {
   try {
-    parsed = JSON.parse(message);
+    const parsed: unknown = JSON.parse(message);
+    return parsed !== null && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : undefined;
   } catch {
     return undefined;
   }
-  if (parsed === null || typeof parsed !== "object") return undefined;
-  const { type, status } = parsed as { type?: unknown; status?: unknown };
-  return type === "run.completed" && typeof status === "string"
-    ? status
-    : undefined;
 }
 
 /** A status sequence for a note, at most `max` statuses before the ellipsis. */
