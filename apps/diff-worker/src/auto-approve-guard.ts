@@ -35,8 +35,8 @@ export type AutoApproveBaselineBlock =
  * Runs inside a step's commit (`commitStep`), which already holds the run's
  * row and the step's (its run and step locks), and first locks the variation
  * `FOR NO KEY UPDATE`: runs before variations, as every reviewer path locks
- * them (R8), so a concurrent approve of this run or of another run's capture
- * of this variation is either visible here or waits for this write.
+ * them, so a concurrent approve of this run or of another run's capture of
+ * this variation is either visible here or waits for this write.
  */
 export async function autoApproveBaselineBlock(
   tx: DB,

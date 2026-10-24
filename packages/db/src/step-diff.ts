@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { DB } from "./client.js";
 import { recomputeRunStatus, type Tx } from "./review-status.js";
@@ -88,6 +88,46 @@ export async function bumpStepGenerations(
 }
 
 /**
+ * Heals an abort the old whole-run pipeline wrote. A whole-run job that failed
+ * its final attempt wrote `aborted`, a lifecycle state the rollup keeps, and
+ * flagged it as the pipeline's (`aborted_by_diff`). Once every step of the run
+ * has a verdict, that abort is reset to the lifecycle value `running`, so the
+ * `recomputeRunStatus` that follows yields the run's real rollup. An SDK
+ * `/abort` or a capture-worker abort leaves the flag false, and stays.
+ *
+ * Call it in the transaction that settled a step (a diff commit, or
+ * `markStepDiffFailed`), after the step's verdict is written and before the
+ * run status is recomputed, under the run's row lock (`FOR NO KEY UPDATE`,
+ * re-taken here, a no-op when held): a concurrent abort or upload is then
+ * either seen here or waits for this commit. Returns true when it healed the
+ * run.
+ */
+export async function healPipelineAbort(
+  tx: DB | Tx,
+  runId: string,
+): Promise<boolean> {
+  const [run] = await tx
+    .select({ status: testRuns.status, abortedByDiff: testRuns.abortedByDiff })
+    .from(testRuns)
+    .where(eq(testRuns.id, runId))
+    .for("no key update");
+  if (run?.status !== "aborted" || !run.abortedByDiff) return false;
+
+  const [pending] = await tx
+    .select({ id: screenshots.id })
+    .from(screenshots)
+    .where(and(eq(screenshots.runId, runId), isNull(screenshots.verdict)))
+    .limit(1);
+  if (pending) return false;
+
+  await tx
+    .update(testRuns)
+    .set({ status: "running", abortedByDiff: false })
+    .where(eq(testRuns.id, runId));
+  return true;
+}
+
+/**
  * Fails ONE step whose diff cannot succeed (a job's final attempt, or the
  * reconciler giving up), and nothing else: the run is never aborted for it.
  *
@@ -110,8 +150,10 @@ export async function bumpStepGenerations(
  *    `pixel_mismatch_count`, `baseline_source`, `vlm_description`,
  *    `diff_signature`, `diff_image_key`, `rule_resolved`) are cleared: they no
  *    longer describe its image, so the step adds nothing to the run totals;
- *  - the run totals and then the run status are recomputed, and the status
- *    change is returned for the caller's events.
+ *  - the run totals are recomputed; an abort the old whole-run pipeline
+ *    wrote heals if the step was the run's last one without a verdict
+ *    (`healPipelineAbort`, `healed`); then the run status is recomputed, and
+ *    the status change is returned for the caller's events.
  *
  * `tx` is the caller's transaction: a Drizzle transaction, or the scoped
  * handle `withProjectScope` passes (typed `DB`).
@@ -128,6 +170,8 @@ export async function markStepDiffFailed(
 ): Promise<{
   applied: boolean;
   rollup?: { before: RunStatus; after: RunStatus };
+  /** True when the failure healed an abort the old pipeline wrote. */
+  healed?: boolean;
 }> {
   const { runId, stepId, generation, code } = args;
 
@@ -172,6 +216,9 @@ export async function markStepDiffFailed(
   await tx.delete(diffRegions).where(eq(diffRegions.screenshotId, stepId));
 
   await recomputeRunTotals(tx, runId);
+  // A failed step has a verdict too: when it was the run's last one without,
+  // an abort the old pipeline wrote heals, as after a diff commit.
+  const healed = await healPipelineAbort(tx, runId);
   const { before, after } = await recomputeRunStatus(tx, runId);
-  return { applied: true, rollup: { before, after } };
+  return { applied: true, rollup: { before, after }, healed };
 }
