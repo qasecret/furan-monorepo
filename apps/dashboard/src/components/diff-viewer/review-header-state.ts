@@ -46,6 +46,13 @@ export interface ReviewHeaderInput {
     | undefined;
   /** The review state of every step loaded for the run; undefined until loaded. */
   stepStates: ReadonlyArray<CheckpointReviewState | null> | undefined;
+  /**
+   * Whether each of those steps has a failed diff (`diffFailedAt`), by
+   * index. Approve pending steps does not count them: the server skips them
+   * (a step with no result has nothing to approve), though they stay pending
+   * for the review loop. Absent: none failed.
+   */
+  stepDiffFailed?: ReadonlyArray<boolean>;
   /** The selected step has a decision on its way to the server. */
   stepInFlight: boolean;
   /** Some step of the run has a decision on its way to the server. */
@@ -66,7 +73,10 @@ export interface ReviewHeader {
   /** The selected step may be approved / rejected right now. */
   canApprove: boolean;
   canReject: boolean;
-  /** How many steps of the run still need a reviewer. */
+  /**
+   * How many steps of the run Approve pending steps would act on: those that
+   * still need a reviewer, less the ones whose diff failed.
+   */
   pendingSteps: number;
   /** Approve pending steps is available: some are pending, none in flight. */
   canApprovePendingSteps: boolean;
@@ -155,7 +165,9 @@ export function deriveReviewHeader(input: ReviewHeaderInput): ReviewHeader {
   const reviewable = !overridden && !blocked;
   const actionable =
     reviewable && step !== undefined && !input.stepInFlight && !diffFailed;
-  const pendingSteps = (stepStates ?? []).filter(isPendingState).length;
+  const pendingSteps = (stepStates ?? []).filter(
+    (s, i) => isPendingState(s) && input.stepDiffFailed?.[i] !== true,
+  ).length;
 
   return {
     view,

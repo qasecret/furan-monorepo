@@ -64,6 +64,32 @@ describe("HistoryTable", () => {
     expect(screen.queryByTestId("history-row-promotion-r1")).toBeNull();
   });
 
+  test("shows each variation's own diff % and pixel count, not a shared run total", () => {
+    render(
+      <HistoryTable
+        projectId="p1"
+        items={[
+          baseItem({ id: "r1", diffPercent: 0.5, pixelMisMatchCount: 1200 }),
+          baseItem({ id: "r2", diffPercent: 12.25, pixelMisMatchCount: 30 }),
+          // A step with no result of its own (failed, or still diffing).
+          baseItem({ id: "r3", diffPercent: null, pixelMisMatchCount: null }),
+          baseItem({ id: "r4", diffPercent: 0, pixelMisMatchCount: 0 }),
+        ]}
+        nextCursor={null}
+        onLoadMore={() => {}}
+      />,
+    );
+    const cells = (id: string) =>
+      Array.from(
+        screen.getByTestId(`history-row-${id}`).querySelectorAll("td"),
+      ).map((td) => td.textContent);
+    // Columns: when, status, branch, diff %, pixels.
+    expect(cells("r1").slice(3, 5)).toEqual(["0.50%", "1,200"]);
+    expect(cells("r2").slice(3, 5)).toEqual(["12.25%", "30"]);
+    expect(cells("r3").slice(3, 5)).toEqual(["—", "—"]);
+    expect(cells("r4").slice(3, 5)).toEqual(["0.00%", "0"]);
+  });
+
   test("#N opens /builds/:buildId", () => {
     render(
       <HistoryTable

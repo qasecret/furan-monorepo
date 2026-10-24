@@ -15,7 +15,7 @@ import {
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { BatchDoneCard } from "./BatchDoneCard";
-import type { CheckpointSummary } from "./checkpoint-nav";
+import { summarizeCheckpoints } from "./checkpoint-nav";
 import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
@@ -33,6 +33,7 @@ import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
 import { StaleStepCallout } from "./StaleStepCallout";
 import { stepDiffKey } from "./step-diff-key";
+import { stepNumber } from "./step-number";
 import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
@@ -170,21 +171,21 @@ export function DiffViewer({
   // ADR-038: fetch the checkpoint list for the rail
   const checkpointsQuery = trpc.runs.listCheckpoints.useQuery({ runId });
 
+  const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+  // The run's diff % is its worst step's: the step on screen shows its own
+  // (spec §9), and the run's only for a step from before per-step diffs.
+  const runDiffPercent =
+    (data as { diffPercent?: number | null } | undefined)?.diffPercent ?? null;
+
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
   // `state` is the review state (new / passed / unresolved / approved /
-  // rejected), null until the step has been diffed.
-  // diffPercent stays null until diff_regions gains a screenshot_id column
-  // (deferred — see runs.ts listCheckpoints comment).
-  const checkpointSummaries: CheckpointSummary[] = useMemo(() => {
-    return (checkpointsQuery.data?.items ?? []).map((item) => ({
-      id: item.id,
-      name: item.name ?? item.id,
-      state: item.state,
-      diffPercent: null,
-    }));
-  }, [checkpointsQuery.data]);
-
-  const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+  // rejected), null until the step has been diffed; `diffPercent` is the
+  // step's own.
+  const checkpointSummaries = useMemo(
+    () =>
+      summarizeCheckpoints(checkpointsQuery.data?.items ?? [], runDiffPercent),
+    [checkpointsQuery.data, runDiffPercent],
+  );
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
   // Enabled only after `data` lands so we don't fire with an empty id.
@@ -405,12 +406,11 @@ export function DiffViewer({
   // T11: SSE — invalidate runs.getById on terminal worker events so the
   // viewer picks up freshly written diff regions, baselineSource, etc. A step
   // settling (its result, or its diff failing for good) also moves the step
-  // list, which holds each step's review state and failure: a retried step
-  // leaves "being diffed" only through it.
+  // list, which holds each step's review state, numbers and failure: a
+  // retried step leaves "being diffed" only through it.
   const onSseEvent = useCallback(
     (e: RunEvent) => {
       if (
-        e.type === "diff.completed" ||
         e.type === "run.checkpoint_diffed" ||
         e.type === "capture.completed" ||
         e.type === "run.completed"
@@ -769,9 +769,6 @@ export function DiffViewer({
   // INFO sidebar metadata (reference TestStep): test details, environment,
   // execution. Environment lives per-checkpoint on the candidate screenshot
   // (ADR-038); "Run by" + app name come from the build/project siblings.
-  const selectedCheckpointItem = checkpointsQuery.data?.items?.find(
-    (c) => c.id === selectedCheckpointId,
-  );
   const cand = candidateScreenshot as {
     os?: string | null;
     browser?: string | null;
@@ -790,7 +787,7 @@ export function DiffViewer({
   const stepLabel =
     cpIndex >= 0
       ? `${cpIndex + 1}/${checkpointSummaries.length} ${
-          selectedCheckpointItem?.name ?? ""
+          stepItem?.name ?? ""
         }`.trim()
       : null;
   const runByName =
@@ -822,8 +819,6 @@ export function DiffViewer({
   // evidence (not an accessibility finding or an audit row), or a diff
   // percent above 0. The run's percent is its worst step's, so it is this
   // step's only on a run of one.
-  const runDiffPercent =
-    (data as { diffPercent?: number | null }).diffPercent ?? null;
   const stepHasDiff =
     regions.some(isPixelDiffRegion) ||
     (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
@@ -1069,12 +1064,18 @@ export function DiffViewer({
                     durationMs != null ? formatDuration(durationMs) : null
                   }
                   runBy={runByName}
-                  pixelDiffPercent={runDiffPercent}
+                  pixelDiffPercent={stepNumber(
+                    stepItem,
+                    "diffPercent",
+                    runDiffPercent,
+                  )}
                   regions={regions}
-                  vlmDescription={data?.vlmDescription ?? null}
-                  testVariationId={
-                    selectedCheckpointItem?.testVariationId ?? null
-                  }
+                  vlmDescription={stepNumber(
+                    stepItem,
+                    "vlmDescription",
+                    data?.vlmDescription,
+                  )}
+                  testVariationId={stepItem?.testVariationId ?? null}
                   currentBaselineKey={data.baselineName ?? null}
                   runId={runId}
                 />

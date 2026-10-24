@@ -55,9 +55,10 @@ function fractionOf(pct: number): number {
 
 /**
  * In-viewer per-run diff-sensitivity slider. Mutates
- * `runs.setDiffThresholdOverride` and re-enqueues a diff job; the diff
- * viewer's SSE consumer (`useRunEvents`) refetches on `diff.completed` so
- * the new result lands automatically without a manual reload.
+ * `runs.setDiffThresholdOverride` and re-enqueues the run's steps for a diff;
+ * the diff viewer's SSE consumer (`useRunEvents`) refetches on
+ * `run.checkpoint_diffed` as each step settles, so the new result lands
+ * automatically without a manual reload.
  *
  * UX choice: the slider edits a local pending value; the mutation only
  * fires on Apply (or a preset click). This prevents a slider-drag from

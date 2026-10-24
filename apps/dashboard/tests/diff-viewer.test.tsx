@@ -315,6 +315,7 @@ interface MockData {
   statusOverride?: "passed" | "failed" | null;
   checkpointContexts?: Record<string, unknown>;
   diffPercent?: number | null;
+  vlmDescription?: string | null;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -687,6 +688,17 @@ describe("DiffViewer", () => {
 
     act(() => es.emit({ type: "run.completed", runId }));
     expect(getById).toHaveBeenCalledTimes(2);
+  });
+
+  test("diff.started and diff.completed are retired: the worker no longer sends them, and the viewer does not wait on them", () => {
+    const runId = "00000000-0000-0000-0000-000000000000";
+    render(<DiffViewer runId={runId} diffId="d1" />);
+    const es = StubEventSource.instances.at(-1)!;
+
+    act(() => es.emit({ type: "diff.started", runId }));
+    act(() => es.emit({ type: "diff.completed", runId, passed: true }));
+    expect(utilsMock.runs.getById.invalidate).not.toHaveBeenCalled();
+    expect(utilsMock.runs.listCheckpoints.invalidate).not.toHaveBeenCalled();
   });
 
   test("clicking a tab sets the mode preference", () => {
@@ -1560,6 +1572,87 @@ describe("DiffViewer", () => {
     mockGetByIdData = { ...defaultMockData, status: "unresolved" as const };
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.queryByTestId("empty-run-card")).toBeNull();
+  });
+
+  describe("a step's own numbers (spec §9, R46)", () => {
+    const RUN = "00000000-0000-0000-0000-000000000000";
+    // The run's numbers are its worst step's: another step's.
+    const WORST = { diffPercent: 9, vlmDescription: "The worst step's text" };
+    /** One step of `runs.listCheckpoints`, diffed once unless a test says. */
+    const item = (over: Record<string, unknown> = {}) => ({
+      id: "c1",
+      name: "Home",
+      state: "unresolved",
+      diffPercent: 1.25,
+      vlmDescription: "This step's text",
+      diffGeneration: 1,
+      ...over,
+    });
+    function openStep(items: unknown[], at = "c1") {
+      mockGetByIdData = { ...defaultMockData, ...WORST };
+      mockCheckpoints = { items };
+      return render(
+        <DiffViewer runId={RUN} projectId="p1" initialCheckpointId={at} />,
+      );
+    }
+    /** What the sidebar's Pixel diff card says. */
+    const pixelDiff = (r: ReturnType<typeof render>) =>
+      within(r.getByTestId("info-stat-cards")).getByText("Pixel diff")
+        .previousElementSibling?.textContent;
+
+    test("the sidebar shows the step's own diff %, not the run's", () => {
+      const r = openStep([
+        item(),
+        item({ id: "c2", name: "Search", diffPercent: 9 }),
+      ]);
+      expect(pixelDiff(r)).toBe("1.25%");
+    });
+
+    test("the sidebar follows the step on screen", () => {
+      const items = [
+        item(),
+        item({ id: "c2", name: "Search", diffPercent: 3.5 }),
+      ];
+      expect(pixelDiff(openStep(items, "c2"))).toBe("3.50%");
+    });
+
+    test("falls back to the run's when the step has none and predates per-step diffs", () => {
+      const r = openStep([item({ diffPercent: null, diffGeneration: 0 })]);
+      expect(pixelDiff(r)).toBe("9.00%");
+    });
+
+    test("a newer step with none shows no value, never the run's", () => {
+      const r = openStep([item({ diffPercent: null, diffGeneration: 1 })]);
+      expect(pixelDiff(r)).toBe("—");
+      expect(r.queryByText("9.00%")).toBeNull();
+    });
+
+    test.each([0, 1])(
+      "a step at 0%% shows 0.00%% (generation %i)",
+      (diffGeneration) => {
+        const r = openStep([item({ diffPercent: 0, diffGeneration })]);
+        expect(pixelDiff(r)).toBe("0.00%");
+      },
+    );
+
+    test("the region list shows the step's description, not the run's", () => {
+      const r = openStep([item()]);
+      const box = r.getByTestId("vlm-description-box");
+      expect(box.textContent).toContain("This step's text");
+      expect(box.textContent).not.toContain("worst step");
+    });
+
+    test("the region list falls back to the run's description for a step that predates per-step diffs", () => {
+      const r = openStep([item({ vlmDescription: null, diffGeneration: 0 })]);
+      expect(r.getByTestId("vlm-description-box").textContent).toContain(
+        "The worst step's text",
+      );
+    });
+
+    test("a newer step with no description shows none, not the run's", () => {
+      const r = openStep([item({ vlmDescription: null, diffGeneration: 2 })]);
+      expect(r.queryByTestId("vlm-description-box")).toBeNull();
+    });
   });
 
   test("the step's details sit in the resizable rail, and t collapses it to the strip", () => {

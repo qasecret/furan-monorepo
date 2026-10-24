@@ -235,6 +235,35 @@ describe("deriveReviewHeader: approve pending steps", () => {
     expect(header.canApprovePendingSteps).toBe(true);
   });
 
+  it("leaves out the pending steps whose diff failed (the server skips them)", () => {
+    const header = deriveReviewHeader(
+      input("unresolved", {
+        stepStates: states("new", "unresolved", "unresolved", "approved"),
+        stepDiffFailed: [false, false, true, false],
+      }),
+    );
+    expect(header.pendingSteps).toBe(2);
+    expect(header.canApprovePendingSteps).toBe(true);
+  });
+
+  it("is off when every pending step failed its diff", () => {
+    const header = deriveReviewHeader(
+      input("unresolved", {
+        stepStates: states("unresolved", "approved"),
+        stepDiffFailed: [true, false],
+      }),
+    );
+    expect(header.pendingSteps).toBe(0);
+    expect(header.canApprovePendingSteps).toBe(false);
+  });
+
+  it("counts every pending step when none is said to have failed", () => {
+    const header = deriveReviewHeader(
+      input("unresolved", { stepStates: states("new", "unresolved") }),
+    );
+    expect(header.pendingSteps).toBe(2);
+  });
+
   it("is off at zero pending", () => {
     const header = deriveReviewHeader(
       input("approved", { stepStates: states("approved", "passed") }),

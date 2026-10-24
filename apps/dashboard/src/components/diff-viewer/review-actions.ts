@@ -83,7 +83,10 @@ export interface ReviewActions {
   newerCapture: NewerCapture | null;
   /** The run's hand-set status, or null when it is computed. */
   statusOverride: RunStatusOverride | null;
-  /** How many steps of the run still need a reviewer. */
+  /**
+   * How many steps Approve pending steps would act on: those that still need
+   * a reviewer, less the ones whose diff failed (the server skips them).
+   */
   pendingSteps: number;
   /** The selected step may be approved / rejected right now. */
   canApprove: boolean;
@@ -195,6 +198,7 @@ export function useReviewActions({
       diffFailed: current.diffFailedAt != null,
     },
     stepStates: items?.map((i) => i.state),
+    stepDiffFailed: items?.map((i) => i.diffFailedAt != null),
     stepInFlight,
     runInFlight: (items ?? []).some((i) => isInFlight(i.id)),
   });
