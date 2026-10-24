@@ -41,13 +41,18 @@ export const decisionSourceSchema = z.enum([
 ]);
 export type DecisionSource = z.infer<typeof decisionSourceSchema>;
 
-/** Why a checkpoint was refused a decision. */
+/**
+ * Why a checkpoint was refused a decision. `diff_failed`: its diff failed for
+ * good (`diff_failed_at` is set), so there is no result to approve or reject
+ * until it is retried (`runs.retryDiff`).
+ */
 export const reviewRefusalReasonSchema = z.enum([
   "not_reviewable",
   "run_overridden",
   "already_decided",
   "nothing_to_approve",
   "not_in_run",
+  "diff_failed",
 ]);
 export type ReviewRefusalReason = z.infer<typeof reviewRefusalReasonSchema>;
 

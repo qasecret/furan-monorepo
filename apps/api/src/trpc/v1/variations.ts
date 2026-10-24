@@ -160,6 +160,12 @@ export const variationsRouter = t.router({
    * Each row is a run and carries `checkpointId`, that run's step (screenshot)
    * of the variation, so a link can open the exact step instead of the run.
    *
+   * The row's diff numbers (`diffPercent`, `pixelMisMatchCount`,
+   * `baselineSource`) are the variation's own step's (spec 2026-10-23 §9), not
+   * the run's worst-of-its-steps totals. A step with none of its own (a run
+   * diffed before the per-step columns) falls back to the run's, column by
+   * column.
+   *
    * Cross-tenant safety: WHERE already filters on projectId AND
    * testVariationId (on the steps as well as the runs); even if a caller
    * passes a variationId from another project, the projectId guard prevents
@@ -184,6 +190,9 @@ export const variationsRouter = t.router({
         .selectDistinctOn([screenshots.runId], {
           runId: screenshots.runId,
           stepId: screenshots.id,
+          diffPercent: screenshots.diffPercent,
+          pixelMismatchCount: screenshots.pixelMismatchCount,
+          baselineSource: screenshots.baselineSource,
         })
         .from(screenshots)
         .where(
@@ -202,7 +211,7 @@ export const variationsRouter = t.router({
         return { items: [], nextCursor: null };
       }
 
-      const stepByRun = new Map(linkedSteps.map((s) => [s.runId, s.stepId]));
+      const stepByRun = new Map(linkedSteps.map((s) => [s.runId, s]));
       const runIdList = [...stepByRun.keys()];
 
       const conditions = [
@@ -246,12 +255,18 @@ export const variationsRouter = t.router({
         hasMore && last
           ? encodeKeysetCursor({ createdAt: last.cursorAt, id: last.id })
           : null;
-      const items = page.map(({ cursorAt: _cursorAt, ...r }) => ({
-        ...r,
+      const items = page.map(({ cursorAt: _cursorAt, ...r }) => {
         // Every listed run has a step of the variation (the list is built from
         // them), so the lookup always hits.
-        checkpointId: stepByRun.get(r.id)!,
-      }));
+        const step = stepByRun.get(r.id)!;
+        return {
+          ...r,
+          diffPercent: step.diffPercent ?? r.diffPercent,
+          pixelMisMatchCount: step.pixelMismatchCount ?? r.pixelMisMatchCount,
+          baselineSource: step.baselineSource ?? r.baselineSource,
+          checkpointId: step.stepId,
+        };
+      });
       return { items, nextCursor };
     }),
 });

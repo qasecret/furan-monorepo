@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNull, screenshots, type Tx } from "@furan/db";
+import {
+  and,
+  asc,
+  eq,
+  isNotNull,
+  isNull,
+  screenshots,
+  type Tx,
+} from "@furan/db";
 import type { DecisionSource } from "@furan/shared-types";
 
 import {
@@ -12,8 +20,9 @@ import {
 } from "./actions.js";
 import { decideCheckpoints, type DecideResult } from "./decide.js";
 import { reviewError } from "./errors.js";
-import { assessRun } from "./legality.js";
+import { assessDecision, assessRun } from "./legality.js";
 import {
+  loadActiveDecisions,
   lockRuns,
   selectPendingTargets,
   type LockedRun,
@@ -65,10 +74,53 @@ async function lockReviewableRun(
 }
 
 /**
+ * Refuses a run-level approve while a checkpoint of the locked run has no
+ * result because its diff failed (spec 2026-10-23 §7), as PRECONDITION_FAILED
+ * `diff_failed` with the checkpoints named, the run-level form of the refusal
+ * the core gives an explicit target. One that already has a decision doesn't
+ * count: it is `already_decided`, as for an explicit target, and the approve
+ * leaves it alone.
+ */
+async function refuseFailedSteps(tx: Tx, run: LockedRun): Promise<void> {
+  const failed = await tx
+    .select({ id: screenshots.id, verdict: screenshots.verdict })
+    .from(screenshots)
+    .where(
+      and(eq(screenshots.runId, run.id), isNotNull(screenshots.diffFailedAt)),
+    )
+    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
+  if (failed.length === 0) return;
+  const active = await loadActiveDecisions(
+    tx,
+    failed.map((s) => s.id),
+  );
+  const reasons = failed.flatMap((s) =>
+    assessDecision(
+      {
+        lifecycle: run.lifecycle,
+        override: run.override,
+        allVerdictsSet: true,
+        verdict: s.verdict,
+        active: active.get(s.id) ?? null,
+        diffFailed: true,
+      },
+      "approved",
+    ) === "diff_failed"
+      ? [{ checkpointId: s.id, reason: "diff_failed" as const }]
+      : [],
+  );
+  if (reasons.length > 0) {
+    throw reviewError("PRECONDITION_FAILED", "diff_failed", { reasons });
+  }
+}
+
+/**
  * Approves every pending checkpoint of a run: `inbox.approve` (source `inbox`)
  * and the SDK's `POST /runs/:id/approve` (`sdk`). The run is locked first and
- * must be reviewable (`lockReviewableRun`). Nothing pending is a successful
- * no-op (spec §5.7): nothing is written or announced. Returns what was decided.
+ * must be reviewable (`lockReviewableRun`), and none of its undecided
+ * checkpoints may have a failed diff (`refuseFailedSteps`): the run is refused
+ * whole, not approved short. Nothing pending is a successful no-op (spec §5.7):
+ * nothing is written or announced. Returns what was decided.
  */
 export async function approveRunPending(
   ctx: ReviewActionCtx,
@@ -76,6 +128,7 @@ export async function approveRunPending(
 ): Promise<{ runId: string; decided: DecideResult["decided"] }> {
   const projectId = await requireRunProject(ctx.tx, input.runId);
   const run = await lockReviewableRun(ctx.tx, projectId, input.runId);
+  await refuseFailedSteps(ctx.tx, run);
   const { targets } = await selectPendingTargets(
     ctx.tx,
     { projectId, runId: run.id },

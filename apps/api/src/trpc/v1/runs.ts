@@ -15,6 +15,7 @@ import {
   or,
   projects,
   recomputeRunStatus,
+  recomputeRunTotals,
   resolveBaseline,
   screenshots,
   sql,
@@ -1160,6 +1161,74 @@ export const runsRouter = t.router({
     }),
 
   /**
+   * Retries the diff of a step whose diff failed for good (spec 2026-10-23
+   * §6): clears its verdict and its failure, recomputes the run's totals and
+   * status (the run is `running` again) and queues the step for a new diff
+   * (`retry`). Only a step with `diff_failed_at` set can be retried
+   * (PRECONDITION_FAILED `step_not_failed` otherwise, a step of another run
+   * included), which also settles two retries racing: the second finds the
+   * failure already cleared. A guest is refused, like the other step edits.
+   *
+   * Locks, in the pipeline's order: the run (`loadRunForRediff`), then the
+   * step, then whatever `queueStepDiffs` bumps. A reviewer's decision on the
+   * step is kept, as for any re-diff.
+   */
+  retryDiff: publicProcedure
+    .input(
+      z.object({
+        runId: z.string().uuid(),
+        checkpointId: z.string().uuid(),
+      }),
+    )
+    .use(authed)
+    .use(
+      projectMember<RunIdInput>("write", {
+        from: {
+          resolver: ({ input, ctx }) =>
+            resolveRunProjectId({ runId: input.runId }, ctx),
+        },
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const run = await loadRunForRediff(ctx, input.runId);
+      // Read under the lock: a retry that committed while this waited for the
+      // run has cleared the failure already.
+      const [step] = await ctx.db
+        .select({ id: screenshots.id, diffFailedAt: screenshots.diffFailedAt })
+        .from(screenshots)
+        .where(
+          and(
+            eq(screenshots.id, input.checkpointId),
+            eq(screenshots.runId, run.id),
+          ),
+        )
+        .for("update");
+      if (!step || step.diffFailedAt === null) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "step_not_failed",
+        });
+      }
+
+      await ctx.db
+        .update(screenshots)
+        .set({
+          verdict: null,
+          verdictAt: null,
+          diffFailedAt: null,
+          diffError: null,
+        })
+        .where(eq(screenshots.id, step.id));
+      // Totals before status, as every diff commit does.
+      await recomputeRunTotals(ctx.db, run.id);
+      const { after } = await recomputeRunStatus(ctx.db, run.id);
+
+      await rediffStepsAndAnnounce(ctx, run, [step.id], "retry");
+
+      return { status: after };
+    }),
+
+  /**
    * "Force passed / Force failed / Reset to computed" (ADR-070): writes the
    * run's `status_override` (`"default"` clears it), then recomputes the
    * status with `recomputeRunStatus`, where an override wins over the
@@ -1275,6 +1344,12 @@ export const runsRouter = t.router({
           imageKey: screenshots.imageKey,
           testVariationId: screenshots.testVariationId,
           createdAt: screenshots.createdAt,
+          // The step's own diff result (spec 2026-10-23 §9); a failed diff
+          // leaves no numbers, only `diffFailedAt` / `diffError`.
+          diffFailedAt: screenshots.diffFailedAt,
+          diffError: screenshots.diffError,
+          diffPercent: screenshots.diffPercent,
+          vlmDescription: screenshots.vlmDescription,
         })
         .from(screenshots)
         .where(eq(screenshots.runId, input.runId))
@@ -1299,6 +1374,10 @@ export const runsRouter = t.router({
           imageKey: r.imageKey,
           testVariationId: r.testVariationId,
           createdAt: r.createdAt,
+          diffFailedAt: r.diffFailedAt,
+          diffError: r.diffError,
+          diffPercent: r.diffPercent,
+          vlmDescription: r.vlmDescription,
           ...view,
         };
       });

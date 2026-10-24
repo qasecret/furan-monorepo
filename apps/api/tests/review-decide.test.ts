@@ -70,6 +70,7 @@ const REVIEWABLE: TargetFacts = {
   allVerdictsSet: true,
   verdict: "unresolved",
   active: null,
+  diffFailed: false,
 };
 const facts = (over: Partial<TargetFacts>): TargetFacts => ({
   ...REVIEWABLE,
@@ -125,6 +126,23 @@ describe("assessDecision (spec §5.4)", () => {
       "approved",
       "already_decided",
     ],
+    // A step whose diff failed has nothing to decide on until it is retried.
+    ["approve a failed step", { diffFailed: true }, "approved", "diff_failed"],
+    ["reject a failed step", { diffFailed: true }, "rejected", "diff_failed"],
+    // A decision made earlier still stands, so undo (not retry) is the way
+    // out: it is reported as the decision it is.
+    [
+      "approve a failed step that is already approved",
+      { diffFailed: true, active: "approved" },
+      "approved",
+      "already_decided",
+    ],
+    [
+      "reject a failed step that is already approved",
+      { diffFailed: true, active: "approved" },
+      "rejected",
+      "already_decided",
+    ],
   ])("%s", (_label, over, decision, expected) => {
     expect(assessDecision(facts(over), decision)).toBe(expected);
   });
@@ -174,6 +192,28 @@ describe("assessDecision (spec §5.4)", () => {
       expect(assessDecision(facts({ verdict: null }), decision)).toBe(
         "not_reviewable",
       );
+    }
+  });
+
+  test("a failed step is refused after the run's and the verdict's checks", () => {
+    for (const decision of BOTH) {
+      // The run's state comes first ...
+      expect(
+        assessDecision(
+          facts({ diffFailed: true, lifecycle: "running" }),
+          decision,
+        ),
+      ).toBe("not_reviewable");
+      expect(
+        assessDecision(
+          facts({ diffFailed: true, override: "passed" }),
+          decision,
+        ),
+      ).toBe("run_overridden");
+      // ... then the verdict.
+      expect(
+        assessDecision(facts({ diffFailed: true, verdict: null }), decision),
+      ).toBe("not_reviewable");
     }
   });
 

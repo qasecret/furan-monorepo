@@ -18,6 +18,7 @@ const REFUSAL = {
   nothing_to_approve: "Nothing pending to approve",
   not_in_run: "This step is not part of the run",
   already_decided: "Already decided — undo it first",
+  diff_failed: "Retry the diff first.",
 } as const satisfies Record<ReviewRefusalReason, string>;
 
 const SKIP = {

@@ -155,6 +155,8 @@ async function loadCheckpointsInCaptureOrder(tx: Tx, screenshotIds: string[]) {
       accessibilityRegions: screenshots.accessibilityRegions,
       matchLevel: screenshots.matchLevel,
       verdict: screenshots.verdict,
+      // Legality's `diffFailed`: the step has no result to decide on.
+      diffFailed: sql<boolean>`${screenshots.diffFailedAt} is not null`,
     })
     .from(screenshots)
     .innerJoin(testRuns, eq(testRuns.id, screenshots.runId))
@@ -267,6 +269,7 @@ export async function assessTargets(
               allVerdictsSet: !pendingDiff.has(run.id),
               verdict: shot.verdict,
               active: active.get(shot.id) ?? null,
+              diffFailed: shot.diffFailed,
             },
             decision,
           );
@@ -408,6 +411,11 @@ function scopeRuns(scope: SelectionScope) {
  * the approve-build preview shows. Run-level facts (`allVerdictsSet`) always
  * come from the WHOLE run, whatever the scope's signature filter keeps.
  *
+ * A checkpoint whose diff failed is skipped like any illegal one (spec
+ * 2026-10-23 §7), and its run is counted once under `notReviewableTests`, the
+ * "can't be reviewed right now" count, even when the run has other checkpoints
+ * that are legal (and so is counted in `legalRuns` too).
+ *
  * Read-only and unlocked.
  */
 async function collectLegalTargets(
@@ -443,6 +451,7 @@ async function collectLegalTargets(
             runId: screenshots.runId,
             verdict: screenshots.verdict,
             diffSignature: screenshots.diffSignature,
+            diffFailed: sql<boolean>`${screenshots.diffFailedAt} is not null`,
           })
           .from(screenshots)
           .where(inArray(screenshots.runId, runIds))
@@ -477,6 +486,7 @@ async function collectLegalTargets(
 
   const legal: ReviewTarget[] = [];
   const legalRuns = new Set<string>();
+  const runsWithFailedStep = new Set<string>();
   let notReviewableTests = 0;
   for (const run of runs) {
     const runFacts = {
@@ -494,10 +504,14 @@ async function collectLegalTargets(
         ...runFacts,
         verdict: s.verdict,
         active: activeByShot.get(s.id) ?? null,
+        diffFailed: s.diffFailed,
       };
-      if (assessDecision(facts, decision) === null) {
+      const reason = assessDecision(facts, decision);
+      if (reason === null) {
         legal.push({ runId: run.id, screenshotId: s.id });
         legalRuns.add(run.id);
+      } else if (reason === "diff_failed") {
+        runsWithFailedStep.add(run.id);
       }
     }
   }
@@ -505,7 +519,7 @@ async function collectLegalTargets(
   return {
     legal,
     legalRuns,
-    notReviewableTests,
+    notReviewableTests: notReviewableTests + runsWithFailedStep.size,
     rejectedLeftAsIs: active.filter((a) => a.decision === "rejected").length,
   };
 }
