@@ -356,6 +356,94 @@ describe.runIf(RUN_INTEGRATION)("per-step diff helpers", () => {
       expect(run!.status).toBe("unresolved");
     });
 
+    describe("an abort the old whole-run pipeline wrote", () => {
+      async function runRow(runId: string) {
+        const [run] = await db
+          .select({
+            status: testRuns.status,
+            abortedByDiff: testRuns.abortedByDiff,
+          })
+          .from(testRuns)
+          .where(eq(testRuns.id, runId));
+        return run!;
+      }
+
+      /**
+       * A run of `n` passed steps whose `awaiting` last steps were queued
+       * again (version 1, no verdict), with its status set as an old worker
+       * or the SDK left it.
+       */
+      async function abortedRun(
+        n: number,
+        awaiting: number,
+        abortedByDiff: boolean,
+      ) {
+        const { runId, steps } = await seedRun(n, { verdict: "passed" });
+        await db
+          .update(screenshots)
+          .set({ verdict: null, diffGeneration: 1 })
+          .where(inArray(screenshots.id, steps.slice(n - awaiting)));
+        await db
+          .update(testRuns)
+          .set({ status: "aborted", abortedByDiff })
+          .where(eq(testRuns.id, runId));
+        return { runId, steps };
+      }
+
+      const fail = (runId: string, stepId: string) =>
+        db.transaction((tx) =>
+          markStepDiffFailed(tx, {
+            runId,
+            stepId,
+            generation: 1,
+            code: "engine_error",
+          }),
+        );
+
+      it("heals when the run's last step without a verdict fails: the run takes its rollup", async () => {
+        const { runId, steps } = await abortedRun(3, 1, true);
+
+        const result = await fail(runId, steps[2]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(true);
+        expect(result.rollup).toEqual({
+          before: "running",
+          after: "unresolved",
+        });
+        expect(await runRow(runId)).toEqual({
+          status: "unresolved",
+          abortedByDiff: false,
+        });
+      });
+
+      it("does not heal while another step still has no verdict", async () => {
+        const { runId, steps } = await abortedRun(3, 2, true);
+
+        const result = await fail(runId, steps[2]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(false);
+        expect(await runRow(runId)).toEqual({
+          status: "aborted",
+          abortedByDiff: true,
+        });
+      });
+
+      it("never heals an SDK or capture abort (the flag is false)", async () => {
+        const { runId, steps } = await abortedRun(2, 1, false);
+
+        const result = await fail(runId, steps[1]!);
+
+        expect(result.applied).toBe(true);
+        expect(result.healed).toBe(false);
+        expect(await runRow(runId)).toEqual({
+          status: "aborted",
+          abortedByDiff: false,
+        });
+      });
+    });
+
     it("refreshes the run totals in the same commit", async () => {
       const { runId, steps } = await seedRun(2, { verdict: "passed" });
       await db
