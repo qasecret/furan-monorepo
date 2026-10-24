@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef } from "react";
+import { useId, useRef } from "react";
 
 import type { ViewerMode } from "./comparison-modes";
 import { IMAGE_ROLES, type ImageRole, type ImageSetState } from "./image-set";
@@ -16,7 +16,9 @@ import {
 import { modeOnStep } from "./viewer-prefs";
 
 import { Button } from "@/components/ui/button";
+import { useFocusHandoff } from "@/hooks/use-focus-handoff";
 import { cn } from "@/lib/cn";
+import { diffErrorCopy, type DiffErrorCode } from "@/lib/diff-error-copy";
 
 /**
  * What the viewer's stage can't show, and says instead (spec §3.4): DOM over
@@ -31,6 +33,8 @@ export type StageState =
   | { kind: "diff-size-mismatch"; baseline: Size; current: Size }
   | { kind: "diff-legacy-missing" }
   | { kind: "diff-no-changes" }
+  /** The step's diff failed for good: there is no result to show (§10). */
+  | { kind: "diff-failed"; code: DiffErrorCode }
   /** An image the mode draws that the GPU can't hold: it is left out (I2). */
   | { kind: "too-large"; role: ImageRole; size: Size; max: number };
 
@@ -47,12 +51,24 @@ export interface StageStatesInput {
   legacyMissing: boolean;
   /** R4: the step has a pixel-diff region, or a diff percent above 0. */
   stepHasDiff: boolean;
+  /**
+   * R52: the step has no verdict yet (new mid-run, or just retried): it has
+   * not been compared, so Diff claims nothing about its changes or its diff
+   * image.
+   */
+  awaitingDiff?: boolean;
   /** The loaded images' sizes. */
   sizes: { baseline?: Size; current?: Size; diff?: Size };
   /** The GPU's largest texture side, in px (`readMaxTextureSize`). */
   maxTextureSize: number;
   /** The roles whose Retry was pressed for the images now asked for. */
   retrying?: readonly ImageRole[];
+  /**
+   * The step's diff failed for good (`diffFailedAt`), and why. Its images may
+   * be fine; what is missing is the comparison, so the messages about a
+   * missing diff say nothing.
+   */
+  diffFailed?: DiffErrorCode | null;
 }
 
 /**
@@ -65,6 +81,9 @@ export interface StageStatesInput {
  *   it, or show.
  * - **retrying:** the retried ones the mode needs, while they are on their
  *   way again.
+ * - **diff-failed:** the step has no diff result, and says why. It stands in
+ *   for the messages about a missing diff (no changes, a lost image, sizes
+ *   that differ) and for "no baseline yet", whose Approve is not on offer.
  * - **no-baseline:** a new test. Only side by side can show it.
  * - **too-large:** each image the mode draws that is wider or taller than the
  *   GPU's textures (Diff waits for the baseline but never draws it).
@@ -72,7 +91,8 @@ export interface StageStatesInput {
  *   screenshots in at the same size and no diff image asked for (the step's
  *   key is null), R4: a step with no diff has no changes, and a step with a
  *   diff on a legacy run lost its image to history. A step with a diff on a
- *   run of one step says nothing.
+ *   run of one step says nothing, and neither does a step with no verdict
+ *   yet (R52).
  */
 export function stageStates(input: StageStatesInput): StageState[] {
   const { set, hasBaseline, sizes, maxTextureSize: max } = input;
@@ -96,7 +116,11 @@ export function stageStates(input: StageStatesInput): StageState[] {
   );
   if (retrying.length > 0) states.push({ kind: "retrying", roles: retrying });
 
-  if (!hasBaseline) states.push({ kind: "no-baseline" });
+  if (input.diffFailed) {
+    states.push({ kind: "diff-failed", code: input.diffFailed });
+  } else if (!hasBaseline) {
+    states.push({ kind: "no-baseline" });
+  }
 
   for (const role of renderer.draws) {
     const size = sizes[role];
@@ -105,7 +129,7 @@ export function stageStates(input: StageStatesInput): StageState[] {
     }
   }
 
-  if (mode === "diff") {
+  if (mode === "diff" && !input.diffFailed) {
     const { baseline, current } = sizes;
     // Ready with no diff image, loaded or failed: none was asked for.
     const noDiffImage =
@@ -116,11 +140,13 @@ export function stageStates(input: StageStatesInput): StageState[] {
       (baseline.w !== current.w || baseline.h !== current.h)
     ) {
       states.push({ kind: "diff-size-mismatch", baseline, current });
-    } else if (noDiffImage && !input.stepHasDiff) {
-      // Only with both screenshots in can it say they are the same (M4).
-      if (baseline && current) states.push({ kind: "diff-no-changes" });
-    } else if (noDiffImage && input.legacyMissing) {
-      states.push({ kind: "diff-legacy-missing" });
+    } else if (noDiffImage && !input.awaitingDiff) {
+      if (!input.stepHasDiff) {
+        // Only with both screenshots in can it say they are the same (M4).
+        if (baseline && current) states.push({ kind: "diff-no-changes" });
+      } else if (input.legacyMissing) {
+        states.push({ kind: "diff-legacy-missing" });
+      }
     }
   }
   return states;
@@ -182,6 +208,8 @@ const FAILED: Record<ImageRole, string> = {
   diff: "Couldn't load the diff image.",
 };
 const RETRY = "Retry";
+const DIFF_FAILED = "This step's diff failed.";
+const RETRY_DIFF = "Retry diff";
 const NO_BASELINE =
   "No baseline yet. Approve this step to make it the baseline.";
 const NO_CHANGES =
@@ -226,18 +254,7 @@ function Failed({
 }) {
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
-  const focusLost = useRef(onFocusLost);
-  useLayoutEffect(() => {
-    focusLost.current = onFocusLost;
-  });
-  useLayoutEffect(() => {
-    const el = button.current;
-    // A deleted component's layout cleanup runs before its DOM is removed:
-    // the button still has the focus here, if it had it.
-    return () => {
-      if (el !== null && el === document.activeElement) focusLost.current?.();
-    };
-  }, []);
+  useFocusHandoff(button, onFocusLost);
   return (
     <div className={cn(CARD, "pointer-events-auto")}>
       <p id={id}>{FAILED[role]}</p>
@@ -261,6 +278,65 @@ function Failed({
 }
 
 /**
+ * A step whose diff failed for good, and why (spec 2026-10-23 §10). The
+ * danger tone is the edge and the lead sentence; the card itself stays opaque
+ * over the canvas. Retry diff is there only for a viewer who may retry
+ * (`onRetry`); while the retry is out (`busy`) it stays, inert, so the
+ * keyboard keeps its place. When it goes with the focus on its button (the
+ * step is being diffed again), the focus goes to `onFocusLost`.
+ */
+function DiffFailed({
+  code,
+  busy,
+  onRetry,
+  onFocusLost,
+}: {
+  code: DiffErrorCode;
+  busy: boolean;
+  onRetry?: () => void;
+  onFocusLost?: () => void;
+}) {
+  const id = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  useFocusHandoff(button, onFocusLost);
+  // Read as one sentence by the live region: the lead, then the reason. The
+  // button is named "Retry diff", as the copy says; the message describes it.
+  return (
+    <div
+      className={cn(
+        CARD,
+        "border-status-failed/25",
+        onRetry ? "pointer-events-auto" : "pointer-events-none",
+      )}
+      data-testid="stage-diff-failed"
+    >
+      <p id={id} className="min-w-0">
+        <span className="font-medium text-status-failed-text">
+          {DIFF_FAILED}
+        </span>{" "}
+        {diffErrorCopy(code)}
+      </p>
+      {onRetry && (
+        <Button
+          ref={button}
+          type="button"
+          variant="secondary"
+          className="h-7 shrink-0 px-2 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"
+          aria-describedby={id}
+          aria-disabled={busy || undefined}
+          aria-busy={busy || undefined}
+          onClick={() => {
+            if (!busy) onRetry();
+          }}
+        >
+          {RETRY_DIFF}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
  * The states' messages, over the top of the stage (a tall screenshot's card
  * runs below the fold). Loading has none: the canvas skeleton, the empty
  * card, shows it.
@@ -273,14 +349,23 @@ function Failed({
  * - The images' cards come first, one per role in a fixed order, so a card
  *   going from failed to retrying and back is the same element, and keeps
  *   the focus.
+ * - A failed diff's card takes the pointer only with a Retry diff in it. That
+ *   button is there when `onRetryDiff` is (the viewer may retry), and busy
+ *   while `retryingDiff`.
  */
 export function StageStates({
   states,
   onRetry,
+  onRetryDiff,
+  retryingDiff = false,
   onFocusLost,
 }: {
   states: StageState[];
   onRetry(role: ImageRole): void;
+  /** Retry the step's failed diff; absent for a viewer who may not. */
+  onRetryDiff?: () => void;
+  /** The retry of the step's diff is out. */
+  retryingDiff?: boolean;
   /** Where the focus goes when a focused Retry's card goes. */
   onFocusLost?: () => void;
 }) {
@@ -317,6 +402,16 @@ export function StageStates({
             );
           case "diff-no-changes":
             return <Message key={s.kind}>{NO_CHANGES}</Message>;
+          case "diff-failed":
+            return (
+              <DiffFailed
+                key={s.kind}
+                code={s.code}
+                busy={retryingDiff}
+                onRetry={onRetryDiff}
+                onFocusLost={onFocusLost}
+              />
+            );
           case "diff-legacy-missing":
             return <Message key={s.kind}>{LEGACY_MISSING}</Message>;
           case "too-large":

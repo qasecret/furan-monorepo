@@ -15,7 +15,7 @@ import {
 import { ApprovalBar } from "./ApprovalBar";
 import { BaselineSourceBadge } from "./BaselineSourceBadge";
 import { BatchDoneCard } from "./BatchDoneCard";
-import type { CheckpointSummary } from "./checkpoint-nav";
+import { summarizeCheckpoints } from "./checkpoint-nav";
 import type { ViewerMode } from "./comparison-modes";
 import { ContextualHeader, type HeaderLoop } from "./ContextualHeader";
 import { EmptyRunCard } from "./EmptyRunCard";
@@ -33,6 +33,7 @@ import { SizeChip } from "./SizeChip";
 import { findSmallestContainingElement } from "./snap-to-element";
 import { StaleStepCallout } from "./StaleStepCallout";
 import { stepDiffKey } from "./step-diff-key";
+import { stepNumber } from "./step-number";
 import { TestInfoSidebar } from "./TestInfoSidebar";
 import { useDiffStepper } from "./useDiffStepper";
 import { useDiffViewerShortcuts } from "./useDiffViewerShortcuts";
@@ -61,6 +62,7 @@ import {
   useCommandKeys,
   useRegisteredCommands,
 } from "@/lib/commands/registry";
+import { diffErrorCode } from "@/lib/diff-error-copy";
 import { diffViewerHref } from "@/lib/diff-viewer-href";
 import { formatDuration } from "@/lib/format";
 import { leftInBatchLabel, useReviewLoop } from "@/lib/review/use-review-loop";
@@ -74,6 +76,7 @@ import {
   type StepFacets,
 } from "@/lib/review-context";
 import { trpc } from "@/lib/trpc";
+import { useRetryDiff } from "@/lib/use-retry-diff";
 
 interface Props {
   runId: string;
@@ -168,21 +171,21 @@ export function DiffViewer({
   // ADR-038: fetch the checkpoint list for the rail
   const checkpointsQuery = trpc.runs.listCheckpoints.useQuery({ runId });
 
+  const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+  // The run's diff % is its worst step's: the step on screen shows its own
+  // (spec §9), and the run's only for a step from before per-step diffs.
+  const runDiffPercent =
+    (data as { diffPercent?: number | null } | undefined)?.diffPercent ?? null;
+
   // ADR-038: map checkpoint items to CheckpointSummary[] for step navigation.
   // `state` is the review state (new / passed / unresolved / approved /
-  // rejected), null until the step has been diffed.
-  // diffPercent stays null until diff_regions gains a screenshot_id column
-  // (deferred — see runs.ts listCheckpoints comment).
-  const checkpointSummaries: CheckpointSummary[] = useMemo(() => {
-    return (checkpointsQuery.data?.items ?? []).map((item) => ({
-      id: item.id,
-      name: item.name ?? item.id,
-      state: item.state,
-      diffPercent: null,
-    }));
-  }, [checkpointsQuery.data]);
-
-  const { data, isLoading, error } = trpc.runs.getById.useQuery({ runId });
+  // rejected), null until the step has been diffed; `diffPercent` is the
+  // step's own.
+  const checkpointSummaries = useMemo(
+    () =>
+      summarizeCheckpoints(checkpointsQuery.data?.items ?? [], runDiffPercent),
+    [checkpointsQuery.data, runDiffPercent],
+  );
   // Sibling fetch for project settings the viewer needs (currently
   // `dynamicTextEnabled`, which gates the kind selector + PatternEditor).
   // Enabled only after `data` lands so we don't fire with an empty id.
@@ -203,6 +206,11 @@ export function DiffViewer({
   // `_first` is the placeholder before the checkpoint list resolves.
   const activeCheckpointId =
     selectedCheckpointId !== "_first" ? selectedCheckpointId : undefined;
+  // The step on screen in the checkpoint list: its facets, review state and
+  // failed diff.
+  const stepItem = checkpointsQuery.data?.items?.find(
+    (c) => c.id === activeCheckpointId,
+  );
 
   // Select the candidate by selectedCheckpointId, falling back to the
   // first screenshot. Before the fix this was hardcoded to screenshots[0],
@@ -366,14 +374,12 @@ export function DiffViewer({
   // counts in what is left, and in the filter's count if it is inside it.
   const stepHere = {
     pending: review.view === "pending",
-    inFilter: inFacets(
-      checkpointsQuery.data?.items?.find((c) => c.id === activeCheckpointId),
-      context.facets,
-    ),
+    inFilter: inFacets(stepItem, context.facets),
   };
   // A decision on this step still on its way: a read meanwhile that shows the
   // step pending again predates its commit, and is no undo (R36).
   const decisionInFlight = useIsDecisionInFlight(activeCheckpointId);
+  const retryDiff = useRetryDiff(runId);
   const loop = useReviewLoop({
     projectId: data?.projectId ?? "",
     buildId: data?.buildId || undefined,
@@ -398,16 +404,21 @@ export function DiffViewer({
       : null;
 
   // T11: SSE — invalidate runs.getById on terminal worker events so the
-  // viewer picks up freshly written diff regions, baselineSource, etc.
+  // viewer picks up freshly written diff regions, baselineSource, etc. A step
+  // settling (its result, or its diff failing for good) also moves the step
+  // list, which holds each step's review state, numbers and failure: a
+  // retried step leaves "being diffed" only through it.
   const onSseEvent = useCallback(
     (e: RunEvent) => {
       if (
-        e.type === "diff.completed" ||
         e.type === "run.checkpoint_diffed" ||
         e.type === "capture.completed" ||
         e.type === "run.completed"
       ) {
         void utils.runs.getById.invalidate({ runId });
+      }
+      if (e.type === "run.checkpoint_diffed") {
+        void utils.runs.listCheckpoints.invalidate({ runId });
       }
     },
     [utils, runId],
@@ -668,11 +679,26 @@ export function DiffViewer({
   // own wherever focus is. ⌘Z (the global review undo) still undoes. A
   // callback left out disables its command (`enabled`).
   const keysOn = card === null;
+  // The step on screen has a failed diff (spec 2026-10-23 §10): the stage
+  // says why, and a viewer who may review can retry it, from the stage or the
+  // palette. This step's retry in flight is the one retry, and the palette
+  // action waits for it; another step's retry does not hold this one up.
+  const failedDiff =
+    stepItem?.diffFailedAt != null ? diffErrorCode(stepItem.diffError) : null;
+  const retryingHere =
+    activeCheckpointId !== undefined && retryDiff.isPending(activeCheckpointId);
+  const retryFailedDiff =
+    canReview && failedDiff !== null && activeCheckpointId !== undefined
+      ? () => {
+          void retryDiff.retry(activeCheckpointId);
+        }
+      : undefined;
   useDiffViewerShortcuts({
     viewports: uniqueViewports,
     projectId: data?.projectId ?? "",
     onApprove: keysOn ? review.approve : undefined,
     onReject: keysOn ? review.reject : undefined,
+    onRetryDiff: keysOn && !retryingHere ? retryFailedDiff : undefined,
     onNextDiff: stepper.next,
     onPrevDiff: stepper.prev,
     onPrevStep: keysOn ? onPrevStep : undefined,
@@ -743,9 +769,6 @@ export function DiffViewer({
   // INFO sidebar metadata (reference TestStep): test details, environment,
   // execution. Environment lives per-checkpoint on the candidate screenshot
   // (ADR-038); "Run by" + app name come from the build/project siblings.
-  const selectedCheckpointItem = checkpointsQuery.data?.items?.find(
-    (c) => c.id === selectedCheckpointId,
-  );
   const cand = candidateScreenshot as {
     os?: string | null;
     browser?: string | null;
@@ -764,7 +787,7 @@ export function DiffViewer({
   const stepLabel =
     cpIndex >= 0
       ? `${cpIndex + 1}/${checkpointSummaries.length} ${
-          selectedCheckpointItem?.name ?? ""
+          stepItem?.name ?? ""
         }`.trim()
       : null;
   const runByName =
@@ -792,15 +815,26 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
+  // The step on screen's own diff %, for the sidebar (R46): the run's is its
+  // worst step's, another step's, and stands in only for a legacy step.
+  const stepDiffPercent = stepNumber(stepItem, "diffPercent", runDiffPercent);
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
-  // percent above 0. The run's percent is its worst step's, so it is this
-  // step's only on a run of one.
-  const runDiffPercent =
-    (data as { diffPercent?: number | null }).diffPercent ?? null;
+  // percent above 0. Which percent (R50, R54): a step diffed per step has
+  // its own. A legacy step (generation 0, or the step list not loaded yet)
+  // has none, and borrows the run's only when the run has one screenshot:
+  // on a run of several, the run's % may be a sibling's, which would turn
+  // "No pixel changes" into "No diff image was kept" for an unchanged step.
+  const legacyStep = stepItem === undefined || stepItem.diffGeneration === 0;
   const stepHasDiff =
     regions.some(isPixelDiffRegion) ||
-    (data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0);
+    (legacyStep
+      ? data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0
+      : (stepItem.diffPercent ?? 0) > 0);
+  // R52: a step with no verdict yet (new mid-run, or just retried) has not
+  // been compared, so Diff says nothing about it. Unknown while the step
+  // list loads.
+  const awaitingDiff = stepItem !== undefined && stepItem.state === null;
 
   const viewer = (
     <div
@@ -981,7 +1015,11 @@ export function DiffViewer({
                     elementMap={elementMap ?? null}
                     legacyMissing={diffImageLegacyMissing}
                     stepHasDiff={stepHasDiff}
+                    awaitingDiff={awaitingDiff}
                     checkpointId={candidateScreenshot?.id}
+                    diffFailed={failedDiff}
+                    onRetryDiff={retryFailedDiff}
+                    retryingDiff={retryingHere}
                   />
                 </div>
                 {/* Large side step-arrows: navigate
@@ -1040,12 +1078,14 @@ export function DiffViewer({
                     durationMs != null ? formatDuration(durationMs) : null
                   }
                   runBy={runByName}
-                  pixelDiffPercent={runDiffPercent}
+                  pixelDiffPercent={stepDiffPercent}
                   regions={regions}
-                  vlmDescription={data?.vlmDescription ?? null}
-                  testVariationId={
-                    selectedCheckpointItem?.testVariationId ?? null
-                  }
+                  vlmDescription={stepNumber(
+                    stepItem,
+                    "vlmDescription",
+                    data?.vlmDescription,
+                  )}
+                  testVariationId={stepItem?.testVariationId ?? null}
                   currentBaselineKey={data.baselineName ?? null}
                   runId={runId}
                 />

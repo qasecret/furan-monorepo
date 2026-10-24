@@ -45,7 +45,7 @@ import {
   type DecideArgs,
 } from "@/lib/review/use-review-mutations";
 import type { ReviewContext, StepFacets } from "@/lib/review-context";
-import { statusStyle } from "@/lib/status-style";
+import { DIFF_FAILED_STYLE, statusStyle } from "@/lib/status-style";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type Checkpoint = RouterOutputs["runs"]["listCheckpoints"]["items"][number];
@@ -365,6 +365,11 @@ const ResultRow = memo(function ResultRow({
     !hasSteps && hasFacets(ctx.facets)
       ? `${pending} pending`
       : `${pending} of ${total} pending`;
+  // Steps of this row whose diff failed for good (spec 2026-10-23 §10). The
+  // status above stays the run's own: those steps are pending, so it reads
+  // as needing review. Counted from the steps the row already loads.
+  const diffFailed = checkpoints.filter((c) => c.diffFailedAt != null).length;
+  const DiffFailedIcon = DIFF_FAILED_STYLE.icon;
   const [open, setOpen] = useState(true);
 
   // Its place in the batch list's cursor: the row's own toggle is the item
@@ -444,6 +449,20 @@ const ResultRow = memo(function ResultRow({
                 className="truncate text-2xs text-fg-muted"
               >
                 {pendingText}
+              </span>
+            )}
+            {diffFailed > 0 && (
+              <span
+                data-testid={`result-diff-failed-${runId}`}
+                className={cn(
+                  "mt-0.5 inline-flex w-fit max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-2xs font-medium",
+                  DIFF_FAILED_STYLE.pill,
+                )}
+              >
+                <DiffFailedIcon className="h-3 w-3 shrink-0" aria-hidden />
+                <span className="truncate">
+                  {DIFF_FAILED_STYLE.label} ({diffFailed})
+                </span>
               </span>
             )}
           </span>

@@ -176,6 +176,37 @@ describe("stageStates", () => {
       ).toEqual([]);
     });
 
+    test("a step with no verdict yet claims neither no changes nor a lost image (R52)", () => {
+      const same = { w: 100, h: 200 };
+      for (const stepHasDiff of [false, true]) {
+        for (const legacyMissing of [false, true]) {
+          expect(
+            stageStates(
+              diffWithoutImage(same, same, {
+                stepHasDiff,
+                legacyMissing,
+                awaitingDiff: true,
+              }),
+            ),
+            `stepHasDiff=${stepHasDiff} legacyMissing=${legacyMissing}`,
+          ).toEqual([]);
+        }
+      }
+    });
+
+    test("awaiting a diff does not hide what is true of the images: sizes that differ", () => {
+      const states = stageStates(
+        diffWithoutImage(
+          { w: 100, h: 200 },
+          { w: 100, h: 300 },
+          {
+            awaitingDiff: true,
+          },
+        ),
+      );
+      expect(kinds(states)).toEqual(["diff-size-mismatch"]);
+    });
+
     test("a diff image that is still loading is not taken for one that was never kept", () => {
       const same = { w: 100, h: 200 };
       const states = stageStates(

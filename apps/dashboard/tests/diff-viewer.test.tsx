@@ -4,6 +4,7 @@ import {
   cleanup,
   fireEvent,
   render as renderInDom,
+  waitFor,
   within,
   type RenderOptions,
 } from "@testing-library/react";
@@ -41,6 +42,7 @@ const {
   realReview,
   server,
   mutationFor,
+  retryDiffSpy,
 } = vi.hoisted(() => {
   /** A procedure's utils, as the viewer, the loop and the review hook use them. */
   const procedure = () => ({
@@ -86,6 +88,8 @@ const {
     // The ignore-region Save's wire input, so a test can see which step's
     // variation it targets.
     setIgnoreAreasSpy: vi.fn(),
+    // `runs.retryDiff`, as the viewer's Retry diff calls it.
+    retryDiffSpy: vi.fn(async (_input: unknown) => ({ status: "running" })),
     reviewSpies: {
       decide: vi.fn(),
       undo: vi.fn(),
@@ -311,6 +315,7 @@ interface MockData {
   statusOverride?: "passed" | "failed" | null;
   checkpointContexts?: Record<string, unknown>;
   diffPercent?: number | null;
+  vlmDescription?: string | null;
 }
 const defaultMockData: MockData = {
   id: "00000000-0000-0000-0000-000000000000",
@@ -376,6 +381,12 @@ vi.mock("../src/lib/trpc", () => {
         // The review hook's cache patch reads the runs lists by key.
         list: { _def: () => ({ path: ["runs", "list"] }) },
         overrideStatus: { useMutation: noopMutation },
+        retryDiff: {
+          useMutation: () => ({
+            mutateAsync: retryDiffSpy,
+            isPending: false,
+          }),
+        },
         setComment: { useMutation: noopMutation },
         setIgnoreAreas: {
           useMutation: () => ({ mutate: setIgnoreAreasSpy, isPending: false }),
@@ -677,6 +688,17 @@ describe("DiffViewer", () => {
 
     act(() => es.emit({ type: "run.completed", runId }));
     expect(getById).toHaveBeenCalledTimes(2);
+  });
+
+  test("diff.started and diff.completed are retired: the worker no longer sends them, and the viewer does not wait on them", () => {
+    const runId = "00000000-0000-0000-0000-000000000000";
+    render(<DiffViewer runId={runId} diffId="d1" />);
+    const es = StubEventSource.instances.at(-1)!;
+
+    act(() => es.emit({ type: "diff.started", runId }));
+    act(() => es.emit({ type: "diff.completed", runId, passed: true }));
+    expect(utilsMock.runs.getById.invalidate).not.toHaveBeenCalled();
+    expect(utilsMock.runs.listCheckpoints.invalidate).not.toHaveBeenCalled();
   });
 
   test("clicking a tab sets the mode preference", () => {
@@ -1359,11 +1381,16 @@ describe("DiffViewer", () => {
       source,
       screenshotId,
     });
-    /** A run of two steps, diffed before steps kept their own images. */
+    /**
+     * A run of two steps, diffed before steps kept their own images and
+     * numbers: each step is at generation 0 with no diff % of its own, and
+     * the run's diff % and diff image are its worst step's (step 1's).
+     */
     function legacyRun(regions: unknown[]) {
       mockGetByIdData = {
         ...defaultMockData,
         diffName: "diff-of-step-1",
+        diffPercent: 5,
         baselineScreenshot: { id: "base", imageKey: fresh("base") },
         screenshots: [
           { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
@@ -1371,10 +1398,11 @@ describe("DiffViewer", () => {
         ],
         diffRegions: regions,
       };
+      const legacy = { diffPercent: null, diffGeneration: 0 };
       mockCheckpoints = {
         items: [
-          { id: "c1", name: "Home", state: "unresolved" },
-          { id: "c2", name: "Search", state: "unresolved" },
+          { id: "c1", name: "Home", state: "unresolved", ...legacy },
+          { id: "c2", name: "Search", state: "unresolved", ...legacy },
         ],
       };
     }
@@ -1423,7 +1451,7 @@ describe("DiffViewer", () => {
     test("Diff on a legacy step with no diff: no pixel changes (R4)", async () => {
       loadingStorage();
       inDiff();
-      // Step 1's region is not step 2's.
+      // Step 1's region is not step 2's, and the run's 5% is step 1's (R54).
       legacyRun([region("c1")]);
       const r = openStep("c2");
       expect(
@@ -1473,37 +1501,61 @@ describe("DiffViewer", () => {
       ).toBeDefined();
     });
 
+    const NO_CHANGES =
+      "No pixel changes between the baseline and the current screenshot.";
+
+    /**
+     * Diff mode on step `at` of a run with no diff image kept for any step,
+     * once both screenshots are in. `items` are the steps as the server lists
+     * them (a step is diffed once unless it says); `runPercent` is the run's
+     * own, its worst step's.
+     */
+    async function openDiffStep(
+      at: string,
+      runPercent: number | null,
+      items: Array<Record<string, unknown>>,
+    ) {
+      loadingStorage();
+      inDiff();
+      mockGetByIdData = {
+        ...defaultMockData,
+        diffName: null,
+        diffPercent: runPercent,
+        baselineScreenshot: { id: "base", imageKey: fresh("base") },
+        screenshots: items.map((it) => ({
+          id: it.id,
+          imageKey: fresh(`img-${String(it.id)}`),
+          diffImageKey: null,
+        })),
+      };
+      mockCheckpoints = {
+        items: items.map((it) => ({
+          name: "Step",
+          state: "unresolved",
+          diffGeneration: 1,
+          ...it,
+        })),
+      };
+      const r = openStep(at);
+      // Both screenshots are in.
+      await vi.waitFor(() =>
+        expect(
+          r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+        ).toBe(false),
+      );
+      await act(async () => {});
+      return r;
+    }
+
     test.each([
       { diffPercent: 2.5, says: null },
-      {
-        diffPercent: 0,
-        says: "No pixel changes between the baseline and the current screenshot.",
-      },
+      { diffPercent: 0, says: NO_CHANGES },
     ])(
       "Diff on a one-step run with no diff image and a diff percent of $diffPercent (R4)",
       async ({ diffPercent, says }) => {
-        loadingStorage();
-        inDiff();
-        mockGetByIdData = {
-          ...defaultMockData,
-          diffName: null,
-          diffPercent,
-          baselineScreenshot: { id: "base", imageKey: fresh("base") },
-          screenshots: [
-            { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
-          ],
-        };
-        mockCheckpoints = {
-          items: [{ id: "c1", name: "Home", state: "unresolved" }],
-        };
-        const r = openStep("c1");
-        // Both screenshots are in.
-        await vi.waitFor(() =>
-          expect(
-            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
-          ).toBe(false),
-        );
-        await act(async () => {});
+        const r = await openDiffStep("c1", diffPercent, [
+          { id: "c1", diffPercent },
+        ]);
         if (says) {
           expect(r.getByText(says)).toBeDefined();
         } else {
@@ -1512,6 +1564,185 @@ describe("DiffViewer", () => {
         }
       },
     );
+
+    // R50: on a run of several steps, whether a step has a diff is decided by
+    // its own percent. The run's is its worst step's, another step's.
+    describe("Diff on a multi-step run with no diff image (R50)", () => {
+      const steps = (
+        a: Record<string, unknown>,
+        b: Record<string, unknown>,
+      ) => [
+        { id: "c1", name: "Home", ...a },
+        { id: "c2", name: "Search", ...b },
+      ];
+
+      test("a 0% step says no pixel changes, though a sibling differs", async () => {
+        const r = await openDiffStep(
+          "c1",
+          3,
+          steps({ diffPercent: 0 }, { diffPercent: 3 }),
+        );
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+
+      test("a step that differs does not", async () => {
+        const r = await openDiffStep(
+          "c2",
+          3,
+          steps({ diffPercent: 0 }, { diffPercent: 3 }),
+        );
+        expect(r.queryByText(/No pixel changes/)).toBeNull();
+      });
+
+      // R54: a legacy step (generation 0) has no number of its own, and on a
+      // run of several steps the run's % may be a sibling's. Such a step
+      // decides from its own regions alone: with none, no pixel changes,
+      // whatever the run's %, never that its diff image was lost.
+      test.each([0, 5])(
+        "a legacy step (generation 0, no number) of a two-step run ignores the run's %s%",
+        async (runPercent) => {
+          const legacy = { diffPercent: null, diffGeneration: 0 };
+          const r = await openDiffStep("c1", runPercent, steps(legacy, legacy));
+          expect(r.getByText(NO_CHANGES)).toBeDefined();
+          expect(r.queryByText(/No diff image was kept/)).toBeNull();
+        },
+      );
+
+      // A one-screenshot run's % is its only step's, so a legacy step there
+      // still decides from it.
+      test.each([
+        { runPercent: 0, says: true },
+        { runPercent: 5, says: false },
+      ])(
+        "a legacy step (generation 0, no number) of a one-step run decides from the run's $runPercent%",
+        async ({ runPercent, says }) => {
+          const r = await openDiffStep("c1", runPercent, [
+            { id: "c1", name: "Home", diffPercent: null, diffGeneration: 0 },
+          ]);
+          if (says) expect(r.getByText(NO_CHANGES)).toBeDefined();
+          else expect(r.queryByText(/No pixel changes/)).toBeNull();
+        },
+      );
+    });
+
+    // R52: a step with no verdict yet (new mid-run, or just retried) has not
+    // been compared, so Diff claims nothing about it: not "no changes", and
+    // not that its diff image was lost.
+    describe("Diff on a step with no verdict yet (R52)", () => {
+      const NO_DIFF_IMAGE = /No diff image was kept/;
+      const noClaim = (r: ReturnType<typeof render>) => {
+        expect(r.queryByText(/No pixel changes/)).toBeNull();
+        expect(r.queryByText(NO_DIFF_IMAGE)).toBeNull();
+      };
+      const undiffed = {
+        state: null,
+        verdict: null,
+        diffPercent: null,
+        diffGeneration: 1,
+      };
+
+      test("a new step with no state and no numbers says nothing about changes", async () => {
+        const r = await openDiffStep("c1", 3, [
+          { id: "c1", name: "Home", ...undiffed },
+          { id: "c2", name: "Search", diffPercent: 3 },
+        ]);
+        noClaim(r);
+      });
+
+      test("nor that its diff image was lost, with a region from before still on it", async () => {
+        loadingStorage();
+        inDiff();
+        legacyRun([region("c2")]);
+        mockCheckpoints = {
+          items: [
+            { id: "c1", name: "Home", state: "unresolved" },
+            { id: "c2", name: "Search", ...undiffed },
+          ],
+        };
+        const r = openStep("c2");
+        await vi.waitFor(() =>
+          expect(
+            r.getByTestId("single-stage-host").hasAttribute("aria-busy"),
+          ).toBe(false),
+        );
+        await act(async () => {});
+        noClaim(r);
+      });
+
+      test("a step diffed at 0% still says no pixel changes", async () => {
+        const r = await openDiffStep("c1", 3, [
+          { id: "c1", name: "Home", state: "passed", diffPercent: 0 },
+          { id: "c2", name: "Search", diffPercent: 3 },
+        ]);
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+
+      test("a failed step, once retried, claims nothing until its result lands", async () => {
+        retryDiffSpy.mockClear();
+        retryDiffSpy.mockResolvedValue({ status: "running" });
+        const c2 = { id: "c2", name: "Search", diffPercent: 3 };
+        const r = await openDiffStep("c1", 3, [
+          {
+            id: "c1",
+            name: "Home",
+            diffPercent: null,
+            diffFailedAt: "2026-10-24T08:00:00.000Z",
+            diffError: "timeout",
+          },
+          c2,
+        ]);
+        const card = r.getByTestId("stage-diff-failed");
+        noClaim(r);
+
+        fireEvent.click(
+          within(card).getByRole("button", { name: "Retry diff" }),
+        );
+        expect(retryDiffSpy).toHaveBeenCalledWith({
+          runId: "00000000-0000-0000-0000-000000000000",
+          checkpointId: "c1",
+        });
+        // A new element each time: the same one would not render again.
+        const viewer = () => (
+          <DiffViewer
+            runId="00000000-0000-0000-0000-000000000000"
+            projectId="p1"
+            initialCheckpointId="c1"
+          />
+        );
+        const listed = (c1: Record<string, unknown>) => {
+          mockCheckpoints = {
+            items: [
+              {
+                name: "Home",
+                diffGeneration: 1,
+                diffFailedAt: null,
+                diffError: null,
+                ...c1,
+              },
+              { state: "unresolved", diffGeneration: 1, ...c2 },
+            ],
+          };
+          r.rerender(viewer());
+        };
+
+        // The refetch: the failure and the verdict are cleared. The failed
+        // card is gone, and the stage claims nothing yet.
+        listed({ id: "c1", ...undiffed });
+        await act(async () => {});
+        expect(r.queryByTestId("stage-diff-failed")).toBeNull();
+        noClaim(r);
+
+        // The worker settles the step at 0%: now it can say so.
+        listed({
+          id: "c1",
+          state: "passed",
+          verdict: "passed",
+          diffPercent: 0,
+        });
+        await act(async () => {});
+        expect(r.getByText(NO_CHANGES)).toBeDefined();
+      });
+    });
 
     test("the stage root names the step it opened on once its images are drawn (data-stage-drawn)", async () => {
       loadingStorage();
@@ -1550,6 +1781,90 @@ describe("DiffViewer", () => {
     mockGetByIdData = { ...defaultMockData, status: "unresolved" as const };
     const r = render(<DiffViewer runId="r1" diffId="d1" />);
     expect(r.queryByTestId("empty-run-card")).toBeNull();
+  });
+
+  describe("a step's own numbers (spec §9, R46)", () => {
+    const RUN = "00000000-0000-0000-0000-000000000000";
+    // The run's numbers are its worst step's: another step's.
+    const WORST = { diffPercent: 9, vlmDescription: "The worst step's text" };
+    /** One step of `runs.listCheckpoints`, diffed once unless a test says. */
+    const item = (over: Record<string, unknown> = {}) => ({
+      id: "c1",
+      name: "Home",
+      state: "unresolved",
+      diffPercent: 1.25,
+      vlmDescription: "This step's text",
+      diffGeneration: 1,
+      ...over,
+    });
+    function openStep(items: unknown[], at = "c1") {
+      mockGetByIdData = { ...defaultMockData, ...WORST };
+      mockCheckpoints = { items };
+      return render(
+        <DiffViewer runId={RUN} projectId="p1" initialCheckpointId={at} />,
+      );
+    }
+    /** What the sidebar's Pixel diff card says. */
+    const pixelDiff = (r: ReturnType<typeof render>) =>
+      within(r.getByTestId("info-stat-cards")).getByText("Pixel diff")
+        .previousElementSibling?.textContent;
+
+    test("the sidebar shows the step's own diff %, not the run's", () => {
+      const r = openStep([
+        item(),
+        item({ id: "c2", name: "Search", diffPercent: 9 }),
+      ]);
+      expect(pixelDiff(r)).toBe("1.25%");
+    });
+
+    test("the sidebar follows the step on screen", () => {
+      const r = openStep(
+        [item(), item({ id: "c2", name: "Search", diffPercent: 3.5 })],
+        "c1",
+      );
+      expect(pixelDiff(r)).toBe("1.25%");
+      // →: the viewer shows c2 at once, with its own number.
+      fireEvent.click(r.getByTestId("contextual-header-next"));
+      expect(pixelDiff(r)).toBe("3.50%");
+    });
+
+    test("falls back to the run's when the step has none and predates per-step diffs", () => {
+      const r = openStep([item({ diffPercent: null, diffGeneration: 0 })]);
+      expect(pixelDiff(r)).toBe("9.00%");
+    });
+
+    test("a newer step with none shows no value, never the run's", () => {
+      const r = openStep([item({ diffPercent: null, diffGeneration: 1 })]);
+      expect(pixelDiff(r)).toBe("—");
+      expect(r.queryByText("9.00%")).toBeNull();
+    });
+
+    test.each([0, 1])(
+      "a step at 0%% shows 0.00%% (generation %i)",
+      (diffGeneration) => {
+        const r = openStep([item({ diffPercent: 0, diffGeneration })]);
+        expect(pixelDiff(r)).toBe("0.00%");
+      },
+    );
+
+    test("the region list shows the step's description, not the run's", () => {
+      const r = openStep([item()]);
+      const box = r.getByTestId("vlm-description-box");
+      expect(box.textContent).toContain("This step's text");
+      expect(box.textContent).not.toContain("worst step");
+    });
+
+    test("the region list falls back to the run's description for a step that predates per-step diffs", () => {
+      const r = openStep([item({ vlmDescription: null, diffGeneration: 0 })]);
+      expect(r.getByTestId("vlm-description-box").textContent).toContain(
+        "The worst step's text",
+      );
+    });
+
+    test("a newer step with no description shows none, not the run's", () => {
+      const r = openStep([item({ vlmDescription: null, diffGeneration: 2 })]);
+      expect(r.queryByTestId("vlm-description-box")).toBeNull();
+    });
   });
 
   test("the step's details sit in the resizable rail, and t collapses it to the strip", () => {
@@ -2285,6 +2600,27 @@ describe("DiffViewer: the review loop", () => {
     );
     expect(routerSpies.replace).not.toHaveBeenCalled();
     expect(routerSpies.push).not.toHaveBeenCalled();
+  });
+
+  test("a step whose diff failed is pending for the loop: no done card, and J moves on from it", () => {
+    mockCheckpoints = {
+      items: [
+        {
+          ...stepFixture("c1", "unresolved"),
+          diffFailedAt: "2026-10-24T08:00:00.000Z",
+          diffError: "engine_error",
+        },
+        stepFixture("c2", "unresolved"),
+      ],
+    };
+    nextQuery.data = intoOtherRun();
+    const r = renderViewer();
+    // The step needs a reviewer (once it is retried): the loop stops on it.
+    expect(r.queryByTestId("batch-done-card")).toBeNull();
+    expect(r.getByTestId("stage-diff-failed")).toBeDefined();
+    press("J");
+    expect(routerSpies.push).toHaveBeenCalledOnce();
+    expect(routerSpies.push).toHaveBeenCalledWith(stepUrl(OTHER_RUN, "s9"));
   });
 
   test("R25: Mark as Bug in the editor puts its note in this run's draft and says so; another run's comment box stays empty", () => {
@@ -4766,5 +5102,177 @@ describe("DiffViewer: the comparison mode in the URL (spec §6.3)", () => {
       press("5");
       expect(JSON.parse(stored() ?? "{}").mode).toBe("diff");
     });
+  });
+});
+
+describe("DiffViewer: a step whose diff failed (spec 2026-10-23 §10)", () => {
+  const REASON = "The diff didn't finish in time.";
+  /** A step whose diff failed for good, as `runs.listCheckpoints` says it. */
+  const failedStep = (id: string, over: Partial<StepFixture> = {}) => ({
+    ...stepFixture(id, "unresolved", over),
+    diffFailedAt: "2026-10-24T08:00:00.000Z",
+    diffError: "timeout",
+  });
+  const retryCommand = () =>
+    resolveCommands().find(({ command }) => command.id === "viewer.retryDiff");
+  /** Whether the palette would offer Retry diff now. */
+  const retryOffered = () => {
+    const resolved = retryCommand();
+    return resolved?.command.enabled?.(resolved.ctx()) ?? false;
+  };
+  const renderStep = (id = "cp-1") =>
+    render(<DiffViewer runId={RUN_ID} diffId="d1" initialCheckpointId={id} />);
+
+  beforeEach(() => {
+    mockGetByIdData = { ...defaultMockData };
+    mockCheckpoints = { items: [failedStep("cp-1")] };
+    resetReviewSpies();
+    retryDiffSpy.mockReset();
+    retryDiffSpy.mockResolvedValue({ status: "running" });
+  });
+  afterEach(() => cleanup());
+
+  test("the stage says why, and an editor can retry from it", () => {
+    const r = renderStep();
+    const card = r.getByTestId("stage-diff-failed");
+    expect(card.textContent).toContain(`This step's diff failed. ${REASON}`);
+    fireEvent.click(within(card).getByRole("button", { name: "Retry diff" }));
+    expect(retryDiffSpy).toHaveBeenCalledOnce();
+    expect(retryDiffSpy).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
+    });
+  });
+
+  test("a guest sees the state, with no way to retry", () => {
+    keyboard.role = "guest";
+    const r = renderStep();
+    expect(r.getByTestId("stage-diff-failed").textContent).toContain(REASON);
+    expect(r.queryByRole("button", { name: "Retry diff" })).toBeNull();
+    expect(retryCommand()).toBeUndefined();
+  });
+
+  test("Approve, Reject and Mark as Bug are disabled with Retry the diff first, keys included", () => {
+    const r = renderStep();
+    for (const id of [
+      "approve-checkpoint-button",
+      "reject-button",
+      "mark-as-bug-button",
+    ]) {
+      const button = r.getByTestId(id);
+      expect(button.getAttribute("aria-disabled"), id).toBe("true");
+      const reason = document.getElementById(
+        button.getAttribute("aria-describedby")!,
+      );
+      expect(reason?.textContent, id).toBe("Retry the diff first");
+      fireEvent.click(button);
+    }
+    press("A");
+    press("R");
+    expect(reviewSpies.decide).not.toHaveBeenCalled();
+  });
+
+  test("the palette offers Retry diff on the failed step only, and it retries that step", () => {
+    renderStep();
+    expect(retryOffered()).toBe(true);
+    // No key is bound to it.
+    expect(retryCommand()?.command.keys ?? []).toEqual([]);
+    act(() => {
+      void retryCommand()?.command.run(retryCommand()!.ctx());
+    });
+    expect(retryDiffSpy).toHaveBeenCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-1",
+    });
+    cleanup();
+
+    // A step whose diff did not fail has nothing to retry.
+    mockCheckpoints = { items: [stepFixture("cp-1", "unresolved")] };
+    useCommandRegistry.setState({ entries: [], role: "guest" });
+    renderStep();
+    expect(retryOffered()).toBe(false);
+  });
+
+  test("while the retry is out the stage's button is busy and the palette action waits", async () => {
+    let settle!: () => void;
+    retryDiffSpy.mockReturnValue(
+      new Promise<{ status: string }>((resolve) => {
+        settle = () => resolve({ status: "running" });
+      }),
+    );
+    const r = renderStep();
+    const button = r.getByRole("button", { name: "Retry diff" });
+    fireEvent.click(button);
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+    expect(retryOffered()).toBe(false);
+    // The step list, the run and the run lists are read again once it lands.
+    await act(async () => settle());
+    expect(utilsMock.runs.listCheckpoints.invalidate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+    });
+    expect(utilsMock.runs.getById.invalidate).toHaveBeenCalledWith({
+      runId: RUN_ID,
+    });
+    expect(utilsMock.runs.list.invalidate).toHaveBeenCalled();
+  });
+
+  test("a retry of one step in flight does not hold up another failed step", async () => {
+    mockCheckpoints = { items: [failedStep("cp-1"), failedStep("cp-2")] };
+    // The first retry never settles in this test.
+    retryDiffSpy.mockReturnValueOnce(new Promise<{ status: string }>(() => {}));
+    const r = renderStep("cp-1");
+    const first = r.getByRole("button", { name: "Retry diff" });
+    fireEvent.click(first);
+    await waitFor(() => expect(first.getAttribute("aria-busy")).toBe("true"));
+    expect(retryOffered()).toBe(false);
+
+    // On to the next failed step before the first retry has settled.
+    press("ArrowRight");
+    const second = r.getByRole("button", { name: "Retry diff" });
+    expect(second.getAttribute("aria-busy")).toBeNull();
+    expect(second.getAttribute("aria-disabled")).toBeNull();
+    expect(retryOffered()).toBe(true);
+    fireEvent.click(second);
+    expect(retryDiffSpy).toHaveBeenLastCalledWith({
+      runId: RUN_ID,
+      checkpointId: "cp-2",
+    });
+    expect(retryDiffSpy).toHaveBeenCalledTimes(2);
+
+    // And back on the first, its retry is still out.
+    press("ArrowLeft");
+    expect(
+      r.getByRole("button", { name: "Retry diff" }).getAttribute("aria-busy"),
+    ).toBe("true");
+  });
+
+  test("the step list is read again when a step settles, so a retried step leaves 'being diffed'", () => {
+    renderStep();
+    const es = StubEventSource.instances.at(-1)!;
+    const list = utilsMock.runs.listCheckpoints.invalidate;
+
+    act(() => es.emit({ type: "capture.started", runId: RUN_ID }));
+    expect(list).not.toHaveBeenCalled();
+
+    act(() =>
+      es.emit({
+        type: "run.checkpoint_diffed",
+        runId: RUN_ID,
+        screenshotId: "cp-1",
+        verdict: "unresolved",
+        failed: true,
+      }),
+    );
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(list).toHaveBeenLastCalledWith({ runId: RUN_ID });
+  });
+
+  test("a failed step shows no 'no changes' message in Diff", () => {
+    useViewerPrefs.setState({
+      prefs: { ...DEFAULT_VIEWER_PREFS, mode: "diff" },
+    });
+    const r = renderStep();
+    expect(r.getByTestId("stage-diff-failed")).toBeDefined();
+    expect(r.queryByText(/No pixel changes/)).toBeNull();
   });
 });

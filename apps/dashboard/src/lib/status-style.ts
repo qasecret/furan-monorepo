@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   type LucideIcon,
   ThumbsDown,
+  TriangleAlert,
 } from "lucide-react";
 
 /**
@@ -145,6 +146,22 @@ export const REVIEW_STATE_STYLE = {
     tooltip: "Rejected by a reviewer",
   },
 } as const satisfies Record<CheckpointReviewState, StatusStyle>;
+
+/**
+ * A step whose diff failed for good (spec 2026-10-23 §10): it has no result,
+ * so it is no review state, and it never changes the run's own status. It
+ * reads in the danger tone with its own icon, apart from a rejected step.
+ */
+export const DIFF_FAILED_STYLE = {
+  label: "Diff failed",
+  tooltip: "The diff failed; no result yet",
+  icon: TriangleAlert,
+  dot: "bg-status-failed",
+  fill: "fill-status-failed",
+  accent: "border-l-status-failed",
+  text: "text-status-failed-text",
+  pill: "border border-status-failed/25 bg-status-failed/10 text-status-failed-text",
+} as const satisfies StatusStyle;
 
 /** Style for a review state; anything unrecognised renders as `empty`. */
 export function reviewStateStyle(state: string): StatusStyle {
