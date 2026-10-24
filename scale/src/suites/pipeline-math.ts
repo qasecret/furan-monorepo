@@ -12,7 +12,12 @@ import {
  * from the stack that feeds it.
  */
 
-/** P1: checkpoint diffs per step uploaded. Linear diff work is exactly 1. */
+/**
+ * P1: checkpoint diffs per step uploaded. Linear diff work is exactly 1: each
+ * upload queues one job for its own step, a committed job observes 1 in
+ * `furan_diff_job_checkpoints` and a stale one (a newer version of its step
+ * was queued) observes 0, so a re-diff never counts twice.
+ */
 export function amplification(diffs: number, steps: number): number {
   if (!(steps > 0))
     throw new RangeError(`steps must be positive, got ${steps}`);
@@ -117,9 +122,17 @@ export function findDuplicates(regions: readonly RegionRow[]): number {
 export interface StepRow {
   id: string;
   verdict: string | null;
+  /**
+   * Its diff failed for good (`diff_failed_at` set): the verdict reads
+   * `unresolved` and the step has no regions, but it has no result either.
+   */
+  failed?: boolean;
 }
 
-/** P5's checks on the state the race left. */
+/**
+ * P5's checks on the state the race left. A failed step is a lost result,
+ * counted on its own: it is not also an unresolved step without a region.
+ */
 export function raceLosses(
   steps: readonly StepRow[],
   regions: readonly RegionRow[],
@@ -127,15 +140,31 @@ export function raceLosses(
   duplicates: number;
   nullVerdicts: number;
   unresolvedWithoutRegion: number;
+  failedSteps: number;
 } {
   const withRegion = new Set(regions.map((r) => r.screenshotId));
   return {
     duplicates: findDuplicates(regions),
     nullVerdicts: steps.filter((s) => s.verdict === null).length,
     unresolvedWithoutRegion: steps.filter(
-      (s) => s.verdict === "unresolved" && !withRegion.has(s.id),
+      (s) =>
+        s.verdict === "unresolved" &&
+        s.failed !== true &&
+        !withRegion.has(s.id),
     ).length,
+    failedSteps: steps.filter((s) => s.failed === true).length,
   };
+}
+
+/**
+ * P5's quiet re-diff (`runs.setDiffThresholdOverride`) queues one job per step
+ * whose verdict is not `new` (a step with no baseline pair is never re-diffed
+ * by a threshold), failed and undiffed steps included. Each of those jobs
+ * diffs one checkpoint, so the re-diff ran in full only if the checkpoint
+ * diffs it added are at least this many.
+ */
+export function pairedSteps(steps: readonly StepRow[]): number {
+  return steps.filter((s) => s.verdict !== "new").length;
 }
 
 /** A run's steps and regions at one moment. */
@@ -145,10 +174,11 @@ export interface RunSnapshot {
 }
 
 /**
- * P5's ground truth: the steps (counted once each) whose verdict or region
- * set differs between the state the race left and a quiet re-diff of it. The
- * regions are compared as sets of `regionKey` (spec §5.2), so a duplicate the
- * re-diff removed is not counted again here: `findDuplicates` counts it.
+ * P5's ground truth: the steps (counted once each) whose verdict, failure or
+ * region set differs between the state the race left and a quiet re-diff of
+ * it. The regions are compared as sets of `regionKey` (spec §5.2), so a
+ * duplicate the re-diff removed is not counted again here: `findDuplicates`
+ * counts it.
  */
 export function stepDifferences(
   before: RunSnapshot,
@@ -164,11 +194,14 @@ export function stepDifferences(
     const sorted = (id: string): string[] => [...(keys.get(id) ?? [])].sort();
     const out = new Map<string, string>();
     for (const step of snapshot.steps) {
-      out.set(step.id, JSON.stringify([step.verdict, sorted(step.id)]));
+      out.set(
+        step.id,
+        JSON.stringify([step.verdict, step.failed === true, sorted(step.id)]),
+      );
     }
     // Regions of a screenshot the step list does not name still count.
     for (const id of keys.keys()) {
-      if (!out.has(id)) out.set(id, JSON.stringify([null, sorted(id)]));
+      if (!out.has(id)) out.set(id, JSON.stringify([null, false, sorted(id)]));
     }
     return out;
   };
@@ -262,6 +295,33 @@ export function statusSequence(
     if (status !== sequence[sequence.length - 1]) sequence.push(status);
   }
   return sequence;
+}
+
+/**
+ * P6 (ruling R24): the run status a message on the run's own channel
+ * (`run:<id>:events`) announces, or undefined when it announces none.
+ *
+ * Only the diff worker's `run.completed` counts: it carries the new status at
+ * the top level and is published once per status change a step's commit
+ * makes. Ignored:
+ * - `run.checkpoint_diffed`, published after every step's commit, which names
+ *   the step's verdict but no run status;
+ * - the api's `/complete` and `/abort` `run.completed`, whose status is nested
+ *   in `payload`: it is what the api read, not a diff result;
+ * - anything else, or a message that is not a JSON object.
+ */
+export function runCompletedStatus(message: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const { type, status } = parsed as { type?: unknown; status?: unknown };
+  return type === "run.completed" && typeof status === "string"
+    ? status
+    : undefined;
 }
 
 /** A status sequence for a note, at most `max` statuses before the ellipsis. */

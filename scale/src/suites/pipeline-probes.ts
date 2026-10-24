@@ -6,6 +6,8 @@ import { createQueue, type Redis } from "@furan/queue";
 import { QUEUE_PREFIX } from "../stack/constants.js";
 import { releaseRedis } from "../stack/worker.js";
 
+import { runCompletedStatus } from "./pipeline-math.js";
+
 /**
  * What the pipeline suite watches while it drives the stack: one run's rows
  * (`RunWatcher`), the diff queue (`openQueueProbe`), the project's live events
@@ -359,7 +361,10 @@ export async function subscribeProjectEvents(
 }
 
 export interface RunStatuses {
-  /** Each diff job's post-rollup status, with its arrival time. */
+  /**
+   * Each status the diff worker announced (`run.completed`, one per status
+   * change a step's commit made), with its arrival time.
+   */
   seen(): { at: number; status: string }[];
   close(): Promise<void>;
 }
@@ -367,9 +372,11 @@ export interface RunStatuses {
 /**
  * The run's own channel (`run:<id>:events`), where the diff worker publishes
  * `run.completed` with the new status each time a step's commit moves the
- * run's status (top-level `status`, `apps/diff-worker/src/step-events.ts`). The
- * api's `/complete` publishes a `run.completed` too, with the status it read
- * nested in `payload`; that one is not a diff result and is skipped.
+ * run's status (top-level `status`, `apps/diff-worker/src/step-events.ts`).
+ * `runCompletedStatus` keeps only those: the `run.checkpoint_diffed` the
+ * worker publishes after every step's commit carries no run status, and the
+ * api's `/complete` publishes a `run.completed` with the status it read nested
+ * in `payload`, which is not a diff result.
  */
 export async function subscribeRunStatuses(
   redis: Redis,
@@ -380,13 +387,8 @@ export async function subscribeRunStatuses(
     redis,
     `run:${runId}:events`,
     (message, at) => {
-      const parsed = parseJson(message);
-      if (
-        parsed?.type === "run.completed" &&
-        typeof parsed.status === "string"
-      ) {
-        seen.push({ at, status: parsed.status });
-      }
+      const status = runCompletedStatus(message);
+      if (status !== undefined) seen.push({ at, status });
     },
   );
   return { seen: () => seen.map((s) => ({ ...s })), close };

@@ -26,7 +26,7 @@ baseline, and reviewers approve or reject the differences in a web dashboard.
 | --------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/api`            | Fastify 5, tRPC v11, Drizzle                      | REST API for SDKs and CI, tRPC for the dashboard, auth, RBAC, server-sent events, OpenAPI at `/openapi.json`                                                   |
 | `apps/dashboard`      | Next.js 15, React 19, Tailwind v4, Radix, pixi.js | Review UI: builds, the diff viewer, approvals, project settings, admin                                                                                         |
-| `apps/diff-worker`    | BullMQ consumer                                   | Resolves the baseline, runs the comparison, stores regions and status, applies auto-rules, runs retention sweeps                                               |
+| `apps/diff-worker`    | BullMQ consumer                                   | Diffs one step per job: resolves the baseline, runs the comparison, stores regions and status, applies auto-rules; re-queues lost jobs; runs retention sweeps  |
 | `apps/capture-worker` | Playwright (Chromium), sharp                      | Server-side page capture job consumer. Today screenshots are captured by the SDKs inside the test run; server-side capture is not yet exposed through the API. |
 | `apps/integrations`   | Fastify, Octokit                                  | GitHub App (commit status + sticky PR comment) and Slack notifications                                                                                         |
 
@@ -43,18 +43,51 @@ interface), `telemetry` (logging, tracing, metrics), `diff-engine`,
    map (CSS selector → bounding box) so regions can be tied to elements.
 2. Images go to object storage, content-addressed by hash; metadata goes to
    Postgres.
-3. When the SDK completes the run, the api enqueues a **diff job** on Redis.
-4. The **diff-worker** finds the baseline for each checkpoint's **variation**
-   — the test name plus its environment (browser, viewport, OS, device) — on
-   the run's branch, falling back to the pull request's base branch and then
-   the project's default branch.
-5. It compares the images and writes the result: the diff overlay, changed
-   regions, a status (`passed`, `unresolved`, `failed`, or `new` when no
-   baseline exists yet), and an optional Visual-AI explanation.
-6. Updates are published over Redis and streamed to open dashboards as
-   server-sent events; the GitHub App updates the commit status.
+3. Each upload queues a **diff job** on Redis for its own checkpoint (a
+   **step**), so a run of N steps is diffed N times, once per step. A job
+   names the step and the step's **version**, which is bumped every time the
+   step is queued (its id is `<step id>-g<version>`). Anything that needs a
+   diff again (an ignore-region or threshold edit, an undo, a branch merge, a
+   retry) queues only the steps it affects. The run stays `running` until
+   every step has a result.
+4. The **diff-worker** runs one job per step. It finds the baseline for the
+   step's **variation** — the test name plus its environment (browser,
+   viewport, OS, device) — on the run's branch, falling back to the pull
+   request's base branch and then the project's default branch.
+5. It compares the images, then commits the step's result: the diff overlay,
+   changed regions, the step's verdict (`passed`, `unresolved`, or `new` when
+   no baseline exists yet), its diff % and an optional Visual-AI explanation.
+   The commit locks the run, then the step, and **re-checks the version**: a
+   job whose step was queued again in the meantime is stale and writes
+   nothing, so overlapping jobs never duplicate or lose a step's regions. In
+   the same transaction the run's totals (diff %, changed pixels, baseline
+   source) and its status are recomputed from its steps.
+   - **A failed diff fails only its step.** When a step's job fails its last
+     attempt, the step is marked `unresolved` with a reason code (such as
+     `image_unreadable`) and shows "Diff failed" in the dashboard, where an
+     editor can retry it. The run is never aborted; it needs attention, so CI
+     reports a failure, never a pass.
+   - **A reconciler** in each diff-worker looks every 30 s for steps that
+     have waited more than 10 minutes for a result. A step whose job is gone
+     is queued again; after 3 such re-queues it fails with `timeout`. A step
+     is never marked passed for waiting too long. See
+     [`docs/runbooks/diff-queue-backlog.md`](docs/runbooks/diff-queue-backlog.md).
+6. Updates are published over Redis. After every step the worker publishes
+   `run.checkpoint_diffed`; only when that step changed the run's status does
+   it also publish `run.completed`, with the run's totals, and the project's
+   `testRun_updated` and `build_updated`. Open dashboards receive them as
+   server-sent events. The integrations service acts on `run.completed`: the
+   GitHub App updates the commit status, Slack posts once the status is
+   final, and outbound webhooks subscribed to `run.completed` receive it.
 7. A reviewer approves (the candidate becomes the new baseline) or rejects.
    The first baseline for a new variation is approved by a person by default.
+
+**Outbound webhooks get one `run.completed` per status change.** A generic
+(non-Slack) webhook receives a delivery each time a run's status changes,
+usually once, when the run leaves `running`. Releases before the per-step
+pipeline sent one per diff job, most of them repeating `running`. The
+payload's `diffPercent` is omitted when no step of the run was compared with a
+baseline (every step `new`).
 
 ## Comparison pipeline
 

@@ -13,9 +13,11 @@ import {
   mixCounts,
   mixSeed,
   overlappingUploads,
+  pairedSteps,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  runCompletedStatus,
   singleStepChanges,
   statusSequence,
   stepDifferences,
@@ -277,6 +279,54 @@ describe("statusSequence (R24: transitions from the event stream)", () => {
   });
 });
 
+describe("runCompletedStatus (R24: the statuses the run channel announces)", () => {
+  it("reads the diff worker's run.completed, published once per status change", () => {
+    expect(
+      runCompletedStatus(
+        JSON.stringify({
+          type: "run.completed",
+          runId: "r1",
+          projectId: "p1",
+          status: "unresolved",
+          numChanges: 3,
+        }),
+      ),
+    ).toBe("unresolved");
+  });
+
+  it("ignores run.checkpoint_diffed: a step's verdict is no run status", () => {
+    expect(
+      runCompletedStatus(
+        JSON.stringify({
+          type: "run.checkpoint_diffed",
+          runId: "r1",
+          screenshotId: "s1",
+          verdict: "passed",
+          failed: false,
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("ignores the api's run.completed, whose status is nested in payload", () => {
+    expect(
+      runCompletedStatus(
+        JSON.stringify({
+          type: "run.completed",
+          runId: "r1",
+          payload: { status: "running", checkpointCount: 3 },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("ignores anything that is not a JSON object", () => {
+    expect(runCompletedStatus("not json")).toBeUndefined();
+    expect(runCompletedStatus("null")).toBeUndefined();
+    expect(runCompletedStatus('"run.completed"')).toBeUndefined();
+  });
+});
+
 describe("formatSequence", () => {
   it("joins a short sequence", () => {
     expect(formatSequence(["running", "unresolved"])).toBe(
@@ -325,7 +375,40 @@ describe("raceLosses", () => {
       duplicates: 1,
       nullVerdicts: 1,
       unresolvedWithoutRegion: 1,
+      failedSteps: 0,
     });
+  });
+
+  it("counts a failed step as a lost result, not as an unresolved step without a region", () => {
+    const steps = [
+      { id: "s1", verdict: "unresolved", failed: true },
+      { id: "s2", verdict: "unresolved", failed: false },
+      { id: "s3", verdict: "passed", failed: false },
+    ];
+    expect(raceLosses(steps, [region("s2", { x: 1 })])).toEqual({
+      duplicates: 0,
+      nullVerdicts: 0,
+      unresolvedWithoutRegion: 0,
+      failedSteps: 1,
+    });
+  });
+});
+
+describe("pairedSteps", () => {
+  it("counts the steps a threshold re-diff queues: every verdict but new", () => {
+    expect(
+      pairedSteps([
+        { id: "s1", verdict: "unresolved" },
+        { id: "s2", verdict: "passed" },
+        { id: "s3", verdict: "new" },
+        { id: "s4", verdict: "unresolved", failed: true },
+        { id: "s5", verdict: null },
+      ]),
+    ).toBe(4);
+  });
+
+  it("is zero for a run of new steps only", () => {
+    expect(pairedSteps([{ id: "s1", verdict: "new" }])).toBe(0);
   });
 });
 
@@ -365,6 +448,18 @@ describe("stepDifferences", () => {
           steps,
           regions: [...regions, region("s2", { x: 9 })],
         },
+      ),
+    ).toBe(1);
+  });
+
+  it("counts a step whose diff failed on one side only", () => {
+    expect(
+      stepDifferences(
+        {
+          steps: [{ id: "s1", verdict: "unresolved", failed: true }],
+          regions: [],
+        },
+        { steps: [{ id: "s1", verdict: "unresolved" }], regions: [] },
       ),
     ).toBe(1);
   });
