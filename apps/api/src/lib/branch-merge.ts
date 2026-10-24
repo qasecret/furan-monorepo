@@ -7,6 +7,7 @@ import {
   desc,
   eq,
   screenshots,
+  sql,
   testRuns,
   testVariations,
   type DB,
@@ -21,7 +22,11 @@ import {
   recordBranchMergeOutcome,
 } from "./branch-merge-metrics.js";
 import type { Broadcaster } from "./broadcast.js";
-import { addDiffJob } from "./diff-enqueue.js";
+import {
+  addDiffJob,
+  NEW_STEP_GENERATION,
+  stepDiffJob,
+} from "./diff-enqueue.js";
 
 /**
  * Shared backing implementation for the cross-branch baseline merge.
@@ -248,38 +253,51 @@ export async function mergeBranchBaselinesImpl(
     // Screenshot rows — reference the same content-addressed imageKey as
     // the source. ADR-038: unique constraint is (run_id, name, viewport);
     // we copy the source checkpoint's identity columns for traceability.
+    // Each copy is queued by its insert, like an upload's step.
+    const stepIds: string[] = [];
     for (const shot of sourceShots) {
-      await deps.db.insert(screenshots).values({
-        runId: run.id,
-        projectId,
-        testVariationId: shot.testVariationId,
-        name: shot.name,
-        imageKey: shot.imageKey,
-        domKey: shot.domKey,
-        elementMapKey: shot.elementMapKey,
-        viewport: shot.viewport,
-        browser: shot.browser,
-        os: shot.os,
-        device: shot.device,
-        matchLevel: shot.matchLevel,
-      });
+      const [copy] = await deps.db
+        .insert(screenshots)
+        .values({
+          runId: run.id,
+          projectId,
+          testVariationId: shot.testVariationId,
+          name: shot.name,
+          imageKey: shot.imageKey,
+          domKey: shot.domKey,
+          elementMapKey: shot.elementMapKey,
+          viewport: shot.viewport,
+          browser: shot.browser,
+          os: shot.os,
+          device: shot.device,
+          matchLevel: shot.matchLevel,
+          diffGeneration: NEW_STEP_GENERATION,
+          diffQueuedAt: sql`clock_timestamp()`,
+        })
+        .returning({ id: screenshots.id });
+      stepIds.push(copy!.id);
     }
 
-    // Best-effort enqueue — a queue blip should not fail an otherwise
-    // successful synthetic run. Bytes are persisted, the reviewer can
-    // manually re-trigger via setIgnoreAreas (which re-enqueues). Deferred to
-    // after-commit when the caller is transaction-scoped (onCommit) so the
-    // worker never sees the job before the run/screenshot rows.
+    // Best-effort enqueue, one job per copied step — a queue blip should not
+    // fail an otherwise successful synthetic run. Bytes are persisted, and the
+    // reconciler re-queues a step whose job was lost. Deferred to after-commit
+    // when the caller is transaction-scoped (onCommit) so the worker never
+    // sees a job before the run/screenshot rows.
     const runId = run.id;
     const enqueueDiff = async (): Promise<void> => {
-      try {
-        await addDiffJob(
-          { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
-          "branch_merge",
-          { runId, projectId },
-        );
-      } catch (err) {
-        deps.log.warn({ err, runId, projectId }, "merge_diff_enqueue_failed");
+      for (const screenshotId of stepIds) {
+        try {
+          await addDiffJob(
+            { diffQueue: deps.diffQueue, registry: deps.telemetry.metrics },
+            "branch_merge",
+            stepDiffJob(run, screenshotId, NEW_STEP_GENERATION),
+          );
+        } catch (err) {
+          deps.log.warn(
+            { err, runId, projectId, screenshotId },
+            "merge_diff_enqueue_failed",
+          );
+        }
       }
     };
     if (deps.onCommit) deps.onCommit(enqueueDiff);

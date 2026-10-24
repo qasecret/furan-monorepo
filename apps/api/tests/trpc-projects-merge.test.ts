@@ -272,11 +272,31 @@ d("tRPC projects.mergeBranchBaselines", () => {
     // Each variation has 1 source shot + 1 synthetic shot, so 6 rows total.
     expect(mainKeys.length).toBe(6);
 
-    // Diff queue calls — one per synthetic run.
+    // Diff queue calls — one per copied step (one per synthetic run here),
+    // each queued by its insert at version 1, under its job id.
+    const copies = mainShots.filter((sh) =>
+      mainRuns.some((r) => r.id === sh.runId),
+    );
+    expect(copies).toHaveLength(3);
+    expect(copies.every((sh) => sh.diffGeneration === 1)).toBe(true);
+    expect(copies.every((sh) => sh.diffQueuedAt instanceof Date)).toBe(true);
     expect(h.diffQueueAdd).toHaveBeenCalledTimes(3);
-    expect(h.diffQueueAdd).toHaveBeenCalledWith(
-      "diff",
-      expect.objectContaining({ projectId: s.projectId }),
+    const byStep = (a: { screenshotId: string }, b: { screenshotId: string }) =>
+      a.screenshotId.localeCompare(b.screenshotId);
+    expect(
+      h.diffQueueAdd.mock.calls
+        .map(([, p, o]) => ({ ...p, jobId: o?.jobId }))
+        .sort(byStep),
+    ).toEqual(
+      copies
+        .map((sh) => ({
+          runId: sh.runId,
+          projectId: s.projectId,
+          screenshotId: sh.id,
+          generation: 1,
+          jobId: `${sh.id}-g1`,
+        }))
+        .sort(byStep),
     );
     // ...each counted under the branch_merge trigger.
     expect(

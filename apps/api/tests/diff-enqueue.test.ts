@@ -9,7 +9,12 @@ import { counterValue } from "./helpers.js";
 const ENQUEUED = "furan_diff_jobs_enqueued_total";
 const FAILURES = "furan_diff_enqueue_failures_total";
 
-const PAYLOAD = { runId: "run-1", projectId: "project-1" };
+const PAYLOAD = {
+  runId: "run-1",
+  projectId: "project-1",
+  screenshotId: "step-1",
+  generation: 3,
+};
 
 function producer(add: DiffQueueProducer["add"]): DiffQueueProducer {
   return { add };
@@ -57,7 +62,7 @@ describe("addDiffJob", () => {
     );
   });
 
-  test("hands the payload to the queue unchanged, as a diff job", async () => {
+  test("hands the payload to the queue unchanged, as a diff job under the step's job id", async () => {
     const registry = new Registry();
     const add = vi.fn().mockResolvedValue({ id: "job" });
     const payload = { ...PAYLOAD, parentPrBaseBranch: "develop" };
@@ -69,7 +74,8 @@ describe("addDiffJob", () => {
     );
 
     expect(add).toHaveBeenCalledTimes(1);
-    expect(add).toHaveBeenCalledWith("diff", payload);
+    // `diffJobId(step, version)`: the id the reconciler looks the job up by.
+    expect(add).toHaveBeenCalledWith("diff", payload, { jobId: "step-1-g3" });
     // Same object, not a rebuilt copy: the wire stays what the caller built.
     expect(add.mock.calls[0]![1]).toBe(payload);
   });
@@ -88,6 +94,8 @@ describe("addDiffJob", () => {
       "threshold",
       "undo",
       "branch_merge",
+      "retry",
+      "reconcile",
     ];
     for (const t of triggers) await addDiffJob(deps, t, PAYLOAD);
 
@@ -100,6 +108,8 @@ describe("addDiffJob", () => {
       "threshold",
       "undo",
       "branch_merge",
+      "retry",
+      "reconcile",
     ]) {
       expect(await counterValue(registry, ENQUEUED, { trigger: t })).toBe(1);
     }

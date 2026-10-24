@@ -1841,7 +1841,7 @@ d("review router", () => {
     });
 
     describe("re-diffs", () => {
-      test("an undo of an approve enqueues a re-diff after commit, forwarding the run's parent branch", async () => {
+      test("an undo of an approve enqueues a re-diff of the run's steps after commit, forwarding the run's parent branch", async () => {
         const { s, actionId } = await approved({ parent: "main" });
         const seen: number[] = [];
         h.diffQueueAdd.mockImplementation(async () => {
@@ -1851,23 +1851,37 @@ d("review router", () => {
 
         await as(s.editor).review.revert.mutate({ actionId });
 
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-          runId: s.runId,
-          projectId: s.projectId,
-          parentPrBaseBranch: "main",
-        });
-        expect(seen).toEqual([2]);
+        // Each step of the run, in capture order, at its next version.
+        expect(h.diffQueueAdd.mock.calls).toEqual(
+          [s.shots.a!.id, s.shots.b!.id].map((screenshotId) => [
+            "diff",
+            {
+              runId: s.runId,
+              projectId: s.projectId,
+              screenshotId,
+              generation: 1,
+              parentPrBaseBranch: "main",
+            },
+            { jobId: `${screenshotId}-g1` },
+          ]),
+        );
+        expect(seen).toEqual([2, 2]);
       });
 
       test("a run without a parent branch is enqueued without parentPrBaseBranch", async () => {
         const { s, actionId } = await approved();
         await as(s.editor).review.revert.mutate({ actionId });
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-          runId: s.runId,
-          projectId: s.projectId,
-        });
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(2);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith(
+          "diff",
+          {
+            runId: s.runId,
+            projectId: s.projectId,
+            screenshotId: s.shots.a!.id,
+            generation: 1,
+          },
+          { jobId: `${s.shots.a!.id}-g1` },
+        );
       });
 
       test("every run of a multi-run action is enqueued once, even with no checkpoint re-diffed since (R28)", async () => {
@@ -1906,7 +1920,7 @@ d("review router", () => {
           .update(screenshots)
           .set({ verdict: "passed", verdictAt: sql`clock_timestamp()` })
           .where(eq(screenshots.id, s.shots.a!.id));
-        h.diffQueueAdd.mockRejectedValueOnce(new Error("queue is down"));
+        h.diffQueueAdd.mockRejectedValue(new Error("queue is down"));
         const registry = h.app.telemetry.metrics;
         const failuresBefore = await diffEnqueueFailures(registry, "undo");
         const enqueuedBefore = await diffJobsEnqueued(registry, "undo");
@@ -1920,21 +1934,23 @@ d("review router", () => {
         expect(failed.code).toBe("INTERNAL_SERVER_ERROR");
         expect(await revertedRows(actionId)).toHaveLength(2);
         expect(await runStatus(s.runId)).toBe("running");
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        // Both steps' jobs were tried.
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(2);
         expect(
           h.broadcasterPublish.mock.calls.map(
             ([, ev]) => (ev as { event: string }).event,
           ),
         ).toEqual(["testRun_updated", "build_updated"]);
-        // The failure still surfaced, and was counted: as a failure, not a success.
+        // The failure still surfaced, and was counted: as failures, not successes.
         expect(await diffEnqueueFailures(registry, "undo")).toBe(
-          failuresBefore + 1,
+          failuresBefore + 2,
         );
         expect(await diffJobsEnqueued(registry, "undo")).toBe(enqueuedBefore);
-        h.diffQueueAdd.mockClear();
+        h.diffQueueAdd.mockReset();
+        h.diffQueueAdd.mockResolvedValue({ id: "test-job-id" });
 
         // The retry has nothing left to undo, but the run is still waiting
-        // for its diff: that re-diff is queued now.
+        // for its diff: its steps are queued again now, at a new version.
         const retry = await as(s.editor).review.revert.mutate({ actionId });
 
         expect(retry.reverted).toBe(0);
@@ -1942,20 +1958,26 @@ d("review router", () => {
           "already_undone",
           "already_undone",
         ]);
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-          runId: s.runId,
-          projectId: s.projectId,
-        });
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(2);
+        expect(h.diffQueueAdd).toHaveBeenCalledWith(
+          "diff",
+          {
+            runId: s.runId,
+            projectId: s.projectId,
+            screenshotId: s.shots.a!.id,
+            generation: 2,
+          },
+          { jobId: `${s.shots.a!.id}-g2` },
+        );
         expect(await diffJobsEnqueued(registry, "undo")).toBe(
-          enqueuedBefore + 1,
+          enqueuedBefore + 2,
         );
       });
 
       test("a retry of an approve undo whose runs all have their verdicts enqueues nothing", async () => {
         const { s, actionId } = await approved();
         await as(s.editor).review.revert.mutate({ actionId });
-        expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
+        expect(h.diffQueueAdd).toHaveBeenCalledTimes(2);
         h.diffQueueAdd.mockClear();
 
         const retry = await as(s.editor).review.revert.mutate({ actionId });
@@ -2077,8 +2099,9 @@ d("review router", () => {
           { revertedAt: null },
         ]);
         expect(await runStatus(b.runId)).toBe("passed");
-        // Only A's run is re-diffed and announced.
+        // Only A's run (both of its steps) is re-diffed and announced.
         expect(h.diffQueueAdd.mock.calls.map(([, p]) => p.runId)).toEqual([
+          a.runId,
           a.runId,
         ]);
         expect(

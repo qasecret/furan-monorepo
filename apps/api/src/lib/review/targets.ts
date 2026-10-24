@@ -79,10 +79,9 @@ export async function lockRuns(
  * chosen by the same statement that locks them, so a run that appears while
  * the lock is being taken cannot slip between "which runs" and "lock them".
  *
- * A run that cannot be a target is not locked: a `running` run is being
- * written by the upload path, which locks a variation and then its run, so
- * holding that run's lock while the core goes on to lock variations would
- * invert that order (40P01). A run that becomes reviewable after this
+ * A run that cannot be a target is not locked, so a build-wide action never
+ * holds up a `running` run's uploads and diff commits (each takes the run's
+ * lock first, then a variation). A run that becomes reviewable after this
  * statement is therefore unlocked; `approveBuild` refuses a selection that
  * reaches such a run.
  */

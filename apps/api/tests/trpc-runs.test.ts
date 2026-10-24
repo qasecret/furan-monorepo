@@ -1156,15 +1156,18 @@ d("tRPC runs router", () => {
       // ADR-038: test_runs no longer has ignore_areas column. Run-scope ignore
       // areas are written to the first checkpoint's variation's ignore_regions.
       // Seed a screenshot to link the run to the variation.
-      await h.db.insert(screenshots).values({
-        runId: s.runId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        name: "home",
-        imageKey: "seed-img",
-        viewport: VP,
-        browser: "chromium",
-      });
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          name: "home",
+          imageKey: "seed-img",
+          viewport: VP,
+          browser: "chromium",
+        })
+        .returning({ id: screenshots.id });
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
@@ -1188,11 +1191,18 @@ d("tRPC runs router", () => {
         .limit(1);
       expect(vRow.ignoreRegions).toEqual([validRegion]);
 
+      // The run's step, at its next version, under its job id.
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-        runId: s.runId,
-        projectId: s.projectId,
-      });
+      expect(h.diffQueueAdd).toHaveBeenCalledWith(
+        "diff",
+        {
+          runId: s.runId,
+          projectId: s.projectId,
+          screenshotId: shot!.id,
+          generation: 1,
+        },
+        { jobId: `${shot!.id}-g1` },
+      );
       expect(
         await diffJobsEnqueued(h.app.telemetry.metrics, "ignore_areas"),
       ).toBe(enqueuedBefore + 1);
@@ -1201,15 +1211,18 @@ d("tRPC runs router", () => {
     test("scope=variation writes to test_variations.ignore_regions and enqueues a diff job (ADR-038)", async () => {
       // ADR-038: ignore_areas on test_variations renamed to ignore_regions (jsonb).
       // Seed a screenshot to link the run to the variation.
-      await h.db.insert(screenshots).values({
-        runId: s.runId,
-        projectId: s.projectId,
-        testVariationId: s.variationId,
-        name: "home",
-        imageKey: "seed-img",
-        viewport: VP,
-        browser: "chromium",
-      });
+      const [shot] = await h.db
+        .insert(screenshots)
+        .values({
+          runId: s.runId,
+          projectId: s.projectId,
+          testVariationId: s.variationId,
+          name: "home",
+          imageKey: "seed-img",
+          viewport: VP,
+          browser: "chromium",
+        })
+        .returning({ id: screenshots.id });
 
       const client = makeClient(baseUrl, s.memberJwt);
       const res = await client.runs.setIgnoreAreas.mutate({
@@ -1233,10 +1246,16 @@ d("tRPC runs router", () => {
       expect(vRow.ignoreRegions).toEqual([validRegion]);
 
       expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-      expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-        runId: s.runId,
-        projectId: s.projectId,
-      });
+      expect(h.diffQueueAdd).toHaveBeenCalledWith(
+        "diff",
+        {
+          runId: s.runId,
+          projectId: s.projectId,
+          screenshotId: shot!.id,
+          generation: 1,
+        },
+        { jobId: `${shot!.id}-g1` },
+      );
     });
 
     test("ignoreAreas: null clears the target variation column (scope=run, ADR-038)", async () => {
@@ -3516,12 +3535,19 @@ d("tRPC runs router", () => {
             threshold: 0.05,
           });
         }
+        const step = rs.shots.home!.id;
         expect(h.diffQueueAdd).toHaveBeenCalledTimes(1);
-        expect(h.diffQueueAdd).toHaveBeenCalledWith("diff", {
-          runId: rs.runId,
-          projectId: rs.projectId,
-          parentPrBaseBranch: "main",
-        });
+        expect(h.diffQueueAdd).toHaveBeenCalledWith(
+          "diff",
+          {
+            runId: rs.runId,
+            projectId: rs.projectId,
+            screenshotId: step,
+            generation: 1,
+            parentPrBaseBranch: "main",
+          },
+          { jobId: `${step}-g1` },
+        );
         expect(await diffJobsEnqueued(h.app.telemetry.metrics, trigger)).toBe(
           enqueuedBefore + 1,
         );

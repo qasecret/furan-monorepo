@@ -1,4 +1,8 @@
-import { DIFF_JOBS_ENQUEUED_METRIC, type DiffJob } from "@furan/queue";
+import {
+  DIFF_JOBS_ENQUEUED_METRIC,
+  diffJobId,
+  type DiffJob,
+} from "@furan/queue";
 import { Counter, type Registry } from "@furan/telemetry";
 
 import type { DiffQueueProducer } from "../trpc/context.js";
@@ -12,7 +16,10 @@ import type { DiffQueueProducer } from "../trpc/context.js";
  * - `temp_ignore_areas`: `runs.setTempIgnoreAreas`;
  * - `threshold`: `runs.setDiffThresholdOverride`;
  * - `undo`: `review.revert` re-diffing the runs whose verdict it cleared;
- * - `branch_merge`: a synthetic run created by a cross-branch baseline merge.
+ * - `branch_merge`: a synthetic run created by a cross-branch baseline merge;
+ * - `retry`: a reviewer retrying a step whose diff failed;
+ * - `reconcile`: the diff worker re-queueing a step whose job was lost. The
+ *   worker counts it on its own registry; the api never adds one.
  */
 export type DiffTrigger =
   | "upload"
@@ -20,7 +27,48 @@ export type DiffTrigger =
   | "temp_ignore_areas"
   | "threshold"
   | "undo"
-  | "branch_merge";
+  | "branch_merge"
+  | "retry"
+  | "reconcile";
+
+/**
+ * A per-step diff job: the only kind the api adds (spec 2026-10-23 §3). The
+ * worker still splits an old whole-run job, but nothing here makes one.
+ */
+export type StepDiffJob = DiffJob & {
+  screenshotId: string;
+  generation: number;
+};
+
+/**
+ * The version a step is inserted at when its insert queues it (an SDK upload,
+ * a branch-merge copy), with `diff_queued_at` stamped: its first job's. A
+ * re-diff bumps it from there (`queueStepDiffs`).
+ */
+export const NEW_STEP_GENERATION = 1;
+
+/**
+ * The job that diffs step `screenshotId` of `run` at version `generation`.
+ *
+ * Forwards the run's parent branch as `parentPrBaseBranch` when it has one, so
+ * the diff resolves baselines through the parent_pr tier (ADR-055); the field
+ * is omitted when null to keep the wire minimal.
+ */
+export function stepDiffJob(
+  run: { id: string; projectId: string; parentBranchName: string | null },
+  screenshotId: string,
+  generation: number,
+): StepDiffJob {
+  return {
+    runId: run.id,
+    projectId: run.projectId,
+    screenshotId,
+    generation,
+    ...(run.parentBranchName
+      ? { parentPrBaseBranch: run.parentBranchName }
+      : {}),
+  };
+}
 
 interface RegisteredMetrics {
   enqueued: Counter<"trigger">;
@@ -58,16 +106,20 @@ function getOrRegister(registry: Registry): RegisteredMetrics {
  * It decides nothing about what a failure means. A caller that treats the
  * enqueue as best-effort (the SDK upload, a branch merge) catches and logs; one
  * that must surface it (an undo, whose retry re-enqueues) lets it propagate.
- * The payload is handed to the queue as given.
+ * The payload is handed to the queue as given, under the job id
+ * `diffJobId(step, version)`: the reconciler looks a step's job up by exactly
+ * that id, and a version added twice is then one job.
  */
 export async function addDiffJob(
   deps: { diffQueue: DiffQueueProducer; registry: Registry },
   trigger: DiffTrigger,
-  payload: DiffJob,
+  payload: StepDiffJob,
 ): Promise<void> {
   const m = getOrRegister(deps.registry);
   try {
-    await deps.diffQueue.add("diff", payload);
+    await deps.diffQueue.add("diff", payload, {
+      jobId: diffJobId(payload.screenshotId, payload.generation),
+    });
   } catch (err) {
     m.failures.inc({ trigger });
     throw err;

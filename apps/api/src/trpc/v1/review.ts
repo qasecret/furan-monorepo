@@ -28,7 +28,7 @@ import {
   type Selection,
 } from "../../lib/review/actions.js";
 import { selectPendingTargets } from "../../lib/review/decide.js";
-import { enqueueRunDiff } from "../../lib/review/enqueue.js";
+import { queueStepDiffs, runStepIds } from "../../lib/review/enqueue.js";
 import { reviewError } from "../../lib/review/errors.js";
 import { recordReviewNext } from "../../lib/review/metrics.js";
 import {
@@ -492,10 +492,11 @@ export const reviewRouter = t.router({
    * not fatal. The gate's project is the one of the action's oldest decision,
    * and the core acts in that project only (an action id may exist in two).
    *
-   * After commit: the project is told which runs changed, then a re-diff is
-   * queued for every run in `rediffRunIds` (with the run's parent branch like
-   * the upload that first diffed it). A retry announces again, and queues
-   * again a run that still waits for its diff (R30); the events are
+   * Every step of each run in `rediffRunIds` is queued for a re-diff in the
+   * same transaction (`queueStepDiffs`, with the run's parent branch like the
+   * upload that first diffed it). After commit: the project is told which runs
+   * changed, then the re-diff jobs are added. A retry announces again, and
+   * queues again a run that still waits for its diff (R30); the events are
    * idempotent refresh hints.
    */
   revert: publicProcedure
@@ -536,7 +537,16 @@ export const reviewRouter = t.router({
           .from(testRuns)
           .where(inArray(testRuns.id, rediffRunIds))
           .orderBy(asc(testRuns.id));
-        for (const run of rediffs) enqueueRunDiff(ctx, run, "undo");
+        // `revertAction` locked these runs (ascending), then the variations:
+        // each bump only adds its steps' locks under its run's.
+        for (const run of rediffs) {
+          await queueStepDiffs(
+            ctx,
+            run,
+            await runStepIds(actx.tx, run),
+            "undo",
+          );
+        }
       }
       return result;
     }),

@@ -41,7 +41,7 @@ import {
   resolveBuildProject,
   trpcActionCtx,
 } from "../../lib/review/actions.js";
-import { enqueueRunDiff } from "../../lib/review/enqueue.js";
+import { queueStepDiffs, runStepIds } from "../../lib/review/enqueue.js";
 import {
   GROUP_APPROVE_CAP,
   groupScope,
@@ -257,7 +257,15 @@ async function requireRunProjectId(
   return projectId;
 }
 
-/** A run as the re-diff procedures need it; NOT_FOUND when there is no such run. */
+/**
+ * A run as the re-diff procedures need it, locked (`FOR NO KEY UPDATE`) for
+ * the rest of the request transaction; NOT_FOUND when there is no such run.
+ *
+ * The lock comes first, before the procedure writes a variation of the run
+ * (Ruling R34): a diff commit locks run -> step -> variation, so an edit that
+ * wrote the variation and then locked the run to queue its steps could
+ * deadlock with it.
+ */
 async function loadRunForRediff(ctx: Context, runId: string) {
   const [run] = await ctx.db
     .select({
@@ -267,7 +275,7 @@ async function loadRunForRediff(ctx: Context, runId: string) {
     })
     .from(testRuns)
     .where(eq(testRuns.id, runId))
-    .limit(1);
+    .for("no key update");
   if (!run) throw new TRPCError({ code: "NOT_FOUND" });
   return run;
 }
@@ -309,15 +317,17 @@ async function ignoreAreaVariationId(
 }
 
 /**
- * Re-diffs the run after commit and tells list views it changed. `trigger` is
- * the mutation that asked for the re-diff, counted on the enqueue metrics.
+ * Queues every step of the run for a re-diff (`queueStepDiffs`, in the request
+ * transaction; the jobs go out after commit) and tells list views it changed.
+ * `trigger` is the mutation that asked for the re-diff, counted on the enqueue
+ * metrics.
  */
-function rediffAndAnnounce(
+async function rediffAndAnnounce(
   ctx: Context & { onCommit: (effect: () => unknown) => void },
   run: { id: string; projectId: string; parentBranchName: string | null },
   trigger: DiffTrigger,
-): void {
-  enqueueRunDiff(ctx, run, trigger);
+): Promise<void> {
+  await queueStepDiffs(ctx, run, await runStepIds(ctx.db, run), trigger);
   // No build_updated: the diff-worker fires it when the re-diff lands.
   ctx.onCommit(() =>
     ctx.broadcaster.publishProjectEvent(run.projectId, {
@@ -798,7 +808,7 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      rediffAndAnnounce(ctx, run, "ignore_areas");
+      await rediffAndAnnounce(ctx, run, "ignore_areas");
 
       return {
         runId: run.id,
@@ -848,7 +858,7 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      rediffAndAnnounce(ctx, run, "temp_ignore_areas");
+      await rediffAndAnnounce(ctx, run, "temp_ignore_areas");
 
       return {
         runId: run.id,
@@ -940,7 +950,7 @@ export const runsRouter = t.router({
           .where(eq(testVariations.id, variationId));
       }
 
-      rediffAndAnnounce(ctx, run, "ignore_areas");
+      await rediffAndAnnounce(ctx, run, "ignore_areas");
 
       return {
         runId: run.id,
@@ -995,7 +1005,7 @@ export const runsRouter = t.router({
         })
         .where(eq(testRuns.id, run.id));
 
-      rediffAndAnnounce(ctx, run, "threshold");
+      await rediffAndAnnounce(ctx, run, "threshold");
 
       return {
         runId: run.id,
