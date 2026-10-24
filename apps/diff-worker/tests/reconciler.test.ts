@@ -17,6 +17,7 @@ import {
   createWorker,
   diffJobId,
   type DiffJob,
+  type Queue,
 } from "@furan/queue";
 import { Redis } from "ioredis";
 import { Registry } from "prom-client";
@@ -31,7 +32,7 @@ import {
   vi,
 } from "vitest";
 
-import { reconcileStuckSteps } from "../src/reconciler.js";
+import { reconcileStuckSteps, type ReconcileQueue } from "../src/reconciler.js";
 
 import { counterValue } from "./helpers/metrics.js";
 
@@ -64,6 +65,19 @@ const STUCK = later(11 * MIN);
 const LONG_AGO = new Date("2000-01-01T00:00:00Z");
 const longAfter = (minutes: number): Date =>
   new Date(LONG_AGO.getTime() + minutes * MIN);
+
+/** Resolves when `promise` does, or after `ms`, whichever is first. */
+async function within(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, ms))),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const LIVE_STATES = [
   "waiting",
@@ -817,17 +831,19 @@ desc("reconcileStuckSteps", () => {
     expect(await enqueued()).toBe(1);
   });
 
-  it("with a real queue, removes the version's failed job and re-adds it as waiting", async () => {
-    const { runId, steps } = await seedRun();
-    const [step] = steps as [string];
-    const [generation] = (await queueSteps(runId, steps)) as [number];
-    // Queued long ago, so it is the only step a clock near then can find.
-    await setStep(step, { diffQueuedAt: LONG_AGO });
-    const jobId = diffJobId(step, generation);
+  /**
+   * Runs `fn` with a real BullMQ queue under its own prefix that holds `jobId`
+   * as a job that ran once and failed for good (BullMQ keeps it 24 h). The
+   * queue and its keys are gone afterwards.
+   */
+  async function withFailedJob(
+    jobId: string,
+    data: DiffJob,
+    fn: (queue: Queue<DiffJob>) => Promise<void>,
+  ): Promise<void> {
     const prefix = `furan-test-${randomUUID().slice(0, 8)}`;
     const queue = createQueue("diff", { prefix });
     try {
-      // The version's job ran once and failed for good: BullMQ keeps it.
       const worker = createWorker(
         "diff",
         async () => {
@@ -840,17 +856,31 @@ desc("reconcileStuckSteps", () => {
           if (j?.id === jobId) resolve();
         }),
       );
-      await queue.add(
-        "diff",
-        { runId, projectId, screenshotId: step, generation },
-        { jobId, attempts: 1 },
-      );
+      await queue.add("diff", data, { jobId, attempts: 1 });
       await failed;
       const workerClient = await worker.client;
       await worker.close();
       workerClient.disconnect();
       expect(await (await queue.getJob(jobId))!.getState()).toBe("failed");
+      await fn(queue);
+    } finally {
+      const client = await queue.client;
+      await queue.obliterate({ force: true });
+      await queue.close();
+      client.disconnect();
+    }
+  }
 
+  it("with a real queue, removes the version's failed job and re-adds it as waiting", async () => {
+    const { runId, steps } = await seedRun();
+    const [step] = steps as [string];
+    const [generation] = (await queueSteps(runId, steps)) as [number];
+    // Queued long ago, so it is the only step a clock near then can find.
+    await setStep(step, { diffQueuedAt: LONG_AGO });
+    const jobId = diffJobId(step, generation);
+    const data = { runId, projectId, screenshotId: step, generation };
+
+    await withFailedJob(jobId, data, async (queue) => {
       const result = await reconcileStuckSteps({
         db,
         queue,
@@ -864,19 +894,93 @@ desc("reconcileStuckSteps", () => {
       const requeued = await queue.getJob(jobId);
       expect(await requeued!.getState()).toBe("waiting");
       expect(requeued!.attemptsMade).toBe(0);
-      expect(requeued!.data).toEqual({
-        runId,
-        projectId,
-        screenshotId: step,
-        generation,
-        parentPrBaseBranch: null,
-      });
+      expect(requeued!.data).toEqual({ ...data, parentPrBaseBranch: null });
       expect((await stepRow(step)).diffRequeues).toBe(1);
-    } finally {
-      const client = await queue.client;
-      await queue.obliterate({ force: true });
-      await queue.close();
-      client.disconnect();
-    }
+    });
   });
+
+  // Either replica may be the one that removes last; which one wins the run
+  // lock is up to timing, so both are run.
+  it.each(["a", "b"] as const)(
+    "two replicas racing on a step whose job failed leave exactly one waiting job (%s removes last)",
+    async (last) => {
+      const { runId, steps } = await seedRun();
+      const [step] = steps as [string];
+      const [generation] = (await queueSteps(runId, steps)) as [number];
+      await setStep(step, { diffQueuedAt: LONG_AGO });
+      const jobId = diffJobId(step, generation);
+
+      await withFailedJob(
+        jobId,
+        { runId, projectId, screenshotId: step, generation },
+        async (queue) => {
+          // Both replicas find the job failed before either acts on it. Then
+          // `last` removes it only once the other has re-added it (or after a
+          // second, when the other is the one held up behind its locks): the
+          // order in which a remove made outside the claim's locks deletes the
+          // other's new job, since BullMQ removes by id whatever the job's state.
+          let looked = 0;
+          let bothLooked!: () => void;
+          const lookedGate = new Promise<void>((r) => (bothLooked = r));
+          let otherAdded!: () => void;
+          const otherAddedGate = new Promise<void>((r) => (otherAdded = r));
+          const replica = (name: "a" | "b"): ReconcileQueue => ({
+            getJob: async (id) => {
+              const found = await queue.getJob(id);
+              if (id !== jobId) return found;
+              if (++looked === 2) bothLooked();
+              await lookedGate;
+              if (!found) return undefined;
+              return {
+                getState: () => found.getState(),
+                remove: async () => {
+                  if (name === last) await within(otherAddedGate, 1_000);
+                  await found.remove();
+                },
+              };
+            },
+            add: async (jobName, data, opts) => {
+              const added = await queue.add(jobName, data, opts);
+              if (name !== last) otherAdded();
+              return added;
+            },
+          });
+          const now = () => longAfter(11);
+
+          const [a, b] = await Promise.all([
+            reconcileStuckSteps({
+              db,
+              queue: replica("a"),
+              redis,
+              logger,
+              registry,
+              now,
+            }),
+            reconcileStuckSteps({
+              db,
+              queue: replica("b"),
+              redis,
+              logger,
+              registry,
+              now,
+            }),
+          ]);
+
+          expect(looked).toBe(2);
+          expect(a.requeued + b.requeued).toBe(1);
+          expect(a.errors + b.errors).toBe(0);
+          // The step has its job: one, waiting, at its version.
+          const requeued = await queue.getJob(jobId);
+          expect(requeued).toBeDefined();
+          expect(await requeued!.getState()).toBe("waiting");
+          expect(await queue.getJobCounts("waiting", "failed")).toMatchObject({
+            waiting: 1,
+            failed: 0,
+          });
+          expect((await stepRow(step)).diffRequeues).toBe(1);
+          expect(await enqueued()).toBe(1);
+        },
+      );
+    },
+  );
 });

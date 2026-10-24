@@ -18,7 +18,10 @@ import {
   type DiffJobAttemptOutcome,
 } from "./job-metrics.js";
 import { registerQueueDepthGauge } from "./queue-depth.js";
-import { reconcileStuckSteps } from "./reconciler.js";
+import {
+  reconcileStuckSteps,
+  registerReconcilerMetrics,
+} from "./reconciler.js";
 
 type Logger = Telemetry["logger"];
 
@@ -231,6 +234,7 @@ export function startDiffWorker(
   // database or Redis) is not doubled up: the next tick is skipped. `pass` is
   // the one in flight, which `close()` waits for; it never rejects.
   let pass: Promise<void> | undefined;
+  if (opts.reconciler !== false) registerReconcilerMetrics(registry);
   const reconcilerInterval =
     opts.reconciler === false
       ? undefined

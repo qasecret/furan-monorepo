@@ -15,9 +15,12 @@ import { startDiffWorker, type DiffWorkerRuntime } from "../src/runtime.js";
 
 import { histogramSeries, type Sample } from "./helpers/metrics.js";
 
-// The reconciler's pass is a fake each test controls; the tests that start a
-// runtime with the reconciler off never call it.
-vi.mock("../src/reconciler.js", () => ({ reconcileStuckSteps: vi.fn() }));
+// The reconciler's pass is a fake each test controls (its metric is real); the
+// tests that start a runtime with the reconciler off never call it.
+vi.mock("../src/reconciler.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/reconciler.js")>()),
+  reconcileStuckSteps: vi.fn(),
+}));
 
 const PROJECT = "00000000-0000-0000-0000-000000000002";
 const RETRY_ONCE = "00000000-0000-0000-0000-0000000000aa";
@@ -364,13 +367,43 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     await vi.waitFor(() => expect(runtime?.worker.isRunning()).toBe(false));
   });
 
+  it("registers the reconcile enqueue counter at 0 when it starts", async () => {
+    runtime = startDiffWorker({
+      db: {} as DB,
+      storage: {} as Storage,
+      redis: {} as Redis,
+      logger: noop as never,
+      registry,
+      queuePrefix: prefix,
+      concurrency: 1,
+      handler: stub,
+    });
+
+    // Before any pass: an alert on its rate has a baseline.
+    const metric = (await registry.getMetricsAsJSON()).find(
+      (m) => m.name === "furan_diff_jobs_enqueued_total",
+    );
+    expect(metric?.values).toEqual([
+      expect.objectContaining({ labels: { trigger: "reconcile" }, value: 0 }),
+    ]);
+  });
+
   it("close waits for a reconciler pass in flight, which still sees open clients", async () => {
+    const reconcile = vi.mocked(reconcileStuckSteps);
+    reconcile.mockReset();
+    // Any pass after the first would be counted, not hang.
+    reconcile.mockResolvedValue({
+      requeued: 0,
+      failed: 0,
+      emptied: 0,
+      errors: 0,
+    });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     let entered!: () => void;
     const inPass = new Promise<void>((resolve) => (entered = resolve));
     const seen: { queue?: string; workerRunning?: boolean | undefined } = {};
-    vi.mocked(reconcileStuckSteps).mockImplementationOnce(async (args) => {
+    reconcile.mockImplementationOnce(async (args) => {
       entered();
       await gate;
       // What the pass uses is still open once it is let go: the queue it
@@ -381,17 +414,17 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
       return { requeued: 0, failed: 0, emptied: 0, errors: 0 };
     });
 
-    // Take the reconciler's 30 s tick as `startDiffWorker` installs it, to
-    // fire it by hand.
+    // The reconciler's 30 s tick, as `startDiffWorker` installs it, runs every
+    // 20 ms instead, so the test sees every tick it would take.
     const realSetInterval = globalThis.setInterval;
-    let tick: (() => void) | undefined;
+    let ticking = false;
     const spy = vi.spyOn(globalThis, "setInterval").mockImplementation(((
       fn: () => void,
       ms?: number,
     ) => {
-      if (ms === 30_000 && !tick) {
-        tick = fn;
-        return realSetInterval(() => undefined, 2 ** 30);
+      if (ms === 30_000 && !ticking) {
+        ticking = true;
+        return realSetInterval(fn, 20);
       }
       return realSetInterval(fn, ms);
     }) as never);
@@ -409,11 +442,12 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
     } finally {
       spy.mockRestore();
     }
-    await runtime.worker.waitUntilReady();
-    expect(tick).toBeDefined();
+    expect(ticking).toBe(true);
 
-    tick!();
     await inPass;
+    // Ticks keep coming while the pass is held: none starts a second pass.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(reconcile).toHaveBeenCalledTimes(1);
     let closed = false;
     const closing = runtime.close().then(() => {
       closed = true;
@@ -427,7 +461,9 @@ describe.skipIf(!process.env.REDIS_URL)("startDiffWorker", () => {
 
     expect(closed).toBe(true);
     expect(seen).toEqual({ queue: "ready", workerRunning: true });
-    expect(vi.mocked(reconcileStuckSteps)).toHaveBeenCalledTimes(1);
+    // No tick fires once `close()` has resolved.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
   it("closes promptly when the worker's connection never became ready", async () => {

@@ -29,8 +29,9 @@ read, what they mean, and what to do about each cause.
 reconciler looks at the steps that have waited more than 10 minutes for a diff
 result:
 
-- A step whose job is still in the queue (`waiting`, `active`, `delayed`) is
-  left alone, however deep the backlog.
+- A step whose job will still run (`waiting`, `active`, `delayed`,
+  `prioritized` or `waiting-children`) is left alone, however deep the
+  backlog.
 - A step whose job was lost (gone from Redis, or finished without writing a
   result) is re-queued. It logs `reconciler_step_requeued` and counts in the
   worker's `furan_diff_jobs_enqueued_total{trigger="reconcile"}`.
@@ -42,6 +43,15 @@ A step without a result is never marked passed by time. Earlier releases had a
 stale-run sweeper that turned such steps into `passed` after 5 minutes, a CI
 false pass under a backlog; it is gone. A `running` run that no step was
 uploaded to still becomes `empty` after 5 minutes.
+
+Right after an upgrade from a release that queued one diff job per run, such
+an old whole-run job may still wait in the queue. A step of its run that has
+no result 10 minutes after its upload (and whose run is still `running`) gets
+a job of its own from the reconciler, `<step id>-g0`, as if that job were lost.
+This is harmless: when the old job is processed it re-queues every step of
+the run at a new version, and the `-g0` job finds its version superseded and
+writes nothing (or has already written the step's result, which the new
+version then replaces).
 
 ## The four metrics
 
@@ -144,10 +154,13 @@ rather than 0.
    ```
 
    Replicas share the queue. Each one also runs the reconciler, which is safe
-   to run concurrently: a replica claims a re-queue before it adds the job, so
-   two replicas never re-queue one step twice. If the cause is a slow VLM
-   provider, more replicas add waiting calls, not speed: fix the provider
-   instead.
+   to run concurrently: a replica re-checks the step, removes its finished job
+   and claims the re-queue in one transaction that locks the step's run, and
+   adds the new job only after that commits. A replica that lost the race finds
+   the step changed and touches neither the step nor its job, so two replicas
+   never re-queue one step twice nor remove each other's new job. If the cause
+   is a slow VLM provider, more replicas add waiting calls, not speed: fix the
+   provider instead.
 
 5. **Restart a stuck worker.**
 
