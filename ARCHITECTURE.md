@@ -69,8 +69,9 @@ interface), `telemetry` (logging, tracing, metrics), `diff-engine`,
      reports a failure, never a pass.
    - **A reconciler** in each diff-worker looks every 30 s for steps that
      have waited more than 10 minutes for a result. A step whose job is gone
-     is queued again at the same version, under the same job id; after 3
-     such re-queues it fails with `timeout`. A step is never marked passed
+     is queued again at the same version, under the same job id (a step
+     uploaded before per-step diffs gets its first version); after 3 such
+     re-queues it fails with `timeout`. A step is never marked passed
      for waiting too long. See
      [`docs/runbooks/diff-queue-backlog.md`](docs/runbooks/diff-queue-backlog.md).
 6. Updates are published over Redis. After every step the worker publishes

@@ -11,9 +11,10 @@ undo, a branch merge, a retry) queues one job per step it affects. A job
 carries the step's version, which is bumped each time the step needs a new
 diff (an upload, an edit, an undo, a merge or a retry), and its id is
 `<step id>-g<version>`. The reconciler (below) re-adds a lost job at the same
-version, under the same id. When the job commits, it re-checks the version
-under the run's and the step's locks: if the step has a newer version by
-then, the job is **stale** and writes nothing (`diff_step_stale`), and the
+version, under the same id (a step uploaded before per-step diffs, which has
+no version yet, gets its first one). When the job commits, it re-checks the
+version under the run's and the step's locks: if the step has a newer version
+by then, the job is **stale** and writes nothing (`diff_step_stale`), and the
 newer version's job sets the result. A run of N steps is N jobs, and it stays
 `running` until each of its steps has a result.
 
@@ -56,14 +57,21 @@ stale-run sweeper that turned such steps into `passed` after 5 minutes, a CI
 false pass under a backlog; it is gone. A `running` run that no step was
 uploaded to still becomes `empty` after 5 minutes.
 
+The reconciler never looks at a step whose diff failed for good, even after a
+re-diff (an ignore-region or threshold edit, an undo) queues it again: the
+step keeps its failure (`diff_failed_at`) until that new job commits a result.
+If that job is lost, the step is not re-queued. It stays visible as "Diff
+failed" in the dashboard, and **Retry diff** queues it again.
+
 Right after an upgrade from a release that queued one diff job per run, such
 an old whole-run job may still wait in the queue. A step of its run that has
 no result 10 minutes after its upload (and whose run is still `running`) gets
-a job of its own from the reconciler, `<step id>-g0`, as if that job were lost.
-This is harmless: when the old job is processed it re-queues every step of
-the run at a new version, and the `-g0` job finds its version superseded and
-writes nothing (or has already written the step's result, which the new
-version then replaces).
+a job of its own from the reconciler, as if that job were lost: the step is
+given its first per-step version and the job is `<step id>-g1`. This is
+harmless: when the old job is processed it re-queues every step of the run at
+a new version, and the `-g1` job finds its version superseded and writes
+nothing (or has already written the step's result, which the new version then
+replaces).
 
 ## The four metrics
 
@@ -111,9 +119,10 @@ rather than 0.
   `furan_diff_job_checkpoints`
   (`rate(furan_diff_job_checkpoints_sum[5m]) / rate(furan_diff_job_checkpoints_count[5m])`)
   is 1, or a little under it: a stale job counts 0. Well under 1 means many
-  stale jobs, steps queued again while their job was still waiting (the same
-  run edited over and over, or a reviewer undoing and redoing); compare
-  `furan_diff_job_duration_seconds_count{outcome="stale"}` with
+  stale jobs: steps given a newer version while their job was still waiting
+  (the same run edited over and over, or a reviewer undoing and redoing). A
+  reconciler re-queue only replaces a lost job, so it never makes one stale.
+  Compare `furan_diff_job_duration_seconds_count{outcome="stale"}` with
   `{outcome="completed"}`. A stale job writes nothing, so it costs time, not
   results: one found stale before its diff ends at once, one found stale at
   its commit has diffed for nothing. Above 1 never comes from a per-step job: a
