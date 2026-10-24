@@ -3,6 +3,7 @@ import {
   asc,
   bumpStepGenerations,
   eq,
+  isNotNull,
   screenshots,
   testRuns,
   type DB,
@@ -112,26 +113,39 @@ async function bumpSteps(
     .for("no key update");
   if (!locked) return [];
 
-  // One read of the run's version-0 steps (`screenshots_run_idx`): none, or
-  // none with a verdict, on a run the per-step pipeline queued from the start.
-  const unversioned = await db
-    .select({ id: screenshots.id, verdict: screenshots.verdict })
+  // Is this a legacy run? One probe that stops at the first version-0 step
+  // with a verdict. A run the per-step pipeline queued from the start has
+  // none: the probe returns no row, and the read below is skipped (nothing
+  // fetched, nothing sorted). No index covers `diff_generation`, so the probe
+  // still filters the run's rows it finds through `screenshots_run_idx`.
+  const [legacy] = await db
+    .select({ id: screenshots.id })
     .from(screenshots)
     .where(
       and(
         eq(screenshots.projectId, run.projectId),
         eq(screenshots.runId, run.id),
         eq(screenshots.diffGeneration, 0),
+        isNotNull(screenshots.verdict),
       ),
     )
-    .orderBy(asc(screenshots.createdAt), asc(screenshots.id));
-  const ids = [
-    ...new Set(
-      unversioned.some((s) => s.verdict !== null)
-        ? [...unversioned.map((s) => s.id), ...stepIds]
-        : stepIds,
-    ),
-  ];
+    .limit(1);
+  // Only then the run's version-0 steps, in capture order (with or without a
+  // verdict: every one of them is queued, once).
+  const unversioned = legacy
+    ? await db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(
+          and(
+            eq(screenshots.projectId, run.projectId),
+            eq(screenshots.runId, run.id),
+            eq(screenshots.diffGeneration, 0),
+          ),
+        )
+        .orderBy(asc(screenshots.createdAt), asc(screenshots.id))
+    : [];
+  const ids = [...new Set([...unversioned.map((s) => s.id), ...stepIds])];
   if (ids.length === 0) return [];
 
   const bumped = await bumpStepGenerations(db, run.id, ids);

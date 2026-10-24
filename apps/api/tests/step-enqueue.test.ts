@@ -10,6 +10,8 @@ import {
   sql,
   testRuns,
   testVariations,
+  type DB,
+  type Tx,
 } from "@furan/db";
 import { createQueue, diffJobId, type DiffJob, type Queue } from "@furan/queue";
 import { Registry } from "@furan/telemetry";
@@ -31,7 +33,7 @@ import {
   type DiffTrigger,
   type StepDiffJob,
 } from "../src/lib/diff-enqueue.js";
-import { queueStepDiffs } from "../src/lib/review/enqueue.js";
+import { bumpLegacySteps, queueStepDiffs } from "../src/lib/review/enqueue.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
 import {
@@ -90,6 +92,31 @@ async function sqlState(p: Promise<unknown>): Promise<string> {
     }
     return String(err);
   }
+}
+
+/**
+ * `db` with every statement it runs recorded in `log` (its SQL text, as
+ * drizzle builds it). Each builder it hands out is wrapped the same way, and a
+ * statement is recorded when it is awaited.
+ */
+function recordingDb<T extends object>(db: T, log: string[]): T {
+  return new Proxy(db, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      if (prop === "then") {
+        const toSQL = (target as { toSQL?: () => { sql: string } }).toSQL;
+        if (typeof toSQL === "function") log.push(toSQL.call(target).sql);
+        return value.bind(target);
+      }
+      return (...args: unknown[]) => {
+        const out: unknown = value.apply(target, args);
+        return out !== null && typeof out === "object"
+          ? recordingDb(out, log)
+          : out;
+      };
+    },
+  });
 }
 
 d("per-step diff enqueue", () => {
@@ -397,6 +424,92 @@ d("per-step diff enqueue", () => {
 
       expect(add.mock.calls.map(([, p]) => p.screenshotId)).toEqual([a]);
       expect((await versions(other.runId)).get(x)!.generation).toBe(1);
+    });
+
+    // Every upload and re-diff asks whether its run is a legacy one. On a run
+    // the per-step pipeline queued from the start, the answer is one probe
+    // that returns no row: the run's steps are read only when it hits.
+    describe("the legacy check", () => {
+      /** The statements on `screenshots` that `fn` runs in a transaction. */
+      async function screenshotStatements(
+        fn: (db: DB | Tx) => Promise<unknown>,
+      ): Promise<{ selects: string[]; updates: string[] }> {
+        const log: string[] = [];
+        await h.db.transaction((tx) => fn(recordingDb(tx, log)));
+        const onSteps = log.filter((q) => q.includes('"screenshots"'));
+        return {
+          selects: onSteps.filter((q) => q.startsWith("select")),
+          updates: onSteps.filter((q) => q.startsWith("update")),
+        };
+      }
+      const queue = (
+        db: DB | Tx,
+        run: ReturnType<typeof runOf>,
+        ids: string[],
+      ) =>
+        queueStepDiffs(
+          {
+            db,
+            diffQueue: bulkProducer(vi.fn<DiffJobAdd>()),
+            telemetry: { metrics: new Registry() },
+            onCommit: () => {},
+          },
+          run,
+          ids,
+          "threshold",
+        );
+
+      test("a run the per-step pipeline queued reads none of its steps: a re-diff or an upload", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved" },
+            { name: "b", verdict: "passed" },
+            { name: "c", verdict: null },
+          ],
+        });
+        await h.db
+          .update(screenshots)
+          .set({ diffGeneration: 1 })
+          .where(eq(screenshots.runId, s.runId));
+        const a = s.shots.a!.id;
+
+        const rediff = await screenshotStatements((db) =>
+          queue(db, runOf(s), [a]),
+        );
+        // One probe, at most one row, no sort; then the bump of `a` alone.
+        expect(rediff.selects).toHaveLength(1);
+        expect(rediff.selects[0]).toMatch(/ limit \$\d+$/);
+        expect(rediff.selects[0]).not.toMatch(/order by/);
+        expect(rediff.updates).toHaveLength(1);
+
+        const upload = await screenshotStatements((db) =>
+          bumpLegacySteps(db, runOf(s)),
+        );
+        expect(upload.selects).toHaveLength(1);
+        expect(upload.selects[0]).toMatch(/ limit \$\d+$/);
+        expect(upload.updates).toEqual([]);
+      });
+
+      test("a legacy run: the probe hits, then its version-0 steps are read once, in capture order", async () => {
+        const s = await seed({
+          checkpoints: [
+            { name: "a", verdict: "unresolved" },
+            { name: "b", verdict: null },
+          ],
+        });
+
+        const { selects, updates } = await screenshotStatements((db) =>
+          bumpLegacySteps(db, runOf(s)),
+        );
+
+        expect(selects).toHaveLength(2);
+        expect(selects[0]).toMatch(/ limit \$\d+$/);
+        expect(selects[1]).toMatch(/order by .*"created_at".*"id"/);
+        expect(updates).toHaveLength(1);
+        for (const row of (await versions(s.runId)).values()) {
+          expect(row.generation).toBe(1);
+        }
+      });
     });
 
     test("a refused bulk surfaces after commit, every job in it counted as refused", async () => {

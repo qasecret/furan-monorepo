@@ -291,9 +291,14 @@ d("POST /runs/:id/approve", () => {
       url: `/runs/${run!.id}/approve`,
       headers: { authorization: `Bearer ${s.memberJwt}` },
     });
-    // The core refuses (PRECONDITION_FAILED run_overridden): 409, as before.
+    // The core refuses (PRECONDITION_FAILED run_overridden): 409, as before,
+    // with no `reason` (only a failed diff carries one).
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ code: "approve_failed" });
+    expect(res.json()).toEqual({
+      code: "approve_failed",
+      message: "Approve failed",
+      statusCode: 409,
+    });
     expect(await decisionsOf(h, run!.id)).toHaveLength(0);
   });
 
@@ -330,9 +335,15 @@ d("POST /runs/:id/approve", () => {
 
     // The failed step can't be approved until its diff is retried, so the
     // run-level approve is refused whole (the core's `diff_failed`), not
-    // applied to the steps that could be.
+    // applied to the steps that could be. The 409 says so (`reason`), so the
+    // SDK can tell "retry the diff" from a run that is not reviewable.
     expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({ code: "approve_failed" });
+    expect(res.json()).toEqual({
+      code: "approve_failed",
+      message: "Approve failed",
+      statusCode: 409,
+      reason: "diff_failed",
+    });
     expect(await decisionsOf(h, run!.id)).toHaveLength(0);
   });
 
@@ -455,5 +466,6 @@ d("POST /runs/:id/approve", () => {
     // The core refuses (PRECONDITION_FAILED not_reviewable) → 409 Conflict
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ code: "approve_failed" });
+    expect(res.json()).not.toHaveProperty("reason");
   });
 });
