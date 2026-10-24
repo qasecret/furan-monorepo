@@ -81,7 +81,7 @@ export interface DiffAttempt {
  * retry follows. On the final attempt a step job fails ITS step alone (the step
  * becomes `unresolved` with a reason code, `failStep`; the run is never
  * aborted for it), unless the step's commit already landed. If a newer version
- * owns the step by then, the job is stale instead (R27): it reports the stale
+ * owns the step by then, the job is stale instead: it reports the stale
  * outcome and does not rethrow. Only an old whole-run job still marks the
  * whole run `aborted`.
  */
@@ -133,23 +133,23 @@ export async function handleDiffJob(
     };
     if (attempt.finalAttempt) logger.error(failure, "diff_job_failed");
     else logger.warn(failure, "diff_job_failed");
-    // Ruling R9: BullMQ retries a non-final attempt, so leave the step and the
-    // run as they are and let the retry derive them. A failure written now
-    // would stick even after the retry succeeds (`aborted` is a lifecycle
-    // state `recomputeRunStatus` keeps). Rethrow so BullMQ schedules it.
+    // BullMQ retries a non-final attempt, so leave the step and the run as
+    // they are and let the retry derive them. A failure written now would
+    // stick even after the retry succeeds (`aborted` is a lifecycle state
+    // `recomputeRunStatus` keeps). Rethrow so BullMQ schedules it.
     if (!attempt.finalAttempt) throw err;
-    // Ruling R11: once the step's commit has landed, the step holds its verdict
-    // and the run a valid derived status. A later failure must neither fail the
-    // step nor replace that status. (Little after the commit can throw: the
-    // rule audit trail and the events are best-effort.) It is logged above;
+    // Once the step's commit has landed, the step holds its verdict and the
+    // run a valid derived status. A later failure must neither fail the step
+    // nor replace that status. (Little after the commit can throw: the rule
+    // audit trail and the events are best-effort.) It is logged above;
     // rethrow so the job still fails.
     if (progress.coreCommitted) throw err;
-    // Ruling R22: a step job never aborts its run. Its final failure fails its
-    // own step, and the job still rethrows, so its outcome and the dead-letter
-    // signal stay what they were. Ruling R27 is the exception: when a newer
-    // version has taken over the step, that version's job decides it and this
-    // attempt's error no longer matters. The job then ends stale, not failed
-    // (no rethrow, so no dead letter). The error was already logged above.
+    // A step job never aborts its run. Its final failure fails its own step,
+    // and the job still rethrows, so its outcome and the dead-letter signal
+    // stay what they were. The exception: when a newer version has taken over
+    // the step, that version's job decides it and this attempt's error no
+    // longer matters. The job then ends stale, not failed (no rethrow, so no
+    // dead letter). The error was already logged above.
     if (stepJob && code) {
       const stepOutcome = await failStep(deps, logger, stepJob, code);
       if (stepOutcome === "stale") return STALE_OUTCOME;
@@ -160,12 +160,12 @@ export async function handleDiffJob(
     // worker exceptions land as `aborted` (distinct from reviewer-rejected
     // `failed`). Wrap in its own try/catch so a status-write failure does not
     // mask the original error — the worker's error visibility is unchanged.
-    // `abortedByDiff` marks it as the pipeline's abort, which a later commit
-    // that leaves every step with a verdict heals (Ruling R46,
-    // `healPipelineAbort`). A run that is already `aborted` is left exactly as
-    // it is (R50): an SDK or capture abort is final, and re-flagging it as the
-    // pipeline's would let a later diff heal it (a CI false pass); a pipeline
-    // abort already carries the flag.
+    // `abortedByDiff` marks it as the pipeline's abort, which a later step
+    // job that leaves every step with a verdict heals (`healPipelineAbort`).
+    // A run that is already `aborted` is left exactly as it is: an SDK or
+    // capture abort is final, and re-flagging it as the pipeline's would let
+    // a later diff heal it (a CI false pass); a pipeline abort already
+    // carries the flag.
     let aborted = false;
     try {
       const written = await withProjectScope(deps.db, data.projectId, (tx) =>
@@ -223,12 +223,14 @@ export async function handleDiffJob(
 }
 
 /**
- * A step job's final attempt failed before its commit landed (Ruling R22): the
- * step fails alone, in a fresh transaction (`markStepDiffFailed` takes the run
- * and step locks itself). With the reason `code`, it becomes `unresolved`, its
- * result and regions are cleared and the run's totals and status are
- * recomputed. A newer version of the step (a re-diff queued while this job ran)
- * owns it: nothing is written or published.
+ * A step job's final attempt failed before its commit landed: the step fails
+ * alone, in a fresh transaction (`markStepDiffFailed` takes the run and step
+ * locks itself). With the reason `code`, it becomes `unresolved`, its result
+ * and regions are cleared and the run's totals and status are recomputed;
+ * when it was the run's last step without a verdict, an abort the old
+ * whole-run pipeline wrote heals first, as after a commit. A newer version of
+ * the step (a re-diff queued while this job ran) owns it: nothing is written
+ * or published.
  *
  * Best-effort: if the write itself fails (the database is down) it is logged
  * and the step keeps no verdict, for the reconciler to re-queue; the caller
@@ -266,6 +268,11 @@ async function failStep(
   if (!marked.applied || !marked.rollup) {
     logStepStale(logger, job);
     return "stale";
+  }
+  // The failed step was the run's last one without a verdict, and the run
+  // carried an abort the old whole-run pipeline wrote: it took its rollup.
+  if (marked.healed) {
+    logger.info({ runId: job.runId }, "diff_pipeline_abort_healed");
   }
   // The step's own event, and the run's status events when the failure moved
   // it. Best-effort (it never throws): the original error stays the signal.

@@ -163,9 +163,9 @@ export function startDiffWorker(
         },
         "diff_job_received",
       );
-      // Only the final attempt writes a failure (ruling R9): it fails the step,
-      // or marks the run `aborted` for an old whole-run job. An earlier failure
-      // is retried by BullMQ and the retry derives the state.
+      // Only the final attempt writes a failure: it fails the step, or marks
+      // the run `aborted` for an old whole-run job. An earlier failure is
+      // retried by BullMQ and the retry derives the state.
       const finalAttempt = isFinalAttempt(job);
       const started = performance.now();
       const seconds = (): number => (performance.now() - started) / 1000;

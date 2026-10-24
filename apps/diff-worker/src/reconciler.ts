@@ -153,7 +153,8 @@ interface PassContext {
  *    - is missing, or finished (`completed`, `failed`): lost. A step already
  *      re-queued `maxRequeues` times fails with `timeout` (`failStuckStep`);
  *      any other is re-queued (`claimStep`, which removes a finished job
- *      under the claim's locks, then the add).
+ *      under the claim's locks, then the add), at the same version, or at
+ *      its first per-step version for a step that had no queue time.
  * 2. **Empty runs.** A `running` run with no step whose `updated_at` is more
  *    than 5 minutes old becomes `empty` (`emptyStaleRuns`).
  *
@@ -237,19 +238,19 @@ export async function reconcileStuckSteps(
 /**
  * The steps awaiting a diff whose clock is older than `cutoff`, oldest first,
  * at most `batch`. The clock is `diff_queued_at`, or `created_at` for a step
- * uploaded before the per-step pipeline (Ruling R10). Each kind is its own arm
- * of a `UNION ALL`, ordered and limited to `batch` before the two are merged,
- * so each reads `screenshots_stuck_idx` (both repeat its predicate) only as
- * far as it needs: the queued arm walks the index's `diff_queued_at < cutoff`
+ * uploaded before the per-step pipeline. Each kind is its own arm of a
+ * `UNION ALL`, ordered and limited to `batch` before the two are merged, so
+ * each reads `screenshots_stuck_idx` (both repeat its predicate) only as far
+ * as it needs: the queued arm walks the index's `diff_queued_at < cutoff`
  * range in order, the other its `diff_queued_at IS NULL` entries. A backlog
  * of steps queued less than `stuckAfterMs` ago is never read.
  *
  * A step with a queue time is taken whatever its run's status: this pipeline
  * queued it, and its diff may still heal the run (an old whole-run job split,
- * then aborted). A step without one is taken only while its run is `running`
- * (Ruling R35): a never-diffed step of a run that ended before the upgrade
- * (aborted, or otherwise terminal) is left as it is. Re-diffing it would heal
- * months-old runs and announce them (`run.completed`, webhooks).
+ * then aborted). A step without one is taken only while its run is
+ * `running`: a never-diffed step of a run that ended before the upgrade
+ * (aborted, or otherwise terminal) is left as it is. Re-diffing it would
+ * heal months-old runs and announce them (`run.completed`, webhooks).
  */
 async function findStuckSteps(
   db: DB,
@@ -307,24 +308,28 @@ async function reconcileStep(
   ctx: PassContext,
   step: StuckStep,
 ): Promise<StepOutcome> {
-  const jobId = diffJobId(step.id, step.generation);
-  const job = await ctx.queue.getJob(jobId);
+  const job = await ctx.queue.getJob(diffJobId(step.id, step.generation));
   const state = job ? await job.getState() : "missing";
   if (LIVE_JOB_STATES.has(state)) return "left";
 
   if (step.requeues >= ctx.maxRequeues) return failStuckStep(ctx, step);
 
-  // Ruling R26: the claim (with the old job's removal) commits BEFORE the job
-  // is added. A job added first could commit its result before the claim's
-  // later `diff_queued_at`, look stuck again, and in the end fail a step that
-  // was diffed.
-  if ((await claimStep(ctx, step, job, state)) !== "claimed") return "skipped";
+  // The claim (with the old job's removal) commits BEFORE the job is added. A
+  // job added first could commit its result before the claim's later
+  // `diff_queued_at`, look stuck again, and in the end fail a step that was
+  // diffed.
+  const claim = await claimStep(ctx, step, job, state);
+  if (claim.kind !== "claimed") return "skipped";
 
+  // The version the claim left the step at: the scanned one, or for a step
+  // without a queue time, its first per-step version.
+  const { generation } = claim;
+  const jobId = diffJobId(step.id, generation);
   const data: DiffJob = {
     runId: step.runId,
     projectId: step.projectId,
     screenshotId: step.id,
-    generation: step.generation,
+    generation,
     parentPrBaseBranch: step.parentBranchName,
   };
   try {
@@ -337,7 +342,7 @@ async function reconcileStep(
         runId: step.runId,
         projectId: step.projectId,
         screenshotId: step.id,
-        generation: step.generation,
+        generation,
         jobId,
       },
       "reconciler_requeue_failed",
@@ -350,7 +355,7 @@ async function reconcileStep(
       runId: step.runId,
       projectId: step.projectId,
       screenshotId: step.id,
-      generation: step.generation,
+      generation,
       jobId,
       previousJobState: state,
       requeues: step.requeues + 1,
@@ -361,8 +366,8 @@ async function reconcileStep(
 }
 
 /**
- * Claims a re-queue of `step` (rulings R24, R25 and R37), in one transaction
- * that holds the claim's locks throughout:
+ * Claims a re-queue of `step`, in one transaction that holds the claim's
+ * locks throughout:
  *  1. the run row (`FOR NO KEY UPDATE`), then the step row (`FOR UPDATE`),
  *     selected only while it is exactly as scanned: same version, same queue
  *     time (`IS NOT DISTINCT FROM`, so NULL for a pre-per-step step), still
@@ -379,16 +384,26 @@ async function reconcileStep(
  *     and try again next pass;
  *  3. the step gets a new queue time and one more re-queue. The queue time is
  *     `clock_timestamp()`, taken after the run lock as `bumpStepGenerations`
- *     takes it, so it is newer than any result committed before it.
- * If the transaction then fails, a removed job stays removed and the step
- * unclaimed: the next pass finds the job missing and claims it then.
+ *     takes it, so it is newer than any result committed before it. A step
+ *     with no queue time (uploaded by an api that queued whole-run jobs, still
+ *     at version 0) also gets a new version, its first per-step one: its job
+ *     then commits a per-step result, and the step no longer reads as a row
+ *     from before per-step diffs. A step that has a queue time keeps its
+ *     version, so its job keeps its id.
+ * Returns the version the job is to be added at. If the transaction then
+ * fails, a removed job stays removed and the step unclaimed: the next pass
+ * finds the job missing and claims it then.
  */
 async function claimStep(
   ctx: PassContext,
   step: StuckStep,
   job: Awaited<ReturnType<ReconcileQueue["getJob"]>>,
   state: string,
-): Promise<"claimed" | "lost" | "remove_failed"> {
+): Promise<
+  | { kind: "claimed"; generation: number }
+  | { kind: "lost" }
+  | { kind: "remove_failed" }
+> {
   return withProjectScope(ctx.db, step.projectId, async (tx) => {
     await tx
       .select({ id: testRuns.id })
@@ -408,7 +423,7 @@ async function claimStep(
         ),
       )
       .for("update");
-    if (!asScanned) return "lost";
+    if (!asScanned) return { kind: "lost" };
 
     if (job) {
       try {
@@ -424,18 +439,22 @@ async function claimStep(
           },
           "reconciler_job_remove_failed",
         );
-        return "remove_failed";
+        return { kind: "remove_failed" };
       }
     }
 
-    await tx
+    const [claimed] = await tx
       .update(screenshots)
       .set({
         diffQueuedAt: sql`clock_timestamp()`,
         diffRequeues: sql`${screenshots.diffRequeues} + 1`,
+        ...(step.queuedAt === null
+          ? { diffGeneration: sql`${screenshots.diffGeneration} + 1` }
+          : {}),
       })
-      .where(eq(screenshots.id, step.id));
-    return "claimed";
+      .where(eq(screenshots.id, step.id))
+      .returning({ generation: screenshots.diffGeneration });
+    return { kind: "claimed", generation: claimed!.generation };
   });
 }
 
@@ -463,6 +482,9 @@ async function failStuckStep(
     ),
   );
   if (!marked.applied || !marked.rollup) return "skipped";
+  if (marked.healed) {
+    ctx.logger.info({ runId: step.runId }, "diff_pipeline_abort_healed");
+  }
 
   ctx.logger.warn(
     {

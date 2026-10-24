@@ -32,6 +32,9 @@ import {
   vi,
 } from "vitest";
 
+import { commitStep } from "../src/commit-step.js";
+import type { StepResult } from "../src/diff-step.js";
+import type { HandlerDeps } from "../src/handler.js";
 import { reconcileStuckSteps, type ReconcileQueue } from "../src/reconciler.js";
 
 import { counterValue } from "./helpers/metrics.js";
@@ -125,6 +128,29 @@ function fakeQueue(
         _opts: { jobId: string },
       ): Promise<unknown> => undefined,
     ),
+  };
+}
+
+/** What a diff of a step with no baseline commits: verdict `new`, nothing else. */
+function firstCapture(screenshotId: string): StepResult {
+  return {
+    screenshotId,
+    verdict: "new",
+    firstBaseline: true,
+    regions: [],
+    engineIds: [],
+    ranTiers: [],
+    diffSignature: null,
+    diffImageKey: null,
+    diffPercent: null,
+    pixelMismatchCount: null,
+    baselineSource: null,
+    vlmDescription: null,
+    ruleResolved: false,
+    autoApprove: null,
+    ocrAudit: [],
+    ruleDecisions: [],
+    ruleDiagnostics: null,
   };
 }
 
@@ -696,7 +722,7 @@ desc("reconcileStuckSteps", () => {
     );
   });
 
-  it("a pre-per-step step (diff_queued_at NULL, old created_at) is found", async () => {
+  it("a pre-per-step step (diff_queued_at NULL, old created_at) is found and claimed at its first version", async () => {
     // Uploaded by an API that queued whole-run jobs: version 0, no queue
     // time. Its upload time is its clock, and its run is still `running`.
     const old = await seedRun({ createdAt: new Date(Date.now() - 60 * MIN) });
@@ -712,22 +738,67 @@ desc("reconcileStuckSteps", () => {
     const result = await pass(queue, { now: () => new Date() });
 
     expect(result).toMatchObject({ requeued: 1, failed: 0, errors: 0 });
+    // Its job is the version the claim gave it, so the result it commits is
+    // a per-step one: the step no longer reads as a row from before per-step
+    // diffs (generation 0).
+    expect(queue.add).toHaveBeenCalledTimes(1);
     expect(queue.add).toHaveBeenCalledWith(
       "diff",
       {
         runId: old.runId,
         projectId,
         screenshotId: oldStep,
-        generation: 0,
+        generation: 1,
         parentPrBaseBranch: null,
       },
-      { jobId: diffJobId(oldStep, 0) },
+      { jobId: diffJobId(oldStep, 1) },
     );
     const row = await stepRow(oldStep);
     expect(row.queuedAt).not.toBeNull();
     expect(row.diffRequeues).toBe(1);
-    expect(row.diffGeneration).toBe(0);
+    expect(row.diffGeneration).toBe(1);
     expect(await stepRow(freshStep)).toEqual(freshBefore);
+
+    // The job commits (not stale), and the step stays at its new version.
+    const added = queue.add.mock.calls[0]![1];
+    const commit = await commitStep(
+      { db, redis } as unknown as HandlerDeps,
+      {
+        runId: added.runId,
+        projectId: added.projectId,
+        screenshotId: added.screenshotId!,
+        generation: added.generation!,
+      },
+      firstCapture(oldStep),
+      logger,
+    );
+    expect(commit.kind).toBe("committed");
+    const committed = await stepRow(oldStep);
+    expect(committed.verdict).toBe("new");
+    expect(committed.diffGeneration).toBe(1);
+  });
+
+  it("a pre-per-step step claimed by two replicas at once is re-queued once, at one version", async () => {
+    const { steps } = await seedRun({
+      createdAt: new Date(Date.now() - 60 * MIN),
+    });
+    const [step] = steps as [string];
+    const queues = [
+      fakeQueue({ [diffJobId(step, 0)]: undefined }),
+      fakeQueue({ [diffJobId(step, 0)]: undefined }),
+    ];
+
+    const results = await Promise.all(
+      queues.map((queue) => pass(queue, { now: () => new Date() })),
+    );
+
+    expect(results.reduce((n, r) => n + r.requeued, 0)).toBe(1);
+    const adds = queues.flatMap((q) => q.add.mock.calls);
+    expect(adds).toHaveLength(1);
+    expect(adds[0]![2]).toEqual({ jobId: diffJobId(step, 1) });
+    const row = await stepRow(step);
+    expect(row.diffGeneration).toBe(1);
+    expect(row.diffRequeues).toBe(1);
   });
 
   it.each(["aborted", "passed"] as const)(

@@ -625,6 +625,41 @@ desc("handleDiffJob — failures land on the final attempt (integration)", () =>
       });
     }, 60_000);
 
+    it("an abort an older worker wrote heals when the run's last step fails for good: the run takes its rollup", async () => {
+      const s = await seedRun();
+      // The candidate image is missing: the step's job fails its last attempt.
+      await seedChangedCheckpoint(s);
+      await db
+        .update(testRuns)
+        .set({ status: "aborted", abortedByDiff: true })
+        .where(eq(testRuns.id, s.runId));
+      vi.mocked(mockLogger.info).mockClear();
+
+      await expect(
+        handleDiffJob(
+          await stepJob(s),
+          mockLogger,
+          { db, storage, redis },
+          { finalAttempt: true },
+        ),
+      ).rejects.toThrow();
+
+      // The failed step is the run's last without a verdict, so the abort no
+      // longer stands: the run needs attention because of that step.
+      expect(await stepFailure(s.runId)).toMatchObject({
+        verdict: "unresolved",
+        diffError: "object_missing",
+      });
+      expect(await runRow(s.runId)).toEqual({
+        status: "unresolved",
+        abortedByDiff: false,
+      });
+      expect(vi.mocked(mockLogger.info)).toHaveBeenCalledWith(
+        { runId: s.runId },
+        "diff_pipeline_abort_healed",
+      );
+    }, 60_000);
+
     it("an SDK abort followed by a successful diff stays aborted", async () => {
       const s = await seedRun();
       const { candidateKey, candidateImg } = await seedChangedCheckpoint(s);
