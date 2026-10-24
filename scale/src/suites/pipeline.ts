@@ -48,9 +48,11 @@ import {
   mixCounts,
   mixSeed,
   overlappingUploads,
+  pairedSteps,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  rediffShortfall,
   singleStepChanges,
   statusSequence,
   stepDifferences,
@@ -83,9 +85,12 @@ export {
   mixCounts,
   mixSeed,
   overlappingUploads,
+  pairedSteps,
   raceLosses,
   raceSchedule,
   ratePerSec,
+  rediffShortfall,
+  runCompletedStatus,
   SINGLE_STEP_RUNS,
   singleStepChanges,
   statusSequence,
@@ -151,7 +156,10 @@ interface PlannedStep {
 interface MeasuredRun {
   set: PipelineSet;
   steps: number;
-  /** Change in `furan_diff_job_checkpoints` sum over the run. */
+  /**
+   * Change in `furan_diff_job_checkpoints` sum over the run: 1 per committed
+   * step job, 0 per stale one.
+   */
   diffs: number;
   latency: { samples: number[]; capped: number };
   /** Last upload response to the final status; null if it never came. */
@@ -160,8 +168,9 @@ interface MeasuredRun {
   polledChanges: number;
   /**
    * The status sequence inferred from the event stream (only when
-   * subscribed): upload responses (`running`) merged with each diff job's
-   * `run.completed` status (ruling R24).
+   * subscribed): upload responses (`running`) merged with each status the
+   * worker announced in a `run.completed`, one per status change (ruling
+   * R24; `run.checkpoint_diffed` names no run status and is ignored).
    */
   inferred: string[];
   /** `testRun_updated` events for the run (only when subscribed). */
@@ -391,7 +400,8 @@ async function measuredRun(
   let statuses: Awaited<ReturnType<typeof subscribeRunStatuses>> | undefined;
   try {
     const run = await newRun(d, `scale-${set}`);
-    // Subscribed before the first upload, so no diff job's status is missed.
+    // Subscribed before the first upload, so no status the worker announces
+    // is missed.
     statuses = subscribe
       ? await subscribeRunStatuses(d.stack.redis, run.runId)
       : undefined;
@@ -636,10 +646,20 @@ async function runStatus(db: DB, runId: string): Promise<string | undefined> {
 
 /** The run's steps and regions, as the race checks compare them. */
 async function snapshotRun(db: DB, runId: string): Promise<RunSnapshot> {
-  const steps: StepRow[] = await db
-    .select({ id: screenshots.id, verdict: screenshots.verdict })
-    .from(screenshots)
-    .where(eq(screenshots.runId, runId));
+  const steps: StepRow[] = (
+    await db
+      .select({
+        id: screenshots.id,
+        verdict: screenshots.verdict,
+        diffFailedAt: screenshots.diffFailedAt,
+      })
+      .from(screenshots)
+      .where(eq(screenshots.runId, runId))
+  ).map((s) => ({
+    id: s.id,
+    verdict: s.verdict,
+    failed: s.diffFailedAt !== null,
+  }));
   const rows = await db
     .select({
       screenshotId: diffRegions.screenshotId,
@@ -741,15 +761,17 @@ async function approveWhenReviewable(
  * - after `approveAfter`, the uploads pause until step 5 is diffed and its
  *   approve lands (a decision needs a reviewable run); then the uploads
  *   resume at once and the undo runs as a branch concurrent with them, so its
- *   whole-run re-diff overlaps the later uploads' jobs.
+ *   re-diff of step 5 overlaps the later uploads' jobs.
  * Both branches are awaited after the last upload; the note names the
  * uploads each branch overlapped. Steps 3 and 5 carry a small change, so both
  * actions have something to act on.
  *
- * Once the queue is empty: duplicate regions, steps with no verdict and
- * unresolved steps with no region; then a quiet whole-run re-diff
- * (`runs.setDiffThresholdOverride` to the threshold already in force) must
- * leave every step's verdict and regions as they were.
+ * Once the queue is empty: duplicate regions, steps with no verdict,
+ * unresolved steps with no region and steps whose diff failed; then a quiet
+ * re-diff (`runs.setDiffThresholdOverride` to the threshold already in force,
+ * which queues one job per step whose verdict is not `new`) must leave every
+ * step's verdict and regions as they were. It must also have run: the
+ * checkpoint diffs it adds are at least the steps it queued.
  *
  * Step 3's variation gets its ignore regions back afterwards, so the seed is
  * the same for the next run (`--reuse`).
@@ -872,17 +894,19 @@ async function measureRace(
       throw trpcFailure("runs.setDiffThresholdOverride", rediff);
     }
     await drainFully(d);
-    // The ground truth must not go vacuous: the re-diff has to have run.
+    const quiet = await snapshotRun(d.stack.db, run.runId);
+    // The ground truth must not go vacuous: the re-diff has to have run, one
+    // committed job per paired step.
+    const paired = pairedSteps(raced.steps);
     const rediffed = (await checkpointDiffs(d)) - diffsBefore;
-    if (rediffed < raced.steps.length) {
-      throw new Error(
-        `the ground-truth re-diff did not run: ${rediffed} checkpoint diffs for ${raced.steps.length} steps`,
-      );
-    }
-    const differences = stepDifferences(
-      raced,
-      await snapshotRun(d.stack.db, run.runId),
-    );
+    const shortfall = rediffShortfall({
+      steps: raced.steps.length,
+      paired,
+      rediffed,
+      failedAfter: quiet.steps.filter((s) => s.failed === true).length,
+    });
+    if (shortfall !== undefined) throw new Error(shortfall);
+    const differences = stepDifferences(raced, quiet);
 
     return {
       id: "P5",
@@ -890,9 +914,10 @@ async function measureRace(
         losses.duplicates +
         losses.nullVerdicts +
         losses.unresolvedWithoutRegion +
+        losses.failedSteps +
         differences,
       samples: raced.steps.length,
-      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, uploads paused after step ${at.approveAfter} for the approve of step ${at.approveStep}; ignore save overlapped uploads ${formatSteps(overlappingUploads(uploads, ignoreSpan))}; undo${undone} overlapped uploads ${formatSteps(overlappingUploads(uploads, undoSpan))}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${differences} steps changed by a quiet re-diff`,
+      note: `${set} (${n} steps), ignore region on step ${at.ignoreStep} after step ${at.ignoreAfter}, uploads paused after step ${at.approveAfter} for the approve of step ${at.approveStep}; ignore save overlapped uploads ${formatSteps(overlappingUploads(uploads, ignoreSpan))}; undo${undone} overlapped uploads ${formatSteps(overlappingUploads(uploads, undoSpan))}: ${losses.duplicates} duplicate regions, ${losses.nullVerdicts} steps without a verdict, ${losses.unresolvedWithoutRegion} unresolved steps without a region, ${losses.failedSteps} steps whose diff failed, ${differences} steps changed by a quiet re-diff of ${paired} paired steps (${rediffed} checkpoint diffs)`,
     };
   } finally {
     await d.stack.db

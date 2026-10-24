@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 import {
@@ -12,6 +13,7 @@ import {
   type DB,
   type Tx,
 } from "@furan/db";
+import { createQueue, diffJobId, type DiffJob, type Queue } from "@furan/queue";
 import { Registry } from "@furan/telemetry";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import {
@@ -25,7 +27,12 @@ import {
 } from "vitest";
 
 import { createDeferredSink } from "../src/lib/deferred-sink.js";
-import type { DiffTrigger } from "../src/lib/diff-enqueue.js";
+import {
+  addStepDiffJobs,
+  stepDiffJob,
+  type DiffTrigger,
+  type StepDiffJob,
+} from "../src/lib/diff-enqueue.js";
 import { bumpLegacySteps, queueStepDiffs } from "../src/lib/review/enqueue.js";
 import type { AppRouter } from "../src/trpc/v1/router.js";
 
@@ -1035,3 +1042,83 @@ d("per-step diff enqueue", () => {
     );
   });
 });
+
+/**
+ * Ruling R53: a step's version is queued at most once because `addStepDiffJobs`
+ * passes BullMQ the custom job id `<step>-g<version>`, and BullMQ adds no job
+ * whose id it still holds. The fake producers above cannot show that, so it is
+ * pinned here against the real queue (under a prefix of its own): a BullMQ
+ * upgrade that dropped the dedupe for `addBulk` fails this test.
+ */
+describe.skipIf(!process.env.REDIS_URL)(
+  "addStepDiffJobs on the real queue (R53)",
+  () => {
+    const run = {
+      id: randomUUID(),
+      projectId: randomUUID(),
+      parentBranchName: null,
+    };
+    let queue: Queue<DiffJob>;
+
+    beforeAll(() => {
+      queue = createQueue("diff", {
+        prefix: `furan-test-r53-${randomUUID().slice(0, 8)}`,
+      });
+    });
+
+    afterAll(async () => {
+      const client = await queue.client;
+      await queue.obliterate({ force: true });
+      await queue.close();
+      client.disconnect();
+    });
+
+    // Each test reads the whole queue: it starts empty.
+    beforeEach(async () => {
+      await queue.drain();
+    });
+
+    const add = (trigger: DiffTrigger, ...jobs: StepDiffJob[]) =>
+      addStepDiffJobs(
+        { diffQueue: queue, registry: new Registry() },
+        trigger,
+        jobs,
+      );
+
+    /** The queue's jobs, as their ids (it runs no worker, so all wait). */
+    const queued = async (): Promise<string[]> =>
+      (await queue.getJobs(["waiting"])).map((j) => j.id ?? "").sort();
+
+    test("the same step and version added in two bulks is one job", async () => {
+      const step = randomUUID();
+      const job = stepDiffJob(run, step, 1);
+
+      expect(await add("upload", job)).toEqual([]);
+      // Neither add is refused: the second is simply not added.
+      expect(await add("threshold", job)).toEqual([]);
+
+      expect(await queued()).toEqual([diffJobId(step, 1)]);
+      expect((await queue.getJobCounts("waiting")).waiting).toBe(1);
+    });
+
+    test("the same step and version twice in one bulk is one job", async () => {
+      const step = randomUUID();
+      const job = stepDiffJob(run, step, 1);
+
+      expect(await add("upload", job, job)).toEqual([]);
+
+      expect(await queued()).toEqual([diffJobId(step, 1)]);
+    });
+
+    test("a new version of the step is a job of its own", async () => {
+      const step = randomUUID();
+
+      expect(await add("upload", stepDiffJob(run, step, 1))).toEqual([]);
+      expect(await add("threshold", stepDiffJob(run, step, 2))).toEqual([]);
+
+      expect(await queued()).toEqual(
+        [diffJobId(step, 1), diffJobId(step, 2)].sort(),
+      );
+    });
+  },
+);

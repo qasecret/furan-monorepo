@@ -32,6 +32,7 @@ export const CAPABILITIES: Capability[] = [
   { id: "diff.ignore_region", area: "diff", label: "ignore region suppresses diff" },
   { id: "diff.layout_match", area: "diff", label: "layout match-level suppresses shift" },
   { id: "diff.vlm_invoked", area: "diff", label: "VLM layer invoked + persisted", configGated: true },
+  { id: "diff.step_failure", area: "diff", label: "a corrupt screenshot fails only its step (Diff failed + reason; the run unresolved)" },
   // rbac
   { id: "rbac.owner_all_gates", area: "rbac", label: "owner passes admin gates" },
   { id: "rbac.editor_scoped", area: "rbac", label: "editor blocked from admin, allowed on member project" },

@@ -133,8 +133,8 @@ whatever order `--suite` names them in. Each suite changes the seeded project
    that it removes the jobs still queued (the harness's own queue only, under
    the `furan-scale` prefix: they are harness data) and waits up to 2 more
    minutes for the running ones. A backlog would otherwise run through the
-   next suite's measurements: D4's 500-step upload diffs quadratically today,
-   for longer than D4 itself records. The CLI prints
+   next suite's measurements: D4's 500-step upload queues 500 diff jobs,
+   which run for longer than D4 itself records. The CLI prints
    `quiesce after <suite>: drained in Xs` or
    `quiesce after <suite>: N jobs dropped`.
 6. Writes the report, tears everything down and exits.
