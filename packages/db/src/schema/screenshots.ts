@@ -129,14 +129,17 @@ export const screenshots = pgTable(
     // turns a stale job into a no-op. None of these columns holds a storage
     // key.
     //
-    // The step's version: bumped every time the step is queued for a diff
-    // (`bumpStepGenerations`). A job whose generation no longer matches is
-    // stale and writes nothing.
+    // The step's version: bumped each time the step needs a new diff
+    // (`bumpStepGenerations`); the reconciler re-adds a lost job at the same
+    // version, except a step queued before per-step jobs, which its first
+    // claim versions. A job whose generation no longer matches is stale and
+    // writes nothing.
     diffGeneration: integer("diff_generation").notNull().default(0),
     // When the current version was queued; the reconciler's stuck clock.
     diffQueuedAt: timestamp("diff_queued_at", { withTimezone: true }),
     // How many times the reconciler re-queued the current version. Reset to 0
-    // by every new version.
+    // by `bumpStepGenerations`; the reconciler's versioning claim of a step
+    // queued before per-step jobs counts as its first re-queue (1).
     diffRequeues: smallint("diff_requeues").notNull().default(0),
     // The step's own result, written with its verdict. NULL = the step had no
     // baseline pair (or predates 0042). `recomputeRunTotals` folds them into
