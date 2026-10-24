@@ -1,6 +1,7 @@
 import { type DB, eq, screenshots, testRuns, type Tx } from "@furan/db";
+import { humanizeErrorCode, type ApiErrorEnvelope } from "@furan/shared-types";
 import { TRPCError } from "@trpc/server";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 
 import { requireProjectMember } from "../hooks/require-project-member.js";
@@ -9,6 +10,25 @@ import { approveRunPending } from "../lib/review/run-level.js";
 import { withRequestScope } from "../lib/with-request-scope.js";
 
 const runIdParam = z.object({ id: z.string().uuid() });
+
+/**
+ * `POST /runs/:id/approve`'s 409 `approve_failed`, with an additive `reason`
+ * when the refusal has one a caller can act on: `diff_failed`, a step of the
+ * run whose diff failed for good and must be retried before the run can be
+ * approved. The envelope's other fields are unchanged.
+ */
+function sendApproveFailed(
+  reply: FastifyReply,
+  reason: "diff_failed",
+): FastifyReply {
+  const body: ApiErrorEnvelope & { reason: "diff_failed" } = {
+    code: "approve_failed",
+    message: humanizeErrorCode("approve_failed"),
+    statusCode: 409,
+    reason,
+  };
+  return reply.code(409).send(body);
+}
 
 /**
  * Counts the run's persisted checkpoints (one screenshots row per
@@ -201,7 +221,9 @@ export async function registerRunLifecycleRoutes(
   // decision core (spec §5.7): approves every pending checkpoint of the run as
   // one action, `source: "sdk"`, decided by the token's user. Nothing pending
   // (e.g. an already-passed run) is a successful no-op, not an error; a run
-  // that isn't reviewable is refused with 409, as before.
+  // that isn't reviewable is refused with 409, as before. A run with an
+  // undecided step whose diff failed for good is refused with the same 409
+  // plus `reason: "diff_failed"`: retry that step's diff, then approve.
   app.post(
     "/runs/:id/approve",
     {
@@ -247,6 +269,12 @@ export async function registerRunLifecycleRoutes(
             case "BAD_REQUEST":
             case "PRECONDITION_FAILED":
             case "CONFLICT":
+              // A step of the run whose diff failed for good: the same 409,
+              // plus `reason`, so the caller can tell "retry the step's diff"
+              // from a run that is not reviewable.
+              if (err.message === "diff_failed") {
+                return sendApproveFailed(reply, "diff_failed");
+              }
               // The core refused the approve (the run isn't reviewable, is
               // overridden, or lost a race) → 409 Conflict, as before.
               return sendError(reply, 409, "approve_failed");
