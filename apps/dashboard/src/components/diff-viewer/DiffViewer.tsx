@@ -815,15 +815,22 @@ export function DiffViewer({
     sizeMismatch ||
     baselineFallback ||
     Boolean(data.autoApproved);
-  // The step on screen's own diff % (R50): the run's is its worst step's,
-  // another step's, and stands in only for a legacy step. The sidebar shows
-  // it and `stepHasDiff` decides from it, so the two cannot disagree.
+  // The step on screen's own diff %, for the sidebar (R46): the run's is its
+  // worst step's, another step's, and stands in only for a legacy step.
   const stepDiffPercent = stepNumber(stepItem, "diffPercent", runDiffPercent);
   // R4: the step has a pixel diff when it has a region that is pixel
   // evidence (not an accessibility finding or an audit row), or a diff
-  // percent above 0.
+  // percent above 0. Which percent (R50, R54): a step diffed per step has
+  // its own. A legacy step (generation 0, or the step list not loaded yet)
+  // has none, and borrows the run's only when the run has one screenshot:
+  // on a run of several, the run's % may be a sibling's, which would turn
+  // "No pixel changes" into "No diff image was kept" for an unchanged step.
+  const legacyStep = stepItem === undefined || stepItem.diffGeneration === 0;
   const stepHasDiff =
-    regions.some(isPixelDiffRegion) || (stepDiffPercent ?? 0) > 0;
+    regions.some(isPixelDiffRegion) ||
+    (legacyStep
+      ? data.screenshots.length === 1 && (runDiffPercent ?? 0) > 0
+      : (stepItem.diffPercent ?? 0) > 0);
   // R52: a step with no verdict yet (new mid-run, or just retried) has not
   // been compared, so Diff says nothing about it. Unknown while the step
   // list loads.

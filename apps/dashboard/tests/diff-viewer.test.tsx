@@ -1381,11 +1381,16 @@ describe("DiffViewer", () => {
       source,
       screenshotId,
     });
-    /** A run of two steps, diffed before steps kept their own images. */
+    /**
+     * A run of two steps, diffed before steps kept their own images and
+     * numbers: each step is at generation 0 with no diff % of its own, and
+     * the run's diff % and diff image are its worst step's (step 1's).
+     */
     function legacyRun(regions: unknown[]) {
       mockGetByIdData = {
         ...defaultMockData,
         diffName: "diff-of-step-1",
+        diffPercent: 5,
         baselineScreenshot: { id: "base", imageKey: fresh("base") },
         screenshots: [
           { id: "c1", imageKey: fresh("img-1"), diffImageKey: null },
@@ -1393,10 +1398,11 @@ describe("DiffViewer", () => {
         ],
         diffRegions: regions,
       };
+      const legacy = { diffPercent: null, diffGeneration: 0 };
       mockCheckpoints = {
         items: [
-          { id: "c1", name: "Home", state: "unresolved" },
-          { id: "c2", name: "Search", state: "unresolved" },
+          { id: "c1", name: "Home", state: "unresolved", ...legacy },
+          { id: "c2", name: "Search", state: "unresolved", ...legacy },
         ],
       };
     }
@@ -1445,7 +1451,7 @@ describe("DiffViewer", () => {
     test("Diff on a legacy step with no diff: no pixel changes (R4)", async () => {
       loadingStorage();
       inDiff();
-      // Step 1's region is not step 2's.
+      // Step 1's region is not step 2's, and the run's 5% is step 1's (R54).
       legacyRun([region("c1")]);
       const r = openStep("c2");
       expect(
@@ -1588,14 +1594,31 @@ describe("DiffViewer", () => {
         expect(r.queryByText(/No pixel changes/)).toBeNull();
       });
 
+      // R54: a legacy step (generation 0) has no number of its own, and on a
+      // run of several steps the run's % may be a sibling's. Such a step
+      // decides from its own regions alone: with none, no pixel changes,
+      // whatever the run's %, never that its diff image was lost.
+      test.each([0, 5])(
+        "a legacy step (generation 0, no number) of a two-step run ignores the run's %s%",
+        async (runPercent) => {
+          const legacy = { diffPercent: null, diffGeneration: 0 };
+          const r = await openDiffStep("c1", runPercent, steps(legacy, legacy));
+          expect(r.getByText(NO_CHANGES)).toBeDefined();
+          expect(r.queryByText(/No diff image was kept/)).toBeNull();
+        },
+      );
+
+      // A one-screenshot run's % is its only step's, so a legacy step there
+      // still decides from it.
       test.each([
         { runPercent: 0, says: true },
         { runPercent: 5, says: false },
       ])(
-        "a legacy step (generation 0, no number) decides from the run's $runPercent%",
+        "a legacy step (generation 0, no number) of a one-step run decides from the run's $runPercent%",
         async ({ runPercent, says }) => {
-          const legacy = { diffPercent: null, diffGeneration: 0 };
-          const r = await openDiffStep("c1", runPercent, steps(legacy, legacy));
+          const r = await openDiffStep("c1", runPercent, [
+            { id: "c1", name: "Home", diffPercent: null, diffGeneration: 0 },
+          ]);
           if (says) expect(r.getByText(NO_CHANGES)).toBeDefined();
           else expect(r.queryByText(/No pixel changes/)).toBeNull();
         },
